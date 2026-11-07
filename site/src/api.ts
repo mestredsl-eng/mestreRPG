@@ -245,6 +245,8 @@ export interface PoolPontos {
   disponiveis: number;
   gastos: number;
   saldo: number;
+  cedidos?: number;
+  recebidos?: number;
 }
 
 export interface ResultadoPontos {
@@ -252,6 +254,7 @@ export interface ResultadoPontos {
   pools: PoolPontos[];
   detalhes: { campoId: string; label: string; poolId: string; custo: number }[];
   erros: string[];
+  transferencias?: { de: string; para: string; pontos: number }[];
 }
 
 export interface FichaRenderizada {
@@ -259,7 +262,7 @@ export interface FichaRenderizada {
   calculados: Record<string, number | string>;
   pontos?: ResultadoPontos;
   estrutura: EstruturaFicha;
-  validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] };
+  validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> };
 }
 
 // ---- Tipos da Etapa 5: motor de regras ----
@@ -279,11 +282,13 @@ export interface DefinicaoElemento {
   prerequisitos?: { kind: string; key: string; minLevel?: number }[];
   dependencias?: { kind: string; key: string }[];
   grupoExclusividade?: string;
+  gruposExclusividade?: string[];
   exclusivos?: string[];
   obrigatorios?: string[];
   reservaPontos?: string;
   disponivel?: boolean;
   ordem?: number;
+  formulas?: Record<string, string>;
 }
 
 export interface ElementoRegra {
@@ -317,6 +322,7 @@ export interface ConfigRegras {
   };
   pontosExtras: number;
   transferivelEntreReservas: boolean;
+  transferencias: { origem: string; destino: string; limite?: number }[];
 }
 
 export interface RegrasCampanha {
@@ -330,6 +336,7 @@ export interface RegrasCampanha {
 export interface ResultadoValidacaoRegras {
   ok: boolean;
   erros: { campoId?: string; codigo: string; mensagem: string }[];
+  calculos?: Record<string, number>;
   pontosHabilitados: boolean;
   totalErros: number;
 }

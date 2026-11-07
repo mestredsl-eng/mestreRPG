@@ -13,7 +13,7 @@ import {
   TIPOS_REGRA,
   type ElementoRegra,
 } from "../lib/regras.js";
-import { estruturaFichaSchema, todosCampos } from "../lib/ficha.js";
+import { estruturaFichaSchema, todosCampos, avaliarFormula } from "../lib/ficha.js";
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -32,6 +32,21 @@ const elementoSchema = z.object({
 });
 
 const atualizacaoSchema = elementoSchema.partial().omit({ kind: true, key: true });
+
+const ESTRUTURA_VAZIA = { versao: 1 as const, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
+
+/** Valida sintaxe das fórmulas de um elemento (referências são checadas na ficha). */
+function formulasValidas(def: { formulas?: Record<string, string> } | undefined): string | null {
+  for (const [nome, expr] of Object.entries(def?.formulas ?? {})) {
+    try {
+      const v = avaliarFormula(expr, {}, ESTRUTURA_VAZIA);
+      if (typeof v !== "number" || !Number.isFinite(v)) return `Fórmula "${nome}" retornou valor inválido`;
+    } catch {
+      return `Fórmula "${nome}" inválida`;
+    }
+  }
+  return null;
+}
 
 function serializar(el: ElementoRegra) {
   return {
@@ -93,6 +108,11 @@ regrasRouter.post("/elementos", requirePapel("mestre"), async (req, res) => {
   const agora = new Date();
   const id = crypto.randomUUID();
   const def = definicaoElementoSchema.parse(body.data.definition);
+  const erroFormula = formulasValidas(def);
+  if (erroFormula) {
+    res.status(400).json({ erro: erroFormula });
+    return;
+  }
   await db.insert(ruleDefinitions).values({
     id,
     ruleSetId: regras.ruleSetId,
@@ -125,6 +145,11 @@ regrasRouter.patch("/elementos/:elementId", requirePapel("mestre"), async (req, 
   }
   const atual = el.definition;
   const novaDef = definicaoElementoSchema.parse({ ...atual, ...(body.data.definition ?? {}) });
+  const erroFormula = formulasValidas(novaDef);
+  if (erroFormula) {
+    res.status(400).json({ erro: erroFormula });
+    return;
+  }
   await db
     .update(ruleDefinitions)
     .set({
@@ -269,6 +294,7 @@ regrasRouter.get("/validacao/:characterId", requirePapel("mestre", "jogador"), a
   res.json({
     ok: resultado.ok,
     erros: resultado.erros,
+    calculos: ehMestre ? resultado.calculos : undefined,
     pontosHabilitados: regras.config.pontos.habilitado || parse.data.pontos.habilitado,
     totalErros: resultado.erros.length,
   });

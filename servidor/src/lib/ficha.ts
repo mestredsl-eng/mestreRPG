@@ -315,6 +315,13 @@ export function avaliarFormula(
   return Number.isInteger(resultado) ? resultado : Math.round(resultado * 1000) / 1000;
 }
 
+/** Extrai as referências {campo} de uma fórmula (para validar existência). */
+export function referenciasFormula(formula: string): string[] {
+  const refs = new Set<string>();
+  for (const m of formula.matchAll(/\{([^}]+)\}/g)) refs.add(m[1].trim());
+  return [...refs];
+}
+
 /** Calcula todos os campos "calculado" de uma ficha. */
 export function calcularCampos(estrutura: EstruturaFicha, dados: Record<string, unknown>): Record<string, number | string> {
   const saida: Record<string, number | string> = {};
@@ -337,6 +344,14 @@ export interface PoolPontos {
   disponiveis: number;
   gastos: number;
   saldo: number;
+  cedidos?: number;    // pontos transferidos para outras reservas
+  recebidos?: number;  // pontos recebidos de outras reservas
+}
+
+export interface TransferenciaPontos {
+  de: string;
+  para: string;
+  pontos: number;
 }
 
 export interface DetalheCusto {
@@ -351,6 +366,7 @@ export interface ResultadoPontos {
   pools: PoolPontos[];
   detalhes: DetalheCusto[];
   erros: string[];
+  transferencias?: TransferenciaPontos[];
 }
 
 const POOL_PADRAO = "principal";

@@ -22,6 +22,7 @@ import {
   validarRegras,
   estruturaComCustosDeElementos,
   aplicarCustosSelecao,
+  aplicarTransferencias,
   type RegrasCampanha,
 } from "../lib/regras.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -101,16 +102,18 @@ function montarFicha(
     : { ...basePontos, secoes: estruturaFiltrada.secoes };
   const dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
   let pontos = calcularPontos(estruturaPontosVisivel, dadosPontos);
-  if (regras) pontos = aplicarCustosSelecao(pontos, estruturaPontosVisivel, dadosPontos, regras);
+  if (regras) {
+    pontos = aplicarTransferencias(aplicarCustosSelecao(pontos, estruturaPontosVisivel, dadosPontos, regras), regras);
+  }
 
   // Validação de regras (pré-reqs, exclusividades, defeitos, pontos) — spec §9.
   // Para não-mestre, filtra erros de campos que ele não pode ver (privacidade).
-  let validacao: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null = null;
+  let validacao: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> } | null = null;
   if (regras) {
     const r = validarRegras(estrutura, dados, regras);
     const visiveis = new Set(estruturaFiltrada.secoes.flatMap((s) => s.campos.map((c) => c.id)));
     const erros = ehMestre ? r.erros : r.erros.filter((e) => !e.campoId || visiveis.has(e.campoId));
-    validacao = { ok: erros.length === 0, erros };
+    validacao = { ok: erros.length === 0, erros, calculos: ehMestre ? r.calculos : undefined };
   }
 
   return { campos, calculados, pontos, estrutura: estruturaFiltrada, validacao };

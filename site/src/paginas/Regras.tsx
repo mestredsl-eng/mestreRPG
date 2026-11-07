@@ -197,6 +197,8 @@ export default function Regras({ campaignId }: { campaignId: string }) {
                       {el.definition.custoPontos !== undefined && <span className="tag">custo {el.definition.custoPontos}/pt</span>}
                       {el.definition.custoProgressivo?.length ? <span className="tag">progressivo</span> : null}
                       {el.definition.grupoExclusividade && <span className="tag">exclusivo: {el.definition.grupoExclusividade}</span>}
+                      {(el.definition.gruposExclusividade?.length ?? 0) > 0 && <span className="tag">{el.definition.gruposExclusividade!.length} grupo(s)</span>}
+                      {el.definition.formulas && Object.keys(el.definition.formulas).length > 0 && <span className="tag">fórmulas</span>}
                       {el.definition.obrigatorios?.length ? <span className="tag">exige {el.definition.obrigatorios.length}</span> : null}
                     </div>
                     <div className="elemento-acoes">
@@ -239,6 +241,14 @@ export default function Regras({ campaignId }: { campaignId: string }) {
                   </ul>
                 </>
               )}
+              {validacao.calculos && Object.keys(validacao.calculos).length > 0 && (
+                <div>
+                  <p><strong>Cálculos das fórmulas:</strong></p>
+                  <ul>
+                    {Object.entries(validacao.calculos).map(([k, v]) => <li key={k}><code>{k}</code> = {v}</li>)}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -264,7 +274,7 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
   const [custosTxt, setCustosTxt] = useState(""); // "talento:1,2,3,4,5" por linha
 
   useEffect(() => {
-    setForm(config);
+    setForm({ ...config, transferencias: config.transferencias ?? [] });
     setCustosTxt(Object.entries(config.pontos.custos).map(([k, v]) => `${k}: ${v.join(",")}`).join("\n"));
   }, [config]);
 
@@ -325,6 +335,47 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
       <p className="dica">Uma linha por tipo: <code>talento: 1,2,3,4,5</code> (custo de subir do nível i para i+1). Vantagens e defeitos podem usar custos negativos para reservar pontos.</p>
       <textarea rows={4} value={custosTxt} onChange={(e) => setCustosTxt(e.target.value)} />
 
+      <h4>Transferência entre reservas</h4>
+      <label className="checkbox">
+        <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />
+        Permitir transferência de pontos entre reservas (somente pelas arestas abaixo)
+      </label>
+      {form.transferivelEntreReservas && (
+        <div>
+          <p className="dica">Origem → destino: pontos da reserva de origem podem cobrir déficit da destino. Limite opcional por aresta. Crie arestas nos dois sentidos se a troca for mútua.</p>
+          {(form.transferencias ?? []).map((t, i) => {
+            const poolsIds = ["principal", ...form.pontos.pools.map((p) => p.id).filter(Boolean)];
+            const unicos = [...new Set(poolsIds)];
+            return (
+              <div className="linha-ferramentas" key={i}>
+                <select value={t.origem} onChange={(e) => {
+                  const transferencias = [...form.transferencias];
+                  transferencias[i] = { ...t, origem: e.target.value };
+                  setForm((f) => ({ ...f, transferencias }));
+                }}>
+                  {unicos.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <span>→</span>
+                <select value={t.destino} onChange={(e) => {
+                  const transferencias = [...form.transferencias];
+                  transferencias[i] = { ...t, destino: e.target.value };
+                  setForm((f) => ({ ...f, transferencias }));
+                }}>
+                  {unicos.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <input type="number" placeholder="Limite (opcional)" value={t.limite ?? ""} onChange={(e) => {
+                  const transferencias = [...form.transferencias];
+                  transferencias[i] = { ...t, limite: e.target.value === "" ? undefined : Number(e.target.value) };
+                  setForm((f) => ({ ...f, transferencias }));
+                }} />
+                <button type="button" className="mini perigo" onClick={() => setForm((f) => ({ ...f, transferencias: f.transferencias.filter((_, j) => j !== i) }))}>✕</button>
+              </div>
+            );
+          })}
+          <button type="button" className="secundario" onClick={() => setForm((f) => ({ ...f, transferencias: [...(f.transferencias ?? []), { origem: "principal", destino: "vantagens" }] }))}>+ Aresta de transferência</button>
+        </div>
+      )}
+
       <button className="primario" type="submit">Salvar configuração</button>
     </form>
   );
@@ -357,6 +408,8 @@ function ModalElemento({
     minimo: def.minimo?.toString() ?? "",
     maximo: def.maximo?.toString() ?? "",
     grupoExclusividade: def.grupoExclusividade ?? "",
+    gruposExclusividade: (def.gruposExclusividade ?? []).join(", "),
+    formulasTxt: Object.entries(def.formulas ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n"),
     reservaPontos: def.reservaPontos ?? "",
     prerequisitos: (def.prerequisitos ?? []).map((p) => `${p.kind}:${p.key}${p.minLevel ? `@${p.minLevel}` : ""}`).join(", "),
     obrigatorios: (def.obrigatorios ?? []).join(", "),
@@ -373,6 +426,11 @@ function ModalElemento({
         return { kind, key: rest.join(":"), ...(min ? { minLevel: Number(min) } : {}) };
       });
     const listaKeys = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+    const formulas: Record<string, string> = {};
+    for (const linha of form.formulasTxt.split("\n")) {
+      const m = linha.match(/^\s*([a-zA-Z_][\w]*)\s*:\s*(.+)$/);
+      if (m) formulas[m[1]] = m[2].trim();
+    }
     await onSalvar({
       kind: form.kind,
       key: form.key,
@@ -385,6 +443,8 @@ function ModalElemento({
         minimo: num(form.minimo),
         maximo: num(form.maximo),
         grupoExclusividade: form.grupoExclusividade || undefined,
+        gruposExclusividade: listaKeys(form.gruposExclusividade),
+        formulas: Object.keys(formulas).length ? formulas : undefined,
         reservaPontos: form.reservaPontos || undefined,
         prerequisitos: listaRefs(form.prerequisitos),
         obrigatorios: listaKeys(form.obrigatorios),
@@ -424,7 +484,12 @@ function ModalElemento({
             <label>Máximo<input type="number" value={form.maximo} onChange={(e) => setForm({ ...form, maximo: e.target.value })} /></label>
           </div>
           <label>Custo progressivo (vírgula)<input value={form.custoProgressivo} onChange={(e) => setForm({ ...form, custoProgressivo: e.target.value })} placeholder="ex.: 1,2,3,4,5" /></label>
-          <label>Grupo de exclusividade<input value={form.grupoExclusividade} onChange={(e) => setForm({ ...form, grupoExclusividade: e.target.value })} placeholder="elementos do mesmo grupo não combinam" /></label>
+          <label>Grupo de exclusividade (legado — um só)<input value={form.grupoExclusividade} onChange={(e) => setForm({ ...form, grupoExclusividade: e.target.value })} placeholder="elementos do mesmo grupo não combinam" /></label>
+          <label>Grupos de exclusividade (vários, por vírgula)<input value={form.gruposExclusividade} onChange={(e) => setForm({ ...form, gruposExclusividade: e.target.value })} placeholder="ex.: poderes_ocultos, transformacoes" /></label>
+          <label>Fórmulas (nome: expressão por linha)
+            <textarea rows={3} value={form.formulasTxt} onChange={(e) => setForm({ ...form, formulasTxt: e.target.value })} placeholder={"bonus: {forca} * 2\ncusto: {destreza} + 1\nrequisito: {inteligencia}"} />
+            <small className="meta">Use {"{campo}"} para referenciar campos da ficha. Chaves especiais: custo, requisito, minimo, maximo. Sem código arbitrário.</small>
+          </label>
           <label>Pré-requisitos<input value={form.prerequisitos} onChange={(e) => setForm({ ...form, prerequisitos: e.target.value })} placeholder="tipo:chave@nível, separados por vírgula" /></label>
           <label>Elementos obrigatórios<input value={form.obrigatorios} onChange={(e) => setForm({ ...form, obrigatorios: e.target.value })} placeholder="tipo:chave, separados por vírgula" /></label>
           <label className="checkbox">

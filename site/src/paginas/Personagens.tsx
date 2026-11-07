@@ -279,7 +279,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, aoVoltar, aoSal
             {ficha.pontos.pools.map((pool) => (
               <span key={pool.id} className={`badge ${pool.saldo < 0 ? "badge-negativo" : ""}`}>
                 {pool.nome}: {pool.saldo}/{pool.disponiveis} pts
+                {pool.recebidos ? ` (+${pool.recebidos} transf.)` : ""}
+                {pool.cedidos ? ` (-${pool.cedidos} transf.)` : ""}
               </span>
+            ))}
+            {ficha.pontos.transferencias?.map((t, i) => (
+              <span key={i} className="tag">{t.de} → {t.para}: {t.pontos} pts</span>
             ))}
           </div>
         )}
