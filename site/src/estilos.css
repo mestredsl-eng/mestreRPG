@@ -552,3 +552,18 @@ code {
   100% { transform: rotate(360deg) scale(1); }
 }
 @media (max-width: 600px) { .dado { width: 28px; height: 28px; font-size: 13px; } }
+
+/* Etapas 8-9: diário, histórico e biblioteca */
+.lista-anotacoes { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.lista-anotacoes > li { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 12px; }
+.lista-anotacoes > li.importante { border-color: #8a6d1f; }
+.pre-wrap { white-space: pre-wrap; word-break: break-word; }
+.sucesso { color: #7fd08a; }
+.selo { background: #8a6d1f; color: #fff; border-radius: 4px; padding: 1px 6px; font-size: 11px; }
+.biblioteca { display: grid; grid-template-columns: 220px 1fr; gap: 12px; margin-top: 10px; }
+.biblioteca-pastas { display: flex; flex-direction: column; gap: 4px; border-right: 1px solid var(--borda, #2a2f3f); padding-right: 10px; }
+.biblioteca-pastas button { text-align: left; }
+.biblioteca-lista { min-width: 0; }
+.historico-sessao { margin-top: 6px; padding: 8px; background: var(--fundo-input, #0f1219); border-radius: 8px; }
+.historico-sessao ul { margin: 6px 0; padding-left: 18px; }
+@media (max-width: 700px) { .biblioteca { grid-template-columns: 1fr; } .biblioteca-pastas { border-right: 0; border-bottom: 1px solid var(--borda, #2a2f3f); padding-right: 0; padding-bottom: 8px; flex-direction: row; flex-wrap: wrap; } }

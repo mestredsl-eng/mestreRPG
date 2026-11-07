@@ -6,5 +6,9 @@
     "banco": "banco/mestre-rpg.db",
     "arquivos": "arquivos/campanhas",
     "backups": "backups"
+  },
+  "arquivos": {
+    "tamanhoMaxMb": 25,
+    "formatosExtras": []
   }
 }

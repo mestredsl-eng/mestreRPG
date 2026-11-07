@@ -8,6 +8,7 @@ import Regras from "./Regras";
 import Mesa from "./Mesa";
 import Diario from "./Diario";
 import Historico from "./Historico";
+import Arquivos from "./Arquivos";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -18,7 +19,7 @@ const STATUS_OPCOES = [
 ] as const;
 
 const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
-type Aba = "info" | "mesa" | "personagens" | "diario" | "historico" | "fichas" | "regras" | "participantes" | "convites";
+type Aba = "info" | "mesa" | "personagens" | "diario" | "historico" | "arquivos" | "fichas" | "regras" | "participantes" | "convites";
 
 export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
   const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
@@ -160,6 +161,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
           <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>
           <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}>Diário</button>
           <button className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}>Histórico</button>
+          <button className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}>Arquivos</button>
           {souMestre && (
             <>
               <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}>Fichas</button>
@@ -175,6 +177,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
       {aba === "diario" && <Diario campaignId={id} campanha={campanha} />}
       {aba === "historico" && <Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} />}
+      {aba === "arquivos" && <Arquivos campaignId={id} campanha={campanha} />}
       {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
       {aba === "regras" && souMestre && <Regras campaignId={id} />}
 

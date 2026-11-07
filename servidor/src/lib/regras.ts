@@ -119,6 +119,14 @@ export const configRegrasSchema = z.object({
       espectadorLeCompartilhadas: z.boolean().default(true), // espectador vê anotações públicas/selecionadas para ele
     })
     .default({ jogadorCompartilha: true, espectadorLeCompartilhadas: true }),
+  // Biblioteca de arquivos (Etapa 9)
+  arquivos: z
+    .object({
+      jogadoresEnviam: z.boolean().default(true),   // jogadores podem enviar arquivos (vão p/ aprovação)
+      espectadorVe: z.boolean().default(true),      // espectador vê arquivos públicos
+      formatosExtras: z.array(z.string().max(10)).max(50).default([]), // extensões adicionais permitidas pelo mestre
+    })
+    .default({ jogadoresEnviam: true, espectadorVe: true, formatosExtras: [] }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 

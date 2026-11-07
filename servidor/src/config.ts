@@ -11,6 +11,7 @@ interface ConfigServidor {
   porta: number;
   sitePorta: number;
   caminhos: { banco: string; arquivos: string; backups: string };
+  arquivos: { tamanhoMaxMb: number; formatosExtras: string[] };
 }
 
 const padrao: ConfigServidor = {
@@ -18,6 +19,7 @@ const padrao: ConfigServidor = {
   porta: 3001,
   sitePorta: 5173,
   caminhos: { banco: "banco/mestre-rpg.db", arquivos: "arquivos/campanhas", backups: "backups" },
+  arquivos: { tamanhoMaxMb: 25, formatosExtras: [] },
 };
 
 function carregar(): ConfigServidor {
@@ -29,6 +31,7 @@ function carregar(): ConfigServidor {
       porta: json.porta ?? padrao.porta,
       sitePorta: json.sitePorta ?? padrao.sitePorta,
       caminhos: { ...padrao.caminhos, ...(json.caminhos ?? {}) },
+      arquivos: { ...padrao.arquivos, ...(json.arquivos ?? {}) },
     };
   } catch {
     console.warn("[config] configuracao/servidor.json inválido — usando padrões.");

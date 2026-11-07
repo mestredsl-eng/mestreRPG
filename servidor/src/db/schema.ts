@@ -378,11 +378,28 @@ export const notes = sqliteTable("notes", {
   updatedAt: updatedAt(),
 }, (t) => [index("notes_campaign_idx").on(t.campaignId)]);
 
+// Pastas da biblioteca de arquivos (Etapa 9)
+export const folders = sqliteTable("folders", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  parentId: text("parent_id"), // null = raiz; referência fraca a folders.id (mesma campanha)
+  name: text("name").notNull(),
+  allowPlayerUploads: integer("allow_player_uploads", { mode: "boolean" }).notNull().default(false),
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [index("folders_campaign_idx").on(t.campaignId)]);
+
 // Arquivos da campanha (spec §22) — metadados; conteúdo em arquivos/campanhas/
 export const files = sqliteTable("files", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   folderPath: text("folder_path").notNull().default("/"),
+  folderId: text("folder_id"), // pasta lógica (Etapa 9); folderPath mantido por compatibilidade
+  displayName: text("display_name"),
+  description: text("description"),
+  category: text("category"),
+  status: text("status").notNull().default("aprovado"), // aprovado|pendente|rejeitado (uploads de jogadores)
+  storageName: text("storage_name"), // nome físico seguro gerado no servidor
   fileName: text("file_name").notNull(),
   mimeType: text("mime_type"),
   sizeBytes: integer("size_bytes"),
@@ -390,6 +407,7 @@ export const files = sqliteTable("files", {
   visibility: text("visibility").notNull().default("mestre"), // mestre|publica|selecionada
   recipients: text("recipients", { mode: "json" }),
   createdAt: createdAt(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
 }, (t) => [index("files_campaign_idx").on(t.campaignId)]);
 
 // Backups (spec §23)

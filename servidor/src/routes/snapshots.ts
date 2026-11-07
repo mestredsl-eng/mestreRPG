@@ -1,13 +1,16 @@
 import { Router } from "express";
+import { existsSync, mkdirSync, renameSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import { and, desc, eq, getTableColumns, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
-  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files,
+  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders,
   snapshots, users,
 } from "../db/schema.js";
+import { CAMINHOS } from "../db/index.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
@@ -42,6 +45,7 @@ interface EstadoCampanha {
   tests: (typeof tests.$inferSelect)[];
   notes: (typeof notes.$inferSelect)[];
   files: (typeof files.$inferSelect)[];
+  folders: (typeof folders.$inferSelect)[];
 }
 
 /** Exporta o estado completo da campanha (spec §4/§5). */
@@ -77,6 +81,7 @@ async function exportarCampanha(campaignId: string): Promise<EstadoCampanha> {
     tests: await db.select().from(tests).where(eq(tests.campaignId, campaignId)),
     notes: await db.select().from(notes).where(eq(notes.campaignId, campaignId)),
     files: await db.select().from(files).where(eq(files.campaignId, campaignId)),
+    folders: await db.select().from(folders).where(eq(folders.campaignId, campaignId)),
   };
 }
 
@@ -132,6 +137,20 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
   const tplIds = (await db.select({ id: sheetTemplates.id }).from(sheetTemplates).where(eq(sheetTemplates.campaignId, cid))).map((r) => r.id);
   const sessIds = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((r) => r.id);
   const ruleSetIds = (await db.select({ id: ruleSets.id }).from(ruleSets).where(eq(ruleSets.campaignId, cid))).map((r) => r.id);
+  // arquivos físicos dos registros que serão substituídos vão para a lixeira (recuperáveis)
+  const arquivosAtuais = await db.select({ storageName: files.storageName }).from(files).where(eq(files.campaignId, cid));
+  const baseDir = resolve(CAMINHOS.arquivos, cid);
+  const lixeira = resolve(baseDir, ".lixeira");
+  const moverParaLixeira = (storageName: string | null) => {
+    if (!storageName) return;
+    const origem = resolve(baseDir, storageName);
+    if (!origem.startsWith(baseDir + sep)) return;
+    const destino = resolve(lixeira, storageName);
+    if (existsSync(origem) && !existsSync(destino)) {
+      mkdirSync(lixeira, { recursive: true });
+      try { renameSync(origem, destino); } catch { /* best-effort */ }
+    }
+  };
 
   try {
     db.transaction((tx) => {
@@ -153,6 +172,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
       }
       limpar(notes, eq(notes.campaignId, cid));
       limpar(files, eq(files.campaignId, cid));
+      limpar(folders, eq(folders.campaignId, cid));
       limpar(characters, eq(characters.campaignId, cid));
       if (tplIds.length) limpar(sheetVersions, inArray(sheetVersions.templateId, tplIds));
       limpar(sheetTemplates, eq(sheetTemplates.campaignId, cid));
@@ -201,6 +221,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
       ins(rolls, dados.rolls);
       ins(tests, dados.tests);
       ins(notes, dados.notes);
+      ins(folders, dados.folders);
       ins(files, dados.files);
     });
   } catch (e) {
@@ -208,7 +229,23 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
     return;
   }
 
-  await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId });
+  // ---- recuperação de arquivos físicos (spec §8) ----
+  for (const a of arquivosAtuais) moverParaLixeira(a.storageName);
+  let arquivosRecuperados = 0;
+  const arquivosAusentes: string[] = [];
+  for (const f of dados.files ?? []) {
+    if (!f.storageName) continue;
+    const vivo = resolve(baseDir, f.storageName);
+    const naLixeira = resolve(lixeira, f.storageName);
+    if (vivo.startsWith(baseDir + sep) && existsSync(naLixeira) && !existsSync(vivo)) {
+      mkdirSync(baseDir, { recursive: true });
+      try { renameSync(naLixeira, vivo); } catch { /* segue */ }
+    }
+    if (existsSync(vivo)) arquivosRecuperados++;
+    else arquivosAusentes.push(f.fileName ?? f.id);
+  }
+
+  await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados, arquivosAusentes: arquivosAusentes.length });
   emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id });
-  res.json({ ok: true, preSnapshotId: preSnapId });
+  res.json({ ok: true, preSnapshotId: preSnapId, arquivosRecuperados, arquivosAusentes });
 });

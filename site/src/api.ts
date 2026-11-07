@@ -240,6 +240,47 @@ export const api = {
     requisicao<{ id: string }>(`/campaigns/${cid}/snapshots`, { method: "POST", body: JSON.stringify({ description }) }),
   restaurarSnapshot: (cid: string, sid: string) =>
     requisicao<{ ok: boolean; preSnapshotId: string }>(`/campaigns/${cid}/snapshots/${sid}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR" }) }),
+
+  // ---- Etapa 9: biblioteca de arquivos ----
+  listarArquivos: (cid: string) =>
+    requisicao<{ arquivos: ArquivoBiblioteca[]; limites: { tamanhoMaxMb: number }; config: { jogadoresEnviam: boolean; espectadorVe: boolean } }>(`/campaigns/${cid}/arquivos`),
+  listarPastas: (cid: string) =>
+    requisicao<{ pastas: PastaBiblioteca[] }>(`/campaigns/${cid}/arquivos/pastas`),
+  criarPasta: (cid: string, dados: { name: string; parentId?: string | null }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/arquivos/pastas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarPasta: (cid: string, pid: string, dados: { name?: string; parentId?: string | null; allowPlayerUploads?: boolean }) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/pastas/${pid}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  excluirPasta: (cid: string, pid: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/pastas/${pid}`, { method: "DELETE" }),
+  enviarArquivo: async (cid: string, arquivo: File, meta: { folderId?: string | null; displayName?: string; description?: string; category?: string; visibility?: string; recipients?: string[] }) => {
+    const res = await fetch(`${API_BASE}/campaigns/${cid}/arquivos/upload`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-File-Name": encodeURIComponent(arquivo.name),
+        "X-File-Mime": arquivo.type || "application/octet-stream",
+        ...(meta.folderId ? { "X-Folder-Id": meta.folderId } : {}),
+        ...(meta.displayName ? { "X-Display-Name": encodeURIComponent(meta.displayName) } : {}),
+        ...(meta.description ? { "X-Description": encodeURIComponent(meta.description) } : {}),
+        ...(meta.category ? { "X-Category": encodeURIComponent(meta.category) } : {}),
+        ...(meta.visibility ? { "X-Visibility": meta.visibility } : {}),
+        ...(meta.recipients?.length ? { "X-Recipients": meta.recipients.join(",") } : {}),
+      },
+      body: arquivo,
+    });
+    const corpo = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError((corpo as { erro?: string }).erro ?? `HTTP ${res.status}`);
+    return corpo as { id: string };
+  },
+  atualizarArquivo: (cid: string, fid: string, dados: Partial<ArquivoBiblioteca>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/${fid}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  moderarArquivo: (cid: string, fid: string, acao: "aprovar" | "rejeitar") =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/${fid}/moderacao`, { method: "PATCH", body: JSON.stringify({ acao }) }),
+  excluirArquivo: (cid: string, fid: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/${fid}`, { method: "DELETE" }),
+  urlArquivo: (cid: string, fid: string, download = false) =>
+    `${API_BASE}/campaigns/${cid}/arquivos/${fid}${download ? "?download=1" : ""}`,
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -743,4 +784,36 @@ export interface HistoricoSessao {
   testes: TesteMesa[];
   rolagens: Record<string, unknown>[];
   resumo: string | null;
+}
+
+// ---- Tipos da Etapa 9: biblioteca de arquivos ----
+
+export interface PastaBiblioteca {
+  id: string;
+  campaignId: string;
+  parentId: string | null;
+  name: string;
+  allowPlayerUploads: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface ArquivoBiblioteca {
+  id: string;
+  folderId: string | null;
+  folderPath: string;
+  fileName: string;
+  displayName: string;
+  description: string | null;
+  category: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  status: "aprovado" | "pendente" | "rejeitado";
+  visibility: "mestre" | "publica" | "selecionada";
+  recipients: string[] | null;
+  uploadedBy: string;
+  uploader: { username: string; displayName: string | null } | null;
+  ehMeu: boolean;
+  createdAt: string;
+  updatedAt: string | null;
 }
