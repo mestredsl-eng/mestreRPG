@@ -5,6 +5,7 @@ import { autenticarHandshake, type UsuarioAutenticado } from "../middleware/auth
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
 import { setIo } from "../lib/io.js";
+import { registrarMesa } from "./mesa.js";
 
 /**
  * Camada de tempo real (spec §16).
@@ -27,6 +28,7 @@ export function configurarSockets(httpServer: HttpServer): SocketIOServer {
   });
   setIo(io);
   const db = getDb();
+  registrarMesa(io);
 
   io.use(async (socket, next) => {
     const headers = socket.handshake.headers;

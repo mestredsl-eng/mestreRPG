@@ -516,3 +516,39 @@ code {
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
 .checkbox { display: flex; flex-direction: row !important; align-items: center; gap: 8px; }
+
+/* ---- Etapa 7: mesa em tempo real ---- */
+.mesa-grade { display: grid; grid-template-columns: 1fr 340px; gap: 14px; align-items: start; }
+@media (max-width: 900px) { .mesa-grade { grid-template-columns: 1fr; } }
+.mesa-lateral { display: flex; flex-direction: column; gap: 14px; }
+.chat-lista { max-height: 55vh; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 6px 2px; }
+.chat-msg { padding: 6px 10px; border-radius: 8px; background: var(--fundo-input, #0f1219); border-left: 3px solid var(--borda, #2a2f3f); }
+.chat-msg.chat-acao { border-left-color: #d4a017; background: #241d0d; }
+.chat-msg.chat-teste { border-left-color: #3a6fd4; }
+.chat-msg.chat-rolagem { border-left-color: #2e8f5b; }
+.chat-msg.chat-decisao { border-left-color: #8f3ac4; }
+.chat-msg.chat-evento { border-left-color: #555; opacity: 0.85; font-style: italic; }
+.chat-msg.privada { border-left-color: #c46fd4; }
+.chat-msg.secreta { border-left-color: #c4c4c4; background: #1c1c22; }
+.chat-autor { font-weight: 600; font-size: 13px; }
+.chat-hora { font-size: 11px; color: var(--texto-fraco, #8b93a7); margin-left: 8px; }
+.chat-conteudo { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+.chat-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.check { display: flex; flex-direction: row; align-items: center; gap: 5px; font-size: 13px; }
+.tag-atual { background: #2e5c3a; color: #aef0c0; }
+.timer-display { font-size: 2rem; font-variant-numeric: tabular-nums; text-align: center; padding: 8px; border-radius: 8px; background: var(--fundo-input, #0f1219); }
+.timer-display.rodando { color: #7fd08a; }
+.teste-card { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.rolagem-item { padding: 6px 0; border-bottom: 1px solid var(--borda, #2a2f3f); }
+.dados-grupo { display: inline-flex; gap: 4px; margin-right: 8px; }
+.dado { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; background: #232a3d; border: 1px solid #3a4460; font-weight: 700; font-size: 15px; }
+.dado.girando { animation: dado-gira 0.9s ease-in-out infinite; }
+@keyframes dado-gira {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(90deg) scale(1.1); }
+  50% { transform: rotate(180deg) scale(0.95); }
+  75% { transform: rotate(270deg) scale(1.05); }
+  100% { transform: rotate(360deg) scale(1); }
+}
+@media (max-width: 600px) { .dado { width: 28px; height: 28px; font-size: 13px; } }

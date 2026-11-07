@@ -290,7 +290,8 @@ export const sessions = sqliteTable("sessions", {
   summary: text("summary"), // resumo escrito pelo mestre
   startedAt: integer("started_at", { mode: "timestamp_ms" }),
   endedAt: integer("ended_at", { mode: "timestamp_ms" }),
-  status: text("status").notNull().default("ativa"), // ativa|encerrada
+  status: text("status").notNull().default("ativa"), // ativa|pausada|encerrada
+  timerState: text("timer_state", { mode: "json" }), // temporizador sincronizado pelo servidor (Etapa 7)
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -330,8 +331,9 @@ export const rolls = sqliteTable("rolls", {
   results: text("results", { mode: "json" }).notNull(), // resultados individuais + totais
   reason: text("reason"), // motivo da rolagem
   visibility: text("visibility").notNull().default("publica"), // publica|privada|secreta (§12.4)
+  requestId: text("request_id"), // idempotência do cliente
   createdAt: createdAt(),
-}, (t) => [index("rolls_campaign_idx").on(t.campaignId, t.createdAt)]);
+}, (t) => [index("rolls_campaign_idx").on(t.campaignId, t.createdAt), uniqueIndex("rolls_request_idx").on(t.campaignId, t.requestId)]);
 
 // Testes de habilidades (spec §13) — o sistema organiza e calcula; o mestre decide
 export const tests = sqliteTable("tests", {
@@ -351,9 +353,10 @@ export const tests = sqliteTable("tests", {
   outcome: text("outcome"), // sucesso|parcial|falha|falha_critica|personalizado (§13.4)
   outcomeNote: text("outcome_note"), // explicação narrativa do mestre
   visibility: text("visibility").notNull().default("publica"),
+  requestId: text("request_id"), // idempotência do cliente
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, (t) => [index("tests_campaign_idx").on(t.campaignId, t.createdAt)]);
+}, (t) => [index("tests_campaign_idx").on(t.campaignId, t.createdAt), uniqueIndex("tests_request_idx").on(t.campaignId, t.requestId)]);
 
 // Diário do jogador e anotações do mestre (spec §18) — visibilidade no servidor
 export const notes = sqliteTable("notes", {

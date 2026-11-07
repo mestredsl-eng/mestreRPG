@@ -5,6 +5,7 @@ import { statusLabel } from "./Campanhas";
 import ModelosFicha from "./ModelosFicha";
 import Personagens from "./Personagens";
 import Regras from "./Regras";
+import Mesa from "./Mesa";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -15,7 +16,7 @@ const STATUS_OPCOES = [
 ] as const;
 
 const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
-type Aba = "info" | "personagens" | "fichas" | "regras" | "participantes" | "convites";
+type Aba = "info" | "mesa" | "personagens" | "fichas" | "regras" | "participantes" | "convites";
 
 export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
   const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
@@ -153,6 +154,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
 
         <div className="abas">
           <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}>Informações</button>
+          <button className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}>Mesa</button>
           <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>
           {souMestre && (
             <>
@@ -165,6 +167,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </div>
       </section>
 
+      {aba === "mesa" && <Mesa campaignId={id} campanha={campanha} />}
       {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
       {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
       {aba === "regras" && souMestre && <Regras campaignId={id} />}

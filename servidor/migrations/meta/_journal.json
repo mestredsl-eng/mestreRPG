@@ -43,6 +43,13 @@
       "when": 1794040478057,
       "tag": "0005_curved_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794041378196,
+      "tag": "0006_chubby_james_howlett",
+      "breakpoints": true
     }
   ]
 }

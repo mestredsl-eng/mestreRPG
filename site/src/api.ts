@@ -206,6 +206,22 @@ export const api = {
     requisicao<{ ok: boolean }>(`/campaigns/${cid}/inventario/${templateId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   removerItemCatalogo: (cid: string, templateId: string) =>
     requisicao<{ ok: boolean }>(`/campaigns/${cid}/inventario/${templateId}`, { method: "DELETE" }),
+
+  // Sessões / mesa (Etapa 7)
+  listarSessoes: (cid: string) =>
+    requisicao<{ sessoes: Sessao[] }>(`/campaigns/${cid}/sessoes`),
+  criarSessao: (cid: string, name?: string) =>
+    requisicao<{ sessao: Sessao }>(`/campaigns/${cid}/sessoes`, { method: "POST", body: JSON.stringify({ name }) }),
+  atualizarSessao: (cid: string, sid: string, dados: { name?: string; summary?: string; status?: "ativa" | "pausada" | "encerrada" }) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/sessoes/${sid}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  obterSessao: (cid: string, sid: string) =>
+    requisicao<{ sessao: Sessao; turnos: TurnosState }>(`/campaigns/${cid}/sessoes/${sid}`),
+  obterEstadoMesa: (cid: string, sid: string) =>
+    requisicao<{ sessao: Sessao; turnos: TurnosState; agora: number }>(`/campaigns/${cid}/sessoes/${sid}/estado`),
+  listarMensagens: (cid: string, sid: string, limite = 300) =>
+    requisicao<{ mensagens: MensagemMesa[] }>(`/campaigns/${cid}/sessoes/${sid}/mensagens?limite=${limite}`),
+  listarTestes: (cid: string, sid: string) =>
+    requisicao<{ testes: TesteMesa[] }>(`/campaigns/${cid}/sessoes/${sid}/testes`),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -543,6 +559,65 @@ export interface ItemCatalogoInput {
   description?: string;
   data?: Record<string, unknown>;
   isActive?: boolean;
+}
+
+// ---- Tipos da Etapa 7: mesa ----
+
+export interface Sessao {
+  id: string;
+  campaignId: string;
+  number: number;
+  name: string | null;
+  summary: string | null;
+  status: string; // ativa|pausada|encerrada
+  startedAt: string | null;
+  endedAt: string | null;
+  timerState: TimerState | null;
+  createdAt: string;
+}
+
+export interface TimerState {
+  status?: "rodando" | "pausado" | "parado";
+  endsAt?: number;
+  remainingMs?: number;
+  totalMs?: number;
+}
+
+export interface TurnosState {
+  ordem: string[]; // membershipIds
+  atual: number;
+  ativo: boolean;
+}
+
+export interface MensagemMesa {
+  id: string;
+  sessionId: string | null;
+  authorId: string | null;
+  kind: string;
+  content: string;
+  visibility: string;
+  recipients: string[] | null;
+  createdAt: string;
+  autorNome?: string;
+  autor?: { id: string; username: string; displayName: string | null } | null;
+}
+
+export interface TesteMesa {
+  id: string;
+  sessionId: string | null;
+  characterId: string;
+  requestedBy: string;
+  skillRef: unknown;
+  modifiers: { bonus?: number; malus?: number; valorCampo?: number | null };
+  diceCount: number;
+  diceSides: number;
+  target: number | null;
+  status: string;
+  rollId: string | null;
+  outcome: string | null;
+  outcomeNote: string | null;
+  visibility: string;
+  createdAt: string;
 }
 
 export interface PersonagemDetalhe {

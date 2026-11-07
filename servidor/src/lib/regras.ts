@@ -105,6 +105,13 @@ export const configRegrasSchema = z.object({
       jogadorCriaContas: true,
       slotsEquipamento: [],
     }),
+  // Mesa em tempo real (Etapa 7)
+  mesa: z
+    .object({
+      acaoForaDeTurno: z.boolean().default(true),   // jogadores podem declarar ações fora do turno
+      espectadorLe: z.boolean().default(true),      // espectador acompanha chat/rolagens públicas
+    })
+    .default({ acaoForaDeTurno: true, espectadorLe: true }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 
