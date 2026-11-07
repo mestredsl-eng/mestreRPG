@@ -48,6 +48,8 @@ h1 {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   padding: 0.75rem 1.25rem;
   background: #1e2126;
   border-bottom: 1px solid #2c3038;
@@ -64,6 +66,8 @@ h1 {
 .topo nav {
   display: flex;
   gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .topo nav button {
@@ -111,6 +115,11 @@ button.secundario {
 
 button.perigo {
   background: #7f3b3b;
+}
+
+button.primario {
+  background: #3b5bdb;
+  color: #fff;
 }
 
 button.mini {
@@ -185,6 +194,7 @@ label.checkbox input {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .linha-entre {
@@ -192,7 +202,10 @@ label.checkbox input {
 }
 
 .tabela {
+  display: block;
   width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
   border-collapse: collapse;
   margin-top: 0.75rem;
   font-size: 0.9rem;
@@ -425,6 +438,7 @@ textarea {
   display: flex;
   gap: 0.4rem;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .linha-tabela input {
@@ -435,6 +449,8 @@ textarea {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
   padding: 0.4rem 0;
   border-bottom: 1px solid #23262d;
 }
@@ -471,8 +487,32 @@ select option {
   .grade-2 {
     grid-template-columns: 1fr;
   }
+  .span-2 {
+    grid-column: auto;
+  }
   .tabela {
     font-size: 0.8rem;
+  }
+  input,
+  select,
+  textarea {
+    font-size: 16px;
+  }
+  button.mini {
+    padding: 0.4rem 0.7rem;
+    font-size: 0.85rem;
+    min-height: 36px;
+  }
+  .modal {
+    width: 96%;
+    padding: 14px;
+    max-height: 92vh;
+  }
+  .topo {
+    padding: 0.6rem 0.9rem;
+  }
+  .container {
+    padding: 1rem 0.75rem;
   }
 }
 
@@ -511,7 +551,7 @@ code {
 .dica { color: var(--texto-fraco, #8b93a7); font-size: 13px; }
 .modal-fundo { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .modal { background: var(--fundo-cartao, #161a26); border: 1px solid var(--borda, #2a2f3f); border-radius: 12px; padding: 20px; max-width: 560px; width: 92%; max-height: 85vh; overflow-y: auto; }
-.acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 .formulario input, .formulario select, .formulario textarea { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
