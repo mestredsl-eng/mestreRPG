@@ -228,6 +228,85 @@ label.checkbox input {
   color: #f87171;
 }
 
+select,
+textarea {
+  background: #14161a;
+  border: 1px solid #2c3038;
+  color: #e8e6e3;
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+  font-family: inherit;
+}
+
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: #3b5bdb;
+}
+
+textarea {
+  resize: vertical;
+}
+
+/* ---- Etapa 3: campanhas ---- */
+
+.cartao-campanha {
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.cartao-campanha:hover {
+  border-color: #3b5bdb;
+}
+
+.badge {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: #2c3038;
+  color: #c9cdd3;
+  white-space: nowrap;
+}
+
+.badge-andamento { background: #1d4ed8; color: #fff; }
+.badge-arquivada { opacity: 0.6; }
+
+.sistema { color: #8ab4ff; font-size: 0.9rem; }
+.meta { color: #9aa0a6; font-size: 0.85rem; }
+
+.abas {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  flex-wrap: wrap;
+}
+
+.abas button {
+  background: #2c3038;
+  color: #c9cdd3;
+  padding: 0.45rem 0.9rem;
+  font-size: 0.9rem;
+}
+
+.abas button.ativo {
+  background: #3b5bdb;
+  color: #fff;
+}
+
+.convite-criado {
+  background: #14241a;
+  border: 1px solid #2f6b45;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.convite-criado code {
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+}
+
 @media (max-width: 640px) {
   .grade-2 {
     grid-template-columns: 1fr;

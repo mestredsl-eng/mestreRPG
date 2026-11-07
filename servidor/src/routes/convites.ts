@@ -1,0 +1,145 @@
+import { Router } from "express";
+import { and, eq, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { getDb } from "../db/index.js";
+import { campaigns, memberships, invitations } from "../db/schema.js";
+import { requireAuth } from "../middleware/auth.js";
+import { emitirCampanha } from "../lib/io.js";
+
+const db = getDb();
+export const convitesRouter = Router();
+convitesRouter.use(requireAuth);
+
+function hashConvite(codigo: string): string {
+  return createHash("sha256").update(codigo.trim().toUpperCase()).digest("hex");
+}
+
+function statusConvite(inv: typeof invitations.$inferSelect): string {
+  if (inv.revokedAt) return "revogado";
+  if (inv.expiresAt && inv.expiresAt < new Date()) return "expirado";
+  if (inv.maxUses !== null && inv.uses >= inv.maxUses) return "esgotado";
+  return "ativo";
+}
+
+async function buscarConvite(codigo: string) {
+  const [inv] = await db
+    .select()
+    .from(invitations)
+    .where(eq(invitations.code, hashConvite(codigo)))
+    .limit(1);
+  return inv ?? null;
+}
+
+/**
+ * GET /api/convites/:codigo — valida o convite e retorna o que o convidado
+ * precisa ver antes de confirmar: campanha, papel oferecido, validade.
+ */
+convitesRouter.get("/:codigo", async (req, res) => {
+  const inv = await buscarConvite(req.params.codigo);
+  if (!inv) {
+    res.status(404).json({ erro: "Convite não encontrado" });
+    return;
+  }
+  const [campanha] = await db.select().from(campaigns).where(eq(campaigns.id, inv.campaignId)).limit(1);
+  if (!campanha) {
+    res.status(404).json({ erro: "Campanha não encontrada" });
+    return;
+  }
+  const status = statusConvite(inv);
+  const [existente] = await db
+    .select()
+    .from(memberships)
+    .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
+    .limit(1);
+  res.json({
+    convite: {
+      role: inv.role,
+      requiresApproval: inv.requiresApproval,
+      status,
+      campanha: { id: campanha.id, name: campanha.name, system: campanha.system, status: campanha.status },
+      jaParticipa: !!existente && existente.status !== "removido",
+      meuStatus: existente?.status ?? null,
+    },
+  });
+});
+
+/**
+ * POST /api/convites/:codigo/aceitar — confirma a entrada na campanha.
+ * Incremento de usos é atômico para não estourar maxUses em concorrência.
+ */
+convitesRouter.post("/:codigo/aceitar", async (req, res) => {
+  const inv = await buscarConvite(req.params.codigo);
+  if (!inv) {
+    res.status(404).json({ erro: "Convite não encontrado" });
+    return;
+  }
+  if (statusConvite(inv) !== "ativo") {
+    res.status(410).json({ erro: `Convite ${statusConvite(inv)}` });
+    return;
+  }
+
+  const agora = new Date();
+  // UPDATE condicional: só incrementa se ainda houver uso disponível.
+  const resultado = await db.run(sql`
+    UPDATE invitations
+    SET uses = uses + 1, updated_at = ${agora.getTime()}
+    WHERE id = ${inv.id}
+      AND revoked_at IS NULL
+      AND (expires_at IS NULL OR expires_at > ${agora.getTime()})
+      AND (max_uses IS NULL OR uses < max_uses)
+  `);
+  if (resultado.changes === 0) {
+    res.status(410).json({ erro: "Convite não está mais disponível" });
+    return;
+  }
+
+  const papel = (inv.role === "espectador" ? "espectador" : "jogador") as "jogador" | "espectador";
+  const statusMembro = inv.requiresApproval ? "pendente" : "ativo";
+
+  const [existente] = await db
+    .select()
+    .from(memberships)
+    .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
+    .limit(1);
+
+  if (existente && existente.status !== "removido") {
+    // Já participa — estorna o uso do convite
+    await db.run(sql`UPDATE invitations SET uses = MAX(uses - 1, 0) WHERE id = ${inv.id}`);
+    res.status(409).json({ erro: "Você já participa desta campanha", status: existente.status });
+    return;
+  }
+
+  if (existente) {
+    // Reentrada após remoção: reativa a mesma membership
+    await db
+      .update(memberships)
+      .set({
+        role: papel,
+        status: statusMembro,
+        joinedAt: statusMembro === "ativo" ? agora : existente.joinedAt,
+        updatedAt: agora,
+      })
+      .where(eq(memberships.id, existente.id));
+  } else {
+    await db.insert(memberships).values({
+      id: crypto.randomUUID(),
+      campaignId: inv.campaignId,
+      userId: req.usuario!.id,
+      role: papel,
+      status: statusMembro,
+      joinedAt: statusMembro === "ativo" ? agora : null,
+      createdAt: agora,
+      updatedAt: agora,
+    });
+  }
+
+  emitirCampanha(inv.campaignId, "membros:atualizados", { convite: true });
+  res.status(201).json({
+    ok: true,
+    status: statusMembro,
+    mensagem:
+      statusMembro === "pendente"
+        ? "Entrada solicitada! Aguardando aprovação do mestre."
+        : "Você entrou na campanha!",
+  });
+});

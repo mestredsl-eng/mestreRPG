@@ -44,6 +44,8 @@ export const campaigns = sqliteTable("campaigns", {
   id: id(),
   name: text("name").notNull(),
   description: text("description"),
+  system: text("system"), // sistema de RPG em texto livre (ex.: "Caçadores & Caçados")
+  coverImage: text("cover_image"), // caminho do arquivo de capa em arquivos/campanhas/
   status: text("status").notNull().default("preparacao"), // preparacao|andamento|pausada|concluida|arquivada (spec §19.5)
   ownerId: text("owner_id").notNull().references(() => users.id),
   // Regras/configurações da campanha em JSON (custos, limites, pontuação — spec §8)

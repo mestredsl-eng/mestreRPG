@@ -35,4 +35,6 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Etapa 1 — Fundação:** estrutura, servidor, banco com schema completo e interface base.
 - **Etapa 2 — Contas e autenticação:** login, sessões persistentes (cookie httpOnly), papéis de administrador, gerenciamento de usuários e Socket.IO autenticado.
 
-Próximas etapas: campanhas e convites, editor de fichas, mesa virtual, dados e testes.
+- **Etapa 3 — Campanhas, participantes e convites:** criação/edição de campanhas com sistema de RPG livre, papéis por campanha (mestre/jogador/espectador), gestão de participantes com aprovação e bloqueio, convites por código/link com hash, limite de usos e expiração, sincronização via Socket.IO por sala de campanha.
+
+Próximas etapas: editor de fichas, regras personalizáveis, personagens, mesa virtual, dados e testes.

@@ -1,0 +1,314 @@
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { api, type CampanhaResumo, type Convite, type Membro } from "../api";
+import { getSocket } from "../socket";
+import { statusLabel } from "./Campanhas";
+
+const STATUS_OPCOES = [
+  ["preparacao", "Em preparação"],
+  ["andamento", "Em andamento"],
+  ["pausada", "Pausada"],
+  ["concluida", "Concluída"],
+  ["arquivada", "Arquivada"],
+] as const;
+
+const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
+type Aba = "info" | "participantes" | "convites";
+
+export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
+  const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
+  const [membros, setMembros] = useState<Membro[]>([]);
+  const [convites, setConvites] = useState<Convite[]>([]);
+  const [aba, setAba] = useState<Aba>("info");
+  const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState(false);
+  const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
+  const [conviteCriado, setConviteCriado] = useState<{ code: string } | null>(null);
+  const [conviteForm, setConviteForm] = useState({ role: "jogador", maxUses: "", expiresInHours: "", requiresApproval: false });
+
+  const souMestre = campanha?.meuPapel === "mestre";
+
+  const carregar = useCallback(async () => {
+    try {
+      const { campanha } = await api.obterCampanha(id);
+      setCampanha(campanha);
+      setForm({
+        name: campanha.name,
+        description: campanha.description ?? "",
+        system: campanha.system ?? "",
+        status: campanha.status,
+      });
+      if (campanha.meuPapel === "mestre") {
+        const [{ membros }, { convites }] = await Promise.all([api.listarMembros(id), api.listarConvites(id)]);
+        setMembros(membros);
+        setConvites(convites);
+      } else {
+        const { membros } = await api.listarMembros(id);
+        setMembros(membros);
+      }
+      setErro(null);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void carregar();
+    // Sincronização em tempo real: entra na room da campanha e recarrega em mudanças
+    const socket = getSocket();
+    socket.emit("entrar-campanha", id, () => undefined);
+    const aoMudar = () => void carregar();
+    socket.on("membros:atualizados", aoMudar);
+    socket.on("campanha:atualizada", aoMudar);
+    return () => {
+      socket.off("membros:atualizados", aoMudar);
+      socket.off("campanha:atualizada", aoMudar);
+      socket.emit("sair-campanha", id);
+    };
+  }, [id, carregar]);
+
+  const salvarEdicao = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.atualizarCampanha(id, {
+        name: form.name,
+        description: form.description,
+        system: form.system,
+        status: form.status,
+      });
+      setEditando(false);
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao salvar");
+    }
+  };
+
+  const mudarMembro = async (m: Membro, dados: { role?: string; status?: string }) => {
+    try {
+      await api.atualizarMembro(id, m.membershipId, dados);
+      await carregar();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao atualizar participante");
+    }
+  };
+
+  const removerMembro = async (m: Membro) => {
+    if (!window.confirm(`Remover ${m.displayName ?? m.username} da campanha?`)) return;
+    try {
+      await api.removerMembro(id, m.membershipId);
+      await carregar();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao remover participante");
+    }
+  };
+
+  const transferir = async (m: Membro) => {
+    if (!window.confirm(`Transferir a titularidade da campanha para ${m.displayName ?? m.username}?`)) return;
+    try {
+      await api.transferirTitularidade(id, m.membershipId);
+      await carregar();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Erro ao transferir titularidade");
+    }
+  };
+
+  const criarConvite = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const { convite } = await api.criarConvite(id, {
+        role: conviteForm.role,
+        maxUses: conviteForm.maxUses ? Number(conviteForm.maxUses) : undefined,
+        expiresInHours: conviteForm.expiresInHours ? Number(conviteForm.expiresInHours) : undefined,
+        requiresApproval: conviteForm.requiresApproval,
+      });
+      setConviteCriado({ code: convite.code });
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao criar convite");
+    }
+  };
+
+  if (!campanha) {
+    return <section className="cartao"><p>{erro ?? "Carregando…"}</p><button className="secundario" onClick={aoVoltar}>Voltar</button></section>;
+  }
+
+  const pendentes = membros.filter((m) => m.status === "pendente");
+
+  return (
+    <>
+      <section className="cartao">
+        <div className="linha-entre">
+          <div>
+            <h2>{campanha.name}</h2>
+            <p className="meta">
+              {campanha.system ? `Sistema: ${campanha.system} · ` : ""}
+              {statusLabel(campanha.status)} · Você é {PAPEL_LABEL[campanha.meuPapel] ?? campanha.meuPapel}
+            </p>
+          </div>
+          <button className="secundario" onClick={aoVoltar}>Voltar</button>
+        </div>
+        {campanha.description && <p>{campanha.description}</p>}
+
+        {souMestre && (
+          <div className="abas">
+            {(["info", "participantes", "convites"] as Aba[]).map((a) => (
+              <button key={a} className={aba === a ? "ativo" : "secundario"} onClick={() => setAba(a)}>
+                {a === "info" ? "Informações" : a === "participantes" ? `Participantes (${membros.length})` : `Convites (${convites.length})`}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {erro && <p className="erro">{erro}</p>}
+
+      {aba === "info" && (
+        <section className="cartao">
+          {!editando ? (
+            <>
+              <p><strong>Sistema:</strong> {campanha.system ?? "—"}</p>
+              <p><strong>Status:</strong> {statusLabel(campanha.status)}</p>
+              <p><strong>Descrição:</strong> {campanha.description ?? "—"}</p>
+              {souMestre && <button onClick={() => setEditando(true)}>Editar campanha</button>}
+            </>
+          ) : (
+            <form className="formulario" onSubmit={salvarEdicao}>
+              <label>Nome<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} /></label>
+              <label>Sistema de RPG<input value={form.system} onChange={(e) => setForm({ ...form, system: e.target.value })} /></label>
+              <label>Status
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                  {STATUS_OPCOES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </label>
+              <label>Descrição<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} /></label>
+              <div className="linha">
+                <button type="submit">Salvar</button>
+                <button type="button" className="secundario" onClick={() => setEditando(false)}>Cancelar</button>
+              </div>
+            </form>
+          )}
+        </section>
+      )}
+
+      {aba === "participantes" && souMestre && (
+        <section className="cartao">
+          <h2>Participantes</h2>
+          {pendentes.length > 0 && (
+            <>
+              <h3>Aguardando aprovação ({pendentes.length})</h3>
+              <table className="tabela">
+                <tbody>
+                  {pendentes.map((m) => (
+                    <tr key={m.membershipId}>
+                      <td>{m.displayName ?? m.username} <span className="meta">({m.username})</span></td>
+                      <td>{PAPEL_LABEL[m.role] ?? m.role}</td>
+                      <td className="acoes">
+                        <button className="mini" onClick={() => void mudarMembro(m, { status: "ativo" })}>Aprovar</button>
+                        <button className="mini perigo" onClick={() => void mudarMembro(m, { status: "removido" })}>Recusar</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+          <table className="tabela">
+            <thead>
+              <tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Status</th><th>Entrada</th><th>Ações</th></tr>
+            </thead>
+            <tbody>
+              {membros.filter((m) => m.status !== "removido").map((m) => (
+                <tr key={m.membershipId} className={m.status === "bloqueado" ? "linha-bloqueada" : ""}>
+                  <td>{m.displayName ?? "—"}</td>
+                  <td>{m.username}</td>
+                  <td>
+                    <select
+                      value={m.role}
+                      disabled={m.ehEu && m.role === "mestre" && membros.filter((x) => x.role === "mestre" && x.status === "ativo").length <= 1}
+                      onChange={(e) => void mudarMembro(m, { role: e.target.value })}
+                    >
+                      <option value="mestre">Mestre</option>
+                      <option value="jogador">Jogador</option>
+                      <option value="espectador">Espectador</option>
+                    </select>
+                  </td>
+                  <td>
+                    <select value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
+                      <option value="ativo">Ativo</option>
+                      <option value="bloqueado">Bloqueado</option>
+                      <option value="pendente">Pendente</option>
+                    </select>
+                  </td>
+                  <td>{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td className="acoes">
+                    {m.role === "mestre" && m.status === "ativo" && !m.ehEu && (
+                      <button className="mini" onClick={() => void transferir(m)}>Transferir</button>
+                    )}
+                    {!m.ehEu && (
+                      <button className="mini perigo" onClick={() => void removerMembro(m)}>Remover</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {aba === "convites" && souMestre && (
+        <section className="cartao">
+          <h2>Convites</h2>
+
+          {conviteCriado && (
+            <div className="convite-criado">
+              <p><strong>Código:</strong> <code>{conviteCriado.code}</code></p>
+              <p><strong>Link:</strong> <code>{`${window.location.origin}/convite?code=${conviteCriado.code}`}</code></p>
+              <p className="meta">Copie agora — por segurança, o código não poderá ser exibido novamente.</p>
+              <button className="secundario" onClick={() => setConviteCriado(null)}>Fechar</button>
+            </div>
+          )}
+
+          <form className="formulario" onSubmit={criarConvite}>
+            <div className="grade-2">
+              <label>Papel inicial
+                <select value={conviteForm.role} onChange={(e) => setConviteForm({ ...conviteForm, role: e.target.value })}>
+                  <option value="jogador">Jogador</option>
+                  <option value="espectador">Espectador</option>
+                </select>
+              </label>
+              <label>Máx. de usos<input type="number" min="1" placeholder="Ilimitado" value={conviteForm.maxUses} onChange={(e) => setConviteForm({ ...conviteForm, maxUses: e.target.value })} /></label>
+              <label>Expira em (horas)<input type="number" min="1" placeholder="Nunca" value={conviteForm.expiresInHours} onChange={(e) => setConviteForm({ ...conviteForm, expiresInHours: e.target.value })} /></label>
+              <label className="checkbox">
+                <input type="checkbox" checked={conviteForm.requiresApproval} onChange={(e) => setConviteForm({ ...conviteForm, requiresApproval: e.target.checked })} />
+                Exigir aprovação do mestre
+              </label>
+            </div>
+            <button type="submit">Gerar convite</button>
+          </form>
+
+          <table className="tabela">
+            <thead>
+              <tr><th>Criado em</th><th>Papel</th><th>Usos</th><th>Expira</th><th>Aprovação</th><th>Status</th><th></th></tr>
+            </thead>
+            <tbody>
+              {convites.map((c) => (
+                <tr key={c.id}>
+                  <td>{new Date(c.createdAt).toLocaleString("pt-BR")}</td>
+                  <td>{PAPEL_LABEL[c.role] ?? c.role}</td>
+                  <td>{c.uses}{c.maxUses !== null ? `/${c.maxUses}` : ""}</td>
+                  <td>{c.expiresAt ? new Date(c.expiresAt).toLocaleString("pt-BR") : "Nunca"}</td>
+                  <td>{c.requiresApproval ? "Sim" : "Não"}</td>
+                  <td>{c.status}</td>
+                  <td>
+                    {c.status === "ativo" && (
+                      <button className="mini perigo" onClick={async () => { await api.revogarConvite(id, c.id); await carregar(); }}>Revogar</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </>
+  );
+}

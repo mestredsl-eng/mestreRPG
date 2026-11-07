@@ -67,4 +67,87 @@ export const api = {
     requisicao<{ usuario: UsuarioAdmin }>(`/admin/users/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
   removerUsuario: (id: string) =>
     requisicao<{ ok: boolean }>(`/admin/users/${id}`, { method: "DELETE" }),
+
+  // Campanhas (Etapa 3)
+  listarCampanhas: () =>
+    requisicao<{ campanhas: CampanhaResumo[] }>("/campaigns"),
+  criarCampanha: (dados: { name: string; description?: string; system?: string }) =>
+    requisicao<{ campanha: CampanhaResumo }>("/campaigns", { method: "POST", body: JSON.stringify(dados) }),
+  obterCampanha: (id: string) =>
+    requisicao<{ campanha: CampanhaResumo }>(`/campaigns/${id}`),
+  atualizarCampanha: (id: string, dados: Partial<{ name: string; description: string; system: string; status: string; coverImage: string | null }>) =>
+    requisicao<{ campanha: Campanha }>(`/campaigns/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  listarMembros: (id: string) =>
+    requisicao<{ membros: Membro[] }>(`/campaigns/${id}/members`),
+  atualizarMembro: (campaignId: string, membershipId: string, dados: { role?: string; status?: string }) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/members/${membershipId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerMembro: (campaignId: string, membershipId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/members/${membershipId}`, { method: "DELETE" }),
+  transferirTitularidade: (campaignId: string, membershipId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/transferir/${membershipId}`, { method: "POST" }),
+  criarConvite: (campaignId: string, dados: { role?: string; maxUses?: number; expiresInHours?: number; requiresApproval?: boolean }) =>
+    requisicao<{ convite: { id: string; code: string } }>(`/campaigns/${campaignId}/invitations`, { method: "POST", body: JSON.stringify(dados) }),
+  listarConvites: (campaignId: string) =>
+    requisicao<{ convites: Convite[] }>(`/campaigns/${campaignId}/invitations`),
+  revogarConvite: (campaignId: string, invitationId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/invitations/${invitationId}`, { method: "PATCH", body: JSON.stringify({ action: "revogar" }) }),
+
+  // Convites públicos (Etapa 3)
+  validarConvite: (codigo: string) =>
+    requisicao<{ convite: ConviteInfo }>(`/convites/${encodeURIComponent(codigo)}`),
+  aceitarConvite: (codigo: string) =>
+    requisicao<{ ok: boolean; status: string; mensagem: string }>(`/convites/${encodeURIComponent(codigo)}/aceitar`, { method: "POST" }),
 };
+
+// ---- Tipos da Etapa 3 ----
+
+export interface Campanha {
+  id: string;
+  name: string;
+  description: string | null;
+  system: string | null;
+  coverImage: string | null;
+  status: string;
+  ownerId: string;
+  settings: unknown;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CampanhaResumo extends Campanha {
+  meuPapel: string;
+  meuStatus: string;
+}
+
+export interface Membro {
+  membershipId: string;
+  userId: string;
+  username: string;
+  displayName: string | null;
+  email: string | null;
+  role: string;
+  status: string;
+  permissions: unknown;
+  joinedAt: string | null;
+  ehEu: boolean;
+}
+
+export interface Convite {
+  id: string;
+  role: string;
+  maxUses: number | null;
+  uses: number;
+  expiresAt: string | null;
+  requiresApproval: boolean;
+  status: string;
+  createdAt: string;
+}
+
+export interface ConviteInfo {
+  role: string;
+  requiresApproval: boolean;
+  status: string;
+  campanha: { id: string; name: string; system: string | null; status: string };
+  jaParticipa: boolean;
+  meuStatus: string | null;
+}

@@ -4,8 +4,11 @@ import { api, type HealthStatus } from "./api";
 import Login from "./paginas/Login";
 import Admin from "./paginas/Admin";
 import Conta from "./paginas/Conta";
+import Campanhas from "./paginas/Campanhas";
+import Campanha from "./paginas/Campanha";
+import Convite from "./paginas/Convite";
 
-type Aba = "painel" | "admin" | "conta";
+type Aba = "painel" | "campanhas" | "admin" | "conta";
 
 function Painel() {
   const { estado } = useAuth();
@@ -42,13 +45,11 @@ function Painel() {
           {info ? ` — ${info.servico}` : ""}
         </p>
       </section>
-
       <section className="cartao">
-        <h2>Em construção</h2>
+        <h2>Próximas etapas</h2>
         <p>
-          Esta é a Etapa 2 — contas e autenticação. As próximas etapas trarão
-          campanhas e convites, editor de fichas, mesa virtual, dados e testes
-          conforme a especificação Mestre RPG 2.0.
+          Campanhas, convites e participantes implementados. A seguir: editor de
+          fichas, regras personalizáveis, mesa virtual, dados e testes.
         </p>
       </section>
     </>
@@ -58,7 +59,9 @@ function Painel() {
 function Shell() {
   const { estado, sair } = useAuth();
   const [aba, setAba] = useState<Aba>("painel");
+  const [campanhaAberta, setCampanhaAberta] = useState<string | null>(null);
   const usuario = estado.status === "autenticado" ? estado.usuario : null;
+  const ehConvite = window.location.pathname.startsWith("/convite");
 
   if (estado.status === "carregando") {
     return (
@@ -69,12 +72,26 @@ function Shell() {
   }
   if (estado.status === "anonimo") return <Login />;
 
+  // Tela de aceite de convite (link /convite?code=...)
+  if (ehConvite) {
+    return (
+      <>
+        <header className="topo">
+          <span className="marca">Mestre RPG</span>
+          <nav><button className="sair" onClick={() => { window.location.href = "/"; }}>Painel</button></nav>
+        </header>
+        <Convite aoEntrar={() => { window.location.href = "/"; }} />
+      </>
+    );
+  }
+
   return (
     <>
       <header className="topo">
         <span className="marca">Mestre RPG</span>
         <nav>
-          <button className={aba === "painel" ? "ativo" : ""} onClick={() => setAba("painel")}>Painel</button>
+          <button className={aba === "painel" ? "ativo" : ""} onClick={() => { setAba("painel"); setCampanhaAberta(null); }}>Painel</button>
+          <button className={aba === "campanhas" ? "ativo" : ""} onClick={() => { setAba("campanhas"); setCampanhaAberta(null); }}>Campanhas</button>
           {usuario?.isAdmin && (
             <button className={aba === "admin" ? "ativo" : ""} onClick={() => setAba("admin")}>Administração</button>
           )}
@@ -84,6 +101,10 @@ function Shell() {
       </header>
       <main className="container">
         {aba === "painel" && <Painel />}
+        {aba === "campanhas" && !campanhaAberta && <Campanhas aoAbrir={setCampanhaAberta} />}
+        {aba === "campanhas" && campanhaAberta && (
+          <Campanha id={campanhaAberta} aoVoltar={() => setCampanhaAberta(null)} />
+        )}
         {aba === "admin" && usuario?.isAdmin && <Admin />}
         {aba === "conta" && <Conta />}
       </main>
