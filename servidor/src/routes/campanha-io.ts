@@ -13,13 +13,19 @@ import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const campanhaIORouter = Router({ mergeParams: true });
 campanhaIORouter.use(requireAuth);
 
+// Operações pesadas: exportar serializa a campanha inteira; importar grava
+// até 80MB de pacote + binários (Etapa 15, R4).
+const limiteExportar = limiteUsuario({ nome: "exportar-campanha", janelaMs: 5 * 60_000, max: 12 });
+const limiteImportar = limiteUsuario({ nome: "importar-campanha", janelaMs: 10 * 60_000, max: 20 });
+
 /** GET /api/campaigns/:campaignId/exportar — pacote completo da campanha (mestre) */
-campanhaIORouter.get("/:campaignId/exportar", requirePapel("mestre"), async (req, res) => {
+campanhaIORouter.get("/:campaignId/exportar", requirePapel("mestre"), limiteExportar, async (req, res) => {
   const pacote = await exportarPacote(req.params.campaignId);
   await audit(req, "campanha.exportada", { campaignId: req.params.campaignId });
   res.setHeader("content-disposition", `attachment; filename="campanha-${req.params.campaignId}.json"`);
@@ -55,7 +61,7 @@ function coerenteComCampanha(estado: EstadoCampanha, cid: string): boolean {
 }
 
 /** POST /api/campaigns/importar — importa pacote exportado (Etapa 12) */
-campanhaIORouter.post("/importar", async (req, res) => {
+campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
   const body = importarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const { pacote, modo } = body.data;

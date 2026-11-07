@@ -11,6 +11,7 @@ import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
 import { restaurarEstado } from "../lib/restaurar.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const snapshotsRouter = Router({ mergeParams: true });
@@ -65,8 +66,11 @@ snapshotsRouter.get("/estado", requirePapel("mestre"), async (req, res) => {
 
 const criarSchema = z.object({ description: z.string().max(500).optional() });
 
+const limiteCriarSnapshot = limiteUsuario({ nome: "snapshot-criar", janelaMs: 10 * 60_000, max: 12 });
+const limiteRestaurarSnapshot = limiteUsuario({ nome: "snapshot-restaurar", janelaMs: 10 * 60_000, max: 5 });
+
 /** POST /api/campaigns/:campaignId/snapshots — ponto de recuperação manual (mestre) */
-snapshotsRouter.post("/", requirePapel("mestre"), async (req, res) => {
+snapshotsRouter.post("/", requirePapel("mestre"), limiteCriarSnapshot, async (req, res) => {
   const body = criarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const dados = await exportarCampanha(req.params.campaignId);
@@ -84,7 +88,7 @@ snapshotsRouter.post("/", requirePapel("mestre"), async (req, res) => {
 const restaurarSchema = z.object({ confirmacao: z.literal("RESTAURAR") });
 
 /** POST /api/campaigns/:campaignId/snapshots/:snapshotId/restaurar — somente mestre, auditado */
-snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (req, res) => {
+snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRestaurarSnapshot, async (req, res) => {
   const body = restaurarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: 'Confirmação obrigatória: { "confirmacao": "RESTAURAR" }' }); return; }
   const [snap] = await db.select().from(snapshots).where(and(eq(snapshots.id, req.params.snapshotId), eq(snapshots.campaignId, req.params.campaignId))).limit(1);

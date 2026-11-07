@@ -20,6 +20,7 @@ import { campanhaIORouter } from "./routes/campanha-io.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
+import { headersSeguranca } from "./middleware/headers.js";
 import { mkdirSync } from "node:fs";
 import { log } from "./lib/logs.js";
 import { verificarBackupAgendado } from "./lib/backup.js";
@@ -30,6 +31,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const app = express();
+
+// Cabeçalhos de segurança em todas as respostas da API (R2)
+app.use(headersSeguranca);
 
 // Express 4 não encaminha rejeições de handlers async ao errorHandler —
 // sem isso, uma exceção assíncrona deixa a requisição pendurada para sempre.
@@ -117,12 +121,14 @@ try {
 getDb();
 
 // proxy confiável: valor efetivo = servidor.json + ajuste salvo pelo admin (server_settings)
+let dominioPublico = config.acesso.dominioPublico;
 try {
   const { getDb } = await import("./db/index.js");
   const { serverSettings } = await import("./db/schema.js");
   const { eq } = await import("drizzle-orm");
   const row = await getDb().select().from(serverSettings).where(eq(serverSettings.key, "acesso")).get();
   const acessoSalvo = typeof row?.value === "string" ? JSON.parse(row.value) : {};
+  if (typeof acessoSalvo.dominioPublico === "string") dominioPublico = acessoSalvo.dominioPublico;
   const proxyHops = Math.min(10, Math.max(0, Number(acessoSalvo.proxyHops ?? config.acesso.proxyHops) || 0));
   if (proxyHops > 0) app.set("trust proxy", proxyHops);
 } catch {
@@ -139,7 +145,7 @@ httpServer.on("error", (e: NodeJS.ErrnoException) => {
   }
   process.exit(1);
 });
-const ioServer = configurarSockets(httpServer);
+const ioServer = configurarSockets(httpServer, { dominioPublico });
 
 httpServer.listen(config.porta, config.host, () => {
   console.log("============================================");

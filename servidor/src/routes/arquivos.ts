@@ -8,6 +8,7 @@ import { config } from "../config.js";
 import { files, folders, memberships, users, notes, noteAttachments } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, permissoesDe } from "../lib/permissoes.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -186,7 +187,9 @@ arquivosRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (
 });
 
 /** POST /api/campaigns/:cid/arquivos/upload — corpo binário cru (octet-stream) */
-arquivosRouter.post("/upload", express.raw({ type: () => true, limit: `${config.arquivos.tamanhoMaxMb + 5}mb` }), requirePapel("mestre", "jogador"), async (req, res) => {
+// Upload é a operação mais custosa da API (grava até ~30MB em disco).
+// O limiter vem antes do express.raw para rejeitar excesso sem bufferizar o corpo.
+arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario({ nome: "upload", janelaMs: 5 * 60_000, max: 40 }), express.raw({ type: () => true, limit: `${config.arquivos.tamanhoMaxMb + 5}mb` }), async (req, res) => {
   const cid = req.params.campaignId;
   const papel = req.membership!.role;
   const nomeHeader = String(req.headers["x-file-name"] ?? "");

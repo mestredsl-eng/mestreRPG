@@ -12,24 +12,24 @@ import {
   extrairCookie,
   COOKIE_SESSAO,
 } from "../middleware/auth.js";
+import { limitador, limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const authRouter = Router();
 
 const DURACAO_SESSAO_MS = 30 * 24 * 3600 * 1000;
 
-// Rate limit simples em memória: máx. 10 tentativas por IP a cada 5 min.
-const tentativas = new Map<string, { count: number; resetEm: number }>();
-function limiteLogin(ip: string): boolean {
-  const agora = Date.now();
-  const reg = tentativas.get(ip);
-  if (!reg || reg.resetEm < agora) {
-    tentativas.set(ip, { count: 1, resetEm: agora + 5 * 60 * 1000 });
-    return true;
-  }
-  reg.count++;
-  return reg.count <= 10;
-}
+// Rate limit (Etapa 15, R4): 10 tentativas/5min por IP efetivo + 20/5min por
+// username — rotacionar X-Forwarded-For não permite força bruta ilimitada
+// numa conta específica. O limitador envia Retry-After junto com o 429.
+const limiteLoginIp = limitador({ nome: "login-ip", janelaMs: 5 * 60_000, max: 10 });
+const limiteLoginUsuario = limitador({
+  nome: "login-user",
+  janelaMs: 5 * 60_000,
+  max: 20,
+  chave: (req) => `user:${String(req.body?.username ?? "").toLowerCase().slice(0, 64) || "?"}`,
+});
+const limiteTrocaSenha = limiteUsuario({ nome: "troca-senha", janelaMs: 5 * 60_000, max: 10 });
 
 const credenciaisSchema = z.object({
   username: z.string().min(3).max(40),
@@ -76,17 +76,13 @@ authRouter.post("/setup", async (req, res) => {
 });
 
 /** POST /api/auth/login */
-authRouter.post("/login", async (req, res) => {
-  const ip = req.ip ?? "desconhecido";
-  if (!limiteLogin(ip)) {
-    res.status(429).json({ erro: "Muitas tentativas. Aguarde alguns minutos." });
-    return;
-  }
+authRouter.post("/login", limiteLoginIp, limiteLoginUsuario, async (req, res) => {
   const body = credenciaisSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Usuário e senha são obrigatórios" });
     return;
   }
+  const ip = req.ip ?? "desconhecido";
   const { username, password } = body.data;
   const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
   const senhaOk = user ? await verificarSenha(password, user.passwordHash) : false;
@@ -147,7 +143,7 @@ authRouter.get("/me", async (req, res) => {
 const senhaSchema = z.object({ senhaAtual: z.string().min(1), novaSenha: z.string().min(8).max(200) });
 
 /** POST /api/auth/change-password */
-authRouter.post("/change-password", requireAuth, async (req, res) => {
+authRouter.post("/change-password", requireAuth, limiteTrocaSenha, async (req, res) => {
   const body = senhaSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Senha atual e nova senha (mín. 8 caracteres) são obrigatórias" });

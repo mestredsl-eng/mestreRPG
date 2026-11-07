@@ -7,6 +7,7 @@ import { campaigns, memberships, invitations, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
 import { emitirCampanha, expulsarMembroDaCampanha } from "../lib/io.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const campanhasRouter = Router();
@@ -324,10 +325,13 @@ function convitePublico(inv: typeof invitations.$inferSelect) {
   };
 }
 
+const limiteCriarConvite = limiteUsuario({ nome: "convite-criar", janelaMs: 5 * 60_000, max: 20 });
+
 /** POST /api/campaigns/:campaignId/invitations — cria convite (mestre) */
 campanhasRouter.post(
   "/:campaignId/invitations",
   requirePapel("mestre"),
+  limiteCriarConvite,
   async (req, res) => {
     const body = conviteSchema.safeParse(req.body);
     if (!body.success) {

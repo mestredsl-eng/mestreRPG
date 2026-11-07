@@ -10,11 +10,17 @@ import { audit } from "../lib/audit.js";
 import { log, lerLogs } from "../lib/logs.js";
 import { criarBackup, listarBackups, verificarBackup, prepararRestauracao, getConfigBackup, setConfigBackup, BACKUP_PADRAO, pastaBackups } from "../lib/backup.js";
 import { solicitarDesligamento } from "../lib/ciclo-vida.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 import { config } from "../config.js";
 
 const db = getDb();
 export const servidorRouter = Router();
 servidorRouter.use(requireAdmin);
+
+// Backups copiam banco + arquivos inteiros — operação pesada mesmo para admin (R4).
+const limiteBackupCriar = limiteUsuario({ nome: "backup-criar", janelaMs: 5 * 60_000, max: 6 });
+const limiteBackupVerificar = limiteUsuario({ nome: "backup-verificar", janelaMs: 5 * 60_000, max: 10 });
+const limiteBackupRestaurar = limiteUsuario({ nome: "backup-restaurar", janelaMs: 10 * 60_000, max: 3 });
 
 function tamanhoDir(dir: string): number {
   let total = 0;
@@ -151,7 +157,7 @@ servidorRouter.get("/backups", async (_req, res) => {
 });
 
 /** POST /api/admin/servidor/backups — backup manual imediato */
-servidorRouter.post("/backups", async (req, res) => {
+servidorRouter.post("/backups", limiteBackupCriar, async (req, res) => {
   const nota = typeof (req.body as { nota?: string })?.nota === "string" ? (req.body as { nota: string }).nota.slice(0, 300) : undefined;
   const r = await criarBackup("manual", nota);
   await audit(req, r.sucesso ? "backup.criado" : "backup.falhou", { id: r.id, erros: r.erros });
@@ -159,7 +165,7 @@ servidorRouter.post("/backups", async (req, res) => {
 });
 
 /** POST /api/admin/servidor/backups/:id/verificar */
-servidorRouter.post("/backups/:id/verificar", async (req, res) => {
+servidorRouter.post("/backups/:id/verificar", limiteBackupVerificar, async (req, res) => {
   const r = await verificarBackup(req.params.id);
   res.json(r);
 });
@@ -170,7 +176,7 @@ const restaurarSchema = z.object({
 });
 
 /** POST /api/admin/servidor/backups/:id/restaurar — somente admin global */
-servidorRouter.post("/backups/:id/restaurar", async (req, res) => {
+servidorRouter.post("/backups/:id/restaurar", limiteBackupRestaurar, async (req, res) => {
   const body = restaurarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: 'Confirmação obrigatória: { "confirmacao": "RESTAURAR" }' }); return; }
   const r = await prepararRestauracao(req.params.id, req.usuario!.id);

@@ -5,10 +5,16 @@ import { getDb } from "../db/index.js";
 import { campaigns, memberships, invitations } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { emitirCampanha } from "../lib/io.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const convitesRouter = Router();
 convitesRouter.use(requireAuth);
+
+// Códigos de convite são segredos: limitar consultas/aceites por usuário
+// dificulta enumeração e abuso (Etapa 15, R4).
+const limiteConsultaConvite = limiteUsuario({ nome: "convite-consulta", janelaMs: 5 * 60_000, max: 30 });
+const limiteAceiteConvite = limiteUsuario({ nome: "convite-aceite", janelaMs: 5 * 60_000, max: 20 });
 
 function hashConvite(codigo: string): string {
   return createHash("sha256").update(codigo.trim().toUpperCase()).digest("hex");
@@ -34,7 +40,7 @@ async function buscarConvite(codigo: string) {
  * GET /api/convites/:codigo — valida o convite e retorna o que o convidado
  * precisa ver antes de confirmar: campanha, papel oferecido, validade.
  */
-convitesRouter.get("/:codigo", async (req, res) => {
+convitesRouter.get("/:codigo", limiteConsultaConvite, async (req, res) => {
   const inv = await buscarConvite(req.params.codigo);
   if (!inv) {
     res.status(404).json({ erro: "Convite não encontrado" });
@@ -67,7 +73,7 @@ convitesRouter.get("/:codigo", async (req, res) => {
  * POST /api/convites/:codigo/aceitar — confirma a entrada na campanha.
  * Incremento de usos é atômico para não estourar maxUses em concorrência.
  */
-convitesRouter.post("/:codigo/aceitar", async (req, res) => {
+convitesRouter.post("/:codigo/aceitar", limiteAceiteConvite, async (req, res) => {
   const inv = await buscarConvite(req.params.codigo);
   if (!inv) {
     res.status(404).json({ erro: "Convite não encontrado" });

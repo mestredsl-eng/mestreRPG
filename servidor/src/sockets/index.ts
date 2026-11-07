@@ -1,10 +1,11 @@
-import type { Server as HttpServer } from "node:http";
+import type { Server as HttpServer, IncomingMessage } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import { and, eq } from "drizzle-orm";
 import { autenticarHandshake, type UsuarioAutenticado } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
 import { setIo } from "../lib/io.js";
+import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 
 /**
@@ -21,9 +22,26 @@ declare module "socket.io" {
   }
 }
 
-export function configurarSockets(httpServer: HttpServer): SocketIOServer {
+export interface OpcoesSockets {
+  /** domínio público configurado — libera essa origem no handshake (R3) */
+  dominioPublico?: string;
+}
+
+export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets = {}): SocketIOServer {
+  const dominio = opcoes.dominioPublico;
   const io = new SocketIOServer(httpServer, {
-    cors: { origin: true, credentials: true },
+    // R3: origem explícita — localhost, IPs privados/LAN e o domínio público
+    // configurado. Clientes sem Origin (não-browser) passam; a autenticação
+    // por sessão continua obrigatória no middleware abaixo.
+    cors: {
+      origin: (origin, cb) => cb(null, origemPermitida(origin, dominio)),
+      credentials: true,
+    },
+    // WebSocket não passa por CORS — allowRequest valida a origem também no
+    // handshake WS (encaminhado ao engine.io pelo socket.io).
+    allowRequest: (req: IncomingMessage, cb: (err: string | null, success: boolean) => void) => {
+      cb(null, origemPermitida(req.headers.origin, dominio));
+    },
     path: "/socket.io",
   });
   setIo(io);
