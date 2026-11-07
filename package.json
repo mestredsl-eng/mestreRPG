@@ -1,0 +1,22 @@
+{
+  "name": "mestre-rpg",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plataforma própria de RPG — campanhas online, fichas personalizáveis e mesa sincronizada.",
+  "workspaces": [
+    "servidor",
+    "site"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:servidor": "npm run dev -w servidor",
+    "dev:site": "npm run dev -w site",
+    "build": "npm run build --workspaces --if-present",
+    "db:generate": "npm run db:generate -w servidor",
+    "db:migrate": "npm run db:migrate -w servidor",
+    "start": "npm run start -w servidor"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

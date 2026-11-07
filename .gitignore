@@ -1,0 +1,23 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Dados locais (nunca commitar)
+banco/*.db
+banco/*.db-journal
+banco/*.db-wal
+banco/*.db-shm
+arquivos/campanhas/*
+!arquivos/campanhas/.gitkeep
+backups/*
+!backups/.gitkeep
+
+# Segredos e ambiente local
+.env
+.env.*
+!.env.example
+configuracao/local.json
+
+# Logs
+*.log
+npm-debug.log*

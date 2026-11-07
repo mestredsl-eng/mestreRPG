@@ -1,0 +1,10 @@
+{
+  "host": "0.0.0.0",
+  "porta": 3001,
+  "sitePorta": 5173,
+  "caminhos": {
+    "banco": "banco/mestre-rpg.db",
+    "arquivos": "arquivos/campanhas",
+    "backups": "backups"
+  }
+}

@@ -1,0 +1,40 @@
+import { readFileSync, existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const RAIZ = resolve(__dirname, "..", "..", "..");
+const ARQUIVO_CONFIG = resolve(RAIZ, "configuracao", "servidor.json");
+
+interface ConfigServidor {
+  host: string;
+  porta: number;
+  sitePorta: number;
+  caminhos: { banco: string; arquivos: string; backups: string };
+}
+
+const padrao: ConfigServidor = {
+  host: "0.0.0.0",
+  porta: 3001,
+  sitePorta: 5173,
+  caminhos: { banco: "banco/mestre-rpg.db", arquivos: "arquivos/campanhas", backups: "backups" },
+};
+
+function carregar(): ConfigServidor {
+  if (!existsSync(ARQUIVO_CONFIG)) return padrao;
+  try {
+    const json = JSON.parse(readFileSync(ARQUIVO_CONFIG, "utf-8")) as Partial<ConfigServidor>;
+    return {
+      host: json.host ?? padrao.host,
+      porta: json.porta ?? padrao.porta,
+      sitePorta: json.sitePorta ?? padrao.sitePorta,
+      caminhos: { ...padrao.caminhos, ...(json.caminhos ?? {}) },
+    };
+  } catch {
+    console.warn("[config] configuracao/servidor.json inválido — usando padrões.");
+    return padrao;
+  }
+}
+
+export const config = carregar();
+export const RAIZ_PROJETO = RAIZ;

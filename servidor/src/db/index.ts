@@ -1,0 +1,25 @@
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import Database from "better-sqlite3";
+import * as schema from "./schema.js";
+import { mkdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const RAIZ = resolve(__dirname, "..", "..", "..");
+
+export const CAMINHOS = {
+  banco: resolve(RAIZ, "banco", "mestre-rpg.db"),
+  arquivos: resolve(RAIZ, "arquivos", "campanhas"),
+  backups: resolve(RAIZ, "backups"),
+} as const;
+
+export function criarBanco(caminho: string = CAMINHOS.banco) {
+  mkdirSync(dirname(caminho), { recursive: true });
+  const sqlite = new Database(caminho);
+  sqlite.pragma("journal_mode = WAL");
+  sqlite.pragma("foreign_keys = ON");
+  return drizzle(sqlite, { schema });
+}
+
+export type Db = ReturnType<typeof criarBanco>;

@@ -1,0 +1,28 @@
+{
+  "name": "@mestre-rpg/servidor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/db/migrate.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.2.0",
+    "drizzle-orm": "^0.44.2",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/express": "^4.17.21",
+    "@types/node": "^24.0.0",
+    "drizzle-kit": "^0.31.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.8.3"
+  }
+}
