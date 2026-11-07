@@ -138,7 +138,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; privado?: boolean }) => {
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
-        setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedByName, ts: Date.now() }]);
+        setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
     const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string }) => {
@@ -221,7 +221,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   };
 
   const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
-    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r) => { if (r && !r.ok) setErro(r.erro ?? "Erro"); }));
+    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string }) => { if (r && !r.ok) setErro(r.erro ?? "Erro"); }));
   };
 
   const pausarSessao = async () => {

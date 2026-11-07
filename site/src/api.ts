@@ -84,7 +84,7 @@ export const api = {
     requisicao<{ campanha: CampanhaResumo }>("/campaigns", { method: "POST", body: JSON.stringify(dados) }),
   obterCampanha: (id: string) =>
     requisicao<{ campanha: CampanhaResumo }>(`/campaigns/${id}`),
-  atualizarCampanha: (id: string, dados: Partial<{ name: string; description: string; system: string; status: string; coverImage: string | null }>) =>
+  atualizarCampanha: (id: string, dados: Partial<{ name: string; description: string; system: string; status: string; coverImage: string | null; summary: string | null }>) =>
     requisicao<{ campanha: Campanha }>(`/campaigns/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
   listarMembros: (id: string) =>
     requisicao<{ membros: Membro[] }>(`/campaigns/${id}/members`),
@@ -222,6 +222,24 @@ export const api = {
     requisicao<{ mensagens: MensagemMesa[] }>(`/campaigns/${cid}/sessoes/${sid}/mensagens?limite=${limite}`),
   listarTestes: (cid: string, sid: string) =>
     requisicao<{ testes: TesteMesa[] }>(`/campaigns/${cid}/sessoes/${sid}/testes`),
+
+  // ---- Etapa 8: diário, anotações, snapshots, histórico ----
+  listarAnotacoes: (cid: string, tipo?: string, personagemId?: string) =>
+    requisicao<{ anotacoes: Anotacao[] }>(`/campaigns/${cid}/anotacoes?tipo=${tipo ?? "diario"}${personagemId ? `&personagemId=${personagemId}` : ""}`),
+  criarAnotacao: (cid: string, dados: Partial<Anotacao> & { tipo?: string; personagemId?: string }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/anotacoes`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarAnotacao: (cid: string, aid: string, dados: Partial<Anotacao>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/anotacoes/${aid}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  excluirAnotacao: (cid: string, aid: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/anotacoes/${aid}`, { method: "DELETE" }),
+  historicoSessao: (cid: string, sid: string) =>
+    requisicao<HistoricoSessao>(`/campaigns/${cid}/sessoes/${sid}/historico`),
+  listarSnapshots: (cid: string) =>
+    requisicao<{ snapshots: Snapshot[] }>(`/campaigns/${cid}/snapshots`),
+  criarSnapshot: (cid: string, description?: string) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/snapshots`, { method: "POST", body: JSON.stringify({ description }) }),
+  restaurarSnapshot: (cid: string, sid: string) =>
+    requisicao<{ ok: boolean; preSnapshotId: string }>(`/campaigns/${cid}/snapshots/${sid}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR" }) }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -645,6 +663,7 @@ export interface Campanha {
   status: string;
   ownerId: string;
   settings: unknown;
+  summary: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -685,4 +704,43 @@ export interface ConviteInfo {
   campanha: { id: string; name: string; system: string | null; status: string };
   jaParticipa: boolean;
   meuStatus: string | null;
+}
+
+// ---- Tipos da Etapa 8 ----
+
+export interface Anotacao {
+  id: string;
+  campaignId: string;
+  ownerId: string;
+  characterId: string | null;
+  kind: "diario" | "mestre";
+  category: string | null;
+  title: string;
+  content: string;
+  important: number | boolean;
+  visibility: "privada" | "mestre" | "publica" | "selecionada";
+  recipients: string[] | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+  owner?: { username: string; displayName: string | null } | null;
+  ehMinha?: boolean;
+}
+
+export interface Snapshot {
+  id: string;
+  description: string | null;
+  createdAt: string;
+  createdBy: string;
+  autor?: { username: string; displayName: string | null } | null;
+}
+
+export interface HistoricoSessao {
+  sessao: Sessao;
+  duracaoMs: number | null;
+  participantes: { id: string; username: string; displayName: string | null }[];
+  eventos: { id: string; kind: string; content: string; createdAt: string; autor: { id: string; username: string; displayName: string | null } | null }[];
+  testes: TesteMesa[];
+  rolagens: Record<string, unknown>[];
+  resumo: string | null;
 }

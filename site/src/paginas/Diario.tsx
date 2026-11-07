@@ -1,0 +1,155 @@
+import { useCallback, useEffect, useState } from "react";
+import { api, type Anotacao, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
+
+const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
+const VISIBILIDADES = [
+  { v: "privada", l: "Somente eu" },
+  { v: "mestre", l: "Mestre" },
+  { v: "publica", l: "Todos os participantes" },
+  { v: "selecionada", l: "Jogadores selecionados" },
+] as const;
+
+export default function Diario({ campaignId, campanha }: { campaignId: string; campanha: CampanhaResumo }) {
+  const souMestre = campanha.meuPapel === "mestre";
+  const [aba, setAba] = useState<"diario" | "mestre">("diario");
+  const [anotacoes, setAnotacoes] = useState<Anotacao[]>([]);
+  const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
+  const [membros, setMembros] = useState<Membro[]>([]);
+  const [editando, setEditando] = useState<Anotacao | null>(null);
+  const [novo, setNovo] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [form, setForm] = useState({ title: "", content: "", category: "livre", characterId: "", important: false, visibility: "privada" as Anotacao["visibility"], recipients: [] as string[] });
+
+  const carregar = useCallback(async () => {
+    try {
+      const { anotacoes: lista } = await api.listarAnotacoes(campaignId, aba);
+      setAnotacoes(lista);
+      setErro(null);
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+  }, [campaignId, aba]);
+
+  useEffect(() => { void carregar(); }, [carregar]);
+  useEffect(() => {
+    api.listarPersonagens(campaignId).then((r) => setPersonagens(r.personagens.filter((p) => p.ehEu || souMestre))).catch(() => {});
+    api.listarMembros(campaignId).then((r) => setMembros(r.membros.filter((m) => m.status === "ativo" && m.userId !== undefined))).catch(() => {});
+  }, [campaignId, souMestre]);
+
+  const abrirEdicao = (n: Anotacao | null) => {
+    setEditando(n);
+    setNovo(n === null);
+    setForm(n
+      ? { title: n.title, content: n.content, category: n.category ?? "livre", characterId: n.characterId ?? "", important: !!n.important, visibility: n.visibility, recipients: (n.recipients ?? []) as string[] }
+      : { title: "", content: "", category: aba === "mestre" ? "planejamento" : "livre", characterId: "", important: false, visibility: "privada", recipients: [] });
+  };
+
+  const salvar = async () => {
+    try {
+      const dados = {
+        title: form.title, content: form.content, category: form.category || undefined,
+        characterId: form.characterId || undefined,
+        kind: aba === "mestre" ? "mestre" as const : "diario" as const,
+        important: form.important, visibility: form.visibility,
+        recipients: form.visibility === "selecionada" ? form.recipients : undefined,
+      };
+      if (editando) await api.atualizarAnotacao(campaignId, editando.id, dados);
+      else await api.criarAnotacao(campaignId, dados);
+      setEditando(null); setNovo(false);
+      await carregar();
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao salvar"); }
+  };
+
+  const remover = async (n: Anotacao) => {
+    if (!confirm(`Excluir "${n.title}"?`)) return;
+    try { await api.excluirAnotacao(campaignId, n.id); await carregar(); }
+    catch (e) { setErro(e instanceof Error ? e.message : "Erro ao excluir"); }
+  };
+
+  const alternarImportante = async (n: Anotacao) => {
+    try { await api.atualizarAnotacao(campaignId, n.id, { important: !n.important }); await carregar(); }
+    catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
+  };
+
+  const visLabel = (n: Anotacao) => VISIBILIDADES.find((v) => v.v === n.visibility)?.l ?? n.visibility;
+
+  return (
+    <section className="cartao">
+      <div className="abas">
+        <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}>Diário</button>
+        <button className={aba === "mestre" ? "ativo" : "secundario"} onClick={() => setAba("mestre")}>Anotações do mestre</button>
+      </div>
+      {erro && <p className="erro">{erro}</p>}
+
+      {aba === "mestre" && !souMestre && (
+        <p className="dica">Você vê apenas anotações do mestre compartilhadas com você.</p>
+      )}
+
+      {(novo || editando) && (
+        <div className="formulario">
+          <h3>{editando ? "Editar anotação" : aba === "mestre" ? "Nova anotação do mestre" : "Nova anotação"}</h3>
+          <input placeholder="Título" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
+          <textarea placeholder="Conteúdo" rows={6} value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} />
+          <div className="linha">
+            <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
+              {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            {aba === "diario" && (
+              <select value={form.characterId} onChange={(e) => setForm({ ...form, characterId: e.target.value })}>
+                <option value="">Sem personagem vinculado</option>
+                {personagens.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            )}
+            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value as Anotacao["visibility"] })}>
+              {VISIBILIDADES.map((v) => <option key={v.v} value={v.v}>{v.l}</option>)}
+            </select>
+            <label><input type="checkbox" checked={form.important} onChange={(e) => setForm({ ...form, important: e.target.checked })} /> Importante</label>
+          </div>
+          {form.visibility === "selecionada" && (
+            <div className="linha">
+              {membros.map((m) => (
+                <label key={m.membershipId}>
+                  <input type="checkbox" checked={form.recipients.includes(m.userId)}
+                    onChange={(e) => setForm({ ...form, recipients: e.target.checked ? [...form.recipients, m.userId] : form.recipients.filter((r) => r !== m.userId) })} />
+                  {" "}{m.displayName ?? m.username}
+                </label>
+              ))}
+            </div>
+          )}
+          <div className="linha">
+            <button onClick={salvar} disabled={!form.title.trim()}>Salvar</button>
+            <button className="secundario" onClick={() => { setEditando(null); setNovo(false); }}>Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {!novo && !editando && (
+        <button className="secundario" onClick={() => abrirEdicao(null)}>
+          {aba === "mestre" ? "Nova anotação do mestre" : "Nova anotação"}
+        </button>
+      )}
+
+      <ul className="lista-anotacoes">
+        {anotacoes.map((n) => (
+          <li key={n.id} className={n.important ? "importante" : ""}>
+            <div className="linha">
+              <strong>{n.title}</strong>
+              {n.important ? <span className="selo">★</span> : null}
+              <span className="dica">{n.category} · {visLabel(n)}{n.owner && !n.ehMinha ? ` · ${n.owner.displayName ?? n.owner.username}` : ""}</span>
+            </div>
+            <p className="pre-wrap">{n.content}</p>
+            <div className="linha">
+              <span className="dica">{new Date(n.updatedAt).toLocaleString("pt-BR")}</span>
+              {n.ehMinha && (
+                <>
+                  <button className="secundario" onClick={() => alternarImportante(n)}>{n.important ? "Desmarcar" : "Marcar importante"}</button>
+                  <button className="secundario" onClick={() => abrirEdicao(n)}>Editar</button>
+                  <button className="secundario" onClick={() => remover(n)}>Excluir</button>
+                </>
+              )}
+            </div>
+          </li>
+        ))}
+        {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
+      </ul>
+    </section>
+  );
+}

@@ -112,6 +112,13 @@ export const configRegrasSchema = z.object({
       espectadorLe: z.boolean().default(true),      // espectador acompanha chat/rolagens públicas
     })
     .default({ acaoForaDeTurno: true, espectadorLe: true }),
+  // Diário e anotações (Etapa 8)
+  notas: z
+    .object({
+      jogadorCompartilha: z.boolean().default(true), // jogador pode compartilhar anotações do diário
+      espectadorLeCompartilhadas: z.boolean().default(true), // espectador vê anotações públicas/selecionadas para ele
+    })
+    .default({ jogadorCompartilha: true, espectadorLeCompartilhadas: true }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 

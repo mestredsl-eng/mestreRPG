@@ -13,6 +13,8 @@ import { regrasRouter } from "./routes/regras.js";
 import { patrimonioRouter } from "./routes/patrimonio.js";
 import { catalogoRouter } from "./routes/catalogo.js";
 import { sessoesRouter } from "./routes/sessoes.js";
+import { anotacoesRouter } from "./routes/anotacoes.js";
+import { snapshotsRouter } from "./routes/snapshots.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { mkdirSync } from "node:fs";
@@ -32,6 +34,8 @@ app.use("/api/campaigns/:campaignId/regras", regrasRouter);
 app.use("/api/characters/:characterId", patrimonioRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);
+app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
+app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/characters", personagensRouter);
 
 app.use(errorHandler);

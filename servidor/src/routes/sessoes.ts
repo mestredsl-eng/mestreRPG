@@ -2,7 +2,7 @@ import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { sessions, turns, chatMessages, tests, memberships, users, characters } from "../db/schema.js";
+import { sessions, turns, chatMessages, tests, memberships, users, characters, rolls } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
@@ -143,6 +143,51 @@ sessoesRouter.get("/:sessionId/testes", requirePapel("mestre", "jogador", "espec
   );
   const visiveis = lista.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
   res.json({ testes: visiveis });
+});
+
+/** GET /api/campaigns/:campaignId/sessoes/:sessionId/historico — histórico consolidado (Etapa 8) */
+sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
+  const s = await sessaoDaCampanha(req.params.sessionId, req.params.campaignId);
+  if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
+  const ehMestre = req.membership!.role === "mestre";
+  const meusIds = new Set([req.usuario!.id, req.membership!.id]);
+
+  const todosMsgs = await db.select().from(chatMessages).where(eq(chatMessages.sessionId, s.id)).orderBy(chatMessages.createdAt);
+  const eventos = todosMsgs.filter((m) => mensagemVisivel(m, req.usuario!.id, ehMestre, meusIds));
+  const todosTestes = await db.select().from(tests).where(eq(tests.sessionId, s.id));
+  const minhas = await db.select().from(memberships)
+    .where(and(eq(memberships.campaignId, req.params.campaignId), eq(memberships.userId, req.usuario!.id)));
+  const meusChars = new Set(
+    (await db.select({ id: characters.id, membershipId: characters.membershipId }).from(characters)
+      .where(eq(characters.campaignId, req.params.campaignId)))
+      .filter((c) => minhas.some((m) => m.id === c.membershipId)).map((c) => c.id)
+  );
+  const testesVisiveis = todosTestes.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
+  const rollsIds = testesVisiveis.map((t) => t.rollId).filter(Boolean) as string[];
+  const rollsSessao = await db.select().from(rolls).where(eq(rolls.sessionId, s.id));
+  const rolagensVisiveis = rollsSessao.filter((r) =>
+    r.visibility === "publica" || ehMestre || r.userId === req.usuario!.id ||
+    (r.visibility === "privada" && meusChars.size > 0)
+  );
+
+  // participantes: autores de mensagens + donos de testes + quem estava online não é persistido;
+  // usamos membros ativos da campanha + autores presentes no chat
+  const autorIds = [...new Set([...eventos.map((m) => m.authorId), ...testesVisiveis.map((t) => t.requestedBy)].filter(Boolean) as string[])];
+  const autores = autorIds.length
+    ? await db.select({ id: users.id, username: users.username, displayName: users.displayName }).from(users).where(inArray(users.id, autorIds))
+    : [];
+
+  const inicio = s.startedAt ? new Date(s.startedAt).getTime() : null;
+  const fim = s.endedAt ? new Date(s.endedAt).getTime() : null;
+  res.json({
+    sessao: s,
+    duracaoMs: inicio && fim ? fim - inicio : null,
+    participantes: autores,
+    eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
+    testes: testesVisiveis,
+    rolagens: rolagensVisiveis,
+    resumo: s.summary,
+  });
 });
 
 /** GET /api/campaigns/:campaignId/sessoes/:sessionId/estado — snapshot para reconexão */

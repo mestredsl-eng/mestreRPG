@@ -46,6 +46,7 @@ export const campaigns = sqliteTable("campaigns", {
   description: text("description"),
   system: text("system"), // sistema de RPG em texto livre (ex.: "Caçadores & Caçados")
   coverImage: text("cover_image"), // caminho do arquivo de capa em arquivos/campanhas/
+  summary: text("summary"), // resumo geral escrito pelo mestre (Etapa 8)
   status: text("status").notNull().default("preparacao"), // preparacao|andamento|pausada|concluida|arquivada (spec §19.5)
   ownerId: text("owner_id").notNull().references(() => users.id),
   // Regras/configurações da campanha em JSON (custos, limites, pontuação — spec §8)
@@ -364,9 +365,11 @@ export const notes = sqliteTable("notes", {
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   ownerId: text("owner_id").notNull().references(() => users.id), // dono da anotação
   characterId: text("character_id").references(() => characters.id, { onDelete: "set null" }),
+  kind: text("kind").notNull().default("diario"), // diario|mestre (Etapa 8)
   category: text("category"),
   title: text("title").notNull(),
   content: text("content").notNull().default(""),
+  important: integer("important").notNull().default(0), // marcado como importante
   // visibilidade: privada|mestre|publica|selecionada; recipients em JSON (§18.4)
   visibility: text("visibility").notNull().default("privada"),
   recipients: text("recipients", { mode: "json" }),
@@ -400,6 +403,16 @@ export const backups = sqliteTable("backups", {
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
 });
+
+// Pontos de recuperação da campanha (Etapa 8, spec §5)
+export const snapshots = sqliteTable("snapshots", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  description: text("description"),
+  data: text("data", { mode: "json" }).notNull(), // estado completo da campanha em JSON
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [index("snapshots_campaign_idx").on(t.campaignId, t.createdAt)]);
 
 // Trilha de auditoria administrativa (spec §24)
 export const auditLogs = sqliteTable("audit_logs", {

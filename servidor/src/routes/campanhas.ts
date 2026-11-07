@@ -23,6 +23,7 @@ const criarSchema = z.object({
 const atualizarSchema = criarSchema.partial().extend({
   status: z.enum(STATUS).optional(),
   coverImage: z.string().max(500).nullable().optional(),
+  summary: z.string().max(20000).nullable().optional(),
 });
 
 function campanhaPublica(c: typeof campaigns.$inferSelect) {
@@ -35,6 +36,7 @@ function campanhaPublica(c: typeof campaigns.$inferSelect) {
     status: c.status,
     ownerId: c.ownerId,
     settings: c.settings,
+    summary: c.summary,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
   };
@@ -118,6 +120,7 @@ campanhasRouter.patch("/:campaignId", requirePapel("mestre"), async (req, res) =
   if (body.data.system !== undefined) dados.system = body.data.system;
   if (body.data.status !== undefined) dados.status = body.data.status;
   if (body.data.coverImage !== undefined) dados.coverImage = body.data.coverImage;
+  if (body.data.summary !== undefined) dados.summary = body.data.summary;
   await db.update(campaigns).set(dados).where(eq(campaigns.id, req.params.campaignId));
   const [atualizada] = await db.select().from(campaigns).where(eq(campaigns.id, req.params.campaignId)).limit(1);
   emitirCampanha(req.params.campaignId, "campanha:atualizada", campanhaPublica(atualizada));

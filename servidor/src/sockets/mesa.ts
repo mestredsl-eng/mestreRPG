@@ -163,6 +163,7 @@ function socket_handlers(
         sessao: ctx.sessao,
         turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
         presenca: presentes(sessionId),
+        agora: Date.now(),
       });
       await emitirPresenca(sessionId);
       await registrarChat(io, {
@@ -584,8 +585,16 @@ function socket_handlers(
       const rodando = await db.select().from(sessions);
       for (const s of rodando) {
         const ts = s.timerState as { status?: string; endsAt?: number; remainingMs?: number; totalMs?: number } | null;
-        if (!ts || ts.status !== "rodando" || !ts.endsAt) continue;
-        const rest = Math.max(0, ts.endsAt - Date.now());
+        if (!ts || ts.status !== "rodando") continue;
+        // recuperação pós-restart: se endsAt faltar, reconstrói a partir de remainingMs persistido
+        const endsAt = ts.endsAt ?? (ts.remainingMs ? Date.now() + ts.remainingMs : 0);
+        if (!endsAt) {
+          const parado = { status: "parado", remainingMs: 0, totalMs: ts.totalMs ?? 0 };
+          await db.update(sessions).set({ timerState: parado as never }).where(eq(sessions.id, s.id));
+          io.to(`sessao:${s.id}`).emit("mesa:timer", { sessionId: s.id, ...parado, servidorAgora: Date.now() });
+          continue;
+        }
+        const rest = Math.max(0, endsAt - Date.now());
         if (rest <= 0) {
           const parado = { status: "parado", remainingMs: 0, totalMs: ts.totalMs ?? 0 };
           await db.update(sessions).set({ timerState: parado as never }).where(eq(sessions.id, s.id));
