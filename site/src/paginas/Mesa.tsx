@@ -61,7 +61,7 @@ export default function Mesa({ campaignId, campanha }: Props) {
               <tr key={s.id} className="clicavel" onClick={() => s.status !== "encerrada" && setAtiva(s)}>
                 <td>{s.number}</td>
                 <td>{s.name}</td>
-                <td><span className={`badge ${s.status === "ativa" ? "aprovada" : s.status === "pausada" ? "devolvida" : "bloqueada"}`}>{s.status}</span></td>
+                <td><span className={`badge badge-${s.status === "ativa" ? "aprovada" : s.status === "pausada" ? "devolvida" : "bloqueada"}`}>{s.status}</span></td>
                 <td>{s.startedAt ? new Date(s.startedAt).toLocaleString("pt-BR") : "—"}</td>
               </tr>
             ))}
@@ -257,7 +257,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           <div>
             <h2>Mesa — {sessaoAtual.name}</h2>
             <p className="meta">
-              <span className={`badge ${sessaoAtual.status === "ativa" ? "aprovada" : "devolvida"}`}>{sessaoAtual.status}</span>
+              <span className={`badge badge-${sessaoAtual.status === "ativa" ? "aprovada" : "devolvida"}`}>{sessaoAtual.status}</span>
               {" "}Online: {online.length ? online.map((id) => membros.find((m) => m.userId === id)?.displayName || membros.find((m) => m.userId === id)?.username || "?").join(", ") : "ninguém"}
             </p>
           </div>
@@ -323,7 +323,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               <p><strong>{turnoAtualNome ?? "—"}</strong> é a vez</p>
             ) : <p className="meta">Sem sequência ativa.</p>}
             {souMestre && (
-              <div className="linha">
+              <div className="linha linha-botoes">
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "iniciar", ordem: membros.map((m) => m.membershipId) })}>Iniciar</button>
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "avancar" })}>Avançar</button>
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "voltar" })}>Voltar</button>
@@ -346,7 +346,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               {timer?.status === "pausado" && <span className="meta"> (pausado)</span>}
             </p>
             {souMestre && sessaoAtual.status !== "encerrada" && (
-              <div className="linha">
+              <div className="linha linha-botoes">
                 <button className="secundario" onClick={() => socketEmit("mesa:timer", { acao: timer?.status === "rodando" ? "pausar" : timer?.status === "pausado" ? "retomar" : "iniciar", duracaoSegundos: 300 })}>
                   {timer?.status === "rodando" ? "Pausar" : timer?.status === "pausado" ? "Retomar" : "Iniciar (5min)"}
                 </button>
@@ -368,7 +368,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                     <p><strong>{personagens.find((p) => p.id === t.characterId)?.name ?? "?"}</strong> — {String((t.skillRef as { rotulo?: string } | null)?.rotulo ?? "teste")}</p>
                     {souMestre && <p className="meta">{t.diceCount}d{t.diceSides}{t.target != null ? ` · alvo ${t.target}` : ""}</p>}
                     {podeAgir && t.status === "pendente" && (
-                      <div className="linha">
+                      <div className="linha linha-botoes">
                         {(souMestre || ehDono) && (
                           <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number }) => {
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.diceSides], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
@@ -440,7 +440,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               {testesRecentes.map((t) => (
                 <tr key={t.id}>
                   <td>{personagens.find((p) => p.id === t.characterId)?.name ?? "?"}</td>
-                  <td><span className={`badge ${t.outcome === "sucesso" ? "aprovada" : t.outcome === "parcial" ? "devolvida" : "bloqueada"}`}>{t.outcome ?? t.status}</span></td>
+                  <td><span className={`badge badge-${t.outcome === "sucesso" ? "aprovada" : t.outcome === "parcial" ? "devolvida" : "bloqueada"}`}>{t.outcome ?? t.status}</span></td>
                   <td>{t.outcomeNote ?? "—"}</td>
                 </tr>
               ))}
@@ -539,7 +539,7 @@ function RolagemLivre({ sessionId, aoErro, souMestre }: { sessionId: string; aoE
   return (
     <section className="cartao">
       <h3>Rolagem rápida</h3>
-      <form className="linha" onSubmit={(e: FormEvent) => {
+      <form className="linha rolagem-form" onSubmit={(e: FormEvent) => {
         e.preventDefault();
         getSocket().emit("mesa:rolar", {
           sessionId, dados: [{ sides: lados, count: qtd }], motivo: motivo || undefined,
