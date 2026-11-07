@@ -8,6 +8,13 @@
       "when": 1794036644564,
       "tag": "0000_goofy_prima",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1794036967225,
+      "tag": "0001_tricky_human_torch",
+      "breakpoints": true
     }
   ]
 }

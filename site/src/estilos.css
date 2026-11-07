@@ -38,6 +38,205 @@ h1 {
   font-size: 1.1rem;
 }
 
+/* ---- Etapa 2: autenticação e admin ---- */
+
+.container-estreito {
+  max-width: 420px;
+}
+
+.topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1.25rem;
+  background: #1e2126;
+  border-bottom: 1px solid #2c3038;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.marca {
+  font-weight: 700;
+  font-size: 1.1rem;
+}
+
+.topo nav {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.topo nav button {
+  background: transparent;
+  border: 1px solid #2c3038;
+  color: #9aa0a6;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.topo nav button:hover {
+  color: #e8e6e3;
+}
+
+.topo nav button.ativo {
+  background: #2c3038;
+  color: #e8e6e3;
+}
+
+.topo nav button.sair {
+  border-color: #7f3b3b;
+  color: #f87171;
+}
+
+button {
+  background: #3b5bdb;
+  border: none;
+  color: #fff;
+  padding: 0.55rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+button.secundario {
+  background: #2c3038;
+  color: #e8e6e3;
+}
+
+button.perigo {
+  background: #7f3b3b;
+}
+
+button.mini {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.8rem;
+  background: #2c3038;
+  color: #e8e6e3;
+  margin-right: 0.25rem;
+}
+
+button.mini.perigo {
+  background: #5c2b2b;
+}
+
+button.link {
+  background: none;
+  color: #8ab4ff;
+  padding: 0.25rem 0;
+  font-size: 0.9rem;
+  text-decoration: underline;
+}
+
+.formulario {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.formulario label,
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+  color: #c9cdd3;
+  flex: 1;
+}
+
+input {
+  background: #14161a;
+  border: 1px solid #2c3038;
+  color: #e8e6e3;
+  padding: 0.55rem 0.7rem;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
+input:focus {
+  outline: none;
+  border-color: #3b5bdb;
+}
+
+label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+label.checkbox input {
+  width: auto;
+}
+
+.grade-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.linha,
+.linha-entre {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.linha-entre {
+  justify-content: space-between;
+}
+
+.tabela {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.tabela th,
+.tabela td {
+  text-align: left;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px solid #2c3038;
+}
+
+.tabela th {
+  color: #9aa0a6;
+  font-weight: 600;
+}
+
+.linha-bloqueada {
+  opacity: 0.55;
+}
+
+.acoes {
+  white-space: nowrap;
+}
+
+.formulario-edicao {
+  margin-top: 1rem;
+  border-top: 1px solid #2c3038;
+  padding-top: 1rem;
+}
+
+.erro {
+  color: #f87171;
+}
+
+@media (max-width: 640px) {
+  .grade-2 {
+    grid-template-columns: 1fr;
+  }
+  .tabela {
+    font-size: 0.8rem;
+  }
+}
+
 .online {
   color: #4ade80;
 }

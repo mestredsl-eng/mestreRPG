@@ -23,3 +23,10 @@ export function criarBanco(caminho: string = CAMINHOS.banco) {
 }
 
 export type Db = ReturnType<typeof criarBanco>;
+
+let instancia: Db | null = null;
+/** Instância única do banco para toda a aplicação. */
+export function getDb(): Db {
+  if (!instancia) instancia = criarBanco(CAMINHOS.banco);
+  return instancia;
+}

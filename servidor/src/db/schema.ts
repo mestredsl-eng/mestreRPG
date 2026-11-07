@@ -20,11 +20,25 @@ export const users = sqliteTable("users", {
   id: id(),
   username: text("username").notNull(),
   email: text("email"),
+  displayName: text("display_name"),
   passwordHash: text("password_hash").notNull(),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
+  status: text("status").notNull().default("ativo"), // ativo|bloqueado
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("users_username_idx").on(t.username)]);
+
+// Sessões de autenticação persistentes (cookie httpOnly → token hash).
+// Distinta de `sessions` (sessões de jogo da campanha, spec §20).
+export const authSessions = sqliteTable("auth_sessions", {
+  id: id(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: text("token_hash").notNull(),
+  userAgent: text("user_agent"),
+  ip: text("ip"),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: createdAt(),
+}, (t) => [uniqueIndex("auth_sessions_token_idx").on(t.tokenHash), index("auth_sessions_user_idx").on(t.userId)]);
 
 export const campaigns = sqliteTable("campaigns", {
   id: id(),

@@ -32,4 +32,7 @@ configuracao/  Configurações do servidor (servidor.json)
 
 ## Estado atual
 
-Etapa 1 — Fundação: estrutura, servidor, banco com schema completo e interface base. Autenticação, campanhas, editor de fichas e mesa serão implementados nas etapas seguintes conforme a especificação.
+- **Etapa 1 — Fundação:** estrutura, servidor, banco com schema completo e interface base.
+- **Etapa 2 — Contas e autenticação:** login, sessões persistentes (cookie httpOnly), papéis de administrador, gerenciamento de usuários e Socket.IO autenticado.
+
+Próximas etapas: campanhas e convites, editor de fichas, mesa virtual, dados e testes.
