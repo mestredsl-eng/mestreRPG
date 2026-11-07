@@ -194,7 +194,7 @@ try {
   for (const k of colecoes) for (const row of pacoteCopia.estado[k] ?? []) row.campaignId = NOVO_CID;
 
   // arquivo preexistente no diretório da "nova" campanha — não pode ser tocado
-  const dirNovo = resolve("arquivos", NOVO_CID);
+  const dirNovo = resolve("arquivos/campanhas", NOVO_CID);
   mkdirSync(dirNovo, { recursive: true });
   writeFileSync(resolve(dirNovo, "sentinela-preexistente.txt"), "NAO APAGAR");
 
