@@ -48,12 +48,13 @@ const RUN = Date.now().toString(36);
 
 try {
   // ============ 1-4: salvamento automático ============
-  const snapsAntes = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
+  const ultimoAntes = db.prepare("select id from snapshots where campaign_id=? and kind='automatico' order by created_at desc limit 1").get(CID)?.id ?? null;
   // mutação que emite evento de socket → agenda autosave (debounce 15s)
   await cReq("PATCH", "", { body: { summary: `autosave-e12-${RUN}` } });
   await sleep(18000);
   const snapsDepois = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
-  t("1 autosave criou snapshot automático", snapsDepois > snapsAntes, `${snapsAntes}→${snapsDepois}`);
+  const ultimoDepois = db.prepare("select id from snapshots where campaign_id=? and kind='automatico' order by created_at desc limit 1").get(CID)?.id ?? null;
+  t("1 autosave criou snapshot automático", ultimoDepois !== ultimoAntes, `${ultimoAntes}→${ultimoDepois}`);
   const autoSnap = db.prepare("select * from snapshots where campaign_id=? and kind='automatico' order by created_at desc limit 1").get(CID);
   t("2 snapshot automático tem dados completos", !!autoSnap && !!autoSnap.data);
 
@@ -163,7 +164,7 @@ try {
 
   // ============ 24-26: cobertura do autosave (auditoria) ============
   // mutações que antes NÃO emitiam evento → agora devem agendar autosave
-  const autoAntes = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
+  const ultimoCovAntes = db.prepare("select id from snapshots where campaign_id=? and kind='automatico' order by created_at desc limit 1").get(CID)?.id ?? null;
   await cReq("PUT", "/regras/config", { body: {} });                       // regras: config
   await cReq("POST", "/invitations", { body: { role: "jogador", requiresApproval: true } }); // convite
   // mensagem de chat via socket (mesa)
@@ -182,8 +183,8 @@ try {
   }
   t("24 mutações de cobertura executadas", chatOk !== undefined);
   await sleep(18000);
-  const autoDepois = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
-  t("25 autosave cobre regras/convite/chat", autoDepois > autoAntes, `${autoAntes}→${autoDepois}`);
+  const ultimoCovDepois = db.prepare("select id from snapshots where campaign_id=? and kind='automatico' order by created_at desc limit 1").get(CID)?.id ?? null;
+  t("25 autosave cobre regras/convite/chat", ultimoCovDepois !== ultimoCovAntes, `${ultimoCovAntes}→${ultimoCovDepois}`);
 
   // ============ 27-31: falha de importação após gravar arquivos físicos ============
   // pacote "cópia": novo campaignId + campaignId remapeado em todas as coleções

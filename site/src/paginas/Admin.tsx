@@ -97,7 +97,7 @@ export default function Admin() {
         </form>
       )}
 
-      <table className="tabela">
+      <table className="tabela tabela-responsiva">
         <thead>
           <tr>
             <th>Usuário</th>
@@ -130,6 +130,27 @@ export default function Admin() {
           ))}
         </tbody>
       </table>
+      <div className="cartoes-registro">
+        {usuarios.map((u) => (
+          <div key={u.id} className={`registro-cartao ${u.status === "bloqueado" ? "linha-bloqueada" : ""}`}>
+            <div className="registro-campo"><span className="registro-rotulo">Usuário</span><strong>{u.username}</strong></div>
+            <div className="registro-campo"><span className="registro-rotulo">Nome</span><span>{u.displayName ?? "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{u.isAdmin ? "Administrador" : "Usuário"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{u.status === "bloqueado" ? "Bloqueado" : "Ativo"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Criado em</span><span>{new Date(u.createdAt).toLocaleDateString("pt-BR")}</span></div>
+            <div className="registro-acoes">
+              <button className="mini" onClick={() => setEditando(editando === u.id ? null : u.id)}>
+                {editando === u.id ? "Fechar" : "Editar"}
+              </button>
+              <button className="mini" onClick={() => void alternarBloqueio(u)}>
+                {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
+              </button>
+              <button className="mini" onClick={() => void redefinirSenha(u)}>Senha</button>
+              <button className="mini perigo" onClick={() => void remover(u)}>Remover</button>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {editando && (
         <FormEdicao

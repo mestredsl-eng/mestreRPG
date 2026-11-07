@@ -609,3 +609,38 @@ code {
 @media (max-width: 700px) { .biblioteca { grid-template-columns: 1fr; } .biblioteca-pastas { border-right: 0; border-bottom: 1px solid var(--borda, #2a2f3f); padding-right: 0; padding-bottom: 8px; flex-direction: row; flex-wrap: wrap; } }
 
 .permissoes-membro { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+/* ---- Etapa 14.2: tabelas densas -> cartões no mobile ---- */
+.cartoes-registro { display: none; }
+.registro-cartao {
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  margin-top: 0.5rem;
+  background: #1a1d22;
+}
+.registro-campo {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.2rem 0;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.registro-campo .registro-rotulo { color: #9aa0a6; flex-shrink: 0; }
+.registro-acoes {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #2c3038;
+}
+@media (max-width: 640px) {
+  .tabela-responsiva { display: none; }
+  .cartoes-registro {
+    display: flex;
+    flex-direction: column;
+  }
+}

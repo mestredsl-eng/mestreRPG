@@ -233,7 +233,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
               </table>
             </>
           )}
-          <table className="tabela">
+          <table className="tabela tabela-responsiva">
             <thead>
               <tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Status</th><th>Entrada</th><th>Permissões</th><th>Ações</th></tr>
             </thead>
@@ -298,6 +298,69 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {membros.filter((m) => m.status !== "removido").map((m) => (
+              <div key={m.membershipId} className={`registro-cartao ${m.status === "bloqueado" ? "linha-bloqueada" : ""}`}>
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><strong>{m.displayName ?? "—"}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Usuário</span><span>{m.username}</span></div>
+                <div className="registro-campo">
+                  <span className="registro-rotulo">Papel</span>
+                  <select
+                    value={m.role}
+                    disabled={m.ehEu && m.role === "mestre" && membros.filter((x) => x.role === "mestre" && x.status === "ativo").length <= 1}
+                    onChange={(e) => void mudarMembro(m, { role: e.target.value })}
+                  >
+                    <option value="mestre">Mestre</option>
+                    <option value="jogador">Jogador</option>
+                    <option value="espectador">Espectador</option>
+                  </select>
+                </div>
+                <div className="registro-campo">
+                  <span className="registro-rotulo">Status</span>
+                  <select value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
+                    <option value="ativo">Ativo</option>
+                    <option value="bloqueado">Bloqueado</option>
+                    <option value="pendente">Pendente</option>
+                  </select>
+                </div>
+                <div className="registro-campo"><span className="registro-rotulo">Entrada</span><span>{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString("pt-BR") : "—"}</span></div>
+                {m.role === "espectador" && m.status === "ativo" && (
+                  <div className="registro-campo">
+                    <span className="registro-rotulo">Permissões</span>
+                    <div className="permissoes-membro">
+                      {([
+                        ["enviarMensagens", "chat"],
+                        ["verBiblioteca", "arquivos"],
+                        ["verHistorico", "histórico"],
+                      ] as [keyof PermissoesMembro, string][]).map(([key, rotulo]) => {
+                        const perms = (m.permissions ?? {}) as PermissoesMembro;
+                        const padrao = key === "enviarMensagens" ? false : true;
+                        const ativo = perms[key] ?? padrao;
+                        return (
+                          <label key={key} className="check" title={`Permitir ${rotulo}`}>
+                            <input
+                              type="checkbox"
+                              checked={!!ativo}
+                              onChange={(e) => void mudarMembro(m, { permissions: { [key]: e.target.checked } })}
+                            />
+                            {rotulo}
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div className="registro-acoes">
+                  {m.role === "mestre" && m.status === "ativo" && !m.ehEu && (
+                    <button className="mini" onClick={() => void transferir(m)}>Transferir</button>
+                  )}
+                  {!m.ehEu && (
+                    <button className="mini perigo" onClick={() => void removerMembro(m)}>Remover</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
@@ -332,7 +395,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             <button type="submit">Gerar convite</button>
           </form>
 
-          <table className="tabela">
+          <table className="tabela tabela-responsiva">
             <thead>
               <tr><th>Criado em</th><th>Papel</th><th>Usos</th><th>Expira</th><th>Aprovação</th><th>Status</th><th></th></tr>
             </thead>
@@ -354,6 +417,23 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {convites.map((c) => (
+              <div key={c.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Criado em</span><span>{new Date(c.createdAt).toLocaleString("pt-BR")}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{PAPEL_LABEL[c.role] ?? c.role}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Usos</span><span>{c.uses}{c.maxUses !== null ? `/${c.maxUses}` : ""}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Expira</span><span>{c.expiresAt ? new Date(c.expiresAt).toLocaleString("pt-BR") : "Nunca"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Aprovação</span><span>{c.requiresApproval ? "Sim" : "Não"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{c.status}</span></div>
+                {c.status === "ativo" && (
+                  <div className="registro-acoes">
+                    <button className="mini perigo" onClick={async () => { await api.revogarConvite(id, c.id); await carregar(); }}>Revogar</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </section>
       )}
     </>

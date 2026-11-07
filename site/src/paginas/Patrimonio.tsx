@@ -51,7 +51,7 @@ export default function Patrimonio({ characterId, campaignId, souMestre }: Props
       <h3>Patrimônio</h3>
       <div className="abas">
         {abas.map(([id, label]) => (
-          <button key={id} className={aba === id ? "aba ativa" : "aba"} onClick={() => setAba(id)}>{label}</button>
+          <button key={id} className={aba === id ? "ativo" : "secundario"} onClick={() => setAba(id)}>{label}</button>
         ))}
       </div>
       {erro && <p className="erro">{erro}</p>}
@@ -140,7 +140,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
         <button type="submit">Adicionar</button>
       </form>
 
-      <table className="tabela">
+      <table className="tabela tabela-responsiva">
         <thead><tr><th>Item</th><th>Qtd</th><th>Categoria</th><th>Peso</th><th>Local</th><th></th></tr></thead>
         <tbody>
           {visiveis.map((item) => (
@@ -184,6 +184,50 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
           {visiveis.length === 0 && <tr><td colSpan={6} className="meta">Inventário vazio.</td></tr>}
         </tbody>
       </table>
+      <div className="cartoes-registro">
+        {visiveis.map((item) => (
+          <div key={item.id} className="registro-cartao">
+            <div className="registro-campo">
+              <strong>{item.name}</strong>
+              <span>
+                {item.data?.equipped === true && <span className="tag">equipado</span>}
+                {qtd(item, item.data) > 0 && <span className="tag">{fmtMoeda(qtd(item, item.data))}</span>}
+              </span>
+            </div>
+            {item.description && <p className="meta">{item.description}</p>}
+            <div className="registro-campo">
+              <span className="registro-rotulo">Qtd</span>
+              {editando === item.id ? (
+                <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }}
+                  onBlur={async (e) => {
+                    const q = Number(e.target.value);
+                    try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
+                    catch (err) { aoErro(err); }
+                  }} />
+              ) : (
+                <span className="clicavel" onClick={() => setEditando(item.id)}>{item.quantity}</span>
+              )}
+            </div>
+            <div className="registro-campo"><span className="registro-rotulo">Categoria</span><span>{item.category ?? "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Peso</span><span>{item.weight != null ? `${item.weight} kg` : "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
+            <div className="registro-acoes">
+              <button className="secundario" title="Equipar" onClick={async () => {
+                try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
+              }}>Equipar</button>
+              <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
+                await api.transferirItem(characterId, item.id, dest, q);
+                await carregar();
+              }} aoErro={aoErro} />
+              <button className="perigo" onClick={async () => {
+                if (!confirm(`Remover "${item.name}"?`)) return;
+                try { await api.removerItem(characterId, item.id); await carregar(); } catch (e) { aoErro(e); }
+              }}>×</button>
+            </div>
+          </div>
+        ))}
+        {visiveis.length === 0 && <p className="meta">Inventário vazio.</p>}
+      </div>
     </div>
   );
 }
@@ -344,7 +388,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
         </div>
         <button type="submit">Adicionar veículo</button>
       </form>
-      <table className="tabela">
+      <table className="tabela tabela-responsiva">
         <thead><tr><th>Veículo</th><th>Tipo</th><th>Marca/Modelo</th><th>Ano</th><th>Placa</th><th>Posse</th><th></th></tr></thead>
         <tbody>
           {lista.map((v) => (
@@ -364,6 +408,24 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
         </tbody>
       </table>
+      <div className="cartoes-registro">
+        {lista.map((v) => (
+          <div key={v.id} className="registro-cartao">
+            <div className="registro-campo"><strong>{v.name}</strong><span className="tag">{v.kind ?? "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Marca/Modelo</span><span>{[v.brand, v.model].filter(Boolean).join(" ") || "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Ano</span><span>{v.year ?? "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Placa</span><span>{v.plate ?? "—"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Posse</span><span>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</span></div>
+            <div className="registro-acoes">
+              <button className="perigo" onClick={async () => {
+                if (!confirm(`Remover "${v.name}"?`)) return;
+                try { await api.removerVeiculo(characterId, v.id); await carregar(); } catch (e) { aoErro(e); }
+              }}>×</button>
+            </div>
+          </div>
+        ))}
+        {lista.length === 0 && <p className="meta">Nenhum veículo.</p>}
+      </div>
     </div>
   );
 }
@@ -417,7 +479,7 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
       <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
 
       <h4>Histórico financeiro</h4>
-      <table className="tabela">
+      <table className="tabela tabela-responsiva">
         <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Conta</th><th>Contraparte</th><th>Valor</th><th>Saldo após</th></tr></thead>
         <tbody>
           {fin.historico.map((t) => (
@@ -434,6 +496,23 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
           {fin.historico.length === 0 && <tr><td colSpan={7} className="meta">Sem movimentações.</td></tr>}
         </tbody>
       </table>
+      <div className="cartoes-registro">
+        {fin.historico.map((t) => (
+          <div key={t.id} className="registro-cartao">
+            <div className="registro-campo"><span className="registro-rotulo">Data</span><span>{new Date(t.createdAt).toLocaleString("pt-BR")}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Tipo</span><span>{t.kind}</span></div>
+            {t.description && <div className="registro-campo"><span className="registro-rotulo">Descrição</span><span>{t.description}</span></div>}
+            <div className="registro-campo"><span className="registro-rotulo">Conta</span><span>{t.account ?? "—"}</span></div>
+            {t.counterparty && <div className="registro-campo"><span className="registro-rotulo">Contraparte</span><span>{t.counterparty}</span></div>}
+            <div className="registro-campo">
+              <span className="registro-rotulo">Valor</span>
+              <span className={t.amountCents !== null && t.amountCents < 0 ? "erro" : "online"}>{t.amountCents !== null ? fmt(t.amountCents) : fmt(t.amount * 100)}</span>
+            </div>
+            <div className="registro-campo"><span className="registro-rotulo">Saldo após</span><span>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</span></div>
+          </div>
+        ))}
+        {fin.historico.length === 0 && <p className="meta">Sem movimentações.</p>}
+      </div>
     </div>
   );
 }
