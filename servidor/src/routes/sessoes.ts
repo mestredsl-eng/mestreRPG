@@ -2,7 +2,7 @@ import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { sessions, turns, chatMessages, tests, memberships, users, characters, rolls } from "../db/schema.js";
+import { sessions, turns, chatMessages, tests, memberships, users, characters, rolls, auditLogs } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
@@ -179,6 +179,22 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
 
   const inicio = s.startedAt ? new Date(s.startedAt).getTime() : null;
   const fim = s.endedAt ? new Date(s.endedAt).getTime() : null;
+
+  // alterações relevantes da campanha no período da sessão (audit_logs)
+  const limiteInicio = s.startedAt ?? new Date(0);
+  const limiteFim = s.endedAt ?? new Date();
+  const auditorias = await db.select().from(auditLogs)
+    .where(and(eq(auditLogs.campaignId, req.params.campaignId)))
+    .orderBy(auditLogs.createdAt);
+  const alteracoes = auditorias.filter((a) => {
+    const t = new Date(a.createdAt).getTime();
+    return t >= new Date(limiteInicio).getTime() && t <= new Date(limiteFim).getTime();
+  });
+  const atorIds = [...new Set(alteracoes.map((a) => a.actorId).filter(Boolean) as string[])];
+  const atores = atorIds.length
+    ? await db.select({ id: users.id, username: users.username, displayName: users.displayName }).from(users).where(inArray(users.id, atorIds))
+    : [];
+
   res.json({
     sessao: s,
     duracaoMs: inicio && fim ? fim - inicio : null,
@@ -186,6 +202,12 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
     eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
     testes: testesVisiveis,
     rolagens: rolagensVisiveis,
+    alteracoes: alteracoes.map((a) => ({
+      id: a.id, action: a.action, createdAt: a.createdAt,
+      autor: a.actorId ? atores.find((u) => u.id === a.actorId) ?? null : null,
+      // detalhe só para o mestre — pode conter ids/dados internos
+      detalhe: ehMestre ? a.detail : undefined,
+    })),
     resumo: s.summary,
   });
 });

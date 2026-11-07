@@ -7,7 +7,7 @@ import { getDb } from "../db/index.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
-  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders,
+  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
   snapshots, users,
 } from "../db/schema.js";
 import { CAMINHOS } from "../db/index.js";
@@ -46,6 +46,7 @@ interface EstadoCampanha {
   notes: (typeof notes.$inferSelect)[];
   files: (typeof files.$inferSelect)[];
   folders: (typeof folders.$inferSelect)[];
+  noteAttachments: (typeof noteAttachments.$inferSelect)[];
 }
 
 /** Exporta o estado completo da campanha (spec §4/§5). */
@@ -55,6 +56,8 @@ async function exportarCampanha(campaignId: string): Promise<EstadoCampanha> {
   const charIds = (await db.select({ id: characters.id }).from(characters).where(eq(characters.campaignId, campaignId))).map((r) => r.id);
   const sessIds = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId))).map((r) => r.id);
   const ruleSetIds = (await db.select({ id: ruleSets.id }).from(ruleSets).where(eq(ruleSets.campaignId, campaignId))).map((r) => r.id);
+  const noteIds = (await db.select({ id: notes.id }).from(notes).where(eq(notes.campaignId, campaignId))).map((r) => r.id);
+  const fileIds = (await db.select({ id: files.id }).from(files).where(eq(files.campaignId, campaignId))).map((r) => r.id);
 
   const { id: _id, createdAt: _c, updatedAt: _u, ownerId: _o, ...restoCampanha } = campanha ?? {};
 
@@ -82,6 +85,9 @@ async function exportarCampanha(campaignId: string): Promise<EstadoCampanha> {
     notes: await db.select().from(notes).where(eq(notes.campaignId, campaignId)),
     files: await db.select().from(files).where(eq(files.campaignId, campaignId)),
     folders: await db.select().from(folders).where(eq(folders.campaignId, campaignId)),
+    noteAttachments: noteIds.length && fileIds.length
+      ? await db.select().from(noteAttachments).where(inArray(noteAttachments.noteId, noteIds))
+      : [],
   };
 }
 
@@ -137,6 +143,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
   const tplIds = (await db.select({ id: sheetTemplates.id }).from(sheetTemplates).where(eq(sheetTemplates.campaignId, cid))).map((r) => r.id);
   const sessIds = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((r) => r.id);
   const ruleSetIds = (await db.select({ id: ruleSets.id }).from(ruleSets).where(eq(ruleSets.campaignId, cid))).map((r) => r.id);
+  const noteIds = (await db.select({ id: notes.id }).from(notes).where(eq(notes.campaignId, cid))).map((r) => r.id);
   // arquivos físicos dos registros que serão substituídos vão para a lixeira (recuperáveis)
   const arquivosAtuais = await db.select({ storageName: files.storageName }).from(files).where(eq(files.campaignId, cid));
   const baseDir = resolve(CAMINHOS.arquivos, cid);
@@ -170,6 +177,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
         limpar(inventoryEntries, inArray(inventoryEntries.characterId, charIds));
         limpar(characterFields, inArray(characterFields.characterId, charIds));
       }
+      if (noteIds.length) limpar(noteAttachments, inArray(noteAttachments.noteId, noteIds));
       limpar(notes, eq(notes.campaignId, cid));
       limpar(files, eq(files.campaignId, cid));
       limpar(folders, eq(folders.campaignId, cid));
@@ -223,6 +231,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), async (re
       ins(notes, dados.notes);
       ins(folders, dados.folders);
       ins(files, dados.files);
+      ins(noteAttachments, dados.noteAttachments);
     });
   } catch (e) {
     res.status(500).json({ erro: "Falha ao restaurar", detalhe: String(e) });

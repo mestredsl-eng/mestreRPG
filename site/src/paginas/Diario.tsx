@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Anotacao, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
+import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
 
 const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
 const VISIBILIDADES = [
@@ -15,6 +15,8 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [anotacoes, setAnotacoes] = useState<Anotacao[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
+  const [arquivos, setArquivos] = useState<ArquivoBiblioteca[]>([]);
+  const [anexando, setAnexando] = useState<string | null>(null);
   const [editando, setEditando] = useState<Anotacao | null>(null);
   const [novo, setNovo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -32,6 +34,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   useEffect(() => {
     api.listarPersonagens(campaignId).then((r) => setPersonagens(r.personagens.filter((p) => p.ehEu || souMestre))).catch(() => {});
     api.listarMembros(campaignId).then((r) => setMembros(r.membros.filter((m) => m.status === "ativo" && m.userId !== undefined))).catch(() => {});
+    api.listarArquivos(campaignId).then((r) => setArquivos(r.arquivos.filter((a) => a.status === "aprovado"))).catch(() => {});
   }, [campaignId, souMestre]);
 
   const abrirEdicao = (n: Anotacao | null) => {
@@ -67,6 +70,16 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const alternarImportante = async (n: Anotacao) => {
     try { await api.atualizarAnotacao(campaignId, n.id, { important: !n.important }); await carregar(); }
     catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
+  };
+
+  const anexar = async (noteId: string, fileId: string) => {
+    if (!fileId) return;
+    try { await api.anexarArquivoNota(campaignId, noteId, fileId); setAnexando(null); await carregar(); }
+    catch (e) { setErro(e instanceof Error ? e.message : "Erro ao anexar"); }
+  };
+  const desanexar = async (n: Anotacao, fileId: string) => {
+    try { await api.removerAnexoNota(campaignId, n.id, fileId); await carregar(); }
+    catch (e) { setErro(e instanceof Error ? e.message : "Erro ao remover anexo"); }
   };
 
   const visLabel = (n: Anotacao) => VISIBILIDADES.find((v) => v.v === n.visibility)?.l ?? n.visibility;
@@ -136,10 +149,29 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
               <span className="dica">{n.category} · {visLabel(n)}{n.owner && !n.ehMinha ? ` · ${n.owner.displayName ?? n.owner.username}` : ""}</span>
             </div>
             <p className="pre-wrap">{n.content}</p>
+            {(n.anexos?.length ?? 0) > 0 && (
+              <ul className="lista-anexos">
+                {n.anexos!.map((a) => (
+                  <li key={a.id} className="linha">
+                    <a href={api.urlArquivo(campaignId, a.fileId)} target="_blank" rel="noreferrer">{a.displayName}</a>
+                    {n.ehMinha && <button className="secundario" onClick={() => desanexar(n, a.fileId)}>✕</button>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {n.ehMinha && anexando === n.id && (
+              <div className="linha">
+                <select autoFocus value="" onChange={(e) => void anexar(n.id, e.target.value)} onBlur={() => setAnexando(null)}>
+                  <option value="">Escolher arquivo da biblioteca…</option>
+                  {arquivos.map((a) => <option key={a.id} value={a.id}>{a.displayName}</option>)}
+                </select>
+              </div>
+            )}
             <div className="linha">
               <span className="dica">{new Date(n.updatedAt).toLocaleString("pt-BR")}</span>
               {n.ehMinha && (
                 <>
+                  <button className="secundario" onClick={() => setAnexando(anexando === n.id ? null : n.id)}>Anexar</button>
                   <button className="secundario" onClick={() => alternarImportante(n)}>{n.important ? "Desmarcar" : "Marcar importante"}</button>
                   <button className="secundario" onClick={() => abrirEdicao(n)}>Editar</button>
                   <button className="secundario" onClick={() => remover(n)}>Excluir</button>

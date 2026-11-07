@@ -232,6 +232,10 @@ export const api = {
     requisicao<{ ok: boolean }>(`/campaigns/${cid}/anotacoes/${aid}`, { method: "PATCH", body: JSON.stringify(dados) }),
   excluirAnotacao: (cid: string, aid: string) =>
     requisicao<{ ok: boolean }>(`/campaigns/${cid}/anotacoes/${aid}`, { method: "DELETE" }),
+  anexarArquivoNota: (cid: string, aid: string, fileId: string) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/anotacoes/${aid}/anexos`, { method: "POST", body: JSON.stringify({ fileId }) }),
+  removerAnexoNota: (cid: string, aid: string, fileId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/anotacoes/${aid}/anexos/${fileId}`, { method: "DELETE" }),
   historicoSessao: (cid: string, sid: string) =>
     requisicao<HistoricoSessao>(`/campaigns/${cid}/sessoes/${sid}/historico`),
   listarSnapshots: (cid: string) =>
@@ -782,6 +786,7 @@ export interface Anotacao {
   updatedAt: string;
   owner?: { username: string; displayName: string | null } | null;
   ehMinha?: boolean;
+  anexos?: { id: string; fileId: string; fileName: string; displayName: string; mimeType: string | null; sizeBytes: number | null }[];
 }
 
 export interface Snapshot {
@@ -799,6 +804,7 @@ export interface HistoricoSessao {
   eventos: { id: string; kind: string; content: string; createdAt: string; autor: { id: string; username: string; displayName: string | null } | null }[];
   testes: TesteMesa[];
   rolagens: Record<string, unknown>[];
+  alteracoes?: { id: string; action: string; createdAt: string; autor: { id: string; username: string; displayName: string | null } | null; detalhe?: unknown }[];
   resumo: string | null;
 }
 

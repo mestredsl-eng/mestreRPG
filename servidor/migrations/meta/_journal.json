@@ -71,6 +71,13 @@
       "when": 1794043462816,
       "tag": "0009_light_serpent_society",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1794070845321,
+      "tag": "0010_bored_human_fly",
+      "breakpoints": true
     }
   ]
 }

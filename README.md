@@ -40,6 +40,7 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Etapa 4 — Editor de fichas e personagens:** modelos de ficha por campanha com versões publicáveis, editor visual de seções/campos (13 tipos, incluindo calculados com fórmulas), visibilidade e permissão de edição por campo validadas no servidor, personagens com aprovação e fichas renderizadas dinamicamente.
 - **Etapas 5–9:** motor de regras personalizável, inventário/equipamentos/veículos/finanças fictícias, mesa em tempo real (chat, testes, turnos, timer, espectador), diário/anotações/snapshots/histórico e biblioteca de arquivos das campanhas.
 - **Etapa 10 — Backup e administração do servidor:** backups completos automáticos (banco + arquivos + configuração + versão), restauração com confirmação e rollback, painel "Servidor" no admin, logs operacionais com rotação, health detalhado, encerramento controlado e suporte a proxy HTTPS.
+- **Etapa 11 — Diário, anotações e histórico de sessões:** anexos em anotações (arquivos da biblioteca vinculados à nota, com a mesma permissão do arquivo), compartilhamento seletivo por anotação e histórico de sessão enriquecido com alterações relevantes da campanha (auditoria) — detalhe interno visível só ao mestre.
 
 ## Operação no Windows
 

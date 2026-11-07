@@ -2,12 +2,13 @@ import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { notes, memberships, users, characters } from "../db/schema.js";
+import { notes, memberships, users, characters, files, noteAttachments } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { arquivoVisivel } from "./arquivos.js";
 
 const db = getDb();
 export const anotacoesRouter = Router({ mergeParams: true });
@@ -17,7 +18,8 @@ type Nota = typeof notes.$inferSelect;
 
 /** Visibilidade de uma anotação para o requisitante (spec §2/§3/§10). */
 function notaVisivel(n: Nota, usuarioId: string, ehMestre: boolean): boolean {
-  if (n.visibility === "privada") return n.ownerId === usuarioId;
+  if (n.ownerId === usuarioId) return true;
+  if (n.visibility === "privada") return false;
   if (n.visibility === "mestre") return ehMestre;
   if (n.visibility === "publica") return true;
   const recips = (n.recipients ?? []) as string[];
@@ -28,6 +30,27 @@ async function nomesOwners(ids: string[]) {
   if (!ids.length) return new Map<string, { username: string; displayName: string | null }>();
   const rows = await db.select({ id: users.id, username: users.username, displayName: users.displayName }).from(users).where(inArray(users.id, ids));
   return new Map(rows.map((r) => [r.id, r]));
+}
+
+/** Anexos das notas visíveis ao requisitante — filtrados pela visibilidade do ARQUIVO também. */
+async function anexosPorNota(noteIds: string[], usuarioId: string, ehMestre: boolean, membershipIds: Set<string>) {
+  const mapa = new Map<string, { id: string; fileId: string; fileName: string; displayName: string; mimeType: string | null; sizeBytes: number | null }[]>();
+  if (!noteIds.length) return mapa;
+  const rows = await db.select({ att: noteAttachments, file: files })
+    .from(noteAttachments)
+    .innerJoin(files, eq(noteAttachments.fileId, files.id))
+    .where(inArray(noteAttachments.noteId, noteIds));
+  for (const { att, file } of rows) {
+    if (!arquivoVisivel(file, usuarioId, ehMestre, membershipIds)) continue;
+    const lista = mapa.get(att.noteId) ?? [];
+    lista.push({
+      id: att.id, fileId: file.id,
+      fileName: file.fileName, displayName: file.displayName ?? file.fileName,
+      mimeType: file.mimeType, sizeBytes: file.sizeBytes,
+    });
+    mapa.set(att.noteId, lista);
+  }
+  return mapa;
 }
 
 async function validarDestinatarios(campaignId: string, recipients: string[] | undefined): Promise<string[] | null> {
@@ -63,11 +86,14 @@ anotacoesRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async 
     return notaVisivel(n, req.usuario!.id, ehMestre);
   });
   const mapa = await nomesOwners([...new Set(visiveis.map((n) => n.ownerId))]);
+  const membershipIds = new Set([req.usuario!.id, req.membership!.id]);
+  const anexos = await anexosPorNota(visiveis.map((n) => n.id), req.usuario!.id, ehMestre, membershipIds);
   res.json({
     anotacoes: visiveis.map((n) => ({
       ...n,
       owner: mapa.get(n.ownerId) ?? null,
       ehMinha: n.ownerId === req.usuario!.id,
+      anexos: anexos.get(n.id) ?? [],
     })),
   });
 });
@@ -166,6 +192,49 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
   }).where(eq(notes.id, n.id));
   await audit(req, "anotacao.atualizada", { noteId: n.id });
   emitirCampanha(req.params.campaignId, "anotacoes:atualizadas", {});
+  res.json({ ok: true });
+});
+
+/** POST /api/campaigns/:campaignId/anotacoes/:noteId/anexos — anexa arquivo da biblioteca (Etapa 11) */
+anotacoesRouter.post("/:noteId/anexos", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = req.params.campaignId;
+  const [n] = await db.select().from(notes).where(and(eq(notes.id, req.params.noteId), eq(notes.campaignId, cid))).limit(1);
+  if (!n) { res.status(404).json({ erro: "Anotação não encontrada" }); return; }
+  if (n.ownerId !== req.usuario!.id && req.membership!.role !== "mestre") {
+    res.status(403).json({ erro: "Só o dono da anotação anexa arquivos" }); return;
+  }
+  const fileId = typeof (req.body as { fileId?: string })?.fileId === "string" ? (req.body as { fileId: string }).fileId : null;
+  if (!fileId) { res.status(400).json({ erro: "fileId obrigatório" }); return; }
+  const [f] = await db.select().from(files).where(and(eq(files.id, fileId), eq(files.campaignId, cid))).limit(1);
+  if (!f) { res.status(404).json({ erro: "Arquivo não encontrado" }); return; }
+  // o requisitante precisa enxergar o arquivo para anexá-lo (não vaza arquivos privados alheios)
+  const membershipIds = new Set([req.usuario!.id, req.membership!.id]);
+  const ehMestre = req.membership!.role === "mestre";
+  if (!arquivoVisivel(f, req.usuario!.id, ehMestre, membershipIds)) {
+    res.status(403).json({ erro: "Sem permissão sobre este arquivo" }); return;
+  }
+  const id = crypto.randomUUID();
+  await db.insert(noteAttachments).values({ id, noteId: n.id, fileId: f.id, createdBy: req.usuario!.id, createdAt: new Date() })
+    .onConflictDoNothing();
+  await audit(req, "anotacao.anexo_adicionado", { noteId: n.id, fileId: f.id });
+  emitirCampanha(cid, "anotacoes:atualizadas", {});
+  res.status(201).json({ id });
+});
+
+/** DELETE /api/campaigns/:campaignId/anotacoes/:noteId/anexos/:fileId — remove anexo */
+anotacoesRouter.delete("/:noteId/anexos/:fileId", requirePapel("mestre", "jogador"), async (req, res) => {
+  const cid = req.params.campaignId;
+  const [n] = await db.select().from(notes).where(and(eq(notes.id, req.params.noteId), eq(notes.campaignId, cid))).limit(1);
+  if (!n) { res.status(404).json({ erro: "Anotação não encontrada" }); return; }
+  if (n.ownerId !== req.usuario!.id && req.membership!.role !== "mestre") {
+    res.status(403).json({ erro: "Só o dono da anotação remove anexos" }); return;
+  }
+  const removidos = await db.delete(noteAttachments)
+    .where(and(eq(noteAttachments.noteId, n.id), eq(noteAttachments.fileId, req.params.fileId)))
+    .returning({ id: noteAttachments.id });
+  if (!removidos.length) { res.status(404).json({ erro: "Anexo não encontrado" }); return; }
+  await audit(req, "anotacao.anexo_removido", { noteId: n.id, fileId: req.params.fileId });
+  emitirCampanha(cid, "anotacoes:atualizadas", {});
   res.json({ ok: true });
 });
 

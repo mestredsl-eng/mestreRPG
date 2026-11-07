@@ -410,6 +410,18 @@ export const files = sqliteTable("files", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
 }, (t) => [index("files_campaign_idx").on(t.campaignId)]);
 
+// Anexos de anotações do diário/mestre (Etapa 11) — vínculo nota ↔ arquivo da biblioteca
+export const noteAttachments = sqliteTable("note_attachments", {
+  id: id(),
+  noteId: text("note_id").notNull().references(() => notes.id, { onDelete: "cascade" }),
+  fileId: text("file_id").notNull().references(() => files.id, { onDelete: "cascade" }),
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("note_att_unique_idx").on(t.noteId, t.fileId),
+  index("note_att_note_idx").on(t.noteId),
+]);
+
 // Backups (spec §23)
 export const backups = sqliteTable("backups", {
   id: id(),

@@ -5,7 +5,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import { config } from "../config.js";
-import { files, folders, memberships, users } from "../db/schema.js";
+import { files, folders, memberships, users, notes, noteAttachments } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
@@ -63,7 +63,7 @@ function garantirDir(cid: string) {
   mkdirSync(resolve(dirCampanha(cid), ".lixeira"), { recursive: true });
 }
 
-function arquivoVisivel(f: Arquivo, usuarioId: string, ehMestre: boolean, membershipIds: Set<string>): boolean {
+export function arquivoVisivel(f: Arquivo, usuarioId: string, ehMestre: boolean, membershipIds: Set<string>): boolean {
   if (f.status === "pendente" || f.status === "rejeitado") return f.uploadedBy === usuarioId || ehMestre;
   if (f.visibility === "mestre") return ehMestre;
   if (f.visibility === "publica") return true;
@@ -229,6 +229,15 @@ arquivosRouter.post("/upload", express.raw({ type: () => true, limit: `${config.
     }
   }
 
+  // anexo direto a uma anotação (Etapa 11): x-note-id vincula o arquivo à nota
+  const noteId = typeof req.headers["x-note-id"] === "string" && req.headers["x-note-id"] ? String(req.headers["x-note-id"]).slice(0, 64) : null;
+  if (noteId) {
+    const [nota] = await db.select({ id: notes.id, ownerId: notes.ownerId }).from(notes)
+      .where(and(eq(notes.id, noteId), eq(notes.campaignId, cid))).limit(1);
+    if (!nota) { res.status(400).json({ erro: "Anotação não encontrada" }); return; }
+    if (nota.ownerId !== req.usuario!.id && papel !== "mestre") { res.status(403).json({ erro: "Só o dono da anotação anexa arquivos" }); return; }
+  }
+
   const id = crypto.randomUUID();
   const storageName = `${id}.${ext || "bin"}`;
   const displayName = String(req.headers["x-display-name"] ?? "").slice(0, 200) || null;
@@ -250,6 +259,10 @@ arquivosRouter.post("/upload", express.raw({ type: () => true, limit: `${config.
     status, visibility, recipients,
     uploadedBy: req.usuario!.id, createdAt: new Date(), updatedAt: new Date(),
   });
+  if (noteId) {
+    await db.insert(noteAttachments).values({ id: crypto.randomUUID(), noteId, fileId: id, createdBy: req.usuario!.id, createdAt: new Date() })
+      .onConflictDoNothing();
+  }
   await audit(req, "arquivo.enviado", { fileId: id, fileName, status });
   emitirCampanha(cid, "arquivos:atualizados", {});
   res.status(201).json({ id });

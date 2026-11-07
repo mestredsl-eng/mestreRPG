@@ -112,6 +112,9 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
                     )}
                     {h.testes.length > 0 && <p className="dica">{h.testes.length} teste(s) realizado(s).</p>}
                     {h.rolagens.length > 0 && <p className="dica">{h.rolagens.length} rolagem(ns) registrada(s).</p>}
+                    {(h.alteracoes?.length ?? 0) > 0 && (
+                      <p className="dica">{h.alteracoes!.length} alteração(ões) relevante(is): {h.alteracoes!.map((a) => a.action).join(", ")}</p>
+                    )}
                     {h.resumo && <p className="pre-wrap"><strong>Resumo:</strong> {h.resumo}</p>}
                   </div>
                 )}
