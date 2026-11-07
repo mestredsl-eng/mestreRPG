@@ -16,6 +16,7 @@ import { sessoesRouter } from "./routes/sessoes.js";
 import { anotacoesRouter } from "./routes/anotacoes.js";
 import { snapshotsRouter } from "./routes/snapshots.js";
 import { arquivosRouter } from "./routes/arquivos.js";
+import { campanhaIORouter } from "./routes/campanha-io.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
@@ -29,6 +30,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const app = express();
+// pacotes de importação de campanha podem ser grandes (arquivos embutidos em base64)
+app.use("/api/campaigns/importar", express.json({ limit: "80mb" }));
 app.use(express.json({ limit: "2mb" }));
 
 // Rotas da API
@@ -38,6 +41,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/admin/servidor", servidorRouter);
 app.use("/api/local", localRouter);
 app.use("/api/campaigns", campanhasRouter);
+app.use("/api/campaigns", campanhaIORouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
 app.use("/api/campaigns/:campaignId/characters", personagensRouter);

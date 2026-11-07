@@ -243,7 +243,22 @@ export const api = {
   criarSnapshot: (cid: string, description?: string) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/snapshots`, { method: "POST", body: JSON.stringify({ description }) }),
   restaurarSnapshot: (cid: string, sid: string) =>
-    requisicao<{ ok: boolean; preSnapshotId: string }>(`/campaigns/${cid}/snapshots/${sid}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR" }) }),
+    requisicao<{ ok: boolean; preSnapshotId: string; arquivosRecuperados?: number; arquivosAusentes?: string[] }>(`/campaigns/${cid}/snapshots/${sid}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR" }) }),
+  estadoCampanha: (cid: string) =>
+    requisicao<EstadoAtualCampanha>(`/campaigns/${cid}/snapshots/estado`),
+  listarRestauracoes: (cid: string) =>
+    requisicao<{ restauracoes: Restauracao[] }>(`/campaigns/${cid}/snapshots/restauracoes`),
+  exportarCampanha: async (cid: string): Promise<PacoteCampanha> => {
+    const res = await fetch(`${API_BASE}/campaigns/${cid}/exportar`, { credentials: "same-origin" });
+    const corpo = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError((corpo as { erro?: string }).erro ?? `HTTP ${res.status}`);
+    return corpo as PacoteCampanha;
+  },
+  importarCampanha: (pacote: PacoteCampanha, modo: "nova" | "substituir", campaignId?: string) =>
+    requisicao<{ ok: boolean; campaignId: string; modo: string; arquivosGravados?: number }>(`/campaigns/importar`, {
+      method: "POST",
+      body: JSON.stringify({ pacote, modo, campaignId, confirmacao: modo === "substituir" ? "SUBSTITUIR" : undefined }),
+    }),
 
   // ---- Etapa 9: biblioteca de arquivos ----
   listarArquivos: (cid: string) =>
@@ -791,10 +806,33 @@ export interface Anotacao {
 
 export interface Snapshot {
   id: string;
+  kind: "manual" | "automatico" | "pre_restauracao";
   description: string | null;
   createdAt: string;
   createdBy: string;
   autor?: { username: string; displayName: string | null } | null;
+}
+
+export interface EstadoAtualCampanha {
+  campanha: { id: string; name: string; status: string; updatedAt: string } | null;
+  sessaoAtiva: { id: string; status: string; number: number; startedAt: string | null; endedAt: string | null } | null;
+  totais: { personagens: number; mensagens: number; membrosAtivos: number };
+  ultimoPonto: { id: string; kind: string; description: string | null; createdAt: string } | null;
+}
+
+export interface Restauracao {
+  id: string;
+  createdAt: string;
+  autor: { username: string; displayName: string | null } | null;
+  detalhe: { snapshotId?: string; descricao?: string; arquivosRecuperados?: number; arquivosAusentes?: number } | null;
+}
+
+export interface PacoteCampanha {
+  versao: number;
+  exportadoEm: string;
+  campanhaId: string;
+  estado: Record<string, unknown>;
+  arquivos: Record<string, { conteudo: string; mimeType: string | null }>;
 }
 
 export interface HistoricoSessao {

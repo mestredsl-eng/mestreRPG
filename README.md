@@ -41,6 +41,7 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Etapas 5–9:** motor de regras personalizável, inventário/equipamentos/veículos/finanças fictícias, mesa em tempo real (chat, testes, turnos, timer, espectador), diário/anotações/snapshots/histórico e biblioteca de arquivos das campanhas.
 - **Etapa 10 — Backup e administração do servidor:** backups completos automáticos (banco + arquivos + configuração + versão), restauração com confirmação e rollback, painel "Servidor" no admin, logs operacionais com rotação, health detalhado, encerramento controlado e suporte a proxy HTTPS.
 - **Etapa 11 — Diário, anotações e histórico de sessões:** anexos em anotações (arquivos da biblioteca vinculados à nota, com a mesma permissão do arquivo), compartilhamento seletivo por anotação e histórico de sessão enriquecido com alterações relevantes da campanha (auditoria) — detalhe interno visível só ao mestre.
+- **Etapa 12 — Salvamento e recuperação de campanhas:** salvamento automático com debounce (qualquer mutação agenda um ponto "Automático", retenção de 20 por campanha), pontos de recuperação manuais com nome/data/descrição, restauração com confirmação `RESTAURAR` + snapshot prévio + auditoria, exportação/importação de campanha em JSON (binários embutidos; conflito de identificador exige substituição explícita pelo mestre), histórico de restaurações e resumo do estado atual na aba Histórico.
 
 ## Operação no Windows
 

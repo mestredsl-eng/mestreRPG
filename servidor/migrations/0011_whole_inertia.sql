@@ -1,0 +1,1 @@
+ALTER TABLE `snapshots` ADD `kind` text DEFAULT 'manual' NOT NULL;

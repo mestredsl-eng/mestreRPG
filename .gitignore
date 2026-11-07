@@ -23,3 +23,6 @@ configuracao/local.json
 npm-debug.log*
 
 logs/
+
+# Sandboxes de teste locais
+teste-sandbox-*/

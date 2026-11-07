@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type CampanhaResumo } from "../api";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { api, type CampanhaResumo, type PacoteCampanha } from "../api";
 
 const STATUS_LABEL: Record<string, string> = {
   preparacao: "Em preparação",
@@ -16,6 +16,8 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
   const [erro, setErro] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "" });
+  const [msg, setMsg] = useState<string | null>(null);
+  const inputImport = useRef<HTMLInputElement>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -47,14 +49,43 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
     }
   };
 
+  const importar = async (arquivo: File) => {
+    try {
+      const pacote = JSON.parse(await arquivo.text()) as PacoteCampanha;
+      if (pacote?.versao !== 1 || !pacote.estado) throw new Error("Arquivo não é um pacote de campanha válido.");
+      try {
+        await api.importarCampanha(pacote, "nova");
+        setMsg("Campanha importada.");
+      } catch (e) {
+        const msgErro = e instanceof Error ? e.message : "Erro ao importar";
+        // identificador já existente → oferece substituição explícita (exige ser mestre da campanha)
+        if (!msgErro.includes("Já existe")) throw e;
+        if (!confirm(`${msgErro}\n\nDeseja SUBSTITUIR a campanha existente por este pacote? Um ponto de recuperação do estado atual será criado antes.`)) {
+          setErro("Importação cancelada.");
+          return;
+        }
+        await api.importarCampanha(pacote, "substituir", pacote.campanhaId);
+        setMsg("Campanha substituída pelo pacote importado.");
+      }
+      void carregar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao importar pacote");
+    }
+  };
+
   return (
     <>
       <section className="cartao">
         <div className="linha-entre">
           <h2>Minhas campanhas</h2>
-          <button onClick={() => setCriando((v) => !v)}>{criando ? "Cancelar" : "Nova campanha"}</button>
+          <div className="linha">
+            <input ref={inputImport} type="file" accept=".json,application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) void importar(f); e.target.value = ""; }} />
+            <button className="secundario" onClick={() => inputImport.current?.click()}>Importar campanha</button>
+            <button onClick={() => setCriando((v) => !v)}>{criando ? "Cancelar" : "Nova campanha"}</button>
+          </div>
         </div>
         {erro && <p className="erro">{erro}</p>}
+        {msg && <p className="sucesso">{msg}</p>}
 
         {criando && (
           <form className="formulario" onSubmit={criar}>

@@ -438,6 +438,7 @@ export const backups = sqliteTable("backups", {
 export const snapshots = sqliteTable("snapshots", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull().default("manual"), // manual|automatico|pre_restauracao
   description: text("description"),
   data: text("data", { mode: "json" }).notNull(), // estado completo da campanha em JSON
   createdBy: text("created_by").notNull().references(() => users.id),

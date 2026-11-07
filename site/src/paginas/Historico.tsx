@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type CampanhaResumo, type HistoricoSessao, type Sessao, type Snapshot } from "../api";
+import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
+
+const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
 
 function fmtDuracao(ms: number | null) {
   if (ms == null) return "—";
@@ -12,6 +14,8 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
   const souMestre = campanha.meuPapel === "mestre";
   const [sessoes, setSessoes] = useState<Sessao[]>([]);
   const [snapshots, setSnapshots] = useState<Snapshot[]>([]);
+  const [restauracoes, setRestauracoes] = useState<Restauracao[]>([]);
+  const [estado, setEstado] = useState<EstadoAtualCampanha | null>(null);
   const [historicos, setHistoricos] = useState<Record<string, HistoricoSessao>>({});
   const [resumoEdit, setResumoEdit] = useState(campanha.summary ?? "");
   const [descSnap, setDescSnap] = useState("");
@@ -25,6 +29,8 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
       if (souMestre) {
         const { snapshots: sn } = await api.listarSnapshots(campaignId);
         setSnapshots(sn);
+        const [est, rests] = await Promise.all([api.estadoCampanha(campaignId), api.listarRestauracoes(campaignId)]);
+        setEstado(est); setRestauracoes(rests.restauracoes);
       }
       setErro(null);
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
@@ -54,6 +60,20 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
       setDescSnap(""); await carregar(); setMsg("Ponto de recuperação criado.");
       setTimeout(() => setMsg(null), 3000);
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao criar snapshot"); }
+  };
+
+  const exportar = async () => {
+    try {
+      const pacote = await api.exportarCampanha(campaignId);
+      const blob = new Blob([JSON.stringify(pacote)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `campanha-${campanha.name ?? campaignId}.json`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setMsg("Campanha exportada.");
+      setTimeout(() => setMsg(null), 3000);
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao exportar"); }
   };
 
   const restaurar = async (s: Snapshot) => {
@@ -125,24 +145,58 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
         </ul>
       </section>
 
+      {souMestre && estado && (
+        <section className="cartao">
+          <h3>Estado atual da campanha</h3>
+          <p className="dica">
+            Status: <strong>{estado.campanha?.status ?? "—"}</strong> ·
+            Sessão ativa: {estado.sessaoAtiva ? `nº ${estado.sessaoAtiva.number} (${estado.sessaoAtiva.status})` : "nenhuma"} ·
+            {" "}{estado.totais.personagens} personagem(ns) · {estado.totais.membrosAtivos} membro(s) · {estado.totais.mensagens} mensagem(ns)
+          </p>
+          <p className="dica">Último ponto de recuperação: {estado.ultimoPonto ? `${estado.ultimoPonto.description ?? KIND_SNAPSHOT[estado.ultimoPonto.kind] ?? estado.ultimoPonto.kind} (${new Date(estado.ultimoPonto.createdAt).toLocaleString("pt-BR")})` : "nenhum"}</p>
+          <button className="secundario" onClick={exportar}>Exportar campanha (.json)</button>
+        </section>
+      )}
+
       {souMestre && (
         <section className="cartao">
           <h3>Recuperação e snapshots</h3>
           <div className="linha">
-            <input placeholder="Descrição do ponto de recuperação (opcional)" value={descSnap} onChange={(e) => setDescSnap(e.target.value)} />
+            <input placeholder="Nome do ponto de recuperação (opcional)" value={descSnap} onChange={(e) => setDescSnap(e.target.value)} />
             <button onClick={criarSnap}>Criar ponto de recuperação</button>
           </div>
+          <p className="dica">Alterações recentes são salvas automaticamente em segundo plano (pontos "Automático").</p>
           <ul className="lista-anotacoes">
             {snapshots.map((s) => (
               <li key={s.id}>
                 <div className="linha">
                   <strong>{s.description ?? "Sem descrição"}</strong>
-                  <span className="dica">{new Date(s.createdAt).toLocaleString("pt-BR")} · {s.autor ? (s.autor.displayName ?? s.autor.username) : "—"}</span>
+                  <span className="dica">{KIND_SNAPSHOT[s.kind] ?? s.kind} · {new Date(s.createdAt).toLocaleString("pt-BR")} · {s.autor ? (s.autor.displayName ?? s.autor.username) : "—"}</span>
                   <button className="secundario" onClick={() => restaurar(s)}>Restaurar</button>
                 </div>
               </li>
             ))}
-            {!snapshots.length && <li className="dica">Nenhum snapshot criado.</li>}
+            {!snapshots.length && <li className="dica">Nenhum ponto de recuperação criado.</li>}
+          </ul>
+        </section>
+      )}
+
+      {souMestre && restauracoes.length > 0 && (
+        <section className="cartao">
+          <h3>Histórico de restaurações</h3>
+          <ul className="lista-anotacoes">
+            {restauracoes.map((r) => (
+              <li key={r.id}>
+                <div className="linha">
+                  <span>{new Date(r.createdAt).toLocaleString("pt-BR")}</span>
+                  <span className="dica">
+                    por {r.autor ? (r.autor.displayName ?? r.autor.username) : "—"}
+                    {r.detalhe?.descricao ? ` · ${r.detalhe.descricao}` : ""}
+                    {r.detalhe?.arquivosRecuperados != null ? ` · ${r.detalhe.arquivosRecuperados} arquivo(s) recuperado(s)` : ""}
+                  </span>
+                </div>
+              </li>
+            ))}
           </ul>
         </section>
       )}
