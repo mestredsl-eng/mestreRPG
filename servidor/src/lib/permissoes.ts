@@ -1,5 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
+import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
 
@@ -67,6 +68,30 @@ declare global {
       membership?: MembershipInfo;
     }
   }
+}
+
+// ---- Permissões individuais do membro (Etapa 13 — modo espectador) ----
+
+export interface PermissoesMembro {
+  /** Espectador pode enviar mensagens no chat (padrão: não). */
+  enviarMensagens?: boolean;
+  /** Espectador pode ver a biblioteca de arquivos (padrão: sim, se a campanha permitir). */
+  verBiblioteca?: boolean;
+  /** Espectador pode consultar o histórico detalhado de sessões (padrão: sim). */
+  verHistorico?: boolean;
+}
+
+export const permissoesMembroSchema = z.object({
+  enviarMensagens: z.boolean().optional(),
+  verBiblioteca: z.boolean().optional(),
+  verHistorico: z.boolean().optional(),
+}).strict();
+
+/** Lê as permissões do membro de forma segura (JSON arbitrário → objeto tipado). */
+export function permissoesDe(m: { permissions: unknown } | null | undefined): PermissoesMembro {
+  const p = m?.permissions;
+  if (!p || typeof p !== "object" || Array.isArray(p)) return {};
+  return p as PermissoesMembro;
 }
 
 /** Conta mestres ativos de uma campanha (para impedir campanha sem responsável). */

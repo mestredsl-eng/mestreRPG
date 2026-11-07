@@ -7,7 +7,7 @@ import { getDb, CAMINHOS } from "../db/index.js";
 import { config } from "../config.js";
 import { files, folders, memberships, users, notes, noteAttachments } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel } from "../lib/permissoes.js";
+import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -172,7 +172,9 @@ arquivosRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (
   const ehEspectador = req.membership!.role === "espectador";
   const membershipIds = new Set([req.usuario!.id, req.membership!.id]);
   const regras = await carregarRegras(cid);
-  if (ehEspectador && !regras.config.arquivos?.espectadorVe) { res.status(403).json({ erro: "Espectador sem acesso à biblioteca" }); return; }
+  if (ehEspectador && (!regras.config.arquivos?.espectadorVe || permissoesDe(req.membership).verBiblioteca === false)) {
+    res.status(403).json({ erro: "Espectador sem acesso à biblioteca" }); return;
+  }
   const todos = await db.select().from(files).where(eq(files.campaignId, cid)).orderBy(desc(files.createdAt));
   const visiveis = todos.filter((f) => arquivoVisivel(f, req.usuario!.id, ehMestre, membershipIds));
   const mapa = await mapaUsuarios([...new Set(visiveis.map((f) => f.uploadedBy))]);
@@ -276,7 +278,9 @@ arquivosRouter.get("/:fileId", requirePapel("mestre", "jogador", "espectador"), 
   const ehMestre = req.membership!.role === "mestre";
   if (req.membership!.role === "espectador") {
     const regras = await carregarRegras(cid);
-    if (!regras.config.arquivos?.espectadorVe) { res.status(403).json({ erro: "Sem permissão" }); return; }
+    if (!regras.config.arquivos?.espectadorVe || permissoesDe(req.membership).verBiblioteca === false) {
+      res.status(403).json({ erro: "Sem permissão" }); return;
+    }
   }
   const membershipIds = new Set([req.usuario!.id, req.membership!.id]);
   if (!arquivoVisivel(f, req.usuario!.id, ehMestre, membershipIds)) { res.status(403).json({ erro: "Sem permissão" }); return; }

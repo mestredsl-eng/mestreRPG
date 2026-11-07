@@ -5,7 +5,7 @@ import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
 import { campaigns, memberships, invitations, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel, getMembership, contarMestres, type PapelCampanha } from "../lib/permissoes.js";
+import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
 import { emitirCampanha } from "../lib/io.js";
 
 const db = getDb();
@@ -52,7 +52,7 @@ campanhasRouter.get("/", async (req, res) => {
     .orderBy(desc(campaigns.createdAt));
   const lista = rows
     .filter((r) => r.membership.status !== "removido")
-    .map((r) => ({ ...campanhaPublica(r.campaign), meuPapel: r.membership.role, meuStatus: r.membership.status }));
+    .map((r) => ({ ...campanhaPublica(r.campaign), meuPapel: r.membership.role, meuStatus: r.membership.status, meuPermissions: permissoesDe(r.membership) }));
   res.json({ campanhas: lista });
 });
 
@@ -87,7 +87,7 @@ campanhasRouter.post("/", async (req, res) => {
     updatedAt: agora,
   });
   const [criada] = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
-  res.status(201).json({ campanha: { ...campanhaPublica(criada), meuPapel: "mestre", meuStatus: "ativo" } });
+  res.status(201).json({ campanha: { ...campanhaPublica(criada), meuPapel: "mestre", meuStatus: "ativo", meuPermissions: {} } });
 });
 
 // ---- Rotas com :campaignId ----
@@ -95,7 +95,7 @@ campanhasRouter.post("/", async (req, res) => {
 /** GET /api/campaigns/:campaignId — detalhe (qualquer membro não-removido) */
 campanhasRouter.get("/:campaignId", async (req, res) => {
   const m = await getMembership(req.params.campaignId, req.usuario!.id);
-  if (!m || m.status === "removido") {
+  if (!m || m.status === "removido" || m.status === "bloqueado") {
     res.status(403).json({ erro: "Sem permissão nesta campanha" });
     return;
   }
@@ -104,7 +104,7 @@ campanhasRouter.get("/:campaignId", async (req, res) => {
     res.status(404).json({ erro: "Campanha não encontrada" });
     return;
   }
-  res.json({ campanha: { ...campanhaPublica(c), meuPapel: m.role, meuStatus: m.status } });
+  res.json({ campanha: { ...campanhaPublica(c), meuPapel: m.role, meuStatus: m.status, meuPermissions: permissoesDe(m) } });
 });
 
 /** PATCH /api/campaigns/:campaignId — edição e status (somente mestre) */
@@ -156,6 +156,8 @@ campanhasRouter.get("/:campaignId/members", requirePapel("mestre", "jogador", "e
 const membroSchema = z.object({
   role: z.enum(["mestre", "jogador", "espectador"]).optional(),
   status: z.enum(["pendente", "ativo", "bloqueado", "removido"]).optional(),
+  // permissões individuais (Etapa 13): enviarMensagens, verBiblioteca, verHistorico
+  permissions: permissoesMembroSchema.optional(),
 });
 
 /** PATCH /api/campaigns/:campaignId/members/:membershipId — papel/status (mestre) */
@@ -194,11 +196,18 @@ campanhasRouter.patch(
       return;
     }
 
+    // mescla permissões: chaves ausentes preservam o valor atual
+    const permissoesAtuais = permissoesDe(alvo);
+    const permissoesNovas = body.data.permissions
+      ? { ...permissoesAtuais, ...Object.fromEntries(Object.entries(body.data.permissions).filter(([, v]) => v !== undefined)) }
+      : permissoesAtuais;
+
     await db
       .update(memberships)
       .set({
         role: novoPapel,
         status: novoStatus,
+        permissions: permissoesNovas,
         updatedAt: new Date(),
         ...(novoStatus === "ativo" && !alvo.joinedAt ? { joinedAt: new Date() } : {}),
       })

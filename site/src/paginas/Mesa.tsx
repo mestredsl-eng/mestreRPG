@@ -85,6 +85,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const [membros, setMembros] = useState<Membro[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [papel, setPapel] = useState<string>(souMestre ? "mestre" : "jogador");
+  const [podeEnviar, setPodeEnviar] = useState(true);
   const [meuUserId, setMeuUserId] = useState<string>("");
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
@@ -170,9 +171,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
 
-    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; turnos?: TurnosState; presenca?: string[] }) => {
+    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[] }) => {
       if (r?.ok) {
         if (r.papel) setPapel(r.papel);
+        if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
         if (r.turnos) setTurnos(r.turnos);
         if (r.presenca) setOnline(r.presenca);
       } else {
@@ -288,7 +290,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             ))}
             {mensagens.length === 0 && <p className="meta">Sem mensagens ainda.</p>}
           </div>
-          {sessaoAtual.status !== "encerrada" && papel !== "espectador" && (
+          {sessaoAtual.status !== "encerrada" && (papel !== "espectador" || podeEnviar) && (
             <form className="chat-form" onSubmit={enviar}>
               <div className="linha">
                 <label className="check"><input type="checkbox" checked={comoAcao} onChange={(e) => setComoAcao(e.target.checked)} /> Ação</label>
@@ -309,7 +311,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               </div>
             </form>
           )}
-          {papel === "espectador" && <p className="meta">Modo espectador — apenas leitura.</p>}
+          {papel === "espectador" && <p className="meta">{podeEnviar ? "Modo espectador — pode comentar no chat." : "Modo espectador — apenas leitura."}</p>}
         </section>
 
         {/* coluna direita: painéis */}

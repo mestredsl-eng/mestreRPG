@@ -88,7 +88,7 @@ export const api = {
     requisicao<{ campanha: Campanha }>(`/campaigns/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
   listarMembros: (id: string) =>
     requisicao<{ membros: Membro[] }>(`/campaigns/${id}/members`),
-  atualizarMembro: (campaignId: string, membershipId: string, dados: { role?: string; status?: string }) =>
+  atualizarMembro: (campaignId: string, membershipId: string, dados: { role?: string; status?: string; permissions?: PermissoesMembro }) =>
     requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/members/${membershipId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   removerMembro: (campaignId: string, membershipId: string) =>
     requisicao<{ ok: boolean }>(`/campaigns/${campaignId}/members/${membershipId}`, { method: "DELETE" }),
@@ -744,9 +744,16 @@ export interface Campanha {
   updatedAt: string;
 }
 
+export interface PermissoesMembro {
+  enviarMensagens?: boolean;
+  verBiblioteca?: boolean;
+  verHistorico?: boolean;
+}
+
 export interface CampanhaResumo extends Campanha {
   meuPapel: string;
   meuStatus: string;
+  meuPermissions?: PermissoesMembro;
 }
 
 export interface Membro {

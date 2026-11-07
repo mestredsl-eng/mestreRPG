@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { sessions, turns, chatMessages, tests, memberships, users, characters, rolls, auditLogs } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel } from "../lib/permissoes.js";
+import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 
@@ -147,6 +147,10 @@ sessoesRouter.get("/:sessionId/testes", requirePapel("mestre", "jogador", "espec
 
 /** GET /api/campaigns/:campaignId/sessoes/:sessionId/historico — histórico consolidado (Etapa 8) */
 sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
+  // espectador sem permissão individual de histórico (Etapa 13)
+  if (req.membership!.role === "espectador" && permissoesDe(req.membership).verHistorico === false) {
+    res.status(403).json({ erro: "Sem permissão para consultar o histórico" }); return;
+  }
   const s = await sessaoDaCampanha(req.params.sessionId, req.params.campaignId);
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
   const ehMestre = req.membership!.role === "mestre";

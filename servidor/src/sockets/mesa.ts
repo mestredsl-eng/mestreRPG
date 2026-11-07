@@ -7,6 +7,7 @@ import {
 } from "../db/schema.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
+import { permissoesDe } from "../lib/permissoes.js";
 
 const db = getDb();
 
@@ -161,8 +162,9 @@ function socket_handlers(
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       socket.join(`sessao:${sessionId}`);
       const [t] = await db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1);
+      const podeEnviar = ctx.papel !== "espectador" || permissoesDe(ctx.membership).enviarMensagens === true;
       cb?.({
-        ok: true, papel: ctx.papel,
+        ok: true, papel: ctx.papel, podeEnviar,
         sessao: ctx.sessao,
         turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
         presenca: presentes(sessionId),
@@ -192,10 +194,17 @@ function socket_handlers(
       if (!u || !payload?.sessionId || !payload.content?.trim()) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
-      if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectadores não podem enviar mensagens" }); return; }
+      // espectador só envia mensagem se o mestre concedeu a permissão individual
+      if (ctx.papel === "espectador" && permissoesDe(ctx.membership).enviarMensagens !== true) {
+        cb?.({ ok: false, erro: "Espectadores não podem enviar mensagens" }); return;
+      }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
 
       const vis = payload.visibilidade ?? "publica";
+      // espectador só participa do chat público — nunca envia privada/secreta
+      if (ctx.papel === "espectador" && vis !== "publica") {
+        cb?.({ ok: false, erro: "Espectadores só podem enviar mensagens públicas" }); return;
+      }
       let visibility = "publica";
       let recipients: string[] | undefined;
       if (vis === "secreta") {

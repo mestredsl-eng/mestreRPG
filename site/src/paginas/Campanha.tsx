@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type CampanhaResumo, type Convite, type Membro } from "../api";
+import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
 import ModelosFicha from "./ModelosFicha";
@@ -89,7 +89,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     }
   };
 
-  const mudarMembro = async (m: Membro, dados: { role?: string; status?: string }) => {
+  const mudarMembro = async (m: Membro, dados: { role?: string; status?: string; permissions?: PermissoesMembro }) => {
     try {
       await api.atualizarMembro(id, m.membershipId, dados);
       await carregar();
@@ -235,7 +235,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
           )}
           <table className="tabela">
             <thead>
-              <tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Status</th><th>Entrada</th><th>Ações</th></tr>
+              <tr><th>Nome</th><th>Usuário</th><th>Papel</th><th>Status</th><th>Entrada</th><th>Permissões</th><th>Ações</th></tr>
             </thead>
             <tbody>
               {membros.filter((m) => m.status !== "removido").map((m) => (
@@ -261,6 +261,31 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                     </select>
                   </td>
                   <td>{m.joinedAt ? new Date(m.joinedAt).toLocaleDateString("pt-BR") : "—"}</td>
+                  <td>
+                    {m.role === "espectador" && m.status === "ativo" ? (
+                      <div className="permissoes-membro">
+                        {([
+                          ["enviarMensagens", "chat"],
+                          ["verBiblioteca", "arquivos"],
+                          ["verHistorico", "histórico"],
+                        ] as [keyof PermissoesMembro, string][]).map(([key, rotulo]) => {
+                          const perms = (m.permissions ?? {}) as PermissoesMembro;
+                          const padrao = key === "enviarMensagens" ? false : true;
+                          const ativo = perms[key] ?? padrao;
+                          return (
+                            <label key={key} className="check" title={`Permitir ${rotulo}`}>
+                              <input
+                                type="checkbox"
+                                checked={!!ativo}
+                                onChange={(e) => void mudarMembro(m, { permissions: { [key]: e.target.checked } })}
+                              />
+                              {rotulo}
+                            </label>
+                          );
+                        })}
+                      </div>
+                    ) : "—"}
+                  </td>
                   <td className="acoes">
                     {m.role === "mestre" && m.status === "ativo" && !m.ehEu && (
                       <button className="mini" onClick={() => void transferir(m)}>Transferir</button>
