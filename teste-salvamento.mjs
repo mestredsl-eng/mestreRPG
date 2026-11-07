@@ -1,5 +1,8 @@
 // Testes de integração — Etapa 12: salvamento automático, pontos de recuperação, export/import, estados
 import Database from "better-sqlite3";
+import { io as ioClient } from "socket.io-client";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { hashToken } from "./servidor/dist/lib/password.js";
 
 const BASE = "http://localhost:3001";
@@ -31,6 +34,12 @@ async function req(metodo, path, { cookie = ADMIN.cookie, body, cid = CID, raw }
 const cReq = (m, p, o = {}) => req(m, `/campaigns/${o.cid ?? CID}${p}`, o);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function conectar(cookie) {
+  return ioClient(BASE, { path: "/socket.io", transports: ["polling", "websocket"], extraHeaders: { cookie }, reconnection: false });
+}
+function emitirCb(socket, evento, payload) {
+  return new Promise((resolve) => socket.emit(evento, payload, resolve));
+}
 let pass = 0, fail = 0;
 const res = [];
 const t = (n, c, extra = "") => { if (c) { pass++; res.push("ok " + n); } else { fail++; res.push("FALHOU " + n + " " + extra); } };
@@ -151,6 +160,66 @@ try {
   t("23 isolamento: CID2 sem snapshots do teste", true, `snaps CID2=${snapsC2}`);
   r = await cReq("GET", "/snapshots", { cid: CID2 });
   t("23b snapshots isolados por campanha", r.status === 200 && !(r.json?.snapshots ?? []).some((s) => s.description?.includes("E12")));
+
+  // ============ 24-26: cobertura do autosave (auditoria) ============
+  // mutações que antes NÃO emitiam evento → agora devem agendar autosave
+  const autoAntes = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
+  await cReq("PUT", "/regras/config", { body: {} });                       // regras: config
+  await cReq("POST", "/invitations", { body: { role: "jogador", requiresApproval: true } }); // convite
+  // mensagem de chat via socket (mesa)
+  let sessaoAtiva = db.prepare("select id from sessions where campaign_id=? and status='ativa' order by number desc limit 1").get(CID);
+  if (!sessaoAtiva) {
+    const sr = await cReq("POST", "/sessoes", { body: { name: `Autosave E12 ${RUN}` } });
+    sessaoAtiva = sr.json?.sessao ? { id: sr.json.sessao.id } : null;
+  }
+  let chatOk = false;
+  if (sessaoAtiva) {
+    const sock = conectar(ADMIN.cookie);
+    await emitirCb(sock, "mesa:entrar", { sessionId: sessaoAtiva.id });
+    const resp = await emitirCb(sock, "mesa:mensagem", { sessionId: sessaoAtiva.id, content: `autosave-chat-${RUN}`, clientId: crypto.randomUUID() });
+    chatOk = !!resp;
+    sock.close();
+  }
+  t("24 mutações de cobertura executadas", chatOk !== undefined);
+  await sleep(18000);
+  const autoDepois = db.prepare("select count(*) c from snapshots where campaign_id=? and kind='automatico'").get(CID).c;
+  t("25 autosave cobre regras/convite/chat", autoDepois > autoAntes, `${autoAntes}→${autoDepois}`);
+
+  // ============ 27-31: falha de importação após gravar arquivos físicos ============
+  // pacote "cópia": novo campaignId + campaignId remapeado em todas as coleções
+  const NOVO_CID = crypto.randomUUID();
+  const pacoteCopia = JSON.parse(JSON.stringify(pacote));
+  pacoteCopia.campanhaId = NOVO_CID;
+  const colecoes = ["memberships","invitations","sheetTemplates","characters","ruleSets","itemTemplates","vehicles","financialAccounts","moneyTransactions","sessions","chatMessages","rolls","tests","notes","files","folders"];
+  for (const k of colecoes) for (const row of pacoteCopia.estado[k] ?? []) row.campaignId = NOVO_CID;
+
+  // arquivo preexistente no diretório da "nova" campanha — não pode ser tocado
+  const dirNovo = resolve("arquivos", NOVO_CID);
+  mkdirSync(dirNovo, { recursive: true });
+  writeFileSync(resolve(dirNovo, "sentinela-preexistente.txt"), "NAO APAGAR");
+
+  // adultera FK no fim da ordem de inserção (files.uploadedBy) → tx falha após gravar binários
+  const arquivosMeta = pacoteCopia.estado.files ?? [];
+  t("26 pacote cópia tem arquivos", arquivosMeta.length > 0);
+  if (arquivosMeta.length) arquivosMeta[0].uploadedBy = "usuario-fantasma-inexistente";
+
+  const snapsAntesFalha = db.prepare("select count(*) c from snapshots where campaign_id=?").get(NOVO_CID).c;
+  r = await req("POST", "/campaigns/importar", { body: { pacote: pacoteCopia, modo: "nova" } });
+  t("27 import falha com integridade", r.status === 422, `status=${r.status} ${JSON.stringify(r.json).slice(0,120)}`);
+
+  const campanhaRolled = db.prepare("select count(*) c from campaigns where id=?").get(NOVO_CID).c;
+  t("28 campanha não criada (rollback SQLite)", campanhaRolled === 0);
+  const sentinela = resolve(dirNovo, "sentinela-preexistente.txt");
+  t("29 arquivo preexistente preservado", existsSync(sentinela) && readFileSync(sentinela, "utf8") === "NAO APAGAR");
+  // arquivos gravados pela tentativa devem ter sido removidos (exceto a sentinela)
+  const restantes = readdirSync(dirNovo).filter((f) => f !== "sentinela-preexistente.txt" && f !== ".lixeira");
+  t("30 arquivos da tentativa removidos", restantes.length === 0, `restantes: ${restantes.join(",")}`);
+  const msgsNovas = db.prepare("select count(*) c from chat_messages where campaign_id=?").get(NOVO_CID).c;
+  t("31 nenhuma entidade parcial persistida", msgsNovas === 0);
+
+  // pacote de outra campanha não pode substituir (coerência)
+  r = await req("POST", "/campaigns/importar", { body: { pacote, modo: "substituir", campaignId: CID2, confirmacao: "SUBSTITUIR" } });
+  t("32 pacote de campanha diversa rejeitado no substituir", r.status === 400 || r.status === 403, `status=${r.status}`);
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
 }

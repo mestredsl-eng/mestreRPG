@@ -110,6 +110,7 @@ modelosRouter.post("/", requirePapel("mestre"), async (req, res) => {
   });
   await db.update(sheetTemplates).set({ currentVersionId: versionId }).where(eq(sheetTemplates.id, templateId));
   await audit(req, "ficha.modelo_criado", { templateId, campaignId: campaignIdDe(req) });
+  emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId });
   res.status(201).json({ modelo: { id: templateId, versionId } });
 });
 
@@ -150,6 +151,7 @@ modelosRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) => 
       .where(and(eq(sheetTemplates.campaignId, campaignIdDe(req)), eq(sheetTemplates.isDefault, true)));
   }
   await db.update(sheetTemplates).set(dados).where(eq(sheetTemplates.id, t.id));
+  emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: t.id });
   const [atualizado] = await db.select().from(sheetTemplates).where(eq(sheetTemplates.id, t.id)).limit(1);
   res.json({ modelo: templatePublico(atualizado) });
 });
@@ -193,6 +195,7 @@ modelosRouter.post("/:templateId/duplicate", requirePapel("mestre"), async (req,
     createdAt: agora,
   });
   await db.update(sheetTemplates).set({ currentVersionId: novaVersaoId }).where(eq(sheetTemplates.id, novoId));
+  emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: novoId });
   res.status(201).json({ modelo: { id: novoId, versionId: novaVersaoId } });
 });
 
@@ -257,6 +260,9 @@ modelosRouter.put(
       return;
     }
     await db.update(sheetVersions).set({ structure: parse.data }).where(eq(sheetVersions.id, v.id));
+    const [tpl] = await db.select({ campaignId: sheetTemplates.campaignId }).from(sheetTemplates)
+      .where(eq(sheetTemplates.id, req.params.templateId)).limit(1);
+    if (tpl?.campaignId) emitirCampanha(tpl.campaignId, "fichas:atualizadas", { templateId: req.params.templateId });
     res.json({ ok: true });
   }
 );
@@ -292,6 +298,7 @@ modelosRouter.post("/:templateId/versions", requirePapel("mestre"), async (req, 
     createdAt: agora,
   });
   await db.update(sheetTemplates).set({ currentVersionId: versionId, updatedAt: agora }).where(eq(sheetTemplates.id, t.id));
+  emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: t.id });
   res.status(201).json({ versionId });
 });
 

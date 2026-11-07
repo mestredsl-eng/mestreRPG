@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -11,7 +11,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
-import { exportarCampanha, exportarPacote, type PacoteExportacao } from "../lib/estado.js";
+import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 
 const db = getDb();
@@ -42,6 +42,18 @@ function pacoteValido(p: unknown): p is PacoteExportacao {
     && typeof pacote.arquivos === "object" && pacote.arquivos !== null;
 }
 
+/** Garante que todas as entidades do pacote pertencem ao campaignId declarado (anti-adulteração). */
+function coerenteComCampanha(estado: EstadoCampanha, cid: string): boolean {
+  const colecoes = [
+    estado.memberships, estado.invitations, estado.sheetTemplates, estado.characters,
+    estado.ruleSets, estado.itemTemplates, estado.vehicles, estado.financialAccounts,
+    estado.moneyTransactions, estado.sessions, estado.chatMessages, estado.rolls,
+    estado.tests, estado.notes, estado.files, estado.folders,
+  ];
+  return colecoes.every((rows) =>
+    (rows ?? []).every((r) => (r as { campaignId?: string }).campaignId === cid));
+}
+
 /** POST /api/campaigns/importar — importa pacote exportado (Etapa 12) */
 campanhaIORouter.post("/importar", async (req, res) => {
   const body = importarSchema.safeParse(req.body ?? {});
@@ -60,6 +72,9 @@ campanhaIORouter.post("/importar", async (req, res) => {
     const [m] = await db.select().from(memberships)
       .where(and(eq(memberships.campaignId, cid), eq(memberships.userId, req.usuario!.id), eq(memberships.role, "mestre"), eq(memberships.status, "ativo"))).limit(1);
     if (!m) { res.status(403).json({ erro: "Somente o mestre da campanha pode substituí-la" }); return; }
+    if (pacote.campanhaId !== cid || !coerenteComCampanha(estado, cid)) {
+      res.status(400).json({ erro: "O pacote não pertence a esta campanha" }); return;
+    }
 
     // segurança: snapshot do estado atual antes de sobrescrever
     const preSnapId = crypto.randomUUID();
@@ -84,6 +99,9 @@ campanhaIORouter.post("/importar", async (req, res) => {
   // ---- modo nova: cria campanha a partir do pacote ----
   const cid = pacote.campanhaId ?? crypto.randomUUID();
   if (typeof cid !== "string" || !/^[\w-]{8,64}$/.test(cid)) { res.status(400).json({ erro: "Identificador de campanha inválido no pacote" }); return; }
+  if (!coerenteComCampanha(estado, cid)) {
+    res.status(400).json({ erro: "Pacote inconsistente: entidades de outra campanha" }); return;
+  }
   const [existente] = await db.select({ id: campaigns.id }).from(campaigns).where(eq(campaigns.id, cid)).limit(1);
   if (existente) {
     res.status(409).json({ erro: "Já existe uma campanha com este identificador", sugestao: "Use modo 'substituir' (somente o mestre da campanha) ou edite o pacote." });
@@ -100,6 +118,22 @@ campanhaIORouter.post("/importar", async (req, res) => {
       res.status(422).json({ erro: "O pacote referencia usuários que não existem nesta instalação", usuariosAusentes: faltando.length });
       return;
     }
+  }
+
+  // grava binários ANTES da transação: se o SQLite falhar, removemos apenas o
+  // que esta operação criou (arquivos preexistentes nunca são tocados)
+  const baseDir = resolve(CAMINHOS.arquivos, cid);
+  const gravados = new Set<string>();
+  for (const [fileId, arq] of Object.entries(pacote.arquivos ?? {})) {
+    const meta = (estado.files as { id: string; storageName: string | null }[]).find((f) => f.id === fileId);
+    if (!meta?.storageName || !arq?.conteudo) continue;
+    const destino = resolve(baseDir, meta.storageName);
+    if (!destino.startsWith(baseDir + sep) || gravados.has(destino)) continue;
+    try {
+      mkdirSync(baseDir, { recursive: true });
+      writeFileSync(destino, Buffer.from(arq.conteudo, "base64"));
+      gravados.add(destino);
+    } catch { /* best-effort: arquivo fica ausente, metadados ainda importam */ }
   }
 
   const precisaMembroExtra = !(estado.memberships as { userId: string }[]).some((m) => m.userId === req.usuario!.id);
@@ -121,21 +155,13 @@ campanhaIORouter.post("/importar", async (req, res) => {
       }
     });
   } catch (e) {
+    // rollback dos artefatos físicos criados por esta operação
+    for (const p of gravados) { try { rmSync(p); } catch { /* ignora */ } }
+    try { rmdirSync(baseDir); } catch { /* diretório pode ter conteúdo preexistente */ }
     res.status(422).json({ erro: "Falha de integridade ao importar pacote", detalhe: String(e) });
     return;
   }
 
-  // grava binários dos arquivos
-  const baseDir = resolve(CAMINHOS.arquivos, cid);
-  let arquivosGravados = 0;
-  for (const [fileId, arq] of Object.entries(pacote.arquivos ?? {})) {
-    const meta = (estado.files as { id: string; storageName: string | null }[]).find((f) => f.id === fileId);
-    if (!meta?.storageName || !arq?.conteudo) continue;
-    const destino = resolve(baseDir, meta.storageName);
-    if (!destino.startsWith(baseDir + sep)) continue;
-    try { mkdirSync(baseDir, { recursive: true }); writeFileSync(destino, Buffer.from(arq.conteudo, "base64")); arquivosGravados++; } catch { /* best-effort */ }
-  }
-
-  await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados });
-  res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados });
+  await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados: gravados.size });
+  res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados: gravados.size });
 });

@@ -207,6 +207,7 @@ regrasRouter.post("/duplicar/:elementId", requirePapel("mestre"), async (req, re
     createdAt: agora,
     updatedAt: agora,
   });
+  emitirCampanha(req.params.campaignId, "regras:atualizadas", { elementId: id });
   res.status(201).json({ id });
 });
 
@@ -226,6 +227,7 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   const novo = configRegrasSchema.parse({ ...configAtual, ...body.data, pontos: { ...((configAtual.pontos as object) ?? {}), ...((body.data.pontos as object) ?? {}) } });
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));
   await audit(req, "regras.config.atualizada", {});
+  emitirCampanha(req.params.campaignId, "regras:atualizadas", {});
   res.json({ ok: true, config: novo });
 });
 

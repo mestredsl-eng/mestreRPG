@@ -6,6 +6,7 @@ import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users,
 } from "../db/schema.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
+import { agendarAutosave } from "../lib/autosave.js";
 
 const db = getDb();
 
@@ -97,6 +98,8 @@ async function registrarChat(
   }
   const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
   await emitirMensagem(io, msg);
+  // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
+  agendarAutosave(opts.campaignId);
   return msg;
 }
 
@@ -573,6 +576,7 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
       await db.update(sessions).set({ timerState: novo as never, updatedAt: new Date() }).where(eq(sessions.id, s.id));
+      agendarAutosave(s.campaignId);
       const estadoTimer = { sessionId: s.id, ...novo, servidorAgora: agora };
       io.to(`sessao:${s.id}`).emit("mesa:timer", estadoTimer);
       cb?.({ ok: true, timer: estadoTimer });
@@ -591,6 +595,7 @@ function socket_handlers(
         if (!endsAt) {
           const parado = { status: "parado", remainingMs: 0, totalMs: ts.totalMs ?? 0 };
           await db.update(sessions).set({ timerState: parado as never }).where(eq(sessions.id, s.id));
+          agendarAutosave(s.campaignId);
           io.to(`sessao:${s.id}`).emit("mesa:timer", { sessionId: s.id, ...parado, servidorAgora: Date.now() });
           continue;
         }
@@ -598,6 +603,7 @@ function socket_handlers(
         if (rest <= 0) {
           const parado = { status: "parado", remainingMs: 0, totalMs: ts.totalMs ?? 0 };
           await db.update(sessions).set({ timerState: parado as never }).where(eq(sessions.id, s.id));
+          agendarAutosave(s.campaignId);
           io.to(`sessao:${s.id}`).emit("mesa:timer", { sessionId: s.id, ...parado, servidorAgora: Date.now() });
         } else {
           io.to(`sessao:${s.id}`).emit("mesa:timer", {

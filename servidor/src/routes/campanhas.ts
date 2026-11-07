@@ -264,6 +264,7 @@ campanhasRouter.post(
       .update(campaigns)
       .set({ ownerId: alvo.userId, updatedAt: new Date() })
       .where(eq(campaigns.id, req.params.campaignId));
+    emitirCampanha(req.params.campaignId, "campanha:atualizada", {});
     res.json({ ok: true });
   }
 );
@@ -336,6 +337,7 @@ campanhasRouter.post(
       updatedAt: agora,
     });
     // O código em claro só é retornado aqui, uma única vez.
+    emitirCampanha(req.params.campaignId, "convites:atualizados", {});
     res.status(201).json({ convite: { id, code: codigo } });
   }
 );
@@ -376,6 +378,7 @@ campanhasRouter.patch(
       return;
     }
     await db.update(invitations).set({ revokedAt: new Date(), updatedAt: new Date() }).where(eq(invitations.id, inv.id));
+    emitirCampanha(req.params.campaignId, "convites:atualizados", {});
     res.json({ ok: true });
   }
 );
