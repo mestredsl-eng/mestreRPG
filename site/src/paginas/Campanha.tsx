@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
+import ModelosFicha from "./ModelosFicha";
+import Personagens from "./Personagens";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -12,7 +14,7 @@ const STATUS_OPCOES = [
 ] as const;
 
 const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
-type Aba = "info" | "participantes" | "convites";
+type Aba = "info" | "personagens" | "fichas" | "participantes" | "convites";
 
 export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
   const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
@@ -148,16 +150,21 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </div>
         {campanha.description && <p>{campanha.description}</p>}
 
-        {souMestre && (
-          <div className="abas">
-            {(["info", "participantes", "convites"] as Aba[]).map((a) => (
-              <button key={a} className={aba === a ? "ativo" : "secundario"} onClick={() => setAba(a)}>
-                {a === "info" ? "Informações" : a === "participantes" ? `Participantes (${membros.length})` : `Convites (${convites.length})`}
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="abas">
+          <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}>Informações</button>
+          <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>
+          {souMestre && (
+            <>
+              <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}>Fichas</button>
+              <button className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}>Participantes ({membros.length})</button>
+              <button className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}>Convites ({convites.length})</button>
+            </>
+          )}
+        </div>
       </section>
+
+      {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
+      {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
 
       {erro && <p className="erro">{erro}</p>}
 

@@ -307,6 +307,154 @@ textarea {
   letter-spacing: 0.05em;
 }
 
+/* ---- Etapa 4: editor de fichas e personagens ---- */
+
+.cartao-item {
+  padding: 0.75rem 1rem;
+  margin-top: 0.5rem;
+  cursor: pointer;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  background: #1a1d22;
+}
+
+.cartao-item.selecionado {
+  border-color: #3b5bdb;
+}
+
+.clicavel {
+  cursor: pointer;
+}
+
+.clicavel:hover {
+  background: #23262d;
+}
+
+.ficha-secao {
+  border-top: 1px solid #2c3038;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.ficha-secao h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.ficha-subsecao {
+  margin-left: 1rem;
+  border-left: 2px solid #2c3038;
+  padding-left: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.ficha-subsecao h4 {
+  margin: 0.5rem 0;
+  font-size: 0.95rem;
+  color: #c9cdd3;
+}
+
+.campo {
+  margin-bottom: 0.75rem;
+}
+
+.campo-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+  color: #c9cdd3;
+  margin-bottom: 0.3rem;
+}
+
+.campo-label small {
+  font-weight: 400;
+}
+
+.obrigatorio {
+  color: #f87171;
+  font-style: normal;
+}
+
+.campo input,
+.campo select,
+.campo textarea {
+  width: 100%;
+}
+
+.campo .calculado {
+  display: inline-block;
+  background: #2c3038;
+  padding: 0.4rem 0.8rem;
+  border-radius: 6px;
+  font-weight: 600;
+  color: #8ab4ff;
+}
+
+.valor-leitura {
+  background: #14161a;
+  border: 1px solid #2c3038;
+  border-radius: 6px;
+  padding: 0.45rem 0.7rem;
+  min-height: 1.2em;
+}
+
+.checkbox-inline {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.checkbox-inline input {
+  width: auto;
+}
+
+.opcoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+}
+
+.tabela-campos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.linha-tabela {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.linha-tabela input {
+  flex: 1;
+}
+
+.campo-editor-linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid #23262d;
+}
+
+.campo-editor-nome {
+  font-size: 0.9rem;
+}
+
+.subsecao-editor {
+  background: #191c21;
+}
+
+.span-2 {
+  grid-column: span 2;
+}
+
+select option {
+  background: #1e2126;
+}
+
 @media (max-width: 640px) {
   .grade-2 {
     grid-template-columns: 1fr;

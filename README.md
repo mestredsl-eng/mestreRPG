@@ -37,4 +37,6 @@ configuracao/  Configurações do servidor (servidor.json)
 
 - **Etapa 3 — Campanhas, participantes e convites:** criação/edição de campanhas com sistema de RPG livre, papéis por campanha (mestre/jogador/espectador), gestão de participantes com aprovação e bloqueio, convites por código/link com hash, limite de usos e expiração, sincronização via Socket.IO por sala de campanha.
 
-Próximas etapas: editor de fichas, regras personalizáveis, personagens, mesa virtual, dados e testes.
+- **Etapa 4 — Editor de fichas e personagens:** modelos de ficha por campanha com versões publicáveis, editor visual de seções/campos (13 tipos, incluindo calculados com fórmulas), visibilidade e permissão de edição por campo validadas no servidor, personagens com aprovação e fichas renderizadas dinamicamente.
+
+Próximas etapas: regras personalizadas (atributos/talentos/pontos), inventário e economia, mesa virtual, dados e testes.

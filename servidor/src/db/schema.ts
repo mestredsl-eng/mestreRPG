@@ -91,13 +91,17 @@ export const invitations = sqliteTable("invitations", {
 // `structure` = JSON com seções, subseções e definições de campos (tipos da §6.2)
 export const sheetTemplates = sqliteTable("sheet_templates", {
   id: id(),
+  // null = modelo global da conta; preenchido = modelo da campanha (spec §3)
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
   ownerId: text("owner_id").notNull().references(() => users.id),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false), // modelo para novos personagens
   currentVersionId: text("current_version_id"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-});
+}, (t) => [index("sheet_templates_campaign_idx").on(t.campaignId)]);
 
 export const sheetVersions = sqliteTable("sheet_versions", {
   id: id(),
@@ -117,6 +121,8 @@ export const characters = sqliteTable("characters", {
   name: text("name").notNull(),
   // Valores dos campos em JSON; chaves = ids dos campos do template
   data: text("data", { mode: "json" }).notNull().default({}),
+  // Ajustes por personagem definidos pelo mestre: visibilidade/edição por campo (spec §8)
+  overrides: text("overrides", { mode: "json" }).notNull().default({}),
   status: text("status").notNull().default("rascunho"), // rascunho|aguardando_aprovacao|devolvida|aprovada|bloqueada (spec §6.7)
   createdAt: createdAt(),
   updatedAt: updatedAt(),
