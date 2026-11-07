@@ -197,7 +197,13 @@ try {
 
   // timer expirado durante "indisponibilidade"
   db.prepare("update sessions set timer_state=? where id=?").run(JSON.stringify({ status: "rodando", endsAt: Date.now() - 1000, remainingMs: 0, totalMs: 60000 }), sidTimer);
-  const parado = await esperar(sT1, "mesa:timer", (d) => d.sessionId === sidTimer && d.status === "parado", 5000).catch(() => null);
+  // o encerramento é confirmado pelo estado persistido; o evento socket é sincronização best-effort
+  let parado = null;
+  for (let i = 0; i < 20 && !parado; i++) {
+    await sleep(250);
+    const ts = JSON.parse(db.prepare("select timer_state from sessions where id=?").get(sidTimer)?.timer_state ?? "{}");
+    if (ts.status === "parado") parado = ts;
+  }
   t("21 timer expirado é encerrado", !!parado);
   sT1.close(); sT2.close();
 

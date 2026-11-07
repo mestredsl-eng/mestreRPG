@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type UsuarioAdmin } from "../api";
+import Servidor from "./Servidor";
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
@@ -141,6 +142,7 @@ export default function Admin() {
           aoCancelar={() => setEditando(null)}
         />
       )}
+      <Servidor />
     </section>
   );
 }

@@ -432,6 +432,13 @@ export const snapshots = sqliteTable("snapshots", {
   createdAt: createdAt(),
 }, (t) => [index("snapshots_campaign_idx").on(t.campaignId, t.createdAt)]);
 
+// Configurações globais do servidor (Etapa 10) — chave/valor JSON
+export const serverSettings = sqliteTable("server_settings", {
+  key: text("key").primaryKey(),
+  value: text("value", { mode: "json" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+});
+
 // Trilha de auditoria administrativa (spec §24)
 export const auditLogs = sqliteTable("audit_logs", {
   id: id(),

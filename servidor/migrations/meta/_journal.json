@@ -64,6 +64,13 @@
       "when": 1794042969618,
       "tag": "0008_cloudy_the_fury",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1794043462816,
+      "tag": "0009_light_serpent_society",
+      "breakpoints": true
     }
   ]
 }

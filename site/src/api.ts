@@ -281,6 +281,20 @@ export const api = {
     requisicao<{ ok: boolean }>(`/campaigns/${cid}/arquivos/${fid}`, { method: "DELETE" }),
   urlArquivo: (cid: string, fid: string, download = false) =>
     `${API_BASE}/campaigns/${cid}/arquivos/${fid}${download ? "?download=1" : ""}`,
+
+  // ---- Etapa 10: administração do servidor ----
+  statusServidor: () => requisicao<StatusServidor>("/admin/servidor/status"),
+  configServidor: () => requisicao<ConfigServidor>("/admin/servidor/config"),
+  salvarConfigServidor: (dados: Partial<ConfigServidor>) =>
+    requisicao<{ ok: boolean }>("/admin/servidor/config", { method: "PUT", body: JSON.stringify(dados) }),
+  logsServidor: (limite = 200) => requisicao<{ logs: LogServidor[] }>(`/admin/servidor/logs?limite=${limite}`),
+  listarBackupsServidor: () => requisicao<{ backups: BackupServidor[] }>("/admin/servidor/backups"),
+  criarBackupServidor: (nota?: string) =>
+    requisicao<{ id: string; sucesso: boolean; erros: string[] }>("/admin/servidor/backups", { method: "POST", body: JSON.stringify({ nota }) }),
+  verificarBackupServidor: (id: string) =>
+    requisicao<{ ok: boolean; detalhes: string[] }>(`/admin/servidor/backups/${id}/verificar`, { method: "POST", body: "{}" }),
+  restaurarBackupServidor: (id: string, modo: "preparar" | "agora" = "preparar") =>
+    requisicao<{ ok: boolean; seguranca?: string; mensagem?: string; proximoPasso?: string }>(`/admin/servidor/backups/${id}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR", modo }) }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -817,3 +831,22 @@ export interface ArquivoBiblioteca {
   createdAt: string;
   updatedAt: string | null;
 }
+
+// ---- Tipos da Etapa 10: administração do servidor ----
+export interface StatusServidor {
+  servidor: { status: string; uptimeSegundos: number; versao: string; node: string; plataforma: string };
+  banco: { acessivel: boolean };
+  arquivos: { diretorioOk: boolean; tamanhoBytes: number };
+  disco: { livreBytes: number; totalBytes: number };
+  contagens: { campanhas: number; usuarios: number; sessoesMesa: number; sessoesLoginAtivas: number };
+  backup: { id: string; criadoEm: string; tamanhoBytes: number | null; sucesso: boolean | undefined } | null;
+  alertas: string[];
+}
+export interface ConfigServidor {
+  nomeInstalacao: string;
+  backup: { agenda: string; hora: string; retencaoDiarios: number; retencaoSemanais: number; pasta: string };
+  acesso: { dominioPublico: string; proxyHops: number; https: boolean };
+  arquivos: { tamanhoMaxMb: number };
+}
+export interface LogServidor { ts: string; nivel: string; msg: string; detalhe?: unknown }
+export interface BackupServidor { id: string; kind: string; filePath: string; sizeBytes: number | null; note: string | null; createdAt: string; sucesso?: boolean }

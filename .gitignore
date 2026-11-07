@@ -21,3 +21,5 @@ configuracao/local.json
 # Logs
 *.log
 npm-debug.log*
+
+logs/
