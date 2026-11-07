@@ -57,7 +57,9 @@ O script instala dependências se preciso, roda as migrações, verifica se a po
 parar-mestre-rpg.bat
 ```
 
-Ou feche a janela do servidor / envie `Ctrl+C`. O encerramento é controlado: o servidor para de aceitar novas conexões, fecha o Socket.IO, encerra o agendador de backups e finaliza o banco com segurança.
+Ou feche a janela do servidor / envie `Ctrl+C` / use o botão **Encerrar servidor** no painel Admin → Servidor.
+
+O encerramento é controlado e não depende só de sinais de console: o script chama `POST /api/local/desligar` (somente conexões do próprio computador + segredo em `configuracao/local.json`, que não é versionado), o servidor para de aceitar novas conexões, fecha o Socket.IO, limpa o agendador de backups, drena operações em andamento e fecha o banco SQLite. O `.bat` aguarda a confirmação via `/api/health` por ~20 s e, só se o servidor não cair, exibe aviso claro antes de recorrer ao encerramento forçado. Também é possível encerrar pelo painel admin (`POST /api/admin/servidor/desligar`, requer admin global).
 
 ### Onde ficam os dados
 
@@ -81,6 +83,8 @@ Configuração pelo painel **Administração → Servidor → Backups** (salva n
 - `backup.pasta`: pasta de destino (padrão `backups/`)
 
 Também é possível criar backup manual imediato pelo painel **Administração → Servidor → Backups**.
+
+**Recuperação de agendamentos perdidos:** se o PC ficar desligado no horário programado, na próxima inicialização o servidor verifica a ocorrência mais recente de cada agenda (diária/semanal). Se ela ainda não foi coberta por um backup automático, executa **um único** backup de recuperação (não uma sequência por dia parado), registra nos logs como "backup recuperado de agendamento perdido" e marca a cobertura para não duplicar. Em caso de falha, tenta novamente em ~30 minutos sem bloquear a inicialização nem o funcionamento do servidor.
 
 ### Restaurar uma instalação
 

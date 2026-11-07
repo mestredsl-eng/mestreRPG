@@ -295,6 +295,8 @@ export const api = {
     requisicao<{ ok: boolean; detalhes: string[] }>(`/admin/servidor/backups/${id}/verificar`, { method: "POST", body: "{}" }),
   restaurarBackupServidor: (id: string, modo: "preparar" | "agora" = "preparar") =>
     requisicao<{ ok: boolean; seguranca?: string; mensagem?: string; proximoPasso?: string }>(`/admin/servidor/backups/${id}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR", modo }) }),
+  desligarServidor: () =>
+    requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----

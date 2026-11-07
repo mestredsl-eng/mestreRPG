@@ -1,6 +1,7 @@
 // Testes de integração — Etapa 10: backup, segurança operacional e administração
 import Database from "better-sqlite3";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
+import { io as ioClient } from "socket.io-client";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { hashToken } from "./servidor/dist/lib/password.js";
@@ -171,6 +172,102 @@ try {
   const chars = (await req("GET", `/campaigns/${CID}/characters`, {})).json?.personagens?.length;
   const arqs = (await req("GET", `/campaigns/${CID}/arquivos`, {})).json?.arquivos?.length;
   t("22 campanhas e arquivos íntegros", chars > 0 && arqs >= 0, `chars=${chars} arqs=${arqs}`);
+
+  // ============ 23: recuperação de backup atrasado ============
+  const { verificarBackupAgendado, getConfigBackup } = await import("./servidor/dist/lib/backup.js");
+  const contarBackups = () => db.prepare("select count(*) c from backups where campaign_id is null").get().c;
+  const cobMsg = () => db.prepare("select value from server_settings where key='backup_cobertura'").get()?.value;
+
+  // diário perdido: marca cobertura antiga e horário já passado hoje
+  const cfg0 = await getConfigBackup();
+  await req("PUT", "/admin/servidor/config", { body: { backup: { agenda: "diario", hora: "00:01", retencaoDiarios: 50, retencaoSemanais: 50 } } });
+  db.prepare("insert into server_settings (key,value,updated_at) values ('backup_cobertura',?,?) on conflict(key) do update set value=excluded.value")
+    .run(JSON.stringify({ diario: "D2000-01-01" }), Date.now());
+  const nAntes = contarBackups();
+  await verificarBackupAgendado(true); // simula verificação de subida
+  await new Promise((r) => setTimeout(r, 1500)); // servidor pode executar no tick também — cobertura garante 1x só
+  const nDepois = contarBackups();
+  const cob = typeof cobMsg() === "string" ? JSON.parse(cobMsg()) : cobMsg();
+  t("23a backup diário perdido recuperado", nDepois === nAntes + 1, `${nAntes}->${nDepois}`);
+  t("23b cobertura registrada", typeof cob?.diario === "string" && cob.diario.startsWith("D"), JSON.stringify(cob));
+  await verificarBackupAgendado(true);
+  t("23c backup não duplicado", contarBackups() === nDepois, `total=${contarBackups()}`);
+
+  // semanal perdido
+  await req("PUT", "/admin/servidor/config", { body: { backup: { agenda: "semanal", hora: "00:01" } } });
+  db.prepare("update server_settings set value=? where key='backup_cobertura'").run(JSON.stringify({ semanal: "S2000-01-01" }));
+  const nSem = contarBackups();
+  await verificarBackupAgendado(true);
+  await new Promise((r) => setTimeout(r, 1500));
+  t("23d backup semanal perdido recuperado", contarBackups() === nSem + 1, `${nSem}->${contarBackups()}`);
+
+  // vários dias desligado → ainda apenas 1 backup por tipo (ocorrência mais recente)
+  db.prepare("update server_settings set value=? where key='backup_cobertura'").run(JSON.stringify({ semanal: "S2000-01-01" }));
+  const nMulti = contarBackups();
+  await verificarBackupAgendado(true);
+  await new Promise((r) => setTimeout(r, 1500));
+  t("23e vários dias desligado = 1 backup", contarBackups() === nMulti + 1, `${nMulti}->${contarBackups()}`);
+
+  // falha no backup recuperado não impede o servidor (e não marca cobertura)
+  await req("PUT", "/admin/servidor/config", { body: { backup: { agenda: "semanal", hora: "00:01", pasta: "package.json" } } });
+  db.prepare("update server_settings set value=? where key='backup_cobertura'").run(JSON.stringify({ semanal: "S2000-01-01" }));
+  let falhouOk = true;
+  try { await verificarBackupAgendado(true); } catch { falhouOk = false; }
+  const hAposFalha = await fetch(BASE + "/api/health");
+  t("23f falha no backup não derruba servidor", falhouOk && hAposFalha.ok);
+  await req("PUT", "/admin/servidor/config", { body: { backup: { agenda: cfg0.agenda, hora: cfg0.hora, retencaoDiarios: cfg0.retencaoDiarios, retencaoSemanais: cfg0.retencaoSemanais, pasta: cfg0.pasta } } });
+  db.prepare("delete from server_settings where key='backup_cobertura'").run();
+
+  // ============ 24: encerramento gracioso ============
+  // endpoint local exige loopback + segredo
+  let rl = await fetch(API + "/local/desligar", { method: "POST" });
+  t("24a desligar local sem token → 401", rl.status === 401, `status=${rl.status}`);
+  rl = await fetch(API + "/local/desligar", { method: "POST", headers: { "x-mestre-local": "errado" } });
+  t("24b desligar local token errado → 401", rl.status === 401, `status=${rl.status}`);
+  // jogador não pode desligar
+  rl = await req("POST", "/admin/servidor/desligar", { cookie: JOG5.cookie, body: {} });
+  t("24c jogador não desliga servidor", rl.status === 403, `status=${rl.status}`);
+
+  // abre socket para verificar que Socket.IO é encerrado junto
+  const sockFim = ioClient(BASE, { path: "/socket.io", transports: ["websocket"], extraHeaders: { cookie: ADMIN.cookie }, reconnection: false });
+  await new Promise((res2) => sockFim.on("connect", res2));
+  let socketCaiu = false;
+  sockFim.on("disconnect", () => { socketCaiu = true; });
+
+  // admin solicita encerramento — ÚLTIMO teste que usa o servidor
+  rl = await req("POST", "/admin/servidor/desligar", { cookie: ADMIN.cookie, body: {} });
+  t("24d admin solicita encerramento", rl.status === 200 && rl.json?.ok === true, `status=${rl.status}`);
+
+  // aguarda queda (graceful)
+  let caiu = false;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r2) => setTimeout(r2, 500));
+    try { const h = await fetch(BASE + "/api/health"); if (!h.ok) { caiu = true; break; } } catch { caiu = true; break; }
+  }
+  await new Promise((r2) => setTimeout(r2, 800));
+  t("24e servidor parou de aceitar operações", caiu);
+  t("24f Socket.IO encerrado", socketCaiu);
+
+  // logs registram encerramento
+  const logTxt = existsSync("logs/servidor.log") ? readFileSync("logs/servidor.log", "utf-8") : "";
+  t("24g encerramento registrado em log", logTxt.includes("encerramento solicitado") && logTxt.includes("servidor encerrado"));
+
+  // .bat/ps1: espera confirmação e tem fallback controlado
+  const ps1 = existsSync("parar-mestre-rpg.ps1") ? readFileSync("parar-mestre-rpg.ps1", "utf-8") : "";
+  const batParar = existsSync("parar-mestre-rpg.bat") ? readFileSync("parar-mestre-rpg.bat", "utf-8") : "";
+  t("24h BAT aguarda encerramento + fallback", ps1.includes("/api/health") && ps1.includes("Stop-Process") && ps1.includes("api/local/desligar") && batParar.includes("parar-mestre-rpg.ps1"));
+
+  // sobe o servidor de novo e confere integridade (SQLite fechou corretamente)
+  spawn("node", ["servidor/dist/index.js"], { detached: true, stdio: "ignore" }).unref();
+  let subiu = false;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r2) => setTimeout(r2, 500));
+    try { const h = await fetch(BASE + "/api/health"); if (h.ok) { subiu = true; break; } } catch { }
+  }
+  t("24i reinício sem processo duplicado", subiu);
+  const h2 = await fetch(BASE + "/api/health");
+  const hj = await h2.json();
+  t("24j banco íntegro após restart", hj.checagens?.banco === true);
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
 }

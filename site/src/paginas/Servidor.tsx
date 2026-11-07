@@ -52,6 +52,13 @@ export default function Servidor() {
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
     setTimeout(() => setMsg(null), 8000);
   };
+  const desligar = async () => {
+    if (!confirm("Encerrar o servidor Mestre RPG agora? As sessões ativas serão desconectadas.")) return;
+    try {
+      await api.desligarServidor();
+      setMsg("Encerramento solicitado — o servidor vai cair em instantes.");
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao solicitar encerramento"); }
+  };
   const salvarConfig = async () => {
     if (!config) return;
     try {
@@ -95,6 +102,10 @@ export default function Servidor() {
             <p><strong>Disco livre:</strong> {fmtBytes(status.disco.livreBytes)} de {fmtBytes(status.disco.totalBytes)}</p>
             <p><strong>Campanhas:</strong> {status.contagens.campanhas} · <strong>Usuários:</strong> {status.contagens.usuarios} · <strong>Sessões de mesa:</strong> {status.contagens.sessoesMesa}</p>
             <p><strong>Último backup:</strong> {status.backup ? `${new Date(status.backup.criadoEm).toLocaleString("pt-BR")} (${status.backup.sucesso === false ? "falhou" : "ok"})` : "nenhum"}</p>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button className="secundario" onClick={desligar}>Encerrar servidor</button>
+            <span className="dica"> Encerra o Mestre RPG com segurança (drenagem de conexões e fechamento do banco).</span>
           </div>
         </>
       )}

@@ -9,6 +9,7 @@ import { requireAdmin } from "../middleware/auth.js";
 import { audit } from "../lib/audit.js";
 import { log, lerLogs } from "../lib/logs.js";
 import { criarBackup, listarBackups, verificarBackup, prepararRestauracao, getConfigBackup, setConfigBackup, BACKUP_PADRAO, pastaBackups } from "../lib/backup.js";
+import { solicitarDesligamento } from "../lib/ciclo-vida.js";
 import { config } from "../config.js";
 
 const db = getDb();
@@ -178,10 +179,19 @@ servidorRouter.post("/backups/:id/restaurar", async (req, res) => {
   log("aviso", "restauração de backup preparada", { backupId: req.params.id, usuario: req.usuario!.username });
 
   if (body.data.modo === "agora") {
-    // encerra o processo; o iniciar-mestre-rpg.bat aplica a restauração antes de subir
+    // encerra graciosamente; o iniciar-mestre-rpg.bat aplica a restauração antes de subir
     res.json({ ok: true, mensagem: "Restauração agendada. Reinicie o servidor (iniciar-mestre-rpg.bat) para aplicar.", seguranca: r.seguranca.id });
-    setTimeout(() => process.exit(0), 500);
+    solicitarDesligamento();
     return;
   }
   res.json({ ok: true, seguranca: r.seguranca.id, proximoPasso: "Execute o iniciar-mestre-rpg.bat — a restauração será aplicada antes da inicialização." });
+});
+
+/** POST /api/admin/servidor/desligar — encerramento gracioso solicitado pelo admin global */
+servidorRouter.post("/desligar", async (req, res) => {
+  const ok = solicitarDesligamento();
+  if (!ok) { res.status(409).json({ erro: "Encerramento já em andamento ou indisponível" }); return; }
+  await audit(req, "servidor.desligamento_solicitado", {});
+  log("aviso", "encerramento do servidor solicitado pelo admin", { usuario: req.usuario!.username });
+  res.json({ ok: true, mensagem: "Encerrando servidor…" });
 });

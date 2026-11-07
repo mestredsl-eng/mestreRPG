@@ -3,12 +3,12 @@ title Mestre RPG - Encerrar servidor
 cd /d "%~dp0"
 
 echo Encerrando Mestre RPG com seguranca...
+echo.
 
-rem 1) Tenta SIGINT-equivalente via taskkill sem /F (permite tratamento)
-powershell -NoProfile -Command "$c = Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue; if ($c) { $p = Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; if ($p) { Write-Host ('Processo encontrado: PID ' + $p.Id + ' - ' + $p.ProcessName); Stop-Process -Id $p.Id -ErrorAction SilentlyContinue } } else { Write-Host 'Nenhum processo ouvindo na porta 3001.' }"
+rem Delega ao script PowerShell: pede encerramento gracioso ao servidor,
+pem pausa ate confirmar a queda e so recorre a forcar o processo se
+rem o encerramento normal nao concluir dentro do tempo limite.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0parar-mestre-rpg.ps1"
 
 echo.
-echo Se o processo ainda estiver ativo em alguns segundos, execute:
-echo   taskkill /PID ^<pid^> /T
-echo (ou feche a janela do iniciar-mestre-rpg.bat e pressione Ctrl+C)
 pause

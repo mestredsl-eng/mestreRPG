@@ -19,14 +19,23 @@ export function criarBanco(caminho: string = CAMINHOS.banco) {
   const sqlite = new Database(caminho);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  sqliteInstancia = sqlite;
   return drizzle(sqlite, { schema });
 }
 
 export type Db = ReturnType<typeof criarBanco>;
 
 let instancia: Db | null = null;
+let sqliteInstancia: Database.Database | null = null;
 /** Instância única do banco para toda a aplicação. */
 export function getDb(): Db {
   if (!instancia) instancia = criarBanco(CAMINHOS.banco);
   return instancia;
+}
+
+/** Fecha a conexão SQLite compartilhada (encerramento gracioso). */
+export function fecharBanco() {
+  try { sqliteInstancia?.close(); } catch { }
+  sqliteInstancia = null;
+  instancia = null;
 }

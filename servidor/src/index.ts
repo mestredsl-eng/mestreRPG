@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import express from "express";
 import { config } from "./config.js";
-import { criarBanco, CAMINHOS } from "./db/index.js";
+import { getDb, fecharBanco, CAMINHOS, RAIZ } from "./db/index.js";
 import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter } from "./routes/admin.js";
@@ -21,7 +21,12 @@ import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { mkdirSync } from "node:fs";
 import { log } from "./lib/logs.js";
-import { criarBackup, getConfigBackup } from "./lib/backup.js";
+import { verificarBackupAgendado } from "./lib/backup.js";
+import { registrarDesligamento } from "./lib/ciclo-vida.js";
+import { localRouter } from "./routes/desligar.js";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 const app = express();
 app.use(express.json({ limit: "2mb" }));
@@ -31,6 +36,7 @@ app.use("/api", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/admin/servidor", servidorRouter);
+app.use("/api/local", localRouter);
 app.use("/api/campaigns", campanhasRouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
@@ -49,8 +55,20 @@ app.use(errorHandler);
 // Garante diretórios de dados
 for (const dir of [CAMINHOS.arquivos, CAMINHOS.backups]) mkdirSync(dir, { recursive: true });
 
-// Banco (cria arquivo na primeira execução; migrações via `npm run db:migrate`)
-criarBanco(CAMINHOS.banco);
+// Segredo local (configuracao/local.json — não versionado) usado pelo script de
+// encerramento do Windows: só aceita conexão originada do próprio computador.
+const ARQ_LOCAL = resolve(RAIZ, "configuracao", "local.json");
+try {
+  mkdirSync(resolve(RAIZ, "configuracao"), { recursive: true });
+  if (!existsSync(ARQ_LOCAL)) {
+    writeFileSync(ARQ_LOCAL, JSON.stringify({ segredoLocal: randomBytes(24).toString("hex") }, null, 2));
+  }
+} catch (e) {
+  log("aviso", "não foi possível criar configuracao/local.json", { erro: String(e) });
+}
+
+// Banco (instância única compartilhada; migrações via `npm run db:migrate`)
+getDb();
 
 // proxy confiável: valor efetivo = servidor.json + ajuste salvo pelo admin (server_settings)
 try {
@@ -84,33 +102,15 @@ httpServer.listen(config.porta, config.host, () => {
   console.log(`  Health: http://${config.host}:${config.porta}/api/health`);
   console.log("============================================");
   log("info", "servidor iniciado", { porta: config.porta });
+  // recuperação de agendamentos de backup perdidos — não bloqueia a subida
+  setImmediate(() => void verificarBackupAgendado(true));
 });
 
 // ---------- backup automático agendado (Etapa 10) ----------
-let ultimoBackupDiario = "";
-let ultimoBackupSemanal = "";
-async function tickBackup() {
-  try {
-    const cfg = await getConfigBackup();
-    if (cfg.agenda === "manual") return;
-    const agora = new Date();
-    const [hh, mm] = cfg.hora.split(":").map(Number);
-    const chave = `${agora.getFullYear()}-${agora.getMonth()}-${agora.getDate()}_${hh}:${mm}`;
-    const diaSemana = agora.getDay(); // 0=domingo
-    const ehHora = agora.getHours() === hh && agora.getMinutes() === mm;
-    if (!ehHora) return;
-    const querDiario = (cfg.agenda === "diario" || cfg.agenda === "ambos") && ultimoBackupDiario !== chave;
-    const querSemanal = cfg.agenda === "semanal" && diaSemana === 0 && ultimoBackupSemanal !== chave;
-    if (querDiario || querSemanal) {
-      if (querDiario) ultimoBackupDiario = chave;
-      if (querSemanal) ultimoBackupSemanal = chave;
-      await criarBackup("automatico", `Agendado ${cfg.agenda}`);
-    }
-  } catch (e) {
-    log("erro", "falha no agendador de backup", { erro: String(e) });
-  }
-}
-setInterval(() => void tickBackup(), 60_000);
+// verificarBackupAgendado cobre tanto o disparo no horário quanto a recuperação
+// de agendamentos perdidos (PC desligado). Chave de cobertura fica persistida.
+const timerBackup = setInterval(() => void verificarBackupAgendado(), 60_000);
+timerBackup.unref();
 
 // ---------- encerramento controlado ----------
 let encerrando = false;
@@ -118,14 +118,24 @@ async function desligar(sinal: string) {
   if (encerrando) return;
   encerrando = true;
   log("info", "encerramento solicitado", { sinal });
-  console.log(`\n[sinal ${sinal}] Encerrando Mestre RPG…`);
+  console.log(`\n[${sinal}] Encerrando Mestre RPG…`);
+  clearInterval(timerBackup);
+  // para de aceitar novas conexões e desconecta sockets existentes
   try { ioServer?.close(); } catch { }
+  try { httpServer.closeIdleConnections?.(); } catch { }
   httpServer.close(() => {
-    log("info", "servidor encerrado");
+    log("info", "servidor encerrado", { sinal });
+    fecharBanco();
     process.exit(0);
   });
-  setTimeout(() => process.exit(0), 5000).unref();
+  // fallback: se conexões não drenarem, força após 8s
+  setTimeout(() => {
+    log("aviso", "encerramento graceful expirou — forçando saída", { sinal });
+    fecharBanco();
+    process.exit(0);
+  }, 8000).unref();
 }
+registrarDesligamento(() => desligar("admin"));
 process.on("SIGINT", () => void desligar("SIGINT"));
 process.on("SIGTERM", () => void desligar("SIGTERM"));
 process.on("uncaughtException", (e) => { log("erro", "exceção não tratada", { erro: String(e?.stack ?? e) }); });

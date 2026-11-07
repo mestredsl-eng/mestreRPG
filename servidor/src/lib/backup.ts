@@ -23,9 +23,13 @@ export const BACKUP_PADRAO: ConfigBackup = {
   pasta: "backups",
 };
 
-async function getSetting<T>(key: string, padrao: T): Promise<T> {
+export async function getSetting<T>(key: string, padrao: T): Promise<T> {
   const [r] = await db.select().from(serverSettings).where(eq(serverSettings.key, key)).limit(1);
   return (r?.value as T) ?? padrao;
+}
+export async function setSetting<T>(key: string, valor: T) {
+  await db.insert(serverSettings).values({ key, value: valor as never, updatedAt: new Date() })
+    .onConflictDoUpdate({ target: serverSettings.key, set: { value: valor as never, updatedAt: new Date() } });
 }
 export async function getConfigBackup(): Promise<ConfigBackup> {
   return getSetting("backup", BACKUP_PADRAO);
@@ -33,9 +37,91 @@ export async function getConfigBackup(): Promise<ConfigBackup> {
 export async function setConfigBackup(c: Partial<ConfigBackup>) {
   const atual = await getConfigBackup();
   const novo = { ...atual, ...c };
-  await db.insert(serverSettings).values({ key: "backup", value: novo as never, updatedAt: new Date() })
-    .onConflictDoUpdate({ target: serverSettings.key, set: { value: novo as never, updatedAt: new Date() } });
+  await setSetting("backup", novo);
   return novo;
+}
+
+// ---------- agendamento com recuperação de execuções perdidas ----------
+// Modelo: para cada tipo (diario/semanal) guardamos em server_settings a chave da
+// ocorrência programada mais recente JÁ coberta por um backup automático.
+// A cada verificação calculamos a ocorrência programada mais recente ≤ agora;
+// se ela for posterior à coberta, falta backup — executa UMA vez (recupera
+// agendamentos perdidos sem gerar sequência de backups por dias desligado).
+
+interface Cobertura { diario?: string; semanal?: string }
+const RETRY_FALHA_MS = 30 * 60 * 1000; // falha → nova tentativa em 30 min (em memória)
+const proximaTentativa = new Map<string, number>();
+
+function fmtData(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** Ocorrência programada mais recente de cada tipo, com sua chave de cobertura. */
+function ocorrenciasRecentes(cfg: ConfigBackup, agora: Date): { tipo: "diario" | "semanal"; chave: string; quando: Date }[] {
+  const [hh, mm] = cfg.hora.split(":").map(Number);
+  const minutosAgendamento = (hh || 0) * 60 + (mm || 0);
+  const agoraMinutos = agora.getHours() * 60 + agora.getMinutes();
+  const out: { tipo: "diario" | "semanal"; chave: string; quando: Date }[] = [];
+
+  if (cfg.agenda === "diario" || cfg.agenda === "ambos") {
+    const d = new Date(agora);
+    d.setHours(hh || 0, mm || 0, 0, 0);
+    if (agoraMinutos < minutosAgendamento) d.setDate(d.getDate() - 1); // ainda não chegou a hora hoje → ocorrência é a de ontem
+    out.push({ tipo: "diario", chave: `D${fmtData(d)}`, quando: d });
+  }
+  if (cfg.agenda === "semanal") {
+    const d = new Date(agora);
+    d.setHours(hh || 0, mm || 0, 0, 0);
+    const diasDesdeDomingo = d.getDay();
+    d.setDate(d.getDate() - diasDesdeDomingo);
+    if (diasDesdeDomingo === 0 && agoraMinutos < minutosAgendamento) d.setDate(d.getDate() - 7);
+    out.push({ tipo: "semanal", chave: `S${fmtData(d)}`, quando: d });
+  }
+  return out;
+}
+
+/**
+ * Verifica agendamentos de backup. Chamada a cada minuto e uma vez na subida.
+ * Executa no máximo um backup por tipo pendente; recupera agendamentos perdidos
+ * (PC desligado no horário) sem duplicar execuções já concluídas.
+ */
+export async function verificarBackupAgendado(motivoInicio = false): Promise<void> {
+  try {
+    const cfg = await getConfigBackup();
+    if (cfg.agenda === "manual") return;
+    const agora = new Date();
+    const cobertura = await getSetting<Cobertura>("backup_cobertura", {});
+    const occs = ocorrenciasRecentes(cfg, agora);
+
+    for (const occ of occs) {
+      const chaveAtual = cobertura[occ.tipo];
+      if (chaveAtual && chaveAtual >= occ.chave) continue; // ocorrência já coberta
+      const agoraMs = Date.now();
+      if ((proximaTentativa.get(occ.chave) ?? 0) > agoraMs) continue; // backoff após falha
+
+      const recuperado = motivoInicio || (chaveAtual !== undefined && chaveAtual < occ.chave && occ.quando.getTime() < agoraMs - 60_000);
+      // só marca como "recuperado" se a ocorrência é claramente passada (não é o minuto exato do agendamento)
+      const rotulo = recuperado ? `Recuperado: agendado ${occ.tipo} perdido` : `Agendado ${cfg.agenda}`;
+      try {
+        const r = await criarBackup("automatico", `${rotulo} (${occ.chave})`);
+        if (r.sucesso) {
+          cobertura[occ.tipo] = occ.chave;
+          await setSetting("backup_cobertura", cobertura);
+          proximaTentativa.delete(occ.chave);
+          if (recuperado) log("info", "backup recuperado de agendamento perdido", { tipo: occ.tipo, chave: occ.chave });
+          else log("info", "backup agendado executado", { tipo: occ.tipo, chave: occ.chave });
+        } else {
+          proximaTentativa.set(occ.chave, agoraMs + RETRY_FALHA_MS);
+          log("erro", "backup agendado falhou — nova tentativa em 30min", { tipo: occ.tipo, chave: occ.chave, erros: r.erros });
+        }
+      } catch (e) {
+        proximaTentativa.set(occ.chave, agoraMs + RETRY_FALHA_MS);
+        log("erro", "backup agendado falhou — nova tentativa em 30min", { tipo: occ.tipo, chave: occ.chave, erro: String(e) });
+      }
+    }
+  } catch (e) {
+    log("erro", "falha no agendador de backup", { erro: String(e) });
+  }
 }
 
 export function pastaBackups(c: ConfigBackup): string {
