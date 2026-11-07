@@ -12,6 +12,8 @@ import {
   campoVisivelPara,
   campoEditavelPor,
   todosCampos,
+  calcularPontos,
+  validarPontos,
   type EstruturaFicha,
   type CampoDef,
   type Visibilidade,
@@ -84,7 +86,13 @@ function montarFicha(
         campos as Record<string, unknown>
       );
 
-  return { campos, calculados, estrutura: estruturaFiltrada };
+  // Saldo de pontos calculado no servidor (spec §8.5)
+  const pontos = ehMestre ? calcularPontos(estrutura, dados) : calcularPontos(
+    { ...estrutura, secoes: estruturaFiltrada.secoes },
+    campos as Record<string, unknown>
+  );
+
+  return { campos, calculados, pontos, estrutura: estruturaFiltrada };
 }
 
 async function personagemPublico(
@@ -204,6 +212,12 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     res.status(400).json({ erro: "Dados da ficha inválidos", detalhes: validacao.erros });
     return;
   }
+  // Validação de saldo de pontos — regra central, não opcional (spec §8)
+  const pontos = validarPontos(carregada.estrutura, validacao.dados);
+  if (!pontos.ok) {
+    res.status(400).json({ erro: "Pontos insuficientes", detalhes: { pontos: pontos.pontos.erros, pools: pontos.pontos.pools } });
+    return;
+  }
 
   const agora = new Date();
   const id = crypto.randomUUID();
@@ -262,6 +276,8 @@ const atualizarSchema = z.object({
     editavelPor: z.enum(["jogador", "mestre", "ambos"]).optional(),
     destinatarios: z.array(z.string()).optional(),
   })).optional(),
+  // Ajuste administrativo do mestre: permite salvar mesmo estourando pontos (spec §8.5)
+  ignorarPontos: z.boolean().optional(),
 });
 
 /** PATCH /api/characters/:characterId — dono edita campos permitidos; mestre tudo */
@@ -304,6 +320,16 @@ personagensRouter.patch("/:characterId", async (req, res) => {
       return;
     }
     dadosFinais = { ...(p.data as Record<string, unknown>), ...validacao.dados };
+  }
+
+  // Validação de saldo de pontos (spec §8): jogador sempre validado;
+  // mestre também, salvo ajuste administrativo explícito (ignorarPontos).
+  if (!(ehMestre && body.data.ignorarPontos)) {
+    const pontos = validarPontos(estrutura, dadosFinais);
+    if (!pontos.ok) {
+      res.status(400).json({ erro: "Pontos insuficientes", detalhes: { pontos: pontos.pontos.erros, pools: pontos.pontos.pools } });
+      return;
+    }
   }
 
   // Transições de status

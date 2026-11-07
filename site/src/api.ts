@@ -19,6 +19,14 @@ export interface UsuarioAdmin extends Usuario {
   createdAt: string;
 }
 
+export class ApiError extends Error {
+  detalhes?: unknown;
+  constructor(mensagem: string, detalhes?: unknown) {
+    super(mensagem);
+    this.detalhes = detalhes;
+  }
+}
+
 async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise<T> {
   const res = await fetch(`${API_BASE}${caminho}`, {
     credentials: "same-origin",
@@ -27,7 +35,8 @@ async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise
   });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error((corpo as { erro?: string }).erro ?? `HTTP ${res.status}`);
+    const c = corpo as { erro?: string; detalhes?: unknown };
+    throw new ApiError(c.erro ?? `HTTP ${res.status}`, c.detalhes);
   }
   return corpo as T;
 }
@@ -207,9 +216,25 @@ export interface PersonagemResumo {
   updatedAt: string;
 }
 
+export interface PoolPontos {
+  id: string;
+  nome: string;
+  disponiveis: number;
+  gastos: number;
+  saldo: number;
+}
+
+export interface ResultadoPontos {
+  habilitado: boolean;
+  pools: PoolPontos[];
+  detalhes: { campoId: string; label: string; poolId: string; custo: number }[];
+  erros: string[];
+}
+
 export interface FichaRenderizada {
   campos: Record<string, unknown>;
   calculados: Record<string, number | string>;
+  pontos?: ResultadoPontos;
   estrutura: EstruturaFicha;
 }
 

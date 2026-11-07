@@ -451,6 +451,18 @@ textarea {
   grid-column: span 2;
 }
 
+.pontos-resumo {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.badge-negativo {
+  background: #7f3b3b;
+  color: #fff;
+}
+
 select option {
   background: #1e2126;
 }

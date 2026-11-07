@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type CampanhaResumo, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
+import { api, ApiError, type CampanhaResumo, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 
@@ -204,7 +204,12 @@ function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
       setMsg(status === "aguardando_aprovacao" ? "Ficha enviada para aprovação." : "Ficha salva.");
       setEditando(false);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao salvar");
+      if (e instanceof ApiError && e.detalhes && typeof e.detalhes === "object" && "pontos" in (e.detalhes as object)) {
+        const d = e.detalhes as { pontos?: string[] };
+        setErro(`${e.message}: ${(d.pontos ?? []).join("; ")}`);
+      } else {
+        setErro(e instanceof Error ? e.message : "Erro ao salvar");
+      }
     } finally {
       setSalvando(false);
     }
@@ -253,6 +258,15 @@ function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
 
       <section className="cartao">
         <h3>Ficha</h3>
+        {ficha?.pontos?.habilitado && (
+          <div className="pontos-resumo">
+            {ficha.pontos.pools.map((pool) => (
+              <span key={pool.id} className={`badge ${pool.saldo < 0 ? "badge-negativo" : ""}`}>
+                {pool.nome}: {pool.saldo}/{pool.disponiveis} pts
+              </span>
+            ))}
+          </div>
+        )}
         {estruturaVazia && <p className="meta">Esta ficha ainda não possui campos configurados.</p>}
         {estrutura && !estruturaVazia && (
           <FichaForm

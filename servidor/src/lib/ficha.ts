@@ -325,6 +325,113 @@ export function calcularCampos(estrutura: EstruturaFicha, dados: Record<string, 
   return saida;
 }
 
+// ---------- Pontos e custos (spec §6, §8) ----------
+
+export interface PoolPontos {
+  id: string;
+  nome: string;
+  disponiveis: number;
+  gastos: number;
+  saldo: number;
+}
+
+export interface DetalheCusto {
+  campoId: string;
+  label: string;
+  poolId: string;
+  custo: number;
+}
+
+export interface ResultadoPontos {
+  habilitado: boolean;
+  pools: PoolPontos[];
+  detalhes: DetalheCusto[];
+  erros: string[];
+}
+
+const POOL_PADRAO = "principal";
+
+/**
+ * Calcula o custo em pontos de cada campo numérico configurado.
+ *
+ * Regras (todas configuráveis pela estrutura, nada fixo):
+ * - `campo.custoPontos`: custo fixo por ponto acima da base
+ *   (base = padrao ?? minimo ?? 0).
+ * - `pontos.custos[semantico]`: tabela progressiva — custos[i] é o custo de
+ *   subir do nível i para i+1 (ex.: talentos [1,2,3,4,5] — spec §8.2).
+ *   Tem prioridade sobre custoPontos quando ambos existem.
+ * - `campo.reservaPontos`: pool que paga o campo; sem reserva usa o pool
+ *   "principal" (ou o primeiro pool). `pontosIniciais` soma no pool padrão.
+ */
+export function calcularPontos(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>
+): ResultadoPontos {
+  const cfg = estrutura.pontos;
+  if (!cfg?.habilitado) return { habilitado: false, pools: [], detalhes: [], erros: [] };
+
+  const pools = new Map<string, PoolPontos>();
+  const garantirPool = (id: string, nome?: string) => {
+    if (!pools.has(id)) pools.set(id, { id, nome: nome ?? id, disponiveis: 0, gastos: 0, saldo: 0 });
+    return pools.get(id)!;
+  };
+
+  // Pools declarados + pool padrão implícito
+  for (const p of cfg.pools ?? []) garantirPool(p.id, p.nome).disponiveis += p.pontos;
+  const padrao = cfg.pools?.find((p) => p.id === POOL_PADRAO) ?? cfg.pools?.[0];
+  const poolPadraoId = padrao?.id ?? POOL_PADRAO;
+  garantirPool(poolPadraoId, padrao?.nome ?? "Principal").disponiveis += cfg.pontosIniciais ?? 0;
+
+  const detalhes: DetalheCusto[] = [];
+  const erros: string[] = [];
+
+  for (const campo of todosCampos(estrutura)) {
+    const valor = dados[campo.id];
+    if (typeof valor !== "number" || Number.isNaN(valor)) continue;
+    if (campo.custoPontos === undefined && !cfg.custos?.[campo.semantico]) continue;
+
+    const base = typeof campo.padrao === "number" ? campo.padrao : (campo.minimo ?? 0);
+    const diff = valor - base;
+    if (diff <= 0) continue;
+
+    const poolId = campo.reservaPontos ?? poolPadraoId;
+    const pool = garantirPool(poolId);
+    let custo = 0;
+
+    const tabela = cfg.custos?.[campo.semantico];
+    if (tabela?.length) {
+      // custo progressivo: soma custos[base..valor-1]
+      for (let nivel = base; nivel < valor; nivel++) {
+        const c = tabela[nivel];
+        custo += typeof c === "number" ? c : (campo.custoPontos ?? 0);
+      }
+    } else {
+      custo = diff * (campo.custoPontos ?? 0);
+    }
+
+    if (custo <= 0) continue;
+    pool.gastos += custo;
+    detalhes.push({ campoId: campo.id, label: campo.label, poolId, custo });
+  }
+
+  const saida: PoolPontos[] = [];
+  for (const pool of pools.values()) {
+    pool.saldo = pool.disponiveis - pool.gastos;
+    saida.push(pool);
+    if (pool.saldo < 0) erros.push(`Pool "${pool.nome}": pontos insuficientes (saldo ${pool.saldo})`);
+  }
+  return { habilitado: true, pools: saida, detalhes, erros };
+}
+
+/** Valida se os dados estouram algum pool. Retorna null se OK. */
+export function validarPontos(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>
+): { ok: boolean; pontos: ResultadoPontos } {
+  const pontos = calcularPontos(estrutura, dados);
+  return { ok: pontos.erros.length === 0, pontos };
+}
+
 // ---------- Validação de dados da ficha ----------
 
 export interface ResultadoValidacao {
