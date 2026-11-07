@@ -9,6 +9,7 @@ import {
   definirCookieSessao,
   limparCookieSessao,
   resolverUsuario,
+  extrairCookie,
   COOKIE_SESSAO,
 } from "../middleware/auth.js";
 
@@ -124,14 +125,8 @@ authRouter.post("/login", async (req, res) => {
 /** POST /api/auth/logout */
 authRouter.post("/logout", requireAuth, async (req, res) => {
   const auth = req.headers.authorization;
-  const cookie = req.headers.cookie
-    ?.split(";")
-    .map((p) => p.trim())
-    .find((p) => p.startsWith(`${COOKIE_SESSAO}=`))
-    ?.split("=")
-    .slice(1)
-    .join("=");
-  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : cookie ? decodeURIComponent(cookie) : undefined;
+  const cookie = extrairCookie(req.headers.cookie, COOKIE_SESSAO);
+  const token = auth?.startsWith("Bearer ") ? auth.slice(7) : cookie;
   if (token) {
     await db.delete(authSessions).where(eq(authSessions.tokenHash, hashToken(token)));
   }

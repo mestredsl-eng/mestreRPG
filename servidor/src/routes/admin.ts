@@ -125,6 +125,18 @@ adminRouter.delete("/users/:id", async (req, res) => {
     res.status(404).json({ erro: "Usuário não encontrado" });
     return;
   }
-  await db.delete(users).where(eq(users.id, id)); // cascade remove auth_sessions
+  try {
+    await db.delete(users).where(eq(users.id, id)); // cascade remove auth_sessions/memberships
+  } catch (e) {
+    // O usuário é referenciado por histórico que deve ser preservado
+    // (mensagens de chat, campanhas, arquivos, anotações etc.) — FKs sem cascade.
+    if (String(e).includes("FOREIGN KEY")) {
+      res.status(409).json({
+        erro: "Conta possui histórico vinculado a campanhas (mensagens, arquivos, anotações ou registros). Para preservar o histórico, bloqueie a conta em vez de excluí-la.",
+      });
+      return;
+    }
+    throw e;
+  }
   res.json({ ok: true });
 });

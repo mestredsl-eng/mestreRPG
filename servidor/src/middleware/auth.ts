@@ -29,7 +29,13 @@ export function extrairCookie(header: string | undefined, nome: string): string 
   if (!header) return undefined;
   for (const parte of header.split(";")) {
     const [k, ...v] = parte.trim().split("=");
-    if (k === nome) return decodeURIComponent(v.join("="));
+    if (k === nome) {
+      try {
+        return decodeURIComponent(v.join("="));
+      } catch {
+        return undefined; // percent-encoding malformado → trata como ausente
+      }
+    }
   }
   return undefined;
 }

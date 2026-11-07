@@ -190,7 +190,13 @@ arquivosRouter.post("/upload", express.raw({ type: () => true, limit: `${config.
   const cid = req.params.campaignId;
   const papel = req.membership!.role;
   const nomeHeader = String(req.headers["x-file-name"] ?? "");
-  const fileName = decodeURIComponent(nomeHeader).slice(0, 255) || "arquivo";
+  let fileName: string;
+  try {
+    fileName = decodeURIComponent(nomeHeader).slice(0, 255) || "arquivo";
+  } catch {
+    res.status(400).json({ erro: "Nome de arquivo inválido" });
+    return;
+  }
   const ext = extensaoSegura(fileName);
   const buffer = req.body as Buffer;
 

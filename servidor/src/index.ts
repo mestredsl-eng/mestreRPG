@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import express from "express";
+import express, { type Request, type Response, type NextFunction, type Router } from "express";
 import { config } from "./config.js";
 import { getDb, fecharBanco, CAMINHOS, RAIZ } from "./db/index.js";
 import { healthRouter } from "./routes/health.js";
@@ -30,11 +30,48 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 const app = express();
+
+// Express 4 não encaminha rejeições de handlers async ao errorHandler —
+// sem isso, uma exceção assíncrona deixa a requisição pendurada para sempre.
+// blindar() envolve todos os handlers (rotas e middlewares de router) para
+// que qualquer erro síncrono ou assíncrono chegue ao middleware central.
+type Handler = (req: Request, res: Response, next: NextFunction) => unknown;
+function envolver(fn: Handler): Handler {
+  return (req, res, next) => {
+    try {
+      const r = fn(req, res, next);
+      if (r && typeof (r as Promise<unknown>).catch === "function") {
+        (r as Promise<unknown>).catch(next);
+      }
+    } catch (e) {
+      next(e);
+    }
+  };
+}
+function blindar(router: Router) {
+  const stack = (router as unknown as { stack?: { route?: { stack: { handle: Handler }[] }; handle?: Handler }[] }).stack;
+  for (const layer of stack ?? []) {
+    if (layer.route?.stack) {
+      for (const s of layer.route.stack) s.handle = envolver(s.handle);
+    } else if (typeof layer.handle === "function") {
+      layer.handle = envolver(layer.handle);
+    }
+  }
+}
+
 // pacotes de importação de campanha podem ser grandes (arquivos embutidos em base64)
 app.use("/api/campaigns/importar", express.json({ limit: "80mb" }));
 app.use(express.json({ limit: "2mb" }));
 
 // Rotas da API
+const routers: Router[] = [
+  healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
+  campanhasRouter, campanhaIORouter, convitesRouter, modelosRouter,
+  personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
+  sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter,
+];
+for (const r of routers) blindar(r);
+
 app.use("/api", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
@@ -53,6 +90,11 @@ app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
 app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/campaigns/:campaignId/arquivos", arquivosRouter);
 app.use("/api/characters", personagensRouter);
+
+// 404 consistente para rotas de API inexistentes
+app.use("/api", (_req, res) => {
+  res.status(404).json({ erro: "Rota não encontrada" });
+});
 
 app.use(errorHandler);
 
