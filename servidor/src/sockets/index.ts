@@ -57,7 +57,8 @@ export function configurarSockets(httpServer: HttpServer): SocketIOServer {
         .where(
           and(
             eq(memberships.campaignId, campaignId),
-            eq(memberships.userId, usuario.id)
+            eq(memberships.userId, usuario.id),
+            eq(memberships.status, "ativo")
           )
         )
         .limit(1);

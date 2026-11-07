@@ -1,5 +1,8 @@
 import type { Server as SocketIOServer } from "socket.io";
+import { eq } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
+import { getDb } from "../db/index.js";
+import { sessions } from "../db/schema.js";
 
 /** Instância do Socket.IO para emissão de eventos fora do handshake. */
 let io: SocketIOServer | null = null;
@@ -13,4 +16,25 @@ export function emitirCampanha(campaignId: string, evento: string, dados: unknow
   io?.to(`campanha:${campaignId}`).emit(evento, dados);
   // Etapa 12: qualquer mutação propagada por socket também agenda salvamento automático
   agendarAutosave(campaignId);
+}
+
+/**
+ * Remove o usuário de todas as rooms de uma campanha (campanha + sessões de
+ * mesa), sem desconectar o socket — assim outras campanhas do mesmo usuário
+ * no mesmo socket não são afetadas. Após a expulsão, `entrar-campanha` e
+ * `mesa:entrar` rejeitam a entrada porque exigem membership ativa.
+ */
+export async function expulsarMembroDaCampanha(campaignId: string, userId: string) {
+  if (!io) return;
+  const db = getDb();
+  const sessoes = await db
+    .select({ id: sessions.id })
+    .from(sessions)
+    .where(eq(sessions.campaignId, campaignId));
+  const rooms = [`campanha:${campaignId}`, ...sessoes.map((s) => `sessao:${s.id}`)];
+  for (const socket of io.sockets.sockets.values()) {
+    const u = socket.data.usuario as { id?: string } | undefined;
+    if (u?.id !== userId) continue;
+    for (const room of rooms) socket.leave(room);
+  }
 }

@@ -1,6 +1,6 @@
 import { randomInt, randomUUID } from "node:crypto";
 import type { Server as SocketIOServer, Socket } from "socket.io";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users,
@@ -66,10 +66,29 @@ async function emitirMensagem(io: SocketIOServer, msg: typeof chatMessages.$infe
     for (const uid of mestres) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
     return;
   }
-  // privada: autor + destinatários
+  // privada: autor + destinatários — somente membros ainda ativos recebem
   const destinos = new Set<string>((msg.recipients ?? []) as string[]);
   if (msg.authorId) destinos.add(msg.authorId);
-  for (const uid of destinos) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
+  const ids = [...destinos];
+  const ativos = ids.length
+    ? new Set(
+        (
+          await db
+            .select({ userId: memberships.userId })
+            .from(memberships)
+            .where(
+              and(
+                eq(memberships.campaignId, msg.campaignId),
+                eq(memberships.status, "ativo"),
+                inArray(memberships.userId, ids)
+              )
+            )
+        ).map((r) => r.userId)
+      )
+    : new Set<string>();
+  for (const uid of ids) {
+    if (ativos.has(uid)) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
+  }
 }
 
 // ---------- dados ----------

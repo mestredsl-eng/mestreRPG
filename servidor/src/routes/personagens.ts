@@ -278,7 +278,7 @@ export async function carregarPersonagemComAcesso(req: Request) {
   const ehMestre = membership?.role === "mestre";
   const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, p.membershipId)).limit(1);
   const ehDono = membroDono?.userId === req.usuario!.id;
-  if (!membership || membership.status === "removido" || (!ehMestre && !ehDono)) {
+  if (!membership || membership.status !== "ativo" || (!ehMestre && !ehDono)) {
     return { erro: 403 as const };
   }
   return { personagem: p, membership, ehMestre, ehDono, membershipId: p.membershipId };

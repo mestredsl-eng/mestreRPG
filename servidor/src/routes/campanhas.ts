@@ -6,7 +6,7 @@ import { getDb } from "../db/index.js";
 import { campaigns, memberships, invitations, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, expulsarMembroDaCampanha } from "../lib/io.js";
 
 const db = getDb();
 export const campanhasRouter = Router();
@@ -213,6 +213,10 @@ campanhasRouter.patch(
       })
       .where(eq(memberships.id, alvo.id));
 
+    // Status não-ativo (bloqueado/pendente/removido): derruba o acesso em tempo real
+    if (novoStatus !== "ativo") {
+      await expulsarMembroDaCampanha(req.params.campaignId, alvo.userId);
+    }
     emitirCampanha(req.params.campaignId, "membros:atualizados", { membershipId: alvo.id });
     res.json({ ok: true });
   }
@@ -245,6 +249,7 @@ campanhasRouter.delete(
       .update(memberships)
       .set({ status: "removido", updatedAt: new Date() })
       .where(eq(memberships.id, alvo.id));
+    await expulsarMembroDaCampanha(req.params.campaignId, alvo.userId);
     emitirCampanha(req.params.campaignId, "membros:atualizados", { membershipId: alvo.id });
     res.json({ ok: true });
   }
