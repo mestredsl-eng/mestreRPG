@@ -9,6 +9,7 @@ import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 import { arquivoVisivel } from "./arquivos.js";
+import { somenteEnviados } from "../lib/parcial.js";
 
 const db = getDb();
 export const anotacoesRouter = Router({ mergeParams: true });
@@ -153,7 +154,7 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
   if (n.ownerId !== req.usuario!.id) { res.status(403).json({ erro: "Só o proprietário edita a anotação" }); return; }
   const body = notaSchema.partial().safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
-  const d = body.data;
+  const d = somenteEnviados(body.data, req.body);
   // revalida personagem ao trocar characterId
   if (d.characterId && d.characterId !== n.characterId) {
     const [char] = await db.select().from(characters).where(and(eq(characters.id, d.characterId), eq(characters.campaignId, req.params.campaignId))).limit(1);

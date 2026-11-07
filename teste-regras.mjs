@@ -4,6 +4,14 @@ import { calcularPontos } from "./servidor/dist/lib/ficha.js";
 
 const CID = "e8bbf8ea-c4d0-4bc1-9f1b-c4e6ec8558c0";
 const regras = await carregarRegras(CID);
+// Pontos precisam estar habilitados para os testes de transferência —
+// restaurações de snapshot podem reverter a config persistida, então
+// fixamos o estado esperado em memória (determinístico, sem tocar no banco).
+regras.config.pontos = { habilitado: true, pontosIniciais: 20, pools: [
+  { id: "vantagens", nome: "Vantagens", pontos: 5 },
+  { id: "defeitos", nome: "Defeitos", pontos: 5 },
+], custos: {} };
+regras.config.pontosExtras = 5;
 
 const est = {
   versao: 1,

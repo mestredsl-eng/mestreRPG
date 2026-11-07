@@ -27,7 +27,8 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     statusHttp === 400 ||
     e?.type === "entity.parse.failed" ||
     e?.type === "encoding.unsupported" ||
-    e instanceof URIError
+    e instanceof URIError ||
+    Array.isArray((e as { issues?: unknown })?.issues) // ZodError em parse() direto
   ) {
     log("aviso", "requisição malformada", { rota, tipo: e?.type ?? e?.name });
     res.status(400).json({ erro: "Requisição malformada" });

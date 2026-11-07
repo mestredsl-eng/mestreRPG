@@ -12,6 +12,7 @@ import {
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
+import { somenteEnviados } from "../lib/parcial.js";
 import { carregarRegras, configRegrasSchema } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -109,20 +110,21 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
   const config = await configPatrimonio(a.personagem.campaignId);
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  const d = somenteEnviados(body.data, req.body);
   if (!a.ehMestre) {
     const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-    if (body.data.quantity !== undefined && body.data.quantity <= 0) {
+    if (d.quantity !== undefined && d.quantity <= 0) {
       if (!config.patrimonio.jogadorRemoveItens) { res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return; }
     } else if (!config.patrimonio.jogadorAdicionaItens) {
       res.status(403).json({ erro: "Edição de itens não permitida" }); return;
     }
     void dadosItem;
   }
-  const { data, valueCents, transferable, ...resto } = body.data;
+  const { data, valueCents, transferable, ...resto } = d;
   const dataAtual = (item.data ?? {}) as Record<string, unknown>;
   await db.update(inventoryEntries).set({
     ...resto,
-    quantity: body.data.quantity ?? item.quantity,
+    quantity: d.quantity ?? item.quantity,
     data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
     updatedAt: new Date(),
   }).where(eq(inventoryEntries.id, item.id));
@@ -300,7 +302,7 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.update(equipmentEntries).set({ ...body.data, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
+  await db.update(equipmentEntries).set({ ...somenteEnviados(body.data, req.body), updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -372,7 +374,7 @@ patrimonioRouter.patch("/veiculos/:veiculoId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [v] = await db.select().from(vehicles).where(and(eq(vehicles.id, req.params.veiculoId), eq(vehicles.characterId, a.personagem.id))).limit(1);
   if (!v) { res.status(404).json({ erro: "Veículo não encontrado" }); return; }
-  const { valueCents, data, ...resto } = body.data;
+  const { valueCents, data, ...resto } = somenteEnviados(body.data, req.body);
   const dAtual = (v.data ?? {}) as Record<string, unknown>;
   await db.update(vehicles).set({
     ...resto,
@@ -475,16 +477,17 @@ patrimonioRouter.patch("/financeiro/contas/:contaId", async (req, res) => {
   const [conta] = await db.select().from(financialAccounts).where(and(eq(financialAccounts.id, req.params.contaId), eq(financialAccounts.characterId, a.personagem.id))).limit(1);
   if (!conta) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
   // Jogador só edita metadados da própria conta; limite de crédito só mestre
-  const dados = { ...body.data } as Record<string, unknown>;
+  const dados = somenteEnviados(body.data, req.body) as Record<string, unknown>;
   if (!a.ehMestre) delete dados.creditLimitReais;
+  const dp = somenteEnviados(body.data, req.body);
   await db.update(financialAccounts).set({
-    name: body.data.name ?? conta.name,
-    institution: body.data.institution ?? conta.institution,
-    agency: body.data.agency ?? conta.agency,
-    accountNumber: body.data.accountNumber ?? conta.accountNumber,
-    holder: body.data.holder ?? conta.holder,
-    currency: body.data.currency ?? conta.currency,
-    data: body.data.data ?? conta.data,
+    name: dp.name ?? conta.name,
+    institution: dp.institution ?? conta.institution,
+    agency: dp.agency ?? conta.agency,
+    accountNumber: dp.accountNumber ?? conta.accountNumber,
+    holder: dp.holder ?? conta.holder,
+    currency: dp.currency ?? conta.currency,
+    data: dp.data ?? conta.data,
     updatedAt: new Date(),
   }).where(eq(financialAccounts.id, conta.id));
   emitir(a.personagem);

@@ -6,6 +6,7 @@ import { itemTemplates, inventoryEntries } from "../db/schema.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { somenteEnviados } from "../lib/parcial.js";
 
 const db = getDb();
 export const catalogoRouter = Router({ mergeParams: true });
@@ -49,12 +50,13 @@ catalogoRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) =>
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [tpl] = await db.select().from(itemTemplates).where(and(eq(itemTemplates.id, req.params.templateId), eq(itemTemplates.campaignId, req.params.campaignId))).limit(1);
   if (!tpl) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  const d = somenteEnviados(body.data, req.body);
   await db.update(itemTemplates).set({
-    name: body.data.name ?? tpl.name,
-    category: body.data.category ?? tpl.category,
-    description: body.data.description ?? tpl.description,
-    data: body.data.data ?? tpl.data,
-    isActive: body.data.isActive ?? tpl.isActive,
+    name: d.name ?? tpl.name,
+    category: d.category ?? tpl.category,
+    description: d.description ?? tpl.description,
+    data: d.data ?? tpl.data,
+    isActive: d.isActive ?? tpl.isActive,
     updatedAt: new Date(),
   }).where(eq(itemTemplates.id, tpl.id));
   emitirCampanha(req.params.campaignId, "inventario:atualizado", {});

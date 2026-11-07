@@ -17,6 +17,7 @@ import { estruturaFichaSchema, todosCampos, avaliarFormula } from "../lib/ficha.
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { somenteEnviados, mesclarParcial } from "../lib/parcial.js";
 
 const db = getDb();
 export const regrasRouter = Router({ mergeParams: true });
@@ -28,7 +29,7 @@ const elementoSchema = z.object({
   name: z.string().min(1).max(160),
   category: z.string().max(120).optional(),
   parentKey: z.string().max(80).optional(),
-  definition: definicaoElementoSchema.default({}),
+  definition: definicaoElementoSchema.prefault({}),
 });
 
 const atualizacaoSchema = elementoSchema.partial().omit({ kind: true, key: true });
@@ -144,7 +145,11 @@ regrasRouter.patch("/elementos/:elementId", requirePapel("mestre"), async (req, 
     return;
   }
   const atual = el.definition;
-  const novaDef = definicaoElementoSchema.parse({ ...atual, ...(body.data.definition ?? {}) });
+  const defEnviada =
+    body.data.definition !== undefined && req.body?.definition && typeof req.body.definition === "object"
+      ? somenteEnviados(body.data.definition, req.body.definition)
+      : {};
+  const novaDef = definicaoElementoSchema.parse({ ...atual, ...defEnviada });
   const erroFormula = formulasValidas(novaDef);
   if (erroFormula) {
     res.status(400).json({ erro: erroFormula });
@@ -224,7 +229,7 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
     return;
   }
   const configAtual = { ...(regras.config as Record<string, unknown>) };
-  const novo = configRegrasSchema.parse({ ...configAtual, ...body.data, pontos: { ...((configAtual.pontos as object) ?? {}), ...((body.data.pontos as object) ?? {}) } });
+  const novo = configRegrasSchema.parse(mesclarParcial(configAtual, body.data as Record<string, unknown>, req.body));
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));
   await audit(req, "regras.config.atualizada", {});
   emitirCampanha(req.params.campaignId, "regras:atualizadas", {});
