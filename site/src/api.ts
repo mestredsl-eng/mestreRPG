@@ -154,6 +154,58 @@ export const api = {
     requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
   obterVinculaveis: (cid: string) =>
     requisicao<{ kinds: string[]; elementos: Record<string, { key: string; name: string; category: string | null }[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
+
+  // Patrimônio (Etapa 6)
+  listarInventario: (charId: string) =>
+    requisicao<{ itens: ItemInventario[]; pesoTotal: number | null; pesoMaximo: number | null; pesoExcedido: boolean }>(`/characters/${charId}/inventario`),
+  adicionarItem: (charId: string, dados: ItemInventarioInput) =>
+    requisicao<{ id: string }>(`/characters/${charId}/inventario`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarItem: (charId: string, itemId: string, dados: Partial<ItemInventarioInput>) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerItem: (charId: string, itemId: string) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}`, { method: "DELETE" }),
+  transferirItem: (charId: string, itemId: string, destinoCharacterId: string, quantidade?: number) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}/transferir`, { method: "POST", body: JSON.stringify({ destinoCharacterId, quantidade }) }),
+  equiparItem: (charId: string, itemId: string, slot?: string) =>
+    requisicao<{ id: string }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot }) }),
+  listarEquipamentos: (charId: string) =>
+    requisicao<{ equipamentos: Equipamento[]; slots: string[] }>(`/characters/${charId}/equipamentos`),
+  adicionarEquipamento: (charId: string, dados: { name: string; kind?: string; slot?: string; equipped?: boolean; description?: string }) =>
+    requisicao<{ id: string }>(`/characters/${charId}/equipamentos`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarEquipamento: (charId: string, equipId: string, dados: { name?: string; kind?: string; slot?: string; equipped?: boolean; description?: string }) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/equipamentos/${equipId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  desequipar: (charId: string, equipId: string) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/equipamentos/${equipId}/desequipar`, { method: "POST" }),
+  listarVeiculos: (charId: string) =>
+    requisicao<{ veiculos: Veiculo[] }>(`/characters/${charId}/veiculos`),
+  adicionarVeiculo: (charId: string, dados: VeiculoInput) =>
+    requisicao<{ id: string }>(`/characters/${charId}/veiculos`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarVeiculo: (charId: string, veiculoId: string, dados: Partial<VeiculoInput>) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/veiculos/${veiculoId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerVeiculo: (charId: string, veiculoId: string) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/veiculos/${veiculoId}`, { method: "DELETE" }),
+  obterFinanceiro: (charId: string) =>
+    requisicao<Financeiro>(`/characters/${charId}/financeiro`),
+  criarConta: (charId: string, dados: ContaInput) =>
+    requisicao<{ id: string }>(`/characters/${charId}/financeiro/contas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarConta: (charId: string, contaId: string, dados: Partial<ContaInput>) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}/financeiro/contas/${contaId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  movimentar: (charId: string, dados: { accountId: string; tipo: "entrada" | "saida" | "ajuste"; valor: number; descricao?: string; requestId?: string }) =>
+    requisicao<{ id: string; saldo: number }>(`/characters/${charId}/financeiro/movimentar`, { method: "POST", body: JSON.stringify(dados) }),
+  transferirFinanceiro: (charId: string, dados: { origemAccountId: string; destinoAccountId: string; valor: number; descricao?: string; requestId?: string }) =>
+    requisicao<{ ok: boolean; tipo: string }>(`/characters/${charId}/financeiro/transferir`, { method: "POST", body: JSON.stringify(dados) }),
+  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId: string; valor: number; descricao?: string; itemId?: string; item?: ItemInventarioInput; quantidade?: number; contraparte?: string; requestId?: string }) =>
+    requisicao<{ ok: boolean; saldo: number }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
+
+  // Catálogo de itens (Etapa 6)
+  listarCatalogo: (cid: string) =>
+    requisicao<{ itens: ItemCatalogo[]; categorias: string[] }>(`/campaigns/${cid}/inventario`),
+  criarItemCatalogo: (cid: string, dados: ItemCatalogoInput) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/inventario`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarItemCatalogo: (cid: string, templateId: string, dados: Partial<ItemCatalogoInput>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/inventario/${templateId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerItemCatalogo: (cid: string, templateId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/inventario/${templateId}`, { method: "DELETE" }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -339,6 +391,158 @@ export interface ResultadoValidacaoRegras {
   calculos?: Record<string, number>;
   pontosHabilitados: boolean;
   totalErros: number;
+}
+
+// ---- Tipos da Etapa 6: patrimônio e finanças ----
+
+export interface ItemInventario {
+  id: string;
+  name: string;
+  quantity: number;
+  description: string | null;
+  category: string | null;
+  location: string | null;
+  condition: string | null;
+  weight: number | null;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ItemInventarioInput {
+  name: string;
+  quantity?: number;
+  description?: string;
+  category?: string;
+  location?: string;
+  condition?: string;
+  weight?: number;
+  valueCents?: number;
+  transferable?: boolean;
+  templateId?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface Equipamento {
+  id: string;
+  name: string;
+  kind: string | null;
+  slot: string | null;
+  equipped: boolean;
+  description: string | null;
+  data: Record<string, unknown>;
+}
+
+export interface Veiculo {
+  id: string;
+  name: string;
+  kind: string | null;
+  brand: string | null;
+  model: string | null;
+  year: number | null;
+  color: string | null;
+  plate: string | null;
+  serialNumber: string | null;
+  condition: string | null;
+  valueCents: number | null;
+  fuel: string | null;
+  capacity: string | null;
+  ownership: string;
+  data: Record<string, unknown>;
+}
+
+export interface VeiculoInput {
+  name: string;
+  kind?: string;
+  brand?: string;
+  model?: string;
+  year?: number;
+  color?: string;
+  plate?: string;
+  serialNumber?: string;
+  condition?: string;
+  valueCents?: number;
+  fuel?: string;
+  capacity?: string;
+  ownership?: "propriedade" | "compartilhado";
+  data?: Record<string, unknown>;
+}
+
+export interface ContaFinanceira {
+  id: string;
+  type: string;
+  name: string;
+  institution: string | null;
+  agency: string | null;
+  accountNumber: string | null;
+  holder: string | null;
+  currency: string;
+  balanceCents: number;
+  saldo: number;
+  creditLimitCents: number | null;
+  data: Record<string, unknown>;
+}
+
+export interface ContaInput {
+  type: "especie" | "banco" | "cartao_debito" | "cartao_credito" | "pre_pago" | "pix" | "outro";
+  name: string;
+  institution?: string;
+  agency?: string;
+  accountNumber?: string;
+  holder?: string;
+  currency?: string;
+  balanceReais?: number;
+  creditLimitReais?: number;
+  data?: Record<string, unknown>;
+}
+
+export interface TransacaoFinanceira {
+  id: string;
+  kind: string;
+  amount: number;
+  amountCents: number | null;
+  currency: string;
+  account: string | null;
+  accountId: string | null;
+  counterparty: string | null;
+  counterpartyCharacterId: string | null;
+  description: string | null;
+  balanceBeforeCents: number | null;
+  balanceAfterCents: number | null;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+export interface Financeiro {
+  config: {
+    moedaPrincipal: string;
+    simbolo: string;
+    casasDecimais: number;
+    permitirSaldoNegativo: boolean;
+    jogadorPix: boolean;
+    jogadorCompraVenda: boolean;
+    moedas: { codigo: string; nome: string; simbolo?: string; conversaoParaPrincipal?: number }[];
+    faturaCartaoCredito: boolean;
+  };
+  contas: ContaFinanceira[];
+  historico: TransacaoFinanceira[];
+}
+
+export interface ItemCatalogo {
+  id: string;
+  name: string;
+  category: string | null;
+  description: string | null;
+  data: Record<string, unknown>;
+  isActive: boolean;
+}
+
+export interface ItemCatalogoInput {
+  name: string;
+  category?: string;
+  description?: string;
+  data?: Record<string, unknown>;
+  isActive?: boolean;
 }
 
 export interface PersonagemDetalhe {

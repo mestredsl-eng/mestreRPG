@@ -271,7 +271,7 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
 
 // ---------- leitura/edição por id ----------
 
-async function carregarPersonagemComAcesso(req: Request) {
+export async function carregarPersonagemComAcesso(req: Request) {
   const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
   if (!p) return { erro: 404 as const };
   const membership = await getMembership(p.campaignId, req.usuario!.id);

@@ -51,6 +51,60 @@ export const configRegrasSchema = z.object({
     )
     .max(100)
     .default([]),
+  // Sistema financeiro fictício da campanha (Etapa 6, spec §7/§8)
+  financeiro: z
+    .object({
+      moedaPrincipal: z.string().max(10).default("BRL"),
+      simbolo: z.string().max(10).default("R$"),
+      casasDecimais: z.number().int().min(0).max(4).default(2),
+      permitirSaldoNegativo: z.boolean().default(false),
+      jogadorPix: z.boolean().default(true),       // jogador pode fazer PIX fictício
+      jogadorCompraVenda: z.boolean().default(true), // jogador registra compra/venda própria
+      moedas: z
+        .array(
+          z.object({
+            codigo: z.string().max(10),
+            nome: z.string().max(60),
+            simbolo: z.string().max(10).optional(),
+            conversaoParaPrincipal: z.number().positive().optional(), // unidades da moeda principal por 1 unidade
+          })
+        )
+        .max(20)
+        .default([]),
+      faturaCartaoCredito: z.boolean().default(true), // controla limite utilizado/faturas
+    })
+    .default({
+      moedaPrincipal: "BRL",
+      simbolo: "R$",
+      casasDecimais: 2,
+      permitirSaldoNegativo: false,
+      jogadorPix: true,
+      jogadorCompraVenda: true,
+      moedas: [],
+      faturaCartaoCredito: true,
+    }),
+  // Inventário/equipamentos/veículos (Etapa 6, spec §3/§4/§10/§12)
+  patrimonio: z
+    .object({
+      pesoAtivo: z.boolean().default(false),
+      pesoMaximo: z.number().nonnegative().default(0),
+      jogadorAdicionaItens: z.boolean().default(true),
+      jogadorRemoveItens: z.boolean().default(false),
+      jogadorEditaEquipamentos: z.boolean().default(true),
+      jogadorEditaVeiculos: z.boolean().default(true),
+      jogadorCriaContas: z.boolean().default(true),
+      slotsEquipamento: z.array(z.string().max(60)).max(30).default([]), // posições configuráveis
+    })
+    .default({
+      pesoAtivo: false,
+      pesoMaximo: 0,
+      jogadorAdicionaItens: true,
+      jogadorRemoveItens: false,
+      jogadorEditaEquipamentos: true,
+      jogadorEditaVeiculos: true,
+      jogadorCriaContas: true,
+      slotsEquipamento: [],
+    }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 

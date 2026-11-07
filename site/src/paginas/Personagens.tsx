@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
+import Patrimonio from "./Patrimonio";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -76,6 +77,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
         detalhe={selecionado}
         souMestre={souMestre}
         biblioteca={biblioteca}
+        campaignId={campaignId}
         aoVoltar={async () => {
           setSelecionado(null);
           await carregar();
@@ -185,10 +187,11 @@ function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
   );
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, biblioteca, aoVoltar, aoSalvar }: {
+function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
   biblioteca: Record<string, { key: string; name: string; category: string | null }[]> | null;
+  campaignId: string;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
 }) {
@@ -308,6 +311,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, aoVoltar, aoSal
           />
         )}
       </section>
+
+      <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} />
     </>
   );
 }

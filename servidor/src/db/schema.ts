@@ -198,6 +198,63 @@ export const equipmentEntries = sqliteTable("equipment_entries", {
   updatedAt: updatedAt(),
 }, (t) => [index("equipment_entries_char_idx").on(t.characterId)]);
 
+// Catálogo de itens gerenciado pelo mestre (Etapa 6, spec §3/§13)
+export const itemTemplates = sqliteTable("item_templates", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  category: text("category"),
+  description: text("description"),
+  // dados padrão aplicados ao criar item do catálogo: peso, valor, etc.
+  data: text("data", { mode: "json" }).notNull().default({}),
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("item_templates_camp_idx").on(t.campaignId)]);
+
+// Contas financeiras fictícias do personagem (Etapa 6, spec §7):
+// especie | banco | cartao_debito | cartao_credito | pre_pago | pix | outro
+export const financialAccounts = sqliteTable("financial_accounts", {
+  id: id(),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  name: text("name").notNull(),
+  institution: text("institution"), // banco/emissor fictício
+  agency: text("agency"),
+  accountNumber: text("account_number"), // fictício — nunca dado real
+  holder: text("holder"),
+  currency: text("currency").notNull().default("BRL"),
+  balanceCents: integer("balance_cents").notNull().default(0), // centavos — sem float
+  creditLimitCents: integer("credit_limit_cents"), // cartões de crédito
+  data: text("data", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("fin_accounts_char_idx").on(t.characterId)]);
+
+// Veículos do personagem (Etapa 6, spec §6)
+export const vehicles = sqliteTable("vehicles", {
+  id: id(),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  kind: text("kind"), // carro|moto|caminhao|barco|heli|aviao|militar|futurista...
+  brand: text("brand"),
+  model: text("model"),
+  year: integer("year"),
+  color: text("color"),
+  plate: text("plate"),
+  serialNumber: text("serial_number"),
+  condition: text("condition"),
+  valueCents: integer("value_cents"),
+  fuel: text("fuel"),
+  capacity: text("capacity"),
+  ownership: text("ownership").notNull().default("propriedade"), // propriedade|compartilhado
+  data: text("data", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("vehicles_char_idx").on(t.characterId)]);
+
 // Dinheiro fictício e transações (inclui "PIX fictício" — spec §9.3)
 export const moneyTransactions = sqliteTable("money_transactions", {
   id: id(),
@@ -209,10 +266,20 @@ export const moneyTransactions = sqliteTable("money_transactions", {
   currency: text("currency").notNull().default("BRL"),
   account: text("account"), // especie|banco|pix_ficticio|outro
   counterparty: text("counterparty"), // NPC, outro personagem, loja etc.
+  counterpartyCharacterId: text("counterparty_character_id").references(() => characters.id),
+  accountId: text("account_id").references(() => financialAccounts.id),
   description: text("description"),
+  // Precisão monetária em centavos + saldos para auditoria (spec §8/§14)
+  amountCents: integer("amount_cents"),
+  balanceBeforeCents: integer("balance_before_cents"),
+  balanceAfterCents: integer("balance_after_cents"),
+  requestId: text("request_id"), // idempotência — impede duplicação
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
-}, (t) => [index("money_tx_char_idx").on(t.characterId)]);
+}, (t) => [
+  index("money_tx_char_idx").on(t.characterId),
+  uniqueIndex("money_tx_request_idx").on(t.campaignId, t.requestId),
+]);
 
 // Sessões de jogo (spec §20)
 export const sessions = sqliteTable("sessions", {
