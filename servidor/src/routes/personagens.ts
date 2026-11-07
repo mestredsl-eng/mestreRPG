@@ -13,12 +13,17 @@ import {
   campoEditavelPor,
   todosCampos,
   calcularPontos,
-  validarPontos,
   type EstruturaFicha,
-  type CampoDef,
   type Visibilidade,
   type EditavelPor,
 } from "../lib/ficha.js";
+import {
+  carregarRegras,
+  validarRegras,
+  estruturaComCustosDeElementos,
+  aplicarCustosSelecao,
+  type RegrasCampanha,
+} from "../lib/regras.js";
 import { emitirCampanha } from "../lib/io.js";
 import { audit } from "../lib/audit.js";
 
@@ -61,7 +66,8 @@ function montarFicha(
   ehMestre: boolean,
   ehDono: boolean,
   userId: string,
-  membershipId: string
+  membershipId: string,
+  regras?: RegrasCampanha
 ) {
   const overrides = overridesDe(personagem);
   const dados = (personagem.data ?? {}) as Record<string, unknown>;
@@ -86,13 +92,28 @@ function montarFicha(
         campos as Record<string, unknown>
       );
 
-  // Saldo de pontos calculado no servidor (spec §8.5)
-  const pontos = ehMestre ? calcularPontos(estrutura, dados) : calcularPontos(
-    { ...estrutura, secoes: estruturaFiltrada.secoes },
-    campos as Record<string, unknown>
-  );
+  // Saldo de pontos calculado no servidor (spec §8.5); com Etapa 5,
+  // a config do ruleset da campanha tem prioridade e campos vinculados
+  // a elementos herdam custos da biblioteca.
+  const basePontos = regras ? estruturaComCustosDeElementos(estrutura, regras) : estrutura;
+  const estruturaPontosVisivel = ehMestre
+    ? basePontos
+    : { ...basePontos, secoes: estruturaFiltrada.secoes };
+  const dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
+  let pontos = calcularPontos(estruturaPontosVisivel, dadosPontos);
+  if (regras) pontos = aplicarCustosSelecao(pontos, estruturaPontosVisivel, dadosPontos, regras);
 
-  return { campos, calculados, pontos, estrutura: estruturaFiltrada };
+  // Validação de regras (pré-reqs, exclusividades, defeitos, pontos) — spec §9.
+  // Para não-mestre, filtra erros de campos que ele não pode ver (privacidade).
+  let validacao: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null = null;
+  if (regras) {
+    const r = validarRegras(estrutura, dados, regras);
+    const visiveis = new Set(estruturaFiltrada.secoes.flatMap((s) => s.campos.map((c) => c.id)));
+    const erros = ehMestre ? r.erros : r.erros.filter((e) => !e.campoId || visiveis.has(e.campoId));
+    validacao = { ok: erros.length === 0, erros };
+  }
+
+  return { campos, calculados, pontos, estrutura: estruturaFiltrada, validacao };
 }
 
 async function personagemPublico(
@@ -106,7 +127,8 @@ async function personagemPublico(
   if (!carregada) {
     return { personagem: { id: p.id, name: p.name, status: p.status }, ficha: null };
   }
-  const ficha = montarFicha(p, carregada.estrutura, ehMestre, ehDono, userId, membershipId);
+  const regras = await carregarRegras(p.campaignId);
+  const ficha = montarFicha(p, carregada.estrutura, ehMestre, ehDono, userId, membershipId, regras);
   return {
     personagem: {
       id: p.id,
@@ -212,10 +234,13 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     res.status(400).json({ erro: "Dados da ficha inválidos", detalhes: validacao.erros });
     return;
   }
-  // Validação de saldo de pontos — regra central, não opcional (spec §8)
-  const pontos = validarPontos(carregada.estrutura, validacao.dados);
-  if (!pontos.ok) {
-    res.status(400).json({ erro: "Pontos insuficientes", detalhes: { pontos: pontos.pontos.erros, pools: pontos.pontos.pools } });
+  // Motor de regras da campanha (Etapa 5): pontos + pré-requisitos +
+  // exclusividades + defeitos obrigatórios. Mestre pode ignorar via
+  // ajuste administrativo? Na criação sempre valida (é o jogador criando).
+  const regras = await carregarRegras(req.params.campaignId);
+  const validacaoRegras = validarRegras(carregada.estrutura, validacao.dados, regras);
+  if (!validacaoRegras.ok) {
+    res.status(400).json({ erro: "Ficha viola as regras da campanha", detalhes: { erros: validacaoRegras.erros } });
     return;
   }
 
@@ -322,14 +347,13 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     dadosFinais = { ...(p.data as Record<string, unknown>), ...validacao.dados };
   }
 
-  // Validação de saldo de pontos (spec §8): jogador sempre validado;
+  // Validação do motor de regras (spec §9): jogador sempre validado;
   // mestre também, salvo ajuste administrativo explícito (ignorarPontos).
-  if (!(ehMestre && body.data.ignorarPontos)) {
-    const pontos = validarPontos(estrutura, dadosFinais);
-    if (!pontos.ok) {
-      res.status(400).json({ erro: "Pontos insuficientes", detalhes: { pontos: pontos.pontos.erros, pools: pontos.pontos.pools } });
-      return;
-    }
+  const regras = await carregarRegras(p.campaignId);
+  let validacaoRegras = validarRegras(estrutura, dadosFinais, regras);
+  if (!(ehMestre && body.data.ignorarPontos) && !validacaoRegras.ok) {
+    res.status(400).json({ erro: "Ficha viola as regras da campanha", detalhes: { erros: validacaoRegras.erros } });
+    return;
   }
 
   // Transições de status
@@ -350,6 +374,17 @@ personagensRouter.patch("/:characterId", async (req, res) => {
       res.status(400).json({ erro: "Status inválido" });
       return;
     }
+  }
+
+  // Aprovação automática quando configurada e regras cumpridas (spec §9).
+  // Padrão é aprovação manual — o mestre sempre decide.
+  if (
+    !ehMestre &&
+    novoStatus === "aguardando_aprovacao" &&
+    regras.config.aprovacaoAutomatica &&
+    validacaoRegras.ok
+  ) {
+    novoStatus = "aprovada";
   }
 
   await db

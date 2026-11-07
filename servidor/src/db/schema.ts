@@ -148,6 +148,8 @@ export const ruleSets = sqliteTable("rule_sets", {
   name: text("name").notNull(),
   version: integer("version").notNull().default(1),
   isActive: integer("is_active", { mode: "boolean" }).notNull().default(false),
+  // Configuração do motor de regras: pontos, reservas, custos, auto-aprovação etc. (spec §5, §9)
+  config: text("config", { mode: "json" }).notNull().default({}),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });

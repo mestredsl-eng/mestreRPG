@@ -12,9 +12,11 @@ interface Props {
   calculados?: Record<string, number | string>;
   somenteLeitura?: boolean;
   aoMudar?: (campoId: string, valor: unknown) => void;
+  /** Biblioteca de regras da campanha (Etapa 5): campos com regraKind usam estas opções. */
+  biblioteca?: Record<string, { key: string; name: string; category: string | null }[]>;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca }: Props) {
   return (
     <div className="ficha">
       {estrutura.secoes
@@ -27,13 +29,13 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} />
               ))}
               {subsecoes.map((sub) => (
                 <div key={sub.id} className="ficha-subsecao">
                   <h4>{sub.titulo}</h4>
                   {sub.campos.map((campo) => (
-                    <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} />
+                    <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} />
                   ))}
                 </div>
               ))}
@@ -44,14 +46,18 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   );
 }
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
   somenteLeitura: boolean;
   aoMudar?: (id: string, v: unknown) => void;
+  biblioteca?: Record<string, { key: string; name: string; category: string | null }[]>;
 }) {
   const mudar = (v: unknown) => aoMudar?.(campo.id, v);
+  // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
+  const opcoesBiblioteca = campo.regraKind ? (biblioteca?.[campo.regraKind] ?? []) : [];
+  const nomeDe = (key: string) => opcoesBiblioteca.find((o) => o.key === key)?.name ?? key;
   const rotulo = (
     <span className="campo-label">
       {campo.label}
@@ -70,10 +76,15 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar }: {
   }
 
   if (somenteLeitura) {
+    const exibido = campo.regraKind && Array.isArray(valor)
+      ? (valor as string[]).map(nomeDe).join(", ")
+      : campo.regraKind && typeof valor === "string"
+        ? nomeDe(valor)
+        : undefined;
     return (
       <div className="campo">
         {rotulo}
-        <div className="valor-leitura">{formatarValor(campo, valor)}</div>
+        <div className="valor-leitura">{exibido ?? formatarValor(campo, valor)}</div>
       </div>
     );
   }
@@ -129,25 +140,32 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar }: {
           Sim
         </label>
       );
-    case "selecao_unica":
+    case "selecao_unica": {
+      const opcoes = campo.regraKind && opcoesBiblioteca.length
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
       return editavel(
         <select value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)}>
           <option value="">—</option>
-          {(campo.opcoes ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+          {opcoes.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
         </select>
       );
+    }
     case "selecao_multipla":
     case "lista": {
       const lista: string[] = Array.isArray(atual) ? (atual as string[]) : [];
+      const opcoes = campo.regraKind && opcoesBiblioteca.length
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
       const alternar = (op: string) => {
         mudar(lista.includes(op) ? lista.filter((x) => x !== op) : [...lista, op]);
       };
       return editavel(
         <div className="opcoes">
-          {(campo.opcoes ?? []).map((o) => (
-            <label key={o} className="checkbox-inline">
-              <input type="checkbox" checked={lista.includes(o)} onChange={() => alternar(o)} />
-              {o}
+          {opcoes.map((o) => (
+            <label key={o.v} className="checkbox-inline">
+              <input type="checkbox" checked={lista.includes(o.v)} onChange={() => alternar(o.v)} />
+              {o.l}
             </label>
           ))}
         </div>

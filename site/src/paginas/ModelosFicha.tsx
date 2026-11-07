@@ -10,6 +10,7 @@ const estruturaVazia = (): EstruturaFicha => ({
 
 export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   const [modelos, setModelos] = useState<ModeloResumo[]>([]);
+  const [vinculaveis, setVinculaveis] = useState<{ kinds: string[]; elementos: Record<string, { key: string; name: string; category: string | null }[]> } | null>(null);
   const [selecionado, setSelecionado] = useState<string | null>(null);
   const [detalhe, setDetalhe] = useState<{ modelo: ModeloResumo; versoes: VersaoModelo[] } | null>(null);
   const [versaoSel, setVersaoSel] = useState<VersaoModelo | null>(null);
@@ -24,6 +25,12 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       const { modelos } = await api.listarModelos(campaignId);
       setModelos(modelos);
       setErro(null);
+      try {
+        const { kinds, elementos } = await api.obterVinculaveis(campaignId);
+        setVinculaveis({ kinds, elementos });
+      } catch {
+        setVinculaveis(null);
+      }
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar modelos");
     }
@@ -179,9 +186,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           </div>
           {versaoSel.publishedAt && <p className="meta">Versão publicada — para alterar, crie uma nova versão.</p>}
           {!versaoSel.rascunho && versaoSel.estrutura && (
-            <EditorFicha inicial={estrutura} aoMudar={setEstrutura} />
+            <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} />
           )}
-          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} />}
+          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} />}
         </section>
       )}
     </>

@@ -132,8 +132,28 @@ export const api = {
     requisicao<PersonagemDetalhe>(`/campaigns/${cid}/characters`, { method: "POST", body: JSON.stringify(dados) }),
   obterPersonagem: (charId: string) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`),
-  atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown> }) =>
+  atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+
+  // Regras da campanha (Etapa 5)
+  obterRegras: (cid: string) =>
+    requisicao<RegrasCampanha>(`/campaigns/${cid}/regras`),
+  criarElementoRegra: (cid: string, dados: ElementoRegraInput) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/regras/elementos`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarElementoRegra: (cid: string, elementId: string, dados: Partial<ElementoRegraInput>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/regras/elementos/${elementId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerElementoRegra: (cid: string, elementId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/regras/elementos/${elementId}`, { method: "DELETE" }),
+  duplicarElementoRegra: (cid: string, elementId: string) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/regras/duplicar/${elementId}`, { method: "POST" }),
+  atualizarConfigRegras: (cid: string, config: Partial<ConfigRegras>) =>
+    requisicao<{ ok: boolean; config: ConfigRegras }>(`/campaigns/${cid}/regras/config`, { method: "PUT", body: JSON.stringify(config) }),
+  semearBiblioteca: (cid: string) =>
+    requisicao<{ ok: boolean; inseridos: number }>(`/campaigns/${cid}/regras/seed`, { method: "POST" }),
+  validarFichaRegras: (cid: string, characterId: string) =>
+    requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
+  obterVinculaveis: (cid: string) =>
+    requisicao<{ kinds: string[]; elementos: Record<string, { key: string; name: string; category: string | null }[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -166,7 +186,10 @@ export interface CampoDef {
   editavelPor: string;
   usadoEmTestes: boolean;
   custoPontos?: number;
+  custoProgressivo?: number[];
   reservaPontos?: string;
+  regra?: { kind: string; key: string };
+  regraKind?: string;
 }
 
 export interface SecaoDef {
@@ -236,6 +259,79 @@ export interface FichaRenderizada {
   calculados: Record<string, number | string>;
   pontos?: ResultadoPontos;
   estrutura: EstruturaFicha;
+  validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] };
+}
+
+// ---- Tipos da Etapa 5: motor de regras ----
+
+export type TipoRegra =
+  | "atributo" | "talento" | "habilidade" | "conhecimento" | "profissao"
+  | "especializacao" | "vantagem" | "defeito" | "poder" | "disciplina"
+  | "pericia" | "caracteristica";
+
+export interface DefinicaoElemento {
+  descricao?: string;
+  subcategoria?: string;
+  custoPontos?: number;
+  custoProgressivo?: number[];
+  minimo?: number;
+  maximo?: number;
+  prerequisitos?: { kind: string; key: string; minLevel?: number }[];
+  dependencias?: { kind: string; key: string }[];
+  grupoExclusividade?: string;
+  exclusivos?: string[];
+  obrigatorios?: string[];
+  reservaPontos?: string;
+  disponivel?: boolean;
+  ordem?: number;
+}
+
+export interface ElementoRegra {
+  id: string;
+  kind: TipoRegra;
+  key: string;
+  name: string;
+  category: string | null;
+  parentKey: string | null;
+  definition: DefinicaoElemento;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ElementoRegraInput {
+  kind: TipoRegra;
+  key: string;
+  name: string;
+  category?: string;
+  parentKey?: string;
+  definition?: DefinicaoElemento;
+}
+
+export interface ConfigRegras {
+  aprovacaoAutomatica: boolean;
+  pontos: {
+    habilitado: boolean;
+    pontosIniciais: number;
+    pools: { id: string; nome: string; pontos: number }[];
+    custos: Record<string, number[]>;
+  };
+  pontosExtras: number;
+  transferivelEntreReservas: boolean;
+}
+
+export interface RegrasCampanha {
+  config: ConfigRegras;
+  ruleSetId: string | null;
+  kinds: TipoRegra[];
+  elementos: ElementoRegra[];
+  total: number;
+}
+
+export interface ResultadoValidacaoRegras {
+  ok: boolean;
+  erros: { campoId?: string; codigo: string; mensagem: string }[];
+  pontosHabilitados: boolean;
+  totalErros: number;
 }
 
 export interface PersonagemDetalhe {

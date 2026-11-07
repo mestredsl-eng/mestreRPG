@@ -9,6 +9,7 @@ import { campanhasRouter } from "./routes/campanhas.js";
 import { convitesRouter } from "./routes/convites.js";
 import { modelosRouter } from "./routes/modelos.js";
 import { personagensRouter } from "./routes/personagens.js";
+import { regrasRouter } from "./routes/regras.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { mkdirSync } from "node:fs";
@@ -24,6 +25,7 @@ app.use("/api/campaigns", campanhasRouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
 app.use("/api/campaigns/:campaignId/characters", personagensRouter);
+app.use("/api/campaigns/:campaignId/regras", regrasRouter);
 app.use("/api/characters", personagensRouter);
 
 app.use(errorHandler);

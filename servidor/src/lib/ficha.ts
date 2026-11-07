@@ -80,7 +80,11 @@ export const campoSchema = z.object({
   editavelPor: z.enum(EDITAVEIS).default("ambos"),
   usadoEmTestes: z.boolean().default(false),
   custoPontos: z.number().optional(), // custo por ponto adicional (spec §8.1)
+  custoProgressivo: z.array(z.number()).max(100).optional(), // tabela de custo por nível deste campo (ex.: talentos)
   reservaPontos: z.string().max(80).optional(), // pool de pontos da campanha
+  // Vínculo com a biblioteca de regras (Etapa 5): elemento específico ou tipo de elementos
+  regra: z.object({ kind: z.string().max(40), key: z.string().max(80) }).optional(),
+  regraKind: z.string().max(40).optional(), // p/ seleção/lista: opções vêm da biblioteca deste tipo
 });
 export type CampoDef = z.infer<typeof campoSchema>;
 
@@ -388,7 +392,7 @@ export function calcularPontos(
   for (const campo of todosCampos(estrutura)) {
     const valor = dados[campo.id];
     if (typeof valor !== "number" || Number.isNaN(valor)) continue;
-    if (campo.custoPontos === undefined && !cfg.custos?.[campo.semantico]) continue;
+    if (campo.custoPontos === undefined && !campo.custoProgressivo?.length && !cfg.custos?.[campo.semantico]) continue;
 
     const base = typeof campo.padrao === "number" ? campo.padrao : (campo.minimo ?? 0);
     const diff = valor - base;
@@ -398,7 +402,7 @@ export function calcularPontos(
     const pool = garantirPool(poolId);
     let custo = 0;
 
-    const tabela = cfg.custos?.[campo.semantico];
+    const tabela = campo.custoProgressivo?.length ? campo.custoProgressivo : cfg.custos?.[campo.semantico];
     if (tabela?.length) {
       // custo progressivo: soma custos[base..valor-1]
       for (let nivel = base; nivel < valor; nivel++) {

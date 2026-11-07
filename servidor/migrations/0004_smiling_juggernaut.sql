@@ -1,0 +1,1 @@
+ALTER TABLE `rule_sets` ADD `config` text DEFAULT '{}' NOT NULL;

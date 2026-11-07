@@ -61,12 +61,25 @@ function campoVazio(tipo: TipoCampo): CampoDef {
   };
 }
 
+interface Vinculaveis {
+  kinds: string[];
+  elementos: Record<string, { key: string; name: string; category: string | null }[]>;
+}
+
 interface Props {
   inicial: EstruturaFicha;
   aoMudar: (e: EstruturaFicha) => void;
+  /** Biblioteca de regras da campanha (Etapa 5) — permite vincular campos a elementos. */
+  vinculaveis?: Vinculaveis;
 }
 
-export default function EditorFicha({ inicial, aoMudar }: Props) {
+const ROTULO_KIND: Record<string, string> = {
+  atributo: "Atributo", talento: "Talento", habilidade: "Habilidade", conhecimento: "Conhecimento",
+  profissao: "Profissão", especializacao: "Especialização", vantagem: "Vantagem", defeito: "Defeito",
+  poder: "Poder", disciplina: "Disciplina", pericia: "Perícia", caracteristica: "Característica",
+};
+
+export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
   const [estrutura, setEstrutura] = useState<EstruturaFicha>(inicial);
   const [aba, setAba] = useState<"editar" | "previa">("editar");
   const [secaoEditando, setSecaoEditando] = useState<string | null>(null);
@@ -203,6 +216,7 @@ export default function EditorFicha({ inicial, aoMudar }: Props) {
         <EditorCampo
           campo={campoEditandoObj}
           estrutura={estrutura}
+          vinculaveis={vinculaveis}
           aoSalvar={(patch) => {
             atualizarCampo(campoEditando.secaoId, campoEditando.campoId, patch);
             setCampoEditando(null);
@@ -284,9 +298,10 @@ function SecaoEditor(props: {
   );
 }
 
-function EditorCampo({ campo, estrutura, aoSalvar, aoFechar }: {
+function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
   campo: CampoDef;
   estrutura: EstruturaFicha;
+  vinculaveis?: Vinculaveis;
   aoSalvar: (patch: Partial<CampoDef>) => void;
   aoFechar: () => void;
 }) {
@@ -353,6 +368,42 @@ function EditorCampo({ campo, estrutura, aoSalvar, aoFechar }: {
         {precisaOpcoes && (
           <label className="span-2">Opções (uma por linha)
             <textarea rows={4} value={(edit.opcoes ?? []).join("\n")} onChange={(e) => set("opcoes", e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))} />
+          </label>
+        )}
+        {/* Vínculo com a biblioteca de regras (Etapa 5) */}
+        {vinculaveis && ["inteiro", "decimal", "moeda"].includes(edit.tipo) && (
+          <label className="span-2">Elemento da biblioteca (regras)
+            <select
+              value={edit.regra ? `${edit.regra.kind}:${edit.regra.key}` : ""}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (!v) { set("regra", undefined); return; }
+                const [kind, ...rest] = v.split(":");
+                set("regra", { kind, key: rest.join(":") });
+              }}
+            >
+              <option value="">— nenhum —</option>
+              {vinculaveis.kinds.flatMap((kind) =>
+                (vinculaveis.elementos[kind] ?? []).map((el) => (
+                  <option key={`${kind}:${el.key}`} value={`${kind}:${el.key}`}>{ROTULO_KIND[kind] ?? kind}: {el.name}</option>
+                ))
+              )}
+            </select>
+            <small className="meta">Vincula este campo a um elemento: custos, limites, pré-requisitos e exclusividades da biblioteca passam a valer para ele.</small>
+          </label>
+        )}
+        {vinculaveis && precisaOpcoes && (
+          <label className="span-2">Opções da biblioteca (regras)
+            <select
+              value={edit.regraKind ?? ""}
+              onChange={(e) => set("regraKind", e.target.value || undefined)}
+            >
+              <option value="">— usar opções manuais —</option>
+              {vinculaveis.kinds.filter((k) => (vinculaveis.elementos[k] ?? []).length > 0).map((k) => (
+                <option key={k} value={k}>{ROTULO_KIND[k] ?? k} ({(vinculaveis.elementos[k] ?? []).length})</option>
+              ))}
+            </select>
+            <small className="meta">Se definido, as opções deste campo vêm da biblioteca (ex.: poderes, vantagens). O jogador escolhe entre os elementos disponíveis.</small>
           </label>
         )}
         {edit.tipo === "tabela" && (

@@ -29,6 +29,13 @@
       "when": 1794038152959,
       "tag": "0003_secret_slipstream",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794039053916,
+      "tag": "0004_smiling_juggernaut",
+      "breakpoints": true
     }
   ]
 }

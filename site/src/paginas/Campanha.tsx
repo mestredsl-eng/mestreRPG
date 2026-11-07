@@ -4,6 +4,7 @@ import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
 import ModelosFicha from "./ModelosFicha";
 import Personagens from "./Personagens";
+import Regras from "./Regras";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -14,7 +15,7 @@ const STATUS_OPCOES = [
 ] as const;
 
 const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
-type Aba = "info" | "personagens" | "fichas" | "participantes" | "convites";
+type Aba = "info" | "personagens" | "fichas" | "regras" | "participantes" | "convites";
 
 export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
   const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
@@ -156,6 +157,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
           {souMestre && (
             <>
               <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}>Fichas</button>
+              <button className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}>Regras</button>
               <button className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}>Participantes ({membros.length})</button>
               <button className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}>Convites ({convites.length})</button>
             </>
@@ -165,6 +167,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
 
       {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
       {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
+      {aba === "regras" && souMestre && <Regras campaignId={id} />}
 
       {erro && <p className="erro">{erro}</p>}
 

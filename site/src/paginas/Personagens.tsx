@@ -22,6 +22,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [selecionado, setSelecionado] = useState<PersonagemDetalhe | null>(null);
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [biblioteca, setBiblioteca] = useState<Record<string, { key: string; name: string; category: string | null }[]> | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
@@ -35,6 +36,13 @@ export default function Personagens({ campaignId, campanha }: Props) {
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar");
+    }
+    // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
+    try {
+      const { elementos } = await api.obterVinculaveis(campaignId);
+      setBiblioteca(elementos);
+    } catch {
+      setBiblioteca(null);
     }
   }, [campaignId]);
 
@@ -67,6 +75,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
       <PersonagemDetalheView
         detalhe={selecionado}
         souMestre={souMestre}
+        biblioteca={biblioteca}
         aoVoltar={async () => {
           setSelecionado(null);
           await carregar();
@@ -176,9 +185,10 @@ function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
   );
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
+function PersonagemDetalheView({ detalhe, souMestre, biblioteca, aoVoltar, aoSalvar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
+  biblioteca: Record<string, { key: string; name: string; category: string | null }[]> | null;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
 }) {
@@ -204,9 +214,15 @@ function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
       setMsg(status === "aguardando_aprovacao" ? "Ficha enviada para aprovação." : "Ficha salva.");
       setEditando(false);
     } catch (e) {
-      if (e instanceof ApiError && e.detalhes && typeof e.detalhes === "object" && "pontos" in (e.detalhes as object)) {
-        const d = e.detalhes as { pontos?: string[] };
-        setErro(`${e.message}: ${(d.pontos ?? []).join("; ")}`);
+      const det = e instanceof ApiError ? e.detalhes : undefined;
+      if (det && typeof det === "object") {
+        const d = det as { erros?: { mensagem: string }[]; pontos?: string[] };
+        const msgs = d.erros?.map((x) => x.mensagem) ?? d.pontos ?? [];
+        if (msgs.length) {
+          setErro(`${e instanceof Error ? e.message : "Erro"}: ${msgs.join("; ")}`);
+        } else {
+          setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        }
       } else {
         setErro(e instanceof Error ? e.message : "Erro ao salvar");
       }
@@ -267,6 +283,14 @@ function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
             ))}
           </div>
         )}
+        {ficha?.validacao && !ficha.validacao.ok && ficha.validacao.erros.length > 0 && (
+          <div className="caixa-validacao erro">
+            <p><strong>Pendências das regras da campanha:</strong></p>
+            <ul>
+              {ficha.validacao.erros.map((e, i) => <li key={i}>{e.mensagem}</li>)}
+            </ul>
+          </div>
+        )}
         {estruturaVazia && <p className="meta">Esta ficha ainda não possui campos configurados.</p>}
         {estrutura && !estruturaVazia && (
           <FichaForm
@@ -275,6 +299,7 @@ function PersonagemDetalheView({ detalhe, souMestre, aoVoltar, aoSalvar }: {
             calculados={ficha?.calculados}
             somenteLeitura={!editando}
             aoMudar={editando ? aoMudar : undefined}
+            biblioteca={biblioteca ?? undefined}
           />
         )}
       </section>
