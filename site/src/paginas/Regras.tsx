@@ -335,6 +335,43 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
       <p className="dica">Uma linha por tipo: <code>talento: 1,2,3,4,5</code> (custo de subir do nível i para i+1). Vantagens e defeitos podem usar custos negativos para reservar pontos.</p>
       <textarea rows={4} value={custosTxt} onChange={(e) => setCustosTxt(e.target.value)} />
 
+      <h4>Poderes e defeitos</h4>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={!!form.poderes?.exigirDefeito}
+          onChange={(e) => setForm((f) => ({ ...f, poderes: { ...(f.poderes ?? { limitePoderes: 1, exigirDefeito: false }), exigirDefeito: e.target.checked } }))}
+        />
+        Poder exige ao menos 1 defeito como contrapartida
+      </label>
+      <div className="grade-form">
+        <label>Limite de poderes
+          <select
+            value={form.poderes?.limitePoderes == null ? "ilimitado" : String(form.poderes.limitePoderes)}
+            onChange={(e) => setForm((f) => ({
+              ...f,
+              poderes: { ...(f.poderes ?? { limitePoderes: 1, exigirDefeito: false }), limitePoderes: e.target.value === "ilimitado" ? null : Number(e.target.value) },
+            }))}
+          >
+            {[1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+            <option value="ilimitado">Sem limite</option>
+          </select>
+        </label>
+        <label>Limite de defeitos
+          <select
+            value={form.poderes?.limiteDefeitos == null ? "ilimitado" : String(form.poderes.limiteDefeitos)}
+            onChange={(e) => setForm((f) => ({
+              ...f,
+              poderes: { ...(f.poderes ?? { limitePoderes: 1, exigirDefeito: false }), limiteDefeitos: e.target.value === "ilimitado" ? null : Number(e.target.value) },
+            }))}
+          >
+            <option value="ilimitado">Sem limite</option>
+            {[1, 2, 3, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      </div>
+      <p className="dica">Vale para elementos dos tipos "Poder" e "Defeito" selecionados na ficha. Custos negativos de defeitos concedem pontos.</p>
+
       <h4>Transferência entre reservas</h4>
       <label className="checkbox">
         <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />
@@ -413,6 +450,7 @@ function ModalElemento({
     reservaPontos: def.reservaPontos ?? "",
     prerequisitos: (def.prerequisitos ?? []).map((p) => `${p.kind}:${p.key}${p.minLevel ? `@${p.minLevel}` : ""}`).join(", "),
     obrigatorios: (def.obrigatorios ?? []).join(", "),
+    niveis: (def.niveis ?? []).map((n) => ({ descricao: n.descricao ?? "", custo: n.custo?.toString() ?? "" })),
     disponivel: def.disponivel !== false,
   });
 
@@ -448,6 +486,9 @@ function ModalElemento({
         reservaPontos: form.reservaPontos || undefined,
         prerequisitos: listaRefs(form.prerequisitos),
         obrigatorios: listaKeys(form.obrigatorios),
+        niveis: form.niveis.length
+          ? form.niveis.map((n) => ({ descricao: n.descricao || undefined, custo: n.custo.trim() === "" ? undefined : Number(n.custo) }))
+          : undefined,
         disponivel: form.disponivel,
       },
     });
@@ -492,6 +533,29 @@ function ModalElemento({
           </label>
           <label>Pré-requisitos<input value={form.prerequisitos} onChange={(e) => setForm({ ...form, prerequisitos: e.target.value })} placeholder="tipo:chave@nível, separados por vírgula" /></label>
           <label>Elementos obrigatórios<input value={form.obrigatorios} onChange={(e) => setForm({ ...form, obrigatorios: e.target.value })} placeholder="tipo:chave, separados por vírgula" /></label>
+          <div>
+            <strong>Níveis graduados (1–5)</strong>
+            <p className="dica">Para elementos com graus (ex.: defeitos): cada linha é um nível com descrição e custo incremental próprios. Custo negativo concede pontos. O número de linhas define o máximo de níveis.</p>
+            {form.niveis.map((n, i) => (
+              <div className="linha-ferramentas" key={i}>
+                <span className="meta" style={{ minWidth: 56 }}>Nv. {i + 1}</span>
+                <input placeholder="Descrição do nível" value={n.descricao} onChange={(e) => {
+                  const niveis = [...form.niveis];
+                  niveis[i] = { ...n, descricao: e.target.value };
+                  setForm({ ...form, niveis });
+                }} />
+                <input type="number" step="any" placeholder="Custo (+gasta / −concede)" value={n.custo} onChange={(e) => {
+                  const niveis = [...form.niveis];
+                  niveis[i] = { ...n, custo: e.target.value };
+                  setForm({ ...form, niveis });
+                }} style={{ maxWidth: 170 }} />
+                <button type="button" className="mini perigo" onClick={() => setForm({ ...form, niveis: form.niveis.filter((_, j) => j !== i) })}>✕</button>
+              </div>
+            ))}
+            {form.niveis.length < 5 && (
+              <button type="button" className="mini" onClick={() => setForm({ ...form, niveis: [...form.niveis, { descricao: "", custo: "" }] })}>+ Nível</button>
+            )}
+          </div>
           <label className="checkbox">
             <input type="checkbox" checked={form.disponivel} onChange={(e) => setForm({ ...form, disponivel: e.target.checked })} />
             Disponível na campanha

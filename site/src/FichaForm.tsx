@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, type CampoDef, type EstruturaFicha, type PoolPontos, type ResultadoPontos } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos } from "./api";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -13,11 +13,13 @@ interface Props {
   somenteLeitura?: boolean;
   aoMudar?: (campoId: string, valor: unknown) => void;
   /** Biblioteca de regras da campanha (Etapa 5): campos com regraKind usam estas opções. */
-  biblioteca?: Record<string, { key: string; name: string; category: string | null }[]>;
+  biblioteca?: Record<string, ElementoVinculavel[]>;
   /** Personagem dono da ficha — habilita a prévia de pontos em tempo real (sem salvar). */
   personagemId?: string;
   /** Saldo de pontos já calculado pelo servidor para os dados atuais. */
   pontosInicial?: ResultadoPontos;
+  /** Config Poderes×Defeitos da campanha — UX de limite/aviso (backend valida). */
+  poderesCfg?: ConfigPoderes | null;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -28,8 +30,9 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
+  const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
 
   // Prévia de pontos: recalcula no servidor (mesmo pipeline do GET/PATCH) com
   // debounce a cada alteração da ficha. Em modo leitura usa o valor inicial.
@@ -58,9 +61,84 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
     };
   }, [pontos, estrutura]);
 
+  // ---- Poderes × Defeitos (UX; a validação real é do backend) ----
+  const todosOsCampos = useMemo(() => estrutura.secoes.flatMap((s) => s.campos), [estrutura]);
+  const ehPoder = (c: CampoDef) => c.regraKind === "poder" || c.regra?.kind === "poder";
+  const ehDefeito = (c: CampoDef) => c.regraKind === "defeito" || c.regra?.kind === "defeito";
+  const camposPoder = useMemo(() => todosOsCampos.filter(ehPoder), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
+  const camposDefeito = useMemo(() => todosOsCampos.filter(ehDefeito), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Chaves de elementos selecionadas num campo (strings ou {key,nivel}). */
+  const chavesSelecionadas = (c: CampoDef): string[] => {
+    const v = valores[c.id];
+    if (Array.isArray(v)) {
+      return v
+        .map((x) => (typeof x === "object" && x !== null ? String((x as { key?: unknown }).key ?? "") : String(x)))
+        .filter(Boolean);
+    }
+    return typeof v === "string" && v ? [v] : [];
+  };
+
+  const poderesSelecionados = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of camposPoder) for (const k of chavesSelecionadas(c)) s.add(k);
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camposPoder, valores]);
+
+  const defeitosSelecionados = useMemo(() => {
+    const s = new Set<string>();
+    for (const c of camposDefeito) for (const k of chavesSelecionadas(c)) s.add(k);
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [camposDefeito, valores]);
+
+  const faltaDefeito = !!poderesCfg?.exigirDefeito && poderesSelecionados.size > 0 && defeitosSelecionados.size === 0;
+
+  /**
+   * Alterna um poder respeitando o limite configurado.
+   * limite=1 → selecionar outro substitui o anterior; limite=N → bloqueia
+   * com aviso; null → comportamento normal de múltipla escolha.
+   */
+  const alternarPoder = (campo: CampoDef, op: string) => {
+    setAvisoPoder(null);
+    if (!aoMudar) return;
+    const atuais = chavesSelecionadas(campo);
+    const marcando = op !== "" && !atuais.includes(op);
+    if (!marcando) {
+      // desmarcar (ou limpar seleção única)
+      aoMudar(campo.id, campo.tipo === "selecao_unica" ? "" : atuais.filter((k) => k !== op));
+      return;
+    }
+    const limite = poderesCfg?.limitePoderes ?? null;
+    if (limite != null) {
+      const outros = new Set<string>();
+      for (const c of camposPoder) {
+        if (c.id === campo.id) continue;
+        for (const k of chavesSelecionadas(c)) outros.add(k);
+      }
+      for (const k of atuais) if (k !== op) outros.add(k);
+      if (outros.size + 1 > limite) {
+        setAvisoPoder(
+          limite === 1
+            ? `Limite de poderes: apenas 1 poder por personagem — desmarque o poder atual antes de escolher outro.`
+            : `Limite de ${limite} poderes atingido — remova um poder antes de escolher outro.`
+        );
+        return;
+      }
+    }
+    aoMudar(campo.id, campo.tipo === "selecao_unica" ? op : [...atuais, op]);
+  };
+
   return (
     <div className="ficha">
       {ctxPontos && (ctxPontos.pontos || personagemId) && <PainelPontos ctx={ctxPontos} />}
+      {avisoPoder && <div className="ficha-aviso">{avisoPoder}</div>}
+      {faltaDefeito && (
+        <div className="ficha-aviso">
+          Poderes exigem ao menos 1 defeito como contrapartida — escolha um defeito para liberar o poder.
+        </div>
+      )}
       {estrutura.secoes
         .filter((s) => !s.parentId)
         .sort((a, b) => a.ordem - b.ordem)
@@ -71,7 +149,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -79,7 +157,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} />
                       ))}
                     </div>
                   ))}
@@ -92,14 +170,15 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   );
 }
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
   somenteLeitura: boolean;
   aoMudar?: (id: string, v: unknown) => void;
-  biblioteca?: Record<string, { key: string; name: string; category: string | null }[]>;
+  biblioteca?: Record<string, ElementoVinculavel[]>;
   ctxPontos?: ContextoPontos | null;
+  aoAlternarPoder?: (campo: CampoDef, op: string) => void;
 }) {
   const mudar = (v: unknown) => aoMudar?.(campo.id, v);
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
@@ -136,6 +215,27 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   }
 
   if (somenteLeitura) {
+    if (campo.tipo === "selecao_nivel") {
+      const itens = Array.isArray(valor) ? (valor as { key: string; nivel: number }[]) : [];
+      return (
+        <div className="campo">
+          {rotulo}
+          <div className="valor-leitura selecao-nivel-leitura">
+            {itens.length === 0 && "—"}
+            {itens.map((item) => {
+              const el = opcoesBiblioteca.find((o) => o.key === item.key);
+              const desc = el?.niveis?.[item.nivel - 1]?.descricao;
+              return (
+                <div key={item.key} className="nivel-item">
+                  <strong>{el?.name ?? item.key}</strong> — nível {item.nivel}
+                  {desc && <div className="meta">{desc}</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+    }
     const exibido = campo.regraKind && Array.isArray(valor)
       ? (valor as string[]).map(nomeDe).join(", ")
       : campo.regraKind && typeof valor === "string"
@@ -205,10 +305,53 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
         ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
         : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
       return editavel(
-        <select value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)}>
+        <select value={String(atual ?? "")} onChange={(e) => {
+          const v = e.target.value;
+          if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
+          else mudar(v);
+        }}>
           <option value="">—</option>
           {opcoes.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
         </select>
+      );
+    }
+    case "selecao_nivel": {
+      // Elementos da biblioteca com nível graduado (ex.: defeitos 1–5).
+      // Valor: [{ key, nivel }] — só entram itens com nivel >= 1.
+      const itens = Array.isArray(atual) ? (atual as { key: string; nivel: number }[]) : [];
+      const porKey = new Map(itens.map((i) => [i.key, i.nivel]));
+      const opcoes: ElementoVinculavel[] = campo.regraKind && opcoesBiblioteca.length
+        ? opcoesBiblioteca
+        : (campo.opcoes ?? []).map((o) => ({ key: o, name: o, category: null }));
+      const alternarNivel = (key: string, nivel: number) => {
+        const novas = itens.filter((i) => i.key !== key);
+        if (nivel > 0) novas.push({ key, nivel });
+        mudar(novas);
+      };
+      return editavel(
+        <div className="selecao-nivel">
+          {opcoes.map((el) => {
+            const nivel = porKey.get(el.key) ?? 0;
+            const maxN = Math.max(1, Math.min(5, el.niveis?.length || el.maximo || 5));
+            const desc = nivel > 0 ? el.niveis?.[nivel - 1]?.descricao : undefined;
+            const custo = nivel > 0 ? custoNivelEl(el, nivel) : 0;
+            return (
+              <div key={el.key} className="nivel-item">
+                <div className="nivel-linha">
+                  <span className="nivel-nome">{el.name}</span>
+                  <SeletorNivel valor={nivel} max={maxN} aoMudar={(n) => alternarNivel(el.key, n)} />
+                </div>
+                {nivel > 0 && desc && <div className="nivel-desc">{desc}</div>}
+                {nivel > 0 && custo !== 0 && (
+                  <span className={`seletor-custo${custo < 0 ? " custo-positivo" : ""}`}>
+                    {custo > 0 ? `+${custo}` : custo} pts
+                  </span>
+                )}
+              </div>
+            );
+          })}
+          {opcoes.length === 0 && <p className="meta">Nenhum elemento de "{campo.regraKind}" disponível na biblioteca da campanha.</p>}
+        </div>
       );
     }
     case "selecao_multipla":
@@ -218,6 +361,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
         ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
         : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
       const alternar = (op: string) => {
+        if (aoAlternarPoder) { aoAlternarPoder(campo, op); return; }
         mudar(lista.includes(op) ? lista.filter((x) => x !== op) : [...lista, op]);
       };
       return editavel(
@@ -283,6 +427,42 @@ function faixaAtributo(campo: CampoDef): { min: number; max: number; inicio: num
   const total = max - inicio + 1;
   if (total < 2 || total > 12) return null;
   return { min, max, inicio, total };
+}
+
+/** Custo acumulado de um elemento com níveis: soma custos incrementais. */
+function custoNivelEl(el: ElementoVinculavel, nivel: number): number {
+  let custo = 0;
+  for (let i = 0; i < nivel; i++) custo += el.niveis?.[i]?.custo ?? el.custoPontos ?? 0;
+  return custo;
+}
+
+/** Bolinhas de nível 1..max (0 = não escolhido) — usado por selecao_nivel. */
+function SeletorNivel({ valor, max, aoMudar }: {
+  valor: number;
+  max: number;
+  aoMudar: (nivel: number) => void;
+}) {
+  return (
+    <div className="seletor-atributos">
+      <div className="bolinhas" role="radiogroup">
+        {Array.from({ length: max }, (_, i) => {
+          const v = i + 1;
+          const cheio = v <= valor;
+          return (
+            <button
+              key={v}
+              type="button"
+              className={`bolinha ${cheio ? "cheia" : ""}`}
+              aria-pressed={v === valor}
+              aria-label={`nível ${v}`}
+              onClick={() => aoMudar(v === valor ? 0 : v)}
+            />
+          );
+        })}
+      </div>
+      <span className="seletor-valor">{valor > 0 ? valor : "—"}</span>
+    </div>
+  );
 }
 
 /** Pool padrão da distribuição — mesma regra do servidor ("principal" ou o primeiro). */

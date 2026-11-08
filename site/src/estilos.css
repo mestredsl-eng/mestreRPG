@@ -479,6 +479,68 @@ textarea {
   margin-top: 0;
 }
 
+/* ---- Poderes × Defeitos: avisos e seleção com níveis ---- */
+
+.ficha-aviso {
+  background: #2a2113;
+  border: 1px solid #8a6d1f;
+  color: #e8d9a8;
+  border-radius: 8px;
+  padding: 0.55rem 0.8rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.9rem;
+}
+
+.selecao-nivel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.nivel-item {
+  padding: 0.4rem 0.55rem;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  background: #14161a;
+}
+
+.nivel-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.nivel-nome {
+  font-size: 0.9rem;
+  color: #e8e6e3;
+  flex: 1;
+  min-width: 120px;
+}
+
+.nivel-desc {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  margin-top: 0.3rem;
+  line-height: 1.35;
+}
+
+.nivel-item .seletor-custo {
+  display: inline-block;
+  margin-top: 0.25rem;
+}
+
+.seletor-custo.custo-positivo {
+  color: #7fd08a;
+  font-weight: 600;
+}
+
+.selecao-nivel-leitura .nivel-item {
+  background: transparent;
+  border-color: #23262d;
+}
+
 .campo {
   margin-bottom: 0.75rem;
 }

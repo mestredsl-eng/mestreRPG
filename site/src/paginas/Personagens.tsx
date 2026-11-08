@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, ApiError, type CampanhaResumo, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
+import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Patrimonio from "./Patrimonio";
@@ -23,7 +23,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [selecionado, setSelecionado] = useState<PersonagemDetalhe | null>(null);
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [biblioteca, setBiblioteca] = useState<Record<string, { key: string; name: string; category: string | null }[]> | null>(null);
+  const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
@@ -190,7 +190,7 @@ function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
 function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
-  biblioteca: Record<string, { key: string; name: string; category: string | null }[]> | null;
+  biblioteca: Record<string, ElementoVinculavel[]> | null;
   campaignId: string;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
@@ -312,6 +312,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             biblioteca={biblioteca ?? undefined}
             personagemId={personagem.id}
             pontosInicial={ficha?.pontos}
+            poderesCfg={ficha?.poderes ?? null}
           />
         )}
       </section>

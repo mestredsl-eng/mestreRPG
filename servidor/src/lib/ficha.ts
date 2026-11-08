@@ -19,6 +19,7 @@ export const TIPOS_CAMPO = [
   "checkbox",
   "selecao_unica",
   "selecao_multipla",
+  "selecao_nivel", // elementos da biblioteca com nível (ex.: defeitos 1–5)
   "lista", // opções simples, um valor por linha
   "tabela", // registros com colunas próprias (repetível)
   "calculado",
@@ -429,7 +430,9 @@ export function calcularPontos(
       custo = diff * (campo.custoPontos ?? 0);
     }
 
-    if (custo <= 0) continue;
+    // Custos negativos concedem pontos (ex.: defeito custo -1 = +1 ponto).
+    // gastos pode ficar negativo — o saldo final é que importa.
+    if (custo === 0) continue;
     pool.gastos += custo;
     detalhes.push({ campoId: campo.id, label: campo.label, poolId, custo });
   }
@@ -464,7 +467,7 @@ function valorPadrao(campo: CampoDef): unknown {
   if (campo.padrao !== undefined) return campo.padrao;
   switch (campo.tipo) {
     case "checkbox": return false;
-    case "selecao_multipla": case "lista": case "tabela": return campo.repetivel || campo.tipo !== "tabela" ? [] : [];
+    case "selecao_multipla": case "selecao_nivel": case "lista": case "tabela": return campo.repetivel || campo.tipo !== "tabela" ? [] : [];
     default: return campo.repetivel ? [] : "";
   }
 }
@@ -516,6 +519,23 @@ function validarValor(campo: CampoDef, valor: unknown, dados: Record<string, unk
       const vals = Array.isArray(valor) ? valor : [valor];
       if (campo.opcoes?.length) {
         for (const v of vals) if (!campo.opcoes.includes(String(v))) return `Opção inválida: ${String(v)}`;
+      }
+      return null;
+    }
+    case "selecao_nivel": {
+      // Formato: [{ key: string, nivel: int 1..5 }] — elementos da biblioteca
+      // com grau (ex.: defeitos). Chaves duplicadas são rejeitadas.
+      if (!Array.isArray(valor)) return "Deve ser uma lista";
+      const vistos = new Set<string>();
+      for (const item of valor) {
+        if (typeof item !== "object" || item === null) return "Item inválido";
+        const { key, nivel } = item as Record<string, unknown>;
+        if (typeof key !== "string" || !key) return "Item sem chave de elemento";
+        if (vistos.has(key)) return `Elemento duplicado: ${key}`;
+        vistos.add(key);
+        if (typeof nivel !== "number" || !Number.isInteger(nivel) || nivel < 1 || nivel > 5) {
+          return `Nível inválido para ${key} (1 a 5)`;
+        }
       }
       return null;
     }

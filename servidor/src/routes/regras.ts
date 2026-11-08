@@ -312,11 +312,22 @@ regrasRouter.get("/validacao/:characterId", requirePapel("mestre", "jogador"), a
 /** GET /api/campaigns/:campaignId/regras/vinculaveis — kinds + elementos p/ binding no editor */
 regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, res) => {
   const regras = await carregarRegras(req.params.campaignId);
-  const porKind = new Map<string, { key: string; name: string; category: string | null }[]>();
+  const porKind = new Map<string, {
+    key: string; name: string; category: string | null;
+    niveis?: { descricao?: string; custo?: number }[];
+    custoPontos?: number; maximo?: number;
+  }[]>();
   for (const el of regras.elementos.values()) {
     if (el.definition.disponivel === false) continue;
     const lista = porKind.get(el.kind) ?? [];
-    lista.push({ key: el.key, name: el.name, category: el.category });
+    lista.push({
+      key: el.key,
+      name: el.name,
+      category: el.category,
+      niveis: el.definition.niveis?.length ? el.definition.niveis : undefined,
+      custoPontos: el.definition.custoPontos,
+      maximo: el.definition.maximo,
+    });
     porKind.set(el.kind, lista);
   }
   const out: Record<string, { key: string; name: string; category: string | null }[]> = {};

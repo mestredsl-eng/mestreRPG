@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { CampoDef, EstruturaFicha, SecaoDef, TipoCampo } from "./api";
+import type { CampoDef, ElementoVinculavel, EstruturaFicha, SecaoDef, TipoCampo } from "./api";
 import FichaForm from "./FichaForm";
 
 const TIPOS: { v: TipoCampo; l: string }[] = [
@@ -12,6 +12,7 @@ const TIPOS: { v: TipoCampo; l: string }[] = [
   { v: "checkbox", l: "Caixa de seleção" },
   { v: "selecao_unica", l: "Seleção única" },
   { v: "selecao_multipla", l: "Múltipla escolha" },
+  { v: "selecao_nivel", l: "Seleção com níveis (biblioteca)" },
   { v: "lista", l: "Lista de opções" },
   { v: "tabela", l: "Registros (tabela)" },
   { v: "calculado", l: "Campo calculado" },
@@ -78,7 +79,7 @@ function campoVazio(tipo: TipoCampo): CampoDef {
 
 interface Vinculaveis {
   kinds: string[];
-  elementos: Record<string, { key: string; name: string; category: string | null }[]>;
+  elementos: Record<string, ElementoVinculavel[]>;
 }
 
 interface Props {
@@ -162,7 +163,7 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
       {aba === "previa" ? (
         <section className="cartao">
           <h3>Pré-visualização da ficha</h3>
-          <FichaForm estrutura={estrutura} valores={{}} somenteLeitura={false} />
+          <FichaForm estrutura={estrutura} valores={{}} somenteLeitura={false} biblioteca={vinculaveis?.elementos} />
         </section>
       ) : (
         <>
@@ -361,7 +362,7 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
   aoFechar: () => void;
 }) {
   const [edit, setEdit] = useState<CampoDef>({ ...campo });
-  const precisaOpcoes = ["selecao_unica", "selecao_multipla", "lista"].includes(edit.tipo);
+  const precisaOpcoes = ["selecao_unica", "selecao_multipla", "selecao_nivel", "lista"].includes(edit.tipo);
   const camposDisponiveis = useMemo(() => {
     const todos: { id: string; label: string }[] = [];
     for (const s of estrutura.secoes) for (const c of s.campos) if (c.id !== edit.id) todos.push({ id: c.id, label: c.label });

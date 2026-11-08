@@ -127,6 +127,18 @@ export const configRegrasSchema = z.object({
       formatosExtras: z.array(z.string().max(10)).max(50).default([]), // extensões adicionais permitidas pelo mestre
     })
     .default({ jogadoresEnviam: true, espectadorVe: true, formatosExtras: [] }),
+  // Relação Poderes × Defeitos (campos selecao_multipla/selecao_nivel ligados
+  // a elementos kind "poder"/"defeito").
+  poderes: z
+    .object({
+      // Máximo de poderes distintos por personagem. null = sem limite.
+      limitePoderes: z.number().int().min(1).max(50).nullable().default(1),
+      // Poder selecionado exige ao menos 1 defeito (qualquer um).
+      exigirDefeito: z.boolean().default(false),
+      // Máximo de defeitos distintos. null/undefined = sem limite.
+      limiteDefeitos: z.number().int().min(1).max(50).nullable().optional(),
+    })
+    .default({ limitePoderes: 1, exigirDefeito: false }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 
@@ -135,6 +147,18 @@ export const definicaoElementoSchema = z.object({
   subcategoria: z.string().max(120).optional(),
   custoPontos: z.number().optional(),          // custo fixo por ponto
   custoProgressivo: z.array(z.number()).max(100).optional(), // ex.: talentos [1,2,3,4,5]
+  // Níveis graduados (ex.: defeitos 1–5): cada nível tem descrição e custo
+  // incremental próprios. Custo negativo concede pontos. O tamanho do array
+  // define o máximo de níveis (1–5).
+  niveis: z
+    .array(
+      z.object({
+        descricao: z.string().max(2000).optional(),
+        custo: z.number().optional(),
+      })
+    )
+    .max(5)
+    .default([]),
   minimo: z.number().optional(),
   maximo: z.number().optional(),
   prerequisitos: z.array(z.object({
@@ -276,6 +300,19 @@ export function extrairEscolhas(estrutura: EstruturaFicha, dados: Record<string,
 
     // Modo 2: campo de seleção preenchido pela biblioteca (campo.regraKind)
     if (campo.regraKind) {
+      // selecao_nivel: itens {key, nivel} — nível graduado (ex.: defeitos)
+      if (campo.tipo === "selecao_nivel") {
+        const itens = Array.isArray(valor) ? valor : [];
+        for (const item of itens) {
+          if (typeof item !== "object" || item === null) continue;
+          const { key, nivel } = item as Record<string, unknown>;
+          if (typeof key !== "string" || !key) continue;
+          const n = typeof nivel === "number" && Number.isInteger(nivel) ? Math.max(0, nivel) : 0;
+          const elemento = regras.elementos.get(CHAVE(campo.regraKind, key)) ?? null;
+          escolhas.push({ campoId: campo.id, campo, elemento, level: n, selecionado: n > 0 });
+        }
+        continue;
+      }
       const opcoes = Array.isArray(valor) ? valor : valor ? [valor] : [];
       for (const op of opcoes) {
         const key = String(op);
@@ -321,7 +358,7 @@ export function estruturaComCustosDeElementos(estrutura: EstruturaFicha, regras:
   };
 }
 
-const TIPOS_SELECAO = new Set(["selecao_unica", "selecao_multipla", "lista", "tabela", "checkbox"]);
+const TIPOS_SELECAO = new Set(["selecao_unica", "selecao_multipla", "selecao_nivel", "lista", "tabela", "checkbox"]);
 
 /**
  * Custos de elementos escolhidos via campos de seleção/lista
@@ -355,6 +392,13 @@ export function custosSelecao(
       } catch {
         erros.push(`Fórmula de custo inválida em "${el.name}"`);
         continue;
+      }
+    } else if (def.niveis?.length) {
+      // Níveis graduados: custo incremental de cada nível até o nível
+      // escolhido (niveis[i].custo; fallback custoPontos do elemento).
+      // Custos negativos concedem pontos (ex.: defeito = bônus).
+      for (let i = 0; i < Math.min(info.level, def.niveis.length); i++) {
+        custo += def.niveis[i].custo ?? def.custoPontos ?? 0;
       }
     } else if (def.custoPontos !== undefined) custo = def.custoPontos * info.level;
     else if (def.custoProgressivo?.length) {
@@ -569,7 +613,10 @@ export function validarRegras(
     const chaveEl = CHAVE(e.elemento.kind, e.elemento.key);
     const lim = limitesFormula.get(chaveEl);
     const minimo = lim?.minimo ?? def.minimo;
-    const maximo = lim?.maximo ?? def.maximo;
+    // Teto efetivo: menor entre máximo declarado, fórmula e nº de níveis.
+    const tetos = [lim?.maximo, def.maximo, def.niveis?.length ? def.niveis.length : undefined]
+      .filter((v): v is number => v !== undefined);
+    const maximo = tetos.length ? Math.min(...tetos) : undefined;
     if (!def.disponivel) {
       erros.push({ campoId: e.campoId, codigo: "indisponivel", mensagem: `"${e.elemento.name}" está desativado nesta campanha` });
     }
@@ -661,6 +708,41 @@ export function validarRegras(
           mensagem: `"${el.name}" exige a escolha de ${alvo?.name ?? obrig}`,
         });
       }
+    }
+  }
+
+  // 4b) Poderes × Defeitos (config.poderes): limites de poderes/defeitos e
+  // regra "poder exige defeito". Conta elementos distintos por kind.
+  const cfgPoderes = regras.config.poderes;
+  if (cfgPoderes) {
+    const porKindSel = new Map<string, { campoId: string; level: number }[]>();
+    for (const [chave, info] of nivelPorElemento) {
+      const kind = chave.split(":")[0];
+      if (kind !== "poder" && kind !== "defeito") continue;
+      const lista = porKindSel.get(kind) ?? [];
+      lista.push(info);
+      porKindSel.set(kind, lista);
+    }
+    const poderes = porKindSel.get("poder") ?? [];
+    const defeitos = porKindSel.get("defeito") ?? [];
+    if (cfgPoderes.exigirDefeito && poderes.length > 0 && defeitos.length === 0) {
+      erros.push({
+        campoId: poderes[0]?.campoId,
+        codigo: "poder_sem_defeito",
+        mensagem: "Poderes exigem ao menos 1 defeito como contrapartida — escolha um defeito para liberar o poder",
+      });
+    }
+    if (cfgPoderes.limitePoderes != null && poderes.length > cfgPoderes.limitePoderes) {
+      erros.push({
+        codigo: "limite_poderes",
+        mensagem: `Limite de poderes excedido: máximo de ${cfgPoderes.limitePoderes} (escolhidos: ${poderes.length})`,
+      });
+    }
+    if (cfgPoderes.limiteDefeitos != null && defeitos.length > cfgPoderes.limiteDefeitos) {
+      erros.push({
+        codigo: "limite_defeitos",
+        mensagem: `Limite de defeitos excedido: máximo de ${cfgPoderes.limiteDefeitos} (escolhidos: ${defeitos.length})`,
+      });
     }
   }
 

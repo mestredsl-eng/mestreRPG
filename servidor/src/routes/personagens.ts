@@ -127,7 +127,16 @@ function montarFicha(
     validacao = { ok: erros.length === 0, erros, calculos: ehMestre ? r.calculos : undefined };
   }
 
-  return { campos, calculados, pontos, estrutura: estruturaFiltrada, validacao };
+  return {
+    campos,
+    calculados,
+    pontos,
+    estrutura: estruturaFiltrada,
+    validacao,
+    // Config Poderes×Defeitos da campanha — a ficha usa p/ UX (limite,
+    // aviso de defeito obrigatório). A validação real é do backend.
+    poderes: regras?.config.poderes ?? null,
+  };
 }
 
 async function personagemPublico(

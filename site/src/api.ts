@@ -155,7 +155,7 @@ export const api = {
   validarFichaRegras: (cid: string, characterId: string) =>
     requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
   obterVinculaveis: (cid: string) =>
-    requisicao<{ kinds: string[]; elementos: Record<string, { key: string; name: string; category: string | null }[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
+    requisicao<{ kinds: string[]; elementos: Record<string, ElementoVinculavel[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
 
   // Patrimônio (Etapa 6)
   listarInventario: (charId: string) =>
@@ -324,7 +324,7 @@ export const api = {
 
 export type TipoCampo =
   | "texto" | "texto_longo" | "inteiro" | "decimal" | "moeda" | "data"
-  | "checkbox" | "selecao_unica" | "selecao_multipla" | "lista" | "tabela"
+  | "checkbox" | "selecao_unica" | "selecao_multipla" | "selecao_nivel" | "lista" | "tabela"
   | "calculado" | "referencia";
 
 export interface CampoDef {
@@ -427,6 +427,14 @@ export interface FichaRenderizada {
   pontos?: ResultadoPontos;
   estrutura: EstruturaFicha;
   validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> };
+  poderes?: ConfigPoderes | null;
+}
+
+/** Configuração Poderes×Defeitos da campanha (regras). */
+export interface ConfigPoderes {
+  limitePoderes: number | null;   // null = sem limite
+  exigirDefeito: boolean;
+  limiteDefeitos?: number | null;  // null/undefined = sem limite
 }
 
 // ---- Tipos da Etapa 5: motor de regras ----
@@ -441,6 +449,7 @@ export interface DefinicaoElemento {
   subcategoria?: string;
   custoPontos?: number;
   custoProgressivo?: number[];
+  niveis?: { descricao?: string; custo?: number }[];
   minimo?: number;
   maximo?: number;
   prerequisitos?: { kind: string; key: string; minLevel?: number }[];
@@ -487,6 +496,7 @@ export interface ConfigRegras {
   pontosExtras: number;
   transferivelEntreReservas: boolean;
   transferencias: { origem: string; destino: string; limite?: number }[];
+  poderes?: ConfigPoderes;
 }
 
 export interface RegrasCampanha {
@@ -495,6 +505,16 @@ export interface RegrasCampanha {
   kinds: TipoRegra[];
   elementos: ElementoRegra[];
   total: number;
+}
+
+/** Elemento da biblioteca exposto ao editor/ficha (vinculaveis). */
+export interface ElementoVinculavel {
+  key: string;
+  name: string;
+  category: string | null;
+  niveis?: { descricao?: string; custo?: number }[];
+  custoPontos?: number;
+  maximo?: number;
 }
 
 export interface ResultadoValidacaoRegras {
