@@ -7,9 +7,46 @@ echo   MESTRE RPG - Iniciando servidor...
 echo ============================================
 echo.
 
+rem ---------- Node.js: verifica e tenta instalar automaticamente ----------
 where node >nul 2>nul
 if errorlevel 1 (
-    echo [ERRO] Node.js nao encontrado. Instale o Node.js 20+ e tente novamente.
+    echo [INFO] Node.js nao encontrado. Tentando instalar automaticamente...
+    echo.
+
+    where winget >nul 2>nul
+    if errorlevel 1 (
+        echo [ERRO] Node.js nao encontrado e o winget nao esta disponivel.
+        echo        Instale o Node.js 20+ manualmente em https://nodejs.org e tente novamente.
+        pause
+        exit /b 1
+    )
+
+    echo [INFO] Instalando Node.js LTS via winget (pode pedir permissao de administrador)...
+    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent
+    if errorlevel 1 (
+        echo [ERRO] Falha ao instalar o Node.js automaticamente.
+        echo        Instale manualmente em https://nodejs.org e tente novamente.
+        pause
+        exit /b 1
+    )
+
+    rem O PATH do Windows nao e atualizado nesta janela - adiciona os locais padrao
+    set "PATH=%PATH%;C:\Program Files\nodejs;C:\Program Files (x86)\nodejs;%LOCALAPPDATA%\Programs\nodejs"
+
+    where node >nul 2>nul
+    if errorlevel 1 (
+        echo [ERRO] Node.js instalado, mas nao encontrado nesta sessao.
+        echo        Feche esta janela e execute iniciar-mestre-rpg.bat novamente.
+        pause
+        exit /b 1
+    )
+    echo [OK] Node.js instalado com sucesso.
+    echo.
+)
+
+where npm >nul 2>nul
+if errorlevel 1 (
+    echo [ERRO] npm nao encontrado. Reinstale o Node.js 20+ e tente novamente.
     pause
     exit /b 1
 )
