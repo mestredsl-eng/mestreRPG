@@ -1251,6 +1251,43 @@ code {
 }
 @media (max-width: 600px) { .dado { width: 28px; height: 28px; font-size: 13px; } }
 
+/* Lançador D10 */
+.d10-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.d10-controles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.d10-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--texto-fraco, #8b93a7); }
+.d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.d10-dados { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
+.d10-face {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px;
+  background: linear-gradient(145deg, #2b3350, #1b2138);
+  border: 1px solid #46538a; border-radius: 10px;
+  transform: rotate(45deg);
+  font-weight: 800; font-size: 17px; color: #e8ecf7;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4), inset 0 0 0 2px rgba(255,255,255,.04);
+}
+.d10-face { position: relative; }
+.d10-num { transform: rotate(-45deg); display: inline-flex; }
+.d10-face.girando { animation: d10-gira 0.7s ease-in-out infinite; border-color: #6a7bc0; }
+@keyframes d10-gira {
+  0% { transform: rotate(45deg) scale(1); }
+  50% { transform: rotate(225deg) scale(1.08); }
+  100% { transform: rotate(405deg) scale(1); }
+}
+.d10-face.d10-sucesso { border-color: #2e8f5b; background: linear-gradient(145deg, #1f4a34, #153023); color: #8fe6b0; }
+.d10-face.d10-falha { border-color: #8a3a3a; background: linear-gradient(145deg, #4a2222, #301515); color: #e8a0a0; }
+.d10-resumo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.d10-chip { padding: 3px 10px; border-radius: 999px; background: var(--fundo-input, #0f1219); border: 1px solid var(--borda, #2a2f3f); font-size: 12px; }
+.d10-chip-ok { border-color: #2e8f5b; color: #8fe6b0; }
+.d10-chip-fail { border-color: #8a3a3a; color: #e8a0a0; }
+.d10-chip-neg { border-color: #8a6d1f; color: #e8c96a; }
+.d10-chip-total { border-color: #46538a; color: #cdd6f4; font-weight: 700; }
+.d10-rolagem { color: #9aa7c7; }
+@media (max-width: 600px) {
+  .d10-face { width: 36px; height: 36px; font-size: 14px; }
+  .d10-controles { grid-template-columns: 1fr; }
+}
+
 /* Etapas 8-9: diário, histórico e biblioteca */
 .lista-anotacoes { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
 .lista-anotacoes > li { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 12px; }

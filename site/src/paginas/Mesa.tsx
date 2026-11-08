@@ -5,6 +5,7 @@ import {
   type Membro, type PersonagemResumo, type CampanhaResumo,
 } from "../api";
 import { getSocket } from "../socket";
+import LancadorD10 from "../D10";
 
 interface Props {
   campaignId: string;
@@ -92,7 +93,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const [privado, setPrivado] = useState(false);
   const [secreto, setSecreto] = useState(false);
   const [destinoPriv, setDestinoPriv] = useState("");
-  const [rolagens, setRolagens] = useState<{ id: string; dados: number[][]; lados: number[]; total: number | null; motivo?: string | null; autor?: string; ts: number; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number }[]>([]);
+  const [rolagens, setRolagens] = useState<{ id: string; dados: number[][]; lados: number[]; total: number | null; motivo?: string | null; autor?: string; ts: number; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }[]>([]);
+  const [minimoD10, setMinimoD10] = useState(6);
   const [erro, setErro] = useState<string | null>(null);
   const [sessaoAtual, setSessaoAtual] = useState(sessao);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -108,12 +110,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   useEffect(() => {
     void (async () => {
       try {
-        const [msgs, tes, est, mem, pers] = await Promise.all([
+        const [msgs, tes, est, mem, pers, regras] = await Promise.all([
           api.listarMensagens(campaignId, sessao.id),
           api.listarTestes(campaignId, sessao.id),
           api.obterEstadoMesa(campaignId, sessao.id),
           api.listarMembros(campaignId).catch(() => ({ membros: [] as Membro[] })),
           api.listarPersonagens(campaignId).catch(() => ({ personagens: [] as PersonagemResumo[] })),
+          api.obterRegras(campaignId).catch(() => null),
         ]);
         setMensagens(msgs.mensagens);
         setTestes(tes.testes);
@@ -122,6 +125,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         setSessaoAtual(est.sessao);
         setMembros(mem.membros.filter((m) => m.status === "ativo"));
         setPersonagens(pers.personagens);
+        const minD10 = regras?.config?.dados?.d10SucessoMinimo;
+        if (typeof minD10 === "number") setMinimoD10(minD10);
         const eu = mem.membros.find((m) => m.ehEu);
         if (eu) setMeuUserId(eu.userId);
       } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar mesa"); }
@@ -142,13 +147,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number }) => {
+    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
         id: r.id, dados: grupos.map((g) => g.resultados), lados: grupos.map((g) => g.lados),
         total: r.total, motivo: r.motivo ?? null, autor: r.rolador, ts: Date.now(),
-        vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais,
+        vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais, d10: r.d10 ?? null,
       }]);
     };
     const aoDecisao = (d: { testId: string; outcome: string; nota?: string | null; characterName?: string; visibility?: string }) => {
@@ -409,6 +414,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             <RolagemLivre sessionId={sessao.id} aoErro={setErro} souMestre={souMestre} />
           )}
 
+          {/* lançador D10 */}
+          {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
+            <LancadorD10 sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} />
+          )}
+
           {/* resultados de dados */}
           {rolagens.length > 0 && (
             <section className="cartao">
@@ -432,6 +442,15 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                       {r.vitalidade.penalidadeDados > 0 && ` (−${r.vitalidade.penalidadeDados} dado${r.vitalidade.penalidadeDados > 1 ? "s" : ""})`}
                       {` — ${r.vitalidade.dadosOriginais}d → ${r.vitalidade.dadosFinais}d`}
                       {r.vitalidade.excecaoMestre && " · exceção do mestre"}
+                    </p>
+                  )}
+                  {r.d10 && (
+                    <p className="meta d10-rolagem">
+                      D10: {r.d10.positivos} positivo{r.d10.positivos === 1 ? "" : "s"}
+                      {r.d10.negativos ? ` − ${r.d10.negativos} negativo${r.d10.negativos === 1 ? "" : "s"}` : ""}
+                      {` → ${r.d10.lancados} lançado${r.d10.lancados === 1 ? "" : "s"} · `}
+                      <strong>{r.d10.sucessos} sucesso{r.d10.sucessos === 1 ? "" : "s"}</strong>
+                      {` / ${r.d10.falhas} falha${r.d10.falhas === 1 ? "" : "s"} (mín ${r.d10.minimo})`}
                     </p>
                   )}
                 </div>

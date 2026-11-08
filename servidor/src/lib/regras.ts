@@ -193,6 +193,12 @@ export const configRegrasSchema = z.object({
         { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
       ],
     }),
+  // Lançador de dados (D10): meta mínima que conta como sucesso.
+  dados: z
+    .object({
+      d10SucessoMinimo: z.number().int().min(2).max(10).default(6),
+    })
+    .default({ d10SucessoMinimo: 6 }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 

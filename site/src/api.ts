@@ -521,6 +521,9 @@ export interface ConfigRegras {
     niveis: { nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[];
     edicaoPor: string;
   };
+  dados?: {
+    d10SucessoMinimo: number;
+  };
 }
 
 export interface RegrasCampanha {

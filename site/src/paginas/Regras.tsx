@@ -455,6 +455,18 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
         </label>
       </div>
 
+      <h4>Dados (D10)</h4>
+      <div className="grade-form">
+        <label>Sucesso mínimo no D10
+          <input
+            type="number" min="2" max="10"
+            value={form.dados?.d10SucessoMinimo ?? 6}
+            onChange={(e) => setForm((f) => ({ ...f, dados: { d10SucessoMinimo: Number(e.target.value) } }))}
+          />
+        </label>
+      </div>
+      <p className="dica">Usado pelo lançador D10 da mesa: resultados iguais ou acima desse valor contam como sucesso.</p>
+
       <h4>Transferência entre reservas</h4>
       <label className="checkbox">
         <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />

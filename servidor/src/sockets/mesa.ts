@@ -432,6 +432,7 @@ function socket_handlers(
     socket.on("mesa:rolar", async (payload: {
       sessionId?: string; dados?: { sides: number; count: number }[];
       motivo?: string; visibilidade?: "publica" | "privada"; requestId?: string;
+      d10?: { positivos?: number; negativos?: number; minimo?: number };
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.dados?.length) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
@@ -446,6 +447,28 @@ function socket_handlers(
       }));
       const grupos = dadosValidados.map((d) => ({ ...d, resultados: rolarLados(d.sides, d.count) }));
       const total = grupos.reduce((s, g) => s + g.resultados.reduce((a, b) => a + b, 0), 0);
+
+      // Lançador D10: dados negativos consomem positivos; sucessos = valor >= mínimo.
+      let d10: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null = null;
+      if (payload.d10) {
+        const pos = Math.round(payload.d10.positivos ?? NaN);
+        const neg = Math.round(payload.d10.negativos ?? NaN);
+        const minimo = Math.round(payload.d10.minimo ?? NaN);
+        if (!Number.isFinite(pos) || !Number.isFinite(neg) || pos < 0 || neg < 0 || pos > 30 || neg > 30
+          || !Number.isFinite(minimo) || minimo < 2 || minimo > 10) {
+          cb?.({ ok: false, erro: "Dados D10 inválidos" });
+          return;
+        }
+        const efetivos = Math.max(0, pos - neg);
+        const resD10 = grupos.length === 1 && grupos[0].sides === 10 ? grupos[0].resultados : null;
+        if (!resD10 || resD10.length !== efetivos) {
+          cb?.({ ok: false, erro: "Quantidade de dados D10 inconsistente com a rolagem" });
+          return;
+        }
+        const sucessos = resD10.filter((v) => v >= minimo).length;
+        d10 = { positivos: pos, negativos: neg, minimo, lancados: resD10.length, sucessos, falhas: resD10.length - sucessos };
+      }
+
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       const vis = payload.visibilidade === "privada" ? "privada" : "publica";
@@ -454,7 +477,7 @@ function socket_handlers(
           id: rollId, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: null, userId: u.id,
           dice: dadosValidados as never,
-          results: { grupos, total } as never,
+          results: { grupos, total, d10 } as never,
           reason: payload.motivo?.slice(0, 300) ?? null,
           visibility: vis, requestId: payload.requestId ?? null, createdAt: agora,
         });
@@ -465,7 +488,7 @@ function socket_handlers(
       const rollPayload = {
         id: rollId, sessionId: ctx.sessao.id, userId: u.id, rolador: await nomeUsuario(u.id),
         grupos: grupos.map((g) => ({ lados: g.sides, resultados: g.resultados })),
-        total, motivo: payload.motivo ?? null, visibility: vis, createdAt: agora,
+        total, motivo: payload.motivo ?? null, visibility: vis, createdAt: agora, d10,
       };
       if (vis === "publica") io.to(`sessao:${ctx.sessao.id}`).emit("mesa:rolagem", rollPayload);
       else {
@@ -476,11 +499,11 @@ function socket_handlers(
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "rolagem",
-        content: `${rollPayload.rolador} rolou ${grupos.map((g) => `${g.count}d${g.sides}`).join(" + ")} → ${total}${payload.motivo ? ` (${payload.motivo})` : ""}`,
+        content: `${rollPayload.rolador} rolou ${grupos.map((g) => `${g.count}d${g.sides}`).join(" + ")} → ${total}${payload.motivo ? ` (${payload.motivo})` : ""}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
         visibility: vis === "privada" ? "privada" : "publica",
         recipients: vis === "privada" ? [u.id, ...(await mestresDaCampanha(ctx.sessao.campaignId))] : undefined,
       });
-      cb?.({ ok: true, id: rollId, grupos, total });
+      cb?.({ ok: true, id: rollId, grupos, total, d10 });
     });
 
     // ---------- decisão do mestre ----------
