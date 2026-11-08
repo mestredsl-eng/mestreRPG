@@ -165,4 +165,39 @@ export const SEED_BIBLIOTECA: ItemSeed[] = [
     descricao: "Defeito metafórico exigido por poderes sobrenaturais (spec §6)",
     custoPontos: 0,
   }),
+
+  // ===== Itens (patrimônio — custeio opcional definido pelo mestre) =====
+  E("item", "arma_branca", "Arma branca", "Itens", { descricao: "Facas, porretes, machados etc." }),
+  E("item", "arma_fogo", "Arma de fogo", "Itens", { descricao: "Pistolas, revólveres, espingardas etc." }),
+  E("item", "armadura", "Armadura", "Itens"),
+  E("item", "mochila", "Mochila", "Itens"),
+  E("item", "kit_primeiros_socos", "Kit de primeiros socorros", "Itens"),
+  E("item", "lanterna", "Lanterna", "Itens"),
+  E("item", "radio_comunicador", "Rádio comunicador", "Itens"),
+  E("item", "ferramentas", "Kit de ferramentas", "Itens"),
+  E("item", "documento_falso", "Documento de identidade falso", "Itens"),
+  E("item", "comida_racao", "Ração / comida de campanha", "Itens"),
+  E("item", "remedios", "Medicamentos", "Itens"),
+  E("item", "celular", "Celular / smartphone", "Itens"),
+  E("item", "notebook", "Notebook / computador portátil", "Itens"),
+  E("item", "cadeado", "Cadeado / algemas", "Itens"),
+  E("item", "binoculos", "Binóculos", "Itens"),
+  E("item", "corda", "Corda / linha de escalada", "Itens"),
+
+  // ===== Veículos =====
+  E("veiculo", "carro_popular", "Carro popular", "Veículos"),
+  E("veiculo", "carro_esportivo", "Carro esportivo", "Veículos"),
+  E("veiculo", "carro_sedan", "Carro sedã", "Veículos"),
+  E("veiculo", "caminhonete", "Caminhonete / picape", "Veículos"),
+  E("veiculo", "moto", "Motocicleta", "Veículos"),
+  E("veiculo", "barco", "Barco / lancha", "Veículos"),
+  E("veiculo", "bicicleta", "Bicicleta", "Veículos"),
+  E("veiculo", "van", "Van / kombi", "Veículos"),
+
+  // ===== Dinheiro / patrimônio financeiro =====
+  E("dinheiro", "bolso_generoso", "Bolso generoso", "Dinheiro", { descricao: "Dinheiro vivo em espécie acima do comum" }),
+  E("dinheiro", "conta_bancaria", "Conta bancária", "Dinheiro"),
+  E("dinheiro", "investimentos", "Investimentos", "Dinheiro"),
+  E("dinheiro", "renda_mensal", "Renda mensal", "Dinheiro"),
+  E("dinheiro", "dividas", "Dívidas", "Dinheiro", { descricao: "Contrapartida: compromissos financeiros pendentes" }),
 ];
