@@ -6,6 +6,7 @@ import {
   type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo,
 } from "../api";
 import { getSocket } from "../socket";
+import { ModalConfirmar } from "../Modal";
 
 const fmtMoeda = (cents: number | null | undefined, casas = 2) =>
   cents === null || cents === undefined ? "—" : (cents / 100).toFixed(casas);
@@ -82,6 +83,8 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   const [novo, setNovo] = useState<ItemInventarioInput>({ name: "", quantity: 1 });
   const [editando, setEditando] = useState<string | null>(null);
   const [slots, setSlots] = useState<string[]>([]);
+  const [confirmandoItem, setConfirmandoItem] = useState<ItemInventario | null>(null);
+  const [ocupadoItem, setOcupadoItem] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -174,10 +177,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
                 }} aoErro={aoErro} />
-                <button className="perigo" onClick={async () => {
-                  if (!confirm(`Remover "${item.name}"?`)) return;
-                  try { await api.removerItem(characterId, item.id); await carregar(); } catch (e) { aoErro(e); }
-                }}>×</button>
+                <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
               </td>
             </tr>
           ))}
@@ -219,15 +219,30 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
               }} aoErro={aoErro} />
-              <button className="perigo" onClick={async () => {
-                if (!confirm(`Remover "${item.name}"?`)) return;
-                try { await api.removerItem(characterId, item.id); await carregar(); } catch (e) { aoErro(e); }
-              }}>×</button>
+              <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
             </div>
           </div>
         ))}
         {visiveis.length === 0 && <p className="meta">Inventário vazio.</p>}
       </div>
+      {confirmandoItem && (
+        <ModalConfirmar
+          titulo="Remover item"
+          mensagem={`Remover "${confirmandoItem.name}"?`}
+          rotuloConfirmar="Remover"
+          perigo
+          ocupado={ocupadoItem}
+          aoConfirmar={() => {
+            if (ocupadoItem) return;
+            setOcupadoItem(true);
+            api.removerItem(characterId, confirmandoItem.id)
+              .then(async () => { setConfirmandoItem(null); await carregar(); })
+              .catch((e) => aoErro(e))
+              .finally(() => setOcupadoItem(false));
+          }}
+          aoCancelar={() => { if (!ocupadoItem) setConfirmandoItem(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -352,6 +367,8 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
+  const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
+  const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
 
   const carregar = useCallback(async () => {
     try { setLista((await api.listarVeiculos(characterId)).veiculos); } catch (e) { aoErro(e); }
@@ -399,10 +416,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
               <td>{v.year ?? "—"}</td>
               <td>{v.plate ?? "—"}</td>
               <td>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</td>
-              <td><button className="perigo" onClick={async () => {
-                if (!confirm(`Remover "${v.name}"?`)) return;
-                try { await api.removerVeiculo(characterId, v.id); await carregar(); } catch (e) { aoErro(e); }
-              }}>×</button></td>
+              <td><button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button></td>
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
@@ -417,15 +431,30 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
             <div className="registro-campo"><span className="registro-rotulo">Placa</span><span>{v.plate ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Posse</span><span>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</span></div>
             <div className="registro-acoes">
-              <button className="perigo" onClick={async () => {
-                if (!confirm(`Remover "${v.name}"?`)) return;
-                try { await api.removerVeiculo(characterId, v.id); await carregar(); } catch (e) { aoErro(e); }
-              }}>×</button>
+              <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>
             </div>
           </div>
         ))}
         {lista.length === 0 && <p className="meta">Nenhum veículo.</p>}
       </div>
+      {confirmandoVeiculo && (
+        <ModalConfirmar
+          titulo="Remover veículo"
+          mensagem={`Remover "${confirmandoVeiculo.name}"?`}
+          rotuloConfirmar="Remover"
+          perigo
+          ocupado={ocupadoVeiculo}
+          aoConfirmar={() => {
+            if (ocupadoVeiculo) return;
+            setOcupadoVeiculo(true);
+            api.removerVeiculo(characterId, confirmandoVeiculo.id)
+              .then(async () => { setConfirmandoVeiculo(null); await carregar(); })
+              .catch((e) => aoErro(e))
+              .finally(() => setOcupadoVeiculo(false));
+          }}
+          aoCancelar={() => { if (!ocupadoVeiculo) setConfirmandoVeiculo(null); }}
+        />
+      )}
     </div>
   );
 }
@@ -642,6 +671,8 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
   const [itens, setItens] = useState<ItemCatalogo[]>([]);
   const [novo, setNovo] = useState<ItemCatalogoInput>({ name: "", category: "" });
   const [busca, setBusca] = useState("");
+  const [confirmandoItem, setConfirmandoItem] = useState<ItemCatalogo | null>(null);
+  const [ocupadoItem, setOcupadoItem] = useState(false);
 
   const carregar = useCallback(async () => {
     try { setItens((await api.listarCatalogo(campaignId)).itens); } catch (e) { aoErro(e); }
@@ -674,15 +705,30 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
               <td>{i.name}</td>
               <td>{i.category ?? "—"}</td>
               <td>{i.description ?? "—"}</td>
-              <td><button className="perigo" onClick={async () => {
-                if (!confirm(`Desativar "${i.name}"?`)) return;
-                try { await api.removerItemCatalogo(campaignId, i.id); await carregar(); } catch (e) { aoErro(e); }
-              }}>×</button></td>
+              <td><button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button></td>
             </tr>
           ))}
           {visiveis.length === 0 && <tr><td colSpan={4} className="meta">Catálogo vazio.</td></tr>}
         </tbody>
       </table>
+      {confirmandoItem && (
+        <ModalConfirmar
+          titulo="Desativar item do catálogo"
+          mensagem={`Desativar "${confirmandoItem.name}"?`}
+          rotuloConfirmar="Desativar"
+          perigo
+          ocupado={ocupadoItem}
+          aoConfirmar={() => {
+            if (ocupadoItem) return;
+            setOcupadoItem(true);
+            api.removerItemCatalogo(campaignId, confirmandoItem.id)
+              .then(async () => { setConfirmandoItem(null); await carregar(); })
+              .catch((e) => aoErro(e))
+              .finally(() => setOcupadoItem(false));
+          }}
+          aoCancelar={() => { if (!ocupadoItem) setConfirmandoItem(null); }}
+        />
+      )}
     </div>
   );
 }

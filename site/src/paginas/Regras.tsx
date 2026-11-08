@@ -9,6 +9,7 @@ import {
   type ResultadoValidacaoRegras,
   type TipoRegra,
 } from "../api";
+import { ModalConfirmar } from "../Modal";
 
 const ROTULO_KIND: Record<TipoRegra, string> = {
   atributo: "Atributo",
@@ -43,6 +44,8 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [validacao, setValidacao] = useState<ResultadoValidacaoRegras | null>(null);
   const [personagemSel, setPersonagemSel] = useState("");
+  const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -107,13 +110,17 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     }
   };
 
-  const remover = async (el: ElementoRegra) => {
-    if (!window.confirm(`Excluir "${el.name}" da biblioteca? Personagens que o usam podem ficar inválidos.`)) return;
+  const remover = async () => {
+    if (!confirmando || ocupado) return;
+    setOcupado(true);
     try {
-      await api.removerElementoRegra(campaignId, el.id);
+      await api.removerElementoRegra(campaignId, confirmando.id);
+      setConfirmando(null);
       await carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao remover elemento");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -208,7 +215,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
                       <button className="mini" onClick={() => void alternarDisponivel(el)}>{el.definition.disponivel === false ? "Ativar" : "Desativar"}</button>
                       <button className="mini" onClick={() => void duplicar(el)}>Duplicar</button>
                       <button className="mini" onClick={() => setEditando(el)}>Editar</button>
-                      <button className="mini perigo" onClick={() => void remover(el)}>Excluir</button>
+                      <button className="mini perigo" onClick={() => setConfirmando(el)}>Excluir</button>
                     </div>
                   </div>
                 ))}
@@ -264,6 +271,17 @@ export default function Regras({ campaignId }: { campaignId: string }) {
           todosElementos={regras?.elementos ?? []}
           onFechar={() => setEditando(null)}
           onSalvar={salvarElemento}
+        />
+      )}
+      {confirmando && (
+        <ModalConfirmar
+          titulo="Excluir elemento"
+          mensagem={`Excluir "${confirmando.name}" da biblioteca? Personagens que o usam podem ficar inválidos.`}
+          rotuloConfirmar="Excluir"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void remover()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
         />
       )}
     </div>

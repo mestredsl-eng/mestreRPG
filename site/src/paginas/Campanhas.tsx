@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type PacoteCampanha } from "../api";
+import { ModalConfirmar } from "../Modal";
 
 const STATUS_LABEL: Record<string, string> = {
   preparacao: "Em preparação",
@@ -18,6 +19,8 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
   const [form, setForm] = useState({ name: "", description: "", system: "" });
   const [msg, setMsg] = useState<string | null>(null);
   const inputImport = useRef<HTMLInputElement>(null);
+  const [importPendente, setImportPendente] = useState<{ pacote: PacoteCampanha; msgErro: string } | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -60,16 +63,27 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
         const msgErro = e instanceof Error ? e.message : "Erro ao importar";
         // identificador já existente → oferece substituição explícita (exige ser mestre da campanha)
         if (!msgErro.includes("Já existe")) throw e;
-        if (!confirm(`${msgErro}\n\nDeseja SUBSTITUIR a campanha existente por este pacote? Um ponto de recuperação do estado atual será criado antes.`)) {
-          setErro("Importação cancelada.");
-          return;
-        }
-        await api.importarCampanha(pacote, "substituir", pacote.campanhaId);
-        setMsg("Campanha substituída pelo pacote importado.");
+        setImportPendente({ pacote, msgErro });
+        return;
       }
       void carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao importar pacote");
+    }
+  };
+
+  const confirmarSubstituir = async () => {
+    if (!importPendente || ocupado) return;
+    setOcupado(true);
+    try {
+      await api.importarCampanha(importPendente.pacote, "substituir", importPendente.pacote.campanhaId);
+      setImportPendente(null);
+      setMsg("Campanha substituída pelo pacote importado.");
+      void carregar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao substituir campanha");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -116,6 +130,18 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
           </p>
         </section>
       ))}
+
+      {importPendente && (
+        <ModalConfirmar
+          titulo="Substituir campanha"
+          mensagem={`${importPendente.msgErro}\n\nDeseja SUBSTITUIR a campanha existente por este pacote? Um ponto de recuperação do estado atual será criado antes.`}
+          rotuloConfirmar="Substituir"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void confirmarSubstituir()}
+          aoCancelar={() => { if (!ocupado) { setImportPendente(null); setErro("Importação cancelada."); } }}
+        />
+      )}
     </>
   );
 }

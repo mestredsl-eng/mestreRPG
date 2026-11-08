@@ -1205,6 +1205,9 @@ code {
 .dica { color: var(--texto-fraco, #8b93a7); font-size: 13px; }
 .modal-fundo { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 50; }
 .modal { background: var(--fundo-cartao, #161a26); border: 1px solid var(--borda, #2a2f3f); border-radius: 12px; padding: 20px; max-width: 560px; width: 92%; max-height: 85vh; overflow-y: auto; }
+.modal-titulo { margin: 0 0 10px; font-size: 1.05rem; }
+.modal-texto { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
+.modal .formulario { margin-top: 4px; }
 .acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }

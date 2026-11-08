@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type UsuarioAdmin } from "../api";
+import { Modal, ModalConfirmar } from "../Modal";
 import Servidor from "./Servidor";
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [erro, setErro] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
   const [editando, setEditando] = useState<string | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
   const [form, setForm] = useState({ username: "", displayName: "", email: "", password: "", isAdmin: false });
+  const [senhaPara, setSenhaPara] = useState<UsuarioAdmin | null>(null);
+  const [senhaNova, setSenhaNova] = useState("");
+  const [confirmandoRemocao, setConfirmandoRemocao] = useState<UsuarioAdmin | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -51,24 +57,34 @@ export default function Admin() {
     }
   };
 
-  const redefinirSenha = async (u: UsuarioAdmin) => {
-    const senha = window.prompt(`Nova senha para ${u.username} (mín. 8 caracteres):`);
-    if (!senha) return;
+  const redefinirSenha = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!senhaPara || senhaNova.length < 8 || ocupado) return;
+    setOcupado(true);
     try {
-      await api.atualizarUsuario(u.id, { password: senha });
-      alert("Senha redefinida. As sessões ativas do usuário foram encerradas.");
+      await api.atualizarUsuario(senhaPara.id, { password: senhaNova });
+      setSenhaPara(null);
+      setSenhaNova("");
+      setMsg("Senha redefinida. As sessões ativas do usuário foram encerradas.");
+      setErro(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Erro ao redefinir senha");
+      setErro(err instanceof Error ? err.message : "Erro ao redefinir senha");
+    } finally {
+      setOcupado(false);
     }
   };
 
-  const remover = async (u: UsuarioAdmin) => {
-    if (!window.confirm(`Remover o usuário "${u.username}"? Esta ação não pode ser desfeita.`)) return;
+  const remover = async () => {
+    if (!confirmandoRemocao || ocupado) return;
+    setOcupado(true);
     try {
-      await api.removerUsuario(u.id);
+      await api.removerUsuario(confirmandoRemocao.id);
+      setConfirmandoRemocao(null);
       await carregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao remover usuário");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -80,6 +96,7 @@ export default function Admin() {
       </div>
 
       {erro && <p className="erro">{erro}</p>}
+      {msg && <p className="sucesso">{msg}</p>}
 
       {novoAberto && (
         <form className="formulario" onSubmit={criar}>
@@ -123,8 +140,8 @@ export default function Admin() {
                 <button className="mini" onClick={() => void alternarBloqueio(u)}>
                   {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
                 </button>
-                <button className="mini" onClick={() => void redefinirSenha(u)}>Senha</button>
-                <button className="mini perigo" onClick={() => void remover(u)}>Remover</button>
+                <button className="mini" onClick={() => { setSenhaPara(u); setSenhaNova(""); setErro(null); }}>Senha</button>
+                <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
               </td>
             </tr>
           ))}
@@ -145,8 +162,8 @@ export default function Admin() {
               <button className="mini" onClick={() => void alternarBloqueio(u)}>
                 {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
               </button>
-              <button className="mini" onClick={() => void redefinirSenha(u)}>Senha</button>
-              <button className="mini perigo" onClick={() => void remover(u)}>Remover</button>
+              <button className="mini" onClick={() => { setSenhaPara(u); setSenhaNova(""); setErro(null); }}>Senha</button>
+              <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
             </div>
           </div>
         ))}
@@ -161,6 +178,33 @@ export default function Admin() {
             await carregar();
           }}
           aoCancelar={() => setEditando(null)}
+        />
+      )}
+
+      {senhaPara && (
+        <Modal titulo={`Nova senha — ${senhaPara.username}`} aoFechar={() => { if (!ocupado) { setSenhaPara(null); setSenhaNova(""); } }} ocupado={ocupado}>
+          <form className="formulario" onSubmit={redefinirSenha}>
+            <label>Nova senha (mín. 8 caracteres)
+              <input type="password" value={senhaNova} onChange={(e) => setSenhaNova(e.target.value)} required minLength={8} autoFocus />
+            </label>
+            {erro && <p className="erro">{erro}</p>}
+            <div className="acoes-modal">
+              <button type="button" className="secundario" onClick={() => { setSenhaPara(null); setSenhaNova(""); setErro(null); }} disabled={ocupado}>Cancelar</button>
+              <button type="submit" disabled={ocupado || senhaNova.length < 8}>{ocupado ? "Salvando…" : "Redefinir senha"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {confirmandoRemocao && (
+        <ModalConfirmar
+          titulo="Remover usuário"
+          mensagem={`Remover o usuário "${confirmandoRemocao.username}"? Esta ação não pode ser desfeita.`}
+          rotuloConfirmar="Remover"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void remover()}
+          aoCancelar={() => { if (!ocupado) setConfirmandoRemocao(null); }}
         />
       )}
       <Servidor />

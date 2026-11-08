@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ModalConfirmar } from "../Modal";
 import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
@@ -21,6 +22,8 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
   const [descSnap, setDescSnap] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmando, setConfirmando] = useState<Snapshot | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -76,14 +79,17 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao exportar"); }
   };
 
-  const restaurar = async (s: Snapshot) => {
-    if (!confirm(`Restaurar a campanha para "${s.description ?? s.createdAt}"?\nUm snapshot automático do estado atual será criado antes.`)) return;
+  const restaurar = async () => {
+    if (!confirmando || ocupado) return;
+    setOcupado(true);
     try {
-      await api.restaurarSnapshot(campaignId, s.id);
+      await api.restaurarSnapshot(campaignId, confirmando.id);
+      setConfirmando(null);
       await carregar(); aoAtualizar();
       setMsg("Campanha restaurada. Um ponto automático foi salvo antes da restauração.");
       setTimeout(() => setMsg(null), 5000);
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao restaurar"); }
+    finally { setOcupado(false); }
   };
 
   const encerradas = sessoes.filter((s) => s.status === "encerrada");
@@ -172,7 +178,7 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
                 <div className="linha">
                   <strong>{s.description ?? "Sem descrição"}</strong>
                   <span className="dica">{KIND_SNAPSHOT[s.kind] ?? s.kind} · {new Date(s.createdAt).toLocaleString("pt-BR")} · {s.autor ? (s.autor.displayName ?? s.autor.username) : "—"}</span>
-                  <button className="secundario" onClick={() => restaurar(s)}>Restaurar</button>
+                  <button className="secundario" onClick={() => setConfirmando(s)}>Restaurar</button>
                 </div>
               </li>
             ))}
@@ -199,6 +205,17 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
             ))}
           </ul>
         </section>
+      )}
+      {confirmando && (
+        <ModalConfirmar
+          titulo="Restaurar campanha"
+          mensagem={`Restaurar a campanha para "${confirmando.description ?? confirmando.createdAt}"?\nUm snapshot automático do estado atual será criado antes.`}
+          rotuloConfirmar="Restaurar"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void restaurar()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
       )}
     </>
   );

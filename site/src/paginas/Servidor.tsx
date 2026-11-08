@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ModalConfirmar } from "../Modal";
 import { api, type BackupServidor, type ConfigServidor, type LogServidor, type StatusServidor } from "../api";
 
 function fmtBytes(b: number) {
@@ -19,6 +20,8 @@ export default function Servidor() {
   const [aba, setAba] = useState<"status" | "backups" | "logs" | "config">("status");
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [confirmando, setConfirmando] = useState<{ tipo: "restaurar"; id: string } | { tipo: "desligar" } | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -43,21 +46,25 @@ export default function Servidor() {
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
     setTimeout(() => setMsg(null), 6000);
   };
-  const restaurar = async (id: string) => {
-    if (!confirm("Restaurar este backup? Um backup de segurança do estado atual será criado antes. O servidor precisará ser reiniciado depois.")) return;
+  const confirmar = async () => {
+    if (!confirmando || ocupado) return;
+    setOcupado(true);
     try {
-      const r = await api.restaurarBackupServidor(id, "preparar");
-      setMsg(`Restauração preparada. ${r.proximoPasso ?? ""}`);
-      await carregar();
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
-    setTimeout(() => setMsg(null), 8000);
-  };
-  const desligar = async () => {
-    if (!confirm("Encerrar o servidor Mestre RPG agora? As sessões ativas serão desconectadas.")) return;
-    try {
-      await api.desligarServidor();
-      setMsg("Encerramento solicitado — o servidor vai cair em instantes.");
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao solicitar encerramento"); }
+      if (confirmando.tipo === "restaurar") {
+        const r = await api.restaurarBackupServidor(confirmando.id, "preparar");
+        setConfirmando(null);
+        setMsg(`Restauração preparada. ${r.proximoPasso ?? ""}`);
+        await carregar();
+        setTimeout(() => setMsg(null), 8000);
+      } else {
+        await api.desligarServidor();
+        setMsg("Encerramento solicitado — o servidor vai cair em instantes.");
+      }
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro");
+    } finally {
+      setOcupado(false);
+    }
   };
   const salvarConfig = async () => {
     if (!config) return;
@@ -104,7 +111,7 @@ export default function Servidor() {
             <p><strong>Último backup:</strong> {status.backup ? `${new Date(status.backup.criadoEm).toLocaleString("pt-BR")} (${status.backup.sucesso === false ? "falhou" : "ok"})` : "nenhum"}</p>
           </div>
           <div style={{ marginTop: 12 }}>
-            <button className="secundario" onClick={desligar}>Encerrar servidor</button>
+            <button className="secundario" onClick={() => setConfirmando({ tipo: "desligar" })}>Encerrar servidor</button>
             <span className="dica"> Encerra o Mestre RPG com segurança (drenagem de conexões e fechamento do banco).</span>
           </div>
         </>
@@ -120,7 +127,7 @@ export default function Servidor() {
                   <strong>{new Date(b.createdAt).toLocaleString("pt-BR")}</strong>
                   <span className="dica">{b.kind} · {b.sizeBytes ? fmtBytes(b.sizeBytes) : "—"}{b.sucesso === false ? " · FALHOU" : ""}</span>
                   <button className="secundario" onClick={() => verificar(b.id)}>Verificar</button>
-                  <button className="secundario" onClick={() => restaurar(b.id)}>Restaurar</button>
+                  <button className="secundario" onClick={() => setConfirmando({ tipo: "restaurar", id: b.id })}>Restaurar</button>
                 </div>
                 {b.note && <p className="dica">{b.note}</p>}
               </li>
@@ -164,6 +171,19 @@ export default function Servidor() {
           <label>Tamanho máximo (MB)<input type="number" min={1} value={config.arquivos.tamanhoMaxMb} onChange={(e) => setConfig({ ...config, arquivos: { tamanhoMaxMb: Number(e.target.value) } })} /></label>
           <button onClick={salvarConfig}>Salvar configuração</button>
         </div>
+      )}
+      {confirmando && (
+        <ModalConfirmar
+          titulo={confirmando.tipo === "restaurar" ? "Restaurar backup" : "Encerrar servidor"}
+          mensagem={confirmando.tipo === "restaurar"
+            ? "Restaurar este backup? Um backup de segurança do estado atual será criado antes. O servidor precisará ser reiniciado depois."
+            : "Encerrar o servidor Mestre RPG agora? As sessões ativas serão desconectadas."}
+          rotuloConfirmar={confirmando.tipo === "restaurar" ? "Restaurar" : "Encerrar"}
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void confirmar()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
       )}
     </section>
   );

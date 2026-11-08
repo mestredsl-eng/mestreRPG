@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type EstruturaFicha, type ModeloResumo, type VersaoModelo } from "../api";
 import EditorFicha from "../EditorFicha";
+import { ModalConfirmar } from "../Modal";
 
 const estruturaVazia = (): EstruturaFicha => ({
   versao: 1,
@@ -19,6 +20,8 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   const [salvando, setSalvando] = useState(false);
   const [novoNome, setNovoNome] = useState("");
   const [criando, setCriando] = useState(false);
+  const [confirmandoPublicar, setConfirmandoPublicar] = useState<string | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -82,15 +85,18 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
     }
   };
 
-  const publicar = async (versionId: string) => {
-    if (!selecionado) return;
-    if (!window.confirm("Publicar esta versão para os jogadores? Versões publicadas não podem mais ser editadas.")) return;
+  const publicar = async () => {
+    if (!selecionado || !confirmandoPublicar || ocupado) return;
+    setOcupado(true);
     try {
-      await api.publicarVersao(campaignId, selecionado, versionId);
+      await api.publicarVersao(campaignId, selecionado, confirmandoPublicar);
+      setConfirmandoPublicar(null);
       await abrirModelo(selecionado);
       await carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao publicar");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -178,7 +184,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
               {versaoSel.rascunho && (
                 <>
                   <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar rascunho"}</button>
-                  <button className="secundario" onClick={() => void publicar(versaoSel.id)}>Publicar</button>
+                  <button className="secundario" onClick={() => setConfirmandoPublicar(versaoSel.id)}>Publicar</button>
                 </>
               )}
               <button className="secundario" onClick={() => void novaVersao()}>Nova versão</button>
@@ -190,6 +196,16 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           )}
           {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} />}
         </section>
+      )}
+      {confirmandoPublicar && (
+        <ModalConfirmar
+          titulo="Publicar versão"
+          mensagem="Publicar esta versão para os jogadores? Versões publicadas não podem mais ser editadas."
+          rotuloConfirmar="Publicar"
+          ocupado={ocupado}
+          aoConfirmar={() => void publicar()}
+          aoCancelar={() => { if (!ocupado) setConfirmandoPublicar(null); }}
+        />
       )}
     </>
   );

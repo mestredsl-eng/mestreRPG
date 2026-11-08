@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca } from "../api";
+import { ModalConfirmar } from "../Modal";
 
 const CATEGORIAS = ["mapas", "npcs", "locais", "documentos", "imagens", "pistas", "regras", "referencias", "jogadores", "outros"];
 const VIS_OPCOES = [
@@ -36,6 +37,8 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
   const inputRef = useRef<HTMLInputElement>(null);
   const [novaPasta, setNovaPasta] = useState<{ nome: string; pai: string | null } | null>(null);
   const [renomeandoPasta, setRenomeandoPasta] = useState<PastaBiblioteca | null>(null);
+  const [confirmando, setConfirmando] = useState<{ tipo: "pasta"; p: PastaBiblioteca } | { tipo: "arquivo"; a: ArquivoBiblioteca } | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -99,10 +102,13 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
   };
 
-  const excluirPasta = async (p: PastaBiblioteca) => {
-    if (!confirm(`Excluir a pasta "${p.name}"? Ela precisa estar vazia.`)) return;
-    try { await api.excluirPasta(campaignId, p.id); if (pastaAtual === p.id) setPastaAtual(null); await carregar(); }
+  const excluirPasta = async () => {
+    if (confirmando?.tipo !== "pasta" || ocupado) return;
+    const p = confirmando.p;
+    setOcupado(true);
+    try { await api.excluirPasta(campaignId, p.id); if (pastaAtual === p.id) setPastaAtual(null); setConfirmando(null); await carregar(); }
     catch (e) { setErro(e instanceof Error ? e.message : "Erro ao excluir pasta"); }
+    finally { setOcupado(false); }
   };
 
   const salvarEdicao = async () => {
@@ -122,10 +128,13 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
     catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
   };
 
-  const excluirArquivo = async (a: ArquivoBiblioteca) => {
-    if (!confirm(`Excluir "${a.displayName}"? O arquivo vai para a lixeira interna.`)) return;
-    try { await api.excluirArquivo(campaignId, a.id); if (visualizando?.id === a.id) setVisualizando(null); await carregar(); }
+  const excluirArquivo = async () => {
+    if (confirmando?.tipo !== "arquivo" || ocupado) return;
+    const a = confirmando.a;
+    setOcupado(true);
+    try { await api.excluirArquivo(campaignId, a.id); if (visualizando?.id === a.id) setVisualizando(null); setConfirmando(null); await carregar(); }
     catch (e) { setErro(e instanceof Error ? e.message : "Erro ao excluir"); }
+    finally { setOcupado(false); }
   };
 
   const url = (a: ArquivoBiblioteca, download = false) => api.urlArquivo(campaignId, a.id, download);
@@ -154,7 +163,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
                   <span className="dica">{a.uploader?.displayName ?? a.uploader?.username ?? "?"} · {fmtTamanho(a.sizeBytes)}</span>
                   <button onClick={() => moderar(a, "aprovar")}>Aprovar</button>
                   <button className="secundario" onClick={() => moderar(a, "rejeitar")}>Rejeitar</button>
-                  <button className="secundario" onClick={() => excluirArquivo(a)}>Excluir</button>
+                  <button className="secundario" onClick={() => setConfirmando({ tipo: "arquivo", a })}>Excluir</button>
                 </div>
               </li>
             ))}
@@ -174,7 +183,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
               {souMestre && (
                 <>
                   <button className="secundario" onClick={() => setRenomeandoPasta({ ...p })} title="Renomear">✎</button>
-                  <button className="secundario" onClick={() => excluirPasta(p)} title="Excluir pasta vazia">✕</button>
+                  <button className="secundario" onClick={() => setConfirmando({ tipo: "pasta", p })} title="Excluir pasta vazia">✕</button>
                 </>
               )}
             </div>
@@ -228,7 +237,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
                   )}
                   <a className="secundario" href={url(a, true)} download={a.displayName}>Download</a>
                   {(souMestre || a.ehMeu) && <button className="secundario" onClick={() => setEditando({ ...a })}>Editar</button>}
-                  {(souMestre || a.ehMeu) && <button className="secundario" onClick={() => excluirArquivo(a)}>Excluir</button>}
+                  {(souMestre || a.ehMeu) && <button className="secundario" onClick={() => setConfirmando({ tipo: "arquivo", a })}>Excluir</button>}
                 </div>
               </li>
             ))}
@@ -284,6 +293,29 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
             </div>
           </div>
         </div>
+      )}
+
+      {confirmando?.tipo === "pasta" && (
+        <ModalConfirmar
+          titulo="Excluir pasta"
+          mensagem={`Excluir a pasta \"${confirmando.p.name}\"? Ela precisa estar vazia.`}
+          rotuloConfirmar="Excluir"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void excluirPasta()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
+      )}
+      {confirmando?.tipo === "arquivo" && (
+        <ModalConfirmar
+          titulo="Excluir arquivo"
+          mensagem={`Excluir \"${confirmando.a.displayName}\"? O arquivo vai para a lixeira interna.`}
+          rotuloConfirmar="Excluir"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void excluirArquivo()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
       )}
     </section>
   );

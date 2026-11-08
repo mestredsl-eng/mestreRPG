@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
+import { ModalConfirmar } from "../Modal";
 import ModelosFicha from "./ModelosFicha";
 import Personagens from "./Personagens";
 import Regras from "./Regras";
@@ -31,6 +32,8 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
   const [conviteCriado, setConviteCriado] = useState<{ code: string } | null>(null);
   const [conviteForm, setConviteForm] = useState({ role: "jogador", maxUses: "", expiresInHours: "", requiresApproval: false });
+  const [confirmando, setConfirmando] = useState<{ m: Membro; acao: "remover" | "transferir" } | null>(null);
+  const [ocupado, setOcupado] = useState(false);
 
   const souMestre = campanha?.meuPapel === "mestre";
 
@@ -94,27 +97,23 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       await api.atualizarMembro(id, m.membershipId, dados);
       await carregar();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Erro ao atualizar participante");
+      setErro(err instanceof Error ? err.message : "Erro ao atualizar participante");
     }
   };
 
-  const removerMembro = async (m: Membro) => {
-    if (!window.confirm(`Remover ${m.displayName ?? m.username} da campanha?`)) return;
+  const confirmarAcao = async () => {
+    if (!confirmando || ocupado) return;
+    const { m, acao } = confirmando;
+    setOcupado(true);
     try {
-      await api.removerMembro(id, m.membershipId);
+      if (acao === "remover") await api.removerMembro(id, m.membershipId);
+      else await api.transferirTitularidade(id, m.membershipId);
+      setConfirmando(null);
       await carregar();
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Erro ao remover participante");
-    }
-  };
-
-  const transferir = async (m: Membro) => {
-    if (!window.confirm(`Transferir a titularidade da campanha para ${m.displayName ?? m.username}?`)) return;
-    try {
-      await api.transferirTitularidade(id, m.membershipId);
-      await carregar();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "Erro ao transferir titularidade");
+      setErro(err instanceof Error ? err.message : acao === "remover" ? "Erro ao remover participante" : "Erro ao transferir titularidade");
+    } finally {
+      setOcupado(false);
     }
   };
 
@@ -288,10 +287,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                   </td>
                   <td className="acoes">
                     {m.role === "mestre" && m.status === "ativo" && !m.ehEu && (
-                      <button className="mini" onClick={() => void transferir(m)}>Transferir</button>
+                      <button className="mini" onClick={() => setConfirmando({ m, acao: "transferir" })}>Transferir</button>
                     )}
                     {!m.ehEu && (
-                      <button className="mini perigo" onClick={() => void removerMembro(m)}>Remover</button>
+                      <button className="mini perigo" onClick={() => setConfirmando({ m, acao: "remover" })}>Remover</button>
                     )}
                   </td>
                 </tr>
@@ -352,10 +351,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                 )}
                 <div className="registro-acoes">
                   {m.role === "mestre" && m.status === "ativo" && !m.ehEu && (
-                    <button className="mini" onClick={() => void transferir(m)}>Transferir</button>
+                    <button className="mini" onClick={() => setConfirmando({ m, acao: "transferir" })}>Transferir</button>
                   )}
                   {!m.ehEu && (
-                    <button className="mini perigo" onClick={() => void removerMembro(m)}>Remover</button>
+                    <button className="mini perigo" onClick={() => setConfirmando({ m, acao: "remover" })}>Remover</button>
                   )}
                 </div>
               </div>
@@ -435,6 +434,20 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             ))}
           </div>
         </section>
+      )}
+
+      {confirmando && (
+        <ModalConfirmar
+          titulo={confirmando.acao === "remover" ? "Remover participante" : "Transferir titularidade"}
+          mensagem={confirmando.acao === "remover"
+            ? `Remover ${confirmando.m.displayName ?? confirmando.m.username} da campanha?`
+            : `Transferir a titularidade da campanha para ${confirmando.m.displayName ?? confirmando.m.username}?`}
+          rotuloConfirmar={confirmando.acao === "remover" ? "Remover" : "Transferir"}
+          perigo={confirmando.acao === "remover"}
+          ocupado={ocupado}
+          aoConfirmar={() => void confirmarAcao()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
       )}
     </>
   );

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { ModalConfirmar } from "../Modal";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
 
 const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
@@ -61,10 +62,14 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao salvar"); }
   };
 
-  const remover = async (n: Anotacao) => {
-    if (!confirm(`Excluir "${n.title}"?`)) return;
-    try { await api.excluirAnotacao(campaignId, n.id); await carregar(); }
+  const [confirmando, setConfirmando] = useState<Anotacao | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const remover = async () => {
+    if (!confirmando || ocupado) return;
+    setOcupado(true);
+    try { await api.excluirAnotacao(campaignId, confirmando.id); setConfirmando(null); await carregar(); }
     catch (e) { setErro(e instanceof Error ? e.message : "Erro ao excluir"); }
+    finally { setOcupado(false); }
   };
 
   const alternarImportante = async (n: Anotacao) => {
@@ -174,7 +179,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
                   <button className="secundario" onClick={() => setAnexando(anexando === n.id ? null : n.id)}>Anexar</button>
                   <button className="secundario" onClick={() => alternarImportante(n)}>{n.important ? "Desmarcar" : "Marcar importante"}</button>
                   <button className="secundario" onClick={() => abrirEdicao(n)}>Editar</button>
-                  <button className="secundario" onClick={() => remover(n)}>Excluir</button>
+                  <button className="secundario" onClick={() => setConfirmando(n)}>Excluir</button>
                 </>
               )}
             </div>
@@ -182,6 +187,17 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
         ))}
         {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
       </ul>
+      {confirmando && (
+        <ModalConfirmar
+          titulo="Excluir anotação"
+          mensagem={`Excluir "${confirmando.title}"?`}
+          rotuloConfirmar="Excluir"
+          perigo
+          ocupado={ocupado}
+          aoConfirmar={() => void remover()}
+          aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
+        />
+      )}
     </section>
   );
 }

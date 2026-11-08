@@ -6,6 +6,7 @@ import {
 } from "../api";
 import { getSocket } from "../socket";
 import PainelDados, { FaceDado } from "../Dados";
+import { ModalConfirmar } from "../Modal";
 
 interface Props {
   campaignId: string;
@@ -97,6 +98,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const [minimoD10, setMinimoD10] = useState(6);
   const [erro, setErro] = useState<string | null>(null);
   const [sessaoAtual, setSessaoAtual] = useState(sessao);
+  const [confirmandoEncerrar, setConfirmandoEncerrar] = useState(false);
+  const [ocupadoEncerrar, setOcupadoEncerrar] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<number | null>(null);
   const [, forcarTick] = useState(0);
@@ -238,9 +241,14 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     setSessaoAtual({ ...sessaoAtual, status: novo });
   };
   const encerrarSessao = async () => {
-    if (!confirm("Encerrar a sessão?")) return;
-    await api.atualizarSessao(campaignId, sessao.id, { status: "encerrada" });
-    aoSair();
+    if (ocupadoEncerrar) return;
+    setOcupadoEncerrar(true);
+    try {
+      await api.atualizarSessao(campaignId, sessao.id, { status: "encerrada" });
+      aoSair();
+    } finally {
+      setOcupadoEncerrar(false);
+    }
   };
 
   const restantes = timer?.status === "rodando" && timer.endsAt && timer.servidorAgora
@@ -272,7 +280,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             {souMestre && sessaoAtual.status !== "encerrada" && (
               <>
                 <button className="secundario" onClick={() => void pausarSessao()}>{sessaoAtual.status === "pausada" ? "Retomar" : "Pausar"}</button>
-                <button className="perigo" onClick={() => void encerrarSessao()}>Encerrar</button>
+                <button className="perigo" onClick={() => setConfirmandoEncerrar(true)}>Encerrar</button>
               </>
             )}
             <button className="secundario" onClick={aoSair}>Sair da mesa</button>
@@ -492,6 +500,17 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             </tbody>
           </table>
         </section>
+      )}
+      {confirmandoEncerrar && (
+        <ModalConfirmar
+          titulo="Encerrar sessão"
+          mensagem="Encerrar a sessão?"
+          rotuloConfirmar="Encerrar"
+          perigo
+          ocupado={ocupadoEncerrar}
+          aoConfirmar={() => void encerrarSessao()}
+          aoCancelar={() => { if (!ocupadoEncerrar) setConfirmandoEncerrar(false); }}
+        />
       )}
     </>
     </div>
