@@ -92,7 +92,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const [privado, setPrivado] = useState(false);
   const [secreto, setSecreto] = useState(false);
   const [destinoPriv, setDestinoPriv] = useState("");
-  const [rolagens, setRolagens] = useState<{ id: string; dados: number[][]; lados: number[]; total: number | null; motivo?: string | null; autor?: string; ts: number }[]>([]);
+  const [rolagens, setRolagens] = useState<{ id: string; dados: number[][]; lados: number[]; total: number | null; motivo?: string | null; autor?: string; ts: number; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number }[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [sessaoAtual, setSessaoAtual] = useState(sessao);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -142,12 +142,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string }) => {
+    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number }) => {
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
         id: r.id, dados: grupos.map((g) => g.resultados), lados: grupos.map((g) => g.lados),
         total: r.total, motivo: r.motivo ?? null, autor: r.rolador, ts: Date.now(),
+        vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais,
       }]);
     };
     const aoDecisao = (d: { testId: string; outcome: string; nota?: string | null; characterName?: string; visibility?: string }) => {
@@ -422,7 +423,17 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                     ))}
                     {r.total !== null && <strong> = {r.total}</strong>}
                   </div>
-                  <p className="meta">{r.autor ?? ""}{r.motivo ? ` — ${r.motivo}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}</p>
+                  <p className="meta">
+                    {r.autor ?? ""}{r.motivo ? ` — ${r.motivo}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}
+                  </p>
+                  {r.vitalidade && (
+                    <p className="meta vitalidade-rolagem">
+                      Vitalidade: {r.vitalidade.nome}
+                      {r.vitalidade.penalidadeDados > 0 && ` (−${r.vitalidade.penalidadeDados} dado${r.vitalidade.penalidadeDados > 1 ? "s" : ""})`}
+                      {` — ${r.vitalidade.dadosOriginais}d → ${r.vitalidade.dadosFinais}d`}
+                      {r.vitalidade.excecaoMestre && " · exceção do mestre"}
+                    </p>
+                  )}
                 </div>
               ))}
             </section>

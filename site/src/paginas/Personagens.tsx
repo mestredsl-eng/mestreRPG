@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
+import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -302,6 +303,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           </div>
         )}
         {estruturaVazia && <p className="meta">Esta ficha ainda não possui campos configurados.</p>}
+        {ficha?.vida && (
+          <Vida vidaInicial={ficha.vida} characterId={personagem.id} aoErro={setErro} />
+        )}
         {estrutura && !estruturaVazia && (
           <FichaForm
             estrutura={estrutura}

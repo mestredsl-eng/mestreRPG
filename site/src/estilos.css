@@ -922,6 +922,143 @@ textarea {
 .carteira-linha-edicao select { flex: 0 0 7rem; }
 .carteira-linha-edicao input[type="number"] { flex: 0 0 7rem; }
 
+/* ---- Pontos de Vida e Vitalidade ---- */
+.vida-paineis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1rem;
+}
+
+.vida-cartao {
+  border: 1px solid #2c3038;
+  border-radius: 10px;
+  background: #14161a;
+  padding: 0.8rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.vida-cartao h4 {
+  margin: 0;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8ab4ff;
+}
+
+.hp-resumo {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.hp-atual {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #e8e6e3;
+  min-width: 4.5rem;
+}
+
+.hp-atual small {
+  font-size: 0.85rem;
+  color: #8a8f98;
+  font-weight: 400;
+}
+
+.hp-atual.critico { color: #ff9d9d; }
+
+.hp-barra {
+  flex: 1;
+  height: 12px;
+  border-radius: 999px;
+  background: #23262d;
+  overflow: hidden;
+}
+
+.hp-preenchimento {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #4d7ec4, #7fb3ff);
+  transition: width 0.25s ease;
+}
+
+.hp-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.hp-acoes input[type="number"] { width: 6.5rem; }
+.hp-acoes input[type="text"] { flex: 1; min-width: 8rem; }
+
+.hp-historico {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.hp-evento {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.6rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+  color: #c9cdd3;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid #1d2026;
+}
+
+.hp-qtd { font-weight: 700; min-width: 2.4rem; }
+.hp-qtd.negativo { color: #ff9d9d; }
+.hp-qtd.positivo { color: #7fd18b; }
+.hp-tipo { color: #8ab4ff; }
+.hp-motivo { flex: 1; min-width: 6rem; }
+.hp-data { color: #6b7078; font-size: 0.72rem; }
+
+.vitalidade-escala {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 0.4rem;
+}
+
+.vit-nivel {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.1rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  background: #101216;
+  color: #c9cdd3;
+  font-size: 0.8rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.vit-nivel:hover { border-color: #4d7ec4; }
+
+.vit-nivel.atual {
+  border-color: #8ab4ff;
+  background: #1a2333;
+  color: #e8e6e3;
+}
+
+.vit-nivel.somente-leitura { cursor: default; }
+
+.vit-nome { font-weight: 600; }
+.vit-penalidade { font-size: 0.72rem; color: #8a8f98; }
+.vit-nivel.atual .vit-penalidade { color: #8ab4ff; }
+
+.vitalidade-rolagem {
+  color: #8ab4ff;
+}
+
 .campo-editor-linha {
   display: flex;
   justify-content: space-between;

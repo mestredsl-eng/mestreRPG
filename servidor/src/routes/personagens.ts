@@ -19,6 +19,7 @@ import {
   type Visibilidade,
   type EditavelPor,
 } from "../lib/ficha.js";
+import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import {
   carregarRegras,
   validarRegras,
@@ -53,6 +54,19 @@ async function carregarEstrutura(versionId: string): Promise<EstruturaCarregada 
 
 type OverrideCampo = { visibilidade?: Visibilidade; editavelPor?: EditavelPor; destinatarios?: string[] };
 type Overrides = Record<string, OverrideCampo>;
+
+const ESTRUTURA_VAZIA: EstruturaFicha = { versao: 1, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
+
+async function estruturaDoPersonagem(p: typeof characters.$inferSelect): Promise<EstruturaFicha> {
+  if (!p.templateVersionId) return ESTRUTURA_VAZIA;
+  const carregada = await carregarEstrutura(p.templateVersionId);
+  return carregada?.estrutura ?? ESTRUTURA_VAZIA;
+}
+
+async function nomeUsuario(id: string): Promise<string> {
+  const [u] = await db.select({ displayName: users.displayName, username: users.username }).from(users).where(eq(users.id, id)).limit(1);
+  return u?.displayName || u?.username || "?";
+}
 
 function overridesDe(personagem: typeof characters.$inferSelect): Overrides {
   return (personagem.overrides ?? {}) as Overrides;
@@ -153,6 +167,16 @@ function montarFicha(
     }
   }
 
+  // Pontos de Vida e Vitalidade (config da campanha; estado em data.__hp/__vitalidade)
+  const vida = regras
+    ? {
+        hp: resumoHp(regras.config.hp, estrutura, dados),
+        vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
+        podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
+        podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
+      }
+    : null;
+
   return {
     campos,
     calculados,
@@ -160,6 +184,7 @@ function montarFicha(
     estrutura: estruturaFiltrada,
     validacao,
     carteiras,
+    vida,
     // Config Poderes×Defeitos da campanha — a ficha usa p/ UX (limite,
     // aviso de defeito obrigatório). A validação real é do backend.
     poderes: regras?.config.poderes ?? null,
@@ -310,6 +335,16 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     return;
   }
 
+  // HP começa cheio na criação quando a campanha habilita Pontos de Vida.
+  const dadosCriacao = { ...validacao.dados } as Record<string, unknown>;
+  const hpMax = hpMaximo(regras.config.hp, carregada.estrutura, dadosCriacao);
+  if (hpMax !== null) {
+    dadosCriacao[CHAVE_HP] = {
+      atual: hpMax,
+      historico: [{ em: new Date().toISOString(), tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
+    };
+  }
+
   const agora = new Date();
   const id = crypto.randomUUID();
   await db.insert(characters).values({
@@ -318,7 +353,7 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     membershipId: req.membership!.id,
     templateVersionId: versionId,
     name: body.data.name,
-    data: validacao.dados,
+    data: dadosCriacao,
     overrides: {},
     status: "rascunho",
     createdAt: agora,
@@ -472,6 +507,20 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     return;
   }
 
+  // Personagens antigos sem estado de HP: inicializa cheio na primeira gravação.
+  if (regras.config.hp.habilitado && dadosFinais[CHAVE_HP] === undefined) {
+    const hpMax = hpMaximo(regras.config.hp, estrutura, dadosFinais);
+    if (hpMax !== null) {
+      dadosFinais = {
+        ...dadosFinais,
+        [CHAVE_HP]: {
+          atual: hpMax,
+          historico: [{ em: new Date().toISOString(), tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
+        },
+      };
+    }
+  }
+
   // Transições de status
   let novoStatus = body.data.status ?? p.status;
   if (!ehMestre && body.data.status && body.data.status !== "aguardando_aprovacao" && body.data.status !== "rascunho") {
@@ -520,4 +569,117 @@ personagensRouter.patch("/:characterId", async (req, res) => {
   const [atualizado] = await db.select().from(characters).where(eq(characters.id, p.id)).limit(1);
   const resp = await personagemPublico(atualizado, req.usuario!.id, acesso.membershipId, ehMestre);
   res.json(resp);
+});
+
+// ---------- Pontos de Vida e Vitalidade ----------
+
+const hpSchema = z.object({
+  acao: z.enum(["dano", "recuperar", "ajuste"]),
+  quantidade: z.number().optional(),
+  motivo: z.string().max(300).optional(),
+});
+
+/** POST /api/characters/:characterId/hp — dano/recuperação/ajuste de HP.
+ *  O HP atual nunca fica negativo nem acima do máximo; histórico gravado. */
+personagensRouter.post("/:characterId/hp", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre, ehDono } = acesso;
+  const body = hpSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const regras = await carregarRegras(p.campaignId);
+  const cfg = regras.config.hp;
+  if (!cfg.habilitado) {
+    res.status(400).json({ erro: "Pontos de vida não estão habilitados nesta campanha" });
+    return;
+  }
+  const dados = (p.data ?? {}) as Record<string, unknown>;
+  const estrutura = await estruturaDoPersonagem(p);
+  const maximo = hpMaximo(cfg, estrutura, dados);
+  if (maximo === null) {
+    res.status(400).json({ erro: "Não foi possível calcular o HP máximo (verifique o atributo configurado)" });
+    return;
+  }
+  if (!ehMestre && !(ehDono && cfg.edicaoPor !== "mestre")) {
+    res.status(403).json({ erro: "Sem permissão para alterar o HP deste personagem" });
+    return;
+  }
+
+  const { acao, motivo } = body.data;
+  let delta = 0;
+  if (acao === "ajuste") {
+    delta = body.data.quantidade ?? 0;
+    if (!Number.isFinite(delta) || delta === 0) {
+      res.status(400).json({ erro: "Ajuste exige uma quantidade diferente de zero" });
+      return;
+    }
+  } else {
+    const q = body.data.quantidade;
+    if (typeof q !== "number" || !Number.isFinite(q) || q <= 0) {
+      res.status(400).json({ erro: "Quantidade deve ser um número positivo" });
+      return;
+    }
+    delta = acao === "dano" ? -Math.abs(q) : Math.abs(q);
+  }
+
+  const estado = lerHp(dados);
+  const agora = new Date();
+  const autorNome = await nomeUsuario(req.usuario!.id);
+  const { estado: novo, erro } = aplicarHp(estado, maximo, delta, {
+    em: agora.toISOString(),
+    tipo: acao === "dano" ? "dano" : acao === "recuperar" ? "recuperacao" : "ajuste",
+    motivo: motivo?.trim() || (acao === "dano" ? "Dano" : acao === "recuperar" ? "Recuperação" : "Ajuste"),
+    autorId: req.usuario!.id,
+    autorNome,
+  });
+  if (erro) {
+    res.status(400).json({ erro });
+    return;
+  }
+  const novosDados = { ...dados, [CHAVE_HP]: novo };
+  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: novo.atual - (estado?.atual ?? maximo) });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, hp: resumoHp(cfg, estrutura, novosDados) });
+});
+
+const vitalidadeSchema = z.object({ nivel: z.number().int().min(0) });
+
+/** POST /api/characters/:characterId/vitalidade — define o nível de ferimento. */
+personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre, ehDono } = acesso;
+  const body = vitalidadeSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const regras = await carregarRegras(p.campaignId);
+  const cfg = regras.config.vitalidade;
+  if (body.data.nivel >= cfg.niveis.length) {
+    res.status(400).json({ erro: `Nível inválido (0 a ${cfg.niveis.length - 1})` });
+    return;
+  }
+  if (!ehMestre && !(ehDono && cfg.edicaoPor !== "mestre")) {
+    res.status(403).json({ erro: "Sem permissão para alterar a vitalidade deste personagem" });
+    return;
+  }
+  const dados = (p.data ?? {}) as Record<string, unknown>;
+  const agora = new Date();
+  const estado = { ...lerVitalidade(dados), nivel: body.data.nivel, alteradoEm: agora.toISOString(), alteradoPor: req.usuario!.id };
+  const novosDados = { ...dados, [CHAVE_VITALIDADE]: estado };
+  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  await audit(req, "personagem.vitalidade", { characterId: p.id, nivel: body.data.nivel });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, vitalidade: resumoVitalidade(cfg, novosDados) });
 });

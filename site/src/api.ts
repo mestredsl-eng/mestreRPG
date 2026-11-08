@@ -136,6 +136,10 @@ export const api = {
     requisicao<{ pontos: ResultadoPontos }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
   atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
+    requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"] }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
+  alterarVitalidade: (charId: string, nivel: number) =>
+    requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel }) }),
 
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
@@ -430,6 +434,12 @@ export interface FichaRenderizada {
   validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> };
   poderes?: ConfigPoderes | null;
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
+  vida?: {
+    hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
+    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+    podeEditarHp: boolean;
+    podeEditarVitalidade: boolean;
+  } | null;
 }
 
 /** Configuração Poderes×Defeitos da campanha (regras). */
@@ -499,6 +509,18 @@ export interface ConfigRegras {
   transferivelEntreReservas: boolean;
   transferencias: { origem: string; destino: string; limite?: number }[];
   poderes?: ConfigPoderes;
+  hp?: {
+    habilitado: boolean;
+    base: number;
+    porNivel: number;
+    campoId?: string;
+    semantico?: string;
+    edicaoPor: string;
+  };
+  vitalidade?: {
+    niveis: { nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[];
+    edicaoPor: string;
+  };
 }
 
 export interface RegrasCampanha {

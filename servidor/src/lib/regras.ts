@@ -142,6 +142,57 @@ export const configRegrasSchema = z.object({
       limiteDefeitos: z.number().int().min(1).max(50).nullable().optional(),
     })
     .default({ limitePoderes: 1, exigirDefeito: false }),
+  // Pontos de Vida (HP): máximo derivado de atributo configurável.
+  hp: z
+    .object({
+      habilitado: z.boolean().default(false),
+      base: z.number().nonnegative().default(100),
+      porNivel: z.number().nonnegative().default(20),
+      // Atributo do cálculo: campoId explícito tem prioridade; senão,
+      // primeiro campo numérico com este semântico.
+      campoId: z.string().max(80).optional(),
+      semantico: z.string().max(40).optional(),
+      // Quem pode aplicar dano/recuperação/ajuste na ficha.
+      edicaoPor: z.enum(["jogador", "mestre", "ambos"]).default("mestre"),
+    })
+    .default({ habilitado: false, base: 100, porNivel: 20, edicaoPor: "mestre" }),
+  // Vitalidade: escala ordenada de ferimentos; penalidadeDados = dados
+  // removidos da rolagem; bloqueiaAcoes = impede ações (mestre autoriza).
+  vitalidade: z
+    .object({
+      niveis: z
+        .array(
+          z.object({
+            nome: z.string().min(1).max(60),
+            penalidadeDados: z.number().int().min(0).max(30).default(0),
+            bloqueiaAcoes: z.boolean().default(false),
+          })
+        )
+        .min(1)
+        .max(20)
+        .default([
+          { nome: "Escoriado", penalidadeDados: 0, bloqueiaAcoes: false },
+          { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
+          { nome: "Ferido", penalidadeDados: 1, bloqueiaAcoes: false },
+          { nome: "Ferido gravemente", penalidadeDados: 2, bloqueiaAcoes: false },
+          { nome: "Espancado", penalidadeDados: 2, bloqueiaAcoes: false },
+          { nome: "Aleijado", penalidadeDados: 5, bloqueiaAcoes: false },
+          { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
+        ]),
+      edicaoPor: z.enum(["jogador", "mestre", "ambos"]).default("mestre"),
+    })
+    .default({
+      edicaoPor: "mestre",
+      niveis: [
+        { nome: "Escoriado", penalidadeDados: 0, bloqueiaAcoes: false },
+        { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
+        { nome: "Ferido", penalidadeDados: 1, bloqueiaAcoes: false },
+        { nome: "Ferido gravemente", penalidadeDados: 2, bloqueiaAcoes: false },
+        { nome: "Espancado", penalidadeDados: 2, bloqueiaAcoes: false },
+        { nome: "Aleijado", penalidadeDados: 5, bloqueiaAcoes: false },
+        { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
+      ],
+    }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 

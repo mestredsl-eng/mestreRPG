@@ -8,6 +8,8 @@ import {
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
+import { carregarRegras } from "../lib/regras.js";
+import { resumoVitalidade } from "../lib/vida.js";
 
 const db = getDb();
 
@@ -356,7 +358,29 @@ function socket_handlers(
       if (ctx.papel !== "mestre" && !ehDono) { cb?.({ ok: false, erro: "Só o dono do personagem ou o mestre rolam" }); return; }
       if (teste.status !== "pendente") { cb?.({ ok: true, id: teste.id, status: teste.status, jaRolado: true }); return; }
 
-      const resultados = rolarLados(teste.diceSides, teste.diceCount);
+      // Vitalidade: penalidade de dados aplicada no servidor a partir do
+      // estado atual do personagem — o jogador não pode ignorá-la.
+      // Incapacitado bloqueia ações de quem não é mestre (exceção do mestre).
+      let vitalidade: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null = null;
+      let countFinal = teste.diceCount;
+      if (char) {
+        const regras = await carregarRegras(teste.campaignId);
+        const vit = resumoVitalidade(regras.config.vitalidade, (char.data ?? {}) as Record<string, unknown>);
+        if (vit) {
+          if (vit.bloqueiaAcoes && ctx.papel !== "mestre") {
+            cb?.({ ok: false, erro: `Ação bloqueada: ${char.name} está ${vit.nome} e não pode agir normalmente` });
+            return;
+          }
+          countFinal = Math.max(0, teste.diceCount - vit.penalidadeDados);
+          vitalidade = {
+            nivel: vit.nivel, nome: vit.nome, penalidadeDados: vit.penalidadeDados,
+            dadosOriginais: teste.diceCount, dadosFinais: countFinal,
+            excecaoMestre: vit.bloqueiaAcoes && ctx.papel === "mestre" ? true : undefined,
+          };
+        }
+      }
+
+      const resultados = rolarLados(teste.diceSides, countFinal);
       const total = resultados.reduce((a, b) => a + b, 0);
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
@@ -364,8 +388,8 @@ function socket_handlers(
         await db.insert(rolls).values({
           id: rollId, campaignId: teste.campaignId, sessionId: teste.sessionId,
           characterId: teste.characterId, userId: u.id,
-          dice: [{ sides: teste.diceSides, count: teste.diceCount }] as never,
-          results: { dados: resultados, total, soma: total } as never,
+          dice: [{ sides: teste.diceSides, count: countFinal }] as never,
+          results: { dados: resultados, total, soma: total, vitalidade } as never,
           reason: `teste:${teste.id}`, visibility: teste.visibility,
           requestId: payload.requestId ?? null, createdAt: agora,
         });
@@ -383,7 +407,8 @@ function socket_handlers(
         id: rollId, testId: teste.id, sessionId: teste.sessionId,
         characterId: teste.characterId, characterName: char?.name,
         userId: u.id, rolador: await nomeUsuario(u.id),
-        dados: resultados, total, lados: teste.diceSides, count: teste.diceCount,
+        dados: resultados, total, lados: teste.diceSides, count: countFinal,
+        dadosOriginais: teste.diceCount, vitalidade,
         alvo: teste.target, // só mestres recebem via filtro abaixo
         visibility: teste.visibility, createdAt: agora,
       };
@@ -396,11 +421,11 @@ function socket_handlers(
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "rolagem",
-        content: `${await nomeUsuario(u.id)} rolou ${teste.diceCount}d${teste.diceSides} → ${resultados.join(", ")} = ${total}`,
+        content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}`,
         visibility: teste.visibility === "privada" ? "privada" : "publica",
         recipients: teste.visibility === "privada" && membroDono ? [membroDono.userId] : undefined,
       });
-      cb?.({ ok: true, id: rollId, dados: resultados, total });
+      cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade });
     });
 
     // ---------- rolagem livre ----------

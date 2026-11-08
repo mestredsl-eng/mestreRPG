@@ -375,6 +375,86 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
       </div>
       <p className="dica">Vale para elementos dos tipos "Poder" e "Defeito" selecionados na ficha. Custos negativos de defeitos concedem pontos.</p>
 
+      <h4>Pontos de Vida (HP)</h4>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={!!form.hp?.habilitado}
+          onChange={(e) => setForm((f) => ({
+            ...f,
+            hp: { ...(f.hp ?? { habilitado: false, base: 100, porNivel: 20, edicaoPor: "mestre" }), habilitado: e.target.checked },
+          }))}
+        />
+        Habilitar pontos de vida
+      </label>
+      {form.hp?.habilitado && (
+        <div className="grade-form">
+          <label>HP base
+            <input type="number" min="0" value={form.hp.base} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, base: Number(e.target.value) } }))} />
+          </label>
+          <label>HP por nível do atributo
+            <input type="number" min="0" value={form.hp.porNivel} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, porNivel: Number(e.target.value) } }))} />
+          </label>
+          <label>Atributo — ID do campo (opcional; senão usa o semântico)
+            <input type="text" value={form.hp.campoId ?? ""} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, campoId: e.target.value || undefined } }))} placeholder="ex.: dc2d4cb6" />
+          </label>
+          <label>Ou semântico do atributo
+            <input type="text" value={form.hp.semantico ?? ""} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, semantico: e.target.value || undefined } }))} placeholder="ex.: atributo" />
+          </label>
+          <label>Quem altera HP
+            <select value={form.hp.edicaoPor} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, edicaoPor: e.target.value } }))}>
+              <option value="mestre">Somente o mestre</option>
+              <option value="ambos">Mestre e dono</option>
+              <option value="jogador">Somente o dono</option>
+            </select>
+          </label>
+        </div>
+      )}
+      <p className="dica">HP máximo = base + atributo × HP por nível. O HP atual começa cheio e o histórico de dano/recuperação fica na ficha do personagem.</p>
+
+      <h4>Vitalidade</h4>
+      <p className="dica">Escala ordenada de ferimentos. A penalidade remove dados das rolagens do personagem; "bloqueia" impede ações (o mestre pode autorizar exceção). A ordem da lista é a gravidade.</p>
+      {(form.vitalidade?.niveis ?? []).map((n, i) => (
+        <div className="linha-ferramentas" key={i}>
+          <input type="text" value={n.nome} onChange={(e) => {
+            const niveis = [...form.vitalidade!.niveis];
+            niveis[i] = { ...n, nome: e.target.value };
+            setForm((f) => ({ ...f, vitalidade: { ...f.vitalidade!, niveis } }));
+          }} />
+          <label className="checkbox-inline">−
+            <input type="number" min="0" max="30" value={n.penalidadeDados} onChange={(e) => {
+              const niveis = [...form.vitalidade!.niveis];
+              niveis[i] = { ...n, penalidadeDados: Number(e.target.value) };
+              setForm((f) => ({ ...f, vitalidade: { ...f.vitalidade!, niveis } }));
+            }} /> dados
+          </label>
+          <label className="checkbox-inline">
+            <input type="checkbox" checked={n.bloqueiaAcoes} onChange={(e) => {
+              const niveis = [...form.vitalidade!.niveis];
+              niveis[i] = { ...n, bloqueiaAcoes: e.target.checked };
+              setForm((f) => ({ ...f, vitalidade: { ...f.vitalidade!, niveis } }));
+            }} /> bloqueia ações
+          </label>
+          <button type="button" className="mini perigo" onClick={() => {
+            const niveis = form.vitalidade!.niveis.filter((_, j) => j !== i);
+            setForm((f) => ({ ...f, vitalidade: { ...f.vitalidade!, niveis: niveis.length ? niveis : f.vitalidade!.niveis } }));
+          }}>✕</button>
+        </div>
+      ))}
+      <div className="linha-ferramentas">
+        <button type="button" className="secundario" onClick={() => setForm((f) => ({
+          ...f,
+          vitalidade: { ...(f.vitalidade ?? { edicaoPor: "mestre" }), niveis: [...(f.vitalidade?.niveis ?? []), { nome: "Novo estado", penalidadeDados: 0, bloqueiaAcoes: false }] },
+        }))}>+ Nível</button>
+        <label>Quem altera vitalidade
+          <select value={form.vitalidade?.edicaoPor ?? "mestre"} onChange={(e) => setForm((f) => ({ ...f, vitalidade: { ...(f.vitalidade ?? { niveis: [] }), edicaoPor: e.target.value, niveis: f.vitalidade?.niveis ?? [] } }))}>
+            <option value="mestre">Somente o mestre</option>
+            <option value="ambos">Mestre e dono</option>
+            <option value="jogador">Somente o dono</option>
+          </select>
+        </label>
+      </div>
+
       <h4>Transferência entre reservas</h4>
       <label className="checkbox">
         <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />
