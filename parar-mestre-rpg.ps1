@@ -1,7 +1,7 @@
 # Encerramento controlado do Mestre RPG (chamado por parar-mestre-rpg.bat)
 $ErrorActionPreference = 'SilentlyContinue'
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
-$base = 'http://localhost:3001'
+$base = 'http://127.0.0.1:3001'
 
 # Segredo local (somente este computador consegue le-lo)
 $segredo = $null

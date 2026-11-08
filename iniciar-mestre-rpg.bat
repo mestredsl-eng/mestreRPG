@@ -52,7 +52,8 @@ if errorlevel 1 (
 )
 
 rem Impede segunda instancia: verifica se a porta 3001 ja responde
-powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 http://localhost:3001/api/health).StatusCode } catch { exit 1 }" >nul 2>nul
+rem (127.0.0.1 evita ambiguidade de IPv6/localhost; -Proxy $null ignora proxy do sistema)
+powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Proxy $null http://127.0.0.1:3001/api/health).StatusCode } catch { exit 1 }" >nul 2>nul
 if not errorlevel 1 (
     echo [AVISO] Ja existe um servidor respondendo em http://localhost:3001
     echo         Se desejar reiniciar, feche a janela anterior ou use parar-mestre-rpg.bat
