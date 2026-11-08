@@ -141,7 +141,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const aoMensagem = (m: MensagemMesa & { autorNome?: string }) => {
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
-    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; privado?: boolean }) => {
+    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean }) => {
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
@@ -371,7 +371,17 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                 const podeAgir = souMestre || ehDono;
                 return (
                   <div key={t.id} className="teste-card">
-                    <p><strong>{personagens.find((p) => p.id === t.characterId)?.name ?? "?"}</strong> — {String((t.skillRef as { rotulo?: string } | null)?.rotulo ?? "teste")}</p>
+                    <p><strong>{personagens.find((p) => p.id === t.characterId)?.name ?? "?"}</strong> — {String((t.skillRef as { rotulo?: string } | null)?.rotulo ?? t.rotulo ?? "teste")}{(t.pool?.dadosLados ?? t.diceSides) === 10 && <span className="tag">D10</span>}</p>
+                    {(() => {
+                      const lados = t.pool?.dadosLados ?? t.diceSides;
+                      const pool = t.pool ?? (t.modifiers?.positivos != null ? { positivos: t.modifiers.positivos, negativos: t.modifiers.malus ?? 0, dadosLados: lados } : null);
+                      return pool ? (
+                        <p className="meta">
+                          {pool.positivos}d{pool.dadosLados} positivo{pool.positivos === 1 ? "" : "s"}
+                          {pool.negativos ? ` · −${pool.negativos} negativo${pool.negativos === 1 ? "" : ""} → ${Math.max(0, pool.positivos - pool.negativos)} efetivo${pool.positivos - pool.negativos === 1 ? "" : "s"}` : ""}
+                        </p>
+                      ) : null;
+                    })()}
                     {souMestre && <p className="meta">{t.diceCount}d{t.diceSides}{t.target != null ? ` · alvo ${t.target}` : ""}</p>}
                     {podeAgir && t.status === "pendente" && (
                       <div className="linha linha-botoes">
@@ -390,11 +400,15 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                           </select>
                         )}
                         {souMestre && (
-                          <button className="secundario" onClick={() => {
-                            const sel = document.getElementById(`out-${t.id}`) as HTMLSelectElement;
-                            if (!sel.value) return;
-                            getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value }, () => undefined);
-                          }}>Confirmar</button>
+                          <>
+                            <input id={`nota-${t.id}`} placeholder="Nota narrativa (opcional)" style={{ minWidth: 160 }} />
+                            <button className="secundario" onClick={() => {
+                              const sel = document.getElementById(`out-${t.id}`) as HTMLSelectElement;
+                              if (!sel.value) return;
+                              const nota = (document.getElementById(`nota-${t.id}`) as HTMLInputElement)?.value;
+                              getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, () => undefined);
+                            }}>Confirmar</button>
+                          </>
                         )}
                       </div>
                     )}
@@ -407,6 +421,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           {/* solicitar teste (mestre) */}
           {souMestre && papel !== "espectador" && (
             <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+          )}
+
+          {/* desafio D10 (mestre) */}
+          {souMestre && papel !== "espectador" && (
+            <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
           )}
 
           {/* rolagem livre */}
@@ -555,6 +574,102 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
             <label className="check"><input type="checkbox" checked={privado} onChange={(e) => setPrivado(e.target.checked)} /> Visibilidade privada</label>
           </div>
           <button type="submit">Solicitar</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+/** Desafio D10: mestre escolhe personagem + campo numérico da ficha; o
+ *  servidor calcula os dados positivos pelo valor do campo e aplica os
+ *  dados negativos como malus. O jogador rola pelo fluxo de teste normal. */
+function DesafioD10({ sessionId, personagens, aoErro }: {
+  sessionId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [characterId, setCharacterId] = useState("");
+  const [campos, setCampos] = useState<{ id: string; label: string; valor: number }[]>([]);
+  const [campoId, setCampoId] = useState("");
+  const [negativos, setNegativos] = useState(0);
+  const [privado, setPrivado] = useState(false);
+  const [carregando, setCarregando] = useState(false);
+
+  const escolherPersonagem = async (id: string) => {
+    setCharacterId(id);
+    setCampoId("");
+    setCampos([]);
+    if (!id) return;
+    setCarregando(true);
+    try {
+      const det = await api.obterPersonagem(id);
+      const valores = det.ficha?.campos ?? {};
+      const lista: { id: string; label: string; valor: number }[] = [];
+      for (const s of det.ficha?.estrutura?.secoes ?? []) {
+        for (const c of s.campos ?? []) {
+          if ((c.tipo === "inteiro" || c.tipo === "decimal") && typeof valores[c.id] === "number" && Number.isFinite(valores[c.id] as number)) {
+            lista.push({ id: c.id, label: c.label, valor: valores[c.id] as number });
+          }
+        }
+      }
+      setCampos(lista);
+    } catch { /* sem ficha acessível */ }
+    setCarregando(false);
+  };
+
+  if (personagens.length === 0) return null;
+  const campoSel = campos.find((c) => c.id === campoId);
+  const efetivos = campoSel ? Math.max(0, Math.round(campoSel.valor) - Math.max(0, Math.round(negativos) || 0)) : null;
+
+  return (
+    <section className="cartao">
+      <div className="linha-entre">
+        <h3>Desafio D10</h3>
+        <button className="secundario" onClick={() => setAberto(!aberto)}>+ Desafio</button>
+      </div>
+      {aberto && (
+        <form className="formulario" onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          if (!campoSel) { aoErro("Escolha a habilidade/atributo do personagem"); return; }
+          getSocket().emit("mesa:teste:pedir", {
+            sessionId, characterId, campoId: campoSel.id, rotulo: campoSel.label,
+            dadosLados: 10, malus: Math.max(0, Math.round(negativos) || 0),
+            visibilidade: privado ? "privada" : "publica",
+            requestId: crypto.randomUUID(),
+          }, (r: { ok?: boolean; erro?: string }) => {
+            if (r?.ok) { setAberto(false); setNegativos(0); }
+            else aoErro(r?.erro ?? "Erro");
+          });
+        }}>
+          <label>Personagem
+            <select value={characterId} onChange={(e) => void escolherPersonagem(e.target.value)} required>
+              <option value="">Escolher…</option>
+              {personagens.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.displayName ?? p.dono})</option>)}
+            </select>
+          </label>
+          <label>Habilidade/atributo (define os dados positivos)
+            <select value={campoId} onChange={(e) => setCampoId(e.target.value)} required disabled={!characterId || carregando}>
+              <option value="">{carregando ? "Carregando ficha…" : "Escolher…"}</option>
+              {campos.map((c) => <option key={c.id} value={c.id}>{c.label} ({Math.round(c.valor)})</option>)}
+            </select>
+          </label>
+          {campos.length === 0 && characterId && !carregando && (
+            <p className="meta">Nenhum campo numérico preenchido nesta ficha.</p>
+          )}
+          {campoSel && (
+            <p className="meta">
+              {Math.round(campoSel.valor)} dado{Math.round(campoSel.valor) === 1 ? "" : "s"} positivo{Math.round(campoSel.valor) === 1 ? "" : "s"} (valor do campo)
+            </p>
+          )}
+          <div className="grade-2">
+            <label>Dados negativos (penalidade do mestre)
+              <input type="number" min="0" max="30" value={negativos} onChange={(e) => setNegativos(Number(e.target.value))} />
+            </label>
+            <label className="check"><input type="checkbox" checked={privado} onChange={(e) => setPrivado(e.target.checked)} /> Desafio privado</label>
+          </div>
+          {efetivos !== null && (
+            <p className="meta">Efetivos: <strong>{efetivos}</strong> d10 · sucesso ≥ mínimo da campanha</p>
+          )}
+          <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
       )}
     </section>

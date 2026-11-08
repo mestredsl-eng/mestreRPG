@@ -270,17 +270,19 @@ function socket_handlers(
 
       // dados calculados no servidor: campoId → valor numérico da ficha; senão dadosCount explícito
       const dadosLados = LADOS_VALIDOS.has(payload.dadosLados ?? 0) ? payload.dadosLados! : 20;
-      let count = payload.dadosCount ?? 1;
       let valorCampo: number | null = null;
-      if (payload.campoId) {
-        const dados = (char.data ?? {}) as Record<string, unknown>;
-        const v = dados[payload.campoId];
-        if (typeof v === "number" && Number.isFinite(v)) {
-          valorCampo = v;
-          count = Math.max(1, Math.round(v) + (payload.bonus ?? 0) - (payload.malus ?? 0));
-        }
-      }
-      count = Math.min(Math.max(1, count), 30);
+      const base = payload.campoId
+        ? (() => {
+            const dados = (char.data ?? {}) as Record<string, unknown>;
+            const v = dados[payload.campoId!];
+            return typeof v === "number" && Number.isFinite(v) ? v : null;
+          })()
+        : null;
+      if (payload.campoId) valorCampo = base;
+      // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
+      const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
+      const negativos = Math.max(0, Math.round(payload.malus ?? 0));
+      let count = Math.min(Math.max(0, positivos - negativos), 30);
 
       const id = payload.requestId ?? randomUUID();
       const agora = new Date();
@@ -289,7 +291,7 @@ function socket_handlers(
           id, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: char.id, requestedBy: u.id,
           skillRef: (payload.skillRef ?? (payload.campoId ? { campoId: payload.campoId, rotulo: payload.rotulo } : null)) as never,
-          modifiers: { bonus: payload.bonus ?? 0, malus: payload.malus ?? 0, valorCampo } as never,
+          modifiers: { bonus: payload.bonus ?? 0, malus: negativos, valorCampo, positivos } as never,
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
           status: "pendente",
@@ -309,6 +311,7 @@ function socket_handlers(
       // notifica: sala recebe versão pública; dono recebe completa (com alvo se privada)
       const nomeChar = char.name;
       const nomeAutor = await nomeUsuario(u.id);
+      const pool = { positivos, negativos, dadosLados };
       const publico = {
         id, sessionId: ctx.sessao.id, characterId: char.id, characterName: nomeChar,
         requestedByName: nomeAutor, rotulo: payload.rotulo ?? null,
@@ -316,23 +319,24 @@ function socket_handlers(
         status: "pendente", createdAt: agora,
       };
       if (payload.visibilidade === "privada") {
-        // privada: só dono do personagem + mestres recebem (com alvo/dados)
+        // privada: só dono do personagem + mestres recebem (com alvo/dados/pool)
         io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
           ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, privado: true,
+          dados: { lados: dadosLados, count }, pool, privado: true,
         });
         const mestresPriv = await mestresDaCampanha(ctx.sessao.campaignId);
         for (const mid of mestresPriv) io.to(`usuario:${mid}`).emit("mesa:teste", {
           ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, privado: true,
+          dados: { lados: dadosLados, count }, pool, privado: true,
         });
       } else {
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, alvo: null });
+        // pública: composição do pool é visível; só o alvo (dificuldade) fica oculto
+        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, alvo: null, dados: { lados: dadosLados, count }, pool });
         io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
           ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, privado: false,
+          dados: { lados: dadosLados, count }, pool, privado: false,
         });
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste:detalhe", { id, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count } });
+        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste:detalhe", { id, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count }, pool });
       }
 
       await registrarChat(io, {
@@ -363,8 +367,8 @@ function socket_handlers(
       // Incapacitado bloqueia ações de quem não é mestre (exceção do mestre).
       let vitalidade: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null = null;
       let countFinal = teste.diceCount;
+      const regras = await carregarRegras(teste.campaignId);
       if (char) {
-        const regras = await carregarRegras(teste.campaignId);
         const vit = resumoVitalidade(regras.config.vitalidade, (char.data ?? {}) as Record<string, unknown>);
         if (vit) {
           if (vit.bloqueiaAcoes && ctx.papel !== "mestre") {
@@ -382,6 +386,16 @@ function socket_handlers(
 
       const resultados = rolarLados(teste.diceSides, countFinal);
       const total = resultados.reduce((a, b) => a + b, 0);
+
+      // Desafio D10: sucessos/falhas calculados no servidor com a meta da
+      // campanha — o navegador não pode alterar o mínimo de sucesso.
+      let d10: { minimo: number; lancados: number; sucessos: number; falhas: number } | null = null;
+      if (teste.diceSides === 10) {
+        const minimo = regras.config.dados?.d10SucessoMinimo ?? 6;
+        const sucessos = resultados.filter((v) => v >= minimo).length;
+        d10 = { minimo, lancados: resultados.length, sucessos, falhas: resultados.length - sucessos };
+      }
+
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -389,7 +403,7 @@ function socket_handlers(
           id: rollId, campaignId: teste.campaignId, sessionId: teste.sessionId,
           characterId: teste.characterId, userId: u.id,
           dice: [{ sides: teste.diceSides, count: countFinal }] as never,
-          results: { dados: resultados, total, soma: total, vitalidade } as never,
+          results: { dados: resultados, total, soma: total, vitalidade, d10 } as never,
           reason: `teste:${teste.id}`, visibility: teste.visibility,
           requestId: payload.requestId ?? null, createdAt: agora,
         });
@@ -408,7 +422,7 @@ function socket_handlers(
         characterId: teste.characterId, characterName: char?.name,
         userId: u.id, rolador: await nomeUsuario(u.id),
         dados: resultados, total, lados: teste.diceSides, count: countFinal,
-        dadosOriginais: teste.diceCount, vitalidade,
+        dadosOriginais: teste.diceCount, vitalidade, d10,
         alvo: teste.target, // só mestres recebem via filtro abaixo
         visibility: teste.visibility, createdAt: agora,
       };
@@ -421,11 +435,11 @@ function socket_handlers(
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "rolagem",
-        content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}`,
+        content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
         visibility: teste.visibility === "privada" ? "privada" : "publica",
         recipients: teste.visibility === "privada" && membroDono ? [membroDono.userId] : undefined,
       });
-      cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade });
+      cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade, d10 });
     });
 
     // ---------- rolagem livre ----------

@@ -751,7 +751,13 @@ export interface TesteMesa {
   characterId: string;
   requestedBy: string;
   skillRef: unknown;
-  modifiers: { bonus?: number; malus?: number; valorCampo?: number | null };
+  rotulo?: string | null;
+  modifiers: { bonus?: number; malus?: number; valorCampo?: number | null; positivos?: number };
+  dados?: { lados: number; count: number };
+  pool?: { positivos: number; negativos: number; dadosLados: number };
+  alvo?: number | null;
+  privado?: boolean;
+  d10?: { minimo: number; lancados: number; sucessos: number; falhas: number } | null;
   diceCount: number;
   diceSides: number;
   target: number | null;
