@@ -10,7 +10,7 @@ export default function Admin() {
   const { notificar } = useNotificar();
   const [editando, setEditando] = useState<string | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
-  const [form, setForm] = useState({ username: "", displayName: "", email: "", password: "", isAdmin: false });
+  const [form, setForm] = useState({ username: "", displayName: "", email: "", password: "" });
   const [senhaPara, setSenhaPara] = useState<UsuarioAdmin | null>(null);
   const [senhaNova, setSenhaNova] = useState("");
   const [confirmandoRemocao, setConfirmandoRemocao] = useState<UsuarioAdmin | null>(null);
@@ -39,10 +39,9 @@ export default function Admin() {
         displayName: form.displayName || undefined,
         email: form.email || undefined,
         password: form.password,
-        isAdmin: form.isAdmin,
       });
       setNovoAberto(false);
-      setForm({ username: "", displayName: "", email: "", password: "", isAdmin: false });
+      setForm({ username: "", displayName: "", email: "", password: "" });
       notificar(`Usuário ${form.username} criado.`, "sucesso");
       await carregar();
     } catch (err) {
@@ -109,10 +108,6 @@ export default function Admin() {
             <label>E-mail<input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
             <label>Senha inicial<input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} required minLength={8} /></label>
           </div>
-          <label className="checkbox">
-            <input type="checkbox" checked={form.isAdmin} onChange={(e) => setForm({ ...form, isAdmin: e.target.checked })} />
-            Administrador do servidor
-          </label>
           <button type="submit">Criar usuário</button>
         </form>
       )}
@@ -133,18 +128,22 @@ export default function Admin() {
             <tr key={u.id} className={u.status === "bloqueado" ? "linha-bloqueada" : ""}>
               <td>{u.username}</td>
               <td>{u.displayName ?? "—"}</td>
-              <td>{u.isAdmin ? "Administrador" : "Usuário"}</td>
+              <td>{u.adminPrincipal ? "Administrador principal" : u.isAdmin ? "Administrador" : "Usuário"}</td>
               <td>{u.status === "bloqueado" ? "Bloqueado" : "Ativo"}</td>
               <td>{new Date(u.createdAt).toLocaleDateString("pt-BR")}</td>
               <td className="acoes">
                 <button className="mini" onClick={() => setEditando(editando === u.id ? null : u.id)}>
                   {editando === u.id ? "Fechar" : "Editar"}
                 </button>
-                <button className="mini" onClick={() => void alternarBloqueio(u)}>
-                  {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
-                </button>
+                {!u.adminPrincipal && (
+                  <>
+                    <button className="mini" onClick={() => void alternarBloqueio(u)}>
+                      {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
+                    </button>
+                    <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
+                  </>
+                )}
                 <button className="mini" onClick={() => { setSenhaPara(u); setSenhaNova(""); setErro(null); }}>Senha</button>
-                <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
               </td>
             </tr>
           ))}
@@ -155,18 +154,22 @@ export default function Admin() {
           <div key={u.id} className={`registro-cartao ${u.status === "bloqueado" ? "linha-bloqueada" : ""}`}>
             <div className="registro-campo"><span className="registro-rotulo">Usuário</span><strong>{u.username}</strong></div>
             <div className="registro-campo"><span className="registro-rotulo">Nome</span><span>{u.displayName ?? "—"}</span></div>
-            <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{u.isAdmin ? "Administrador" : "Usuário"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{u.adminPrincipal ? "Administrador principal" : u.isAdmin ? "Administrador" : "Usuário"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{u.status === "bloqueado" ? "Bloqueado" : "Ativo"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Criado em</span><span>{new Date(u.createdAt).toLocaleDateString("pt-BR")}</span></div>
             <div className="registro-acoes">
               <button className="mini" onClick={() => setEditando(editando === u.id ? null : u.id)}>
                 {editando === u.id ? "Fechar" : "Editar"}
               </button>
-              <button className="mini" onClick={() => void alternarBloqueio(u)}>
-                {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
-              </button>
+              {!u.adminPrincipal && (
+                <>
+                  <button className="mini" onClick={() => void alternarBloqueio(u)}>
+                    {u.status === "bloqueado" ? "Desbloquear" : "Bloquear"}
+                  </button>
+                  <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
+                </>
+              )}
               <button className="mini" onClick={() => { setSenhaPara(u); setSenhaNova(""); setErro(null); }}>Senha</button>
-              <button className="mini perigo" onClick={() => setConfirmandoRemocao(u)}>Remover</button>
             </div>
           </div>
         ))}
@@ -221,19 +224,18 @@ function FormEdicao({
   aoCancelar,
 }: {
   usuario: UsuarioAdmin;
-  aoSalvar: (dados: { username?: string; displayName?: string; email?: string; isAdmin?: boolean }) => Promise<void>;
+  aoSalvar: (dados: { username?: string; displayName?: string; email?: string }) => Promise<void>;
   aoCancelar: () => void;
 }) {
   const [username, setUsername] = useState(usuario.username);
   const [displayName, setDisplayName] = useState(usuario.displayName ?? "");
   const [email, setEmail] = useState(usuario.email ?? "");
-  const [isAdmin, setIsAdmin] = useState(usuario.isAdmin);
   const [erro, setErro] = useState<string | null>(null);
 
   const salvar = async (e: FormEvent) => {
     e.preventDefault();
     try {
-      await aoSalvar({ username, displayName, email, isAdmin });
+      await aoSalvar({ username, displayName, email });
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao salvar");
     }
@@ -247,10 +249,7 @@ function FormEdicao({
         <label>Nome de exibição<input value={displayName} onChange={(e) => setDisplayName(e.target.value)} /></label>
         <label>E-mail<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
       </div>
-      <label className="checkbox">
-        <input type="checkbox" checked={isAdmin} onChange={(e) => setIsAdmin(e.target.checked)} />
-        Administrador do servidor
-      </label>
+      {usuario.adminPrincipal && <p className="dica">Conta administradora original — protegida permanentemente.</p>}
       {erro && <p className="erro">{erro}</p>}
       <div className="linha">
         <button type="submit">Salvar</button>

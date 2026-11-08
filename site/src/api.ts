@@ -18,6 +18,8 @@ export interface Usuario {
 export interface UsuarioAdmin extends Usuario {
   status: string;
   createdAt: string;
+  /** true apenas para a conta administradora original protegida (admin_principal). */
+  adminPrincipal?: boolean;
 }
 
 export class ApiError extends Error {

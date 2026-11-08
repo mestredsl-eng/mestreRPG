@@ -5,6 +5,7 @@ import { getDb } from "../db/index.js";
 import { users, authSessions } from "../db/schema.js";
 import { hashSenha, gerarToken, hashToken } from "../lib/password.js";
 import { requireAdmin } from "../middleware/auth.js";
+import { ehAdminPrincipal, idAdminPrincipal } from "../lib/adminPrincipal.js";
 
 const db = getDb();
 export const adminRouter = Router();
@@ -18,13 +19,14 @@ const novoUsuarioSchema = z.object({
   isAdmin: z.boolean().optional(),
 });
 
-function usuarioPublico(u: typeof users.$inferSelect) {
+function usuarioPublico(u: typeof users.$inferSelect, adminPrincipalId: string | null = null) {
   return {
     id: u.id,
     username: u.username,
     email: u.email,
     displayName: u.displayName,
     isAdmin: u.isAdmin,
+    adminPrincipal: u.id === adminPrincipalId,
     status: u.status,
     createdAt: u.createdAt,
   };
@@ -32,8 +34,11 @@ function usuarioPublico(u: typeof users.$inferSelect) {
 
 /** GET /api/admin/users — lista contas */
 adminRouter.get("/users", async (_req, res) => {
-  const lista = await db.select().from(users).orderBy(asc(users.username));
-  res.json({ usuarios: lista.map(usuarioPublico) });
+  const [lista, principalId] = await Promise.all([
+    db.select().from(users).orderBy(asc(users.username)),
+    idAdminPrincipal(),
+  ]);
+  res.json({ usuarios: lista.map((u) => usuarioPublico(u, principalId)) });
 });
 
 /** POST /api/admin/users — cria usuário (mestre/jogador/etc.; papel de campanha vem depois) */
@@ -44,6 +49,12 @@ adminRouter.post("/users", async (req, res) => {
     return;
   }
   const { username, email, displayName, password, isAdmin } = body.data;
+  // Privilégio administrativo global é exclusivo da conta protegida
+  // (admin_principal + triggers). Nenhum fluxo cria outro admin.
+  if (isAdmin === true) {
+    res.status(400).json({ erro: "Somente a conta administradora original pode ser administradora" });
+    return;
+  }
   const [existente] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
   if (existente) {
     res.status(409).json({ erro: "Nome de usuário já está em uso" });
@@ -57,7 +68,7 @@ adminRouter.post("/users", async (req, res) => {
     email: email || null,
     displayName: displayName || null,
     passwordHash: await hashSenha(password),
-    isAdmin: isAdmin ?? false,
+    isAdmin: false,
     status: "ativo",
     createdAt: agora,
     updatedAt: agora,
@@ -88,11 +99,21 @@ adminRouter.patch("/users/:id", async (req, res) => {
     return;
   }
   const { username, email, displayName, password, isAdmin, status } = body.data;
+  // Privilégio administrativo global é imutável via API: nenhum fluxo
+  // promove, rebaixa ou altera is_admin (admin_principal + triggers no banco).
+  if (isAdmin !== undefined) {
+    res.status(400).json({ erro: "O privilégio de administrador não pode ser alterado" });
+    return;
+  }
+  const alvoProtegido = await ehAdminPrincipal(alvo.id);
+  if (alvoProtegido && status === "bloqueado") {
+    res.status(403).json({ erro: "A conta administradora original não pode ser bloqueada" });
+    return;
+  }
   const dados: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
   if (username !== undefined) dados.username = username;
   if (email !== undefined) dados.email = email || null;
   if (displayName !== undefined) dados.displayName = displayName || null;
-  if (isAdmin !== undefined) dados.isAdmin = isAdmin;
   if (status !== undefined) dados.status = status;
   if (password !== undefined) dados.passwordHash = await hashSenha(password);
 
@@ -110,7 +131,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
     await db.delete(authSessions).where(eq(authSessions.userId, id));
   }
   const [atualizado] = await db.select().from(users).where(eq(users.id, id)).limit(1);
-  res.json({ usuario: usuarioPublico(atualizado) });
+  res.json({ usuario: usuarioPublico(atualizado, await idAdminPrincipal()) });
 });
 
 /** DELETE /api/admin/users/:id — remove conta (sem campanhas associadas nesta etapa) */
@@ -123,6 +144,10 @@ adminRouter.delete("/users/:id", async (req, res) => {
   const [alvo] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   if (!alvo) {
     res.status(404).json({ erro: "Usuário não encontrado" });
+    return;
+  }
+  if (await ehAdminPrincipal(alvo.id)) {
+    res.status(403).json({ erro: "A conta administradora original não pode ser excluída" });
     return;
   }
   try {

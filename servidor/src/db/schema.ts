@@ -30,6 +30,15 @@ export const users = sqliteTable("users", {
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("users_username_idx").on(t.username)]);
 
+// Identidade imutável do administrador principal (v1.0): uma única linha
+// apontando para o usuário que nasceu como admin da instalação. Triggers em
+// `users` e nesta tabela (migração 0013) impedem promoção, rebaixamento,
+// exclusão e alteração do identificador protegido.
+export const adminPrincipal = sqliteTable("admin_principal", {
+  userId: text("user_id").primaryKey().references(() => users.id),
+  createdAt: createdAt(),
+});
+
 // Sessões de autenticação persistentes (cookie httpOnly → token hash).
 // Distinta de `sessions` (sessões de jogo da campanha, spec §20).
 export const authSessions = sqliteTable("auth_sessions", {
