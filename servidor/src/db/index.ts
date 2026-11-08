@@ -9,9 +9,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 export const RAIZ = resolve(__dirname, "..", "..", "..");
 
 export const CAMINHOS = {
-  banco: resolve(RAIZ, "banco", "mestre-rpg.db"),
-  arquivos: resolve(RAIZ, "arquivos", "campanhas"),
-  backups: resolve(RAIZ, "backups"),
+  banco: process.env.MESTRE_BANCO ? resolve(process.env.MESTRE_BANCO) : resolve(RAIZ, "banco", "mestre-rpg.db"),
+  arquivos: process.env.MESTRE_ARQUIVOS ? resolve(process.env.MESTRE_ARQUIVOS) : resolve(RAIZ, "arquivos", "campanhas"),
+  backups: process.env.MESTRE_BACKUPS ? resolve(process.env.MESTRE_BACKUPS) : resolve(RAIZ, "backups"),
 } as const;
 
 export function criarBanco(caminho: string = CAMINHOS.banco) {

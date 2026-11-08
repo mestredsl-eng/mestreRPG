@@ -26,3 +26,6 @@ logs/
 
 # Sandboxes de teste locais
 teste-sandbox-*/
+
+# simulacao de limpeza v1.0 (copias de banco de teste)
+simulacao-limpeza/
