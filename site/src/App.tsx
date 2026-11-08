@@ -46,14 +46,21 @@ function Painel() {
         </p>
       </section>
       <section className="cartao">
-        <h2>Próximas etapas</h2>
+        <h2>O que já está no ar</h2>
         <p>
-          Campanhas, convites e participantes implementados. A seguir: editor de
-          fichas, regras personalizáveis, mesa virtual, dados e testes.
+          Campanhas com convites e papéis, fichas personalizáveis por sistema de
+          regras, mesa em tempo real com chat e dados D4–D20, desafios do mestre,
+          diário, histórico com restauração, biblioteca de arquivos e financeiro
+          da campanha — tudo persistente e sincronizado.
         </p>
       </section>
     </>
   );
+}
+
+/** Gatilho de diagnóstico: `/?__erro=1` força erro de renderização para testar o ErrorBoundary. */
+function ErroProposital(): never {
+  throw new Error("erro de renderização proposital (diagnóstico)");
 }
 
 function Shell() {
@@ -62,6 +69,7 @@ function Shell() {
   const [campanhaAberta, setCampanhaAberta] = useState<string | null>(null);
   const usuario = estado.status === "autenticado" ? estado.usuario : null;
   const ehConvite = window.location.pathname.startsWith("/convite");
+  const forcarErro = new URLSearchParams(window.location.search).has("__erro");
 
   if (estado.status === "carregando") {
     return (
@@ -100,6 +108,7 @@ function Shell() {
         </nav>
       </header>
       <main className={campanhaAberta ? "container container-largo" : "container"}>
+        {forcarErro && <ErroProposital />}
         {aba === "painel" && <Painel />}
         {aba === "campanhas" && !campanhaAberta && <Campanhas aoAbrir={setCampanhaAberta} />}
         {aba === "campanhas" && campanhaAberta && (

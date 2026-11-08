@@ -1208,6 +1208,15 @@ code {
 .modal-titulo { margin: 0 0 10px; font-size: 1.05rem; }
 .modal-texto { white-space: pre-wrap; word-break: break-word; line-height: 1.5; }
 .modal .formulario { margin-top: 4px; }
+
+/* ---- indicador de conexão Socket.IO ---- */
+.conexao { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--texto-fraco, #8b93a7); white-space: nowrap; }
+.conexao i { width: 8px; height: 8px; border-radius: 50%; background: #8b93a7; flex: none; }
+.conexao-conectado { color: #7fd08a; }
+.conexao-conectado i { background: #3fae6a; }
+.conexao-conectando i, .conexao-reconectando i { background: #d4a017; }
+.conexao-desconectado { color: #e08080; }
+.conexao-desconectado i { background: #c44; }
 .acoes-modal { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .grade-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .grade-form label, .formulario label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }

@@ -7,6 +7,7 @@ import {
 import { getSocket } from "../socket";
 import PainelDados, { FaceDado } from "../Dados";
 import { ModalConfirmar } from "../Modal";
+import { IndicadorConexao } from "../ConexaoSocket";
 
 interface Props {
   campaignId: string;
@@ -274,6 +275,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             <p className="meta">
               <span className={`badge badge-${sessaoAtual.status === "ativa" ? "aprovada" : "devolvida"}`}>{sessaoAtual.status}</span>
               {" "}Online: {online.length ? online.map((id) => membros.find((m) => m.userId === id)?.displayName || membros.find((m) => m.userId === id)?.username || "?").join(", ") : "ninguém"}
+              {" · "}<IndicadorConexao />
             </p>
           </div>
           <div className="linha">
