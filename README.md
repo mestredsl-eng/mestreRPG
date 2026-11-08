@@ -125,6 +125,8 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 
 **Acesso pela rede NetBird (mesh):** com o NetBird ativo, o servidor responde em `http://100.97.99.149:3001` para os peers da malha — sem HTTPS (tráfego já criptografado pelo WireGuard). Para publicar na internet via NetBird, crie um ingress/domínio no painel NetBird apontando para a porta 3001 e cadastre o hostname resultante em `dominioPublico`.
 
+**Exposição pública automática (NetBird Services):** o projeto inclui `expor-mestre-rpg.bat`, que roda `netbird expose --with-name-prefix mestre-rpg 3001` em loop (reinicia se cair) e registra a URL gerada em `logs/netbird-expose.log`. Uma tarefa agendada do Windows (`MestreRPG-NetBirdExpose`) o inicia no logon. **Atenção:** cada execução do `expose` gera um sufixo aleatório no domínio (`mestre-rpg-XXXX.eu1.netbird.services`) e a propagação leva alguns minutos — para descobrir a URL atual, veja a última linha `URL:` do log. O acesso também funciona de forma estável dentro da malha por `http://100.97.99.149:3001`.
+
 ### Recuperação em outro computador Windows
 
 1. Instale Node.js 20+ e clone/baixe o projeto.
