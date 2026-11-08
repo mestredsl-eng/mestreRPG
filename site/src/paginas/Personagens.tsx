@@ -240,7 +240,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         <div className="linha-entre">
           <div>
             <h2>{personagem.name}</h2>
-            <p className="meta">
+            <p className="meta ficha-dono">
+              Jogador: <strong>{personagem.donoNome ?? "—"}</strong>
+              {" · "}
               <span className={`badge badge-${personagem.status}`}>{STATUS_LABEL[personagem.status] ?? personagem.status}</span>
             </p>
           </div>
@@ -249,7 +251,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         {souMestre && editando && (
           <label>Nome do personagem<input value={nome} onChange={(e) => setNome(e.target.value)} /></label>
         )}
-        {!editando && souMestre && <p className="meta">Nome: {personagem.name}</p>}
+        {!editando && souMestre && <p className="meta">Nome do personagem: {personagem.name}</p>}
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
@@ -275,9 +277,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         </div>
       </section>
 
-      <section className="cartao">
+      <section className="cartao ficha-cartao">
         <h3>Ficha</h3>
-        {personagem.donoNome && <p className="meta">Jogador: <strong>{personagem.donoNome}</strong></p>}
         {ficha?.pontos?.habilitado && (
           <div className="pontos-resumo">
             {ficha.pontos.pools.map((pool) => (

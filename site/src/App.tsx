@@ -99,7 +99,7 @@ function Shell() {
           <button className="sair" onClick={() => void sair()}>Sair</button>
         </nav>
       </header>
-      <main className="container">
+      <main className={campanhaAberta ? "container container-largo" : "container"}>
         {aba === "painel" && <Painel />}
         {aba === "campanhas" && !campanhaAberta && <Campanhas aoAbrir={setCampanhaAberta} />}
         {aba === "campanhas" && campanhaAberta && (

@@ -81,7 +81,9 @@ async function abrirEditor(w, h, nome) {
 }
 
 await abrirFicha(null, 1920, 1080, "desktop");
+await abrirFicha(null, 1366, 768, "notebook");
 await abrirFicha(null, 390, 844, "mobile");
 await abrirEditor(1920, 1080, "desktop");
+await abrirEditor(390, 844, "mobile");
 await browser.close();
 console.log(JSON.stringify(rel, null, 1));

@@ -225,6 +225,7 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
 
           <button onClick={adicionarSecao}>+ Adicionar seção</button>
 
+          <div className="editor-secoes">
           {topo.map((secao, idx) => (
             <SecaoEditor
               key={secao.id}
@@ -262,6 +263,7 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
               ))}
             />
           ))}
+          </div>
         </>
       )}
 

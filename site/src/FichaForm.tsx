@@ -64,23 +64,27 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       {estrutura.secoes
         .filter((s) => !s.parentId)
         .sort((a, b) => a.ordem - b.ordem)
-        .map((secao) => {
+        .map((secao, indice) => {
           const subsecoes = estrutura.secoes.filter((s) => s.parentId === secao.id);
           return (
-            <div key={secao.id} className="ficha-secao">
+            <div key={secao.id} className={`ficha-secao${indice === 0 ? " ficha-secao-capa" : ""}`}>
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo) => (
                 <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} />
               ))}
-              {subsecoes.map((sub) => (
-                <div key={sub.id} className="ficha-subsecao">
-                  <h4>{sub.titulo}</h4>
-                  {sub.campos.map((campo) => (
-                    <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} />
+              {subsecoes.length > 0 && (
+                <div className="ficha-subsecoes">
+                  {subsecoes.map((sub) => (
+                    <div key={sub.id} className="ficha-subsecao">
+                      <h4>{sub.titulo}</h4>
+                      {sub.campos.map((campo) => (
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} />
+                      ))}
+                    </div>
                   ))}
                 </div>
-              ))}
+              )}
             </div>
           );
         })}
