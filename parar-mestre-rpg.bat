@@ -6,7 +6,7 @@ echo Encerrando Mestre RPG com seguranca...
 echo.
 
 rem Delega ao script PowerShell: pede encerramento gracioso ao servidor,
-pem pausa ate confirmar a queda e so recorre a forcar o processo se
+rem pausa ate confirmar a queda e so recorre a forcar o processo se
 rem o encerramento normal nao concluir dentro do tempo limite.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0parar-mestre-rpg.ps1"
 
