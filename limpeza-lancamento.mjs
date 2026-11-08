@@ -14,6 +14,7 @@ if (!process.argv.includes("--aplicar") || (ehDefinitivo && !process.argv.includ
   process.exit(2);
 }
 const db = new Database(caminho);
+db.pragma("busy_timeout = 15000");
 db.pragma("foreign_keys = ON");
 
 const cont = (sql, ...p) => db.prepare(sql).get(...p).c;
