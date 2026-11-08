@@ -127,8 +127,9 @@ button.primario {
 }
 
 button.mini {
-  padding: 0.25rem 0.55rem;
+  padding: 0.3rem 0.6rem;
   font-size: 0.8rem;
+  min-height: 28px;
   background: #2c3038;
   color: #e8e6e3;
   margin-right: 0.25rem;
@@ -191,6 +192,8 @@ label.checkbox {
   flex-direction: row;
   align-items: center;
   gap: 0.5rem;
+  min-height: 28px;
+  cursor: pointer;
 }
 
 label.checkbox input {
@@ -590,6 +593,8 @@ textarea {
   flex-direction: row !important;
   align-items: center;
   gap: 0.5rem;
+  min-height: 28px;
+  cursor: pointer;
 }
 
 .checkbox-inline input {
@@ -1241,7 +1246,7 @@ code {
 .chat-conteudo { white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
 .chat-form { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .chat-form input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
-.check { display: flex; flex-direction: row; align-items: center; gap: 5px; font-size: 13px; }
+.check { display: flex; flex-direction: row; align-items: center; gap: 5px; font-size: 13px; min-height: 28px; cursor: pointer; }
 .tag-atual { background: #2e5c3a; color: #aef0c0; }
 .timer-display { font-size: 2rem; font-variant-numeric: tabular-nums; text-align: center; padding: 8px; border-radius: 8px; background: var(--fundo-input, #0f1219); }
 .timer-display.rodando { color: #7fd08a; }
@@ -1341,7 +1346,7 @@ code {
 
 /* Etapas 8-9: diário, histórico e biblioteca */
 .lista-anotacoes { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-direction: column; gap: 8px; }
-.lista-anotacoes > li { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 12px; }
+.lista-anotacoes > li { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 12px; overflow-wrap: anywhere; }
 .lista-anotacoes > li.importante { border-color: #8a6d1f; }
 .pre-wrap { white-space: pre-wrap; word-break: break-word; }
 .sucesso { color: #7fd08a; }
