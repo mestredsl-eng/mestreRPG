@@ -516,7 +516,7 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
       <div className="linha">
         <label className="checkbox-inline"><input type="checkbox" checked={edit.obrigatorio} onChange={(e) => set("obrigatorio", e.target.checked)} /> Obrigatório</label>
         <label className="checkbox-inline"><input type="checkbox" checked={edit.repetivel} onChange={(e) => set("repetivel", e.target.checked)} /> Repetível</label>
-        <label className="checkbox-inline"><input type="checkbox" checked={edit.usadoEmTestes} onChange={(e) => set("usadoEmTestes", e.target.checked)} /> Usado em testes</label>
+        <label className="checkbox-inline"><input type="checkbox" checked={edit.usadoEmTestes === true} onChange={(e) => set("usadoEmTestes", e.target.checked)} /> Usado em testes</label>
       </div>
       <div className="linha">
         <button onClick={() => aoSalvar(edit)}>Salvar campo</button>

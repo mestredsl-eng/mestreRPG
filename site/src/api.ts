@@ -359,7 +359,7 @@ export interface CampoDef {
   visibilidade: string;
   destinatarios?: string[];
   editavelPor: string;
-  usadoEmTestes: boolean;
+  usadoEmTestes?: boolean;
   custoPontos?: number;
   custoProgressivo?: number[];
   reservaPontos?: string;

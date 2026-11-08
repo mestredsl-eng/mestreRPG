@@ -80,7 +80,9 @@ export const campoSchema = z.object({
   visibilidade: z.enum(VISIBILIDADES).default("todos"),
   destinatarios: z.array(z.string().max(80)).max(200).optional(), // p/ "selecionados"
   editavelPor: z.enum(EDITAVEIS).default("ambos"),
-  usadoEmTestes: z.boolean().default(false),
+  // Opcional (não .default) para distinguir "não configurado" (fallback por
+  // semântica) de "explicitamente desmarcado" (não elegível).
+  usadoEmTestes: z.boolean().optional(),
   custoPontos: z.number().optional(), // custo por ponto adicional (spec §8.1)
   custoProgressivo: z.array(z.number()).max(100).optional(), // tabela de custo por nível deste campo (ex.: talentos)
   reservaPontos: z.string().max(80).optional(), // pool de pontos da campanha
@@ -135,6 +137,33 @@ export type EstruturaFicha = z.infer<typeof estruturaFichaSchema>;
 
 export function todosCampos(estrutura: EstruturaFicha): CampoDef[] {
   return estrutura.secoes.flatMap((s) => s.campos);
+}
+
+/** Semânticos elegíveis por fallback quando `usadoEmTestes` não existe no
+ *  campo (estruturas antigas salvas antes da flag ou importadas). */
+export const SEMANTICOS_TESTAVEIS_FALLBACK = new Set<TipoSemantico>([
+  "atributo",
+  "habilidade",
+  "conhecimento",
+  "talento",
+]);
+
+/**
+ * Elegibilidade de um campo para desafios/testes D10 (spec Etapa C).
+ *
+ * - `usadoEmTestes: true` → elegível (ainda exige tipo numérico e semântica
+ *   não excluída — moeda/item nunca são stats de teste).
+ * - `usadoEmTestes: false` → não elegível.
+ * - ausente → fallback: numérico + semântica de atributo/habilidade/
+ *   conhecimento/talento. Campos numéricos "livres" (idade, crônica,
+ *   contadores) não entram só por serem números.
+ */
+export function campoElegivelParaTeste(campo: Pick<CampoDef, "tipo" | "semantico" | "usadoEmTestes">): boolean {
+  if (campo.tipo !== "inteiro" && campo.tipo !== "decimal") return false;
+  if (campo.semantico === "moeda" || campo.semantico === "item") return false;
+  if (campo.usadoEmTestes === true) return true;
+  if (campo.usadoEmTestes === false) return false;
+  return SEMANTICOS_TESTAVEIS_FALLBACK.has(campo.semantico);
 }
 
 export function mapaCampos(estrutura: EstruturaFicha): Map<string, CampoDef> {

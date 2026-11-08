@@ -3,8 +3,9 @@ import Database from "better-sqlite3";
 import { chromium } from "playwright";
 import { hashToken } from "./servidor/dist/lib/password.js";
 import { mkdirSync, writeFileSync } from "fs";
+import { garantirBackend } from "./homologacao-base.mjs";
 
-const BASE = "http://localhost:5173";
+const { base: BASE, encerrar: encerrarBackend } = await garantirBackend();
 const OUT = "C:/Users/mestr/AppData/Local/Temp/capturas-mestrerpg";
 mkdirSync(OUT, { recursive: true });
 
@@ -115,5 +116,6 @@ for (const [vp, w, h] of VIEWPORTS) {
   await ctx.close();
 }
 await browser.close();
+await encerrarBackend();
 writeFileSync(`${OUT}/relatorio-mesa.json`, JSON.stringify(rel, null, 2));
 console.log("fim");

@@ -587,8 +587,18 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 /** Desafio D10: mestre escolhe personagem + campo numérico da ficha; o
  *  servidor calcula os dados positivos pelo valor do campo e aplica os
  *  dados negativos como malus. O jogador rola pelo fluxo de teste normal. */
-// Semânticos que nunca representam valor testável em desafio (dinheiro, itens/equipamento).
-const SEMANTICOS_NAO_TESTAVEIS = new Set(["moeda", "item"]);
+// Mesmo critério do backend (campoElegivelParaTeste em lib/ficha.ts):
+// usadoEmTestes explícito manda; sem a flag (fichas antigas), cai no
+// fallback por semântica — números "livres" (idade, contadores) não entram.
+const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+
+function campoElegivelTeste(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  if (c.tipo !== "inteiro" && c.tipo !== "decimal") return false;
+  if (c.semantico === "moeda" || c.semantico === "item") return false;
+  if (c.usadoEmTestes === true) return true;
+  if (c.usadoEmTestes === false) return false;
+  return SEMANTICOS_TESTAVEIS_FALLBACK.has(c.semantico ?? "");
+}
 
 interface CampoTeste { id: string; label: string; valor: number; secao: string }
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
@@ -616,7 +626,7 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
       const porSecao = new Map<string, CampoTeste[]>();
       for (const s of det.ficha?.estrutura?.secoes ?? []) {
         for (const c of s.campos ?? []) {
-          if ((c.tipo !== "inteiro" && c.tipo !== "decimal") || SEMANTICOS_NAO_TESTAVEIS.has(c.semantico)) continue;
+          if (!campoElegivelTeste(c)) continue;
           const v = valores[c.id];
           if (typeof v === "number" && Number.isFinite(v)) {
             const titulo = s.titulo || "Outros campos";
@@ -673,7 +683,7 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             </select>
           </label>
           {campos.length === 0 && characterId && !carregando && (
-            <p className="meta">Nenhum campo numérico preenchido nesta ficha.</p>
+            <p className="meta">Nenhum campo elegível para teste nesta ficha. Marque "Usado em testes" no editor de fichas ou use atributos/habilidades/conhecimentos.</p>
           )}
           {campoSel && (
             <p className="meta">

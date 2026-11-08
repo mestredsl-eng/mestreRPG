@@ -5,7 +5,7 @@ import { getDb } from "../db/index.js";
 import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
 } from "../db/schema.js";
-import { estruturaFichaSchema, mapaCampos } from "../lib/ficha.js";
+import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
@@ -289,10 +289,7 @@ function socket_handlers(
         const parse = ver ? estruturaFichaSchema.safeParse(ver.structure) : null;
         if (parse?.success) {
           const campo = mapaCampos(parse.data).get(payload.campoId);
-          const testavel = !!campo
-            && (campo.tipo === "inteiro" || campo.tipo === "decimal")
-            && campo.semantico !== "moeda" && campo.semantico !== "item";
-          if (!testavel) {
+          if (!campo || !campoElegivelParaTeste(campo)) {
             cb?.({ ok: false, erro: "Campo não é elegível para teste" });
             return;
           }

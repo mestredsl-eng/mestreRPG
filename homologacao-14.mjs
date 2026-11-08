@@ -1,11 +1,13 @@
 // Homologação visual Etapa 14.4 — screenshots + overflow + erros de console.
-// Uso: node homologacao-14.mjs   (requer backend :3001 e vite :5173)
+// Uso: node homologacao-14.mjs   (sobe/reutiliza backend com build de produção;
+// não depende de Vite dev nem de terminal manual)
 import Database from "better-sqlite3";
 import { chromium } from "playwright";
 import { hashToken } from "./servidor/dist/lib/password.js";
 import { mkdirSync, writeFileSync } from "fs";
+import { garantirBackend } from "./homologacao-base.mjs";
 
-const BASE = "http://localhost:5173";
+const { base: BASE, encerrar: encerrarBackend } = await garantirBackend();
 const OUT = "C:/Users/mestr/AppData/Local/Temp/capturas-mestrerpg";
 mkdirSync(OUT, { recursive: true });
 
@@ -156,6 +158,7 @@ for (const [vp, w, h] of VIEWPORTS) {
 }
 
 await browser.close();
+await encerrarBackend();
 writeFileSync(`${OUT}/relatorio.json`, JSON.stringify({ relatorio, errosConsole }, null, 2));
 const comOverflow = relatorio.filter((r) => r.overflowX > 2);
 console.log(`\nTelas capturadas: ${relatorio.length} · com overflow horizontal: ${comOverflow.length}`);
