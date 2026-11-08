@@ -169,7 +169,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       setAviso("Configuração de regras salva.");
       await carregar();
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao salvar configuração");
+      setErro(mensagemApi(e, "Erro ao salvar configuração"));
     }
   };
 
@@ -247,7 +247,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       )}
 
       {aba === "pontuacao" && regras && (
-        <PainelPontuacao config={regras.config} onSalvar={salvarConfig} />
+        <PainelPontuacao config={regras.config} onSalvar={salvarConfig} campaignId={campaignId} />
       )}
 
       {aba === "validacao" && (
@@ -310,20 +310,85 @@ export default function Regras({ campaignId }: { campaignId: string }) {
 
 // ---------- Painel de pontuação ----------
 
-function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar: (c: ConfigRegras) => Promise<void> }) {
+interface CampoHp {
+  id: string;
+  label: string;
+  semantico?: string;
+  modelo?: string;
+}
+
+function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegras; onSalvar: (c: ConfigRegras) => Promise<void>; campaignId: string }) {
   const [form, setForm] = useState<ConfigRegras>(config);
   const [custosTxt, setCustosTxt] = useState(""); // "talento:1,2,3,4,5" por linha
+  const [erroLocal, setErroLocal] = useState<string | null>(null);
+  const [camposHp, setCamposHp] = useState<CampoHp[] | null>(null);
 
   useEffect(() => {
     setForm({ ...config, transferencias: config.transferencias ?? [] });
     setCustosTxt(Object.entries(config.pontos.custos).map(([k, v]) => `${k}: ${v.join(",")}`).join("\n"));
   }, [config]);
 
+  // Campos numéricos das versões PUBLICADAS das fichas da campanha —
+  // permite escolher o atributo do HP pelo nome, sem saber o ID interno.
+  // Nada é associado automaticamente: o mestre escolhe explicitamente.
+  useEffect(() => {
+    if (!form.hp?.habilitado || camposHp !== null) return;
+    let vivo = true;
+    (async () => {
+      try {
+        const { modelos } = await api.listarModelos(campaignId);
+        const achados: CampoHp[] = [];
+        for (const m of modelos.filter((x) => x.isActive)) {
+          try {
+            const { versoes } = await api.obterModelo(campaignId, m.id);
+            // Somente versões publicadas (publishedAt) — rascunhos não valem.
+            const pub = versoes
+              .filter((v) => v.publishedAt && v.estrutura)
+              .sort((a, b) => b.version - a.version)[0];
+            for (const s of pub?.estrutura?.secoes ?? []) {
+              for (const c of s.campos ?? []) {
+                if (["inteiro", "decimal", "moeda"].includes(c.tipo)) {
+                  achados.push({
+                    id: c.id,
+                    label: c.label,
+                    semantico: c.semantico && c.semantico !== "livre" ? c.semantico : undefined,
+                    modelo: modelos.length > 1 ? m.name : undefined,
+                  });
+                }
+              }
+            }
+          } catch { /* modelo sem versão legível — ignora */ }
+        }
+        if (vivo) setCamposHp(achados);
+      } catch {
+        if (vivo) setCamposHp([]);
+      }
+    })();
+    return () => { vivo = false; };
+  }, [form.hp?.habilitado, camposHp, campaignId]);
+
   const setPontos = (patch: Partial<ConfigRegras["pontos"]>) =>
     setForm((f) => ({ ...f, pontos: { ...f.pontos, ...patch } }));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    setErroLocal(null);
+    const vit = form.vitalidade;
+    if (vit?.niveis?.length) {
+      for (const [i, n] of vit.niveis.entries()) {
+        if (!n.nome?.trim()) { setErroLocal(`Vitalidade: o nome do nível ${i + 1} é obrigatório.`); return; }
+        if (!Number.isInteger(n.penalidadeDados) || n.penalidadeDados < 0 || n.penalidadeDados > 30) {
+          setErroLocal(`Vitalidade: a penalidade de "${n.nome}" deve ser um número inteiro entre 0 e 30.`); return;
+        }
+      }
+    }
+    if (form.hp?.habilitado) {
+      if (!Number.isFinite(form.hp.base) || form.hp.base < 0) { setErroLocal("Pontos de Vida: HP base deve ser um número maior ou igual a zero."); return; }
+      if (!Number.isFinite(form.hp.porNivel) || form.hp.porNivel < 0) { setErroLocal("Pontos de Vida: HP por nível deve ser um número maior ou igual a zero."); return; }
+    }
+    if (form.dados && (!Number.isInteger(form.dados.d10SucessoMinimo) || form.dados.d10SucessoMinimo < 2 || form.dados.d10SucessoMinimo > 10)) {
+      setErroLocal("Dados (D10): o sucesso mínimo deve ser um número inteiro entre 2 e 10."); return;
+    }
     // Interpreta custos "semantico: 1,2,3"
     const custos: Record<string, number[]> = {};
     for (const linha of custosTxt.split("\n")) {
@@ -433,11 +498,42 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
           <label>HP por nível do atributo
             <input type="number" min="0" value={form.hp.porNivel} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, porNivel: Number(e.target.value) } }))} />
           </label>
-          <label>Atributo — ID do campo (opcional; senão usa o semântico)
-            <input type="text" value={form.hp.campoId ?? ""} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, campoId: e.target.value || undefined } }))} placeholder="ex.: dc2d4cb6" />
-          </label>
-          <label>Ou semântico do atributo
-            <input type="text" value={form.hp.semantico ?? ""} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, semantico: e.target.value || undefined } }))} placeholder="ex.: atributo" />
+          <label className="span-2">Atributo da ficha (opcional — HP fixo = base se vazio)
+            <select
+              value={form.hp.campoId ?? (form.hp.semantico ? `sem:${form.hp.semantico}` : "")}
+              onChange={(e) => {
+                const v = e.target.value;
+                const sem = v.startsWith("sem:") ? v.slice(4) : undefined;
+                const campo = v && !sem ? camposHp?.find((c) => c.id === v) : undefined;
+                setForm((f) => ({
+                  ...f,
+                  hp: {
+                    ...f.hp!,
+                    campoId: campo?.id,
+                    // semantico fica como fallback se o campoId deixar de existir
+                    semantico: campo ? (campo.semantico ?? undefined) : sem,
+                  },
+                }));
+              }}
+            >
+              <option value="">— nenhum (HP fixo = base) —</option>
+              {form.hp.semantico && !form.hp.campoId && (
+                <option value={`sem:${form.hp.semantico}`}>Semântico: {form.hp.semantico}</option>
+              )}
+              {(camposHp ?? []).map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label}{c.semantico ? ` (${c.semantico})` : ""}{c.modelo ? ` — ${c.modelo}` : ""}
+                </option>
+              ))}
+              {form.hp.campoId && camposHp !== null && !camposHp.some((c) => c.id === form.hp!.campoId) && (
+                <option value={form.hp.campoId}>Campo atual ({form.hp.campoId})</option>
+              )}
+            </select>
+            <small className="meta">
+              Escolha o campo numérico da ficha publicado que alimenta o HP (ex.: Vigor).
+              {camposHp === null && " Carregando campos das fichas…"}
+              {camposHp?.length === 0 && " Nenhum campo numérico encontrado em versões publicadas — publique uma ficha com campos numéricos ou deixe vazio para HP fixo."}
+            </small>
           </label>
           <label>Quem altera HP
             <select value={form.hp.edicaoPor} onChange={(e) => setForm((f) => ({ ...f, hp: { ...f.hp!, edicaoPor: e.target.value } }))}>
@@ -462,7 +558,8 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
           <label className="checkbox-inline">−
             <input type="number" min="0" max="30" value={n.penalidadeDados} onChange={(e) => {
               const niveis = [...form.vitalidade!.niveis];
-              niveis[i] = { ...n, penalidadeDados: Number(e.target.value) };
+              const bruto = e.target.value.trim();
+              niveis[i] = { ...n, penalidadeDados: bruto === "" ? 0 : Number(bruto.replace(",", ".")) };
               setForm((f) => ({ ...f, vitalidade: { ...f.vitalidade!, niveis } }));
             }} /> dados
           </label>
@@ -485,7 +582,13 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
           vitalidade: { ...(f.vitalidade ?? { edicaoPor: "mestre" }), niveis: [...(f.vitalidade?.niveis ?? []), { nome: "Novo estado", penalidadeDados: 0, bloqueiaAcoes: false }] },
         }))}>+ Nível</button>
         <label>Quem altera vitalidade
-          <select value={form.vitalidade?.edicaoPor ?? "mestre"} onChange={(e) => setForm((f) => ({ ...f, vitalidade: { ...(f.vitalidade ?? { niveis: [] }), edicaoPor: e.target.value, niveis: f.vitalidade?.niveis ?? [] } }))}>
+          <select value={form.vitalidade?.edicaoPor ?? "mestre"} onChange={(e) => setForm((f) => {
+            // Garante ao menos 1 nível — o backend exige min(1).
+            const niveis = f.vitalidade?.niveis?.length
+              ? f.vitalidade.niveis
+              : [{ nome: "Sem ferimentos", penalidadeDados: 0, bloqueiaAcoes: false }];
+            return { ...f, vitalidade: { ...(f.vitalidade ?? {}), edicaoPor: e.target.value, niveis } };
+          })}>
             <option value="mestre">Somente o mestre</option>
             <option value="ambos">Mestre e dono</option>
             <option value="jogador">Somente o dono</option>
@@ -546,6 +649,7 @@ function PainelPontuacao({ config, onSalvar }: { config: ConfigRegras; onSalvar:
         </div>
       )}
 
+      {erroLocal && <div className="erro">{erroLocal}</div>}
       <button className="primario" type="submit">Salvar configuração</button>
     </form>
   );
