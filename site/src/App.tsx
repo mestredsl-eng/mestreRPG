@@ -7,6 +7,7 @@ import Conta from "./paginas/Conta";
 import Campanhas from "./paginas/Campanhas";
 import Campanha from "./paginas/Campanha";
 import Convite from "./paginas/Convite";
+import { ProvedorNotificacoes } from "./Notificacoes";
 
 type Aba = "painel" | "campanhas" | "admin" | "conta";
 
@@ -124,7 +125,9 @@ function Shell() {
 export default function App() {
   return (
     <AuthProvider>
-      <Shell />
+      <ProvedorNotificacoes>
+        <Shell />
+      </ProvedorNotificacoes>
     </AuthProvider>
   );
 }

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type UsuarioAdmin } from "../api";
 import { Modal, ModalConfirmar } from "../Modal";
+import { useNotificar } from "../Notificacoes";
 import Servidor from "./Servidor";
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
   const [erro, setErro] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { notificar } = useNotificar();
   const [editando, setEditando] = useState<string | null>(null);
   const [novoAberto, setNovoAberto] = useState(false);
   const [form, setForm] = useState({ username: "", displayName: "", email: "", password: "", isAdmin: false });
@@ -42,6 +43,7 @@ export default function Admin() {
       });
       setNovoAberto(false);
       setForm({ username: "", displayName: "", email: "", password: "", isAdmin: false });
+      notificar(`Usuário ${form.username} criado.`, "sucesso");
       await carregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao criar usuário");
@@ -51,6 +53,7 @@ export default function Admin() {
   const alternarBloqueio = async (u: UsuarioAdmin) => {
     try {
       await api.atualizarUsuario(u.id, { status: u.status === "bloqueado" ? "ativo" : "bloqueado" });
+      notificar(u.status === "bloqueado" ? `Usuário ${u.username} desbloqueado.` : `Usuário ${u.username} bloqueado.`, "info");
       await carregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao alterar status");
@@ -65,7 +68,7 @@ export default function Admin() {
       await api.atualizarUsuario(senhaPara.id, { password: senhaNova });
       setSenhaPara(null);
       setSenhaNova("");
-      setMsg("Senha redefinida. As sessões ativas do usuário foram encerradas.");
+      notificar("Senha redefinida. As sessões ativas do usuário foram encerradas.", "sucesso");
       setErro(null);
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao redefinir senha");
@@ -80,6 +83,7 @@ export default function Admin() {
     try {
       await api.removerUsuario(confirmandoRemocao.id);
       setConfirmandoRemocao(null);
+      notificar(`Usuário ${confirmandoRemocao.username} removido.`, "sucesso");
       await carregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao remover usuário");
@@ -96,7 +100,6 @@ export default function Admin() {
       </div>
 
       {erro && <p className="erro">{erro}</p>}
-      {msg && <p className="sucesso">{msg}</p>}
 
       {novoAberto && (
         <form className="formulario" onSubmit={criar}>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type PacoteCampanha } from "../api";
 import { ModalConfirmar } from "../Modal";
+import { useNotificar } from "../Notificacoes";
 
 const STATUS_LABEL: Record<string, string> = {
   preparacao: "Em preparação",
@@ -17,7 +18,7 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
   const [erro, setErro] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "" });
-  const [msg, setMsg] = useState<string | null>(null);
+  const { notificar } = useNotificar();
   const inputImport = useRef<HTMLInputElement>(null);
   const [importPendente, setImportPendente] = useState<{ pacote: PacoteCampanha; msgErro: string } | null>(null);
   const [ocupado, setOcupado] = useState(false);
@@ -58,7 +59,7 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
       if (pacote?.versao !== 1 || !pacote.estado) throw new Error("Arquivo não é um pacote de campanha válido.");
       try {
         await api.importarCampanha(pacote, "nova");
-        setMsg("Campanha importada.");
+        notificar("Campanha importada.", "sucesso");
       } catch (e) {
         const msgErro = e instanceof Error ? e.message : "Erro ao importar";
         // identificador já existente → oferece substituição explícita (exige ser mestre da campanha)
@@ -78,7 +79,7 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
     try {
       await api.importarCampanha(importPendente.pacote, "substituir", importPendente.pacote.campanhaId);
       setImportPendente(null);
-      setMsg("Campanha substituída pelo pacote importado.");
+      notificar("Campanha substituída pelo pacote importado.", "sucesso");
       void carregar();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao substituir campanha");
@@ -99,7 +100,6 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
           </div>
         </div>
         {erro && <p className="erro">{erro}</p>}
-        {msg && <p className="sucesso">{msg}</p>}
 
         {criando && (
           <form className="formulario" onSubmit={criar}>

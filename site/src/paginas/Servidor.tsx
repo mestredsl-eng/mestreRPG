@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ModalConfirmar } from "../Modal";
+import { useNotificar } from "../Notificacoes";
 import { api, type BackupServidor, type ConfigServidor, type LogServidor, type StatusServidor } from "../api";
 
 function fmtBytes(b: number) {
@@ -19,7 +20,7 @@ export default function Servidor() {
   const [logs, setLogs] = useState<LogServidor[]>([]);
   const [aba, setAba] = useState<"status" | "backups" | "logs" | "config">("status");
   const [erro, setErro] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { notificar } = useNotificar();
   const [confirmando, setConfirmando] = useState<{ tipo: "restaurar"; id: string } | { tipo: "desligar" } | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
@@ -34,17 +35,15 @@ export default function Servidor() {
   const backupAgora = async () => {
     try {
       const r = await api.criarBackupServidor();
-      setMsg(r.sucesso ? "Backup criado com sucesso." : `Backup falhou: ${r.erros.join(", ")}`);
+      notificar(r.sucesso ? "Backup criado com sucesso." : `Backup falhou: ${r.erros.join(", ")}`, r.sucesso ? "sucesso" : "erro");
       await carregar();
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
-    setTimeout(() => setMsg(null), 5000);
   };
   const verificar = async (id: string) => {
     try {
       const r = await api.verificarBackupServidor(id);
-      setMsg(r.ok ? "Backup íntegro." : `Problemas: ${r.detalhes.join("; ")}`);
+      notificar(r.ok ? "Backup íntegro." : `Problemas: ${r.detalhes.join("; ")}`, r.ok ? "sucesso" : "erro");
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
-    setTimeout(() => setMsg(null), 6000);
   };
   const confirmar = async () => {
     if (!confirmando || ocupado) return;
@@ -53,12 +52,11 @@ export default function Servidor() {
       if (confirmando.tipo === "restaurar") {
         const r = await api.restaurarBackupServidor(confirmando.id, "preparar");
         setConfirmando(null);
-        setMsg(`Restauração preparada. ${r.proximoPasso ?? ""}`);
+        notificar(`Restauração preparada. ${r.proximoPasso ?? ""}`, "aviso");
         await carregar();
-        setTimeout(() => setMsg(null), 8000);
       } else {
         await api.desligarServidor();
-        setMsg("Encerramento solicitado — o servidor vai cair em instantes.");
+        notificar("Encerramento solicitado — o servidor vai cair em instantes.", "aviso");
       }
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro");
@@ -70,7 +68,7 @@ export default function Servidor() {
     if (!config) return;
     try {
       await api.salvarConfigServidor(config);
-      setMsg("Configuração salva."); setTimeout(() => setMsg(null), 3000);
+      notificar("Configuração salva.", "sucesso");
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
   };
 
@@ -91,7 +89,6 @@ export default function Servidor() {
         <button className={aba === "config" ? "ativo" : "secundario"} onClick={() => setAba("config")}>Configuração</button>
       </div>
       {erro && <p className="erro">{erro}</p>}
-      {msg && <p className="sucesso">{msg}</p>}
 
       {aba === "status" && status && (
         <>
