@@ -140,6 +140,35 @@ authRouter.get("/me", async (req, res) => {
   res.json({ usuario });
 });
 
+const corHex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor deve estar no formato #RRGGBB");
+const preferenciasSchema = z.object({
+  dados: z
+    .object({ corExterna: corHex, corInterna: corHex })
+    .strict()
+    .optional(),
+});
+
+/** PATCH /api/auth/preferences — mescla preferências do usuário autenticado (por usuário, não global). */
+authRouter.patch("/preferences", requireAuth, async (req, res) => {
+  const body = preferenciasSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Preferências inválidas", detalhes: body.error.issues });
+    return;
+  }
+  const [user] = await db.select().from(users).where(eq(users.id, req.usuario!.id)).limit(1);
+  if (!user) {
+    res.status(404).json({ erro: "Usuário não encontrado" });
+    return;
+  }
+  const atuais = (user.preferences ?? {}) as Record<string, unknown>;
+  const novas = { ...atuais, ...body.data } as Record<string, unknown>;
+  await db
+    .update(users)
+    .set({ preferences: novas, updatedAt: new Date() })
+    .where(eq(users.id, user.id));
+  res.json({ ok: true, preferences: novas });
+});
+
 const senhaSchema = z.object({ senhaAtual: z.string().min(1), novaSenha: z.string().min(8).max(200) });
 
 /** POST /api/auth/change-password */

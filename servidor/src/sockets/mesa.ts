@@ -3,8 +3,9 @@ import type { Server as SocketIOServer, Socket } from "socket.io";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  sessions, turns, chatMessages, rolls, tests, characters, memberships, users,
+  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
 } from "../db/schema.js";
+import { estruturaFichaSchema, mapaCampos } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
@@ -268,8 +269,9 @@ function socket_handlers(
       const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (!membroDono) { cb?.({ ok: false, erro: "Dono não encontrado" }); return; }
 
-      // dados calculados no servidor: campoId → valor numérico da ficha; senão dadosCount explícito
-      const dadosLados = LADOS_VALIDOS.has(payload.dadosLados ?? 0) ? payload.dadosLados! : 20;
+      // dados calculados no servidor: campoId → valor numérico da ficha; senão dadosCount explícito.
+      // Testes de ficha (atributo/habilidade/ataque) são sempre D10 — o cliente não escolhe o dado.
+      const dadosLados = payload.campoId ? 10 : (LADOS_VALIDOS.has(payload.dadosLados ?? 0) ? payload.dadosLados! : 20);
       let valorCampo: number | null = null;
       const base = payload.campoId
         ? (() => {
@@ -279,6 +281,23 @@ function socket_handlers(
           })()
         : null;
       if (payload.campoId) valorCampo = base;
+      // Elegibilidade do campo de teste: quando a estrutura da ficha está
+      // disponível, rejeita campos não testáveis (dinheiro, itens) e campos
+      // que não existem na estrutura publicada.
+      if (payload.campoId && char.templateVersionId) {
+        const [ver] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, char.templateVersionId)).limit(1);
+        const parse = ver ? estruturaFichaSchema.safeParse(ver.structure) : null;
+        if (parse?.success) {
+          const campo = mapaCampos(parse.data).get(payload.campoId);
+          const testavel = !!campo
+            && (campo.tipo === "inteiro" || campo.tipo === "decimal")
+            && campo.semantico !== "moeda" && campo.semantico !== "item";
+          if (!testavel) {
+            cb?.({ ok: false, erro: "Campo não é elegível para teste" });
+            return;
+          }
+        }
+      }
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
       const negativos = Math.max(0, Math.round(payload.malus ?? 0));
@@ -447,6 +466,7 @@ function socket_handlers(
       sessionId?: string; dados?: { sides: number; count: number }[];
       motivo?: string; visibilidade?: "publica" | "privada"; requestId?: string;
       d10?: { positivos?: number; negativos?: number; minimo?: number };
+      modo?: string;
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.dados?.length) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
@@ -483,6 +503,8 @@ function socket_handlers(
         d10 = { positivos: pos, negativos: neg, minimo, lancados: resD10.length, sucessos, falhas: resD10.length - sucessos };
       }
 
+      // Modo explícito "dano": totalização genérica, sem contagem de sucessos D10.
+      const modoDano = payload.modo === "dano" && !payload.d10 ? "dano" : null;
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       const vis = payload.visibilidade === "privada" ? "privada" : "publica";
@@ -491,7 +513,7 @@ function socket_handlers(
           id: rollId, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: null, userId: u.id,
           dice: dadosValidados as never,
-          results: { grupos, total, d10 } as never,
+          results: { grupos, total, d10, modo: modoDano } as never,
           reason: payload.motivo?.slice(0, 300) ?? null,
           visibility: vis, requestId: payload.requestId ?? null, createdAt: agora,
         });
@@ -502,7 +524,7 @@ function socket_handlers(
       const rollPayload = {
         id: rollId, sessionId: ctx.sessao.id, userId: u.id, rolador: await nomeUsuario(u.id),
         grupos: grupos.map((g) => ({ lados: g.sides, resultados: g.resultados })),
-        total, motivo: payload.motivo ?? null, visibility: vis, createdAt: agora, d10,
+        total, motivo: payload.motivo ?? (modoDano ? "Dano" : null), visibility: vis, createdAt: agora, d10, modo: modoDano,
       };
       if (vis === "publica") io.to(`sessao:${ctx.sessao.id}`).emit("mesa:rolagem", rollPayload);
       else {
@@ -517,7 +539,7 @@ function socket_handlers(
         visibility: vis === "privada" ? "privada" : "publica",
         recipients: vis === "privada" ? [u.id, ...(await mestresDaCampanha(ctx.sessao.campaignId))] : undefined,
       });
-      cb?.({ ok: true, id: rollId, grupos, total, d10 });
+      cb?.({ ok: true, id: rollId, grupos, total, d10, modo: modoDano });
     });
 
     // ---------- decisão do mestre ----------

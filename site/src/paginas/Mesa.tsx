@@ -5,7 +5,7 @@ import {
   type Membro, type PersonagemResumo, type CampanhaResumo,
 } from "../api";
 import { getSocket } from "../socket";
-import LancadorD10 from "../D10";
+import PainelDados, { FaceDado } from "../Dados";
 
 interface Props {
   campaignId: string;
@@ -257,6 +257,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeMembro(turnos.ordem[turnos.atual]) : null;
 
   return (
+    <div className="mesa-view">
     <>
       <section className="cartao">
         <div className="linha-entre">
@@ -428,14 +429,9 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
           )}
 
-          {/* rolagem livre */}
+          {/* lançador unificado: testes D10 | rolagem livre e dano */}
           {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <RolagemLivre sessionId={sessao.id} aoErro={setErro} souMestre={souMestre} />
-          )}
-
-          {/* lançador D10 */}
-          {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <LancadorD10 sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} />
+            <PainelDados sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} souMestre={souMestre} />
           )}
 
           {/* resultados de dados */}
@@ -447,7 +443,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                   <div className="linha">
                     {r.dados.map((resultados, gi) => (
                       <span key={gi} className="dados-grupo">
-                        {resultados.map((v, i) => <Dado key={i} valor={v} lados={r.lados[gi]} />)}
+                        {resultados.map((v, i) => <FaceDado key={i} valor={v} lados={r.lados[gi]} indice={i} />)}
                       </span>
                     ))}
                     {r.total !== null && <strong> = {r.total}</strong>}
@@ -498,24 +494,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         </section>
       )}
     </>
+    </div>
   );
 }
 
 // ================= COMPONENTES =================
-
-function Dado({ valor, lados }: { valor: number; lados: number }) {
-  const [exibindo, setExibindo] = useState<number | null>(null);
-  useEffect(() => {
-    setExibindo(null);
-    const t = window.setTimeout(() => setExibindo(valor), 600 + Math.random() * 500);
-    return () => clearTimeout(t);
-  }, [valor]);
-  return (
-    <span className={`dado d${lados} ${exibindo === null ? "girando" : ""}`} title={`d${lados}`}>
-      {exibindo ?? "?"}
-    </span>
-  );
-}
 
 function SolicitarTeste({ sessionId, personagens, aoErro }: {
   sessionId: string; personagens: PersonagemResumo[];
@@ -583,12 +566,18 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 /** Desafio D10: mestre escolhe personagem + campo numérico da ficha; o
  *  servidor calcula os dados positivos pelo valor do campo e aplica os
  *  dados negativos como malus. O jogador rola pelo fluxo de teste normal. */
+// Semânticos que nunca representam valor testável em desafio (dinheiro, itens/equipamento).
+const SEMANTICOS_NAO_TESTAVEIS = new Set(["moeda", "item"]);
+
+interface CampoTeste { id: string; label: string; valor: number; secao: string }
+interface GrupoTeste { titulo: string; campos: CampoTeste[] }
+
 function DesafioD10({ sessionId, personagens, aoErro }: {
   sessionId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
 }) {
   const [aberto, setAberto] = useState(false);
   const [characterId, setCharacterId] = useState("");
-  const [campos, setCampos] = useState<{ id: string; label: string; valor: number }[]>([]);
+  const [grupos, setGrupos] = useState<GrupoTeste[]>([]);
   const [campoId, setCampoId] = useState("");
   const [negativos, setNegativos] = useState(0);
   const [privado, setPrivado] = useState(false);
@@ -597,25 +586,31 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
   const escolherPersonagem = async (id: string) => {
     setCharacterId(id);
     setCampoId("");
-    setCampos([]);
+    setGrupos([]);
     if (!id) return;
     setCarregando(true);
     try {
       const det = await api.obterPersonagem(id);
       const valores = det.ficha?.campos ?? {};
-      const lista: { id: string; label: string; valor: number }[] = [];
+      const porSecao = new Map<string, CampoTeste[]>();
       for (const s of det.ficha?.estrutura?.secoes ?? []) {
         for (const c of s.campos ?? []) {
-          if ((c.tipo === "inteiro" || c.tipo === "decimal") && typeof valores[c.id] === "number" && Number.isFinite(valores[c.id] as number)) {
-            lista.push({ id: c.id, label: c.label, valor: valores[c.id] as number });
+          if ((c.tipo !== "inteiro" && c.tipo !== "decimal") || SEMANTICOS_NAO_TESTAVEIS.has(c.semantico)) continue;
+          const v = valores[c.id];
+          if (typeof v === "number" && Number.isFinite(v)) {
+            const titulo = s.titulo || "Outros campos";
+            const lista = porSecao.get(titulo) ?? [];
+            lista.push({ id: c.id, label: c.label, valor: v, secao: titulo });
+            porSecao.set(titulo, lista);
           }
         }
       }
-      setCampos(lista);
+      setGrupos([...porSecao.entries()].map(([titulo, campos]) => ({ titulo, campos })));
     } catch { /* sem ficha acessível */ }
     setCarregando(false);
   };
 
+  const campos = grupos.flatMap((g) => g.campos);
   if (personagens.length === 0) return null;
   const campoSel = campos.find((c) => c.id === campoId);
   const efetivos = campoSel ? Math.max(0, Math.round(campoSel.valor) - Math.max(0, Math.round(negativos) || 0)) : null;
@@ -649,7 +644,11 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
           <label>Habilidade/atributo (define os dados positivos)
             <select value={campoId} onChange={(e) => setCampoId(e.target.value)} required disabled={!characterId || carregando}>
               <option value="">{carregando ? "Carregando ficha…" : "Escolher…"}</option>
-              {campos.map((c) => <option key={c.id} value={c.id}>{c.label} ({Math.round(c.valor)})</option>)}
+              {grupos.map((g) => (
+                <optgroup key={g.titulo} label={g.titulo}>
+                  {g.campos.map((c) => <option key={c.id} value={c.id}>{c.label} ({Math.round(c.valor)})</option>)}
+                </optgroup>
+              ))}
             </select>
           </label>
           {campos.length === 0 && characterId && !carregando && (
@@ -672,34 +671,6 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
       )}
-    </section>
-  );
-}
-
-function RolagemLivre({ sessionId, aoErro, souMestre }: { sessionId: string; aoErro: (e: string | null) => void; souMestre: boolean }) {
-  const [qtd, setQtd] = useState(1);
-  const [lados, setLados] = useState(20);
-  const [motivo, setMotivo] = useState("");
-  const [privado, setPrivado] = useState(false);
-  return (
-    <section className="cartao">
-      <h3>Rolagem rápida</h3>
-      <form className="linha rolagem-form" onSubmit={(e: FormEvent) => {
-        e.preventDefault();
-        getSocket().emit("mesa:rolar", {
-          sessionId, dados: [{ sides: lados, count: qtd }], motivo: motivo || undefined,
-          visibilidade: privado ? "privada" : "publica", requestId: crypto.randomUUID(),
-        }, (r: { ok?: boolean; erro?: string }) => { if (!r?.ok) aoErro(r?.erro ?? "Erro"); else setMotivo(""); });
-      }}>
-        <input type="number" min="1" max="30" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} style={{ width: 60 }} title="Quantidade" />
-        <span>d</span>
-        <select value={lados} onChange={(e) => setLados(Number(e.target.value))}>
-          {LADOS.map((l) => <option key={l} value={l}>{l}</option>)}
-        </select>
-        <input placeholder="Motivo (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
-        {souMestre && <label className="check"><input type="checkbox" checked={privado} onChange={(e) => setPrivado(e.target.checked)} /> Privada</label>}
-        <button type="submit">Rolar</button>
-      </form>
     </section>
   );
 }

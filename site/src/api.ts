@@ -12,6 +12,7 @@ export interface Usuario {
   email: string | null;
   displayName: string | null;
   isAdmin: boolean;
+  preferences?: { dados?: { corExterna: string; corInterna: string } } & Record<string, unknown>;
 }
 
 export interface UsuarioAdmin extends Usuario {
@@ -61,6 +62,12 @@ export const api = {
     requisicao<{ ok: boolean }>("/auth/change-password", {
       method: "POST",
       body: JSON.stringify({ senhaAtual, novaSenha }),
+    }),
+
+  atualizarPreferenciasDados: (corExterna: string, corInterna: string) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ dados: { corExterna, corInterna } }),
     }),
 
   // Administração (somente admin)

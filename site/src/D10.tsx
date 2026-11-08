@@ -1,5 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
+import { FaceDado } from "./Dados";
 
 interface Props {
   sessionId: string;
@@ -23,17 +24,15 @@ const MAX_DADOS = 30;
 
 /** D10 animado: sorteia faces até revelar o valor final. */
 function D10Face({ valor, indice, minimo }: { valor: number; indice: number; minimo: number }) {
-  const [face, setFace] = useState<number | null>(null);
-  useEffect(() => {
-    setFace(null);
-    const iv = window.setInterval(() => setFace(1 + Math.floor(Math.random() * 10)), 80);
-    const t = window.setTimeout(() => { window.clearInterval(iv); setFace(valor); }, 650 + indice * 110);
-    return () => { window.clearInterval(iv); window.clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valor, indice]);
-  const revelado = face !== null;
-  const classe = !revelado ? "girando" : face >= minimo ? "d10-sucesso" : "d10-falha";
-  return <span className={`d10-face ${classe}`} title={`d10 = ${valor}`}><span className="d10-num">{face ?? "?"}</span></span>;
+  return (
+    <FaceDado
+      lados={10}
+      valor={valor}
+      indice={indice}
+      estado={valor >= minimo ? "sucesso" : "falha"}
+      className="d10-face"
+    />
+  );
 }
 
 /**

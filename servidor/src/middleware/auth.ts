@@ -13,6 +13,7 @@ export interface UsuarioAutenticado {
   email: string | null;
   displayName: string | null;
   isAdmin: boolean;
+  preferences?: Record<string, unknown>;
 }
 
 declare global {
@@ -79,6 +80,7 @@ export async function resolverUsuario(req: Request): Promise<UsuarioAutenticado 
     email: user.email,
     displayName: user.displayName,
     isAdmin: user.isAdmin,
+    preferences: (user.preferences ?? {}) as Record<string, unknown>,
   };
 }
 

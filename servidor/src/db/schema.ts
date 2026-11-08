@@ -24,6 +24,8 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   isAdmin: integer("is_admin", { mode: "boolean" }).notNull().default(false),
   status: text("status").notNull().default("ativo"), // ativo|bloqueado
+  // Preferências visuais do usuário (JSON): ex. { dados: { corExterna, corInterna } }
+  preferences: text("preferences", { mode: "json" }).notNull().default({}),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("users_username_idx").on(t.username)]);

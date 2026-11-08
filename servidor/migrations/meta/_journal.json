@@ -85,6 +85,13 @@
       "when": 1794072786541,
       "tag": "0011_whole_inertia",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1794153696160,
+      "tag": "0012_preferencias_dados",
+      "breakpoints": true
     }
   ]
 }

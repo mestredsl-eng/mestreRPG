@@ -1257,25 +1257,36 @@ code {
 .d10-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--texto-fraco, #8b93a7); }
 .d10-controles input { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
 .d10-dados { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 6px; }
-.d10-face {
+/* Dados com forma geométrica própria (SVG) — cores via preferências do usuário */
+.dado-shape {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 44px; height: 44px;
-  background: linear-gradient(145deg, #2b3350, #1b2138);
-  border: 1px solid #46538a; border-radius: 10px;
-  transform: rotate(45deg);
-  font-weight: 800; font-size: 17px; color: #e8ecf7;
-  box-shadow: 0 2px 6px rgba(0,0,0,.4), inset 0 0 0 2px rgba(255,255,255,.04);
+  width: 34px; height: 34px; flex: none;
 }
-.d10-face { position: relative; }
-.d10-num { transform: rotate(-45deg); display: inline-flex; }
-.d10-face.girando { animation: d10-gira 0.7s ease-in-out infinite; border-color: #6a7bc0; }
-@keyframes d10-gira {
-  0% { transform: rotate(45deg) scale(1); }
-  50% { transform: rotate(225deg) scale(1.08); }
-  100% { transform: rotate(405deg) scale(1); }
+.dado-shape svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.dado-poligono {
+  fill: var(--dado-fundo, #2b3350);
+  stroke: var(--dado-borda, #46538a);
+  stroke-width: 2;
+  transition: stroke 0.2s;
 }
-.d10-face.d10-sucesso { border-color: #2e8f5b; background: linear-gradient(145deg, #1f4a34, #153023); color: #8fe6b0; }
-.d10-face.d10-falha { border-color: #8a3a3a; background: linear-gradient(145deg, #4a2222, #301515); color: #e8a0a0; }
+.dado-numero {
+  fill: var(--dado-texto, #e8ecf7);
+  font-size: 15px; font-weight: 800;
+  font-family: inherit;
+  pointer-events: none;
+}
+.dado-shape.girando { animation: dado-gira 0.6s ease-in-out infinite; }
+.dado-shape.estado-sucesso .dado-poligono { stroke: #2e8f5b; }
+.dado-shape.estado-sucesso .dado-numero { fill: #8fe6b0; }
+.dado-shape.estado-falha .dado-poligono { stroke: #8a3a3a; }
+.dado-shape.estado-falha .dado-numero { fill: #e8a0a0; }
+.d10-face { width: 44px; height: 44px; }
+.d10-face.girando { animation: d10-gira 0.7s ease-in-out infinite; }
+@media (max-width: 600px) {
+  .d10-face { width: 36px; height: 36px; }
+  .dado-shape { width: 28px; height: 28px; }
+  .dado-numero { font-size: 13px; }
+}
 .d10-resumo { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .d10-chip { padding: 3px 10px; border-radius: 999px; background: var(--fundo-input, #0f1219); border: 1px solid var(--borda, #2a2f3f); font-size: 12px; }
 .d10-chip-ok { border-color: #2e8f5b; color: #8fe6b0; }
@@ -1284,8 +1295,36 @@ code {
 .d10-chip-total { border-color: #46538a; color: #cdd6f4; font-weight: 700; }
 .d10-rolagem { color: #9aa7c7; }
 @media (max-width: 600px) {
-  .d10-face { width: 36px; height: 36px; font-size: 14px; }
   .d10-controles { grid-template-columns: 1fr; }
+}
+
+/* Painel de dados unificado: abas Testes D10 / Rolagem e dano */
+.painel-dados { display: flex; flex-direction: column; gap: 10px; }
+.abas-dados { display: flex; gap: 6px; }
+.abas-dados button {
+  flex: 1; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219);
+  color: var(--texto-fraco, #8b93a7); font-size: 13px; font-weight: 600;
+}
+.abas-dados button.ativo { background: #2b3350; border-color: #46538a; color: #e8ecf7; }
+.rolagem-controles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 8px; }
+.rolagem-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
+.rolagem-controles input, .rolagem-controles select { padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+.rolagem-form .linha input { flex: 1; min-width: 0; }
+.rolagem-resultado { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+
+/* Personalização visual dos dados */
+.cores-dados { display: flex; flex-direction: column; gap: 10px; }
+.cores-dados-preview { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; border-radius: 8px; border: 1px dashed var(--borda, #2a2f3f); }
+.cores-dados-controles { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+.cores-dados-controles label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--texto-fraco, #8b93a7); }
+.cores-dados-controles input[type="color"] {
+  width: 52px; height: 34px; padding: 2px; border-radius: 6px;
+  border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); cursor: pointer;
+}
+.cores-contraste-aviso { color: #e8c96a; }
+@media (max-width: 600px) {
+  .rolagem-controles { grid-template-columns: 1fr 1fr; }
 }
 
 /* Etapas 8-9: diário, histórico e biblioteca */
