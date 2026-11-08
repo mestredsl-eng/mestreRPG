@@ -277,6 +277,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
 
       <section className="cartao">
         <h3>Ficha</h3>
+        {personagem.donoNome && <p className="meta">Jogador: <strong>{personagem.donoNome}</strong></p>}
         {ficha?.pontos?.habilitado && (
           <div className="pontos-resumo">
             {ficha.pontos.pools.map((pool) => (

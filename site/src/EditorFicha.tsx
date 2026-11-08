@@ -47,6 +47,21 @@ const EDITAVEIS = [
 
 const novoId = () => crypto.randomUUID().slice(0, 8);
 
+function custosTexto(custos: Record<string, number[]>): string {
+  return Object.entries(custos ?? {}).map(([k, v]) => `${k}: ${v.join(",")}`).join("\n");
+}
+
+function parseCustos(texto: string): Record<string, number[]> {
+  const out: Record<string, number[]> = {};
+  for (const linha of texto.split("\n")) {
+    const m = linha.match(/^\s*([a-zA-Z_]+)\s*:\s*(.*)$/);
+    if (!m) continue;
+    const vals = m[2].split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n));
+    if (vals.length) out[m[1]] = vals;
+  }
+  return out;
+}
+
 function campoVazio(tipo: TipoCampo): CampoDef {
   return {
     id: novoId(),
@@ -162,9 +177,47 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
               Campanha usa distribuição de pontos
             </label>
             {estrutura.pontos.habilitado && (
-              <div className="grade-2">
-                <label>Pontos iniciais
-                  <input type="number" value={estrutura.pontos.pontosIniciais} onChange={(e) => commit({ ...estrutura, pontos: { ...estrutura.pontos, pontosIniciais: Number(e.target.value) } })} />
+              <div className="formulario">
+                <div className="grade-2">
+                  <label>Pontos iniciais
+                    <input type="number" value={estrutura.pontos.pontosIniciais} onChange={(e) => commit({ ...estrutura, pontos: { ...estrutura.pontos, pontosIniciais: Number(e.target.value) } })} />
+                  </label>
+                </div>
+                <h4>Reservas de pontos da ficha</h4>
+                <p className="dica">Pools próprios desta ficha — usados quando a campanha não define reservas próprias (configuração da campanha tem prioridade).</p>
+                {(estrutura.pontos.pools ?? []).map((pool, i) => (
+                  <div className="linha-ferramentas" key={i}>
+                    <input placeholder="id (ex.: atributos)" value={pool.id} onChange={(e) => {
+                      const pools = [...(estrutura.pontos.pools ?? [])];
+                      pools[i] = { ...pool, id: e.target.value };
+                      commit({ ...estrutura, pontos: { ...estrutura.pontos, pools } });
+                    }} />
+                    <input placeholder="Nome" value={pool.nome} onChange={(e) => {
+                      const pools = [...(estrutura.pontos.pools ?? [])];
+                      pools[i] = { ...pool, nome: e.target.value };
+                      commit({ ...estrutura, pontos: { ...estrutura.pontos, pools } });
+                    }} />
+                    <input type="number" placeholder="Pontos" value={pool.pontos} onChange={(e) => {
+                      const pools = [...(estrutura.pontos.pools ?? [])];
+                      pools[i] = { ...pool, pontos: Number(e.target.value) };
+                      commit({ ...estrutura, pontos: { ...estrutura.pontos, pools } });
+                    }} />
+                    <button type="button" className="mini perigo" onClick={() => {
+                      commit({ ...estrutura, pontos: { ...estrutura.pontos, pools: (estrutura.pontos.pools ?? []).filter((_, j) => j !== i) } });
+                    }}>✕</button>
+                  </div>
+                ))}
+                <button type="button" className="secundario" onClick={() => {
+                  commit({ ...estrutura, pontos: { ...estrutura.pontos, pools: [...(estrutura.pontos.pools ?? []), { id: "", nome: "", pontos: 0 }] } });
+                }}>+ Reserva</button>
+                <label>Custos progressivos por tipo semântico
+                  <textarea
+                    rows={3}
+                    placeholder={"talento: 1,2,3,4,5\nhabilidade: 1,1,2,2,3"}
+                    value={custosTexto(estrutura.pontos.custos)}
+                    onChange={(e) => commit({ ...estrutura, pontos: { ...estrutura.pontos, custos: parseCustos(e.target.value) } })}
+                  />
+                  <small className="meta">Uma linha por tipo: <code>semantico: custo1,custo2,…</code> (custo de subir do nível i para i+1).</small>
                 </label>
               </div>
             )}
@@ -345,6 +398,19 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
           <>
             <label>Mínimo<input type="number" value={edit.minimo ?? ""} onChange={(e) => set("minimo", e.target.value === "" ? undefined : Number(e.target.value))} /></label>
             <label>Máximo<input type="number" value={edit.maximo ?? ""} onChange={(e) => set("maximo", e.target.value === "" ? undefined : Number(e.target.value))} /></label>
+            <label>Custo por ponto<input type="number" step="any" placeholder="Ex.: 1" value={edit.custoPontos ?? ""} onChange={(e) => set("custoPontos", e.target.value === "" ? undefined : Number(e.target.value))} /><small className="meta">Custo fixo por unidade acima da base (padrão/mínimo). Ignorado se houver custo progressivo.</small></label>
+            <label>Custo progressivo<input placeholder="Ex.: 1,1,2,2,3" value={(edit.custoProgressivo ?? []).join(",")} onChange={(e) => {
+              const vals = e.target.value.split(",").map((s) => s.trim()).filter(Boolean).map(Number).filter((n) => Number.isFinite(n));
+              set("custoProgressivo", vals.length ? vals : undefined);
+            }} /><small className="meta">Tabela por nível: custos[i] = preço de subir do nível i para i+1.</small></label>
+            <label>Reserva de pontos
+              <select value={edit.reservaPontos ?? ""} onChange={(e) => set("reservaPontos", e.target.value || undefined)}>
+                <option value="">— principal —</option>
+                {[...new Set(["principal", ...(estrutura.pontos?.pools ?? []).map((p) => p.id).filter(Boolean)])].map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
+            </label>
           </>
         ) : edit.tipo === "texto" || edit.tipo === "texto_longo" ? (
           <label>Máx. caracteres<input type="number" value={edit.maxCaracteres ?? ""} onChange={(e) => set("maxCaracteres", e.target.value === "" ? undefined : Number(e.target.value))} /></label>

@@ -77,11 +77,20 @@ function montarFicha(
   const campos: Record<string, unknown> = {};
   const estruturaFiltrada: EstruturaFicha = { ...estrutura, secoes: [] };
 
+  // Uma seção é mantida se tiver campos visíveis OU subseções com campos
+  // visíveis (seções de agrupamento, ex.: "Atributos", não têm campos próprios).
+  const visMap = new Map<string, typeof estrutura.secoes[number]["campos"]>();
   for (const secao of estrutura.secoes) {
-    const camposVisiveis = secao.campos.filter((c) =>
+    visMap.set(secao.id, secao.campos.filter((c) =>
       campoVisivelPara(c, overrides[c.id], ehMestre, ehDono, userId, membershipId)
-    );
-    if (!camposVisiveis.length) continue;
+    ));
+  }
+  const temFilhoVisivel = (id: string) =>
+    estrutura.secoes.some((s) => s.parentId === id && (visMap.get(s.id)?.length ?? 0) > 0);
+
+  for (const secao of estrutura.secoes) {
+    const camposVisiveis = visMap.get(secao.id) ?? [];
+    if (!camposVisiveis.length && !temFilhoVisivel(secao.id)) continue;
     estruturaFiltrada.secoes.push({ ...secao, campos: camposVisiveis });
     for (const c of camposVisiveis) {
       if (c.tipo !== "calculado") campos[c.id] = dados[c.id] ?? c.padrao ?? null;
@@ -134,6 +143,13 @@ async function personagemPublico(
   }
   const regras = await carregarRegras(p.campaignId);
   const ficha = montarFicha(p, carregada.estrutura, ehMestre, ehDono, userId, membershipId, regras);
+  // Nome do dono da ficha (displayName ou username) — exibido somente-leitura.
+  const [dono] = await db
+    .select({ displayName: users.displayName, username: users.username })
+    .from(memberships)
+    .innerJoin(users, eq(memberships.userId, users.id))
+    .where(eq(memberships.id, p.membershipId))
+    .limit(1);
   return {
     personagem: {
       id: p.id,
@@ -142,6 +158,7 @@ async function personagemPublico(
       status: p.status,
       templateVersionId: p.templateVersionId,
       templateId: carregada.templateId,
+      donoNome: dono?.displayName ?? dono?.username ?? null,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     },

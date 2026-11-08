@@ -724,6 +724,7 @@ export interface PersonagemDetalhe {
     status: string;
     templateVersionId: string | null;
     templateId?: string;
+    donoNome?: string | null;
     createdAt?: string;
     updatedAt?: string;
   };
