@@ -746,6 +746,42 @@ textarea {
 
 .linha-tabela input {
   flex: 1;
+  min-width: 90px;
+}
+
+.linha-tabela-grupo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.linha-totais {
+  font-size: 0.78rem;
+  color: #8ab4ff;
+  padding-left: 0.2rem;
+}
+
+.tabela-resumo {
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  background: #14161a;
+  font-size: 0.85rem;
+  color: #e8e6e3;
+  font-weight: 600;
+}
+
+.tabela-leitura {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.tabela-leitura-linha {
+  font-size: 0.85rem;
+  color: #c9cdd3;
+  line-height: 1.4;
 }
 
 .campo-editor-linha {

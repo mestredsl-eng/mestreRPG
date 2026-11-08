@@ -541,13 +541,30 @@ function validarValor(campo: CampoDef, valor: unknown, dados: Record<string, unk
     }
     case "tabela": {
       if (!Array.isArray(valor)) return "Deve ser uma lista";
+      // Inventário (semantico "item"): colunas conhecidas têm regras
+      // próprias — não-negativos e munição ≤ capacidade máxima.
+      const ehInventario = campo.semantico === "item";
+      const COLS_NAO_NEG = ["quantidade", "peso", "espaco", "valor_compra", "municao", "municao_max"] as const;
       for (const item of valor) {
         if (typeof item !== "object" || item === null) return "Item inválido";
+        const reg = item as Record<string, unknown>;
         for (const col of campo.colunas ?? []) {
-          const v = (item as Record<string, unknown>)[col.key];
+          const v = reg[col.key];
           if (v === undefined || v === "") continue;
           if (col.tipo === "inteiro" && (!numero(v) || !Number.isInteger(v))) return `Coluna ${col.label}: inteiro esperado`;
           if ((col.tipo === "decimal" || col.tipo === "moeda") && !numero(v)) return `Coluna ${col.label}: número esperado`;
+        }
+        if (ehInventario) {
+          for (const k of COLS_NAO_NEG) {
+            const v = reg[k];
+            if (v === undefined || v === "") continue;
+            if (!numero(v)) return `Coluna ${k}: número esperado`;
+            if ((v as number) < 0) return `Coluna ${k}: não pode ser negativa`;
+          }
+          const mun = reg.municao, munMax = reg.municao_max;
+          if (numero(mun) && numero(munMax) && (mun as number) > (munMax as number)) {
+            return "Munição atual não pode ultrapassar a capacidade máxima";
+          }
         }
       }
       return null;
@@ -584,11 +601,22 @@ export function validarFicha(
   for (const campo of campos) {
     if (campo.tipo === "calculado") continue; // calculado nunca vem do cliente
     const permitir = !opcoes.apenasCamposPermitidos || opcoes.apenasCamposPermitidos.has(campo.id);
-    const valor = permitir && campo.id in dadosEntrada ? dadosEntrada[campo.id] : undefined;
+    let valor = permitir && campo.id in dadosEntrada ? dadosEntrada[campo.id] : undefined;
+    // Checkbox tolera 0/1 de registros antigos e padrões numéricos.
+    if (campo.tipo === "checkbox" && (valor === 0 || valor === 1)) valor = valor === 1;
 
-    if (valor === undefined) {
-      if (opcoes.estrito && campo.obrigatorio) erros[campo.id] = "Campo obrigatório";
-      else if (campo.padrao !== undefined && opcoes.aplicarPadroes !== false) dados[campo.id] = campo.padrao;
+    // Vazio (undefined/null/"") é "ausente": obrigatório só é exigido no
+    // modo estrito (submissão p/ aprovação); valor vazio enviado limpa o campo.
+    if (valor === undefined || valor === null || valor === "") {
+      if (opcoes.estrito && campo.obrigatorio) { erros[campo.id] = "Campo obrigatório"; continue; }
+      if (campo.padrao !== undefined && opcoes.aplicarPadroes !== false) { dados[campo.id] = campo.padrao; continue; }
+      if (valor !== undefined) dados[campo.id] = valor;
+      continue;
+    }
+    // Registro antigo: tabela com escalar (ex.: saldo digitado antes da tabela
+    // existir) vira linha única para não perder o dado nem travar o salvamento.
+    if (campo.tipo === "tabela" && !Array.isArray(valor)) {
+      dados[campo.id] = [{ valor }];
       continue;
     }
     const erro = validarValor(campo, valor, dados, estrutura);

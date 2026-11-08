@@ -215,6 +215,34 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   }
 
   if (somenteLeitura) {
+    if (campo.tipo === "tabela" && Array.isArray(valor) && valor.length > 0) {
+      const linhas = valor as Record<string, unknown>[];
+      const tot = inventarioTotals(campo, linhas);
+      return (
+        <div className="campo">
+          {rotulo}
+          <div className="tabela-leitura">
+            {linhas.map((linha, i) => {
+              const partes = (campo.colunas ?? [])
+                .map((col) => {
+                  const v = linha[col.key];
+                  if (v === undefined || v === "") return null;
+                  return `${col.label}: ${formatarColuna(col.tipo, v)}`;
+                })
+                .filter(Boolean);
+              const t = tot.porLinha[i];
+              return (
+                <div key={i} className="tabela-leitura-linha">
+                  {partes.length ? partes.join(" · ") : `Registro ${i + 1}`}
+                  {t && <div className="linha-totais">{t}</div>}
+                </div>
+              );
+            })}
+            {tot.resumo && <div className="tabela-resumo">{tot.resumo}</div>}
+          </div>
+        </div>
+      );
+    }
     if (campo.tipo === "selecao_nivel") {
       const itens = Array.isArray(valor) ? (valor as { key: string; nivel: number }[]) : [];
       return (
@@ -376,28 +404,39 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     }
     case "tabela": {
-      const linhas: Record<string, unknown>[] = Array.isArray(atual) ? (atual as Record<string, unknown>[]) : [];
+      // Registro antigo: tabela com escalar vira linha única (espelha o backend).
+      const linhas: Record<string, unknown>[] = Array.isArray(atual)
+        ? (atual as Record<string, unknown>[])
+        : atual !== undefined && atual !== null && atual !== "" ? [{ valor: atual }] : [];
       const setLinha = (i: number, key: string, v: unknown) => {
         const novas = linhas.map((l, idx) => (idx === i ? { ...l, [key]: v } : l));
         mudar(novas);
       };
+      const tot = inventarioTotals(campo, linhas);
       return editavel(
         <div className="tabela-campos">
-          {linhas.map((linha, i) => (
-            <div key={i} className="linha-tabela">
-              {(campo.colunas ?? []).map((col) => (
-                <input
-                  key={col.key}
-                  type={col.tipo === "inteiro" || col.tipo === "decimal" || col.tipo === "moeda" ? "number" : col.tipo === "data" ? "date" : "text"}
-                  placeholder={col.label}
-                  value={String(linha[col.key] ?? "")}
-                  onChange={(e) => setLinha(i, col.key, col.tipo.startsWith("int") || col.tipo === "decimal" || col.tipo === "moeda" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                />
-              ))}
-              <button type="button" className="mini perigo" onClick={() => mudar(linhas.filter((_, idx) => idx !== i))}>✕</button>
-            </div>
-          ))}
+          {linhas.map((linha, i) => {
+            const t = tot.porLinha[i];
+            return (
+              <div key={i} className="linha-tabela-grupo">
+                <div className="linha-tabela">
+                  {(campo.colunas ?? []).map((col) => (
+                    <input
+                      key={col.key}
+                      type={col.tipo === "inteiro" || col.tipo === "decimal" || col.tipo === "moeda" ? "number" : col.tipo === "data" ? "date" : "text"}
+                      placeholder={col.label}
+                      value={String(linha[col.key] ?? "")}
+                      onChange={(e) => setLinha(i, col.key, col.tipo.startsWith("int") || col.tipo === "decimal" || col.tipo === "moeda" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
+                    />
+                  ))}
+                  <button type="button" className="mini perigo" onClick={() => mudar(linhas.filter((_, idx) => idx !== i))}>✕</button>
+                </div>
+                {t && <div className="linha-totais">{t}</div>}
+              </div>
+            );
+          })}
           <button type="button" className="mini" onClick={() => mudar([...linhas, {}])}>+ Adicionar</button>
+          {tot.resumo && <div className="tabela-resumo">{tot.resumo}</div>}
         </div>
       );
     }
@@ -593,6 +632,67 @@ function PainelPontos({ ctx }: { ctx: ContextoPontos }) {
       )}
     </div>
   );
+}
+
+/** Número finito ou null ("" e não-numéricos contam como ausente). */
+function numOuNulo(v: unknown): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function fmtNum(n: number): string {
+  return n.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+}
+
+function fmtMoeda(n: number): string {
+  return `R$ ${n.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function formatarColuna(tipo: string, v: unknown): string {
+  if (tipo === "moeda") { const n = numOuNulo(v); return n === null ? String(v) : fmtMoeda(n); }
+  if (tipo === "inteiro" || tipo === "decimal") { const n = numOuNulo(v); return n === null ? String(v) : fmtNum(n); }
+  if (tipo === "data" && typeof v === "string" && v) {
+    const d = new Date(v.length === 10 ? `${v}T12:00:00` : v);
+    return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString("pt-BR");
+  }
+  return String(v);
+}
+
+/**
+ * Totais derivados de uma tabela de inventário (semantico "item"):
+ * quantidade × peso/espaco/valor_compra por linha + resumo geral.
+ * Nada é digitado nem persistido — sempre calculado dos registros.
+ */
+function inventarioTotals(campo: CampoDef, linhas: Record<string, unknown>[]) {
+  const ehInventario = campo.semantico === "item";
+  if (!ehInventario) return { porLinha: linhas.map(() => null as string | null), resumo: null as string | null };
+  const cols = new Set((campo.colunas ?? []).map((c) => c.key));
+  const tem = (k: string) => cols.has(k);
+  if (!["peso", "espaco", "valor_compra"].some(tem)) return { porLinha: linhas.map(() => null), resumo: null };
+
+  const qtdDe = (l: Record<string, unknown>) => {
+    if (!tem("quantidade")) return 1;
+    return numOuNulo(l.quantidade) ?? 0;
+  };
+  const partesDe = (l: Record<string, unknown>) => {
+    const q = qtdDe(l);
+    const out: string[] = [];
+    if (tem("peso")) { const p = numOuNulo(l.peso); if (p !== null) out.push(`Peso: ${fmtNum(q * p)} kg`); }
+    if (tem("espaco")) { const e = numOuNulo(l.espaco); if (e !== null) out.push(`Espaço: ${fmtNum(q * e)}`); }
+    if (tem("valor_compra")) { const v = numOuNulo(l.valor_compra); if (v !== null) out.push(`Valor: ${fmtMoeda(q * v)}`); }
+    return out.length ? out.join(" · ") : null;
+  };
+
+  const porLinha = linhas.map(partesDe);
+  const totPeso = linhas.reduce((a, l) => a + qtdDe(l) * (numOuNulo(l.peso) ?? 0), 0);
+  const totEspaco = linhas.reduce((a, l) => a + qtdDe(l) * (numOuNulo(l.espaco) ?? 0), 0);
+  const totValor = linhas.reduce((a, l) => a + qtdDe(l) * (numOuNulo(l.valor_compra) ?? 0), 0);
+  const resumoPartes: string[] = [];
+  if (tem("peso")) resumoPartes.push(`Peso total: ${fmtNum(totPeso)} kg`);
+  if (tem("espaco")) resumoPartes.push(`Espaço total: ${fmtNum(totEspaco)}`);
+  if (tem("valor_compra")) resumoPartes.push(`Valor total: ${fmtMoeda(totValor)}`);
+  return { porLinha, resumo: resumoPartes.length ? resumoPartes.join(" · ") : null };
 }
 
 function formatarValor(campo: CampoDef, valor: unknown): string {
