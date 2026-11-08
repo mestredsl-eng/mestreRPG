@@ -45,6 +45,18 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem O backend serve o frontend pronto (site/dist) na mesma porta —
+rem compila o site se ainda nao houver build.
+if not exist site\dist\index.html (
+    echo [INFO] Compilando frontend pela primeira vez...
+    call npm run build -w site
+    if errorlevel 1 (
+        echo [ERRO] Falha ao compilar o frontend.
+        pause
+        exit /b 1
+    )
+)
+
 echo [INFO] Aplicando migracoes...
 call npm run db:migrate -w servidor
 if errorlevel 1 (
@@ -62,9 +74,9 @@ if errorlevel 1 (
 
 echo.
 echo [OK] Servidor iniciado.
-echo      API:     http://localhost:3001
+echo      App:     http://localhost:3001  (API + frontend na mesma porta)
 echo      Health:  http://localhost:3001/api/health
-echo      Painel:  http://localhost:5173  (rode 'npm run dev:site' em outro terminal)
+echo      LAN:     http://SEU-IP-LOCAL:3001  (ex.: ipconfig)
 echo.
 echo Para encerrar com seguranca, feche esta janela ou pressione Ctrl+C.
 echo Para acesso externo HTTPS, veja a secao "Acesso externo" no README.md.

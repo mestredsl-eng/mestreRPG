@@ -96,7 +96,12 @@ const configSchema = z.object({
     pasta: z.string().min(1).max(500),
   }).partial().optional(),
   acesso: z.object({
-    dominioPublico: z.string().max(253).optional(),
+    // hostname puro (sem esquema/caminho) — validado para não virar origem
+    // arbitrária no controle de acesso do Socket.IO (Fase 5/6)
+    dominioPublico: z.string().max(253).regex(
+      /^$|^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$|^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/,
+      "Domínio inválido — informe apenas o hostname (ex.: rpg.exemplo.com)"
+    ).optional(),
     proxyHops: z.number().int().min(0).max(10).optional(),
     https: z.boolean().optional(),
   }).partial().optional(),

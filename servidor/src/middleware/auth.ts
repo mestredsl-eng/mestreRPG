@@ -41,7 +41,10 @@ export function extrairCookie(header: string | undefined, nome: string): string 
 }
 
 export function definirCookieSessao(res: Response, token: string, req: Request) {
-  const seguro = req.headers["x-forwarded-proto"] === "https" || req.secure;
+  // req.secure já considera trust proxy + X-Forwarded-Proto: Secure só é
+  // emitido quando a conexão é realmente HTTPS (direta ou via proxy
+  // confiável) — o header cru não é confiável por si só (Fase 6).
+  const seguro = req.secure;
   res.setHeader(
     "Set-Cookie",
     `${COOKIE_SESSAO}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 24 * 3600}${seguro ? "; Secure" : ""}`

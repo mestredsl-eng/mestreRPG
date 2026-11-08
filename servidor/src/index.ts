@@ -28,7 +28,7 @@ import { registrarDesligamento } from "./lib/ciclo-vida.js";
 import { localRouter } from "./routes/desligar.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 const app = express();
 
@@ -99,6 +99,29 @@ app.use("/api/characters", personagensRouter);
 app.use("/api", (_req, res) => {
   res.status(404).json({ erro: "Rota não encontrada" });
 });
+
+// SPA em produção (Etapa 15, Fase 6): o build do site (site/dist) é servido
+// pelo próprio backend — um único processo/porta para acesso local, LAN e
+// proxy reverso/túnel externo. Assets com hash do Vite recebem cache
+// imutável; o index.html nunca é cacheado (sempre a versão mais recente).
+const DIR_SITE = resolve(RAIZ, "site", "dist");
+if (existsSync(resolve(DIR_SITE, "index.html"))) {
+  app.use(
+    express.static(DIR_SITE, {
+      index: false,
+      setHeaders(res, caminho) {
+        if (caminho.includes(`${sep}assets${sep}`)) {
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        }
+      },
+    })
+  );
+  app.get(/.*/, (req, res, next) => {
+    if (req.method !== "GET" || !req.accepts("html")) return next();
+    res.setHeader("Cache-Control", "no-cache");
+    res.sendFile(resolve(DIR_SITE, "index.html"));
+  });
+}
 
 app.use(errorHandler);
 

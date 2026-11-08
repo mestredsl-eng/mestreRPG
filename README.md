@@ -51,7 +51,7 @@ configuracao/  Configurações do servidor (servidor.json)
 iniciar-mestre-rpg.bat
 ```
 
-O script instala dependências se preciso, roda as migrações, verifica se a porta 3001 já está em uso (evita instância duplicada) e sobe o backend. Em desenvolvimento, `npm run dev` também sobe o frontend em `http://localhost:5173`.
+O script instala dependências se preciso, compila o backend e o frontend (`site/dist`, servido pelo próprio backend na porta 3001), roda as migrações, verifica se a porta 3001 já está em uso (evita instância duplicada) e sobe o servidor. A aplicação completa — API, frontend e Socket.IO — fica disponível em `http://localhost:3001`. Em desenvolvimento, `npm run dev` sobe o frontend com hot-reload em `http://localhost:5173` (proxy para a API).
 
 ### Encerrar
 
@@ -99,14 +99,18 @@ Apenas o **administrador global** pode restaurar. Backups nunca são servidos pu
 
 ### Acesso externo via HTTPS (amigos pelo navegador)
 
-O servidor não precisa de porta aberta no roteador. Use um túnel/proxy reverso HTTPS de sua escolha (Cloudflare Tunnel, ngrok, Caddy, nginx etc.):
+O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3001**. Para acesso externo, use um proxy reverso/túnel HTTPS de sua escolha (Cloudflare Tunnel, NetBird ingress, Caddy, nginx etc.) apontando para `http://localhost:3001` — o HTTPS **termina no proxy**; o backend continua HTTP interno.
 
-1. Aponte o túnel para `http://localhost:3001` (API + Socket.IO no mesmo servidor).
-2. Configure o domínio público no túnel.
+1. Aponte o túnel/proxy para `http://localhost:3001`.
+2. Configure o domínio público no túnel (certificado TLS gerenciado pelo serviço).
 3. Em **Administração → Servidor → Acesso externo** (ou `configuracao/servidor.json` → `acesso`), ajuste:
-   - `proxyHops`: número de proxies confiáveis à frente (ex.: `1`). Isso ativa `trust proxy` para que cookies `Secure` e IPs reais funcionem — **não** ative se o backend ficar exposto diretamente. A mudança vale na próxima inicialização do servidor.
-   - `dominioPublico`: domínio usado nos links de convite.
-4. Cookies de sessão são `HttpOnly` + `SameSite=Lax` e ganham flag `Secure` automaticamente quando a requisição chega via HTTPS (cabeçalho `x-forwarded-proto`). Socket.IO funciona sobre WebSocket/polling através do túnel sem configuração extra.
+   - `proxyHops`: número de proxies confiáveis à frente (ex.: `1`). Ativa `trust proxy` para que cookies `Secure`, IPs reais e rate limit funcionem corretamente — **não** ative se o backend ficar exposto diretamente. A mudança vale na próxima inicialização do servidor.
+   - `dominioPublico`: hostname puro do domínio público (ex.: `rpg.seudominio.com`, sem `https://`). É usado no controle de origens do Socket.IO — somente esse domínio, localhost e IPs privados/LAN são aceitos no handshake. A mudança vale na próxima inicialização.
+   - `https`: marca que o acesso externo usa HTTPS (informativo).
+4. Cookies de sessão são `HttpOnly` + `SameSite=Lax` e ganham flag `Secure` quando a conexão chega via HTTPS (detectado por `req.secure` → `X-Forwarded-Proto` respeitando `trust proxy`). Socket.IO funciona sobre WebSocket/polling através do túnel; o handshake valida a origem (Fase 5).
+5. O proxy deve repassar `X-Forwarded-Proto`, `X-Forwarded-For` e os headers `Upgrade`/`Connection` do WebSocket. O redirecionamento HTTP→HTTPS, quando desejado, é responsabilidade do proxy (o backend não redireciona para não quebrar o acesso HTTP local/LAN).
+
+**Acesso pela rede NetBird (mesh):** com o NetBird ativo, o servidor responde em `http://100.97.99.149:3001` para os peers da malha — sem HTTPS (tráfego já criptografado pelo WireGuard). Para publicar na internet via NetBird, crie um ingress/domínio no painel NetBird apontando para a porta 3001 e cadastre o hostname resultante em `dominioPublico`.
 
 ### Recuperação em outro computador Windows
 

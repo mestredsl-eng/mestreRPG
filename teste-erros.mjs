@@ -28,7 +28,7 @@ async function reqBruta(metodo, path, { cookie, body, contentType = "application
   });
   let json = null;
   try { json = await r.json(); } catch { }
-  return { status: r.status, json };
+  return { status: r.status, json, headers: r.headers };
 }
 const req = (m, p, o = {}) => reqBruta(m, p, { cookie: ADMIN.cookie, ...o });
 
@@ -69,7 +69,11 @@ const id1 = await req("GET", `/characters/${crypto.randomUUID()}`);
 t("8. personagem inexistente → 404", id1.status === 404, String(id1.status));
 
 const id2 = await req("GET", "/characters/../../etc/passwd");
-t("9. id com path traversal → 404/400 sem vazar", [400, 404].includes(id2.status), String(id2.status));
+// Desde a Fase 6 o backend serve a SPA: paths fora de /api caem no fallback
+// e devolvem o index.html (200). A propriedade de segurança é não vazar
+// conteúdo de arquivo — 400/404 ou o shell HTML da SPA são aceitáveis.
+const id2Html = id2.status === 200 && (id2.headers.get("content-type") ?? "").includes("text/html");
+t("9. id com path traversal → sem vazar conteúdo", [400, 404].includes(id2.status) || id2Html, String(id2.status));
 
 const id3 = await req("PATCH", `/campaigns/${cidTeste}/members/id-inexistente`, { body: { status: "ativo" } });
 t("10. membership inexistente → 404", id3.status === 404, String(id3.status));
