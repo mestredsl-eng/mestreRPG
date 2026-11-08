@@ -150,7 +150,10 @@ try {
   const { serverSettings } = await import("./db/schema.js");
   const { eq } = await import("drizzle-orm");
   const row = await getDb().select().from(serverSettings).where(eq(serverSettings.key, "acesso")).get();
-  const acessoSalvo = typeof row?.value === "string" ? JSON.parse(row.value) : {};
+  // server_settings.value é text({mode:"json"}) — o Drizzle já devolve objeto;
+  // aceitar string também cobre valores gravados como texto puro.
+  const bruto = row?.value as unknown;
+  const acessoSalvo = (typeof bruto === "string" ? JSON.parse(bruto) : bruto ?? {}) as Record<string, unknown>;
   if (typeof acessoSalvo.dominioPublico === "string") dominioPublico = acessoSalvo.dominioPublico;
   const proxyHops = Math.min(10, Math.max(0, Number(acessoSalvo.proxyHops ?? config.acesso.proxyHops) || 0));
   if (proxyHops > 0) app.set("trust proxy", proxyHops);
