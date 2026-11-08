@@ -21,7 +21,7 @@ if errorlevel 1 (
         exit /b 1
     )
 
-    echo [INFO] Instalando Node.js LTS via winget (pode pedir permissao de administrador)...
+    echo [INFO] Instalando Node.js LTS via winget - pode pedir permissao de administrador.
     winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements --silent
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar o Node.js automaticamente.
@@ -65,6 +65,18 @@ if not exist node_modules (
     call npm install
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar dependencias.
+        pause
+        exit /b 1
+    )
+)
+
+rem Se o Node foi atualizado, o modulo nativo pode ter ficado incompativel
+node -e "require('better-sqlite3')" >nul 2>nul
+if errorlevel 1 (
+    echo [AVISO] Modulo nativo incompativel com esta versao do Node - recompilando...
+    call npm rebuild better-sqlite3
+    if errorlevel 1 (
+        echo [ERRO] Falha ao recompilar dependencias nativas. Tente 'npm install' manualmente.
         pause
         exit /b 1
     )

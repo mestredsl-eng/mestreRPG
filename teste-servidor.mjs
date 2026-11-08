@@ -217,6 +217,10 @@ try {
   t("23f falha no backup não derruba servidor", falhouOk && hAposFalha.ok);
   await req("PUT", "/admin/servidor/config", { body: { backup: { agenda: cfg0.agenda, hora: cfg0.hora, retencaoDiarios: cfg0.retencaoDiarios, retencaoSemanais: cfg0.retencaoSemanais, pasta: cfg0.pasta } } });
   db.prepare("delete from server_settings where key='backup_cobertura'").run();
+  // limpa a flag de restauração pendente: ela é artefato do teste (o restore
+  // real só foi aplicado no sandbox) — sem isso, o próximo boot restauraria
+  // o backup de teste por engano
+  db.prepare("delete from server_settings where key='restauracao_pendente'").run();
 
   // ============ 24: encerramento gracioso ============
   // endpoint local exige loopback + segredo
