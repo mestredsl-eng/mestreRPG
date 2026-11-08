@@ -27,6 +27,7 @@ import {
 } from "../lib/regras.js";
 import { emitirCampanha } from "../lib/io.js";
 import { audit } from "../lib/audit.js";
+import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
 export const personagensRouter = Router({ mergeParams: true });
@@ -68,10 +69,11 @@ function montarFicha(
   ehDono: boolean,
   userId: string,
   membershipId: string,
-  regras?: RegrasCampanha
+  regras?: RegrasCampanha,
+  dadosOverride?: Record<string, unknown>
 ) {
   const overrides = overridesDe(personagem);
-  const dados = (personagem.data ?? {}) as Record<string, unknown>;
+  const dados = (dadosOverride ?? personagem.data ?? {}) as Record<string, unknown>;
   const campos: Record<string, unknown> = {};
   const estruturaFiltrada: EstruturaFicha = { ...estrutura, secoes: [] };
 
@@ -293,6 +295,46 @@ personagensRouter.get("/:characterId", async (req, res) => {
   }
   const resp = await personagemPublico(acesso.personagem, req.usuario!.id, acesso.membershipId, acesso.ehMestre);
   res.json(resp);
+});
+
+const previaPontosSchema = z.object({
+  dados: z.record(z.string(), z.unknown()).default({}),
+});
+
+/**
+ * POST /api/characters/:characterId/pontos-previa — saldo de pontos para um
+ * rascunho de dados, sem salvar. Usa exatamente o mesmo pipeline do GET
+ * (custos da biblioteca, seleção e transferências de reservas), respeitando
+ * a visibilidade do solicitante. Não substitui a validação do PATCH.
+ */
+personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const body = previaPontosSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const carregada = acesso.personagem.templateVersionId ? await carregarEstrutura(acesso.personagem.templateVersionId) : null;
+  if (!carregada) {
+    res.json({ pontos: { habilitado: false, pools: [], detalhes: [], erros: [] } });
+    return;
+  }
+  const regras = await carregarRegras(acesso.personagem.campaignId);
+  const ficha = montarFicha(
+    acesso.personagem,
+    carregada.estrutura,
+    acesso.ehMestre,
+    acesso.ehDono,
+    req.usuario!.id,
+    acesso.membershipId,
+    regras,
+    body.data.dados
+  );
+  res.json({ pontos: ficha.pontos });
 });
 
 const atualizarSchema = z.object({

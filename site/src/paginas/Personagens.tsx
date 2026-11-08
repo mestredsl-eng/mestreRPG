@@ -308,6 +308,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             somenteLeitura={!editando}
             aoMudar={editando ? aoMudar : undefined}
             biblioteca={biblioteca ?? undefined}
+            personagemId={personagem.id}
+            pontosInicial={ficha?.pontos}
           />
         )}
       </section>

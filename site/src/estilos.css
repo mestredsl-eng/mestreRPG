@@ -451,6 +451,135 @@ textarea {
   gap: 0.5rem 1rem;
 }
 
+.seletor-atributos {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding: 0.35rem 0.5rem;
+  background: #14161a;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  width: fit-content;
+  max-width: 100%;
+}
+
+.seletor-atributos .bolinhas {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.seletor-atributos .bolinha {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid #4a5160;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.08s ease;
+}
+
+.seletor-atributos .bolinha.cheia {
+  background: #8ab4ff;
+  border-color: #8ab4ff;
+}
+
+.seletor-atributos .bolinha:hover {
+  border-color: #8ab4ff;
+  transform: scale(1.08);
+}
+
+.seletor-atributos .bolinha.cheia:hover {
+  background: #b3cdff;
+  border-color: #b3cdff;
+}
+
+.seletor-atributos .bolinha:focus-visible {
+  outline: 2px solid #8ab4ff;
+  outline-offset: 2px;
+}
+
+.seletor-atributos.somente-leitura .bolinha {
+  cursor: default;
+  width: 18px;
+  height: 18px;
+  border-width: 1.5px;
+}
+
+.seletor-atributos.somente-leitura .bolinha:hover {
+  transform: none;
+  border-color: #4a5160;
+}
+
+.seletor-atributos.somente-leitura .bolinha.cheia {
+  background: #8ab4ff;
+  border-color: #8ab4ff;
+}
+
+.seletor-valor {
+  min-width: 2ch;
+  font-weight: 700;
+  font-size: 1rem;
+  color: #e8eaed;
+  text-align: center;
+}
+
+.seletor-custo {
+  font-size: 0.8rem;
+  color: #9aa0a6;
+  white-space: nowrap;
+}
+
+.seletor-custo.negativo,
+.pontos-pool .negativo {
+  color: #f87171;
+  font-weight: 600;
+}
+
+.seletor-atributos .bolinha:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.seletor-atributos .bolinha:disabled:hover {
+  transform: none;
+  border-color: #4a5160;
+}
+
+.pontos-painel {
+  background: #14161a;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.9rem;
+  font-size: 0.85rem;
+}
+
+.pontos-painel.com-erro {
+  border-color: #7f3b3b;
+}
+
+.pontos-painel .pontos-resumo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.35rem;
+}
+
+.pontos-painel .pontos-pool {
+  color: #c9cdd3;
+  margin-top: 0.2rem;
+}
+
+.pontos-erros {
+  margin: 0.4rem 0 0;
+  padding-left: 1.2rem;
+  color: #f87171;
+}
+
 .tabela-campos {
   display: flex;
   flex-direction: column;
