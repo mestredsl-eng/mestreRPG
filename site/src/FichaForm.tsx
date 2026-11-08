@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado } from "./api";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -24,6 +24,25 @@ interface Props {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   /** Papel do usuário — controla se o saldo inicial da carteira é editável. */
   ehMestre?: boolean;
+  /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
+   *  (POST /regras/simulacao — somente leitura, nada é gravado). */
+  simulacao?: { campaignId: string; pontosFicticios?: number | null };
+  /** Mostra selo de origem do campo (biblioteca/opções manuais) — só no simulador. */
+  mostrarOrigem?: boolean;
+}
+
+const ROTULO_ORIGEM_KIND: Record<string, string> = {
+  atributo: "Atributo", talento: "Talento", habilidade: "Habilidade", conhecimento: "Conhecimento",
+  profissao: "Profissão", especializacao: "Especialização", vantagem: "Vantagem", defeito: "Defeito",
+  poder: "Poder", disciplina: "Disciplina", pericia: "Perícia", caracteristica: "Característica",
+};
+
+/** Selo de origem do campo no simulador: de onde vêm as opções/regras dele. */
+function origemCampo(campo: CampoDef): string | null {
+  if (campo.regra) return `vinculado a ${campo.regra.kind}:${campo.regra.key}`;
+  if (campo.regraKind) return `biblioteca: ${ROTULO_ORIGEM_KIND[campo.regraKind] ?? campo.regraKind}`;
+  if (["selecao_unica", "selecao_multipla", "selecao_nivel", "lista"].includes(campo.tipo)) return "opções manuais";
+  return null;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -34,36 +53,54 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, mostrarOrigem }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
+  const [sim, setSim] = useState<SimulacaoResultado | null>(null);
 
   // Prévia de pontos: recalcula no servidor (mesmo pipeline do GET/PATCH) com
   // debounce a cada alteração da ficha. Em modo leitura usa o valor inicial.
+  // No simulador do editor usa POST /regras/simulacao (sem personagem).
   useEffect(() => {
-    if (somenteLeitura || !personagemId || !estrutura.pontos?.habilitado) {
+    const usarSimulacao = !!simulacao && !somenteLeitura;
+    const usarPrevia = !!personagemId && !somenteLeitura && !usarSimulacao;
+    if (!usarSimulacao && !usarPrevia) {
       setPontos(pontosInicial ?? null);
+      setSim(null);
       return;
     }
     let vivo = true;
     const timer = setTimeout(() => {
-      api.previaPontos(personagemId, valores)
-        .then((r) => { if (vivo) setPontos(r.pontos); })
+      const promessa = usarSimulacao
+        ? api.simularFicha(simulacao!.campaignId, {
+            estrutura,
+            dados: valores,
+            pontosFicticios: simulacao!.pontosFicticios ?? undefined,
+          })
+        : api.previaPontos(personagemId!, valores).then((r) => ({
+            ok: true, erros: [], calculos: {}, pontos: r.pontos,
+            pontosCfg: undefined as unknown as EstruturaFicha["pontos"],
+          }));
+      promessa
+        .then((r) => { if (vivo) { setPontos(r.pontos); setSim(usarSimulacao ? (r as SimulacaoResultado) : null); } })
         .catch(() => { /* prévia é best-effort; a validação real é do PATCH */ });
     }, 300);
     return () => { vivo = false; clearTimeout(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valores, somenteLeitura, personagemId, estrutura]);
+  }, [valores, somenteLeitura, personagemId, estrutura, simulacao?.campaignId, simulacao?.pontosFicticios]);
 
+  // Config de pontos efetiva: no simulador vem do servidor (ruleset da
+  // campanha tem prioridade sobre estrutura.pontos); fora dele, a da ficha.
+  const cfgPontos = sim?.pontosCfg ?? estrutura.pontos;
   const ctxPontos = useMemo<ContextoPontos | null>(() => {
-    if (!estrutura.pontos?.habilitado) return null;
+    if (!cfgPontos?.habilitado && !pontos?.habilitado) return null;
     return {
       pontos,
-      cfg: estrutura.pontos,
+      cfg: cfgPontos,
       custoDe: (id) => pontos?.detalhes.find((d) => d.campoId === id)?.custo ?? 0,
       poolDe: (id) => pontos?.pools.find((p) => p.id === id),
     };
-  }, [pontos, estrutura]);
+  }, [pontos, cfgPontos]);
 
   // ---- Poderes × Defeitos (UX; a validação real é do backend) ----
   const todosOsCampos = useMemo(() => estrutura.secoes.flatMap((s) => s.campos), [estrutura]);
@@ -136,11 +173,19 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
 
   return (
     <div className="ficha">
-      {ctxPontos && (ctxPontos.pontos || personagemId) && <PainelPontos ctx={ctxPontos} />}
+      {ctxPontos && (ctxPontos.pontos || personagemId || simulacao) && <PainelPontos ctx={ctxPontos} />}
       {avisoPoder && <div className="ficha-aviso">{avisoPoder}</div>}
       {faltaDefeito && (
         <div className="ficha-aviso">
           Poderes exigem ao menos 1 defeito como contrapartida — escolha um defeito para liberar o poder.
+        </div>
+      )}
+      {sim && sim.erros.filter((e) => e.codigo !== "pontos").length > 0 && (
+        <div className="ficha-aviso simulacao-erros">
+          <strong>Regras ({sim.erros.filter((e) => e.codigo !== "pontos").length}):</strong>
+          <ul>
+            {sim.erros.filter((e) => e.codigo !== "pontos").map((e, i) => <li key={i}>{e.mensagem}</li>)}
+          </ul>
         </div>
       )}
       {estrutura.secoes
@@ -153,7 +198,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} mostrarOrigem={mostrarOrigem} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -161,7 +206,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} mostrarOrigem={mostrarOrigem} />
                       ))}
                     </div>
                   ))}
@@ -174,7 +219,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   );
 }
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, mostrarOrigem }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
@@ -186,15 +231,18 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   carteiraResumo?: { saldoInicial: number; entradas: number; saidas: number; saldo: number };
   saldoEnviado?: unknown;
   ehMestre?: boolean;
+  mostrarOrigem?: boolean;
 }) {
   const mudar = (v: unknown) => aoMudar?.(campo.id, v);
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
   const opcoesBiblioteca = campo.regraKind ? (biblioteca?.[campo.regraKind] ?? []) : [];
   const nomeDe = (key: string) => opcoesBiblioteca.find((o) => o.key === key)?.name ?? key;
+  const origem = mostrarOrigem ? origemCampo(campo) : null;
   const rotulo = (
     <span className="campo-label">
       {campo.label}
       {campo.obrigatorio && <em className="obrigatorio">*</em>}
+      {origem && <small className="meta campo-origem">{origem}</small>}
       {campo.descricao && <small className="meta">{campo.descricao}</small>}
     </span>
   );

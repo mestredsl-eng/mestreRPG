@@ -87,6 +87,8 @@ interface Props {
   aoMudar: (e: EstruturaFicha) => void;
   /** Biblioteca de regras da campanha (Etapa 5) — permite vincular campos a elementos. */
   vinculaveis?: Vinculaveis;
+  /** Campanha da ficha — habilita o simulador interativo da prévia. */
+  campaignId?: string;
 }
 
 const ROTULO_KIND: Record<string, string> = {
@@ -95,7 +97,7 @@ const ROTULO_KIND: Record<string, string> = {
   poder: "Poder", disciplina: "Disciplina", pericia: "Perícia", caracteristica: "Característica",
 };
 
-export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
+export default function EditorFicha({ inicial, aoMudar, vinculaveis, campaignId }: Props) {
   const [estrutura, setEstrutura] = useState<EstruturaFicha>(inicial);
   const [aba, setAba] = useState<"editar" | "previa">("editar");
   const [secaoEditando, setSecaoEditando] = useState<string | null>(null);
@@ -161,10 +163,7 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis }: Props) {
       </div>
 
       {aba === "previa" ? (
-        <section className="cartao">
-          <h3>Pré-visualização da ficha</h3>
-          <FichaForm estrutura={estrutura} valores={{}} somenteLeitura={false} biblioteca={vinculaveis?.elementos} />
-        </section>
+        <SimuladorFicha estrutura={estrutura} vinculaveis={vinculaveis} campaignId={campaignId} />
       ) : (
         <>
           <section className="cartao">
@@ -522,6 +521,68 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
         <button onClick={() => aoSalvar(edit)}>Salvar campo</button>
         <button className="secundario" onClick={aoFechar}>Cancelar</button>
       </div>
+    </section>
+  );
+}
+
+/**
+ * Simulador da prévia: a ficha renderizada com dados 100% locais.
+ * Interage com POST /regras/simulacao (mesmo pipeline da ficha real,
+ * somente leitura) — nada é gravado em personagem, campanha ou banco.
+ */
+function SimuladorFicha({ estrutura, vinculaveis, campaignId }: {
+  estrutura: EstruturaFicha;
+  vinculaveis?: Vinculaveis;
+  campaignId?: string;
+}) {
+  const [valores, setValores] = useState<Record<string, unknown>>({});
+  const [pontosFict, setPontosFict] = useState("");
+  const [simKey, setSimKey] = useState(0);
+  const bruto = pontosFict.trim() === "" ? null : Number(pontosFict.replace(",", "."));
+  const pontosFicticios = bruto !== null && Number.isFinite(bruto) && bruto >= 0 ? bruto : null;
+
+  const restaurar = () => {
+    setValores({});
+    setPontosFict("");
+    setSimKey((k) => k + 1); // remonta o FichaForm: zera pontos/avisos internos
+  };
+
+  return (
+    <section className="cartao">
+      <div className="linha-entre simulador-barra">
+        <span className="badge badge-simulacao">SIMULAÇÃO — DADOS FICTÍCIOS</span>
+        <div className="simulador-controles">
+          <label>Pontos fictícios
+            <input
+              type="number"
+              min="0"
+              placeholder="configuração real"
+              value={pontosFict}
+              onChange={(e) => setPontosFict(e.target.value)}
+            />
+          </label>
+          <button type="button" className="secundario" onClick={restaurar}>Restaurar simulação</button>
+        </div>
+      </div>
+      <p className="meta">
+        Monte um personagem de teste: compre atributos, escolha defeitos/poderes e veja pontos,
+        custos e erros de regra em tempo real. Nada aqui é salvo — serve para validar a ficha
+        antes de publicar para os jogadores.
+      </p>
+      {campaignId ? (
+        <FichaForm
+          key={simKey}
+          estrutura={estrutura}
+          valores={valores}
+          somenteLeitura={false}
+          aoMudar={(id, v) => setValores((s) => ({ ...s, [id]: v }))}
+          biblioteca={vinculaveis?.elementos}
+          simulacao={{ campaignId, pontosFicticios }}
+          mostrarOrigem
+        />
+      ) : (
+        <p className="meta">Simulador indisponível sem campanha.</p>
+      )}
     </section>
   );
 }

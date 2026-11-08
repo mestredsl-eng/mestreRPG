@@ -10,6 +10,7 @@ import {
   configRegrasSchema,
   definicaoElementoSchema,
   validarRegras,
+  pontosParaFicha,
   TIPOS_REGRA,
   type ElementoRegra,
 } from "../lib/regras.js";
@@ -308,6 +309,45 @@ regrasRouter.get("/validacao/:characterId", requirePapel("mestre", "jogador"), a
     calculos: ehMestre ? resultado.calculos : undefined,
     pontosHabilitados: regras.config.pontos.habilitado || parse.data.pontos.habilitado,
     totalErros: resultado.erros.length,
+  });
+});
+
+const simulacaoSchema = z.object({
+  estrutura: estruturaFichaSchema,
+  dados: z.record(z.string(), z.unknown()).default({}),
+  // Orçamento fictício do simulador: substitui o saldo inicial do pool
+  // padrão na prévia (reservas declaradas mantêm seus pontos).
+  pontosFicticios: z.number().min(0).max(1_000_000).optional(),
+});
+
+/**
+ * POST /api/campaigns/:campaignId/regras/simulacao — simulador da prévia
+ * do editor de fichas (somente mestre). SOMENTE LEITURA: roda exatamente
+ * o mesmo pipeline da ficha real (validarRegras → calcularPontos →
+ * custos de seleção → transferências de reservas) sobre a estrutura e os
+ * dados enviados, sem gravar nada. `pontosFicticios` permite testar com
+ * orçamento livre. Não substitui a validação do PATCH/publicação.
+ */
+regrasRouter.post("/simulacao", requirePapel("mestre"), async (req, res) => {
+  const body = simulacaoSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const regras = await carregarRegras(req.params.campaignId);
+  const r = validarRegras(body.data.estrutura, body.data.dados, regras, {
+    pontosIniciais: body.data.pontosFicticios,
+  });
+  const pontosCfgBase = pontosParaFicha(body.data.estrutura, regras);
+  const pontosCfg = body.data.pontosFicticios !== undefined
+    ? { ...pontosCfgBase, pontosIniciais: body.data.pontosFicticios }
+    : pontosCfgBase;
+  res.json({
+    ok: r.ok,
+    erros: r.erros,
+    calculos: r.calculos,
+    pontos: r.pontos,
+    pontosCfg,
   });
 });
 

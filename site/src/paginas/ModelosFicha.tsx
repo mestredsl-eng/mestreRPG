@@ -192,9 +192,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           </div>
           {versaoSel.publishedAt && <p className="meta">Versão publicada — para alterar, crie uma nova versão.</p>}
           {!versaoSel.rascunho && versaoSel.estrutura && (
-            <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} />
+            <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />
           )}
-          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} />}
+          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />}
         </section>
       )}
       {confirmandoPublicar && (

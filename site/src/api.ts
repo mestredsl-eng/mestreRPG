@@ -169,6 +169,9 @@ export const api = {
     requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
   obterVinculaveis: (cid: string) =>
     requisicao<{ kinds: string[]; elementos: Record<string, ElementoVinculavel[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
+  /** Simulador da prévia do editor — mesmo pipeline da ficha real, sem gravar nada. */
+  simularFicha: (cid: string, dados: { estrutura: EstruturaFicha; dados: Record<string, unknown>; pontosFicticios?: number }) =>
+    requisicao<SimulacaoResultado>(`/campaigns/${cid}/regras/simulacao`, { method: "POST", body: JSON.stringify(dados) }),
 
   // Patrimônio (Etapa 6)
   listarInventario: (charId: string) =>
@@ -559,6 +562,15 @@ export interface ResultadoValidacaoRegras {
   calculos?: Record<string, number>;
   pontosHabilitados: boolean;
   totalErros: number;
+}
+
+/** Resposta do simulador da prévia do editor (POST /regras/simulacao). */
+export interface SimulacaoResultado {
+  ok: boolean;
+  erros: { campoId?: string; codigo: string; mensagem: string }[];
+  calculos: Record<string, number>;
+  pontos: ResultadoPontos;
+  pontosCfg: EstruturaFicha["pontos"];
 }
 
 // ---- Tipos da Etapa 6: patrimônio e finanças ----

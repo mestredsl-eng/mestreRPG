@@ -1457,3 +1457,48 @@ code {
 @media (prefers-reduced-motion: reduce) {
   .notificacao { animation: none; }
 }
+
+/* ---- Simulador da prévia da ficha ---- */
+
+.badge-simulacao {
+  background: #6d28d9;
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.simulador-barra {
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
+}
+
+.simulador-controles {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.simulador-controles label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: #9aa0a6;
+}
+
+.simulador-controles input {
+  width: 110px;
+}
+
+.campo-origem {
+  color: #8ab4ff;
+  font-style: italic;
+}
+
+.simulacao-erros ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}

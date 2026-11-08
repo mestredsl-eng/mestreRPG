@@ -644,8 +644,9 @@ function bfs(
 export function validarRegras(
   estrutura: EstruturaFicha,
   dados: Record<string, unknown>,
-  regras: RegrasCampanha
-): { ok: boolean; erros: ErroRegra[]; escolhas: Escolha[]; calculos: Record<string, number> } {
+  regras: RegrasCampanha,
+  opcoes?: { pontosIniciais?: number }
+): { ok: boolean; erros: ErroRegra[]; escolhas: Escolha[]; calculos: Record<string, number>; pontos: ReturnType<typeof calcularPontos> } {
   const erros: ErroRegra[] = [];
   const escolhas = extrairEscolhas(estrutura, dados, regras);
 
@@ -845,6 +846,11 @@ export function validarRegras(
   // 5) Pontos — estrutura efetiva (custos de elementos) + custos de seleção
   //    + transferências entre reservas quando configuradas (spec §5.3)
   const estruturaEfetiva = estruturaComCustosDeElementos(estrutura, regras);
+  // Simulador da prévia do editor: orçamento fictício substitui o saldo
+  // inicial do pool padrão (reservas declaradas mantêm seus pontos).
+  if (opcoes?.pontosIniciais !== undefined) {
+    estruturaEfetiva.pontos = { ...estruturaEfetiva.pontos, pontosIniciais: opcoes.pontosIniciais };
+  }
   const pontos = aplicarTransferencias(
     aplicarCustosSelecao(calcularPontos(estruturaEfetiva, dados), estrutura, dados, regras),
     regras
@@ -856,7 +862,7 @@ export function validarRegras(
   // Dedup por mensagem
   const vistos = new Set<string>();
   const unicos = erros.filter((e) => (vistos.has(e.mensagem) ? false : (vistos.add(e.mensagem), true)));
-  return { ok: unicos.length === 0, erros: unicos, escolhas, calculos };
+  return { ok: unicos.length === 0, erros: unicos, escolhas, calculos, pontos };
 }
 
 // ---------- Config efetiva para resposta de ficha ----------
