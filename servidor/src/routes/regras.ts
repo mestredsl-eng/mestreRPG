@@ -23,12 +23,16 @@ const db = getDb();
 export const regrasRouter = Router({ mergeParams: true });
 regrasRouter.use(requireAuth);
 
+// null em campo opcional equivale a "ausente" (JSON de formulários).
+const opcional = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === null ? undefined : v), schema);
+
 const elementoSchema = z.object({
   kind: z.enum(TIPOS_REGRA),
   key: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/, "Use letras minúsculas, números e _"),
   name: z.string().min(1).max(160),
-  category: z.string().max(120).optional(),
-  parentKey: z.string().max(80).optional(),
+  category: opcional(z.string().max(120).optional()),
+  parentKey: opcional(z.string().max(80).optional()),
   definition: definicaoElementoSchema.prefault({}),
 });
 

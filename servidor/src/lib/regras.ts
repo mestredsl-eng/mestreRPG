@@ -202,45 +202,81 @@ export const configRegrasSchema = z.object({
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
 
+// null/vazio em campo opcional é tratado como "ausente" (clientes HTTP
+// serializam campos vazios como null). Strings numéricas são convertidas;
+// valores realmente inválidos continuam rejeitados pelo schema interno.
+const nuloComoAusente = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === null ? undefined : v), schema);
+
+const numOpcional = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") {
+    const t = v.trim().replace(",", ".");
+    if (t === "" || Number.isNaN(Number(t))) return v; // deixa o schema rejeitar
+    return Number(t);
+  }
+  return v;
+}, z.number().optional());
+
+const listaNumeros = z.preprocess((v) => {
+  if (v === null) return undefined;
+  if (!Array.isArray(v)) return v;
+  return v
+    .map((x) => {
+      if (x === null || x === undefined) return undefined;
+      if (typeof x === "string") {
+        const t = x.trim().replace(",", ".");
+        return t === "" ? undefined : Number(t);
+      }
+      return x;
+    })
+    .filter((x) => x !== undefined);
+}, z.array(z.number()).max(100).optional());
+
+const listaOuVazia = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => (v === null ? undefined : v), schema);
+
 export const definicaoElementoSchema = z.object({
-  descricao: z.string().max(4000).optional(),
-  subcategoria: z.string().max(120).optional(),
-  custoPontos: z.number().optional(),          // custo fixo por ponto
-  custoProgressivo: z.array(z.number()).max(100).optional(), // ex.: talentos [1,2,3,4,5]
+  descricao: nuloComoAusente(z.string().max(4000).optional()),
+  subcategoria: nuloComoAusente(z.string().max(120).optional()),
+  custoPontos: numOpcional,                     // custo fixo por ponto
+  custoProgressivo: listaNumeros,               // ex.: talentos [1,2,3,4,5]
   // Níveis graduados (ex.: defeitos 1–5): cada nível tem descrição e custo
   // incremental próprios. Custo negativo concede pontos. O tamanho do array
   // define o máximo de níveis (1–5).
-  niveis: z
-    .array(
-      z.object({
-        descricao: z.string().max(2000).optional(),
-        custo: z.number().optional(),
-      })
-    )
-    .max(5)
-    .default([]),
-  minimo: z.number().optional(),
-  maximo: z.number().optional(),
-  prerequisitos: z.array(z.object({
+  niveis: nuloComoAusente(
+    z
+      .array(
+        z.object({
+          descricao: nuloComoAusente(z.string().max(2000).optional()),
+          custo: numOpcional,
+        })
+      )
+      .max(5)
+      .default([])
+  ),
+  minimo: numOpcional,
+  maximo: numOpcional,
+  prerequisitos: listaOuVazia(z.array(z.object({
     kind: z.string().max(40),
     key: z.string().max(80),
-    minLevel: z.number().optional(),
-  })).max(50).default([]),
-  dependencias: z.array(z.object({ kind: z.string().max(40), key: z.string().max(80) })).max(50).default([]),
-  grupoExclusividade: z.string().max(80).optional(), // legado: um único grupo
-  gruposExclusividade: z.array(z.string().max(80)).max(20).default([]), // spec: vários grupos por elemento
-  exclusivos: z.array(z.string().max(80)).max(50).default([]), // keys de elementos incompatíveis
-  obrigatorios: z.array(z.string().max(80)).max(50).default([]), // defeitos/itens exigidos
+    minLevel: numOpcional,
+  })).max(50).default([])),
+  dependencias: listaOuVazia(z.array(z.object({ kind: z.string().max(40), key: z.string().max(80) })).max(50).default([])),
+  grupoExclusividade: nuloComoAusente(z.string().max(80).optional()), // legado: um único grupo
+  gruposExclusividade: listaOuVazia(z.array(z.string().max(80)).max(20).default([])), // spec: vários grupos por elemento
+  exclusivos: listaOuVazia(z.array(z.string().max(80)).max(50).default([])), // keys de elementos incompatíveis
+  obrigatorios: listaOuVazia(z.array(z.string().max(80)).max(50).default([])), // defeitos/itens exigidos
   // Fórmulas personalizadas (parser seguro de ficha.ts — sem eval).
   // Chaves especiais: "custo" (custo em pontos p/ escolhas por seleção),
   // "requisito" (deve ser ≠0), "minimo"/"maximo" (limites calculados).
   // Demais chaves são cálculos expostos na validação. Fórmulas só leem
   // campos da ficha ({id}) — não referenciam outras fórmulas, logo não
   // há dependências circulares.
-  formulas: z.record(z.string().max(60), z.string().max(500)).default({}),
-  reservaPontos: z.string().max(80).optional(),
+  formulas: listaOuVazia(z.record(z.string().max(60), z.string().max(500)).default({})),
+  reservaPontos: nuloComoAusente(z.string().max(80).optional()),
   disponivel: z.boolean().default(true),
-  ordem: z.number().default(0),
+  ordem: z.preprocess((v) => (v === null ? undefined : v), z.number().default(0)),
 });
 export type DefinicaoElemento = z.infer<typeof definicaoElementoSchema>;
 

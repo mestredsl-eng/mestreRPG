@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   api,
+  ApiError,
   type ConfigRegras,
   type ElementoRegra,
   type ElementoRegraInput,
@@ -32,6 +33,25 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
 
 type Aba = "biblioteca" | "pontuacao" | "validacao";
+
+/** Extrai campo/mensagem dos issues de validação retornados pela API. */
+function mensagemApi(e: unknown, padrao: string): string {
+  if (e instanceof ApiError) {
+    const detalhes = e.detalhes;
+    if (Array.isArray(detalhes) && detalhes.length) {
+      const campos = detalhes
+        .map((d) => {
+          const i = d as { path?: unknown[]; message?: string };
+          const caminho = (i.path ?? []).join(".");
+          return caminho ? `${caminho}: ${i.message ?? "inválido"}` : (i.message ?? "inválido");
+        })
+        .join("; ");
+      return `${e.message} — ${campos}`;
+    }
+    return e.message || padrao;
+  }
+  return e instanceof Error ? e.message : padrao;
+}
 
 export default function Regras({ campaignId }: { campaignId: string }) {
   const [aba, setAba] = useState<Aba>("biblioteca");
@@ -95,7 +115,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       await carregar();
       setAviso("Elemento salvo.");
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao salvar elemento");
+      setErro(mensagemApi(e, "Erro ao salvar elemento"));
     }
   };
 
@@ -566,42 +586,82 @@ function ModalElemento({
     niveis: (def.niveis ?? []).map((n) => ({ descricao: n.descricao ?? "", custo: n.custo?.toString() ?? "" })),
     disponivel: def.disponivel !== false,
   });
+  const [erroForm, setErroForm] = useState<string | null>(null);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const num = (s: string) => (s.trim() === "" ? undefined : Number(s));
-    const listaRefs = (s: string) =>
-      s.split(",").map((x) => x.trim()).filter(Boolean).map((x) => {
+    setErroForm(null);
+    const erros: string[] = [];
+    // Aceita decimal com vírgula (pt-BR) ou ponto; vazio = ausente; lixo = erro nomeado.
+    const num = (s: string, campo: string) => {
+      const t = s.trim();
+      if (t === "") return undefined;
+      const n = Number(t.replace(",", "."));
+      if (Number.isNaN(n)) { erros.push(`${campo}: "${s}" não é um número válido`); return undefined; }
+      return n;
+    };
+    const listaRefs = (s: string) => {
+      const out: { kind: string; key: string; minLevel?: number }[] = [];
+      for (const bruto of s.split(",")) {
+        const x = bruto.trim();
+        if (!x) continue;
         const [ref, min] = x.split("@");
         const [kind, ...rest] = ref.split(":");
-        return { kind, key: rest.join(":"), ...(min ? { minLevel: Number(min) } : {}) };
-      });
+        const key = rest.join(":").trim();
+        if (!kind?.trim() || !key) { erros.push(`Pré-requisitos: "${x}" deve estar no formato tipo:chave`); continue; }
+        let minLevel: number | undefined;
+        if (min !== undefined) {
+          const n = Number(min.trim());
+          if (Number.isNaN(n)) { erros.push(`Pré-requisitos: nível inválido em "${x}"`); continue; }
+          minLevel = n;
+        }
+        out.push({ kind: kind.trim(), key, ...(minLevel !== undefined ? { minLevel } : {}) });
+      }
+      return out;
+    };
     const listaKeys = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
     const formulas: Record<string, string> = {};
     for (const linha of form.formulasTxt.split("\n")) {
       const m = linha.match(/^\s*([a-zA-Z_][\w]*)\s*:\s*(.+)$/);
       if (m) formulas[m[1]] = m[2].trim();
     }
+    const custoProgressivo = (form.custoProgressivo || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter((x) => x !== "")
+      .map((x) => {
+        const n = Number(x.replace(",", "."));
+        if (Number.isNaN(n)) erros.push(`Custo progressivo: "${x}" não é um número válido`);
+        return n;
+      })
+      .filter((n) => !Number.isNaN(n));
+    const niveis = form.niveis.map((n, i) => ({
+      descricao: n.descricao.trim() || undefined,
+      custo: num(n.custo, `Nível ${i + 1} (custo)`),
+    }));
+    const custoPontos = num(form.custoPontos, "Custo por ponto");
+    const minimo = num(form.minimo, "Mínimo");
+    const maximo = num(form.maximo, "Máximo");
+    const prerequisitos = listaRefs(form.prerequisitos);
+    if (erros.length) { setErroForm(erros.join(" · ")); return; }
     await onSalvar({
       kind: form.kind,
-      key: form.key,
-      name: form.name,
-      category: form.category || undefined,
+      key: form.key.trim(),
+      name: form.name.trim(),
+      category: form.category.trim() || undefined,
       definition: {
-        descricao: form.descricao || undefined,
-        custoPontos: num(form.custoPontos),
-        custoProgressivo: form.custoProgressivo ? form.custoProgressivo.split(",").map((n) => Number(n.trim())).filter((n) => !Number.isNaN(n)) : undefined,
-        minimo: num(form.minimo),
-        maximo: num(form.maximo),
-        grupoExclusividade: form.grupoExclusividade || undefined,
+        descricao: form.descricao.trim() || undefined,
+        custoPontos,
+        custoProgressivo: custoProgressivo.length ? custoProgressivo : undefined,
+        minimo,
+        maximo,
+        grupoExclusividade: form.grupoExclusividade.trim() || undefined,
         gruposExclusividade: listaKeys(form.gruposExclusividade),
         formulas: Object.keys(formulas).length ? formulas : undefined,
-        reservaPontos: form.reservaPontos || undefined,
-        prerequisitos: listaRefs(form.prerequisitos),
+        reservaPontos: form.reservaPontos.trim() || undefined,
+        prerequisitos,
         obrigatorios: listaKeys(form.obrigatorios),
-        niveis: form.niveis.length
-          ? form.niveis.map((n) => ({ descricao: n.descricao || undefined, custo: n.custo.trim() === "" ? undefined : Number(n.custo) }))
-          : undefined,
+        niveis: niveis.length ? niveis : undefined,
         disponivel: form.disponivel,
       },
     });
@@ -619,7 +679,7 @@ function ModalElemento({
                   {kinds.map((k) => <option key={k} value={k}>{ROTULO_KIND[k]}</option>)}
                 </select>
               </label>
-              <label>Chave (id único)<input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="ex.: telepatia" required /></label>
+              <label>Chave (id único)<input value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} placeholder="ex.: telepatia" required /><small className="meta">Somente letras minúsculas, números e _ (sem acentos)</small></label>
             </div>
           )}
           <label>Nome<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required /></label>
@@ -673,6 +733,7 @@ function ModalElemento({
             <input type="checkbox" checked={form.disponivel} onChange={(e) => setForm({ ...form, disponivel: e.target.checked })} />
             Disponível na campanha
           </label>
+          {erroForm && <p className="erro">{erroForm}</p>}
           <div className="acoes-modal">
             <button type="button" className="secundario" onClick={onFechar}>Cancelar</button>
             <button type="submit" className="primario">Salvar</button>
