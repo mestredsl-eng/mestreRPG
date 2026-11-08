@@ -784,6 +784,144 @@ textarea {
   line-height: 1.4;
 }
 
+/* ---- Carteira financeira ---- */
+.carteira {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.carteira-resumo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid #2c3038;
+  border-radius: 10px;
+  background: #14161a;
+}
+
+.carteira-saldo {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.carteira-saldo span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8f98;
+}
+
+.carteira-saldo strong {
+  font-size: 1.35rem;
+  color: #e8e6e3;
+}
+
+.carteira-saldo strong.negativo {
+  color: #ff8a8a;
+}
+
+.carteira-totais {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  font-size: 0.82rem;
+  color: #c9cdd3;
+}
+
+.carteira-positivo { color: #7fd18b; }
+.carteira-negativo { color: #ff9d9d; }
+
+.carteira-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: flex-end;
+}
+
+.carteira-saldo-input {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #8a8f98;
+}
+
+.carteira-saldo-input input {
+  width: 130px;
+}
+
+.carteira-historico {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.carteira-linha {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.8rem;
+  align-items: baseline;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #23262d;
+  border-radius: 8px;
+  background: #101216;
+  font-size: 0.85rem;
+}
+
+.carteira-data {
+  color: #8a8f98;
+  font-size: 0.78rem;
+  min-width: 4.5rem;
+}
+
+.carteira-desc {
+  flex: 1;
+  min-width: 8rem;
+  color: #e8e6e3;
+}
+
+.carteira-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+}
+
+.carteira-badge.positivo { color: #7fd18b; }
+.carteira-badge.negativo { color: #ff9d9d; }
+
+.carteira-valor {
+  font-weight: 600;
+  color: #e8e6e3;
+  min-width: 6.5rem;
+  text-align: right;
+}
+
+.carteira-linha-edicao {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid #23262d;
+  border-radius: 8px;
+  background: #101216;
+}
+
+.carteira-linha-edicao.saida {
+  border-left: 3px solid #ff9d9d;
+}
+
+.carteira-linha-edicao input[type="date"] { flex: 0 0 9.5rem; }
+.carteira-linha-edicao input[type="text"] { flex: 2 1 10rem; }
+.carteira-linha-edicao select { flex: 0 0 7rem; }
+.carteira-linha-edicao input[type="number"] { flex: 0 0 7rem; }
+
 .campo-editor-linha {
   display: flex;
   justify-content: space-between;

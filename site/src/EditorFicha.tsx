@@ -476,16 +476,41 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
           </label>
         )}
         {edit.tipo === "tabela" && (
-          <label className="span-2">Colunas (key|label|tipo por linha, tipo: texto|inteiro|decimal|moeda|data)
+          <label className="span-2">Colunas (key|label|tipo|opções por linha — tipo: texto|inteiro|decimal|moeda|data|selecao; opções separadas por vírgula, ex.: entrada,saida)
             <textarea
               rows={3}
-              value={(edit.colunas ?? []).map((c) => `${c.key}|${c.label}|${c.tipo}`).join("\n")}
+              value={(edit.colunas ?? []).map((c) => `${c.key}|${c.label}|${c.tipo}${c.opcoes?.length ? `|${c.opcoes.join(",")}` : ""}`).join("\n")}
               onChange={(e) => set("colunas", e.target.value.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
-                const [key, label, tipo] = l.split("|");
-                return { key: (key ?? "").trim(), label: (label ?? key ?? "").trim(), tipo: (["inteiro", "decimal", "moeda", "data"].includes(tipo ?? "") ? tipo : "texto") as string };
+                const [key, label, tipo, opcoes] = l.split("|");
+                const t = ["inteiro", "decimal", "moeda", "data", "selecao"].includes(tipo ?? "") ? tipo! : "texto";
+                const ops = (opcoes ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+                return { key: (key ?? "").trim(), label: (label ?? key ?? "").trim(), tipo: t as string, ...(ops.length ? { opcoes: ops } : {}) };
               }))}
             />
           </label>
+        )}
+        {edit.tipo === "tabela" && edit.semantico === "moeda" && (
+          <div className="span-2 linha">
+            <label className="checkbox-inline">
+              <input
+                type="checkbox"
+                checked={!!edit.carteira}
+                onChange={(e) => set("carteira", e.target.checked ? { saldoEditavelPor: "mestre" } : undefined)}
+              />{" "}
+              Carteira financeira (saldo inicial + entradas/saídas calculam o saldo)
+            </label>
+            {edit.carteira && (
+              <label>
+                Quem altera o saldo inicial
+                <select
+                  value={edit.carteira.saldoEditavelPor}
+                  onChange={(e) => set("carteira", { saldoEditavelPor: e.target.value })}
+                >
+                  {EDITAVEIS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                </select>
+              </label>
+            )}
+          </div>
         )}
       </div>
       <div className="linha">

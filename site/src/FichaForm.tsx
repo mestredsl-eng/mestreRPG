@@ -20,6 +20,10 @@ interface Props {
   pontosInicial?: ResultadoPontos;
   /** Config Poderes×Defeitos da campanha — UX de limite/aviso (backend valida). */
   poderesCfg?: ConfigPoderes | null;
+  /** Resumos de carteira calculados no servidor (saldo inicial/entradas/saídas/saldo). */
+  carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
+  /** Papel do usuário — controla se o saldo inicial da carteira é editável. */
+  ehMestre?: boolean;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -30,7 +34,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
 
@@ -149,7 +153,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -157,7 +161,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
                       ))}
                     </div>
                   ))}
@@ -170,7 +174,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   );
 }
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
@@ -179,6 +183,9 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   biblioteca?: Record<string, ElementoVinculavel[]>;
   ctxPontos?: ContextoPontos | null;
   aoAlternarPoder?: (campo: CampoDef, op: string) => void;
+  carteiraResumo?: { saldoInicial: number; entradas: number; saidas: number; saldo: number };
+  saldoEnviado?: unknown;
+  ehMestre?: boolean;
 }) {
   const mudar = (v: unknown) => aoMudar?.(campo.id, v);
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
@@ -215,6 +222,14 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   }
 
   if (somenteLeitura) {
+    if (campo.tipo === "tabela" && campo.carteira) {
+      return (
+        <div className="campo">
+          {rotulo}
+          <CarteiraView campo={campo} valor={valor} somenteLeitura resumo={carteiraResumo} saldoEnviado={saldoEnviado} podeSaldo={false} />
+        </div>
+      );
+    }
     if (campo.tipo === "tabela" && Array.isArray(valor) && valor.length > 0) {
       const linhas = valor as Record<string, unknown>[];
       const tot = inventarioTotals(campo, linhas);
@@ -404,6 +419,20 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     }
     case "tabela": {
+      if (campo.carteira) {
+        const podeSaldo = !!ehMestre || campo.carteira.saldoEditavelPor !== "mestre";
+        return editavel(
+          <CarteiraView
+            campo={campo}
+            valor={valor}
+            somenteLeitura={false}
+            aoMudar={aoMudar}
+            resumo={carteiraResumo}
+            saldoEnviado={saldoEnviado}
+            podeSaldo={podeSaldo}
+          />
+        );
+      }
       // Registro antigo: tabela com escalar vira linha única (espelha o backend).
       const linhas: Record<string, unknown>[] = Array.isArray(atual)
         ? (atual as Record<string, unknown>[])
@@ -639,6 +668,161 @@ function numOuNulo(v: unknown): number | null {
   if (v === undefined || v === null || v === "") return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+/** Espelha parseNumeroBR do backend: "1.111,11" -> 1111.11 etc. */
+function parseBR(v: unknown): number | null {
+  if (typeof v === "number") return Number.isNaN(v) ? null : v;
+  if (typeof v !== "string") return null;
+  let s = v.trim();
+  if (!s) return null;
+  const temVirg = s.includes(",");
+  const temPonto = s.includes(".");
+  if (temVirg && temPonto) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (temVirg) {
+    s = s.replace(",", ".");
+  } else if (temPonto && /^-?\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, "");
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isNaN(n) ? null : n;
+}
+
+const tipoMov = (v: unknown) =>
+  typeof v === "string" ? v.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim() : "";
+
+interface ResumoCarteira { saldoInicial: number; entradas: number; saidas: number; saldo: number }
+
+/** Totais da carteira derivados das movimentações — nunca digitados. */
+function totaisCarteira(linhas: Record<string, unknown>[], saldoInicial: number): ResumoCarteira {
+  let entradas = 0, saidas = 0;
+  for (const l of linhas) {
+    const v = parseBR(l.valor) ?? 0;
+    const t = tipoMov(l.tipo);
+    if (t === "entrada") entradas += v;
+    else if (t === "saida") saidas += v;
+  }
+  return { saldoInicial, entradas, saidas, saldo: saldoInicial + entradas - saidas };
+}
+
+const ROTULO_TIPO: Record<string, string> = { entrada: "Entrada", saida: "Saída" };
+
+/**
+ * Carteira financeira (tabela semantico "moeda" com campo.carteira):
+ * saldo inicial + movimentações -> saldo atual calculado.
+ */
+function CarteiraView({ campo, valor, somenteLeitura, aoMudar, resumo, saldoEnviado, podeSaldo }: {
+  campo: CampoDef;
+  valor: unknown;
+  somenteLeitura: boolean;
+  aoMudar?: (id: string, v: unknown) => void;
+  resumo?: ResumoCarteira;
+  saldoEnviado?: unknown;
+  podeSaldo: boolean;
+}) {
+  const chaveSaldo = `${campo.id}::saldo`;
+  const linhas: Record<string, unknown>[] = Array.isArray(valor) ? (valor as Record<string, unknown>[]) : [];
+  const saldoInicial = numOuNulo(saldoEnviado) ?? resumo?.saldoInicial ?? parseBR(campo.padrao) ?? 0;
+  const tot = totaisCarteira(linhas, saldoInicial);
+
+  const setLinha = (i: number, key: string, v: unknown) => {
+    aoMudar?.(campo.id, linhas.map((l, idx) => (idx === i ? { ...l, [key]: v } : l)));
+  };
+  const dataDe = (l: Record<string, unknown>) => {
+    const d = l.data;
+    if (typeof d === "string" && d) {
+      const dt = new Date(d.length === 10 ? `${d}T12:00:00` : d);
+      if (!Number.isNaN(dt.getTime())) return dt.toLocaleDateString("pt-BR");
+    }
+    return "";
+  };
+
+  return (
+    <div className="carteira">
+      <div className="carteira-resumo">
+        <div className="carteira-saldo">
+          <span>Saldo atual</span>
+          <strong className={tot.saldo < 0 ? "negativo" : ""}>{fmtMoeda(tot.saldo)}</strong>
+        </div>
+        <div className="carteira-totais">
+          <span>Saldo inicial: {fmtMoeda(saldoInicial)}</span>
+          <span className="carteira-positivo">Entradas: {fmtMoeda(tot.entradas)}</span>
+          <span className="carteira-negativo">Saídas: {fmtMoeda(tot.saidas)}</span>
+        </div>
+      </div>
+
+      {!somenteLeitura && (
+        <div className="carteira-acoes">
+          {podeSaldo ? (
+            <label className="carteira-saldo-input">
+              Saldo inicial
+              <input
+                type="number"
+                step="0.01"
+                value={saldoInicial}
+                onChange={(e) => aoMudar?.(chaveSaldo, e.target.value === "" ? "" : Number(e.target.value))}
+              />
+            </label>
+          ) : (
+            <span className="meta">Saldo inicial: {fmtMoeda(saldoInicial)} (somente o mestre pode alterar)</span>
+          )}
+          <button type="button" className="mini" onClick={() => aoMudar?.(campo.id, [...linhas, { tipo: "entrada", valor: "" }])}>
+            + Adicionar movimentação
+          </button>
+        </div>
+      )}
+
+      <div className="carteira-historico">
+        {linhas.length === 0 && <p className="meta">Nenhuma movimentação registrada.</p>}
+        {linhas.map((l, i) => {
+          const t = tipoMov(l.tipo);
+          const rotulo = ROTULO_TIPO[t] ?? (t ? String(l.tipo) : "—");
+          if (somenteLeitura) {
+            const extras = (campo.colunas ?? [])
+              .filter((c) => !["data", "descricao", "tipo", "valor"].includes(c.key))
+              .map((c) => {
+                const v = l[c.key];
+                return v === undefined || v === "" ? null : `${c.label}: ${formatarColuna(c.tipo, v)}`;
+              })
+              .filter(Boolean);
+            return (
+              <div key={i} className={`carteira-linha ${t === "saida" ? "saida" : "entrada"}`}>
+                <span className="carteira-data">{dataDe(l)}</span>
+                <span className="carteira-desc">
+                  {String(l.descricao ?? "")}
+                  {extras.length > 0 && <span className="meta"> · {extras.join(" · ")}</span>}
+                </span>
+                <span className={`carteira-badge ${t === "saida" ? "negativo" : "positivo"}`}>{rotulo}</span>
+                <span className="carteira-valor">{fmtMoeda(parseBR(l.valor) ?? 0)}</span>
+              </div>
+            );
+          }
+          return (
+            <div key={i} className={`carteira-linha-edicao ${t === "saida" ? "saida" : ""}`}>
+              <input type="date" value={String(l.data ?? "")} onChange={(e) => setLinha(i, "data", e.target.value)} aria-label="Data" />
+              <input type="text" placeholder="Descrição" value={String(l.descricao ?? "")} onChange={(e) => setLinha(i, "descricao", e.target.value)} />
+              <select value={t === "entrada" || t === "saida" ? t : "entrada"} onChange={(e) => setLinha(i, "tipo", e.target.value)} aria-label="Tipo">
+                <option value="entrada">Entrada</option>
+                <option value="saida">Saída</option>
+              </select>
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="Valor"
+                value={l.valor === undefined || l.valor === null ? "" : String(l.valor)}
+                onChange={(e) => setLinha(i, "valor", e.target.value === "" ? "" : Number(e.target.value))}
+              />
+              <button type="button" className="mini perigo" onClick={() => aoMudar?.(campo.id, linhas.filter((_, idx) => idx !== i))}>✕</button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function fmtNum(n: number): string {

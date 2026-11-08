@@ -342,7 +342,7 @@ export interface CampoDef {
   maxCaracteres?: number;
   opcoes?: string[];
   repetivel: boolean;
-  colunas?: { key: string; label: string; tipo: string }[];
+  colunas?: { key: string; label: string; tipo: string; opcoes?: string[] }[];
   formula?: string;
   referencia?: string;
   visibilidade: string;
@@ -354,6 +354,7 @@ export interface CampoDef {
   reservaPontos?: string;
   regra?: { kind: string; key: string };
   regraKind?: string;
+  carteira?: { saldoEditavelPor: string };
 }
 
 export interface SecaoDef {
@@ -428,6 +429,7 @@ export interface FichaRenderizada {
   estrutura: EstruturaFicha;
   validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> };
   poderes?: ConfigPoderes | null;
+  carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
 }
 
 /** Configuração Poderes×Defeitos da campanha (regras). */

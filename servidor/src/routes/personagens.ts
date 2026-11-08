@@ -13,6 +13,8 @@ import {
   campoEditavelPor,
   todosCampos,
   calcularPontos,
+  parseNumeroBR,
+  resumoCarteira,
   type EstruturaFicha,
   type Visibilidade,
   type EditavelPor,
@@ -93,7 +95,14 @@ function montarFicha(
     if (!camposVisiveis.length && !temFilhoVisivel(secao.id)) continue;
     estruturaFiltrada.secoes.push({ ...secao, campos: camposVisiveis });
     for (const c of camposVisiveis) {
-      if (c.tipo !== "calculado") campos[c.id] = dados[c.id] ?? c.padrao ?? null;
+      if (c.tipo === "calculado") continue;
+      // Carteira: o valor do campo são só as movimentações (array);
+      // o saldo inicial fica na chave "<id>::saldo" dos dados.
+      if (c.carteira) {
+        campos[c.id] = Array.isArray(dados[c.id]) ? dados[c.id] : [];
+        continue;
+      }
+      campos[c.id] = dados[c.id] ?? c.padrao ?? null;
     }
   }
 
@@ -127,12 +136,30 @@ function montarFicha(
     validacao = { ok: erros.length === 0, erros, calculos: ehMestre ? r.calculos : undefined };
   }
 
+  // Carteiras visíveis: resumo calculado no servidor (saldo inicial +
+  // entradas - saídas). Escalar legado no campo vira saldo inicial.
+  const carteiras: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }> = {};
+  for (const secao of estruturaFiltrada.secoes) {
+    for (const c of secao.campos) {
+      if (!c.carteira || c.tipo !== "tabela") continue;
+      const bruto = dados[c.id];
+      const linhas = Array.isArray(bruto) ? bruto : [];
+      let saldoInicial = parseNumeroBR(dados[`${c.id}::saldo`]);
+      if (saldoInicial === null && bruto !== undefined && bruto !== null && bruto !== "" && !Array.isArray(bruto)) {
+        saldoInicial = parseNumeroBR(bruto); // valor antigo do campo = saldo
+      }
+      if (saldoInicial === null) saldoInicial = parseNumeroBR(c.padrao) ?? 0;
+      carteiras[c.id] = { saldoInicial, ...resumoCarteira(linhas, saldoInicial) };
+    }
+  }
+
   return {
     campos,
     calculados,
     pontos,
     estrutura: estruturaFiltrada,
     validacao,
+    carteiras,
     // Config Poderes×Defeitos da campanha — a ficha usa p/ UX (limite,
     // aviso de defeito obrigatório). A validação real é do backend.
     poderes: regras?.config.poderes ?? null,
@@ -260,7 +287,15 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     return;
   }
 
-  const validacao = validarFicha(carregada.estrutura, body.data.data ?? {}, { estrito: false });
+  const ehMestreCriacao = req.membership!.role === "mestre";
+  const carteirasSaldoCriacao = new Set<string>();
+  for (const c of todosCampos(carregada.estrutura)) {
+    if (!c.carteira) continue;
+    const saldoOk = ehMestreCriacao || c.carteira.saldoEditavelPor !== "mestre";
+    const campoOk = ehMestreCriacao || campoEditavelPor(c, undefined, false, "rascunho");
+    if (saldoOk && campoOk) carteirasSaldoCriacao.add(c.id);
+  }
+  const validacao = validarFicha(carregada.estrutura, body.data.data ?? {}, { estrito: false, carteirasSaldo: carteirasSaldoCriacao });
   if (!validacao.ok) {
     res.status(400).json({ erro: "Dados da ficha inválidos", detalhes: validacao.erros });
     return;
@@ -395,6 +430,16 @@ personagensRouter.patch("/:characterId", async (req, res) => {
   const overrides = { ...overridesDe(p), ...(body.data.overrides ?? {}) } as Overrides;
   const dados = { ...((p.data ?? {}) as Record<string, unknown>), ...(body.data.data ?? {}) };
 
+  // Carteiras cujo saldo inicial o requerente pode alterar: mestre sempre;
+  // jogador só se o campo for editável por ele e saldoEditavelPor != "mestre".
+  const carteirasSaldo = new Set<string>();
+  for (const c of todosCampos(estrutura)) {
+    if (!c.carteira) continue;
+    const saldoOk = ehMestre || c.carteira.saldoEditavelPor !== "mestre";
+    const campoOk = ehMestre || campoEditavelPor(c, overrides[c.id], false, p.status);
+    if (saldoOk && campoOk) carteirasSaldo.add(c.id);
+  }
+
   // Dono: só campos editáveis conforme template + overrides
   let dadosFinais = dados;
   if (!ehMestre && body.data.data) {
@@ -403,14 +448,14 @@ personagensRouter.patch("/:characterId", async (req, res) => {
       const ov = overrides[campo.id];
       if (campoEditavelPor(campo, ov, false, p.status)) permitidos.add(campo.id);
     }
-    const validacao = validarFicha(estrutura, body.data.data, { apenasCamposPermitidos: permitidos, aplicarPadroes: false });
+    const validacao = validarFicha(estrutura, body.data.data, { apenasCamposPermitidos: permitidos, aplicarPadroes: false, carteirasSaldo });
     if (!validacao.ok) {
       res.status(400).json({ erro: "Dados inválidos", detalhes: validacao.erros });
       return;
     }
     dadosFinais = { ...(p.data as Record<string, unknown>), ...validacao.dados };
   } else if (ehMestre && body.data.data) {
-    const validacao = validarFicha(estrutura, body.data.data, { estrito: false, aplicarPadroes: false });
+    const validacao = validarFicha(estrutura, body.data.data, { estrito: false, aplicarPadroes: false, carteirasSaldo });
     if (!validacao.ok) {
       res.status(400).json({ erro: "Dados inválidos", detalhes: validacao.erros });
       return;

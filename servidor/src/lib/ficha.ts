@@ -55,7 +55,8 @@ export type EditavelPor = (typeof EDITAVEIS)[number];
 export const colunaTabelaSchema = z.object({
   key: z.string().min(1).max(60),
   label: z.string().min(1).max(120),
-  tipo: z.enum(["texto", "inteiro", "decimal", "moeda", "data"]).default("texto"),
+  tipo: z.enum(["texto", "inteiro", "decimal", "moeda", "data", "selecao"]).default("texto"),
+  opcoes: z.array(z.string().max(200)).max(200).optional(), // tipo "selecao"
 });
 
 export const campoSchema = z.object({
@@ -86,6 +87,11 @@ export const campoSchema = z.object({
   // Vínculo com a biblioteca de regras (Etapa 5): elemento específico ou tipo de elementos
   regra: z.object({ kind: z.string().max(40), key: z.string().max(80) }).optional(),
   regraKind: z.string().max(40).optional(), // p/ seleção/lista: opções vêm da biblioteca deste tipo
+  // Carteira financeira (tabela com semantico "moeda"): saldo inicial separado
+  // das movimentações; saldoEditavelPor controla quem altera o saldo inicial.
+  carteira: z
+    .object({ saldoEditavelPor: z.enum(EDITAVEIS).default("mestre") })
+    .optional(),
 });
 export type CampoDef = z.infer<typeof campoSchema>;
 
@@ -472,6 +478,79 @@ function valorPadrao(campo: CampoDef): unknown {
   }
 }
 
+// ---------- Números no formato brasileiro ----------
+// Aceita número ou texto "1.111,11" / "1111.11" / "500". Vírgula é decimal;
+// ponto só é milhar quando seguido de exatamente 3 dígitos sem vírgula.
+export function parseNumeroBR(v: unknown): number | null {
+  if (typeof v === "number") return Number.isNaN(v) ? null : v;
+  if (typeof v !== "string") return null;
+  let s = v.trim();
+  if (!s) return null;
+  const temVirg = s.includes(",");
+  const temPonto = s.includes(".");
+  if (temVirg && temPonto) {
+    // O último separador é o decimal.
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (temVirg) {
+    s = s.replace(",", ".");
+  } else if (temPonto && /^-?\d{1,3}(\.\d{3})+$/.test(s)) {
+    s = s.replace(/\./g, ""); // "1.111" = mil e cento e onze
+  }
+  if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  return Number.isNaN(n) ? null : n;
+}
+
+const SEM_ACENTO = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().trim();
+
+/** Normaliza linhas de tabela antes de validar: números BRL -> number,
+ *  seleção -> trim e, em carteiras, tipo -> "entrada"/"saida" canônico. */
+function normalizarTabela(campo: CampoDef, valor: unknown): unknown {
+  if (!Array.isArray(valor)) return valor;
+  const ehCarteira = !!campo.carteira;
+  return valor.map((reg) => {
+    if (typeof reg !== "object" || reg === null) return reg;
+    const out = { ...(reg as Record<string, unknown>) };
+    for (const col of campo.colunas ?? []) {
+      const v = out[col.key];
+      if (v === undefined || v === "") continue;
+      if (col.tipo === "moeda" || col.tipo === "decimal") {
+        const n = parseNumeroBR(v);
+        if (n !== null) out[col.key] = n;
+      } else if (col.tipo === "inteiro") {
+        const n = parseNumeroBR(v);
+        if (n !== null && Number.isInteger(n)) out[col.key] = n;
+      } else if (col.tipo === "selecao" && typeof v === "string") {
+        out[col.key] = v.trim();
+      }
+    }
+    if (ehCarteira && typeof out.tipo === "string") {
+      const t = SEM_ACENTO(out.tipo);
+      if (t === "entrada" || t === "saida") out.tipo = t;
+    }
+    return out;
+  });
+}
+
+/** Resumo financeiro de uma carteira: entradas, saídas e saldo
+ *  (saldo inicial + entradas - saídas). Valores derivados das linhas. */
+export function resumoCarteira(linhas: unknown, saldoInicial: number): { entradas: number; saidas: number; saldo: number } {
+  let entradas = 0;
+  let saidas = 0;
+  if (Array.isArray(linhas)) {
+    for (const reg of linhas) {
+      if (typeof reg !== "object" || reg === null) continue;
+      const r = reg as Record<string, unknown>;
+      const valor = parseNumeroBR(r.valor) ?? 0;
+      const tipo = typeof r.tipo === "string" ? SEM_ACENTO(r.tipo) : "";
+      if (tipo === "entrada") entradas += valor;
+      else if (tipo === "saida") saidas += valor;
+    }
+  }
+  return { entradas, saidas, saldo: saldoInicial + entradas - saidas };
+}
+
 function validarValor(campo: CampoDef, valor: unknown, dados: Record<string, unknown>, estrutura: EstruturaFicha): string | null {
   if (valor === undefined || valor === null || valor === "") {
     return campo.obrigatorio ? "Campo obrigatório" : null;
@@ -553,6 +632,18 @@ function validarValor(campo: CampoDef, valor: unknown, dados: Record<string, unk
           if (v === undefined || v === "") continue;
           if (col.tipo === "inteiro" && (!numero(v) || !Number.isInteger(v))) return `Coluna ${col.label}: inteiro esperado`;
           if ((col.tipo === "decimal" || col.tipo === "moeda") && !numero(v)) return `Coluna ${col.label}: número esperado`;
+          if (col.tipo === "selecao" && col.opcoes?.length && !col.opcoes.includes(String(v))) {
+            return `Coluna ${col.label}: opção inválida`;
+          }
+        }
+        // Carteira financeira: todo registro precisa de tipo entrada/saída
+        // e valor monetário não-negativo.
+        if (campo.carteira) {
+          const tipo = typeof reg.tipo === "string" ? SEM_ACENTO(reg.tipo) : "";
+          if (tipo !== "entrada" && tipo !== "saida") return "Tipo da movimentação deve ser Entrada ou Saída";
+          const valorMov = parseNumeroBR(reg.valor);
+          if (valorMov === null) return "Valor da movimentação inválido";
+          if (valorMov < 0) return "Valor da movimentação não pode ser negativo";
         }
         if (ehInventario) {
           for (const k of COLS_NAO_NEG) {
@@ -592,7 +683,7 @@ function validarValor(campo: CampoDef, valor: unknown, dados: Record<string, unk
 export function validarFicha(
   estrutura: EstruturaFicha,
   dadosEntrada: Record<string, unknown>,
-  opcoes: { apenasCamposPermitidos?: Set<string>; estrito?: boolean; aplicarPadroes?: boolean } = {}
+  opcoes: { apenasCamposPermitidos?: Set<string>; estrito?: boolean; aplicarPadroes?: boolean; carteirasSaldo?: Set<string> } = {}
 ): ResultadoValidacao {
   const dados: Record<string, unknown> = {};
   const erros: Record<string, string> = {};
@@ -601,6 +692,21 @@ export function validarFicha(
   for (const campo of campos) {
     if (campo.tipo === "calculado") continue; // calculado nunca vem do cliente
     const permitir = !opcoes.apenasCamposPermitidos || opcoes.apenasCamposPermitidos.has(campo.id);
+    // Carteira: saldo inicial via chave sintética "<id>::saldo" — só para
+    // quem tem permissão (mestre sempre; jogador conforme configuração).
+    if (campo.carteira) {
+      const chaveSaldo = `${campo.id}::saldo`;
+      if (chaveSaldo in dadosEntrada) {
+        const v = dadosEntrada[chaveSaldo];
+        if (!opcoes.carteirasSaldo?.has(campo.id)) {
+          erros[campo.id] = "Saldo inicial só pode ser alterado pelo mestre";
+        } else if (v !== undefined && v !== null && v !== "") {
+          const n = parseNumeroBR(v);
+          if (n === null) erros[campo.id] = "Saldo inicial inválido";
+          else dados[chaveSaldo] = n;
+        }
+      }
+    }
     let valor = permitir && campo.id in dadosEntrada ? dadosEntrada[campo.id] : undefined;
     // Checkbox tolera 0/1 de registros antigos e padrões numéricos.
     if (campo.tipo === "checkbox" && (valor === 0 || valor === 1)) valor = valor === 1;
@@ -614,11 +720,18 @@ export function validarFicha(
       continue;
     }
     // Registro antigo: tabela com escalar (ex.: saldo digitado antes da tabela
-    // existir) vira linha única para não perder o dado nem travar o salvamento.
+    // existir) vira linha única — em carteiras, o escalar é o saldo inicial.
     if (campo.tipo === "tabela" && !Array.isArray(valor)) {
-      dados[campo.id] = [{ valor }];
+      if (campo.carteira) {
+        const n = parseNumeroBR(valor);
+        if (n !== null) dados[`${campo.id}::saldo`] = n;
+        dados[campo.id] = [];
+      } else {
+        dados[campo.id] = [{ valor }];
+      }
       continue;
     }
+    if (campo.tipo === "tabela") valor = normalizarTabela(campo, valor);
     const erro = validarValor(campo, valor, dados, estrutura);
     if (erro) {
       erros[campo.id] = erro;

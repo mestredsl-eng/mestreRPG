@@ -313,6 +313,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             personagemId={personagem.id}
             pontosInicial={ficha?.pontos}
             poderesCfg={ficha?.poderes ?? null}
+            carteiras={ficha?.carteiras}
+            ehMestre={souMestre}
           />
         )}
       </section>
