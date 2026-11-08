@@ -272,13 +272,17 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
  * (padrão 1–5 quando não definidos). Retorna null quando a faixa
  * não é inteira/limitada — nesse caso o campo segue como número.
  */
-function faixaAtributo(campo: CampoDef): { min: number; max: number; total: number } | null {
+function faixaAtributo(campo: CampoDef): { min: number; max: number; inicio: number; total: number } | null {
   const min = campo.minimo ?? 1;
   const max = campo.maximo ?? 5;
-  if (!Number.isInteger(min) || !Number.isInteger(max) || max < min) return null;
-  const total = max - min + 1;
+  if (!Number.isInteger(min) || !Number.isInteger(max) || max < min || min < 0) return null;
+  // Bolinhas = quantidade de valores selecionáveis a partir de `inicio`.
+  // Mínimo 0 não gera bolinha extra: zero é o estado "tudo vazio" e é
+  // alcançado limpando a seleção (as bolinhas representam 1..máximo).
+  const inicio = min === 0 ? 1 : min;
+  const total = max - inicio + 1;
   if (total < 2 || total > 12) return null;
-  return { min, max, total };
+  return { min, max, inicio, total };
 }
 
 /** Pool padrão da distribuição — mesma regra do servidor ("principal" ou o primeiro). */
@@ -319,7 +323,7 @@ function SeletorAtributo({ campo, valor, somenteLeitura, aoMudar, ctx }: {
 }) {
   const faixa = faixaAtributo(campo)!;
   const num = typeof valor === "number" ? valor : valor === "" || valor === null || valor === undefined ? NaN : Number(valor);
-  const preenchidas = Number.isFinite(num) ? Math.max(0, Math.min(faixa.total, num - faixa.min + 1)) : 0;
+  const preenchidas = Number.isFinite(num) ? Math.max(0, Math.min(faixa.total, num - faixa.inicio + 1)) : 0;
   const foraDaFaixa = Number.isFinite(num) && (num < faixa.min || num > faixa.max);
 
   // Custo/pool deste campo quando a distribuição de pontos está ativa.
@@ -342,7 +346,7 @@ function SeletorAtributo({ campo, valor, somenteLeitura, aoMudar, ctx }: {
     <div className={`seletor-atributos${somenteLeitura ? " somente-leitura" : ""}`}>
       <div className="bolinhas" role={somenteLeitura ? undefined : "radiogroup"} aria-label={campo.label}>
         {Array.from({ length: faixa.total }, (_, i) => {
-          const v = faixa.min + i;
+          const v = faixa.inicio + i;
           const cheio = i < preenchidas;
           const custoCand = comCusto ? custoEstimado(campo, v, ctx!.cfg) : 0;
           const afford = !comCusto || !ctx?.pontos || custoCand <= limiteGasto + 1e-9;
