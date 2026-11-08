@@ -564,6 +564,12 @@ export interface ResultadoValidacaoRegras {
   totalErros: number;
 }
 
+/** Resumo de HP/Vitalidade (vida.ts) — ficha real ou simulação. */
+export interface VidaResumo {
+  hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
+  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+}
+
 /** Resposta do simulador da prévia do editor (POST /regras/simulacao). */
 export interface SimulacaoResultado {
   ok: boolean;
@@ -571,6 +577,7 @@ export interface SimulacaoResultado {
   calculos: Record<string, number>;
   pontos: ResultadoPontos;
   pontosCfg: EstruturaFicha["pontos"];
+  vida?: VidaResumo;
 }
 
 // ---- Tipos da Etapa 6: patrimônio e finanças ----

@@ -114,8 +114,22 @@ try {
     t("criar defeito c/ dependência", dm.status === 201, JSON.stringify(dm.json).slice(0, 200));
     const p = await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "fogo", name: "Manipular Fogo", definition: { custoPontos: 3 } } });
     t("criar poder", p.status === 201);
-    const cfg = await req(BASE, "PUT", `/campaigns/${cid}/regras/config`, { cookie: M, body: { poderes: { exigirDefeito: true } } });
-    t("config exigirDefeito", cfg.status === 200);
+    const cfg = await req(BASE, "PUT", `/campaigns/${cid}/regras/config`, {
+      cookie: M,
+      body: {
+        poderes: { exigirDefeito: true },
+        hp: { habilitado: true, base: 100, porNivel: 20, campoId: F_FORCA, edicaoPor: "ambos" },
+        vitalidade: {
+          edicaoPor: "ambos",
+          niveis: [
+            { nome: "São", penalidadeDados: 0, bloqueiaAcoes: false },
+            { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
+            { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
+          ],
+        },
+      },
+    });
+    t("config exigirDefeito + hp + vitalidade", cfg.status === 200, JSON.stringify(cfg.json?.detalhes ?? "").slice(0, 200));
   }
   const antesSim = contagens(); // snapshot APÓS o setup — simulação não pode alterar nada
 
@@ -162,6 +176,20 @@ try {
     const r4 = await SIM({ [F_DEF]: [{ key: "manco", nivel: 1 }, { key: "covardia", nivel: 1 }] });
     // manco -1 + covardia nv1 -1 = +2 -> saldo 12
     t("manco+covardia -> saldo 12", r4.json?.ok === true && poolPrincipal(r4.json)?.saldo === 12, `saldo=${poolPrincipal(r4.json)?.saldo} erros=${JSON.stringify(r4.json?.erros).slice(0, 200)}`);
+  }
+
+  sec("Simulação: HP e Vitalidade");
+  {
+    const r0 = await SIM({});
+    t("vida.hp presente", r0.json?.vida?.hp?.maximo === 100 && r0.json?.vida?.hp?.atual === 100, JSON.stringify(r0.json?.vida?.hp).slice(0, 150));
+    t("vida.vitalidade nível 0", r0.json?.vida?.vitalidade?.nome === "São" && r0.json?.vida?.vitalidade?.niveis?.length === 3);
+
+    const r1 = await SIM({ [F_FORCA]: 3 });
+    t("Força 3 -> HP máximo 160", r1.json?.vida?.hp?.maximo === 160 && r1.json?.vida?.hp?.atual === 160, `hp=${r1.json?.vida?.hp?.maximo}`);
+
+    // chaves reservadas não são campos — simulação não aceita __hp/__vitalidade
+    const r2 = await SIM({ [F_FORCA]: 0, __hp: { atual: 1, historico: [] }, __vitalidade: { nivel: 2 } });
+    t("__hp/__vitalidade ignorados (HP cheio, vitalidade 0)", r2.json?.vida?.hp?.atual === 100 && r2.json?.vida?.vitalidade?.nivel === 0, `hp=${r2.json?.vida?.hp?.atual} vit=${r2.json?.vida?.vitalidade?.nivel}`);
   }
 
   sec("Simulação: rejeições e permissões");

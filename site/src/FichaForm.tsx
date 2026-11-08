@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -174,6 +174,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   return (
     <div className="ficha">
       {ctxPontos && (ctxPontos.pontos || personagemId || simulacao) && <PainelPontos ctx={ctxPontos} />}
+      {sim?.vida && <PainelVidaSim vida={sim.vida} />}
       {avisoPoder && <div className="ficha-aviso">{avisoPoder}</div>}
       {faltaDefeito && (
         <div className="ficha-aviso">
@@ -706,6 +707,46 @@ function PainelPontos({ ctx }: { ctx: ContextoPontos }) {
         <ul className="pontos-erros">
           {pontos.erros.map((e, i) => <li key={i}>{e}</li>)}
         </ul>
+      )}
+    </div>
+  );
+}
+
+/** HP e Vitalidade simulados (somente leitura) — vem de /regras/simulacao.
+ *  Reutiliza as mesmas classes do componente Vida da ficha real. */
+function PainelVidaSim({ vida }: { vida: VidaResumo }) {
+  const hp = vida.hp;
+  const vit = vida.vitalidade;
+  if (!hp && !vit) return null;
+  const pct = hp ? Math.max(0, Math.min(100, (hp.atual / hp.maximo) * 100)) : 0;
+  return (
+    <div className="vida-cartao vida-sim">
+      <h4>Pontos de Vida / Vitalidade <span className="meta">(simulação)</span></h4>
+      {hp && (
+        <div className="hp-resumo">
+          <span className={`hp-atual${hp.atual / hp.maximo <= 0.25 ? " critico" : ""}`}>{hp.atual}</span>
+          <span className="meta">/ {hp.maximo} HP</span>
+          <div className="hp-barra">
+            <div className="hp-preenchimento" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+      {vit && (
+        <div className="vitalidade-escala">
+          {vit.niveis.map((n) => (
+            <div
+              key={n.indice}
+              className={`vit-nivel somente-leitura${n.indice === vit.nivel ? " atual" : ""}`}
+              title={n.bloqueiaAcoes ? "bloqueia ações" : undefined}
+            >
+              <span className="vit-nome">{n.nome}</span>
+              <span className="vit-penalidade">
+                {n.penalidadeDados ? `−${n.penalidadeDados} dados` : "sem penalidade"}
+                {n.bloqueiaAcoes ? " · bloqueia" : ""}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

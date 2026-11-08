@@ -15,6 +15,7 @@ import {
   type ElementoRegra,
 } from "../lib/regras.js";
 import { estruturaFichaSchema, todosCampos, avaliarFormula } from "../lib/ficha.js";
+import { resumoHp, resumoVitalidade, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -335,7 +336,12 @@ regrasRouter.post("/simulacao", requirePapel("mestre"), async (req, res) => {
     return;
   }
   const regras = await carregarRegras(req.params.campaignId);
-  const r = validarRegras(body.data.estrutura, body.data.dados, regras, {
+  // Chaves reservadas de vida não são campos da ficha — como no PATCH real,
+  // a simulação parte do estado inicial (HP cheio, vitalidade nível 0).
+  const dados = { ...(body.data.dados ?? {}) } as Record<string, unknown>;
+  delete dados[CHAVE_HP];
+  delete dados[CHAVE_VITALIDADE];
+  const r = validarRegras(body.data.estrutura, dados, regras, {
     pontosIniciais: body.data.pontosFicticios,
   });
   const pontosCfgBase = pontosParaFicha(body.data.estrutura, regras);
@@ -348,6 +354,12 @@ regrasRouter.post("/simulacao", requirePapel("mestre"), async (req, res) => {
     calculos: r.calculos,
     pontos: r.pontos,
     pontosCfg,
+    // HP/Vitalidade simulados com os dados fictícios (somente leitura —
+    // funções puras de vida.ts; nada é persistido).
+    vida: {
+      hp: resumoHp(regras.config.hp, body.data.estrutura, dados),
+      vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
+    },
   });
 });
 
