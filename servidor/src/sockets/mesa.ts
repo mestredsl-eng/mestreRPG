@@ -5,7 +5,7 @@ import { getDb } from "../db/index.js";
 import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
 } from "../db/schema.js";
-import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste } from "../lib/ficha.js";
+import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
@@ -281,18 +281,32 @@ function socket_handlers(
           })()
         : null;
       if (payload.campoId) valorCampo = base;
-      // Elegibilidade do campo de teste: quando a estrutura da ficha está
-      // disponível, rejeita campos não testáveis (dinheiro, itens) e campos
-      // que não existem na estrutura publicada.
-      if (payload.campoId && char.templateVersionId) {
-        const [ver] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, char.templateVersionId)).limit(1);
-        const parse = ver ? estruturaFichaSchema.safeParse(ver.structure) : null;
-        if (parse?.success) {
-          const campo = mapaCampos(parse.data).get(payload.campoId);
-          if (!campo || !campoElegivelParaTeste(campo)) {
-            cb?.({ ok: false, erro: "Campo não é elegível para teste" });
-            return;
+      // Elegibilidade do campo de teste: com campoId, a estrutura publicada
+      // da ficha é obrigatória e precisa passar no parse — sem ela não há
+      // como provar elegibilidade, então a solicitação é rejeitada (o
+      // cliente nunca é fonte de confiança para validar o próprio campo).
+      if (payload.campoId) {
+        let campo: CampoDef | undefined;
+        let motivo = "";
+        if (!char.templateVersionId) {
+          motivo = "personagem sem versão de ficha";
+        } else {
+          const [ver] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, char.templateVersionId)).limit(1);
+          if (!ver) {
+            motivo = "versão de ficha não encontrada";
+          } else {
+            const parse = estruturaFichaSchema.safeParse(ver.structure);
+            if (!parse.success) {
+              motivo = `estrutura inválida (${parse.error.issues.length} problema(s) de schema)`;
+            } else {
+              campo = mapaCampos(parse.data).get(payload.campoId);
+            }
           }
+        }
+        if (!campo || !campoElegivelParaTeste(campo)) {
+          console.warn(`[mesa] teste:pedir rejeitado — ${motivo || "campo não elegível"} (campoId=${payload.campoId}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
+          cb?.({ ok: false, erro: "Campo não é elegível para teste" });
+          return;
         }
       }
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam

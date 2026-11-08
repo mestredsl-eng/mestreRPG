@@ -133,7 +133,11 @@ for (const lados of [4, 6, 8, 10, 20]) {
     const valores = det.json?.ficha?.campos ?? {};
     for (const sec of det.json?.ficha?.estrutura?.secoes ?? []) {
       for (const c of sec.campos ?? []) {
-        if ((c.tipo === "inteiro" || c.tipo === "decimal") && c.semantico !== "moeda" && c.semantico !== "item"
+        // mesmo critério do servidor (campoElegivelParaTeste): flag explícita
+        // ou fallback por semântica quando a chave está ausente.
+        const elegivel = c.usadoEmTestes === true
+          || (c.usadoEmTestes !== false && ["atributo", "habilidade", "conhecimento", "talento"].includes(c.semantico));
+        if ((c.tipo === "inteiro" || c.tipo === "decimal") && c.semantico !== "moeda" && c.semantico !== "item" && elegivel
           && typeof valores[c.id] === "number" && valores[c.id] > 0) { char = cand; campoOk = c; break; }
       }
       if (campoOk) break;

@@ -62,6 +62,20 @@ db.prepare("insert into sheet_versions (id,template_id,version,structure,publish
 db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,status,created_at,updated_at,overrides) values (?,?,?,?,?,?,?,?,?,?)")
   .run(charId, CID, mem.id, verId, "Perso Elegibilidade", JSON.stringify(dados), "aprovada", agora, agora, "{}");
 
+// Fixture extra: versão com estrutura que falha no schema + personagem sem template.
+const tplBadId = crypto.randomUUID();
+const verBadId = crypto.randomUUID();
+const charBadId = crypto.randomUUID();
+const charSemTplId = crypto.randomUUID();
+db.prepare("insert into sheet_templates (id,name,description,owner_id,current_version_id,created_at,updated_at,campaign_id,is_active,is_default) values (?,?,?,?,?,?,?,?,?,?)")
+  .run(tplBadId, "MODELO-ELEGIBILIDADE-INVALIDO-TESTE", "fixture temporário", admin.id, verBadId, agora, agora, CID, 1, 0);
+db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,?,?,?,?)")
+  .run(verBadId, tplBadId, 1, JSON.stringify({ versao: 99, secoes: "isto-não-é-array" }), agora, agora);
+db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,status,created_at,updated_at,overrides) values (?,?,?,?,?,?,?,?,?,?)")
+  .run(charBadId, CID, mem.id, verBadId, "Perso Estrutura Invalida", JSON.stringify({ qualquer: 5 }), "aprovada", agora, agora, "{}");
+db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,status,created_at,updated_at,overrides) values (?,?,?,?,?,?,?,?,?,?)")
+  .run(charSemTplId, CID, mem.id, null, "Perso Sem Template", JSON.stringify({ forca: 9 }), "aprovada", agora, agora, "{}");
+
 // sessão + tokens + socket do mestre
 const token = "eleg-" + crypto.randomUUID();
 db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
@@ -112,6 +126,31 @@ for (const [campoId, esperado, nome] of casos) {
   const elegivel = r?.ok === true;
   ok(nome, elegivel === esperado, JSON.stringify(r));
   if (elegivel && r?.id) criados.push(r.id);
+}
+
+// ---------- casos que exigem rejeição mesmo com dados "plausíveis" ----------
+const casosRejeicao = [
+  [charBadId, "el_fb_attr", "estrutura inválida → rejeitado (sem fallback permissivo)"],
+  [charSemTplId, "forca", "personagem sem template → rejeitado"],
+  // tentativa de contorno: campoId de campo inelegível com rótulo "forjado"
+  [charId, "el_false_attr", "bypass: rótulo forjado não salva campo inelegível"],
+];
+for (const [cid, campoId, nome] of casosRejeicao) {
+  const r = await emitir("mesa:teste:pedir", {
+    sessionId: SID, characterId: cid, campoId, rotulo: "Força (forjado)",
+    dadosLados: 10, malus: 0, visibilidade: "publica",
+    requestId: "eleg-" + crypto.randomUUID().slice(0, 8),
+  });
+  ok(nome, r?.ok === false, JSON.stringify(r));
+}
+// e o inverso: mesmo personagem válido segue aceitando campo elegível
+{
+  const r = await emitir("mesa:teste:pedir", {
+    sessionId: SID, characterId: charId, campoId: "el_fb_attr", rotulo: "Teste FB Atributo",
+    dadosLados: 10, requestId: "eleg-" + crypto.randomUUID().slice(0, 8),
+  });
+  ok("ficha válida + campo elegível → aceito", r?.ok === true, JSON.stringify(r));
+  if (r?.id) criados.push(r.id);
 }
 
 // pool efetivo zero: campo elegível com valor 0 não pode gerar dados
@@ -177,9 +216,9 @@ try {
 // ---------- limpeza ----------
 sock.disconnect();
 for (const id of criados) db.prepare("delete from tests where id=?").run(id);
-db.prepare("delete from characters where id=?").run(charId);
-db.prepare("delete from sheet_versions where id=?").run(verId);
-db.prepare("delete from sheet_templates where id=?").run(tplId);
+db.prepare("delete from characters where id in (?,?,?)").run(charId, charBadId, charSemTplId);
+db.prepare("delete from sheet_versions where id in (?,?)").run(verId, verBadId);
+db.prepare("delete from sheet_templates where id in (?,?)").run(tplId, tplBadId);
 
 const falhas = resultados.filter((r) => !r.ok);
 console.log(`\n${resultados.length - falhas.length} passaram, ${falhas.length} falharam`);
