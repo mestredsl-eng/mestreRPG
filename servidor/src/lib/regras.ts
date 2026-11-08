@@ -31,6 +31,9 @@ export const TIPOS_REGRA = [
   "disciplina",
   "pericia",
   "caracteristica",
+  "item",
+  "veiculo",
+  "dinheiro",
 ] as const;
 export type TipoRegra = (typeof TIPOS_REGRA)[number];
 

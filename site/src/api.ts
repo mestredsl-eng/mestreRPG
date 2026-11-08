@@ -442,7 +442,7 @@ export interface ConfigPoderes {
 export type TipoRegra =
   | "atributo" | "talento" | "habilidade" | "conhecimento" | "profissao"
   | "especializacao" | "vantagem" | "defeito" | "poder" | "disciplina"
-  | "pericia" | "caracteristica";
+  | "pericia" | "caracteristica" | "item" | "veiculo" | "dinheiro";
 
 export interface DefinicaoElemento {
   descricao?: string;

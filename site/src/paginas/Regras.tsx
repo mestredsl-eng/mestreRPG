@@ -23,6 +23,9 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
   disciplina: "Disciplina",
   pericia: "Perícia",
   caracteristica: "Característica",
+  item: "Item",
+  veiculo: "Veículo",
+  dinheiro: "Dinheiro",
 };
 
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
