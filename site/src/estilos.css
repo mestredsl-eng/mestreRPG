@@ -388,10 +388,10 @@ textarea {
 }
 
 .ficha-secao {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
   gap: 0.15rem 0.9rem;
-  align-content: start;
   break-inside: avoid;
   background: #171a21;
   border: 1px solid #262b36;
@@ -402,7 +402,7 @@ textarea {
 .ficha-secao > h3,
 .ficha-secao > p.meta,
 .ficha-subsecoes {
-  grid-column: 1 / -1;
+  flex: 0 0 100%;
 }
 
 .ficha-secao-capa {
@@ -442,8 +442,11 @@ textarea {
   color: #9aa0a6;
 }
 
-/* Campos de bolinhas em linha compacta: rótulo à esquerda, seletor à direita */
+/* Campos de bolinhas em linha compacta: rótulo à esquerda, seletor à direita.
+   flex: 1 1 215px — preenche a linha da seção sem deixar trilhas vazias
+   (grid com span full-width impedia o colapso de trilhas do auto-fit). */
 .campo {
+  flex: 1 1 215px;
   margin-bottom: 0.15rem;
   min-width: 0;
 }
@@ -451,7 +454,7 @@ textarea {
 /* Tipos que precisam da linha toda: listas, tabelas, textos longos e o
    primeiro campo da capa (identificação — ex.: nome do personagem). */
 .campo-largo {
-  grid-column: 1 / -1;
+  flex: 0 0 100%;
 }
 
 /* Separação entre grupos largos consecutivos (ex.: Defeitos → Qualidades,
@@ -524,7 +527,7 @@ textarea {
    nome à esquerda, bolinhas à direita, descrição e custo abaixo. */
 .selecao-nivel {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
   gap: 0.4rem;
 }
 
@@ -582,7 +585,7 @@ textarea {
    itens empilhavam em largura total e a seção ficava enorme. */
 .selecao-nivel-leitura {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr));
   gap: 0.4rem;
 }
 
@@ -1221,7 +1224,6 @@ select option {
     min-width: 0;
   }
   .ficha-secao {
-    grid-template-columns: 1fr;
     padding: 0.8rem 0.85rem;
   }
   .ficha-subsecoes {
