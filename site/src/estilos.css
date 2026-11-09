@@ -16,7 +16,7 @@ body {
 }
 
 .container-largo {
-  max-width: 1280px;
+  max-width: min(1680px, 96vw);
 }
 
 h1 {
@@ -410,14 +410,14 @@ textarea {
 }
 
 .ficha-secao h3 {
-  margin: 0 0 0.55rem;
+  margin: 0 0 0.45rem;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: #8ab4ff;
   border-bottom: 1px solid #2c3442;
-  padding-bottom: 0.45rem;
+  padding-bottom: 0.4rem;
 }
 
 .ficha-subsecoes {
@@ -452,6 +452,12 @@ textarea {
    primeiro campo da capa (identificação — ex.: nome do personagem). */
 .campo-largo {
   grid-column: 1 / -1;
+}
+
+/* Separação entre grupos largos consecutivos (ex.: Defeitos → Qualidades,
+   Perícias → Talentos → Conhecimentos): espaço extra antes do próximo bloco. */
+.campo-largo + .campo-largo {
+  margin-top: 0.5rem;
 }
 
 .campo:has(.seletor-atributos) {
@@ -570,6 +576,14 @@ textarea {
 .seletor-custo.custo-positivo {
   color: #7fd08a;
   font-weight: 600;
+}
+
+/* Modo leitura: mesma grade de cartões do modo edição — sem ela os
+   itens empilhavam em largura total e a seção ficava enorme. */
+.selecao-nivel-leitura {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
+  gap: 0.4rem;
 }
 
 .selecao-nivel-leitura .nivel-item {
@@ -1132,6 +1146,24 @@ select option {
   background: #1e2126;
 }
 
+/* Desktop largo: 3 colunas de seções garantidas (seções ~500px,
+   campos e itens de nível respiram em 2 colunas internas). */
+@media (min-width: 1400px) {
+  .ficha {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Seções densas de biblioteca (2+ campos de seleção) ocupam 2 colunas
+   em telas com grade multi-coluna — evita listas verticais intermináveis.
+   Em grade de 1 coluna (mobile/tablet) a regra é inócua. */
+@media (min-width: 981px) {
+  .ficha-secao-densa {
+    grid-column: span 2;
+    min-width: 0;
+  }
+}
+
 /* Tablet: seções ocupam a largura toda; campos seguem em colunas internas */
 @media (max-width: 980px) {
   .ficha {
@@ -1196,8 +1228,10 @@ select option {
     grid-template-columns: 1fr;
   }
   .selecao-nivel,
+  .selecao-nivel-leitura,
   .opcoes {
     grid-template-columns: 1fr;
+    gap: 0.3rem;
   }
   .editor-secoes {
     grid-template-columns: 1fr;

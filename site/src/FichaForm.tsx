@@ -178,8 +178,12 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
         .sort((a, b) => a.ordem - b.ordem)
         .map((secao, indice) => {
           const subsecoes = estrutura.secoes.filter((s) => s.parentId === secao.id);
+          // Seções densas (2+ campos de seleção de biblioteca) precisam de
+          // mais largura para não virar uma lista vertical interminável.
+          const camposDaSecao = [...secao.campos, ...subsecoes.flatMap((s) => s.campos)];
+          const densa = camposDaSecao.filter((c) => TIPOS_SELECAO.has(c.tipo)).length >= 2;
           return (
-            <div key={secao.id} className={`ficha-secao${indice === 0 ? " ficha-secao-capa" : ""}`}>
+            <div key={secao.id} className={`ficha-secao${indice === 0 ? " ficha-secao-capa" : ""}${densa ? " ficha-secao-densa" : ""}`}>
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
@@ -206,6 +210,9 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
 
 /** Tipos que precisam da largura toda da seção (listas, tabelas, textos longos). */
 const TIPOS_LARGOS = new Set(["texto_longo", "tabela", "selecao_nivel", "selecao_multipla", "lista"]);
+
+/** Tipos de campo que listam elementos da biblioteca/opções — indicam seção densa. */
+const TIPOS_SELECAO = new Set(["selecao_nivel", "selecao_multipla", "lista"]);
 
 function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, destaque }: {
   campo: CampoDef;
