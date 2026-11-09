@@ -744,7 +744,12 @@ export function validarFicha(
     // modo estrito (submissão p/ aprovação); valor vazio enviado limpa o campo.
     if (valor === undefined || valor === null || valor === "") {
       if (opcoes.estrito && campo.obrigatorio) { erros[campo.id] = "Campo obrigatório"; continue; }
-      if (campo.padrao !== undefined && opcoes.aplicarPadroes !== false) { dados[campo.id] = campo.padrao; continue; }
+      // O padrão só é aplicado se for válido para o tipo do campo —
+      // evita gravar lixo nos dados (ex.: escalar em selecao_nivel).
+      if (campo.padrao !== undefined && opcoes.aplicarPadroes !== false
+        && validarValor(campo, campo.padrao, dados, estrutura) === null) {
+        dados[campo.id] = campo.padrao; continue;
+      }
       if (valor !== undefined) dados[campo.id] = valor;
       continue;
     }

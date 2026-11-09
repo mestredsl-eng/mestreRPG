@@ -98,12 +98,13 @@ const SIM = (dados, extra = {}) =>
 // Estrutura com campo de atributo com VALOR INICIAL (padrao) — testa se a
 // simulação aplica padrões antes de validar pré-requisitos (fidelidade com
 // a ficha real, onde validarFicha preenche padrao nos campos ausentes).
-const F_INT = "f-int", F_PRO = "f-pro";
+const F_INT = "f-int", F_PRO = "f-pro", F_NIV = "f-niv";
 const ESTRUTURA_PADRAO = {
   versao: 1,
   secoes: [{
     id: "s1", titulo: "Principal", ordem: 0, campos: [
       { id: F_INT, label: "Inteligência", tipo: "inteiro", regra: { kind: "atributo", key: "inteligencia" }, padrao: 1, minimo: 0, maximo: 5, obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false },
+      { id: F_NIV, label: "Conhecimentos", tipo: "selecao_nivel", regraKind: "conhecimento", padrao: [{ key: "ciencias", nivel: 1 }], obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false },
       { id: F_PRO, label: "Profissão", tipo: "selecao_unica", regraKind: "profissao", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false },
     ],
   }],
@@ -138,6 +139,17 @@ try {
       body: { kind: "profissao", key: "cientista", name: "Cientista", definition: { prerequisitos: [{ kind: "atributo", key: "inteligencia", minLevel: 1 }] } },
     });
     t("criar profissão c/ pré-requisito", pc.status === 201, JSON.stringify(pc.json).slice(0, 200));
+    // Cadeia via selecao_nivel: conhecimento exige atributo; profissão exige conhecimento
+    const cn = await req(BASE, "POST", ep, {
+      cookie: M,
+      body: { kind: "conhecimento", key: "ciencias", name: "Ciências", definition: { prerequisitos: [{ kind: "atributo", key: "inteligencia", minLevel: 1 }] } },
+    });
+    t("criar conhecimento c/ pré-requisito", cn.status === 201, JSON.stringify(cn.json).slice(0, 200));
+    const pm = await req(BASE, "POST", ep, {
+      cookie: M,
+      body: { kind: "profissao", key: "medico", name: "Médico", definition: { prerequisitos: [{ kind: "conhecimento", key: "ciencias", minLevel: 1 }] } },
+    });
+    t("criar profissão c/ pré-requisito de conhecimento", pm.status === 201, JSON.stringify(pm.json).slice(0, 200));
     const cfg = await req(BASE, "PUT", `/campaigns/${cid}/regras/config`, {
       cookie: M,
       body: {
@@ -234,6 +246,21 @@ try {
     // Campo sem padrão continua ausente e não quebra nada.
     const r4 = await SIM2({});
     t("sem interação -> ok, sem erros", r4.json?.ok === true && r4.json?.erros?.length === 0, JSON.stringify(r4.json?.erros).slice(0, 200));
+
+    // selecao_nivel com padrao [{key,nivel}]: conhecimento já vem nível 1,
+    // satisfazendo a cadeia médico -> ciências@1 -> inteligência@1.
+    const r5 = await SIM2({ [F_PRO]: "medico" });
+    t("selecao_nivel padrao satisfaz cadeia de pré-requisitos", r5.json?.ok === true, JSON.stringify(r5.json?.erros).slice(0, 300));
+
+    // Lista vazia manual substitui o padrão -> médico fica sem ciências.
+    const r6 = await SIM2({ [F_PRO]: "medico", [F_NIV]: [] });
+    t("lista vazia manual derruba pré-requisito", r6.json?.ok === false && temErro(r6.json, "Médico"), JSON.stringify(r6.json?.erros).slice(0, 300));
+
+    // Padrão inválido (escalar em selecao_nivel) é ignorado, não corrompe.
+    const estRuim = JSON.parse(JSON.stringify(ESTRUTURA_PADRAO));
+    estRuim.secoes[0].campos[1].padrao = 1; // escalar inválido para selecao_nivel
+    const r8 = await req(BASE, "POST", `/campaigns/${cid}/regras/simulacao`, { cookie: M, body: { estrutura: estRuim, dados: { [F_PRO]: "medico" } } });
+    t("padrao escalar inválido é ignorado", r8.json?.ok === false && temErro(r8.json, "Médico"), JSON.stringify(r8.json?.erros).slice(0, 300));
   }
 
   sec("Simulação: rejeições e permissões");

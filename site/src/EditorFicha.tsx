@@ -368,7 +368,31 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
     return todos;
   }, [estrutura, edit.id]);
 
+  // Opções disponíveis para campos de seleção — mesma regra do FichaForm:
+  // biblioteca quando regraKind tem elementos, senão opções manuais.
+  const candidatosSelecao = useMemo<ElementoVinculavel[]>(() => {
+    if (!precisaOpcoes) return [];
+    const els = edit.regraKind ? (vinculaveis?.elementos[edit.regraKind] ?? []) : [];
+    if (els.length) return els;
+    return (edit.opcoes ?? []).map((o) => ({ key: o, name: o, category: null }));
+  }, [precisaOpcoes, edit.regraKind, edit.opcoes, vinculaveis]);
+
   const set = <K extends keyof CampoDef>(k: K, v: CampoDef[K]) => setEdit({ ...edit, [k]: v });
+
+  // Valor inicial de selecao_nivel: [{ key, nivel }] — mesmo formato dos dados.
+  const padroesNivel = (): { key: string; nivel: number }[] =>
+    Array.isArray(edit.padrao) ? (edit.padrao as { key: string; nivel: number }[]) : [];
+  const alternarPadraoNivel = (key: string, nivel: number) => {
+    const novas = padroesNivel().filter((i) => i.key !== key);
+    if (nivel > 0) novas.push({ key, nivel });
+    set("padrao", novas.length ? novas : undefined);
+  };
+  // Valor inicial de selecao_multipla/lista: array de chaves.
+  const padroesLista = (): string[] => (Array.isArray(edit.padrao) ? edit.padrao.map(String) : []);
+  const alternarPadraoOpcao = (key: string, marcado: boolean) => {
+    const novas = marcado ? [...padroesLista(), key] : padroesLista().filter((k) => k !== key);
+    set("padrao", novas.length ? novas : undefined);
+  };
 
   return (
     <section className="cartao formulario-edicao">
@@ -417,7 +441,57 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
         ) : edit.tipo === "texto" || edit.tipo === "texto_longo" ? (
           <label>Máx. caracteres<input type="number" value={edit.maxCaracteres ?? ""} onChange={(e) => set("maxCaracteres", e.target.value === "" ? undefined : Number(e.target.value))} /></label>
         ) : null}
-        <label>Valor inicial<input value={String(edit.padrao ?? "")} onChange={(e) => set("padrao", e.target.value === "" ? undefined : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value))} /></label>
+        {edit.tipo === "selecao_nivel" ? (
+          <div className="span-2">
+            <span className="meta">Valor inicial — elementos que já vêm com nível</span>
+            {candidatosSelecao.map((el) => {
+              const nivel = padroesNivel().find((i) => i.key === el.key)?.nivel ?? 0;
+              const maxN = Math.max(1, Math.min(5, el.niveis?.length || el.maximo || 5));
+              return (
+                <div key={el.key} className="linha valor-inicial-nivel">
+                  <span className="nivel-nome">{el.name}</span>
+                  <select value={nivel} onChange={(e) => alternarPadraoNivel(el.key, Number(e.target.value))}>
+                    {Array.from({ length: maxN + 1 }, (_, n) => (
+                      <option key={n} value={n}>{n === 0 ? "—" : `Nv.${n}`}</option>
+                    ))}
+                  </select>
+                </div>
+              );
+            })}
+            {candidatosSelecao.length === 0 && (
+              <small className="meta">Nenhuma opção disponível — cadastre opções manuais ou escolha o tipo da biblioteca acima.</small>
+            )}
+          </div>
+        ) : edit.tipo === "selecao_unica" ? (
+          <label>Valor inicial
+            <select value={typeof edit.padrao === "string" ? edit.padrao : ""} onChange={(e) => set("padrao", e.target.value || undefined)}>
+              <option value="">— nenhum —</option>
+              {candidatosSelecao.map((el) => <option key={el.key} value={el.key}>{el.name}</option>)}
+            </select>
+          </label>
+        ) : edit.tipo === "selecao_multipla" || edit.tipo === "lista" ? (
+          <div className="span-2">
+            <span className="meta">Valor inicial — opções já marcadas</span>
+            {candidatosSelecao.map((el) => (
+              <label key={el.key} className="checkbox-inline">
+                <input
+                  type="checkbox"
+                  checked={padroesLista().includes(el.key)}
+                  onChange={(e) => alternarPadraoOpcao(el.key, e.target.checked)}
+                /> {el.name}
+              </label>
+            ))}
+            {candidatosSelecao.length === 0 && (
+              <small className="meta">Nenhuma opção disponível — cadastre opções manuais ou escolha o tipo da biblioteca acima.</small>
+            )}
+          </div>
+        ) : edit.tipo === "checkbox" ? (
+          <label className="checkbox-inline">
+            <input type="checkbox" checked={edit.padrao === true} onChange={(e) => set("padrao", e.target.checked ? true : undefined)} /> Vem marcado por padrão
+          </label>
+        ) : (
+          <label>Valor inicial<input value={String(edit.padrao ?? "")} onChange={(e) => set("padrao", e.target.value === "" ? undefined : isNaN(Number(e.target.value)) ? e.target.value : Number(e.target.value))} /></label>
+        )}
         {edit.tipo === "referencia" && (
           <label>Campo referenciado
             <select value={edit.referencia ?? ""} onChange={(e) => set("referencia", e.target.value || undefined)}>
