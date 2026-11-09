@@ -379,7 +379,6 @@ textarea {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 0.9rem;
-  align-items: start;
 }
 
 /* Painéis, avisos e blocos especiais sempre ocupam a largura toda */
