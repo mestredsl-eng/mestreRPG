@@ -652,7 +652,6 @@ function SimuladorFicha({ estrutura, vinculaveis, campaignId }: {
           aoMudar={(id, v) => setValores((s) => ({ ...s, [id]: v }))}
           biblioteca={vinculaveis?.elementos}
           simulacao={{ campaignId, pontosFicticios }}
-          mostrarOrigem
         />
       ) : (
         <p className="meta">Simulador indisponível sem campanha.</p>

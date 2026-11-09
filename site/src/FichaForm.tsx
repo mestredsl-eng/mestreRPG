@@ -27,22 +27,6 @@ interface Props {
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
-  /** Mostra selo de origem do campo (biblioteca/opções manuais) — só no simulador. */
-  mostrarOrigem?: boolean;
-}
-
-const ROTULO_ORIGEM_KIND: Record<string, string> = {
-  atributo: "Atributo", talento: "Talento", habilidade: "Habilidade", conhecimento: "Conhecimento",
-  profissao: "Profissão", especializacao: "Especialização", vantagem: "Vantagem", defeito: "Defeito",
-  poder: "Poder", disciplina: "Disciplina", pericia: "Perícia", caracteristica: "Característica",
-};
-
-/** Selo de origem do campo no simulador: de onde vêm as opções/regras dele. */
-function origemCampo(campo: CampoDef): string | null {
-  if (campo.regra) return `vinculado a ${campo.regra.kind}:${campo.regra.key}`;
-  if (campo.regraKind) return `biblioteca: ${ROTULO_ORIGEM_KIND[campo.regraKind] ?? campo.regraKind}`;
-  if (["selecao_unica", "selecao_multipla", "selecao_nivel", "lista"].includes(campo.tipo)) return "opções manuais";
-  return null;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -53,7 +37,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, mostrarOrigem }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
@@ -199,7 +183,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} mostrarOrigem={mostrarOrigem} destaque={indice === 0 && ci === 0} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -207,7 +191,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} mostrarOrigem={mostrarOrigem} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
                       ))}
                     </div>
                   ))}
@@ -223,7 +207,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
 /** Tipos que precisam da largura toda da seção (listas, tabelas, textos longos). */
 const TIPOS_LARGOS = new Set(["texto_longo", "tabela", "selecao_nivel", "selecao_multipla", "lista"]);
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, mostrarOrigem, destaque }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, destaque }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
@@ -235,7 +219,6 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   carteiraResumo?: { saldoInicial: number; entradas: number; saidas: number; saldo: number };
   saldoEnviado?: unknown;
   ehMestre?: boolean;
-  mostrarOrigem?: boolean;
   /** Primeiro campo da seção de capa (identificação) — ocupa a linha toda. */
   destaque?: boolean;
 }) {
@@ -252,12 +235,10 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
   const opcoesBiblioteca = campo.regraKind ? (biblioteca?.[campo.regraKind] ?? []) : [];
   const nomeDe = (key: string) => opcoesBiblioteca.find((o) => o.key === key)?.name ?? key;
-  const origem = mostrarOrigem ? origemCampo(campo) : null;
   const rotulo = (
     <span className="campo-label">
       {campo.label}
       {campo.obrigatorio && <em className="obrigatorio">*</em>}
-      {origem && <small className="meta campo-origem">{origem}</small>}
       {campo.descricao && <small className="meta">{campo.descricao}</small>}
     </span>
   );

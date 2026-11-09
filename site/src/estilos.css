@@ -430,6 +430,7 @@ textarea {
   margin: 0;
   padding: 0;
   border: none;
+  min-width: 0;
 }
 
 .ficha-subsecao h4 {
@@ -517,7 +518,7 @@ textarea {
    nome à esquerda, bolinhas à direita, descrição e custo abaixo. */
 .selecao-nivel {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
   gap: 0.4rem;
 }
 
@@ -580,6 +581,7 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  margin-bottom: 0.35rem;
   font-size: 0.82rem;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -632,7 +634,7 @@ textarea {
 
 .opcoes {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(160px, 100%), 1fr));
   gap: 0.15rem 0.6rem;
 }
 
@@ -1532,11 +1534,6 @@ code {
 
 .simulador-controles input {
   width: 110px;
-}
-
-.campo-origem {
-  color: #8ab4ff;
-  font-style: italic;
 }
 
 .simulacao-erros ul {
