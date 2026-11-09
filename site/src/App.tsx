@@ -7,6 +7,7 @@ import Conta from "./paginas/Conta";
 import Campanhas from "./paginas/Campanhas";
 import Campanha from "./paginas/Campanha";
 import Convite from "./paginas/Convite";
+import ConviteCadastro from "./paginas/ConviteCadastro";
 import { ProvedorNotificacoes } from "./Notificacoes";
 
 type Aba = "painel" | "campanhas" | "admin" | "conta";
@@ -79,7 +80,9 @@ function Shell() {
       </main>
     );
   }
-  if (estado.status === "anonimo") return <Login />;
+  // Anônimo em /convite?code=... → fluxo de cadastro/login de jogador
+  // (o código permanece na URL e a tela de aceite assume após autenticar).
+  if (estado.status === "anonimo") return ehConvite ? <ConviteCadastro /> : <Login />;
 
   // Tela de aceite de convite (link /convite?code=...)
   if (ehConvite) {

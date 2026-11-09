@@ -56,6 +56,10 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
 
+  /** Cadastro de jogador por convite — retorna sessão ativa (cookie). */
+  registrar: (dados: { codigo: string; username: string; password: string; displayName?: string; email?: string }) =>
+    requisicao<{ usuario: Usuario }>("/auth/registrar", { method: "POST", body: JSON.stringify(dados) }),
+
   logout: () => requisicao<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
   me: () => requisicao<{ usuario: Usuario }>("/auth/me"),
@@ -113,6 +117,9 @@ export const api = {
   // Convites públicos (Etapa 3)
   validarConvite: (codigo: string) =>
     requisicao<{ convite: ConviteInfo }>(`/convites/${encodeURIComponent(codigo)}`),
+  /** Prévia pública do convite (anônimo) — sem dados de membership. */
+  previewConvite: (codigo: string) =>
+    requisicao<{ convite: ConvitePreview }>(`/convites/${encodeURIComponent(codigo)}/preview`),
   aceitarConvite: (codigo: string) =>
     requisicao<{ ok: boolean; status: string; mensagem: string }>(`/convites/${encodeURIComponent(codigo)}/aceitar`, { method: "POST" }),
 
@@ -871,6 +878,14 @@ export interface ConviteInfo {
   campanha: { id: string; name: string; system: string | null; status: string };
   jaParticipa: boolean;
   meuStatus: string | null;
+}
+
+/** Prévia pública do convite (anônimo) — não inclui membership. */
+export interface ConvitePreview {
+  role: string;
+  requiresApproval: boolean;
+  status: string;
+  campanha: { name: string; system: string | null };
 }
 
 // ---- Tipos da Etapa 8 ----

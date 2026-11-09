@@ -1,11 +1,11 @@
 import { Router } from "express";
 import { and, eq, sql } from "drizzle-orm";
-import { createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
-import { campaigns, memberships, invitations } from "../db/schema.js";
+import { campaigns, memberships } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { emitirCampanha } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
+import { buscarConvite, statusConvite } from "../lib/convites.js";
 
 const db = getDb();
 export const convitesRouter = Router();
@@ -16,25 +16,35 @@ convitesRouter.use(requireAuth);
 const limiteConsultaConvite = limiteUsuario({ nome: "convite-consulta", janelaMs: 5 * 60_000, max: 30 });
 const limiteAceiteConvite = limiteUsuario({ nome: "convite-aceite", janelaMs: 5 * 60_000, max: 20 });
 
-function hashConvite(codigo: string): string {
-  return createHash("sha256").update(codigo.trim().toUpperCase()).digest("hex");
-}
+/**
+ * Router PÚBLICO (sem autenticação) — montado antes de convitesRouter.
+ * GET /:codigo/preview permite que um convidado anônimo veja campanha,
+ * papel e status antes de criar conta ou entrar. Não expõe membership
+ * nem dados internos — apenas o necessário para a tela de cadastro.
+ */
+export const convitesPublicoRouter = Router();
+const limitePreviewConvite = limiteUsuario({ nome: "convite-preview", janelaMs: 5 * 60_000, max: 60 });
 
-function statusConvite(inv: typeof invitations.$inferSelect): string {
-  if (inv.revokedAt) return "revogado";
-  if (inv.expiresAt && inv.expiresAt < new Date()) return "expirado";
-  if (inv.maxUses !== null && inv.uses >= inv.maxUses) return "esgotado";
-  return "ativo";
-}
-
-async function buscarConvite(codigo: string) {
-  const [inv] = await db
-    .select()
-    .from(invitations)
-    .where(eq(invitations.code, hashConvite(codigo)))
-    .limit(1);
-  return inv ?? null;
-}
+convitesPublicoRouter.get("/:codigo/preview", limitePreviewConvite, async (req, res) => {
+  const inv = await buscarConvite(req.params.codigo);
+  if (!inv) {
+    res.status(404).json({ erro: "Convite não encontrado" });
+    return;
+  }
+  const [campanha] = await db.select().from(campaigns).where(eq(campaigns.id, inv.campaignId)).limit(1);
+  if (!campanha) {
+    res.status(404).json({ erro: "Campanha não encontrada" });
+    return;
+  }
+  res.json({
+    convite: {
+      role: inv.role,
+      requiresApproval: inv.requiresApproval,
+      status: statusConvite(inv),
+      campanha: { name: campanha.name, system: campanha.system },
+    },
+  });
+});
 
 /**
  * GET /api/convites/:codigo — valida o convite e retorna o que o convidado

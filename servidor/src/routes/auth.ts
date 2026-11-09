@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { eq, count } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
@@ -13,6 +13,7 @@ import {
   COOKIE_SESSAO,
 } from "../middleware/auth.js";
 import { limitador, limiteUsuario } from "../lib/ratelimit.js";
+import { buscarConvite, statusConvite } from "../lib/convites.js";
 
 const db = getDb();
 export const authRouter = Router();
@@ -30,6 +31,7 @@ const limiteLoginUsuario = limitador({
   chave: (req) => `user:${String(req.body?.username ?? "").toLowerCase().slice(0, 64) || "?"}`,
 });
 const limiteTrocaSenha = limiteUsuario({ nome: "troca-senha", janelaMs: 5 * 60_000, max: 10 });
+const limiteRegistrar = limiteUsuario({ nome: "registrar", janelaMs: 5 * 60_000, max: 10 });
 
 const credenciaisSchema = z.object({
   username: z.string().min(3).max(40),
@@ -75,6 +77,84 @@ authRouter.post("/setup", async (req, res) => {
   res.status(201).json({ ok: true, id });
 });
 
+/** Cria sessão persistente e define o cookie — compartilhado por login e registro. */
+async function abrirSessao(req: Request, res: Response, user: typeof users.$inferSelect) {
+  const token = gerarToken();
+  const agora = new Date();
+  await db.insert(authSessions).values({
+    id: crypto.randomUUID(),
+    userId: user.id,
+    tokenHash: hashToken(token),
+    userAgent: req.headers["user-agent"] ?? null,
+    ip: req.ip ?? "desconhecido",
+    expiresAt: new Date(agora.getTime() + DURACAO_SESSAO_MS),
+    createdAt: agora,
+  });
+  definirCookieSessao(res, token, req);
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    displayName: user.displayName,
+    isAdmin: user.isAdmin,
+  };
+}
+
+const registroSchema = credenciaisSchema.extend({
+  codigo: z.string().min(4).max(64),
+  displayName: z.string().max(80).optional(),
+  email: z.string().email().optional(),
+});
+
+/**
+ * POST /api/auth/registrar — cadastro de JOGADOR vinculado a um convite.
+ * Público, mas só funciona com código de convite ativo. Nunca cria admin:
+ * isAdmin é fixo false e chaves extras do body são descartadas pelo Zod.
+ * O uso do convite NÃO é consumido aqui — só no aceite (/convites/:codigo/aceitar).
+ */
+authRouter.post("/registrar", limiteRegistrar, async (req, res) => {
+  const body = registroSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const { codigo, username, password, displayName, email } = body.data;
+
+  const inv = await buscarConvite(codigo);
+  if (!inv) {
+    res.status(404).json({ erro: "Convite não encontrado" });
+    return;
+  }
+  const status = statusConvite(inv);
+  if (status !== "ativo") {
+    res.status(410).json({ erro: `Convite ${status}` });
+    return;
+  }
+
+  const [existente] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
+  if (existente) {
+    res.status(409).json({ erro: "Nome de usuário já está em uso" });
+    return;
+  }
+
+  const agora = new Date();
+  const id = crypto.randomUUID();
+  const [user] = await db.insert(users).values({
+    id,
+    username,
+    email: email ?? null,
+    displayName: displayName ?? null,
+    passwordHash: await hashSenha(password),
+    isAdmin: false,
+    status: "ativo",
+    createdAt: agora,
+    updatedAt: agora,
+  }).returning();
+
+  const usuario = await abrirSessao(req, res, user);
+  res.status(201).json({ usuario });
+});
+
 /** POST /api/auth/login */
 authRouter.post("/login", limiteLoginIp, limiteLoginUsuario, async (req, res) => {
   const body = credenciaisSchema.safeParse(req.body);
@@ -82,7 +162,6 @@ authRouter.post("/login", limiteLoginIp, limiteLoginUsuario, async (req, res) =>
     res.status(400).json({ erro: "Usuário e senha são obrigatórios" });
     return;
   }
-  const ip = req.ip ?? "desconhecido";
   const { username, password } = body.data;
   const [user] = await db.select().from(users).where(eq(users.username, username)).limit(1);
   const senhaOk = user ? await verificarSenha(password, user.passwordHash) : false;
@@ -95,27 +174,8 @@ authRouter.post("/login", limiteLoginIp, limiteLoginUsuario, async (req, res) =>
     return;
   }
 
-  const token = gerarToken();
-  const agora = new Date();
-  await db.insert(authSessions).values({
-    id: crypto.randomUUID(),
-    userId: user.id,
-    tokenHash: hashToken(token),
-    userAgent: req.headers["user-agent"] ?? null,
-    ip,
-    expiresAt: new Date(agora.getTime() + DURACAO_SESSAO_MS),
-    createdAt: agora,
-  });
-  definirCookieSessao(res, token, req);
-  res.json({
-    usuario: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      displayName: user.displayName,
-      isAdmin: user.isAdmin,
-    },
-  });
+  const usuario = await abrirSessao(req, res, user);
+  res.json({ usuario });
 });
 
 /** POST /api/auth/logout */

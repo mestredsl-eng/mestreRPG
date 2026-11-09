@@ -6,7 +6,7 @@ import { healthRouter } from "./routes/health.js";
 import { authRouter } from "./routes/auth.js";
 import { adminRouter } from "./routes/admin.js";
 import { campanhasRouter } from "./routes/campanhas.js";
-import { convitesRouter } from "./routes/convites.js";
+import { convitesRouter, convitesPublicoRouter } from "./routes/convites.js";
 import { modelosRouter } from "./routes/modelos.js";
 import { personagensRouter } from "./routes/personagens.js";
 import { regrasRouter } from "./routes/regras.js";
@@ -70,7 +70,7 @@ app.use(express.json({ limit: "2mb" }));
 // Rotas da API
 const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
-  campanhasRouter, campanhaIORouter, convitesRouter, modelosRouter,
+  campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
   personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter,
 ];
@@ -83,6 +83,7 @@ app.use("/api/admin/servidor", servidorRouter);
 app.use("/api/local", localRouter);
 app.use("/api/campaigns", campanhasRouter);
 app.use("/api/campaigns", campanhaIORouter);
+app.use("/api/convites", convitesPublicoRouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
 app.use("/api/campaigns/:campaignId/characters", personagensRouter);
