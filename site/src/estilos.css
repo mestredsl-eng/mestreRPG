@@ -373,38 +373,50 @@ textarea {
   background: #23262d;
 }
 
-/* ---- Ficha de personagem: composição em colunas (visual de ficha de RPG) ---- */
+/* ---- Ficha de personagem: grade de seções (visual de ficha de RPG) ---- */
 
 .ficha {
-  column-count: 2;
-  column-gap: 1.1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 0.9rem;
+  align-items: start;
 }
 
-.ficha > .pontos-painel {
-  column-span: all;
+/* Painéis, avisos e blocos especiais sempre ocupam a largura toda */
+.ficha > *:not(.ficha-secao) {
+  grid-column: 1 / -1;
 }
 
 .ficha-secao {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(215px, 1fr));
+  gap: 0.15rem 0.9rem;
+  align-content: start;
   break-inside: avoid;
-  background: #1a1d22;
-  border: 1px solid #2c3038;
-  border-radius: 10px;
-  padding: 0.85rem 1rem;
-  margin: 0 0 1rem;
+  background: #171a21;
+  border: 1px solid #262b36;
+  border-radius: 12px;
+  padding: 0.9rem 1rem 1rem;
+}
+
+.ficha-secao > h3,
+.ficha-secao > p.meta,
+.ficha-subsecoes {
+  grid-column: 1 / -1;
 }
 
 .ficha-secao-capa {
-  column-span: all;
+  grid-column: 1 / -1;
 }
 
 .ficha-secao h3 {
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.55rem;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.09em;
   text-transform: uppercase;
   color: #8ab4ff;
-  border-bottom: 1px solid #2c3038;
+  border-bottom: 1px solid #2c3442;
   padding-bottom: 0.45rem;
 }
 
@@ -431,14 +443,21 @@ textarea {
 
 /* Campos de bolinhas em linha compacta: rótulo à esquerda, seletor à direita */
 .campo {
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.15rem;
+  min-width: 0;
+}
+
+/* Tipos que precisam da linha toda: listas, tabelas, textos longos e o
+   primeiro campo da capa (identificação — ex.: nome do personagem). */
+.campo-largo {
+  grid-column: 1 / -1;
 }
 
 .campo:has(.seletor-atributos) {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
-  margin-bottom: 0.45rem;
+  gap: 0.5rem 0.7rem;
+  flex-wrap: wrap;
 }
 
 .campo:has(.seletor-atributos) > .campo-label {
@@ -494,32 +513,45 @@ textarea {
   margin-bottom: 0.9rem;
 }
 
+/* Seleção com níveis (defeitos, qualidades): grade de cartões compactos —
+   nome à esquerda, bolinhas à direita, descrição e custo abaixo. */
 .selecao-nivel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.45rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.4rem;
 }
 
 .nivel-item {
-  padding: 0.4rem 0.55rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.6rem;
   border: 1px solid #2c3038;
   border-radius: 8px;
-  background: #14161a;
+  background: #10131a;
 }
+
+/* Acentos discretos por origem do campo (biblioteca) */
+.campo-kind-defeito .nivel-item { border-left: 3px solid #a0742c; }
+.campo-kind-poder .nivel-item,
+.campo-kind-vantagem .nivel-item,
+.campo-kind-talento .nivel-item,
+.campo-kind-qualidade .nivel-item { border-left: 3px solid #3b5bdb; }
+.campo-kind-atributo .seletor-atributos { border-left: 3px solid #3b5bdb; }
 
 .nivel-linha {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: 0.4rem 0.6rem;
   flex-wrap: wrap;
 }
 
 .nivel-nome {
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #e8e6e3;
   flex: 1;
-  min-width: 120px;
+  min-width: 0;
 }
 
 .nivel-desc {
@@ -544,17 +576,14 @@ textarea {
   border-color: #23262d;
 }
 
-.campo {
-  margin-bottom: 0.75rem;
-}
-
 .campo-label {
   display: flex;
   flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.9rem;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   color: #c9cdd3;
-  margin-bottom: 0.3rem;
 }
 
 .campo-label small {
@@ -602,9 +631,9 @@ textarea {
 }
 
 .opcoes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.15rem 0.6rem;
 }
 
 .seletor-atributos {
@@ -612,7 +641,7 @@ textarea {
   align-items: center;
   gap: 0.75rem;
   flex-wrap: wrap;
-  padding: 0.35rem 0.5rem;
+  padding: 0.3rem 0.5rem;
   background: #14161a;
   border: 1px solid #2c3038;
   border-radius: 8px;
@@ -628,8 +657,8 @@ textarea {
 }
 
 .seletor-atributos .bolinha {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border-radius: 50%;
   border: 2px solid #4a5160;
@@ -706,11 +735,10 @@ textarea {
 }
 
 .pontos-painel {
-  background: #14161a;
-  border: 1px solid #2c3038;
-  border-radius: 8px;
-  padding: 0.6rem 0.9rem;
-  margin-bottom: 0.9rem;
+  background: #14181f;
+  border: 1px solid #2c3442;
+  border-radius: 12px;
+  padding: 0.7rem 1rem;
   font-size: 0.85rem;
 }
 
@@ -936,9 +964,9 @@ textarea {
 }
 
 .vida-cartao {
-  border: 1px solid #2c3038;
-  border-radius: 10px;
-  background: #14161a;
+  border: 1px solid #2c3442;
+  border-radius: 12px;
+  background: #14181f;
   padding: 0.8rem 1rem;
   display: flex;
   flex-direction: column;
@@ -1102,6 +1130,14 @@ select option {
   background: #1e2126;
 }
 
+/* Tablet: seções ocupam a largura toda; campos seguem em colunas internas */
+@media (max-width: 980px) {
+  .ficha {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Celular: uma coluna de campos por seção — legibilidade e toque primeiro */
 @media (max-width: 640px) {
   .grade-2 {
     grid-template-columns: 1fr;
@@ -1150,10 +1186,15 @@ select option {
     flex: 1;
     min-width: 0;
   }
-  .ficha {
-    column-count: 1;
+  .ficha-secao {
+    grid-template-columns: 1fr;
+    padding: 0.8rem 0.85rem;
   }
   .ficha-subsecoes {
+    grid-template-columns: 1fr;
+  }
+  .selecao-nivel,
+  .opcoes {
     grid-template-columns: 1fr;
   }
   .editor-secoes {
