@@ -95,6 +95,22 @@ const ESTRUTURA = {
 };
 const SIM = (dados, extra = {}) =>
   req(BASE, "POST", `/campaigns/${cid}/regras/simulacao`, { cookie: M, body: { estrutura: ESTRUTURA, dados, ...extra } });
+// Estrutura com campo de atributo com VALOR INICIAL (padrao) — testa se a
+// simulação aplica padrões antes de validar pré-requisitos (fidelidade com
+// a ficha real, onde validarFicha preenche padrao nos campos ausentes).
+const F_INT = "f-int", F_PRO = "f-pro";
+const ESTRUTURA_PADRAO = {
+  versao: 1,
+  secoes: [{
+    id: "s1", titulo: "Principal", ordem: 0, campos: [
+      { id: F_INT, label: "Inteligência", tipo: "inteiro", regra: { kind: "atributo", key: "inteligencia" }, padrao: 1, minimo: 0, maximo: 5, obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false },
+      { id: F_PRO, label: "Profissão", tipo: "selecao_unica", regraKind: "profissao", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false },
+    ],
+  }],
+  pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+};
+const SIM2 = (dados, extra = {}) =>
+  req(BASE, "POST", `/campaigns/${cid}/regras/simulacao`, { cookie: M, body: { estrutura: ESTRUTURA_PADRAO, dados, ...extra } });
 const poolPrincipal = (j) => j?.pontos?.pools?.find((p) => p.id === "principal");
 const temErro = (j, frag) => j?.erros?.some((e) => e.mensagem.includes(frag));
 
@@ -114,6 +130,14 @@ try {
     t("criar defeito c/ dependência", dm.status === 201, JSON.stringify(dm.json).slice(0, 200));
     const p = await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "fogo", name: "Manipular Fogo", definition: { custoPontos: 3 } } });
     t("criar poder", p.status === 201);
+    // Cadeia de pré-requisitos: profissão exige atributo via valor inicial
+    const ai = await req(BASE, "POST", ep, { cookie: M, body: { kind: "atributo", key: "inteligencia", name: "Inteligência" } });
+    t("criar atributo inteligencia", ai.status === 201, JSON.stringify(ai.json).slice(0, 200));
+    const pc = await req(BASE, "POST", ep, {
+      cookie: M,
+      body: { kind: "profissao", key: "cientista", name: "Cientista", definition: { prerequisitos: [{ kind: "atributo", key: "inteligencia", minLevel: 1 }] } },
+    });
+    t("criar profissão c/ pré-requisito", pc.status === 201, JSON.stringify(pc.json).slice(0, 200));
     const cfg = await req(BASE, "PUT", `/campaigns/${cid}/regras/config`, {
       cookie: M,
       body: {
@@ -190,6 +214,26 @@ try {
     // chaves reservadas não são campos — simulação não aceita __hp/__vitalidade
     const r2 = await SIM({ [F_FORCA]: 0, __hp: { atual: 1, historico: [] }, __vitalidade: { nivel: 2 } });
     t("__hp/__vitalidade ignorados (HP cheio, vitalidade 0)", r2.json?.vida?.hp?.atual === 100 && r2.json?.vida?.vitalidade?.nivel === 0, `hp=${r2.json?.vida?.hp?.atual} vit=${r2.json?.vida?.vitalidade?.nivel}`);
+  }
+
+  sec("Simulação: valores padrão (padrao) antes das regras");
+  {
+    // Campo Inteligência tem padrao=1 e NÃO é tocado — pré-requisito @1
+    // da profissão deve ser satisfeito (igual à ficha real).
+    const r1 = await SIM2({ [F_PRO]: "cientista" });
+    t("padrao=1 satisfaz pré-requisito sem tocar o campo", r1.json?.ok === true, JSON.stringify(r1.json?.erros).slice(0, 250));
+
+    // Valor manual prevalece sobre o padrão: 0 explícito derruba o pré-requisito.
+    const r2 = await SIM2({ [F_PRO]: "cientista", [F_INT]: 0 });
+    t("valor manual 0 prevalece sobre padrao", r2.json?.ok === false && temErro(r2.json, "Cientista"), JSON.stringify(r2.json?.erros).slice(0, 250));
+
+    // Manual acima do padrão também vale.
+    const r3 = await SIM2({ [F_PRO]: "cientista", [F_INT]: 3 });
+    t("valor manual 3 também satisfaz", r3.json?.ok === true, JSON.stringify(r3.json?.erros).slice(0, 250));
+
+    // Campo sem padrão continua ausente e não quebra nada.
+    const r4 = await SIM2({});
+    t("sem interação -> ok, sem erros", r4.json?.ok === true && r4.json?.erros?.length === 0, JSON.stringify(r4.json?.erros).slice(0, 200));
   }
 
   sec("Simulação: rejeições e permissões");

@@ -14,7 +14,7 @@ import {
   TIPOS_REGRA,
   type ElementoRegra,
 } from "../lib/regras.js";
-import { estruturaFichaSchema, todosCampos, avaliarFormula } from "../lib/ficha.js";
+import { estruturaFichaSchema, todosCampos, avaliarFormula, validarFicha } from "../lib/ficha.js";
 import { resumoHp, resumoVitalidade, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
 import { audit } from "../lib/audit.js";
@@ -336,11 +336,14 @@ regrasRouter.post("/simulacao", requirePapel("mestre"), async (req, res) => {
     return;
   }
   const regras = await carregarRegras(req.params.campaignId);
-  // Chaves reservadas de vida não são campos da ficha — como no PATCH real,
-  // a simulação parte do estado inicial (HP cheio, vitalidade nível 0).
-  const dados = { ...(body.data.dados ?? {}) } as Record<string, unknown>;
-  delete dados[CHAVE_HP];
-  delete dados[CHAVE_VITALIDADE];
+  // Mesma normalização da ficha real: validarFicha descarta chaves
+  // desconhecidas/reservadas (__hp, __vitalidade) e APLICA OS PADRÕES
+  // (campo.padrao) — sem isso um campo com "valor inicial" pareceria
+  // vazio para as regras e o simulador divergiria da ficha do jogador.
+  const dadosBrutos = { ...(body.data.dados ?? {}) } as Record<string, unknown>;
+  delete dadosBrutos[CHAVE_HP];
+  delete dadosBrutos[CHAVE_VITALIDADE];
+  const dados = validarFicha(body.data.estrutura, dadosBrutos, { estrito: false }).dados;
   const r = validarRegras(body.data.estrutura, dados, regras, {
     pontosIniciais: body.data.pontosFicticios,
   });
