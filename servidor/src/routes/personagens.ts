@@ -833,17 +833,31 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
   const autorNome = await nomeUsuario(req.usuario!.id);
-  const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
-    motivo: body.data.motivo,
-    autorId: req.usuario!.id,
-    autorNome,
-  });
+
+  // Transação: relê ficha, calcula, grava atomicamente
   const agora = new Date();
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  let resposta: { ok: true; pontos: { bonus: number; selado: boolean; historico: unknown[] } } | null = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { sumiu = true; return; }
+    const dados = (atual.data ?? {}) as Record<string, unknown>;
+    const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
+      motivo: body.data.motivo,
+      autorId: req.usuario!.id,
+      autorNome,
+    });
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = { ok: true, pontos: { bonus: estado.bonus, selado: estado.selo !== null, historico: estado.historico } };
+  });
+  if (sumiu) {
+    res.status(404).json({ erro: "Personagem não encontrado" });
+    return;
+  }
+
   await audit(req, "personagem.pontos", { characterId: p.id, acao: body.data.acao, quantidade: body.data.quantidade, motivo: body.data.motivo });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, pontos: { bonus: estado.bonus, selado: estado.selo !== null, historico: estado.historico } });
+  res.json(resposta);
 });
