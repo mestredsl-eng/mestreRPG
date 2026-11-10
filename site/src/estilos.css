@@ -1654,3 +1654,40 @@ code {
   margin: 0.35rem 0 0;
   padding-left: 1.1rem;
 }
+
+
+/* Navegação rápida para fichas extensas */
+.ficha-navegacao {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.65rem 0.75rem;
+  margin: 0 0 1rem;
+  background: #191c21;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+}
+
+.ficha-navegacao-titulo {
+  color: #9aa0a6;
+  font-size: 0.82rem;
+  margin-right: 0.2rem;
+}
+
+.ficha-secao[id] {
+  scroll-margin-top: 1rem;
+}
+
+@media (max-width: 600px) {
+  .ficha-navegacao {
+    gap: 0.35rem;
+    padding: 0.55rem;
+  }
+
+  .ficha-navegacao button {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+}
