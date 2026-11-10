@@ -234,7 +234,12 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       if (raw < 1) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(() => {
+      resize();
+      // Redimensionar limpa o bitmap interno; redesenha mesmo após a animação.
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(draw);
+    });
     observer.observe(canvas);
     return () => { cancelAnimationFrame(raf); observer.disconnect(); };
   }, [lados, valor, indice, estado]);
