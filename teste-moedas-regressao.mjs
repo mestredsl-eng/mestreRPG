@@ -1,77 +1,27 @@
 // Regressão de moedas — PRs #29 (formatação) e #32 (moeda da conta).
-// Banco isolado: valida casas decimais 0–4, PATCH de moeda rejeitado/
-// preservado, metadados sem tocar saldo/histórico, nova conta em moeda
-// configurada e permissões mestre/jogador.
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
+// Banco criado do zero em diretório temporário + migrations + fixtures
+// sintéticas (teste-base.mjs) — nunca copia a base real.
 import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
-
-const DIR = "simulacao-limpeza/teste-moedas";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, comDb, abrirDb, req,
+} from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-function portaLivre() {
-  return new Promise((res, rej) => {
-    const s = createServer();
-    s.once("error", rej);
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-  });
-}
-async function esperarSaudavel(base, proc) {
-  const limite = Date.now() + 30000;
-  while (Date.now() < limite) {
-    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error("timeout");
-}
-function subir(porta) {
-  return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-function sessao(userId) {
-  const db = new Database(BANCO);
-  const token = "t-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), userId, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  db.close();
-  return `mestre_rpg_session=${encodeURIComponent(token)}`;
-}
-function comDb(fn) {
-  const db = new Database(BANCO, { readonly: true });
-  try { return fn(db); } finally { db.close(); }
-}
-const saldoDb = (id) => comDb((db) => db.prepare("select balance_cents from financial_accounts where id=?").get(id)?.balance_cents);
-const txCount = (id) => comDb((db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(id).c);
-const moedaDb = (id) => comDb((db) => db.prepare("select currency from financial_accounts where id=?").get(id)?.currency);
+const DIR = dirTeste("moedas");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 
-async function req(base, metodo, path, { cookie, body } = {}) {
-  const r = await fetch(base + "/api" + path, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return { status: r.status, json: await r.json().catch(() => null) };
-}
+const saldoDb = (id) => comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(id)?.balance_cents);
+const txCount = (id) => comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(id).c);
+const moedaDb = (id) => comDb(BANCO, (db) => db.prepare("select currency from financial_accounts where id=?").get(id)?.currency);
 
-// Ajusta financeiro.casasDecimais e financeiro.moedas no ruleset ativo
+// Ajusta financeiro.* no rule_set ativo da campanha de teste
 function setFinanceiro(campId, patch) {
-  const db = new Database(BANCO);
+  const db = abrirDb(BANCO);
   const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
   const cfg = JSON.parse(rs.config);
   cfg.financeiro = { ...cfg.financeiro, ...patch };
@@ -79,34 +29,12 @@ function setFinanceiro(campId, patch) {
   db.close();
 }
 
-// ---------- seed ----------
-const ids = (() => {
-  const db = new Database(BANCO);
-  const admin = db.prepare("select id from users where username='administrador'").get().id;
-  const jogador = db.prepare("select id from users where username='fernandoqc_@hotmail.com'").get().id;
-  const camp = db.prepare("select id from campaigns where name='teste'").get().id;
-  const membM = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, admin).id;
-  let membJ = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, jogador)?.id;
-  const agora = Date.now();
-  if (!membJ) {
-    membJ = crypto.randomUUID();
-    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
-      .run(membJ, camp, jogador, "jogador", "ativo", agora, agora);
-  }
-  const charM = crypto.randomUUID(), charJ = crypto.randomUUID();
-  db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-    .run(charM, camp, membM, "Mestre Moedas", "{}", "{}", "aprovada", 0, agora, agora);
-  db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-    .run(charJ, camp, membJ, "Jogador Moedas", "{}", "{}", "aprovada", 0, agora, agora);
-  db.close();
-  return { admin, jogador, camp, charM, charJ };
-})();
-console.log("seed:", ids);
+await prepararBanco(BANCO);
 
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-const cm = sessao(ids.admin), cj = sessao(ids.jogador);
 let proc;
+let ids, cm, cj;
 
 async function saldoApi(charId, cookie) {
   const r = await req(BASE, "GET", `/characters/${charId}/financeiro`, { cookie });
@@ -114,8 +42,14 @@ async function saldoApi(charId, cookie) {
 }
 
 try {
-  proc = subir(porta);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
+  const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador: "jogador_moedas" } });
+  ids = { admin: cenario.adminId, jogador: cenario.jogadores.jogador.id, camp: cenario.campId, charM: cenario.personagemMestre };
+  ids.charJ = cenario.novoPersonagem(cenario.jogadores.jogador.membershipId, "Jogador Moedas");
+  cm = cenario.cookieMestre; cj = cenario.jogadores.jogador.cookie;
+  console.log("seed:", ids);
   // Config base: moeda principal BRL + EUR/USD configuradas
   setFinanceiro(ids.camp, { casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "EUR", nome: "Euro" }, { codigo: "USD", nome: "Dólar" }] });
 

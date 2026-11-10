@@ -1,114 +1,24 @@
 // Testes — histórico de Vitalidade (nível anterior/novo, data, autor, motivo).
-// Banco isolado em porta livre; cobre alterações repetidas, consulta,
-// persistência após reinício do servidor, proteção contra PATCH genérico
-// e permissões mestre/jogador.
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
-import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
-
-const DIR = "simulacao-limpeza/teste-vitalidade-historico";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+// Banco criado do zero em diretório temporário + migrations + fixtures
+// sintéticas (teste-base.mjs) — nunca copia a base real.
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, comDb, abrirDb, sessao, req,
+} from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-function portaLivre() {
-  return new Promise((res, rej) => {
-    const s = createServer();
-    s.once("error", rej);
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-  });
-}
-async function esperarSaudavel(base, proc) {
-  const limite = Date.now() + 30000;
-  while (Date.now() < limite) {
-    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error("timeout");
-}
-function subir(porta) {
-  return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-function sessao(userId) {
-  const db = new Database(BANCO);
-  const token = "t-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), userId, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  db.close();
-  return `mestre_rpg_session=${encodeURIComponent(token)}`;
-}
-function comDb(fn) {
-  const db = new Database(BANCO, { readonly: true });
-  try { return fn(db); } finally { db.close(); }
-}
-const dadosPersonagem = (id) => JSON.parse(comDb((db) => db.prepare("select data from characters where id=?").get(id).data));
+const DIR = dirTeste("vitalidade");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
+const dadosPersonagem = (id) => JSON.parse(comDb(BANCO, (db) => db.prepare("select data from characters where id=?").get(id).data));
 
-async function req(base, metodo, path, { cookie, body } = {}) {
-  const r = await fetch(base + "/api" + path, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return { status: r.status, json: await r.json().catch(() => null) };
-}
-
-// ---------- seed ----------
-const ids = (() => {
-  const db = new Database(BANCO);
-  const admin = db.prepare("select id from users where username='administrador'").get().id;
-  const jogador = db.prepare("select id from users where username='fernandoqc_@hotmail.com'").get().id;
-  const camp = db.prepare("select id from campaigns where name='teste'").get().id;
-  const membMestre = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, admin).id;
-  // jogador entra na campanha 'teste' como jogador
-  let membJogador = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, jogador)?.id;
-  if (!membJogador) {
-    membJogador = crypto.randomUUID();
-    const agora = Date.now();
-    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
-      .run(membJogador, camp, jogador, "jogador", "ativo", agora, agora);
-  }
-  const agora = Date.now();
-  // Template de ficha mínimo para que GET /characters devolva ficha.vida
-  const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
-  const estrutura = { versao: 1, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
-  db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
-    .run(tplId, camp, "Ficha mínima", null, admin, agora, agora);
-  db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
-    .run(verId, tplId, JSON.stringify(estrutura), agora, agora);
-
-  const charId = crypto.randomUUID();
-  // Personagem ANTIGO: sem __vitalidade — deve funcionar sem migração.
-  db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-    .run(charId, camp, membMestre, verId, "Veterano", "{}", "{}", "aprovada", 0, agora, agora);
-  // Personagem do jogador (mesma campanha) para teste de permissão.
-  const charJogador = crypto.randomUUID();
-  db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-    .run(charJogador, camp, membJogador, verId, "Personagem do jogador", "{}", "{}", "aprovada", 0, agora, agora);
-  db.close();
-  return { admin, jogador, camp, charId, charJogador, membJogador };
-})();
-console.log("seed:", ids);
-
+await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-const cookieMestre = sessao(ids.admin);
-const cookieJogador = sessao(ids.jogador);
-let proc;
+let proc, ids, cookieMestre, cookieJogador;
 
 async function vitalidadeDe(charId, cookie = cookieMestre) {
   const r = await req(BASE, "GET", `/characters/${charId}`, { cookie });
@@ -116,8 +26,23 @@ async function vitalidadeDe(charId, cookie = cookieMestre) {
 }
 
 try {
-  proc = subir(porta);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
+
+  const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador: "jogador_vitalidade" } });
+  ids = { admin: cenario.adminId, camp: cenario.campId };
+  // Personagem do mestre = "Veterano" antigo: removemos __vitalidade se houver
+  const charId = cenario.personagemMestre;
+  const w = abrirDb(BANCO);
+  w.prepare("update characters set name=?, data=? where id=?")
+    .run("Veterano", "{}", charId);
+  const charJogador = cenario.novoPersonagem(cenario.jogadores.jogador.membershipId, "Personagem do jogador");
+  w.close();
+  ids.charId = charId; ids.charJogador = charJogador;
+  cookieMestre = cenario.cookieMestre;
+  cookieJogador = cenario.jogadores.jogador.cookie;
+  console.log("seed:", ids);
 
   // ===== 1. Personagem antigo sem vitalidade =====
   sec("Personagem antigo (sem __vitalidade)");
@@ -197,7 +122,7 @@ try {
   {
     proc.kill();
     await new Promise((r) => setTimeout(r, 800));
-    proc = subir(porta);
+    proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     const vit = await vitalidadeDe(ids.charId);
     t("nível 4 mantido após restart", vit?.nivel === 4, `nivel=${vit?.nivel}`);

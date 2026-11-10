@@ -1,100 +1,44 @@
 // Testes — venda de estoque dentro da transação financeira (PR #31).
-// Roda contra CÓPIA isolada do banco em porta livre — nunca toca o definitivo.
+// Banco SQLite criado do zero em diretório temporário + migrations +
+// fixtures sintéticas (teste-base.mjs) — nunca copia a base real.
 //
 // Sobre "concorrência": requisições HTTP em paralelo, mas better-sqlite3 é
 // síncrono em conexão única — não há corrida real entre conexões. Os testes
 // verificam os valores PERSISTIDOS no banco após operações intercaladas.
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
 import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
-
-const DIR = "simulacao-limpeza/teste-venda-estoque";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, comDb, req,
+} from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-function portaLivre() {
-  return new Promise((res, rej) => {
-    const s = createServer();
-    s.once("error", rej);
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-  });
-}
-async function esperarSaudavel(base, proc) {
-  const limite = Date.now() + 30000;
-  while (Date.now() < limite) {
-    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error("timeout");
-}
-function subir(porta) {
-  return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-function cookieAdmin() {
-  const db = new Database(BANCO);
-  const u = db.prepare("select id from users where username='administrador'").get();
-  const token = "t-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), u.id, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  db.close();
-  return `mestre_rpg_session=${encodeURIComponent(token)}`;
-}
-function comDb(fn) {
-  const db = new Database(BANCO, { readonly: true });
-  try { return fn(db); } finally { db.close(); }
-}
-const saldoDb = (contaId) => comDb((db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
-const txCount = (contaId) => comDb((db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(contaId).c);
-const itemQtd = (itemId) => comDb((db) => db.prepare("select quantity from inventory_entries where id=?").get(itemId)?.quantity ?? null);
-const itemExiste = (itemId) => comDb((db) => !!db.prepare("select 1 from inventory_entries where id=?").get(itemId));
+const DIR = dirTeste("venda-estoque");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 
-async function req(base, metodo, path, { cookie, body } = {}) {
-  const r = await fetch(base + "/api" + path, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return { status: r.status, json: await r.json().catch(() => null) };
-}
+const saldoDb = (contaId) => comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
+const txCount = (contaId) => comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(contaId).c);
+const itemQtd = (itemId) => comDb(BANCO, (db) => db.prepare("select quantity from inventory_entries where id=?").get(itemId)?.quantity ?? null);
+const itemExiste = (itemId) => comDb(BANCO, (db) => !!db.prepare("select 1 from inventory_entries where id=?").get(itemId));
+
+await prepararBanco(BANCO);
 
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
 let proc;
 try {
-  proc = subir(porta);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
-  const cookie = cookieAdmin();
 
-  // ---------- cenário: campanha 'teste' + personagem + conta ----------
-  const cid = comDb((db) => db.prepare("select id from campaigns where name='teste'").get().id);
-  const memb = comDb((db) => db.prepare(
-    "select m.id from memberships m join users u on u.id=m.user_id where m.campaign_id=? and u.username='administrador' and m.status='ativo'"
-  ).get(cid));
-  const charId = crypto.randomUUID();
-  {
-    const w = new Database(BANCO);
-    const agora = Date.now();
-    w.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-      .run(charId, cid, memb.id, "PJ Vendas", "{}", "{}", "aprovada", 0, agora, agora);
-    w.close();
-  }
-  t("personagem criado no banco isolado", !!memb);
+  // ---------- cenário sintético: admin + campanha + personagem ----------
+  const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_vendas" } });
+  const cookie = cenario.jogadores.jogador1.cookie;
+  const charId = cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "PJ Vendas");
+  t("personagem criado no banco isolado", !!charId);
 
   const conta = (await req(BASE, "POST", `/characters/${charId}/financeiro/contas`, {
     cookie, body: { type: "especie", name: "Caixa", balanceReais: 1000 },

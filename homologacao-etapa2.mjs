@@ -1,139 +1,57 @@
 // Homologação E2E — Etapa 2 completa (Issue #33).
-// Mestre + 2 jogadores em banco isolado: fichas, inventário/
-// equipamento/transferência, HP e histórico, Vitalidade com motivo,
-// compra/venda/PIX, reinício do servidor e persistência.
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
-import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
-
-const DIR = "simulacao-limpeza/teste-etapa2-e2e";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+// Mestre + 2 jogadores 100% sintéticos em banco criado do zero
+// (teste-base.mjs) — nunca copia banco/mestre-rpg.db.
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, req,
+} from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-function portaLivre() {
-  return new Promise((res, rej) => {
-    const s = createServer();
-    s.once("error", rej);
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-  });
-}
-async function esperarSaudavel(base, proc) {
-  const limite = Date.now() + 30000;
-  while (Date.now() < limite) {
-    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error("timeout");
-}
-function subir(porta) {
-  return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-function sessao(userId) {
-  const db = new Database(BANCO);
-  const token = "t-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), userId, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  db.close();
-  return `mestre_rpg_session=${encodeURIComponent(token)}`;
-}
-async function req(base, metodo, path, { cookie, body } = {}) {
-  const r = await fetch(base + "/api" + path, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return { status: r.status, json: await r.json().catch(() => null) };
-}
+const DIR = dirTeste("etapa2-e2e");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
+
 const saldo = async (base, cookie, charId) => {
   const fin = (await req(base, "GET", `/characters/${charId}/financeiro`, { cookie })).json;
   return fin?.contas?.[0]?.saldo;
 };
 
-// ---------- seed: regras completas + ficha + 3 personagens ----------
-const ids = (() => {
-  const db = new Database(BANCO);
-  const admin = db.prepare("select id from users where username='administrador'").get().id;
-  const j1 = db.prepare("select id from users where username='fernandoqc_@hotmail.com'").get().id;
-  // segundo jogador: cria usuário direto no banco isolado
-  let j2 = db.prepare("select id from users where username='jogador2'").get()?.id;
-  if (!j2) {
-    j2 = crypto.randomUUID();
-    const agora = Date.now();
-    db.prepare("insert into users (id,username,display_name,password_hash,is_admin,created_at,updated_at) values (?,?,?,?,0,?,?)")
-      .run(j2, "jogador2", "Jogador Dois", "x", agora, agora);
-  }
-  const camp = db.prepare("select id from campaigns where name='teste'").get().id;
-  const agora = Date.now();
-  const memb = (uid, role) => {
-    const ex = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, uid)?.id;
-    if (ex) return ex;
-    const id = crypto.randomUUID();
-    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
-      .run(id, camp, uid, role, "ativo", agora, agora);
-    return id;
-  };
-  const mM = memb(admin, "mestre"), mJ1 = memb(j1, "jogador"), mJ2 = memb(j2, "jogador");
-
-  // Regras da campanha: HP + Vitalidade + financeiro + patrimônio
-  const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(camp);
-  const cfg = JSON.parse(rs.config);
-  cfg.hp = { habilitado: true, base: 100, porNivel: 10, campoId: "for", edicaoPor: "ambos" };
-  cfg.vitalidade = { edicaoPor: "ambos", niveis: [
-    { nome: "São", penalidadeDados: 0, bloqueiaAcoes: false },
-    { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
-    { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
-  ] };
-  cfg.financeiro = { ...cfg.financeiro, casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "EUR", nome: "Euro" }] };
-  cfg.patrimonio = { ...cfg.patrimonio, jogadorCriaContas: true, jogadorCompraVenda: true, jogadorPix: true };
-  db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
-
-  // Ficha publicada com FOR (alimenta o HP)
-  const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
-  const estrutura = { versao: 1, secoes: [{ id: "s1", titulo: "Atributos", ordem: 0, campos: [{ id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" }] }], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
-  db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
-    .run(tplId, camp, "Ficha E2E", null, admin, agora, agora);
-  db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
-    .run(verId, tplId, JSON.stringify(estrutura), agora, agora);
-  db.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
-
-  const novoChar = (membId, nome, extra = {}) => {
-    const id = crypto.randomUUID();
-    db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, camp, membId, verId, nome, JSON.stringify({ for: 5, ...extra }), "{}", "aprovada", 0, agora, agora);
-    return id;
-  };
-  const charM = novoChar(mM, "Mestre Herói");
-  const charJ1 = novoChar(mJ1, "Jogador Um");
-  const charJ2 = novoChar(mJ2, "Jogador Dois");
-  db.close();
-  return { admin, j1, j2, camp, charM, charJ1, charJ2 };
-})();
-console.log("seed:", ids);
-
+await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-const cm = sessao(ids.admin), cj1 = sessao(ids.j1), cj2 = sessao(ids.j2);
-let proc;
+let proc, ids, cm, cj1, cj2;
+
 
 try {
-  proc = subir(porta);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
+
+  // Cenário sintético: admin + campanha + 2 jogadores + regras completas
+  const cenario = await criarCenario(BASE, BANCO, {
+    jogadores: { jogador1: "jogador_um_e2e", jogador2: "jogador_dois_e2e" },
+    config: {
+      hp: { habilitado: true, base: 100, porNivel: 10, campoId: "for", edicaoPor: "ambos" },
+      vitalidade: { edicaoPor: "ambos", niveis: [
+        { nome: "São", penalidadeDados: 0, bloqueiaAcoes: false },
+        { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
+        { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
+      ] },
+      financeiro: { casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "EUR", nome: "Euro" }] },
+      patrimonio: { jogadorCriaContas: true, jogadorCompraVenda: true, jogadorPix: true },
+    },
+  });
+  ids = {
+    admin: cenario.adminId, j1: cenario.jogadores.jogador1.id, j2: cenario.jogadores.jogador2.id,
+    camp: cenario.campId, charM: cenario.personagemMestre,
+    charJ1: cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Jogador Um"),
+    charJ2: cenario.novoPersonagem(cenario.jogadores.jogador2.membershipId, "Jogador Dois"),
+  };
+  cm = cenario.cookieMestre; cj1 = cenario.jogadores.jogador1.cookie; cj2 = cenario.jogadores.jogador2.cookie;
+  console.log("seed:", ids);
 
   // ===== 1. Fichas: mestre vê os 3, jogadores veem a própria =====
   sec("Fichas e permissões de leitura");
@@ -259,7 +177,7 @@ try {
   {
     proc.kill();
     await new Promise((r) => setTimeout(r, 800));
-    proc = subir(porta);
+    proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     const ficha = (await req(BASE, "GET", `/characters/${ids.charJ1}`, { cookie: cj1 })).json?.ficha;
     t("HP persiste (130)", ficha?.vida?.hp?.atual === 130, `atual=${ficha?.vida?.hp?.atual}`);

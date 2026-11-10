@@ -1,65 +1,19 @@
 // Homologação integrada — equipamentos/inventário (PR #34), Etapa 2.
-// Cenário mestre + jogador em banco isolado: pilha de 5, equipar/
-// desequipar/excluir, equipamento manual, concorrência equip×transfer,
-// consistência da ficha e persistência após reinício do servidor.
-import { spawn } from "node:child_process";
-import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
-import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
-
-const DIR = "simulacao-limpeza/teste-homolog-equip";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+// Cenário mestre + jogador 100% sintético em banco criado do zero
+// (teste-base.mjs) — nunca copia banco/mestre-rpg.db.
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, req,
+} from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-function portaLivre() {
-  return new Promise((res, rej) => {
-    const s = createServer();
-    s.once("error", rej);
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
-  });
-}
-async function esperarSaudavel(base, proc) {
-  const limite = Date.now() + 30000;
-  while (Date.now() < limite) {
-    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  throw new Error("timeout");
-}
-function subir(porta) {
-  return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-}
-function sessao(userId) {
-  const db = new Database(BANCO);
-  const token = "t-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), userId, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  db.close();
-  return `mestre_rpg_session=${encodeURIComponent(token)}`;
-}
-async function req(base, metodo, path, { cookie, body } = {}) {
-  const r = await fetch(base + "/api" + path, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  return { status: r.status, json: await r.json().catch(() => null) };
-}
+const DIR = dirTeste("homolog-equip");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
+
 const qtdItem = async (base, cookie, charId, nome) => {
   const inv = (await req(base, "GET", `/characters/${charId}/inventario`, { cookie })).json?.itens ?? [];
   const it = inv.find((i) => i.name === nome);
@@ -74,34 +28,11 @@ const nEquip = async (base, cookie, charId) => {
   return eq.length;
 };
 
-// ---------- seed: mestre + jogador na campanha 'teste' ----------
-const ids = (() => {
-  const db = new Database(BANCO);
-  const admin = db.prepare("select id from users where username='administrador'").get().id;
-  const jogador = db.prepare("select id from users where username='fernandoqc_@hotmail.com'").get().id;
-  const camp = db.prepare("select id from campaigns where name='teste'").get().id;
-  const membM = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, admin).id;
-  let membJ = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp, jogador)?.id;
-  const agora = Date.now();
-  if (!membJ) {
-    membJ = crypto.randomUUID();
-    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
-      .run(membJ, camp, jogador, "jogador", "ativo", agora, agora);
-  }
-  const charM = crypto.randomUUID(), charJ = crypto.randomUUID();
-  db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-    .run(charM, camp, membM, "Mestre PJ", "{}", "{}", "aprovada", 0, agora, agora);
-  db.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-    .run(charJ, camp, membJ, "Jogador PJ", "{}", "{}", "aprovada", 0, agora, agora);
-  db.close();
-  return { admin, jogador, camp, charM, charJ };
-})();
-console.log("seed:", ids);
-
+await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-const cm = sessao(ids.admin), cj = sessao(ids.jogador);
-let proc;
+let proc, ids, cm, cj;
+
 
 async function novoItem(cookie, charId, nome, qtd) {
   const r = await req(BASE, "POST", `/characters/${charId}/inventario`, {
@@ -111,8 +42,14 @@ async function novoItem(cookie, charId, nome, qtd) {
 }
 
 try {
-  proc = subir(porta);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
+  const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador: "jogador_homolog" } });
+  ids = { camp: cenario.campId, charM: cenario.personagemMestre,
+    charJ: cenario.novoPersonagem(cenario.jogadores.jogador.membershipId, "Jogador PJ") };
+  cm = cenario.cookieMestre; cj = cenario.jogadores.jogador.cookie;
+  console.log("seed:", ids);
 
   // ===== Jogador: pilha de 5 → equipar 1 =====
   sec("Jogador: pilha 5 → equipar 1");
@@ -192,7 +129,7 @@ try {
     const eqAntesRestart = await nEquip(BASE, cj, ids.charJ);
     proc.kill();
     await new Promise((r) => setTimeout(r, 800));
-    proc = subir(porta);
+    proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     t("estoque persiste após restart", (await qtdItem(BASE, cj, ids.charJ, "Lança")) === estoqueAntes, `qtd=${await qtdItem(BASE, cj, ids.charJ, "Lança")}`);
     t("equipamentos persistem após restart", (await nEquip(BASE, cj, ids.charJ)) === eqAntesRestart, `eq=${await nEquip(BASE, cj, ids.charJ)} antes=${eqAntesRestart}`);
