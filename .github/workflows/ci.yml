@@ -47,7 +47,7 @@ jobs:
             teste-venda-estoque.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs
-do echo "===== $s ====="; node "$s"; done
+          do echo "===== $s ====="; node "$s"; done
 
   navegador:
     name: Navegador — homologações Playwright
@@ -76,4 +76,4 @@ do echo "===== $s ====="; node "$s"; done
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs
-do echo "===== $s ====="; node "$s"; done
+          do echo "===== $s ====="; node "$s"; done
