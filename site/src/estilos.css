@@ -587,7 +587,7 @@ textarea {
 .campo-kind-vantagem .nivel-item,
 .campo-kind-talento .nivel-item,
 .campo-kind-qualidade .nivel-item { border-left: 3px solid #3b5bdb; }
-.campo-kind-atributo:has(.seletor-bolinhas) { border-left: 3px solid #3b5bdb; }
+.ficha .campo-kind-atributo:has(.seletor-bolinhas) { border-left: 3px solid #3b5bdb; }
 
 .nivel-linha {
   display: flex;
@@ -1281,7 +1281,7 @@ select option {
   .campo:has(.seletor-bolinhas) {
     flex-wrap: wrap;
   }
-  .seletor-bolinhas .bolinha {
+  .ficha .seletor-bolinhas .bolinha {
     width: 30px;
     height: 30px;
   }
