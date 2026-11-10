@@ -516,12 +516,18 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
     return;
   }
 
-  const t = new Date();
   const snapshot = itens.map((item) => ({
     kind: item.kind, key: item.key, name: item.name,
     category: item.category ?? null, parentKey: item.parentKey ?? null,
     definition: item.definition ?? {}, ordem: item.ordem,
   }));
+  const [vinculoExistente] = await db.select().from(campaignRuleBooks)
+    .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).limit(1);
+  if (vinculoExistente && vinculoExistente.appliedVersion === livro.versao && JSON.stringify(vinculoExistente.snapshot) === JSON.stringify(snapshot)) {
+    res.json({ ok: true, semAlteracao: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos: 0, atualizados: 0, mantidos: 0 });
+    return;
+  }
+  const t = new Date();
   const resultado = db.transaction((tx) => {
     const atuais = tx.select().from(ruleDefinitions)
       .where(eq(ruleDefinitions.ruleSetId, regras.ruleSetId!)).all();
