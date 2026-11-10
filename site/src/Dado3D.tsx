@@ -132,7 +132,6 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     const start = qMultiply(spin, target);
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const duration = reduced ? 0 : 1050 + Math.min(indice, 8) * 95;
-    let frame = 0;
     let raf = 0;
     let width = 0, height = 0, dpr = 1;
     const resize = () => {
