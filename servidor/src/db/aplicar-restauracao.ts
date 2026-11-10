@@ -15,7 +15,7 @@ import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, re
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
-import { verificarTravaInstancia } from "./trava-instancia.js";
+import { adquirirTravaRestauracao, aguardarGateTrava, TravaIndisponivel } from "./trava-instancia.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.MESTRE_HOME ?? resolve(__dirname, "..", "..", "..");
@@ -243,22 +243,30 @@ async function principal() {
     process.exit(2);
   }
 
-  // 3) exclusividade REAL antes de qualquer escrita: a trava de
-  //    instância é o mecanismo autoritativo — o servidor a detém enquanto
-  //    usa o banco e o SO a libera na morte do processo (sem PID file,
-  //    sem reúso de PID, igual em Windows e Linux). "em_uso" e
-  //    "indeterminado" abortam: falha de verificação nunca autoriza.
-  //    A varredura de /proc abaixo permanece como diagnóstico
-  //    complementar para clientes estranhos ao servidor.
-  const trava = verificarTravaInstancia(DB_VIVA);
-  if (trava === "em_uso") {
-    log("ERRO: trava de instância detida — há um servidor Mestre RPG ativo neste banco. Nada foi alterado; flag preservada para retry.");
+  // 3) exclusividade REAL antes de qualquer escrita: o restaurador
+  //    ADQUIRE a mesma trava exclusiva do servidor e a mantém durante
+  //    TODA a operação — preservação, substituição de banco/sidecars/
+  //    arquivos/config e limpeza da flag, inclusive no rollback. Sem
+  //    janela TOCTOU: nenhum servidor consegue iniciar enquanto a
+  //    restauração estiver em curso, e nenhuma segunda restauração
+  //    concorrente obtém a trava. O SO libera o lock na morte do
+  //    processo, cobrindo também saídas abruptas.
+  //    A liberação acontece no handler de 'exit' (process.exit não
+  //    executa finally) e implicitamente no encerramento natural —
+  //    sempre DEPOIS de preservação/aplicação/rollback concluídos.
+  let trava: { liberar(): void } | null = null;
+  try {
+    trava = adquirirTravaRestauracao(DB_VIVA);
+  } catch (e) {
+    if (e instanceof TravaIndisponivel && e.estado === "em_uso") {
+      log("ERRO: trava de instância detida — há um servidor Mestre RPG ativo neste banco. Nada foi alterado; flag preservada para retry.");
+    } else {
+      const motivo = e instanceof TravaIndisponivel ? e.message : String(e);
+      log(`ERRO: ${motivo} — restauração abortada por segurança antes de qualquer escrita; flag preservada para retry.`);
+    }
     process.exit(2);
   }
-  if (trava === "indeterminado") {
-    log("ERRO: verificação da trava de instância inconclusiva — restauração abortada por segurança antes de qualquer escrita; flag preservada para retry.");
-    process.exit(2);
-  }
+  process.once("exit", () => { try { trava?.liberar(); } catch { /* ignora */ } });
 
   // 3b) diagnóstico complementar: banco aberto por processo estranho
   //     ao servidor (cliente SQLite direto). Fail-safe onde o procfs
@@ -359,8 +367,15 @@ async function principal() {
     } catch (e2) {
       log(`ROLLBACK FALHOU: ${e2} — estado anterior preservado em ${lado}`);
     }
+    // Gate de teste: prova que a trava continua segurada até DEPOIS do
+    // rollback (sucesso ou falha) — um segundo restaurador/servidor não
+    // consegue adquiri-la neste ponto.
+    aguardarGateTrava("apos-rollback");
     process.exit(1);
   }
+  // Sucesso: libera explicitamente — o handler de 'exit' cobre os
+  // caminhos process.exit(1|2) sem finally.
+  try { trava?.liberar(); } catch { /* ignora */ }
 }
 
 principal().catch((e) => { console.error(e); process.exit(1); });

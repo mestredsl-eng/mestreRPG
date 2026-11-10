@@ -413,8 +413,8 @@ try {
     t("restaurador com falha na flag → exit != 0", rest.code !== 0, `code=${rest.code}`);
     t("NENHUM sidecar residual no banco recuperado",
       !existsSync(dbPath(r13) + "-wal") && !existsSync(dbPath(r13) + "-shm"));
-    t("exatos arquivos esperados no diretório banco/",
-      readdirSync(join(r13, "banco")).filter((f) => f.startsWith("mestre-rpg.db")).sort().join(",") === "mestre-rpg.db");
+    t("exatos arquivos esperados no diretório banco/ (trava de instância é artefato legítimo)",
+      readdirSync(join(r13, "banco")).filter((f) => f.startsWith("mestre-rpg.db")).sort().join(",") === "mestre-rpg.db,mestre-rpg.db.trava");
     t("banco revertido abre e tem flag para retry", !!flagPendenteDb(dbPath(r13)));
     t("tabela nova presente no banco revertido", temTabelaDb(dbPath(r13), TABELA_NOVA));
   }

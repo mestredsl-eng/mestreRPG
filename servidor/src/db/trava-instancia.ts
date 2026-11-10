@@ -12,7 +12,7 @@
 // inconsistente nunca autoriza a escrita.
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 export function caminhoTrava(caminhoBanco: string): string {
   return caminhoBanco + ".trava";
@@ -48,6 +48,76 @@ export function liberarTravaInstancia(): void {
 }
 
 export type EstadoTrava = "livre" | "em_uso" | "indeterminado";
+
+/** Erro de aquisição da trava de restauração — nunca autoriza escrita. */
+export class TravaIndisponivel extends Error {
+  constructor(public estado: "em_uso" | "indeterminado", motivo: string) {
+    super(motivo);
+    this.name = "TravaIndisponivel";
+  }
+}
+
+export interface TravaSegurada {
+  /** Libera a trava (ROLLBACK + close). Idempotente. */
+  liberar(): void;
+}
+
+/**
+ * Ponto de sincronização determinístico para testes de concorrência:
+ * quando MESTRE_TRAVA_GATE_DIR está definido, a trava fica PAUSADA após a
+ * aquisição até que exista o arquivo <etapa> dentro do diretório. Sem a
+ * variável, retorna imediatamente (produção inalterada).
+ */
+export function aguardarGateTrava(etapa: string): void {
+  const dir = process.env.MESTRE_TRAVA_GATE_DIR;
+  if (!dir) return;
+  const alvo = join(dir, etapa);
+  const sab = new Int32Array(new SharedArrayBuffer(4));
+  const limite = Date.now() + 120_000;
+  while (!existsSync(alvo)) {
+    if (Date.now() > limite) throw new Error(`gate de trava '${etapa}' expirou (120s)`);
+    Atomics.wait(sab, 0, 0, 50);
+  }
+}
+
+function classificarFalhaTrava(e: unknown): TravaIndisponivel {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (/SQLITE_BUSY|database is locked|database table is locked/i.test(msg)) {
+    return new TravaIndisponivel("em_uso", `trava de instância detida — há um servidor Mestre RPG ativo neste banco (${msg})`);
+  }
+  return new TravaIndisponivel("indeterminado", `verificação da trava de instância inconclusiva (${msg})`);
+}
+
+/**
+ * Adquire a MESMA trava exclusiva do servidor e a MANTÉM aberta.
+ * Usada pelo restaurador: enquanto a transação estiver aberta, nenhuma
+ * instância do servidor consegue iniciar neste banco (e vice-versa).
+ * Lança TravaIndisponivel — o chamador aborta antes de qualquer escrita.
+ */
+export function adquirirTravaRestauracao(caminhoBanco: string): TravaSegurada {
+  const caminho = caminhoTrava(caminhoBanco);
+  mkdirSync(dirname(caminho), { recursive: true });
+  const db = new Database(caminho);
+  db.pragma("busy_timeout = 0");
+  try {
+    db.exec("BEGIN EXCLUSIVE");
+  } catch (e) {
+    try { db.close(); } catch { /* ignora */ }
+    throw classificarFalhaTrava(e);
+  }
+  // Pausa determinística APÓS a aquisição — testes comprovam que um
+  // segundo processo não consegue a trava enquanto esta está segurada.
+  aguardarGateTrava("apos-trava");
+  let liberada = false;
+  return {
+    liberar() {
+      if (liberada) return;
+      liberada = true;
+      try { db.exec("ROLLBACK"); } catch { /* já revertida/fechada */ }
+      try { db.close(); } catch { /* ignora */ }
+    },
+  };
+}
 
 /**
  * Verifica a trava SEM segurá-la: BEGIN IMMEDIATE com timeout zero.

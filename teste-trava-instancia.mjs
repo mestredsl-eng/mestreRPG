@@ -9,7 +9,7 @@
 // Não há PID file: a prova de "dono morto" é o próprio lock do SQLite,
 // liberado pelo SO na morte do processo — PID reutilizado é irrelevante.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir } from "./teste-base.mjs";
@@ -59,6 +59,22 @@ const fazerBackup = (raiz, nome) => {
 };
 const marcadorDb = (raiz) => comDbRw(dbEm(raiz), (d) =>
   d.prepare("select count(*) c from server_settings where key='restauracao_pendente'").get().c);
+
+// Restaurador ASSÍNCRONO com coleta de saída — permite inspecionar o
+// processo ENQUANTO ele está pausado no gate de trava.
+function restaurarProc(raiz, env) {
+  const p = spawn("node", [RESTAURADOR], { env: env ?? envRaiz(raiz), stdio: ["ignore", "pipe", "pipe"] });
+  let saida = "";
+  p.stdout.on("data", (d) => saida += d);
+  p.stderr.on("data", (d) => saida += d);
+  const fim = new Promise((res) => p.on("exit", (code) => res({ code, saida })));
+  return { p, fim, saida: () => saida };
+}
+async function esperarCond(fn, timeoutMs = 15000, passo = 100) {
+  const limite = Date.now() + timeoutMs;
+  while (Date.now() < limite) { if (fn()) return true; await new Promise((r) => setTimeout(r, passo)); }
+  return false;
+}
 
 try {
   sec("Trava em processo (unidade)");
@@ -186,6 +202,112 @@ try {
     t("flag preservada", flagPendente(dbEm(r)) === antes);
     t("nenhum pre_restore_* criado", readdirSyncSafe(join(r, "backups")).filter((f) => f.startsWith("pre_restore_")).length === 0);
     t("doc do backup NÃO aplicado", !existsSync(join(r, "arquivos", "campanhas", "doc_bk.txt")));
+  }
+
+  sec("Concorrência real — restaurador ADQUIRE e MANTÉM a trava");
+  {
+    const r = join(RAIZ, "concorrencia");
+    mkdirSync(join(r, "arquivos", "campanhas"), { recursive: true });
+    writeFileSync(join(r, "arquivos", "campanhas", "doc_vivo.txt"), "vivo");
+    await prepararBanco(dbEm(r));
+    const bk = fazerBackup(r, "bk_corrida");
+    armarFlag(r, bk);
+    const gate = join(r, "gate");
+    mkdirSync(gate, { recursive: true });
+    const env = envRaiz(r, { MESTRE_TRAVA_GATE_DIR: gate });
+
+    // 1º restaurador: adquire a trava e pausa no gate "apos-trava"
+    const r1 = restaurarProc(r, env);
+    const travou = await esperarCond(() => verificarTravaInstancia(dbEm(r)) === "em_uso");
+    t("restaurador adquiriu a trava (em_uso enquanto pausado)", travou);
+
+    // Com a trava segurada, um SEGUNDO SERVIDOR não pode iniciar
+    const porta = await portaLivre();
+    const p2 = spawn("node", [INDICE], {
+      env: { ...env, MESTRE_PORTA: String(porta) }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let saida2 = "";
+    p2.stdout.on("data", (d) => saida2 += d);
+    p2.stderr.on("data", (d) => saida2 += d);
+    const code2 = await Promise.race([
+      new Promise((res) => p2.on("exit", res)),
+      new Promise((res) => setTimeout(() => { try { p2.kill("SIGKILL"); } catch { } res("TIMEOUT"); }, 20000)),
+    ]);
+    t("2º servidor bloqueado pela trava do restaurador", code2 !== 0 && code2 !== "TIMEOUT", `code=${code2}`);
+    t("mensagem de trava no 2º servidor", /instância|trava/i.test(saida2));
+
+    // E uma SEGUNDA restauração simultânea também é bloqueada
+    const r3 = restaurarProc(r, env);
+    const fim3 = await Promise.race([
+      r3.fim,
+      new Promise((res) => setTimeout(() => res({ code: "TIMEOUT", saida: "" }), 20000)),
+    ]);
+    t("2ª restauração simultânea aborta (exit 2)", fim3.code === 2, `code=${fim3.code}`);
+    t("nada alterado pela tentativa bloqueada", flagPendente(dbEm(r)) !== null &&
+      readFileSync(join(r, "arquivos", "campanhas", "doc_vivo.txt"), "utf8") === "vivo");
+
+    // Libera o gate: o 1º restaurador conclui e libera a trava
+    writeFileSync(join(gate, "apos-trava"), "1");
+    const fim1 = await Promise.race([
+      r1.fim,
+      new Promise((res) => setTimeout(() => { try { r1.p.kill("SIGKILL"); } catch { } res({ code: "TIMEOUT", saida: "" }); }, 30000)),
+    ]);
+    t("1ª restauração conclui (exit 0)", fim1.code === 0, `code=${fim1.code} ${fim1.saida.slice(-300)}`);
+    t("flag limpa após sucesso", flagPendente(dbEm(r)) === null);
+    t("arquivo do backup aplicado", existsSync(join(r, "arquivos", "campanhas", "doc_bk.txt")));
+    t("trava livre após sucesso", verificarTravaInstancia(dbEm(r)) === "livre");
+  }
+
+  sec("Rollback mantém a trava até o fim (POSIX)");
+  if (process.platform === "win32") {
+    t("cenário de permissões POSIX — pulado no Windows (coberto no CI Linux)", true);
+  } else {
+    const r = join(RAIZ, "rollback");
+    mkdirSync(join(r, "arquivos", "campanhas"), { recursive: true });
+    mkdirSync(join(r, "configuracao"), { recursive: true });
+    writeFileSync(join(r, "arquivos", "campanhas", "doc_vivo.txt"), "vivo");
+    writeFileSync(join(r, "configuracao", "servidor.json"), JSON.stringify({ cfg: "viva" }));
+    await prepararBanco(dbEm(r));
+    const bk = fazerBackup(r, "bk_rollback");
+    armarFlag(r, bk);
+    const gate = join(r, "gate");
+    mkdirSync(gate, { recursive: true });
+    const env = envRaiz(r, { MESTRE_TRAVA_GATE_DIR: gate });
+
+    // configuracao/ somente-leitura: a aplicação falha ao substituir a
+    // config E o rollback falha ao recolocá-la → ROLLBACK FALHOU.
+    chmodSync(join(r, "configuracao"), 0o555);
+    const r1 = restaurarProc(r, env);
+    try {
+      await esperarCond(() => verificarTravaInstancia(dbEm(r)) === "em_uso");
+      writeFileSync(join(gate, "apos-trava"), "1"); // passa o 1º gate → vai para aplicação
+      // espera o processo chegar ao gate pós-rollback (log ROLLBACK antes dele)
+      const chegou = await esperarCond(() => /ROLLBACK/.test(r1.saida()), 30000, 100);
+      t("rollback executado e processo pausado no gate pós-rollback", chegou, r1.saida().slice(-300));
+
+      // Trava AINDA segurada durante a pausa pós-rollback: 2º restaurador bloqueado
+      t("trava ainda em_uso durante pausa pós-rollback", verificarTravaInstancia(dbEm(r)) === "em_uso");
+      const r3 = restaurarProc(r, env);
+      const fim3 = await Promise.race([
+        r3.fim,
+        new Promise((res) => setTimeout(() => res({ code: "TIMEOUT", saida: "" }), 20000)),
+      ]);
+      t("2ª restauração bloqueada mesmo após falha do 1º", fim3.code === 2, `code=${fim3.code}`);
+
+      writeFileSync(join(gate, "apos-rollback"), "1");
+      const fim1 = await Promise.race([
+        r1.fim,
+        new Promise((res) => setTimeout(() => { try { r1.p.kill("SIGKILL"); } catch { } res({ code: "TIMEOUT", saida: "" }); }, 20000)),
+      ]);
+      t("restaurador sai com erro após rollback falho", fim1.code === 1, `code=${fim1.code}`);
+      t("log confirma ROLLBACK FALHOU", /ROLLBACK FALHOU/.test(fim1.saida), fim1.saida.slice(-300));
+      t("estado anterior preservado em pre_restore_*", readdirSyncSafe(join(r, "backups")).some((f) => f.startsWith("pre_restore_")));
+      t("flag preservada para retry manual", flagPendente(dbEm(r)) !== null);
+      t("trava liberada só após encerramento", verificarTravaInstancia(dbEm(r)) === "livre");
+    } finally {
+      chmodSync(join(r, "configuracao"), 0o755);
+      try { r1.p.kill("SIGKILL"); } catch { }
+    }
   }
 
   sec("Inicialização limpa sem trava prévia");

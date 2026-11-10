@@ -42,8 +42,13 @@ export function getDb(): Db {
 
 /** Fecha a conexão SQLite compartilhada (encerramento gracioso). */
 export function fecharBanco() {
-  liberarTravaInstancia();
-  try { sqliteInstancia?.close(); } catch { }
-  sqliteInstancia = null;
-  instancia = null;
+  // Ordem obrigatória: a conexão operacional fecha PRIMEIRO; a trava só
+  // é liberada depois — nunca com o banco ainda aberto.
+  try {
+    try { sqliteInstancia?.close(); } catch { }
+    sqliteInstancia = null;
+    instancia = null;
+  } finally {
+    liberarTravaInstancia();
+  }
 }
