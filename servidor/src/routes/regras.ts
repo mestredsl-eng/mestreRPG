@@ -566,7 +566,9 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
       }).run();
     }
     if (inseridos + atualizados > 0) {
-      tx.update(ruleSets).set({ version: (regras as { version?: number }).version ?? 1, updatedAt: t })
+      const [rulesetAtual] = tx.select({ version: ruleSets.version }).from(ruleSets)
+        .where(eq(ruleSets.id, regras.ruleSetId!)).all();
+      tx.update(ruleSets).set({ version: (rulesetAtual?.version ?? 1) + 1, updatedAt: t })
         .where(eq(ruleSets.id, regras.ruleSetId!)).run();
     }
     return { inseridos, atualizados, mantidos };
