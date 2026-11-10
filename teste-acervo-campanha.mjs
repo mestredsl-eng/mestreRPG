@@ -51,6 +51,23 @@ try {
   const bookId = criado.json?.livro?.id;
   t("livro criado no acervo", criado.status === 201 && !!bookId, `status=${criado.status} ${JSON.stringify(criado.json).slice(0, 140)}`);
 
+  // Restauração deve usar o estado atual dentro da transação e preservar backup prévio.
+  const metaV2 = await req(BASE, "PATCH", `/biblioteca/livros/${bookId}`, { cookie: cm, body: { titulo: "Bestiário Sintético v2" } });
+  const metaV3 = await req(BASE, "PATCH", `/biblioteca/livros/${bookId}`, { cookie: cm, body: { titulo: "Bestiário Sintético v3" } });
+  const backupsLivro = await req(BASE, "GET", `/biblioteca/livros/${bookId}/backups`, { cookie: cm });
+  const backupV2 = backupsLivro.json?.backups?.find((b) => b.motivo?.includes("antes"));
+  t("duas edições criam backups", metaV2.status === 200 && metaV3.status === 200 && !!backupV2,
+    `v2=${metaV2.status} v3=${metaV3.status} backups=${backupsLivro.json?.backups?.length}`);
+  if (backupV2) {
+    const restaurado = await req(BASE, "POST", `/biblioteca/backups/${backupV2.id}/restaurar`, { cookie: cm, body: {} });
+    const livroRestaurado = await req(BASE, "GET", `/biblioteca/livros/${bookId}`, { cookie: cm });
+    t("restauração do backup retorna 200", restaurado.status === 200 && restaurado.json?.ok === true, `status=${restaurado.status}`);
+    t("restauração recupera metadados da versão anterior", livroRestaurado.json?.livro?.titulo === "Bestiário Sintético v2",
+      `titulo=${livroRestaurado.json?.livro?.titulo}`);
+    const backupsApos = await req(BASE, "GET", `/biblioteca/livros/${bookId}/backups`, { cookie: cm });
+    t("restauração preserva snapshot de segurança do estado v3", (backupsApos.json?.backups ?? []).some((b) => b.motivo?.includes("antes da restauração")));
+  }
+
   // livro com kind fora de TIPOS_REGRA (válido no acervo, incompatível na campanha)
   const incompat = await req(BASE, "POST", "/biblioteca/livros", {
     cookie: cm,
