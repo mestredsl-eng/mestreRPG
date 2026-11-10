@@ -116,6 +116,29 @@ function normalFor(vertices: Vec3[], face: Face): Vec3 {
   return unit(cross(sub(vertices[face[1]], vertices[face[0]]), sub(vertices[face[2]], vertices[face[0]])));
 }
 
+function faceValues(sides: number, vertices: Vec3[], faces: Face[]): number[] {
+  const values = Array(faces.length).fill(0) as number[];
+  if (sides === 4) return faces.map((_, i) => i + 1);
+  const normals = faces.map((face) => normalFor(vertices, face));
+  const pairs: { a: number; b: number; alignment: number }[] = [];
+  for (let a = 0; a < faces.length; a++) for (let b = a + 1; b < faces.length; b++) {
+    pairs.push({ a, b, alignment: dot(normals[a], normals[b]) });
+  }
+  pairs.sort((a, b) => a.alignment - b.alignment);
+  const used = new Set<number>();
+  let low = 1;
+  for (const pair of pairs) {
+    if (pair.alignment > -0.92 || used.has(pair.a) || used.has(pair.b)) continue;
+    values[pair.a] = low;
+    values[pair.b] = sides + 1 - low;
+    used.add(pair.a);
+    used.add(pair.b);
+    low++;
+  }
+  for (let i = 0; i < values.length; i++) if (values[i] === 0) values[i] = i + 1;
+  return values;
+}
+
 export default function Dado3D({ lados, valor, indice = 0, estado, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasUnavailable, setCanvasUnavailable] = useState(false);
@@ -126,7 +149,9 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     if (!canvas || !ctx) { setCanvasUnavailable(true); return; }
     setCanvasUnavailable(false);
     const { vertices, faces } = geometry(lados);
-    const faceIndex = Math.max(0, Math.min(faces.length - 1, Math.round(valor) - 1));
+    const labels = faceValues(lados, vertices, faces);
+    const indexDaFace = labels.indexOf(Math.round(valor));
+    const faceIndex = indexDaFace >= 0 ? indexDaFace : 0;
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
@@ -162,10 +187,26 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       const q = qMultiply(base, tumble);
       ctx.clearRect(0, 0, width, height);
       const size = Math.min(width, height);
+      // Pequena queda com quique amortecido e sombra de contato: movimento
+      // determinístico, apenas visual; não interfere no resultado do servidor.
+      const restante = 1 - eased;
+      const quique = Math.abs(Math.sin(eased * Math.PI * 4)) * restante * 0.085;
+      const elevacao = (restante * 0.105 + quique) * size;
+      const deslocamento = Math.sin(eased * Math.PI * 2 + indice * 0.7) * restante * size * 0.055;
+      ctx.save();
+      ctx.translate(width / 2 + deslocamento, height / 2 + size * 0.29);
+      ctx.globalAlpha = 0.22 + eased * 0.18;
+      ctx.shadowColor = "rgba(0,0,0,.75)";
+      ctx.shadowBlur = 2 + elevacao * 0.35;
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * (0.30 + elevacao / size * 0.35), size * 0.075, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
       const projected = vertices.map((v) => {
         const p = rotate(v, q);
         const perspective = 3.8 / (3.8 - p[2] * 0.22);
-        return [width / 2 + p[0] * size * 0.31 * perspective, height / 2 - p[1] * size * 0.31 * perspective, p[2]] as const;
+        return [width / 2 + deslocamento + p[0] * size * 0.31 * perspective, height / 2 - elevacao - p[1] * size * 0.31 * perspective, p[2]] as const;
       });
       const visible = faces.map((face, i) => {
         const n = rotate(normalFor(vertices, face), q);
@@ -192,15 +233,39 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.lineWidth = Math.max(1, size * 0.018);
         ctx.stroke();
         const center = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length] as number[], [0,0]);
-        const faceValue = item.i + 1;
+        const faceValue = labels[item.i];
+        // Filete interno dá leitura de aresta/bevel sem depender de WebGL.
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          const insetX = center[0] + (pts[i][0] - center[0]) * 0.86;
+          const insetY = center[1] + (pts[i][1] - center[1]) * 0.86;
+          if (i === 0) ctx.moveTo(insetX, insetY);
+          else ctx.lineTo(insetX, insetY);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = "rgba(255,255,255,.19)";
+        ctx.lineWidth = Math.max(0.7, size * 0.012);
+        ctx.stroke();
+
+        const edge = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]];
+        let labelAngle = Math.atan2(edge[1], edge[0]);
+        // Mantém os algarismos legíveis, sem ficarem de cabeça para baixo.
+        if (labelAngle > Math.PI / 2 || labelAngle < -Math.PI / 2) labelAngle += Math.PI;
+        ctx.save();
+        ctx.translate(center[0], center[1]);
+        ctx.rotate(labelAngle);
         ctx.fillStyle = textColor;
         ctx.font = `800 ${Math.max(9, size * (lados === 20 ? 0.13 : 0.16))}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.shadowColor = "rgba(0,0,0,.5)";
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0,0,0,.58)";
+        ctx.lineWidth = Math.max(1.2, size * 0.025);
+        ctx.strokeText(String(faceValue), 0, 0);
+        ctx.shadowColor = "rgba(0,0,0,.45)";
         ctx.shadowBlur = 2;
-        ctx.fillText(String(faceValue), center[0], center[1]);
-        ctx.shadowBlur = 0;
+        ctx.fillText(String(faceValue), 0, 0);
+        ctx.restore();
       }
     };
     const renderFinal = () => render(1);
@@ -211,14 +276,19 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       else finalizado = true;
     };
     raf = requestAnimationFrame(draw);
-    const observer = new ResizeObserver(resize);
+    const observer = new ResizeObserver(() => {
+      resize();
+      // Redimensionar limpa o bitmap interno; redesenha mesmo após a animação.
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(draw);
+    });
     observer.observe(canvas);
     return () => { cancelAnimationFrame(raf); observer.disconnect(); };
   }, [lados, valor, indice, estado]);
 
   return (
     <>
-      <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />
+      <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${canvasUnavailable ? "dado-3d-indisponivel" : ""} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />
       {canvasUnavailable && <span className={`dado-3d-fallback ${className ?? ""}`} title={`d${lados} = ${valor}`}>{valor}</span>}
     </>
   );

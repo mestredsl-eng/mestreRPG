@@ -22,7 +22,7 @@ interface ResultadoD10 {
 
 const MAX_DADOS = 30;
 
-/** D10 animado: sorteia faces até revelar o valor final. */
+/** D10 animado: apresenta o valor final autoritativo recebido do servidor. */
 function D10Face({ valor, indice, minimo }: { valor: number; indice: number; minimo: number }) {
   return (
     <FaceDado
