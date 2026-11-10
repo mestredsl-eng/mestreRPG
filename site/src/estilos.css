@@ -1724,3 +1724,5 @@ code {
   .dado-3d-fallback { width: 28px; height: 28px; }
   .dado-3d-fallback.d10-face { width: 36px; height: 36px; }
 }
+
+.dado-3d-canvas.dado-3d-indisponivel { display: none; }
