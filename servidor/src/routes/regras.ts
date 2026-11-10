@@ -1,8 +1,8 @@
 import { Router } from "express";
-import { and, eq, like, or } from "drizzle-orm";
+import { and, asc, eq, isNull, like, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions } from "../db/schema.js";
+import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions, ruleBooks, ruleBookItems, campaignRuleBooks } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
@@ -395,4 +395,195 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
   const out: Record<string, { key: string; name: string; category: string | null }[]> = {};
   for (const [k, v] of porKind) out[k] = v.sort((a, b) => a.name.localeCompare(b.name));
   res.json({ kinds: TIPOS_REGRA, elementos: out });
+});
+
+
+// ---------- Acervo global aplicado à campanha (snapshot explícito) ----------
+
+/** GET /api/campaigns/:campaignId/regras/acervo — livros disponíveis e versão aplicada. */
+regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
+  const campaignId = req.params.campaignId;
+  const livros = await db.select().from(ruleBooks)
+    .where(isNull(ruleBooks.excluidoEm))
+    .orderBy(asc(ruleBooks.titulo));
+  const vinculos = await db.select().from(campaignRuleBooks)
+    .where(eq(campaignRuleBooks.campaignId, campaignId));
+  const porLivro = new Map(vinculos.map((v) => [v.bookId, v]));
+  const contagens = await db.select().from(ruleBookItems);
+  const totalPorLivro = new Map<string, number>();
+  for (const item of contagens) totalPorLivro.set(item.bookId, (totalPorLivro.get(item.bookId) ?? 0) + 1);
+  res.json({
+    livros: livros.map((b) => {
+      const vinculo = porLivro.get(b.id);
+      return {
+        id: b.id, titulo: b.titulo, descricao: b.descricao, autor: b.autor,
+        sistema: b.sistema, edicao: b.edicao, tipo: b.tipo, versao: b.versao,
+        totalItens: totalPorLivro.get(b.id) ?? 0,
+        aplicado: !!vinculo,
+        versaoAplicada: vinculo?.appliedVersion ?? null,
+        aplicadoEm: vinculo?.appliedAt ?? null,
+        atualizacaoDisponivel: !!vinculo && vinculo.appliedVersion !== b.versao,
+      };
+    }),
+  });
+});
+
+const aplicarLivroSchema = z.object({
+  decisoes: z.record(z.string(), z.enum(["manter_campanha", "usar_livro"])).default({}),
+});
+
+/**
+ * POST /api/campaigns/:campaignId/regras/acervo/:bookId/aplicar
+ * Copia o conteúdo do livro para o ruleset ativo. Conflitos nunca são
+ * sobrescritos sem decisão explícita; itens removidos do livro são preservados.
+ */
+regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req, res) => {
+  const body = aplicarLivroSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Decisões inválidas", detalhes: body.error.issues });
+    return;
+  }
+  const campaignId = req.params.campaignId;
+  const [livro] = await db.select().from(ruleBooks)
+    .where(and(eq(ruleBooks.id, req.params.bookId), isNull(ruleBooks.excluidoEm))).limit(1);
+  if (!livro) {
+    res.status(404).json({ erro: "Livro não encontrado ou excluído do Acervo" });
+    return;
+  }
+  const itens = await db.select().from(ruleBookItems)
+    .where(eq(ruleBookItems.bookId, livro.id))
+    .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key));
+  const incompatíveis = itens.filter((item) => !TIPOS_REGRA.includes(item.kind as (typeof TIPOS_REGRA)[number]));
+  if (incompatíveis.length) {
+    res.status(422).json({
+      erro: "O livro contém tipos que a biblioteca de campanha ainda não suporta",
+      tipos: [...new Set(incompatíveis.map((i) => i.kind))],
+    });
+    return;
+  }
+  const preparados = itens.map((item) => {
+    const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
+    return { item, parsed };
+  });
+  const invalidos = preparados.filter((p) => !p.parsed.success);
+  if (invalidos.length) {
+    res.status(422).json({
+      erro: "O livro contém definições incompatíveis com as regras da campanha",
+      itens: invalidos.map(({ item, parsed }) => ({
+        chave: `${item.kind}:${item.key}`,
+        detalhes: parsed.success ? [] : parsed.error.issues,
+      })),
+    });
+    return;
+  }
+  const regras = await carregarRegras(campaignId);
+  if (!regras.ruleSetId) {
+    res.status(500).json({ erro: "Ruleset não inicializado" });
+    return;
+  }
+  const existentes = await db.select().from(ruleDefinitions)
+    .where(eq(ruleDefinitions.ruleSetId, regras.ruleSetId));
+  const porChave = new Map(existentes.map((e) => [`${e.kind}:${e.key}`, e]));
+  const conflitos = preparados.flatMap(({ item, parsed }) => {
+    if (!parsed.success) return [];
+    const chave = `${item.kind}:${item.key}`;
+    const atual = porChave.get(chave);
+    if (!atual) return [];
+    const candidato = {
+      name: item.name, category: item.category ?? null,
+      parentKey: item.parentKey ?? null, definition: parsed.data,
+    };
+    const atualNormalizado = {
+      name: atual.name, category: atual.category ?? null,
+      parentKey: atual.parentKey ?? null,
+      definition: definicaoElementoSchema.parse(atual.definition ?? {}),
+    };
+    if (JSON.stringify(candidato) === JSON.stringify(atualNormalizado)) return [];
+    return [{
+      chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name,
+      decisao: body.data.decisoes[chave] ?? null,
+    }];
+  });
+  const semDecisao = conflitos.filter((c) => !c.decisao);
+  if (semDecisao.length) {
+    res.status(409).json({
+      erro: "Há elementos com a mesma chave na campanha. Escolha qual versão manter.",
+      detalhes: {
+        conflitos: semDecisao,
+        opcoes: ["manter_campanha", "usar_livro"],
+      },
+    });
+    return;
+  }
+
+  const snapshot = itens.map((item) => ({
+    kind: item.kind, key: item.key, name: item.name,
+    category: item.category ?? null, parentKey: item.parentKey ?? null,
+    definition: item.definition ?? {}, ordem: item.ordem,
+  }));
+  const [vinculoExistente] = await db.select().from(campaignRuleBooks)
+    .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).limit(1);
+  if (vinculoExistente && vinculoExistente.appliedVersion === livro.versao && JSON.stringify(vinculoExistente.snapshot) === JSON.stringify(snapshot)) {
+    res.json({ ok: true, semAlteracao: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos: 0, atualizados: 0, mantidos: 0 });
+    return;
+  }
+  const t = new Date();
+  const resultado = db.transaction((tx) => {
+    const atuais = tx.select().from(ruleDefinitions)
+      .where(eq(ruleDefinitions.ruleSetId, regras.ruleSetId!)).all();
+    const mapa = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
+    let inseridos = 0, atualizados = 0, mantidos = 0;
+    for (const { item, parsed } of preparados) {
+      if (!parsed.success) continue;
+      const chave = `${item.kind}:${item.key}`;
+      const atual = mapa.get(chave);
+      const decisao = body.data.decisoes[chave];
+      const valores = {
+        name: item.name, category: item.category ?? null,
+        parentKey: item.parentKey ?? null, definition: parsed.data, updatedAt: t,
+      };
+      if (!atual) {
+        tx.insert(ruleDefinitions).values({
+          id: crypto.randomUUID(), ruleSetId: regras.ruleSetId!,
+          kind: item.kind, key: item.key, ...valores, createdAt: t,
+        }).run();
+        inseridos++;
+      } else if (decisao === "manter_campanha") {
+        mantidos++;
+      } else {
+        const mudou = atual.name !== valores.name
+          || (atual.category ?? null) !== valores.category
+          || (atual.parentKey ?? null) !== valores.parentKey
+          || JSON.stringify(definicaoElementoSchema.parse(atual.definition ?? {})) !== JSON.stringify(valores.definition);
+        if (mudou) {
+          tx.update(ruleDefinitions).set(valores).where(eq(ruleDefinitions.id, atual.id)).run();
+          atualizados++;
+        }
+      }
+    }
+    const [vinculo] = tx.select().from(campaignRuleBooks)
+      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
+    if (vinculo) {
+      tx.update(campaignRuleBooks).set({
+        appliedVersion: livro.versao, snapshot, appliedAt: t, updatedAt: t,
+      }).where(eq(campaignRuleBooks.id, vinculo.id)).run();
+    } else {
+      tx.insert(campaignRuleBooks).values({
+        id: crypto.randomUUID(), campaignId, bookId: livro.id,
+        appliedVersion: livro.versao, snapshot, appliedAt: t, createdAt: t, updatedAt: t,
+      }).run();
+    }
+    if (inseridos + atualizados > 0) {
+      const [rulesetAtual] = tx.select({ version: ruleSets.version }).from(ruleSets)
+        .where(eq(ruleSets.id, regras.ruleSetId!)).all();
+      tx.update(ruleSets).set({ version: (rulesetAtual?.version ?? 1) + 1, updatedAt: t })
+        .where(eq(ruleSets.id, regras.ruleSetId!)).run();
+    }
+    return { inseridos, atualizados, mantidos };
+  });
+  await audit(req, "biblioteca.livro.aplicado_campanha", {
+    bookId: livro.id, versao: livro.versao, ...resultado,
+  });
+  emitirCampanha(campaignId, "regras:atualizadas", { origem: "acervo", bookId: livro.id });
+  res.json({ ok: true, livroId: livro.id, versaoAplicada: livro.versao, ...resultado });
 });
