@@ -5,6 +5,7 @@ import {
   type ConfigRegras,
   type ElementoRegra,
   type ElementoRegraInput,
+  type LivroAcervoCampanha,
   type PersonagemResumo,
   type RegrasCampanha,
   type ResultadoValidacaoRegras,
@@ -32,7 +33,7 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
 
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
 
-type Aba = "biblioteca" | "pontuacao" | "validacao";
+type Aba = "biblioteca" | "pontuacao" | "validacao" | "acervo";
 
 /** Extrai campo/mensagem dos issues de validação retornados pela API. */
 function mensagemApi(e: unknown, padrao: string): string {
@@ -66,6 +67,9 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [personagemSel, setPersonagemSel] = useState("");
   const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [livrosAcervo, setLivrosAcervo] = useState<LivroAcervoCampanha[]>([]);
+  const [conflitosAcervo, setConflitosAcervo] = useState<{ bookId: string; itens: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] } | null>(null);
+  const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, "manter_campanha" | "usar_livro">>({});
 
   const carregar = useCallback(async () => {
     try {
@@ -173,6 +177,40 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     }
   };
 
+  const carregarAcervo = useCallback(async () => {
+    try {
+      const r = await api.listarAcervoCampanha(campaignId);
+      setLivrosAcervo(r.livros);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao carregar Acervo da campanha");
+    }
+  }, [campaignId]);
+
+  useEffect(() => {
+    if (aba === "acervo") void carregarAcervo();
+  }, [aba, carregarAcervo]);
+
+  const aplicarLivro = async (bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) => {
+    setErro(null);
+    try {
+      const r = await api.aplicarLivroAcervo(campaignId, bookId, decisoes);
+      setConflitosAcervo(null);
+      setDecisoesAcervo({});
+      setAviso("Livro aplicado: " + r.inseridos + " novo(s), " + r.atualizados + " atualizado(s), " + r.mantidos + " mantido(s) da campanha.");
+      await Promise.all([carregarAcervo(), carregar()]);
+    } catch (e) {
+      if (e instanceof ApiError && e.detalhes && typeof e.detalhes === "object") {
+        const d = e.detalhes as { conflitos?: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] };
+        if (Array.isArray(d.conflitos)) {
+          setConflitosAcervo({ bookId, itens: d.conflitos });
+          setDecisoesAcervo({});
+          return;
+        }
+      }
+      setErro(e instanceof Error ? e.message : "Erro ao aplicar livro do Acervo");
+    }
+  };
+
   const carregarPersonagens = async () => {
     try {
       const { personagens } = await api.listarPersonagens(campaignId);
@@ -197,6 +235,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
         <button className={aba === "biblioteca" ? "ativo" : "secundario"} onClick={() => setAba("biblioteca")}>Biblioteca</button>
         <button className={aba === "pontuacao" ? "ativo" : "secundario"} onClick={() => setAba("pontuacao")}>Pontuação</button>
         <button className={aba === "validacao" ? "ativo" : "secundario"} onClick={() => { setAba("validacao"); void carregarPersonagens(); }}>Validação de fichas</button>
+        <button className={aba === "acervo" ? "ativo" : "secundario"} onClick={() => setAba("acervo")}>Acervo</button>
       </div>
 
       {erro && <div className="erro">{erro}</div>}
@@ -243,6 +282,73 @@ export default function Regras({ campaignId }: { campaignId: string }) {
             </div>
           ))}
           {!elementosFiltrados.length && <p className="dica">Nenhum elemento encontrado. Use "Carregar biblioteca inicial" ou crie um novo.</p>}
+        </div>
+      )}
+
+      {aba === "acervo" && (
+        <div>
+          <p className="dica">Aplique livros e suplementos do Acervo global nesta campanha. O conteúdo vira uma cópia independente: mudanças futuras no Acervo não alteram a campanha sozinhas.</p>
+          <div className="linha-ferramentas">
+            <button className="secundario" onClick={() => void carregarAcervo()}>Atualizar lista</button>
+          </div>
+          {livrosAcervo.map((livro) => (
+            <div className="elemento" key={livro.id}>
+              <div className="elemento-info">
+                <strong>{livro.titulo}</strong>
+                <span className="tag">{livro.tipo === "suplemento" ? "Suplemento" : "Livro"}</span>
+                <span className="tag">v{livro.versao}</span>
+                <span className="tag">{livro.totalItens} itens</span>
+                {livro.aplicado && <span className="tag">Aplicado v{livro.versaoAplicada}</span>}
+                {livro.atualizacaoDisponivel && <span className="tag">Atualização disponível</span>}
+                {livro.sistema && <span className="dica">{livro.sistema}</span>}
+                {livro.descricao && <span className="dica">{livro.descricao}</span>}
+              </div>
+              <div className="elemento-acoes">
+                <button className="mini" onClick={() => void aplicarLivro(livro.id)}>
+                  {livro.aplicado ? "Revisar / reaplicar" : "Aplicar à campanha"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {!livrosAcervo.length && <p className="dica">Nenhum livro ativo no Acervo. Cadastre ou importe livros na Biblioteca global.</p>}
+          {conflitosAcervo && (
+            <section className="cartao">
+              <h4>Conflitos encontrados — escolha o que deve prevalecer</h4>
+              <p className="dica">Nenhuma alteração foi gravada ainda. Para cada chave repetida, escolha manter a regra da campanha ou substituí-la pela versão do livro.</p>
+              {conflitosAcervo.itens.map((item) => (
+                <div className="linha-ferramentas" key={item.chave}>
+                  <div>
+                    <strong>{item.chave}</strong>
+                    <div className="dica">Campanha: {item.nomeNaCampanha} · Livro: {item.nomeNoLivro}</div>
+                  </div>
+                  <select
+                    value={decisoesAcervo[item.chave] ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value as "" | "manter_campanha" | "usar_livro";
+                      setDecisoesAcervo((atual) => {
+                        const novo = { ...atual };
+                        if (v) novo[item.chave] = v;
+                        else delete novo[item.chave];
+                        return novo;
+                      });
+                    }}
+                  >
+                    <option value="">Escolha...</option>
+                    <option value="manter_campanha">Manter campanha</option>
+                    <option value="usar_livro">Usar livro</option>
+                  </select>
+                </div>
+              ))}
+              <div className="linha">
+                <button
+                  className="primario"
+                  disabled={conflitosAcervo.itens.some((i) => !decisoesAcervo[i.chave])}
+                  onClick={() => void aplicarLivro(conflitosAcervo.bookId, decisoesAcervo)}
+                >Confirmar aplicação</button>
+                <button className="secundario" onClick={() => { setConflitosAcervo(null); setDecisoesAcervo({}); }}>Cancelar</button>
+              </div>
+            </section>
+          )}
         </div>
       )}
 
