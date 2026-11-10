@@ -758,6 +758,19 @@ patrimonioRouter.patch("/financeiro/contas/:contaId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [conta] = await db.select().from(financialAccounts).where(and(eq(financialAccounts.id, req.params.contaId), eq(financialAccounts.characterId, a.personagem.id))).limit(1);
   if (!conta) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+  if (body.data.currency !== undefined) {
+    const config = await configPatrimonio(a.personagem.campaignId);
+    const moedaPermitida = body.data.currency === config.financeiro.moedaPrincipal
+      || config.financeiro.moedas.some((m) => m.codigo === body.data.currency);
+    if (!moedaPermitida) {
+      res.status(400).json({ erro: `Moeda "${body.data.currency}" não configurada na campanha` });
+      return;
+    }
+    if (body.data.currency !== conta.currency) {
+      res.status(400).json({ erro: "A moeda de uma conta não pode ser alterada após a criação. Crie outra conta na moeda desejada para preservar o saldo e o histórico." });
+      return;
+    }
+  }
   // Jogador só edita metadados da própria conta; limite de crédito só mestre
   const dados = somenteEnviados(body.data, req.body) as Record<string, unknown>;
   if (!a.ehMestre) delete dados.creditLimitReais;
