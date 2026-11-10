@@ -688,7 +688,11 @@ function socket_handlers(
           break;
         }
         case "reiniciar": {
-          const dur = (atual.totalMs ?? (payload.duracaoSegundos ?? 300) * 1000);
+          const segundos = Math.min(
+            Math.max(1, payload.duracaoSegundos ?? (atual.totalMs ? Math.ceil(atual.totalMs / 1000) : 300)),
+            86400,
+          );
+          const dur = segundos * 1000;
           novo = { status: "rodando", endsAt: agora + dur, remainingMs: dur, totalMs: dur };
           break;
         }
