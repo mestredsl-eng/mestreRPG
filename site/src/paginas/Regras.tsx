@@ -267,8 +267,8 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       const progresso = criados || atualizados || configImportada
         ? ` Importação parcial: ${criados} adicionados, ${atualizados} atualizados${configImportada ? " e configuração aplicada" : ""}.`
         : "";
-      setErro(detalhe + progresso);
       if (criados || atualizados || configImportada) await carregar();
+      setErro(detalhe + progresso);
     } finally {
       setOcupado(false);
     }
