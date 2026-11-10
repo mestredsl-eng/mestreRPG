@@ -415,6 +415,114 @@ try {
     t("tabela nova presente no banco revertido", temTabelaDb(dbPath(r13), TABELA_NOVA));
   }
 
+  // ===== 15. snapshot fiel: backup sem arquivos/ =====
+  sec("Backup válido SEM arquivos/ — vivo fica sem arquivos (A)");
+  {
+    const r15 = join(RAIZ, "sem_arq");
+    mkdirSync(join(r15, "banco"), { recursive: true });
+    migrar(r15);
+    mkdirSync(arqPath(r15), { recursive: true });
+    writeFileSync(join(arqPath(r15), "doc_vivo.txt"), "posterior-ao-backup");
+    const bk = fazerBackup(r15, "bk_sem_arq", { semArq: true });
+    armarFlag(r15, bk);
+    const rest = restaurar(r15);
+    t("restaurador → exit 0", rest.code === 0, rest.saida.slice(-300));
+    t("doc_vivo.txt NÃO permanece (snapshot sem arquivos)", !existsSync(join(arqPath(r15), "doc_vivo.txt")));
+    t("diretório de arquivos ausente ou vazio", !existsSync(arqPath(r15)) || readdirSync(arqPath(r15)).length === 0);
+    t("config do backup aplicada", estadoVivo(r15).cfgBackup === true);
+  }
+
+  // ===== 16. snapshot fiel: backup sem configuracao/ =====
+  sec("Backup válido SEM configuracao/ — vivo fica sem config (B)");
+  {
+    const r16 = join(RAIZ, "sem_cfg");
+    mkdirSync(join(r16, "banco"), { recursive: true });
+    migrar(r16);
+    mkdirSync(join(r16, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(r16), JSON.stringify({ posterior: true }));
+    const bk = fazerBackup(r16, "bk_sem_cfg", { semCfg: true });
+    armarFlag(r16, bk);
+    const rest = restaurar(r16);
+    t("restaurador → exit 0", rest.code === 0, rest.saida.slice(-300));
+    t("configuração viva REMOVIDA", !existsSync(cfgPath(r16)));
+    t("arquivos do backup aplicados", estadoVivo(r16).arqDocBk === true);
+  }
+
+  // ===== 17. snapshot fiel: backup sem ambos =====
+  sec("Backup SEM arquivos e SEM config — nada posterior sobrevive (C)");
+  {
+    const r17 = join(RAIZ, "sem_ambos");
+    mkdirSync(join(r17, "banco"), { recursive: true });
+    migrar(r17);
+    mkdirSync(arqPath(r17), { recursive: true });
+    writeFileSync(join(arqPath(r17), "doc_vivo.txt"), "vivo");
+    mkdirSync(join(r17, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(r17), JSON.stringify({ posterior: true }));
+    const bk = fazerBackup(r17, "bk_vazio", { semArq: true, semCfg: true });
+    armarFlag(r17, bk);
+    const rest = restaurar(r17);
+    t("restaurador → exit 0", rest.code === 0, rest.saida.slice(-300));
+    const st = estadoVivo(r17);
+    t("sem doc_vivo nem doc_bk", !existsSync(join(arqPath(r17), "doc_vivo.txt")) && !st.arqDocBk);
+    t("sem configuração viva", !st.cfgExiste);
+    t("flag limpa e schema do backup", st.flag === null && st.tabelaNova === true);
+  }
+
+  // ===== 18. rollback após remoção de arquivos+config =====
+  sec("Rollback após remoção — estado anterior volta integralmente (D)");
+  {
+    const r18 = join(RAIZ, "rollback_vazio");
+    mkdirSync(join(r18, "banco"), { recursive: true });
+    migrar(r18);
+    mkdirSync(arqPath(r18), { recursive: true });
+    writeFileSync(join(arqPath(r18), "doc_vivo.txt"), "vivo");
+    mkdirSync(join(r18, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(r18), JSON.stringify({ atual: true }));
+    const bk = fazerBackup(r18, "bk_vazio_falha", { semArq: true, semCfg: true });
+    // sabotagem: backup sem server_settings → apply remove arquivos+config,
+    // copia banco e falha na limpeza da flag → rollback deve restaurar TUDO.
+    {
+      const d = abrirDb(join(bk, "mestre-rpg.db"));
+      d.exec("drop table server_settings");
+      d.close();
+    }
+    armarFlag(r18, bk);
+    const rest = restaurar(r18);
+    t("restaurador com falha na flag → exit != 0", rest.code !== 0, `code=${rest.code}`);
+    const st = estadoVivo(r18);
+    t("banco revertido (tabela nova + flag)", st.tabelaNova === true && !!st.flag);
+    t("doc_vivo.txt restaurado", readFileSync(join(arqPath(r18), "doc_vivo.txt"), "utf8") === "vivo");
+    t("doc_bk.txt ausente (nada do backup ficou)", !st.arqDocBk);
+    t("configuração anterior restaurada", st.cfgExiste && JSON.parse(readFileSync(cfgPath(r18), "utf8")).atual === true);
+  }
+
+  // ===== 19. backup inválido: tipos errados =====
+  sec("Backup inválido — arquivos como arquivo / config como diretório (E)");
+  {
+    const r19 = join(RAIZ, "tipos_errados");
+    mkdirSync(join(r19, "banco"), { recursive: true });
+    migrar(r19);
+    mkdirSync(arqPath(r19), { recursive: true });
+    writeFileSync(join(arqPath(r19), "doc_vivo.txt"), "vivo");
+    mkdirSync(join(r19, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(r19), JSON.stringify({ atual: true }));
+    const bk = fazerBackup(r19, "bk_tipos");
+    // sabotagem 1: backup/arquivos vira ARQUIVO
+    rmSync(join(bk, "arquivos"), { recursive: true, force: true });
+    writeFileSync(join(bk, "arquivos"), "nao-e-pasta");
+    // sabotagem 2: backup/configuracao/servidor.json vira DIRETÓRIO
+    rmSync(join(bk, "configuracao", "servidor.json"));
+    mkdirSync(join(bk, "configuracao", "servidor.json"));
+    armarFlag(r19, bk);
+    const rest = restaurar(r19);
+    t("restaurador com tipos inválidos → exit != 0", rest.code !== 0, `code=${rest.code}`);
+    const st = estadoVivo(r19);
+    t("estado anterior intacto: banco+flag", st.tabelaNova === true && !!st.flag);
+    t("doc_vivo.txt intacto", readFileSync(join(arqPath(r19), "doc_vivo.txt"), "utf8") === "vivo");
+    t("configuração intacta", st.cfgExiste && JSON.parse(readFileSync(cfgPath(r19), "utf8")).atual === true);
+    t("sem conteúdo parcial do backup", !st.arqDocBk && !st.cfgBackup);
+  }
+
   // ===== 14. MESTRE_HOME inexistente =====
   sec("MESTRE_HOME que ainda não existe — primeira inicialização real");
   {

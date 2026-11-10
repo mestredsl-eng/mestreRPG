@@ -154,15 +154,18 @@ async function principal() {
       const bkSide = join(backupDir, `mestre-rpg.db${suf}`);
       if (existsSync(bkSide)) copyFileSync(bkSide, DB_VIVA + suf);
     }
+    // Snapshot fiel: o destino vivo passa a ser EXATAMENTE o que o backup
+    // contém — se o backup não tem 'arquivos', o vivo fica sem arquivos;
+    // se não tem config, o vivo fica sem config (servidor usa os defaults).
     const dirArqBackup = join(backupDir, "arquivos");
-    if (existsSync(dirArqBackup)) {
-      if (!statSync(dirArqBackup).isDirectory()) throw new Error("backup/arquivos não é um diretório");
-      // substituição completa (backup espelha o conteúdo de DIR_ARQUIVOS):
-      // mesclar deixaria arquivos criados após o backup — estado misto.
-      rmSync(DIR_ARQUIVOS, { recursive: true, force: true });
-      cpSync(dirArqBackup, DIR_ARQUIVOS, { recursive: true });
-    }
+    if (existsSync(dirArqBackup) && !statSync(dirArqBackup).isDirectory())
+      throw new Error("backup/arquivos não é um diretório");
+    rmSync(DIR_ARQUIVOS, { recursive: true, force: true });
+    if (existsSync(dirArqBackup)) cpSync(dirArqBackup, DIR_ARQUIVOS, { recursive: true });
     const cfgBackup = join(backupDir, "configuracao", "servidor.json");
+    if (existsSync(cfgBackup) && !statSync(cfgBackup).isFile())
+      throw new Error("backup/configuracao/servidor.json não é um arquivo");
+    rmSync(ARQ_CFG, { force: true });
     if (existsSync(cfgBackup)) {
       mkdirSync(dirname(ARQ_CFG), { recursive: true });
       copyFileSync(cfgBackup, ARQ_CFG);
