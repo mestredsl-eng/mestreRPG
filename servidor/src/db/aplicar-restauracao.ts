@@ -15,6 +15,7 @@ import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, re
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
+import { verificarTravaInstancia } from "./trava-instancia.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.MESTRE_HOME ?? resolve(__dirname, "..", "..", "..");
@@ -242,10 +243,27 @@ async function principal() {
     process.exit(2);
   }
 
-  // 3) fail-safe: o banco vivo não pode estar aberto por outro processo
-  //    E a verificação precisa ter sido concluída. "indeterminado" aborta
-  //    igual a "em_uso" — falha de inspeção nunca autoriza a escrita.
-  //    Nada foi tocado: a flag fica para retry.
+  // 3) exclusividade REAL antes de qualquer escrita: a trava de
+  //    instância é o mecanismo autoritativo — o servidor a detém enquanto
+  //    usa o banco e o SO a libera na morte do processo (sem PID file,
+  //    sem reúso de PID, igual em Windows e Linux). "em_uso" e
+  //    "indeterminado" abortam: falha de verificação nunca autoriza.
+  //    A varredura de /proc abaixo permanece como diagnóstico
+  //    complementar para clientes estranhos ao servidor.
+  const trava = verificarTravaInstancia(DB_VIVA);
+  if (trava === "em_uso") {
+    log("ERRO: trava de instância detida — há um servidor Mestre RPG ativo neste banco. Nada foi alterado; flag preservada para retry.");
+    process.exit(2);
+  }
+  if (trava === "indeterminado") {
+    log("ERRO: verificação da trava de instância inconclusiva — restauração abortada por segurança antes de qualquer escrita; flag preservada para retry.");
+    process.exit(2);
+  }
+
+  // 3b) diagnóstico complementar: banco aberto por processo estranho
+  //     ao servidor (cliente SQLite direto). Fail-safe onde o procfs
+  //     permite inspeção; processos que o kernel torna invisíveis são
+  //     contados no log — a garantia de exclusividade é a trava acima.
   const verif = verificarBancoEmUso();
   if (verif.status === "em_uso") {
     log(`ERRO: banco em uso por pid ${verif.pid} — restauração exige o servidor parado. Nada foi alterado; flag preservada para retry.`);

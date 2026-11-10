@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import * as schema from "./schema.js";
+import { adquirirTravaInstancia, liberarTravaInstancia } from "./trava-instancia.js";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,12 +30,19 @@ let instancia: Db | null = null;
 let sqliteInstancia: Database.Database | null = null;
 /** Instância única do banco para toda a aplicação. */
 export function getDb(): Db {
-  if (!instancia) instancia = criarBanco(CAMINHOS.banco);
+  if (!instancia) {
+    // Trava de instância ANTES da conexão operacional: se outra instância
+    // já detém o banco, esta aborta aqui — antes de aceitar qualquer
+    // tráfego. O lock é do SO e morre com o processo (sem PID file).
+    adquirirTravaInstancia(CAMINHOS.banco);
+    instancia = criarBanco(CAMINHOS.banco);
+  }
   return instancia;
 }
 
 /** Fecha a conexão SQLite compartilhada (encerramento gracioso). */
 export function fecharBanco() {
+  liberarTravaInstancia();
   try { sqliteInstancia?.close(); } catch { }
   sqliteInstancia = null;
   instancia = null;

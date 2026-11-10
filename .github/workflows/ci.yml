@@ -33,6 +33,7 @@ jobs:
             teste-acervo-diff.mjs \
             teste-fisica-dados.mjs \
             teste-restauracao-boot.mjs \
+            teste-trava-instancia.mjs \
             teste-atualizacao-instalacao.mjs \
             teste-docs-operacao.mjs \
             homologacao-etapa2.mjs \
