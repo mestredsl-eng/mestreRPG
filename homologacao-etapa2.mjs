@@ -133,6 +133,24 @@ try {
     t("jogador2 não altera HP alheio", negado.status === 403 || negado.status === 404, `status=${negado.status}`);
   }
 
+  // ===== 3b. PATCH genérico concorrente com HP =====
+  sec("Concorrência entre edição da ficha e HP");
+  {
+    const [patch, dano] = await Promise.all([
+      req(BASE, "PATCH", `/characters/${ids.charJ1}`, {
+        cookie: cj1, body: { name: "Jogador Um atualizado" },
+      }),
+      req(BASE, "POST", `/characters/${ids.charJ1}/hp`, {
+        cookie: cj1, body: { acao: "dano", quantidade: 5, motivo: "Teste de concorrência" },
+      }),
+    ]);
+    t("PATCH genérico conclui ou acusa conflito recuperável → 200/409", patch.status === 200 || patch.status === 409, `status=${patch.status}`);
+    t("dano concorrente é persistido → 200", dano.status === 200, `status=${dano.status}`);
+    const final = (await req(BASE, "GET", `/characters/${ids.charJ1}`, { cookie: cj1 })).json;
+    t("nome editado não é perdido", final?.name === "Jogador Um atualizado", `nome=${final?.name}`);
+    t("HP preserva o dano concorrente (125→120)", final?.ficha?.vida?.hp?.atual === 120, `hp=${final?.ficha?.vida?.hp?.atual}`);
+  }
+
   // ===== 4. Vitalidade com motivo =====
   sec("Vitalidade e motivo");
   {
