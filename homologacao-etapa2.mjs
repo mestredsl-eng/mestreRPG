@@ -216,7 +216,7 @@ try {
     proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     const ficha = (await req(BASE, "GET", `/characters/${ids.charJ1}`, { cookie: cj1 })).json?.ficha;
-    t("HP persiste (130)", ficha?.vida?.hp?.atual === 130, `atual=${ficha?.vida?.hp?.atual}`);
+    t("HP persiste (125 — dano concorrente preservado)", ficha?.vida?.hp?.atual === 125, `atual=${ficha?.vida?.hp?.atual}`);
     t("histórico HP persiste", (ficha?.vida?.hp?.historico?.length ?? 0) >= 2);
     const inv = (await req(BASE, "GET", `/characters/${ids.charJ1}/inventario`, { cookie: cj1 })).json?.itens ?? [];
     t("inventário persiste (Espada=3, Poção=1)", inv.find((i) => i.name === "Espada")?.quantity === 3 && inv.find((i) => i.name === "Poção")?.quantity === 1, JSON.stringify(inv.map((i) => [i.name, i.quantity])));
