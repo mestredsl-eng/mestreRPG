@@ -464,8 +464,17 @@ async function processarEnvelope(body: unknown): Promise<{ ok: true; livros: Liv
     if (dup) return { ok: false, erro: `Livro "${livro.titulo}": item duplicado ${dup}` };
   }
   const livros: LivroProcessado[] = [];
+  const destinos = new Set<string>();
   for (const entrada of parsed.data.livros) {
     const { book, itensDb } = await resolverLivro(entrada);
+    // O mesmo livro não pode aparecer duas vezes no envelope: além de gerar
+    // snapshots redundantes, as duas aplicações partiriam da mesma versão
+    // e poderiam sobrescrever uma à outra dentro da mesma transação.
+    const destino = book ? `id:${book.id}` : `novo:${normTitulo(entrada.titulo)}`;
+    if (destinos.has(destino)) {
+      return { ok: false, erro: `Livro duplicado no envelope: "${entrada.titulo}"` };
+    }
+    destinos.add(destino);
     livros.push({ entrada, existente: book, itensDb, diff: diffLivro(entrada, book, itensDb) });
   }
   return { ok: true, livros };
@@ -540,8 +549,6 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
   }
   const bid = bookId; // narrowing de `let` não sobrevive a closures
 
-  // Conjunto de conflitos (itens que divergem do banco).
-  const conflitos = new Set(p.diff.itensAlterados.map((i) => chaveConflito(i.kind, i.key)));
   const mapaDb = new Map(p.itensDb.map((i) => [chaveConflito(i.kind, i.key), i]));
 
   // Metadados: só com decisão explícita "atualizar" E diferença real.

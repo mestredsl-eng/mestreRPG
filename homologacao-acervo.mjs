@@ -193,6 +193,29 @@ try {
   ok("5d. reimportação idempotente: 0 novos/0 alterados", prevRe?.resumo?.itensNovos === 0 && prevRe?.resumo?.itensAlterados === 0 && prevRe?.resumo?.itensIdenticos === 6,
     JSON.stringify(prevRe?.resumo));
 
+  // 5e) confirmar uma importação idêntica não cria backup nem avança versão.
+  const backupsNoOpAntes = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const versaoNoOpAntes = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  r = await apiM("POST", "/api/biblioteca/importar/confirmar", {
+    envelope: envRe,
+    decisoes: { decisoes: [{ indice: 0, metadados: "atualizar", itens: {} }] },
+  });
+  const backupsNoOpDepois = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const versaoNoOpDepois = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  ok("5e. importação idêntica não cria backup", r.status === 200 && backupsNoOpDepois === backupsNoOpAntes,
+    `backups=${backupsNoOpAntes} -> ${backupsNoOpDepois}`);
+  ok("5f. importação idêntica não avança versão", versaoNoOpDepois === versaoNoOpAntes,
+    `versão=${versaoNoOpAntes} -> ${versaoNoOpDepois}`);
+
+  // 5g) duas entradas que resolvem para o mesmo livro devem ser rejeitadas.
+  const mesmoLivroSemId = JSON.parse(JSON.stringify(envRe.livros[0]));
+  delete mesmoLivroSemId.id;
+  r = await apiM("POST", "/api/biblioteca/importar/previa", envelopeDe([
+    JSON.parse(JSON.stringify(envRe.livros[0])), mesmoLivroSemId,
+  ]));
+  ok("5g. prévia rejeita livro repetido por ID/título", r.status === 400 && /duplicado/i.test(r.json?.erro ?? ""),
+    `status=${r.status} erro=${r.json?.erro ?? ""}`);
+
   // ---------- 6-10) prévia, merge e conflitos ----------
   // envelope de atualização do livro A: 1 item alterado, 1 novo, 1 ausente (forca fica de fora)
   const livroAAtual = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json;
@@ -268,9 +291,12 @@ try {
     ok("14. restaurar backup", false, "sem backup para restaurar");
   }
 
-  // ---------- 15) rollback em falha ----------
-  // dois livros do envelope apontam para o MESMO bookId e inserem o mesmo
-  // kind:key -> UNIQUE estoura na 2ª inserção -> rollback integral.
+  // ---------- 15) conflito interno no envelope ----------
+  // dois livros do envelope apontam para o MESMO bookId. Antes isso estourava
+  // UNIQUE no meio da transação (500 + rollback); agora a validação do
+  // envelope rejeita livros duplicados por id/título normalizado com 400,
+  // antes de qualquer escrita — proteção mais forte, mesmo invariante:
+  // nada pode ser gravado parcialmente.
   const envRollback = {
     formato: FORMATO, versao: 1,
     livros: [
@@ -281,7 +307,7 @@ try {
   const totalItensCopiaAntes = (await apiM("GET", `/api/biblioteca/livros/${idCopia}`)).json.itens.length;
   const backupsCopiaAntes = (await apiM("GET", `/api/biblioteca/livros/${idCopia}/backups`)).json.backups.length;
   r = await apiM("POST", "/api/biblioteca/importar/confirmar", { envelope: envRollback, decisoes: { decisoes: [] } });
-  ok("15. importação com conflito interno falha", r.status === 500, `status=${r.status}`);
+  ok("15. livro duplicado no envelope rejeitado", r.status === 400, `status=${r.status}`);
   const copiaApos = (await apiM("GET", `/api/biblioteca/livros/${idCopia}`)).json;
   ok("15b. rollback: nenhum item parcial gravado", copiaApos.itens.length === totalItensCopiaAntes && !copiaApos.itens.some((i) => i.key === "dup"),
     `itens=${copiaApos.itens.length} vs ${totalItensCopiaAntes}`);
