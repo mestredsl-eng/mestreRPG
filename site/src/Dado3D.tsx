@@ -116,6 +116,29 @@ function normalFor(vertices: Vec3[], face: Face): Vec3 {
   return unit(cross(sub(vertices[face[1]], vertices[face[0]]), sub(vertices[face[2]], vertices[face[0]])));
 }
 
+function faceValues(sides: number, vertices: Vec3[], faces: Face[]): number[] {
+  const values = Array(faces.length).fill(0) as number[];
+  if (sides === 4) return faces.map((_, i) => i + 1);
+  const normals = faces.map((face) => normalFor(vertices, face));
+  const pairs: { a: number; b: number; alignment: number }[] = [];
+  for (let a = 0; a < faces.length; a++) for (let b = a + 1; b < faces.length; b++) {
+    pairs.push({ a, b, alignment: dot(normals[a], normals[b]) });
+  }
+  pairs.sort((a, b) => a.alignment - b.alignment);
+  const used = new Set<number>();
+  let low = 1;
+  for (const pair of pairs) {
+    if (pair.alignment > -0.92 || used.has(pair.a) || used.has(pair.b)) continue;
+    values[pair.a] = low;
+    values[pair.b] = sides + 1 - low;
+    used.add(pair.a);
+    used.add(pair.b);
+    low++;
+  }
+  for (let i = 0; i < values.length; i++) if (values[i] === 0) values[i] = i + 1;
+  return values;
+}
+
 export default function Dado3D({ lados, valor, indice = 0, estado, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasUnavailable, setCanvasUnavailable] = useState(false);
@@ -126,7 +149,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     if (!canvas || !ctx) { setCanvasUnavailable(true); return; }
     setCanvasUnavailable(false);
     const { vertices, faces } = geometry(lados);
-    const faceIndex = Math.max(0, Math.min(faces.length - 1, Math.round(valor) - 1));
+    const labels = faceValues(lados, vertices, faces);\n    const faceIndex = Math.max(0, labels.indexOf(Math.round(valor)));
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
@@ -187,7 +210,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.lineWidth = Math.max(1, size * 0.018);
         ctx.stroke();
         const center = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length] as number[], [0,0]);
-        const faceValue = item.i + 1;
+        const faceValue = labels[item.i];
         ctx.fillStyle = text;
         ctx.font = `800 ${Math.max(9, size * (lados === 20 ? 0.13 : 0.16))}px system-ui, sans-serif`;
         ctx.textAlign = "center";
