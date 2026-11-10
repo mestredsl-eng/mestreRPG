@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
@@ -956,45 +956,65 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   const cents = paraCentavos(body.data.valor, casas);
   const isCompra = body.data.tipo === "compra";
   const sinal = isCompra ? -1 : 1;
-  const novoSaldo = conta.balanceCents + sinal * cents;
-  const piso = cfg.permitirSaldoNegativo ? -Infinity : -(conta.type === "cartao_credito" ? (conta.creditLimitCents ?? 0) : 0);
-  if (novoSaldo < piso) {
-    res.status(400).json({ erro: "Saldo insuficiente" }); return;
-  }
 
-  let itemAlvo: typeof inventoryEntries.$inferSelect | null = null;
+  // Pré-leitura apenas para erros amigáveis (404/400). A validação
+  // autoritativa de saldo e estoque acontece DENTRO da transação.
   if (!isCompra) {
     if (!body.data.itemId) { res.status(400).json({ erro: "Venda requer itemId" }); return; }
     const [it] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, body.data.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
     if (!it) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-    const quantidadeVenda = body.data.quantidade ?? it.quantity;
-    if (quantidadeVenda > it.quantity) {
+    if ((body.data.quantidade ?? it.quantity) > it.quantity) {
       res.status(400).json({ erro: `Quantidade indisponível (estoque: ${it.quantity})` });
       return;
     }
-    itemAlvo = it;
   } else if (!body.data.item) {
     res.status(400).json({ erro: "Compra requer dados do item" }); return;
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const agora = new Date();
+  let novoSaldo = 0;
+  let saldoInsuficiente = false;
+  let estoqueInsuficiente = false;
   try {
     db.transaction((tx) => {
-      // 1) movimentação financeira
+      // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
+      // valor atual, nunca sobre leitura anterior (evita lost update).
+      const [contaTx] = tx.select().from(financialAccounts)
+        .where(and(eq(financialAccounts.id, body.data.accountId), eq(financialAccounts.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!contaTx) throw new Error("conta_sumiu");
+      const saldoNovo = contaTx.balanceCents + sinal * cents;
+      const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
+      if (saldoNovo < piso) { saldoInsuficiente = true; return; }
+
+      // 2) Re-lê o item dentro da transação (venda): estoque atual.
+      let itemTx: typeof inventoryEntries.$inferSelect | null = null;
+      let qtdVenda = 0;
+      if (!isCompra) {
+        const [it] = tx.select().from(inventoryEntries)
+          .where(and(eq(inventoryEntries.id, body.data.itemId!), eq(inventoryEntries.characterId, a.personagem.id)))
+          .limit(1).all();
+        if (!it) throw new Error("item_sumiu");
+        qtdVenda = body.data.quantidade ?? it.quantity;
+        if (qtdVenda > it.quantity) { estoqueInsuficiente = true; return; }
+        itemTx = it;
+      }
+
+      // 3) Movimentação financeira (requestId → idempotência por UNIQUE)
       tx.insert(moneyTransactions).values({
         id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: isCompra ? "compra" : "venda",
-        amount: (sinal * cents) / 100, currency: conta.currency, account: conta.type,
-        accountId: conta.id, amountCents: sinal * cents,
-        balanceBeforeCents: conta.balanceCents, balanceAfterCents: novoSaldo,
+        amount: (sinal * cents) / 100, currency: contaTx.currency, account: contaTx.type,
+        accountId: contaTx.id, amountCents: sinal * cents,
+        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
         counterparty: body.data.contraparte ?? null,
         description: body.data.descricao ?? (isCompra ? "Compra" : "Venda"),
         requestId, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoSaldo, updatedAt: agora }).where(eq(financialAccounts.id, conta.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
 
-      // 2) inventário
+      // 4) Inventário
       if (isCompra && body.data.item) {
         const qtd = body.data.quantidade ?? body.data.item.quantity ?? 1;
         tx.insert(inventoryEntries).values({
@@ -1005,18 +1025,39 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           data: { ...body.data.item.data, valueCents: cents, origem: "compra" },
           createdAt: agora, updatedAt: agora,
         }).run();
-      } else if (itemAlvo) {
-        const qtd = body.data.quantidade ?? itemAlvo.quantity;
-        if (qtd >= itemAlvo.quantity) {
-          tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemAlvo.id)).run();
+      } else if (itemTx) {
+        // Baixa condicional: só afeta linhas se o estoque atual ainda
+        // comportar a quantidade — changes===0 indica corrida perdida.
+        if (qtdVenda >= itemTx.quantity) {
+          const del = tx.delete(inventoryEntries)
+            .where(and(eq(inventoryEntries.id, itemTx.id), eq(inventoryEntries.quantity, itemTx.quantity)))
+            .run();
+          if (del.changes !== 1) throw new Error("estoque_mudou");
         } else {
-          tx.update(inventoryEntries).set({ quantity: itemAlvo.quantity - qtd, updatedAt: agora }).where(eq(inventoryEntries.id, itemAlvo.id)).run();
+          const upd = tx.update(inventoryEntries)
+            .set({ quantity: sql`${inventoryEntries.quantity} - ${qtdVenda}`, updatedAt: agora })
+            .where(and(eq(inventoryEntries.id, itemTx.id), gte(inventoryEntries.quantity, qtdVenda)))
+            .run();
+          if (upd.changes !== 1) throw new Error("estoque_mudou");
         }
       }
+      novoSaldo = saldoNovo;
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada" }); return; }
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada" }); return; }
+    if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+    if (msg.includes("item_sumiu")) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+    if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
+  }
+  if (saldoInsuficiente) {
+    res.status(400).json({ erro: "Saldo insuficiente" });
+    return;
+  }
+  if (estoqueInsuficiente) {
+    res.status(400).json({ erro: "Quantidade indisponível no estoque" });
+    return;
   }
   await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents });
   emitir(a.personagem);
