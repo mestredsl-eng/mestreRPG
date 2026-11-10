@@ -272,10 +272,8 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-  if (dadosItem.transferable === false && !a.ehMestre) {
-    res.status(403).json({ erro: "Este item não pode ser transferido" }); return;
-  }
+  // A política de transferência é revalidada sobre o registro lido
+  // dentro da transação; não confiar no snapshot anterior à transação.
   const [destino] = await db.select().from(characters).where(eq(characters.id, body.data.destinoCharacterId)).limit(1);
   if (!destino || destino.campaignId !== a.personagem.campaignId || destino.id === a.personagem.id) {
     res.status(400).json({ erro: "Destino inválido" }); return;
@@ -285,12 +283,14 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   // Releitura do item, verificação de vínculos/equipado e mutação na
   // MESMA transação — um equipar concorrente não cria vínculo no meio
   // da transferência, e vice-versa.
-  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | null = null;
+  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | "nao_transferivel" | null = null;
   await db.transaction((tx) => {
     const [itemTx] = tx.select().from(inventoryEntries)
       .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
       .limit(1).all();
     if (!itemTx) { falha = "sumiu"; return; }
+    const dadosItemTx = (itemTx.data ?? {}) as { transferable?: boolean };
+    if (dadosItemTx.transferable === false && !a.ehMestre) { falha = "nao_transferivel"; return; }
     const qtd = qtdPedida ?? itemTx.quantity;
     if (qtd > itemTx.quantity) { falha = "qtd"; return; }
     const dadosItemTr = (itemTx.data ?? {}) as { equipped?: boolean };
@@ -313,6 +313,7 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
     }).run();
   });
   if (falha === "sumiu") { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (falha === "nao_transferivel") { res.status(403).json({ erro: "Este item não pode ser transferido" }); return; }
   if (falha === "qtd") { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
   if (falha === "equipado") { res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return; }
   if (falha === "vinculado") { res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return; }
