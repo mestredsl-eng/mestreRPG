@@ -182,10 +182,26 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       const q = qMultiply(base, tumble);
       ctx.clearRect(0, 0, width, height);
       const size = Math.min(width, height);
+      // Pequena queda com quique amortecido e sombra de contato: movimento
+      // determinístico, apenas visual; não interfere no resultado do servidor.
+      const restante = 1 - eased;
+      const quique = Math.abs(Math.sin(eased * Math.PI * 4)) * restante * 0.085;
+      const elevacao = (restante * 0.105 + quique) * size;
+      const deslocamento = Math.sin(eased * Math.PI * 2 + indice * 0.7) * restante * size * 0.055;
+      ctx.save();
+      ctx.translate(width / 2 + deslocamento, height / 2 + size * 0.29);
+      ctx.globalAlpha = 0.22 + eased * 0.18;
+      ctx.shadowColor = "rgba(0,0,0,.75)";
+      ctx.shadowBlur = 2 + elevacao * 0.35;
+      ctx.fillStyle = "#000";
+      ctx.beginPath();
+      ctx.ellipse(0, 0, size * (0.30 + elevacao / size * 0.35), size * 0.075, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
       const projected = vertices.map((v) => {
         const p = rotate(v, q);
         const perspective = 3.8 / (3.8 - p[2] * 0.22);
-        return [width / 2 + p[0] * size * 0.31 * perspective, height / 2 - p[1] * size * 0.31 * perspective, p[2]] as const;
+        return [width / 2 + deslocamento + p[0] * size * 0.31 * perspective, height / 2 - elevacao - p[1] * size * 0.31 * perspective, p[2]] as const;
       });
       const visible = faces.map((face, i) => {
         const n = rotate(normalFor(vertices, face), q);
