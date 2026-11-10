@@ -112,10 +112,10 @@ export function abrirDb(banco) {
   return new Database(banco);
 }
 
-export async function req(base, metodo, path, { cookie, body } = {}) {
+export async function req(base, metodo, path, { cookie, body, headers } = {}) {
   const r = await fetch(base + "/api" + path, {
     method: metodo,
-    headers: { "content-type": "application/json", cookie: cookie ?? "" },
+    headers: { "content-type": "application/json", cookie: cookie ?? "", ...headers },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   return { status: r.status, json: await r.json().catch(() => null) };

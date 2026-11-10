@@ -2,7 +2,8 @@
 // Concorrência do endpoint POST /characters/:id/pontos (bônus individual).
 // Garante que concessões/remoções simultâneas e corrida com PATCH genérico
 // não perdem saldo nem eventos de histórico — estado persistido final é a prova.
-import { req, dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir, criarCenario } from "./teste-base.mjs";
+import { req, dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir, criarCenario, sessao, abrirDb } from "./teste-base.mjs";
+import crypto from "node:crypto";
 
 const DIR = dirTeste("pontos");
 const BANCO = join(DIR, "mestre-rpg.db");
@@ -41,7 +42,13 @@ try {
   mkdirSync(ARQ, { recursive: true });
   mkdirSync(BKS, { recursive: true });
 
+  // Atraso exclusivo de teste (TOCTOU): dá janela para rebaixar o vínculo
+  // entre a autorização inicial e a transação. Sem efeito em produção.
+  process.env.MESTRE_PONTOS_ATRASO_MS = "1000";
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
+  proc.stdout.on("data", (d) => process.stdout.write(d));
+  proc.on("exit", (code) => console.log(`  [servidor saiu code=${code}]`));
   await esperarSaudavel(BASE, proc);
 
   const c = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jog_pontos" } });
@@ -120,6 +127,48 @@ try {
   const p4 = await pontosDe(ficha, cm);
   t("histórico inalterado após falha", p4?.historico?.length === 5, `n=${p4?.historico?.length}`);
   t("saldo inalterado após falha", p4?.bonus === 15, `bonus=${p4?.bonus}`);
+
+  // ===== 6. TOCTOU: mestre rebaixado entre autorização e mutação =====
+  // Segundo mestre sintético; o vínculo é rebaixado para 'jogador' durante
+  // o atraso MESTRE_PONTOS_ATRASO_MS — depois da checagem inicial, antes da
+  // transação. A revalidação interna deve responder 403 sem tocar a ficha.
+  const uidM2 = crypto.randomUUID();
+  const agoraMs = Date.now();
+  {
+    const db = abrirDb(BANCO);
+    try {
+      db.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+        .run(uidM2, "mestre_rebaixado", "Mestre Rebaixado", "x", agoraMs, agoraMs);
+      db.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','ativo',?,?,?)")
+        .run(crypto.randomUUID(), c.campId, uidM2, agoraMs, agoraMs, agoraMs);
+    } finally { db.close(); }
+  }
+  const cm2 = sessao(BANCO, uidM2);
+  const pAntes = await pontosDe(ficha, cm);
+  const reqRevogada = req(BASE, "POST", `/characters/${ficha}/pontos`, {
+    cookie: cm2, headers: { connection: "close" },
+    body: { acao: "conceder", quantidade: 7, motivo: "tentativa rebaixado" },
+  });
+  // espera o pedido passar pela autorização inicial e entrar no atraso
+  await new Promise((r) => setTimeout(r, 300));
+  {
+    const dbw = abrirDb(BANCO);
+    try {
+      dbw.prepare("update memberships set role='jogador' where campaign_id=? and user_id=?").run(c.campId, uidM2);
+    } finally { dbw.close(); }
+  }
+  const r7 = await reqRevogada;
+  t("mestre rebaixado durante a requisição → 403", r7.status === 403, `status=${r7.status}`);
+  const pDepois = await pontosDe(ficha, cm);
+  t("saldo inalterado após revogação", pDepois?.bonus === pAntes?.bonus, `antes=${pAntes?.bonus} depois=${pDepois?.bonus}`);
+  t("histórico inalterado após revogação", pDepois?.historico?.length === pAntes?.historico?.length, `antes=${pAntes?.historico?.length} depois=${pDepois?.historico?.length}`);
+
+  // mestre ativo continua funcionando após o episódio
+  const r8 = await req(BASE, "POST", `/characters/${ficha}/pontos`, {
+    cookie: cm, body: { acao: "conceder", quantidade: 2, motivo: "pós-revogação" },
+  });
+  const pFinal = await pontosDe(ficha, cm);
+  t("mestre ativo segue operando normalmente", r8.status === 200 && pFinal?.bonus === (pAntes?.bonus ?? 0) + 2, `status=${r8.status} bonus=${pFinal?.bonus}`);
 
 } finally {
   await encerrarServidor(proc);

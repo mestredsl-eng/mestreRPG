@@ -836,13 +836,29 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
   const autorNome = await nomeUsuario(req.usuario!.id);
 
-  // Transação: relê ficha, calcula, grava atomicamente
+  // MESTRE_PONTOS_ATRASO_MS: atraso exclusivo para testes de TOCTOU —
+  // sem efeito quando a variável não está definida (produção).
+  const atrasoMs = Number(process.env.MESTRE_PONTOS_ATRASO_MS ?? 0);
+  if (atrasoMs > 0) await new Promise((r) => setTimeout(r, atrasoMs));
+
+  // Transação: relê vínculo, ficha, calcula, grava atomicamente
   const agora = new Date();
   let resposta: { ok: true; pontos: { bonus: number; selado: boolean; historico: unknown[] } } | null = null;
   let sumiu = false;
+  let revogado = false;
   await db.transaction((tx) => {
+    // Revalidação transacional: o vínculo pode ter sido revogado/rebaixado
+    // entre a checagem inicial e esta mutação — não confiar no ehMestre.
+    const [vinculo] = tx.select().from(memberships)
+      .where(and(
+        eq(memberships.campaignId, p.campaignId),
+        eq(memberships.userId, req.usuario!.id),
+        eq(memberships.status, "ativo"),
+      ))
+      .limit(1).all();
+    if (!vinculo || vinculo.role !== "mestre") { revogado = true; return; }
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
-    if (!atual) { sumiu = true; return; }
+    if (!atual || atual.campaignId !== p.campaignId) { sumiu = true; return; }
     const dados = (atual.data ?? {}) as Record<string, unknown>;
     const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
       motivo: body.data.motivo,
@@ -854,6 +870,10 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
   });
   if (sumiu) {
     res.status(404).json({ erro: "Personagem não encontrado" });
+    return;
+  }
+  if (revogado) {
+    res.status(403).json({ erro: "Apenas o mestre pode conceder ou remover pontos" });
     return;
   }
 
