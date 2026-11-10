@@ -83,7 +83,7 @@ export function FaceDado({ lados, valor, indice = 0, estado, className }: FaceDa
   const girando = face === null;
   return (
     <span
-      className={`dado-shape d${lados} ${girando ? "girando" : ""} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
+      className={`dado-shape dado-3d d${lados} ${girando ? "girando" : ""} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
       title={`d${lados} = ${valor}`}
     >
       <svg viewBox="0 0 40 40" aria-hidden="true">
