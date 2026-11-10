@@ -193,6 +193,9 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     if (!arquivo) return;
     setErro(null);
     setAviso(null);
+    let criados = 0;
+    let atualizados = 0;
+    let configImportada = false;
     try {
       const pacote = JSON.parse(await arquivo.text()) as {
         formato?: unknown;
@@ -209,7 +212,9 @@ export default function Regras({ campaignId }: { campaignId: string }) {
         if (!item || typeof item !== "object"
           || typeof item.kind !== "string" || !KINDS.includes(item.kind as TipoRegra)
           || typeof item.key !== "string" || !/^[a-z0-9_]{1,80}$/.test(item.key)
-          || typeof item.name !== "string" || !item.name.trim()
+          || typeof item.name !== "string" || !item.name.trim() || item.name.length > 160
+          || (item.category !== undefined && item.category !== null && (typeof item.category !== "string" || item.category.length > 120))
+          || (item.parentKey !== undefined && item.parentKey !== null && (typeof item.parentKey !== "string" || item.parentKey.length > 80))
           || (item.definition !== undefined && (typeof item.definition !== "object" || item.definition === null || Array.isArray(item.definition)))) {
           throw new Error("O livro contém um elemento inválido. Nenhuma alteração foi feita.");
         }
@@ -228,9 +233,10 @@ export default function Regras({ campaignId }: { campaignId: string }) {
 
       setOcupado(true);
       const atuais = await api.obterRegras(campaignId);
-      let criados = 0;
-      let atualizados = 0;
-      if (temConfig) await api.atualizarConfigRegras(campaignId, pacote.config as ConfigRegras);
+      if (temConfig) {
+        await api.atualizarConfigRegras(campaignId, pacote.config as ConfigRegras);
+        configImportada = true;
+      }
       for (const bruto of itens) {
         const item = bruto as unknown as ElementoRegraInput;
         const existente = atuais.elementos.find((el) => el.kind === item.kind && el.key === item.key);
@@ -257,7 +263,12 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       await carregar();
       setAviso(`Livro importado: ${criados} adicionados e ${atualizados} atualizados.`);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Não foi possível importar o livro de regras.");
+      const detalhe = e instanceof Error ? e.message : "Não foi possível importar o livro de regras.";
+      const progresso = criados || atualizados || configImportada
+        ? ` Importação parcial: ${criados} adicionados, ${atualizados} atualizados${configImportada ? " e configuração aplicada" : ""}.`
+        : "";
+      setErro(detalhe + progresso);
+      if (criados || atualizados || configImportada) await carregar();
     } finally {
       setOcupado(false);
     }
