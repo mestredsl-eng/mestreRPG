@@ -607,19 +607,18 @@ textarea {
 .campo-kind-qualidade .nivel-item { border-left: 3px solid #3b5bdb; }
 .ficha .campo-kind-atributo:has(.seletor-bolinhas) { border-left: 3px solid #3b5bdb; }
 
+/* Empilhado: nome em cima, dots embaixo — evita colisão em cartões estreitos */
 .nivel-linha {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.4rem 0.6rem;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
 }
 
 .nivel-nome {
   font-size: 0.85rem;
   color: #e8e6e3;
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
 
 .nivel-desc {
