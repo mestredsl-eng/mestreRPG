@@ -805,35 +805,46 @@ patrimonioRouter.post("/financeiro/movimentar", async (req, res) => {
   const casas = cfg.casasDecimais;
   const cents = paraCentavos(body.data.valor, casas);
   const sinal = body.data.tipo === "saida" ? -1 : 1;
-  const novoSaldo = conta.balanceCents + sinal * cents;
-
-  // Saldo negativo: bloqueado salvo config ou limite de cartão de crédito
-  const limiteCredito = conta.type === "cartao_credito" ? (conta.creditLimitCents ?? 0) : 0;
-  const piso = cfg.permitirSaldoNegativo ? -Infinity : -limiteCredito;
-  if (novoSaldo < piso) {
-    res.status(400).json({ erro: `Saldo insuficiente (disponível: ${deCentavos(conta.balanceCents + limiteCredito, casas)})` });
-    return;
-  }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const txId = crypto.randomUUID();
   const agora = new Date();
+  let novoSaldo = 0;
+  let saldoInsuficiente = false;
   try {
     db.transaction((tx) => {
+      // Re-lê a conta dentro da transação: saldo, tipo e limite são validados
+      // sobre o valor atual, não sobre uma leitura anterior (evita lost update).
+      const [contaTx] = tx.select().from(financialAccounts)
+        .where(and(eq(financialAccounts.id, conta.id), eq(financialAccounts.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!contaTx) throw new Error("conta_sumiu");
+      const saldoNovo = contaTx.balanceCents + sinal * cents;
+      const limiteCredito = contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0;
+      const piso = cfg.permitirSaldoNegativo ? -Infinity : -limiteCredito;
+      if (saldoNovo < piso) { saldoInsuficiente = true; return; }
       tx.insert(moneyTransactions).values({
         id: txId, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: body.data.tipo === "ajuste" ? "ajuste_mestre" : body.data.tipo,
-        amount: (sinal * cents) / 100, currency: conta.currency, account: conta.type,
-        accountId: conta.id, amountCents: sinal * cents,
-        balanceBeforeCents: conta.balanceCents, balanceAfterCents: novoSaldo,
+        amount: (sinal * cents) / 100, currency: contaTx.currency, account: contaTx.type,
+        accountId: contaTx.id, amountCents: sinal * cents,
+        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
         description: body.data.descricao ?? null, requestId,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoSaldo, updatedAt: agora }).where(eq(financialAccounts.id, conta.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
+      novoSaldo = saldoNovo;
     });
   } catch (e) {
     if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    if (String(e).includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     throw e;
+  }
+  if (saldoInsuficiente) {
+    const [contaAtual] = await db.select().from(financialAccounts).where(eq(financialAccounts.id, conta.id)).limit(1);
+    const disponivel = contaAtual ? contaAtual.balanceCents + (contaAtual.type === "cartao_credito" ? (contaAtual.creditLimitCents ?? 0) : 0) : 0;
+    res.status(400).json({ erro: `Saldo insuficiente (disponível: ${deCentavos(disponivel, casas)})` });
+    return;
   }
   await audit(req, "financeiro.movimentacao", { characterId: a.personagem.id, contaId: conta.id, tipo: body.data.tipo, cents: sinal * cents });
   emitir(a.personagem);
@@ -883,42 +894,58 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
     res.status(400).json({ erro: "Moedas diferentes — conversão entre contas ainda não suportada em transferências" }); return;
   }
 
-  const novoOrigem = origem.balanceCents - cents;
-  const pisoOrigem = cfg.permitirSaldoNegativo ? -Infinity : -(origem.type === "cartao_credito" ? (origem.creditLimitCents ?? 0) : 0);
-  if (novoOrigem < pisoOrigem) {
-    res.status(400).json({ erro: "Saldo insuficiente na conta de origem" }); return;
-  }
-  const novoDestino = destino.balanceCents + cents;
   const kind = entrePersonagens ? "pix_ficticio" : "transferencia";
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const agora = new Date();
+  let saldoInsuficiente = false;
 
   try {
     db.transaction((tx) => {
+      // Re-lê as duas contas dentro da transação: débitos/créditos são
+      // calculados sobre saldos atuais, nunca sobre leituras anteriores.
+      const [origemTx] = tx.select().from(financialAccounts)
+        .where(eq(financialAccounts.id, origem.id)).limit(1).all();
+      const [destinoTx] = tx.select().from(financialAccounts)
+        .where(eq(financialAccounts.id, destino.id)).limit(1).all();
+      if (!origemTx || !destinoTx) throw new Error("conta_sumiu");
+      if (origemTx.currency !== destinoTx.currency) throw new Error("moedas_divergentes");
+
+      const novoOrigem = origemTx.balanceCents - cents;
+      const pisoOrigem = cfg.permitirSaldoNegativo ? -Infinity : -(origemTx.type === "cartao_credito" ? (origemTx.creditLimitCents ?? 0) : 0);
+      if (novoOrigem < pisoOrigem) { saldoInsuficiente = true; return; }
+      const novoDestino = destinoTx.balanceCents + cents;
+
       // Saída na origem
       tx.insert(moneyTransactions).values({
-        id: crypto.randomUUID(), characterId: origem.characterId, campaignId: origem.campaignId,
-        kind, amount: -cents / 100, currency: origem.currency, account: origem.type,
-        accountId: origem.id, amountCents: -cents, balanceBeforeCents: origem.balanceCents, balanceAfterCents: novoOrigem,
-        counterpartyCharacterId: destino.characterId, counterparty: destino.name,
+        id: crypto.randomUUID(), characterId: origemTx.characterId, campaignId: origemTx.campaignId,
+        kind, amount: -cents / 100, currency: origemTx.currency, account: origemTx.type,
+        accountId: origemTx.id, amountCents: -cents, balanceBeforeCents: origemTx.balanceCents, balanceAfterCents: novoOrigem,
+        counterpartyCharacterId: destinoTx.characterId, counterparty: destinoTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:out`,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoOrigem, updatedAt: agora }).where(eq(financialAccounts.id, origem.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: novoOrigem, updatedAt: agora }).where(eq(financialAccounts.id, origemTx.id)).run();
       // Entrada no destino
       tx.insert(moneyTransactions).values({
-        id: crypto.randomUUID(), characterId: destino.characterId, campaignId: destino.campaignId,
-        kind, amount: cents / 100, currency: destino.currency, account: destino.type,
-        accountId: destino.id, amountCents: cents, balanceBeforeCents: destino.balanceCents, balanceAfterCents: novoDestino,
-        counterpartyCharacterId: origem.characterId, counterparty: origem.name,
+        id: crypto.randomUUID(), characterId: destinoTx.characterId, campaignId: destinoTx.campaignId,
+        kind, amount: cents / 100, currency: destinoTx.currency, account: destinoTx.type,
+        accountId: destinoTx.id, amountCents: cents, balanceBeforeCents: destinoTx.balanceCents, balanceAfterCents: novoDestino,
+        counterpartyCharacterId: origemTx.characterId, counterparty: origemTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:in`,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoDestino, updatedAt: agora }).where(eq(financialAccounts.id, destino.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: novoDestino, updatedAt: agora }).where(eq(financialAccounts.id, destinoTx.id)).run();
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+    if (msg.includes("moedas_divergentes")) { res.status(400).json({ erro: "Moedas diferentes — conversão entre contas ainda não suportada em transferências" }); return; }
     throw e;
+  }
+  if (saldoInsuficiente) {
+    res.status(400).json({ erro: "Saldo insuficiente na conta de origem" });
+    return;
   }
   await audit(req, "financeiro.transferencia", { de: origem.id, para: destino.id, cents });
   emitirCampanha(a.personagem.campaignId, "patrimonio:atualizado", { characterId: destino.characterId });
