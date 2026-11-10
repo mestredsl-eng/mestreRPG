@@ -604,7 +604,7 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
         definition: it.definition ?? {}, ordem: it.ordem ?? 0,
         createdAt: t, updatedAt: t,
       }).run();
-      adicionados++; alterou = true;
+      adicionados++;
       continue;
     }
     // Idêntico → mantém. Conflito → só atualiza com decisão "atualizar".
@@ -617,7 +617,7 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
         ordem: it.ordem ?? dbItem.ordem,
         updatedAt: t,
       }).where(eq(ruleBookItems.id, dbItem.id)).run();
-      atualizados++; alterou = true;
+      atualizados++;
     }
   }
 
