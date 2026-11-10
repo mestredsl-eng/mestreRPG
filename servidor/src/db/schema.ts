@@ -239,7 +239,7 @@ export const campaignRuleBooks = sqliteTable("campaign_rule_books", {
   // Snapshot da origem no momento da aplicação; permite diff/sync futuro sem
   // confundir regras personalizadas da campanha com conteúdo do Acervo.
   snapshot: text("snapshot", { mode: "json" }).notNull().default([]),
-  appliedAt: createdAt(),
+  appliedAt: integer("applied_at", { mode: "timestamp_ms" }).notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [
