@@ -26,6 +26,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("todos");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
@@ -72,6 +75,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
   };
 
   const modelosPublicados = modelos.filter((m) => m.isActive && m.versaoAtual?.publishedAt);
+  const termoBusca = busca.trim().toLocaleLowerCase("pt-BR");
+  const personagensFiltrados = personagens.filter((p) => {
+    const correspondeBusca = !termoBusca || [p.name, p.displayName, p.dono, STATUS_LABEL[p.status] ?? p.status]
+      .some((valor) => valor?.toLocaleLowerCase("pt-BR").includes(termoBusca));
+    const correspondeStatus = filtroStatus === "todos" || p.status === filtroStatus;
+    const correspondeTipo = filtroTipo === "todos" || (filtroTipo === "npc" ? !!p.isNpc : !p.isNpc);
+    return correspondeBusca && correspondeStatus && correspondeTipo;
+  });
 
   if (selecionado) {
     return (
@@ -128,21 +139,49 @@ export default function Personagens({ campaignId, campanha }: Props) {
         <section className="cartao"><p>Nenhum personagem ainda.</p></section>
       ) : (
         <section className="cartao">
-          <table className="tabela">
-            <thead>
-              <tr><th>Nome</th><th>Dono</th><th>Status</th><th>Atualizado</th></tr>
-            </thead>
-            <tbody>
-              {personagens.map((p) => (
-                <tr key={p.id} className="clicavel" onClick={() => void abrir(p.id)}>
-                  <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
-                  <td>{p.displayName ?? p.dono}</td>
-                  <td><span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span></td>
-                  <td>{new Date(p.updatedAt).toLocaleString("pt-BR")}</td>
-                </tr>
+          <div className="linha-entre">
+            <h3>Personagens da campanha</h3>
+            <span className="meta">{personagensFiltrados.length} de {personagens.length}</span>
+          </div>
+          <div className="linha filtros-personagens">
+            <input
+              type="search"
+              placeholder="Buscar por nome, dono ou status…"
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              aria-label="Buscar personagens"
+            />
+            <select value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)} aria-label="Filtrar por status">
+              <option value="todos">Todos os status</option>
+              {Object.entries(STATUS_LABEL).map(([valor, rotulo]) => (
+                <option key={valor} value={valor}>{rotulo}</option>
               ))}
-            </tbody>
-          </table>
+            </select>
+            <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} aria-label="Filtrar tipo de personagem">
+              <option value="todos">Personagens e NPCs</option>
+              <option value="personagem">Somente personagens</option>
+              <option value="npc">Somente NPCs</option>
+            </select>
+          </div>
+          {personagensFiltrados.length === 0 ? (
+            <p className="meta">Nenhum personagem corresponde à busca e aos filtros.</p>
+          ) : (
+            <table className="tabela">
+              <thead>
+                <tr><th>Nome</th><th>Dono</th><th>Status</th><th>Atualizado</th></tr>
+              </thead>
+              <tbody>
+                {personagensFiltrados.map((p) => (
+                  <tr key={p.id} className="clicavel" onClick={() => void abrir(p.id)}>
+                    <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
+                    <td>{p.displayName ?? p.dono}</td>
+                    <td><span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span></td>
+                    <td>{new Date(p.updatedAt).toLocaleString("pt-BR")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </section>
       )}
     </>
