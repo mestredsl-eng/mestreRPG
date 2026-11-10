@@ -170,9 +170,9 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               <td>{item.weight != null ? `${item.weight} kg` : "—"}</td>
               <td>{item.location ?? "—"}</td>
               <td className="linha">
-                <button className="secundario" title="Equipar" onClick={async () => {
+                <button className="secundario" title={item.data?.equipped === true ? "Este item já está equipado" : "Equipar"} disabled={item.data?.equipped === true} onClick={async () => {
                   try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-                }}>Equipar</button>
+                }}>{item.data?.equipped === true ? "Já equipado" : "Equipar"}</button>
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
@@ -212,9 +212,9 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo"><span className="registro-rotulo">Peso</span><span>{item.weight != null ? `${item.weight} kg` : "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
             <div className="registro-acoes">
-              <button className="secundario" title="Equipar" onClick={async () => {
+              <button className="secundario" title={item.data?.equipped === true ? "Este item já está equipado" : "Equipar"} disabled={item.data?.equipped === true} onClick={async () => {
                 try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-              }}>Equipar</button>
+              }}>{item.data?.equipped === true ? "Já equipado" : "Equipar"}</button>
               <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
