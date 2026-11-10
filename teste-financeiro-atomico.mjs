@@ -262,6 +262,7 @@ try {
         cookie, body: { origemAccountId: contaB, destinoAccountId: contaC, valor: 40 },
       })),
     ];
+    const saldoBAntes = saldoDb(contaB);
     const rs = await Promise.all(ops);
     const entradas = rs.slice(0, 4).filter((r) => r.status === 201).length;
     const saidas = rs.slice(4, 10).filter((r) => r.status === 201).length;
