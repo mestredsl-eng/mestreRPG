@@ -14,6 +14,9 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const souMestre = campanha.meuPapel === "mestre";
   const [aba, setAba] = useState<"diario" | "mestre">("diario");
   const [anotacoes, setAnotacoes] = useState<Anotacao[]>([]);
+  const [busca, setBusca] = useState("");
+  const [categoriaFiltro, setCategoriaFiltro] = useState("");
+  const [somenteImportantes, setSomenteImportantes] = useState(false);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
   const [arquivos, setArquivos] = useState<ArquivoBiblioteca[]>([]);
@@ -71,6 +74,15 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
     catch (e) { setErro(e instanceof Error ? e.message : "Erro ao excluir"); }
     finally { setOcupado(false); }
   };
+
+  const anotacoesFiltradas = anotacoes.filter((n) => {
+    const termo = busca.trim().toLocaleLowerCase("pt-BR");
+    const correspondeBusca = !termo || [n.title, n.content, n.category ?? "", n.owner?.displayName ?? "", n.owner?.username ?? ""]
+      .some((valor) => valor.toLocaleLowerCase("pt-BR").includes(termo));
+    return correspondeBusca
+      && (!categoriaFiltro || n.category === categoriaFiltro)
+      && (!somenteImportantes || n.important);
+  });
 
   const alternarImportante = async (n: Anotacao) => {
     try { await api.atualizarAnotacao(campaignId, n.id, { important: !n.important }); await carregar(); }
@@ -145,8 +157,24 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
         </button>
       )}
 
+      <div className="linha-ferramentas" aria-label="Filtros do diário">
+        <input type="search" placeholder="Buscar título, conteúdo, categoria ou autor…" value={busca}
+          onChange={(e) => setBusca(e.target.value)} aria-label="Buscar anotações" />
+        <select value={categoriaFiltro} onChange={(e) => setCategoriaFiltro(e.target.value)} aria-label="Filtrar por categoria">
+          <option value="">Todas as categorias</option>
+          {[...new Set(anotacoes.map((n) => n.category).filter((v): v is string => !!v))].sort().map((categoria) => (
+            <option key={categoria} value={categoria}>{categoria}</option>
+          ))}
+        </select>
+        <label>
+          <input type="checkbox" checked={somenteImportantes} onChange={(e) => setSomenteImportantes(e.target.checked)} />
+          Somente importantes
+        </label>
+        <span className="dica">{anotacoesFiltradas.length} de {anotacoes.length}</span>
+      </div>
+
       <ul className="lista-anotacoes">
-        {anotacoes.map((n) => (
+        {anotacoesFiltradas.map((n) => (
           <li key={n.id} className={n.important ? "importante" : ""}>
             <div className="linha">
               <strong>{n.title}</strong>
@@ -186,6 +214,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
           </li>
         ))}
         {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
+        {!!anotacoes.length && !anotacoesFiltradas.length && <li className="dica">Nenhuma anotação corresponde aos filtros.</li>}
       </ul>
       {confirmando && (
         <ModalConfirmar
