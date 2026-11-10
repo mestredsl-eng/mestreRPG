@@ -29,6 +29,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
   const [qtd, setQtd] = useState("");
   const [motivo, setMotivo] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [historicoExpandido, setHistoricoExpandido] = useState(false);
 
   useEffect(() => setVida(vidaInicial), [vidaInicial]);
 
@@ -94,7 +95,22 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
             </div>
           )}
           <div className="hp-historico">
-            {[...hp.historico].reverse().slice(0, 8).map((ev, i) => (
+            {hp.historico.length > 0 && (
+              <div className="linha" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <strong>Histórico ({hp.historico.length})</strong>
+                {hp.historico.length > 8 && (
+                  <button
+                    type="button"
+                    className="secundario mini"
+                    aria-expanded={historicoExpandido}
+                    onClick={() => setHistoricoExpandido((v) => !v)}
+                  >
+                    {historicoExpandido ? "Mostrar recentes" : "Ver histórico completo"}
+                  </button>
+                )}
+              </div>
+            )}
+            {[...hp.historico].reverse().slice(0, historicoExpandido ? undefined : 8).map((ev, i) => (
               <div key={i} className="hp-evento">
                 <span className={`hp-qtd ${ev.quantidade < 0 ? "negativo" : ev.quantidade > 0 ? "positivo" : ""}`}>
                   {ev.quantidade > 0 ? "+" : ""}{ev.quantidade}
