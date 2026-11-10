@@ -6,7 +6,7 @@
 // banco, nos arquivos, na config e na limpeza da flag — cada uma com
 // verificação do estado resultante (banco, sidecars, arquivos, config, flag).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { dirTeste, abrirDb, limparDir, portaLivre, subirServidor, esperarSaudavel, encerrarServidor } from "./teste-base.mjs";
 
@@ -270,8 +270,8 @@ try {
     t("config viva intacta", JSON.parse(readFileSync(cfgPath(r6), "utf8")).atual === true);
   }
 
-  // ===== 7. falha na cópia dos ARQUIVOS =====
-  sec("Falha durante a cópia dos arquivos de campanha");
+  // ===== 7. backup inválido: 'arquivos' como arquivo =====
+  sec("Backup inválido — arquivos como arquivo, rejeitado antes de tocar");
   {
     const r7 = join(RAIZ, "falha_arq");
     mkdirSync(join(r7, "banco"), { recursive: true });
@@ -279,23 +279,20 @@ try {
     mkdirSync(arqPath(r7), { recursive: true });
     writeFileSync(join(arqPath(r7), "doc_vivo.txt"), "vivo");
     const bk = fazerBackup(r7, "bk_com_arq"); // backup TEM arquivos/
-    // sabotagem NO BACKUP: 'arquivos' vira ARQUIVO → validacao de tipo
-    // explode na aplicação, DEPOIS do banco já ter sido copiado.
     rmSync(join(bk, "arquivos"), { recursive: true, force: true });
     writeFileSync(join(bk, "arquivos"), "sou-arquivo-nao-pasta");
     armarFlag(r7, bk);
     const rest = restaurar(r7);
-    t("restaurador com falha nos arquivos → exit != 0", rest.code !== 0, `code=${rest.code}`);
-    // banco deve ter sido revertido para o antigo (com tabela nova e flag)
+    t("backup com tipo inválido → exit != 0", rest.code !== 0, `code=${rest.code}`);
     const st = estadoVivo(r7);
-    t("banco revertido ao estado anterior (tabela nova presente)", st.tabelaNova === true);
-    t("flag permanece para retry", !!st.flag, String(st.flag));
-    t("doc_vivo.txt restaurado pelo rollback", readFileSync(join(arqPath(r7), "doc_vivo.txt"), "utf8") === "vivo");
-    t("doc_bk.txt do backup NÃO ficou para trás", !existsSync(join(arqPath(r7), "doc_bk.txt")));
+    t("nada foi tocado: banco intacto", st.tabelaNova === true);
+    t("flag limpa no cancelamento", st.flag === null, String(st.flag));
+    t("doc_vivo.txt intacto", readFileSync(join(arqPath(r7), "doc_vivo.txt"), "utf8") === "vivo");
+    t("doc_bk.txt ausente", !existsSync(join(arqPath(r7), "doc_bk.txt")));
   }
 
-  // ===== 8. falha na cópia da CONFIG =====
-  sec("Falha durante a cópia da configuração");
+  // ===== 8. backup inválido: servidor.json como diretório =====
+  sec("Backup inválido — servidor.json como diretório, rejeitado antes de tocar");
   {
     const r8 = join(RAIZ, "falha_cfg");
     mkdirSync(join(r8, "banco"), { recursive: true });
@@ -303,18 +300,16 @@ try {
     mkdirSync(join(r8, "configuracao"), { recursive: true });
     writeFileSync(cfgPath(r8), JSON.stringify({ atual: true }));
     const bk = fazerBackup(r8, "bk_com_cfg"); // backup TEM configuracao/
-    // sabotagem NO BACKUP: config vira DIRETÓRIO → copyFileSync falha na
-    // aplicação, DEPOIS do banco e dos arquivos já terem sido copiados.
     rmSync(join(bk, "configuracao", "servidor.json"));
     mkdirSync(join(bk, "configuracao", "servidor.json"));
     armarFlag(r8, bk);
     const rest = restaurar(r8);
-    t("restaurador com falha na config → exit != 0", rest.code !== 0, `code=${rest.code}`);
+    t("backup com tipo inválido → exit != 0", rest.code !== 0, `code=${rest.code}`);
     const st = estadoVivo(r8);
-    t("banco revertido ao estado anterior", st.tabelaNova === true);
-    t("flag permanece para retry", !!st.flag, String(st.flag));
-    t("config revertida (diretório sabotador restaurado)", existsSync(cfgPath(r8)));
-    t("banco restaurado não é o do backup (sem mistura)", temTabelaDb(dbPath(r8), TABELA_NOVA));
+    t("nada foi tocado: banco intacto", st.tabelaNova === true);
+    t("flag limpa no cancelamento", st.flag === null, String(st.flag));
+    t("config viva intacta", st.cfgExiste && JSON.parse(readFileSync(cfgPath(r8), "utf8")).atual === true);
+    t("sem mistura do backup", !st.cfgBackup && !st.arqDocBk);
   }
 
   // ===== 9. falha na LIMPEZA DA FLAG (banco restaurado sem server_settings) =====
@@ -517,10 +512,65 @@ try {
     const rest = restaurar(r19);
     t("restaurador com tipos inválidos → exit != 0", rest.code !== 0, `code=${rest.code}`);
     const st = estadoVivo(r19);
-    t("estado anterior intacto: banco+flag", st.tabelaNova === true && !!st.flag);
+    t("estado anterior intacto: banco preservado", st.tabelaNova === true);
+    t("flag limpa no cancelamento (nada foi tocado)", st.flag === null, String(st.flag));
     t("doc_vivo.txt intacto", readFileSync(join(arqPath(r19), "doc_vivo.txt"), "utf8") === "vivo");
     t("configuração intacta", st.cfgExiste && JSON.parse(readFileSync(cfgPath(r19), "utf8")).atual === true);
     t("sem conteúdo parcial do backup", !st.arqDocBk && !st.cfgBackup);
+  }
+
+  // ===== 20. validação estrutural detalhada do backup =====
+  sec("Estrutura: configuracao como arquivo / dir sem json / symlink");
+  {
+    // 20a) backup/configuracao é ARQUIVO → inválido
+    const ra = join(RAIZ, "cfg_arquivo");
+    mkdirSync(join(ra, "banco"), { recursive: true });
+    migrar(ra);
+    mkdirSync(join(ra, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(ra), JSON.stringify({ atual: true }));
+    const bka = fazerBackup(ra, "bk_cfg_arq");
+    rmSync(join(bka, "configuracao"), { recursive: true, force: true });
+    writeFileSync(join(bka, "configuracao"), "sou-arquivo");
+    armarFlag(ra, bka);
+    const ra_rest = restaurar(ra);
+    t("configuracao como arquivo → exit != 0", ra_rest.code !== 0, `code=${ra_rest.code}`);
+    t("nada tocado: config viva intacta", JSON.parse(readFileSync(cfgPath(ra), "utf8")).atual === true);
+    t("flag limpa no cancelamento", flagPendenteDb(dbPath(ra)) === null);
+
+    // 20b) backup/configuracao é dir SEM servidor.json → válido;
+    //      snapshot sem config → remove a config viva
+    const rb = join(RAIZ, "cfg_sem_json");
+    mkdirSync(join(rb, "banco"), { recursive: true });
+    migrar(rb);
+    mkdirSync(join(rb, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(rb), JSON.stringify({ posterior: true }));
+    const bkb = fazerBackup(rb, "bk_cfg_vazia", { semCfg: true });
+    mkdirSync(join(bkb, "configuracao"), { recursive: true }); // dir existe, sem json
+    armarFlag(rb, bkb);
+    const rb_rest = restaurar(rb);
+    t("configuracao dir sem json → exit 0", rb_rest.code === 0, rb_rest.saida.slice(-200));
+    t("config viva removida (snapshot sem config)", !existsSync(cfgPath(rb)));
+
+    // 20c) backup/arquivos como link simbólico → inválido
+    const rc = join(RAIZ, "arq_symlink");
+    mkdirSync(join(rc, "banco"), { recursive: true });
+    migrar(rc);
+    mkdirSync(arqPath(rc), { recursive: true });
+    writeFileSync(join(arqPath(rc), "doc_vivo.txt"), "vivo");
+    const bkc = fazerBackup(rc, "bk_symlink", { semArq: true });
+    const fora = join(rc, "fora_do_backup"); mkdirSync(fora, { recursive: true });
+    writeFileSync(join(fora, "segredo.txt"), "fora");
+    let symlinkOk = true;
+    try { symlinkSync(fora, join(bkc, "arquivos"), "junction"); }
+    catch (e) { symlinkOk = false; console.log("  (skip symlink: " + (e.code ?? e.message) + ")"); }
+    if (symlinkOk) {
+      armarFlag(rc, bkc);
+      const rc_rest = restaurar(rc);
+      t("arquivos como symlink → exit != 0", rc_rest.code !== 0, `code=${rc_rest.code}`);
+      t("nada tocado: doc_vivo intacto", readFileSync(join(arqPath(rc), "doc_vivo.txt"), "utf8") === "vivo");
+      t("nada vazou do link externo", !existsSync(join(arqPath(rc), "segredo.txt")));
+      t("flag limpa no cancelamento", flagPendenteDb(dbPath(rc)) === null);
+    }
   }
 
   // ===== 14. MESTRE_HOME inexistente =====

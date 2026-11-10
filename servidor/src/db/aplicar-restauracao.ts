@@ -11,7 +11,7 @@
 //  - qualquer falha desfaz banco E arquivos/config e sai com código != 0;
 //  - sucesso só é declarado após confirmar que a flag foi removida do banco
 //    restaurado; falha na limpeza dispara rollback completo.
-import { copyFileSync, cpSync, existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
@@ -93,6 +93,26 @@ async function principal() {
     process.exit(2);
   }
 
+  // 2b) validação estrutural ANTES de tocar em qualquer arquivo vivo:
+  //     ausência é intencional (snapshot sem aquele conteúdo); tipo
+  //     errado ou link simbólico tornam o backup inválido.
+  const dirArqBackup = join(backupDir, "arquivos");
+  const dirCfgBackup = join(backupDir, "configuracao");
+  const cfgBackup = join(dirCfgBackup, "servidor.json");
+  const lst = (p: string) => { try { return lstatSync(p); } catch { return null; } };
+  const problemas: string[] = [];
+  const stArq = lst(dirArqBackup);
+  if (stArq && (stArq.isSymbolicLink() || !stArq.isDirectory())) problemas.push("backup/arquivos não é diretório real");
+  const stCfgDir = lst(dirCfgBackup);
+  if (stCfgDir && (stCfgDir.isSymbolicLink() || !stCfgDir.isDirectory())) problemas.push("backup/configuracao não é diretório");
+  const stCfg = lst(cfgBackup);
+  if (stCfg && (stCfg.isSymbolicLink() || !stCfg.isFile())) problemas.push("backup/configuracao/servidor.json não é arquivo regular");
+  if (problemas.length) {
+    log(`ERRO: estrutura inválida no backup (${problemas.join("; ")}) — restauração cancelada.`);
+    limparFlag();
+    process.exit(2);
+  }
+
   // 3) preserva o estado anterior ANTES de aplicar — SOMENTE CÓPIAS:
   //    banco+sidecars, arquivos de campanha e configuração vão para
   //    backups/pre_restore_<ts>. Os originais ficam no lugar; se a
@@ -157,14 +177,9 @@ async function principal() {
     // Snapshot fiel: o destino vivo passa a ser EXATAMENTE o que o backup
     // contém — se o backup não tem 'arquivos', o vivo fica sem arquivos;
     // se não tem config, o vivo fica sem config (servidor usa os defaults).
-    const dirArqBackup = join(backupDir, "arquivos");
-    if (existsSync(dirArqBackup) && !statSync(dirArqBackup).isDirectory())
-      throw new Error("backup/arquivos não é um diretório");
+    // Tipos já foram validados antes da preservação (etapa 2b).
     rmSync(DIR_ARQUIVOS, { recursive: true, force: true });
     if (existsSync(dirArqBackup)) cpSync(dirArqBackup, DIR_ARQUIVOS, { recursive: true });
-    const cfgBackup = join(backupDir, "configuracao", "servidor.json");
-    if (existsSync(cfgBackup) && !statSync(cfgBackup).isFile())
-      throw new Error("backup/configuracao/servidor.json não é um arquivo");
     rmSync(ARQ_CFG, { force: true });
     if (existsSync(cfgBackup)) {
       mkdirSync(dirname(ARQ_CFG), { recursive: true });
