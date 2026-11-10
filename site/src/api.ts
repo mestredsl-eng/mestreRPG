@@ -354,16 +354,16 @@ export const api = {
 
   // ---- Acervo global de livros de regras ----
 
-  listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false) => {
+  listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false, signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (tipo) params.set("tipo", tipo);
     if (incluirExcluidos) params.set("incluirExcluidos", "1");
     const qs = params.toString();
-    return requisicao<{ livros: LivroAcervoResumo[]; total: number }>(`/biblioteca/livros${qs ? `?${qs}` : ""}`);
+    return requisicao<{ livros: LivroAcervoResumo[]; total: number }>(`/biblioteca/livros${qs ? `?${qs}` : ""}`, { signal });
   },
-  obterLivroAcervo: (id: string) =>
-    requisicao<{ livro: LivroAcervoResumo; itens: ItemLivroAcervo[] }>(`/biblioteca/livros/${id}`),
+  obterLivroAcervo: (id: string, signal?: AbortSignal) =>
+    requisicao<{ livro: LivroAcervoResumo; itens: ItemLivroAcervo[] }>(`/biblioteca/livros/${id}`, { signal }),
   criarLivroAcervo: (dados: LivroAcervoInput) =>
     requisicao<{ livro: LivroAcervoResumo }>("/biblioteca/livros", { method: "POST", body: JSON.stringify(dados) }),
   atualizarLivroAcervo: (id: string, dados: Partial<LivroAcervoInput>) =>
@@ -389,8 +389,8 @@ export const api = {
     ),
   urlExportarAcervo: () => `${API_BASE}/biblioteca/exportar`,
   urlExportarLivro: (id: string) => `${API_BASE}/biblioteca/livros/${id}/exportar`,
-  listarBackupsLivro: (bookId: string) =>
-    requisicao<{ backups: BackupLivro[] }>(`/biblioteca/livros/${bookId}/backups`),
+  listarBackupsLivro: (bookId: string, signal?: AbortSignal) =>
+    requisicao<{ backups: BackupLivro[] }>(`/biblioteca/livros/${bookId}/backups`, { signal }),
   obterBackupLivro: (backupId: string) =>
     requisicao<{ backup: { id: string; bookId: string; motivo: string; createdAt: string; snapshot: unknown } }>(`/biblioteca/backups/${backupId}`),
   restaurarBackupLivro: (backupId: string) =>

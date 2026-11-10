@@ -56,42 +56,100 @@ export default function Acervo() {
   const [mostrarBackups, setMostrarBackups] = useState(false);
   const [backupParaRestaurar, setBackupParaRestaurar] = useState<BackupLivro | null>(null);
 
+  // Corridas assíncronas: cada grupo de requisições tem um identificador
+  // crescente e um AbortController. Uma resposta só é aplicada se for da
+  // requisição mais recente e o componente ainda estiver montado.
+  const vivo = useRef(true);
+  const reqLivros = useRef(0);
+  const ctrlLivros = useRef<AbortController | null>(null);
+  const reqLivro = useRef(0);
+  const ctrlLivro = useRef<AbortController | null>(null);
+  const reqBackups = useRef(0);
+  const ctrlBackups = useRef<AbortController | null>(null);
+  const livroAbertoId = useRef<string | null>(null);
+  useEffect(() => { livroAbertoId.current = livroAberto?.id ?? null; }, [livroAberto]);
+
+  useEffect(() => {
+    vivo.current = true;
+    return () => {
+      vivo.current = false;
+      ctrlLivros.current?.abort();
+      ctrlLivro.current?.abort();
+      ctrlBackups.current?.abort();
+    };
+  }, []);
+
   const carregarLivros = useCallback(async () => {
+    const id = ++reqLivros.current;
+    ctrlLivros.current?.abort();
+    const ctrl = new AbortController();
+    ctrlLivros.current = ctrl;
     setCarregando(true);
     try {
-      const r = await api.listarLivrosAcervo(busca || undefined, filtroTipo || undefined, ehAdmin && mostrarExcluidos);
+      const r = await api.listarLivrosAcervo(busca || undefined, filtroTipo || undefined, ehAdmin && mostrarExcluidos, ctrl.signal);
+      if (!vivo.current || id !== reqLivros.current) return;
       setLivros(r.livros);
     } catch (e) {
+      if (!vivo.current || id !== reqLivros.current) return;
       setErro(e instanceof Error ? e.message : "Erro ao carregar acervo");
     } finally {
-      setCarregando(false);
+      if (vivo.current && id === reqLivros.current) setCarregando(false);
     }
   }, [busca, filtroTipo, mostrarExcluidos, ehAdmin]);
 
   useEffect(() => { void carregarLivros(); }, [carregarLivros]);
 
   const abrirLivro = async (l: LivroAcervoResumo) => {
+    const id = ++reqLivro.current;
+    ctrlLivro.current?.abort();
+    const ctrl = new AbortController();
+    ctrlLivro.current = ctrl;
     setLivroAberto(l);
     setCarregandoItens(true);
     try {
-      const r = await api.obterLivroAcervo(l.id);
+      const r = await api.obterLivroAcervo(l.id, ctrl.signal);
+      if (!vivo.current || id !== reqLivro.current) return;
       setItens(r.itens);
       setLivroAberto(r.livro);
     } catch (e) {
+      if (!vivo.current || id !== reqLivro.current) return;
       notificar(e instanceof Error ? e.message : "Erro ao abrir livro", "erro");
     } finally {
-      setCarregandoItens(false);
+      if (vivo.current && id === reqLivro.current) setCarregandoItens(false);
     }
   };
 
-  const carregarBackups = async (bookId: string) => {
-    try {
-      const r = await api.listarBackupsLivro(bookId);
-      setBackups(r.backups);
-    } catch { setBackups([]); }
+  // Invalida requisições pendentes do livro/backups (fechar painel ou exclusão).
+  const fecharLivro = () => {
+    reqLivro.current++;
+    reqBackups.current++;
+    ctrlLivro.current?.abort();
+    ctrlBackups.current?.abort();
+    setLivroAberto(null);
+    setItens([]);
+    setMostrarBackups(false);
+    setBackups([]);
   };
 
-  useEffect(() => { if (livroAberto && mostrarBackups) void carregarBackups(livroAberto.id); }, [livroAberto, mostrarBackups]);
+  const carregarBackups = async (bookId: string) => {
+    const id = ++reqBackups.current;
+    ctrlBackups.current?.abort();
+    const ctrl = new AbortController();
+    ctrlBackups.current = ctrl;
+    try {
+      const r = await api.listarBackupsLivro(bookId, ctrl.signal);
+      if (!vivo.current || id !== reqBackups.current || livroAbertoId.current !== bookId) return;
+      setBackups(r.backups);
+    } catch {
+      if (vivo.current && id === reqBackups.current && livroAbertoId.current === bookId) setBackups([]);
+    }
+  };
+
+  useEffect(() => {
+    if (!livroAberto || !mostrarBackups) { reqBackups.current++; ctrlBackups.current?.abort(); return; }
+    void carregarBackups(livroAberto.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livroAberto?.id, mostrarBackups]);
 
   // ---------- livro: criar/editar ----------
   const salvarLivro = async () => {
@@ -130,7 +188,7 @@ export default function Acervo() {
       try {
         await api.removerLivroAcervo(l.id, true);
         notificar("Livro excluído definitivamente.", "sucesso");
-        setLivroAberto(null);
+        if (livroAbertoId.current === l.id) fecharLivro();
         await carregarLivros();
       } catch (e) {
         notificar(e instanceof Error ? e.message : "Erro ao excluir", "erro");
@@ -141,7 +199,7 @@ export default function Acervo() {
     try {
       await api.removerLivroAcervo(l.id);
       notificar("Livro excluído — pode ser restaurado depois.", "sucesso");
-      if (livroAberto?.id === l.id) setLivroAberto(null);
+      if (livroAbertoId.current === l.id) fecharLivro();
       await carregarLivros();
     } catch (e) {
       notificar(e instanceof Error ? e.message : "Erro ao excluir livro", "erro");
@@ -195,8 +253,13 @@ export default function Acervo() {
         await api.atualizarItemLivro(livroAberto.id, modalItem.id, dados);
       }
       setModalItem(null);
-      const r = await api.obterLivroAcervo(livroAberto.id);
-      setItens(r.itens);
+      const bookId = livroAberto.id;
+      const r = await api.obterLivroAcervo(bookId);
+      // Só aplica se o livro aberto ainda for o mesmo (usuário pode ter trocado).
+      if (vivo.current && livroAbertoId.current === bookId) {
+        setItens(r.itens);
+        setLivroAberto((atual) => (atual?.id === bookId ? { ...atual, ...r.livro } : atual));
+      }
       notificar("Item salvo.", "sucesso");
     } catch (e) {
       notificar(e instanceof Error ? e.message : "Erro ao salvar item", "erro");
@@ -369,7 +432,7 @@ export default function Acervo() {
                   <button className="perigo" onClick={() => void excluirLivro(livroAberto)}>Excluir</button>
                 </>
               )}
-              <button className="secundario" onClick={() => setLivroAberto(null)}>Fechar</button>
+              <button className="secundario" onClick={fecharLivro}>Fechar</button>
             </div>
           </div>
           <table className="tabela">
