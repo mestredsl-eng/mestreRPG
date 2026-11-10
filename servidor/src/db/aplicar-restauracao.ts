@@ -69,14 +69,15 @@ const INSPECAO_ATIVA = process.platform === "linux" || !!process.env.MESTRE_PROC
  *  - "indeterminado": cmdline ausente/erro inesperado — não dá para
  *    distinguir, fail-safe.
  */
-function classePidAposFalha(pid: string): "nao_dumpable" | "dumpable" | "indeterminado" {
+function classePidAposFalha(pid: string): { classe: "nao_dumpable" | "dumpable" | "indeterminado"; cmdline: string } {
   try {
     const cmd = readFileSync(`${PROC_FS}/${pid}/cmdline`, "utf8");
-    return cmd.trim().length ? "dumpable" : "nao_dumpable";
+    const trecho = cmd.replace(/\0/g, " ").trim().slice(0, 120);
+    return { classe: cmd.trim().length ? "dumpable" : "nao_dumpable", cmdline: trecho };
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
-    if (code === "EACCES" || code === "EPERM") return "nao_dumpable";
-    return "indeterminado";
+    if (code === "EACCES" || code === "EPERM") return { classe: "nao_dumpable", cmdline: "" };
+    return { classe: "indeterminado", cmdline: "" };
   }
 }
 
@@ -107,6 +108,10 @@ function inspecionarPid(pid: string, pidDir: string, alvos: Set<string>, meuUid:
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") continue; // fd fechou durante a varredura
+      // EACCES num fd individual: alvo não resolvível (O_PATH, fd de
+      // outro mount/user namespace, etc.) — os demais fds do processo
+      // continuam inspecionados; o risco residual é documentado.
+      if (code === "EACCES") continue;
       return { r: "negado", detalhe: `fd ${fd} de pid ${pid} ilegível (${code ?? e})` };
     }
     if (alvos.has(resolve(alvo))) return { r: "em_uso" };
@@ -131,13 +136,11 @@ function verificarBancoEmUso(): VerificacaoBanco {
     if (insp.r === "negado") {
       // Só o limite do procfs (processo não-dumpable) é ignorado;
       // qualquer outra falha de inspeção aborta por segurança.
-      const classe = classePidAposFalha(pid);
+      const { classe, cmdline } = classePidAposFalha(pid);
       if (classe === "nao_dumpable") continue;
       return {
         status: "indeterminado",
-        motivo: classe === "dumpable"
-          ? `${insp.detalhe} — processo dumpable com fd ilegível`
-          : `${insp.detalhe} — cmdline do pid ${pid} indisponível`,
+        motivo: `${insp.detalhe} — ${classe === "dumpable" ? `dumpable: ${cmdline}` : `cmdline do pid ${pid} indisponível`}`,
       };
     }
   }
