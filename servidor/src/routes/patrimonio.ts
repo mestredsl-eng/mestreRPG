@@ -967,6 +967,11 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     if (!body.data.itemId) { res.status(400).json({ erro: "Venda requer itemId" }); return; }
     const [it] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, body.data.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
     if (!it) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+    const quantidadeVenda = body.data.quantidade ?? it.quantity;
+    if (quantidadeVenda > it.quantity) {
+      res.status(400).json({ erro: `Quantidade indisponível (estoque: ${it.quantity})` });
+      return;
+    }
     itemAlvo = it;
   } else if (!body.data.item) {
     res.status(400).json({ erro: "Compra requer dados do item" }); return;
