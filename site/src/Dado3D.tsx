@@ -149,7 +149,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     if (!canvas || !ctx) { setCanvasUnavailable(true); return; }
     setCanvasUnavailable(false);
     const { vertices, faces } = geometry(lados);
-    const labels = faceValues(lados, vertices, faces);\n    const faceIndex = Math.max(0, labels.indexOf(Math.round(valor)));
+    const labels = faceValues(lados, vertices, faces);\n    const indexDaFace = labels.indexOf(Math.round(valor));\n    const faceIndex = indexDaFace >= 0 ? indexDaFace : 0;
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
