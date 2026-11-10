@@ -285,7 +285,7 @@ try {
       await esperarCond(() => verificarTravaInstancia(dbEm(r)) === "em_uso");
       writeFileSync(join(gate, "apos-trava"), "1"); // passa o 1º gate → vai para aplicação
       // espera o processo chegar ao gate pós-rollback (log de rollback antes dele)
-      const chegou = await esperarCond(() => /Rollback (concluído|FALHOU)/.test(r1.saida()), 30000, 100);
+      const chegou = await esperarCond(() => /Rollback concluído|ROLLBACK FALHOU/.test(r1.saida()), 30000, 100);
       t("rollback executado e processo pausado no gate pós-rollback", chegou, r1.saida().slice(-300));
 
       // Trava AINDA segurada durante a pausa pós-rollback: 2º restaurador bloqueado
