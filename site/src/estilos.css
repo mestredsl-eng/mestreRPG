@@ -486,9 +486,13 @@ textarea {
 /* Cartão do seletor numérico em bolinhas. A classe exclusiva evita
    interferir no SeletorNivel, que também usa .seletor-atributos. */
 .ficha .campo:has(.seletor-bolinhas) {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  /* Grid de uma coluna impede que o rótulo e as bolinhas disputem a mesma
+     linha ou se sobreponham quando o cartão fica estreito. */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
+  justify-items: stretch;
   gap: 0.55rem;
   min-width: 0;
   padding: 0.65rem 0.8rem;
@@ -498,8 +502,22 @@ textarea {
 }
 
 .ficha .campo:has(.seletor-bolinhas) > .campo-label {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  width: 100%;
   margin: 0;
   flex: none;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.ficha .campo:has(.seletor-bolinhas) > .seletor-bolinhas {
+  grid-column: 1;
+  grid-row: 2;
+  position: relative;
+  z-index: 0;
   min-width: 0;
 }
 
