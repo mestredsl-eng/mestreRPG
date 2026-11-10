@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -66,6 +66,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [personagemSel, setPersonagemSel] = useState("");
   const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const arquivoImportacao = useRef<HTMLInputElement>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -163,6 +164,47 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     }
   };
 
+  const exportarLivro = () => {
+    if (!regras) return;
+    const pacote = { formato: "mestre-rpg-livro-regras", versaoFormato: 1, exportadoEm: new Date().toISOString(), livro: { nome: "Biblioteca da campanha", config: regras.config, elementos: regras.elementos.map(({ id: _id, ...el }) => el) } };
+    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "mestre-rpg-livro-regras.json"; a.click(); URL.revokeObjectURL(url);
+    setAviso("Exportação concluída: " + regras.elementos.length + " elementos.");
+  };
+
+  const importarLivro = async (event: ChangeEvent<HTMLInputElement>) => {
+    const arquivo = event.target.files?.[0]; event.target.value = ""; if (!arquivo) return;
+    setErro(null);
+    try {
+      if (arquivo.size > 5 * 1024 * 1024) throw new Error("Arquivo excede o limite de 5 MB.");
+      const pacote: unknown = JSON.parse(await arquivo.text());
+      if (!pacote || typeof pacote !== "object") throw new Error("Arquivo JSON inválido.");
+      const raiz = pacote as { formato?: unknown; versaoFormato?: unknown; livro?: unknown };
+      if (raiz.formato !== "mestre-rpg-livro-regras" || raiz.versaoFormato !== 1 || !raiz.livro || typeof raiz.livro !== "object") throw new Error("Formato incompatível. Selecione um JSON exportado pelo Mestre RPG.");
+      const livro = raiz.livro as { config?: ConfigRegras; elementos?: unknown };
+      if (!Array.isArray(livro.elementos)) throw new Error("O livro não contém uma lista válida de elementos.");
+      const elementos = livro.elementos as ElementoRegraInput[];
+      const tipos = new Set(KINDS);
+      for (const el of elementos) if (!el || !tipos.has(el.kind) || typeof el.key !== "string" || !/^[a-z0-9_]{1,80}$/.test(el.key) || typeof el.name !== "string" || !el.name.trim() || !el.definition || typeof el.definition !== "object") throw new Error("O livro contém um elemento inválido. Nenhuma alteração foi aplicada ainda.");
+      const atuais = regras?.elementos ?? (await api.obterRegras(campaignId)).elementos;
+      const porChave = new Map(atuais.map((el) => [el.kind + ":" + el.key, el]));
+      const novos = elementos.filter((el) => !porChave.has(el.kind + ":" + el.key));
+      const existentes = elementos.filter((el) => porChave.has(el.kind + ":" + el.key));
+      const resumo = "Livro: " + arquivo.name + "\nNovos elementos: " + novos.length + "\nElementos existentes que serão atualizados: " + existentes.length + (livro.config ? "\nA configuração de regras/pontuação também será substituída." : "") + "\n\nOs elementos que não estiverem no arquivo serão preservados. Deseja continuar?";
+      if (!window.confirm(resumo)) return;
+      setOcupado(true); let criados = 0, atualizados = 0;
+      try {
+        for (const el of elementos) {
+          const atual = porChave.get(el.kind + ":" + el.key);
+          if (atual) { const { kind: _kind, key: _key, ...dados } = el; await api.atualizarElementoRegra(campaignId, atual.id, dados); atualizados++; }
+          else { await api.criarElementoRegra(campaignId, el); criados++; }
+        }
+        if (livro.config) await api.atualizarConfigRegras(campaignId, livro.config);
+        await carregar(); setAviso("Importação concluída: " + criados + " novos e " + atualizados + " atualizados.");
+      } catch (e) { await carregar(); throw new Error("Importação interrompida após " + criados + " novos e " + atualizados + " atualizados. Confira a biblioteca. " + (e instanceof Error ? e.message : "")); }
+      finally { setOcupado(false); }
+    } catch (e) { setErro(e instanceof Error ? e.message : "Não foi possível importar o livro."); }
+  };
   const salvarConfig = async (config: ConfigRegras) => {
     try {
       await api.atualizarConfigRegras(campaignId, config);
@@ -212,6 +254,9 @@ export default function Regras({ campaignId }: { campaignId: string }) {
             </select>
             <button className="secundario" onClick={() => setEditando("novo")}>+ Novo elemento</button>
             <button className="secundario" onClick={() => void semear()}>Carregar biblioteca inicial</button>
+            <button className="secundario" onClick={exportarLivro} disabled={!regras || ocupado}>Exportar livro</button>
+            <button className="secundario" onClick={() => arquivoImportacao.current?.click()} disabled={ocupado}>Importar livro</button>
+            <input ref={arquivoImportacao} type="file" accept="application/json,.json" onChange={(e) => void importarLivro(e)} hidden />
           </div>
           <p className="dica">{regras?.total ?? 0} elementos cadastrados. Cada elemento pode ser vinculado a um campo da ficha no editor de fichas.</p>
 
