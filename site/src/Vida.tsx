@@ -29,6 +29,8 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
   const [qtd, setQtd] = useState("");
   const [motivo, setMotivo] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [vitMotivo, setVitMotivo] = useState("");
+  const [vitHistExpandido, setVitHistExpandido] = useState(false);
 
   useEffect(() => setVida(vidaInicial), [vidaInicial]);
 
@@ -60,8 +62,9 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
     if (nivel === vit?.nivel || ocupado) return;
     setOcupado(true);
     try {
-      const r = await api.alterarVitalidade(characterId, nivel);
+      const r = await api.alterarVitalidade(characterId, nivel, vitMotivo || undefined);
       setVida((v) => (v ? { ...v, vitalidade: r.vitalidade } : v));
+      setVitMotivo("");
     } catch (e) {
       aoErro?.(e instanceof Error ? e.message : "Erro ao alterar vitalidade");
     } finally {
@@ -142,6 +145,35 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               );
             })}
           </div>
+          {vida.podeEditarVitalidade && (
+            <div className="hp-acoes">
+              <input type="text" placeholder="Motivo da mudança (opcional)" value={vitMotivo} onChange={(e) => setVitMotivo(e.target.value)} />
+            </div>
+          )}
+          {vit.historico.length > 0 && (
+            <div className="hp-historico">
+              <div className="linha" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <strong>Histórico ({vit.historico.length})</strong>
+                {vit.historico.length > 8 && (
+                  <button
+                    type="button"
+                    className="secundario mini"
+                    aria-expanded={vitHistExpandido}
+                    onClick={() => setVitHistExpandido((v) => !v)}
+                  >
+                    {vitHistExpandido ? "Mostrar recentes" : "Ver histórico completo"}
+                  </button>
+                )}
+              </div>
+              {(vitHistExpandido ? vit.historico : vit.historico.slice(-8)).slice().reverse().map((ev, i) => (
+                <div key={i} className="hp-evento">
+                  <span className="hp-tipo">{vit.niveis.find((n) => n.indice === ev.nivelAnterior)?.nome ?? ev.nivelAnterior} → {vit.niveis.find((n) => n.indice === ev.nivelNovo)?.nome ?? ev.nivelNovo}</span>
+                  <span className="hp-motivo">{ev.motivo ?? ""}{ev.autorNome ? ` · ${ev.autorNome}` : ""}</span>
+                  <span className="hp-data">{fmtData(ev.em)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

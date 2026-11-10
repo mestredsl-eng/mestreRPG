@@ -705,7 +705,7 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
   res.json({ ok: true, hp: resumoHp(cfg, estrutura, novosDados) });
 });
 
-const vitalidadeSchema = z.object({ nivel: z.number().int().min(0) });
+const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });
 
 /** POST /api/characters/:characterId/vitalidade — define o nível de ferimento. */
 personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
@@ -732,7 +732,25 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
   }
   const dados = (p.data ?? {}) as Record<string, unknown>;
   const agora = new Date();
-  const estado = { ...lerVitalidade(dados), nivel: body.data.nivel, alteradoEm: agora.toISOString(), alteradoPor: req.usuario!.id };
+  const anterior = lerVitalidade(dados);
+  const autorNome = await nomeUsuario(req.usuario!.id);
+  const estado = {
+    ...anterior,
+    nivel: body.data.nivel,
+    alteradoEm: agora.toISOString(),
+    alteradoPor: req.usuario!.id,
+    historico: [
+      ...(anterior.historico ?? []),
+      {
+        em: agora.toISOString(),
+        nivelAnterior: anterior.nivel,
+        nivelNovo: body.data.nivel,
+        motivo: body.data.motivo?.trim() || null,
+        autorId: req.usuario!.id,
+        autorNome,
+      },
+    ].slice(-100),
+  };
   const novosDados = { ...dados, [CHAVE_VITALIDADE]: estado };
   await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
   await audit(req, "personagem.vitalidade", { characterId: p.id, nivel: body.data.nivel });
