@@ -194,8 +194,8 @@ export const api = {
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}`, { method: "DELETE" }),
   transferirItem: (charId: string, itemId: string, destinoCharacterId: string, quantidade?: number) =>
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}/transferir`, { method: "POST", body: JSON.stringify({ destinoCharacterId, quantidade }) }),
-  equiparItem: (charId: string, itemId: string, slot?: string) =>
-    requisicao<{ id: string }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot }) }),
+  equiparItem: (charId: string, itemId: string, slot?: string, requestId?: string) =>
+    requisicao<{ id: string; deduplicado?: boolean }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot, requestId }) }),
   listarEquipamentos: (charId: string) =>
     requisicao<{ equipamentos: Equipamento[]; slots: string[] }>(`/characters/${charId}/equipamentos`),
   adicionarEquipamento: (charId: string, dados: { name: string; kind?: string; slot?: string; equipped?: boolean; description?: string }) =>

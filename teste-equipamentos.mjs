@@ -220,6 +220,120 @@ try {
     await req(BASE, "DELETE", `/characters/${charId}/equipamentos/${cap.id}`, { cookie });
     t("excluir equipamento manual não cria item", (await qtdItemPorNome("Capacete")) === antes && antes === 0);
   }
+
+  // ===== 10. Concorrência: desequipar/DELETE simultâneos =====
+  sec("Duas chamadas simultâneas de desequipar");
+  {
+    const item = await novoItem("Escudo", 3);
+    const eq = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} });
+    t("setup: equipou 1 de 3", eq.status === 201 && (await qtdInv(item)) === 2);
+    const eqId = eq.json.id;
+    const [d1, d2] = await Promise.all([
+      req(BASE, "POST", `/characters/${charId}/equipamentos/${eqId}/desequipar`, { cookie, body: {} }),
+      req(BASE, "POST", `/characters/${charId}/equipamentos/${eqId}/desequipar`, { cookie, body: {} }),
+    ]);
+    // Uma processa (200); a outra pode ver o registro já removido (404) —
+    // o invariante é: no máximo uma unidade devolvida, o que já foi
+    // verificado abaixo.
+    t("respostas coerentes (200 e/ou 404)", [d1.status, d2.status].every((x) => x === 200 || x === 404) && [d1.status, d2.status].includes(200), `${d1.status},${d2.status}`);
+    t("somente 1 unidade voltou: total = 3", (await qtdItemPorNome("Escudo")) === 3, `total=${await qtdItemPorNome("Escudo")}`);
+    t("registro de equipamento removido", (await eqs()).filter((e) => e.name === "Escudo").length === 0);
+  }
+
+  sec("Duas chamadas simultâneas de DELETE no mesmo equipamento");
+  {
+    const item = await novoItem("Capa", 3);
+    const eq = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} });
+    const eqId = eq.json.id;
+    const [x1, x2] = await Promise.all([
+      req(BASE, "DELETE", `/characters/${charId}/equipamentos/${eqId}`, { cookie }),
+      req(BASE, "DELETE", `/characters/${charId}/equipamentos/${eqId}`, { cookie }),
+    ]);
+    t("respostas coerentes (200 e/ou 404)", [x1.status, x2.status].every((x) => x === 200 || x === 404) && [x1.status, x2.status].includes(200), `${x1.status},${x2.status}`);
+    t("somente 1 unidade voltou: total 'Capa' = 3", (await qtdItemPorNome("Capa")) === 3, `total=${await qtdItemPorNome("Capa")}`);
+    t("nenhum equipamento 'Capa' restante", (await eqs()).filter((e) => e.name === "Capa").length === 0);
+  }
+
+  // ===== 11. Equipar × transferir / excluir na mesma pilha =====
+  sec("Equipar simultâneo com transferência da mesma pilha");
+  {
+    const destino2 = crypto.randomUUID();
+    {
+      const w = new Database(BANCO);
+      const agora = Date.now();
+      w.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run(destino2, cid, memb.id, "PJ Destino2", "{}", "{}", "aprovada", 0, agora, agora);
+      w.close();
+    }
+    const item = await novoItem("Arco", 2);
+    const [eqR, trR] = await Promise.all([
+      req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} }),
+      req(BASE, "POST", `/characters/${charId}/inventario/${item}/transferir`, { cookie, body: { destinoCharacterId: destino2 } }),
+    ]);
+    // Resultado consistente: OU equip vence (transfer bloqueada) OU
+    // transfer vence (equip falha) — nunca os dois, nunca item órfão.
+    const eqOk = eqR.status === 201, trOk = trR.status === 201;
+    t("exatamente um dos dois vence", eqOk !== trOk, `equip=${eqR.status} transf=${trR.status}`);
+    if (eqOk) {
+      t("transferência bloqueada → 409", trR.status === 409, `status=${trR.status}`);
+      t("restou 1 unidade no inventário", (await qtdInv(item)) === 1, `qtd=${await qtdInv(item)}`);
+      t("1 equipamento 'Arco'", (await eqs()).filter((e) => e.name === "Arco").length === 1);
+    } else {
+      t("equipar falhou (item já foi embora)", [404, 409].includes(eqR.status), `status=${eqR.status}`);
+      t("pilha removida do inventário", (await qtdInv(item)) === null, `qtd=${await qtdInv(item)}`);
+      t("unidade chegou ao destino", (await req(BASE, "GET", `/characters/${destino2}/inventario`, { cookie })).json?.itens?.some((i) => i.name === "Arco" && i.quantity === 2));
+    }
+  }
+
+  sec("Equipar simultâneo com exclusão da mesma pilha");
+  {
+    const item = await novoItem("Daga", 2);
+    const [eqR, delR] = await Promise.all([
+      req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} }),
+      req(BASE, "DELETE", `/characters/${charId}/inventario/${item}`, { cookie }),
+    ]);
+    const eqOk = eqR.status === 201, delOk = delR.status === 200;
+    t("exatamente um dos dois vence", eqOk !== delOk, `equip=${eqR.status} del=${delR.status}`);
+    if (eqOk) {
+      t("exclusão bloqueada → 409", delR.status === 409, `status=${delR.status}`);
+      t("restou 1 unidade", (await qtdInv(item)) === 1);
+    } else {
+      t("equipar falhou", [404, 409].includes(eqR.status), `status=${eqR.status}`);
+      t("item removido por completo", (await qtdItemPorNome("Daga")) === 0);
+    }
+  }
+
+  // ===== 12. Dois PATCH simultâneos no mesmo slot =====
+  sec("PATCH simultâneo disputando o mesmo slot");
+  {
+    // slot "slotY" está LIVRE: dois candidatos disputam simultaneamente
+    const mk = async (n) => (await req(BASE, "POST", `/characters/${charId}/equipamentos`, { cookie, body: { name: n, equipped: false } })).json?.id;
+    const eqA = await mk("Candidato A");
+    const eqB = await mk("Candidato B");
+    const [p1, p2] = await Promise.all([
+      req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqA}`, { cookie, body: { slot: "slotY", equipped: true } }),
+      req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqB}`, { cookie, body: { slot: "slotY", equipped: true } }),
+    ]);
+    const oks = [p1.status, p2.status].filter((s) => s === 200).length;
+    t("apenas 1 PATCH vence o slot", oks === 1, [p1.status, p2.status].join(","));
+    const perdedor = [p1, p2].find((r) => r.status !== 200);
+    t("perdedor recebe 409", perdedor?.status === 409, `status=${perdedor?.status}`);
+  }
+
+  // ===== 13. Retry com mesmo requestId após sucesso =====
+  sec("Retry com mesmo requestId");
+  {
+    const item = await novoItem("Amuleto", 2);
+    const rid = `retry-${crypto.randomUUID()}`;
+    const r1 = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: { requestId: rid } });
+    t("primeira equipagem → 201", r1.status === 201);
+    // simula retry (ex.: resposta perdida na rede) com o MESMO requestId
+    const r2 = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: { requestId: rid } });
+    t("retry mesmo requestId → 200 deduplicado", r2.status === 200 && r2.json?.deduplicado === true, `status=${r2.status} ${JSON.stringify(r2.json)}`);
+    t("mesmo equipamento retornado", r2.json?.id === r1.json?.id);
+    t("somente 1 unidade consumida (restam 1)", (await qtdInv(item)) === 1, `qtd=${await qtdInv(item)}`);
+    t("exatamente 1 equipamento 'Amuleto'", (await eqs()).filter((e) => e.name === "Amuleto").length === 1);
+  }
 } finally {
   proc?.kill();
 }

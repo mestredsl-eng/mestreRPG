@@ -204,18 +204,26 @@ patrimonioRouter.delete("/inventario/:itemId", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorRemoveItens) {
     res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return;
   }
-  // Não deixar equipamento órfão: se alguma unidade deste item está
-  // equipada/registrada como equipamento, a exclusão é bloqueada.
-  const vinculados = await db.select({ id: equipmentEntries.id }).from(equipmentEntries).where(and(
-    eq(equipmentEntries.characterId, a.personagem.id),
-    sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${item.id}`,
-  )).limit(1);
-  const dadosItem = (item.data ?? {}) as { equipped?: boolean };
-  if (vinculados.length || dadosItem.equipped === true) {
+  // Releitura + verificação de vínculos + exclusão na MESMA transação:
+  // um equipar concorrente não consegue criar vínculo enquanto a
+  // exclusão é confirmada (e vice-versa).
+  let bloqueado = false;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { sumiu = true; return; } // removido por operação concorrente
+    const dadosItem = (itemTx.data ?? {}) as { equipped?: boolean };
+    const vinculados = equipamentosDoItem(tx, a.personagem.id, itemTx.id);
+    if (vinculados.length || dadosItem.equipped === true) { bloqueado = true; return; }
+    tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (bloqueado) {
     res.status(409).json({ erro: "Item possui equipamento vinculado — desequipe ou exclua o equipamento antes" });
     return;
   }
-  await db.delete(inventoryEntries).where(eq(inventoryEntries.id, item.id));
   await audit(req, "inventario.item.removido", { characterId: a.personagem.id, itemId: item.id, name: item.name });
   emitir(a.personagem);
   res.json({ ok: true });
@@ -241,38 +249,43 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   if (!destino || destino.campaignId !== a.personagem.campaignId || destino.id === a.personagem.id) {
     res.status(400).json({ erro: "Destino inválido" }); return;
   }
-  const qtd = body.data.quantidade ?? item.quantity;
-  if (qtd > item.quantity) { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
-  // Item equipado ou com equipamento vinculado não pode ser transferido.
-  const dadosItemTr = (item.data ?? {}) as { equipped?: boolean; transferable?: boolean };
-  if (dadosItemTr.equipped === true) {
-    res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return;
-  }
-  const vinculos = await db.select({ id: equipmentEntries.id }).from(equipmentEntries).where(and(
-    eq(equipmentEntries.characterId, a.personagem.id),
-    sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${item.id}`,
-  )).limit(1);
-  if (vinculos.length) {
-    res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return;
-  }
+  const qtdPedida = body.data.quantidade;
 
+  // Releitura do item, verificação de vínculos/equipado e mutação na
+  // MESMA transação — um equipar concorrente não cria vínculo no meio
+  // da transferência, e vice-versa.
+  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | null = null;
   await db.transaction((tx) => {
-    if (qtd >= item.quantity) {
-      tx.delete(inventoryEntries).where(eq(inventoryEntries.id, item.id)).run();
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { falha = "sumiu"; return; }
+    const qtd = qtdPedida ?? itemTx.quantity;
+    if (qtd > itemTx.quantity) { falha = "qtd"; return; }
+    const dadosItemTr = (itemTx.data ?? {}) as { equipped?: boolean };
+    if (dadosItemTr.equipped === true) { falha = "equipado"; return; }
+    if (equipamentosDoItem(tx, a.personagem.id, itemTx.id).length) { falha = "vinculado"; return; }
+
+    if (qtd >= itemTx.quantity) {
+      tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
     } else {
-      tx.update(inventoryEntries).set({ quantity: item.quantity - qtd, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id)).run();
+      tx.update(inventoryEntries).set({ quantity: itemTx.quantity - qtd, updatedAt: new Date() }).where(eq(inventoryEntries.id, itemTx.id)).run();
     }
     const novoId = crypto.randomUUID();
     const agora = new Date();
     tx.insert(inventoryEntries).values({
-      id: novoId, characterId: destino.id, name: item.name, quantity: qtd,
-      description: item.description, category: item.category, location: item.location,
-      condition: item.condition, weight: item.weight,
-      data: { ...((item.data ?? {}) as object), transferidoDe: a.personagem.id },
+      id: novoId, characterId: destino.id, name: itemTx.name, quantity: qtd,
+      description: itemTx.description, category: itemTx.category, location: itemTx.location,
+      condition: itemTx.condition, weight: itemTx.weight,
+      data: { ...((itemTx.data ?? {}) as object), transferidoDe: a.personagem.id },
       createdAt: agora, updatedAt: agora,
     }).run();
   });
-  await audit(req, "inventario.item.transferido", { de: a.personagem.id, para: destino.id, itemId: item.id, quantidade: qtd });
+  if (falha === "sumiu") { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (falha === "qtd") { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
+  if (falha === "equipado") { res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return; }
+  if (falha === "vinculado") { res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return; }
+  await audit(req, "inventario.item.transferido", { de: a.personagem.id, para: destino.id, itemId: item.id, quantidade: qtdPedida ?? item.quantity });
   emitir(a.personagem);
   emitir(destino);
   res.json({ ok: true });
@@ -307,17 +320,25 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
   }
-  if (body.data.slot && body.data.equipped) {
-    const ocupado = await db.select().from(equipmentEntries).where(and(
-      eq(equipmentEntries.characterId, a.personagem.id),
-      eq(equipmentEntries.slot, body.data.slot),
-      eq(equipmentEntries.equipped, true),
-    )).limit(1);
-    if (ocupado.length) { res.status(409).json({ erro: `Slot "${body.data.slot}" já ocupado` }); return; }
-  }
-  const agora = new Date();
+  // Ocupação de slot verificada dentro da transação (consistência com
+  // POST /equipar): dois cadastros simultâneos não tomam o mesmo slot.
+  let slotOcupado: string | null = null;
   const id = crypto.randomUUID();
-  await db.insert(equipmentEntries).values({ id, characterId: a.personagem.id, ...body.data, createdAt: agora, updatedAt: agora });
+  const agora = new Date();
+  db.transaction((tx) => {
+    if (body.data.slot && body.data.equipped) {
+      const [ocupado] = tx.select({ name: equipmentEntries.name }).from(equipmentEntries).where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        eq(equipmentEntries.slot, body.data.slot!),
+        eq(equipmentEntries.equipped, true),
+      )).limit(1).all();
+      if (ocupado) { slotOcupado = ocupado.name; return; }
+    }
+    tx.insert(equipmentEntries).values({ id, characterId: a.personagem.id, ...body.data, createdAt: agora, updatedAt: agora }).run();
+  });
+  if (slotOcupado !== null) {
+    res.status(409).json({ erro: `Slot "${body.data.slot}" já ocupado por "${slotOcupado}"` }); return;
+  }
   await audit(req, "equipamento.criado", { characterId: a.personagem.id, equipId: id });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -433,15 +454,30 @@ patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
 
   const dados = (eqp.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
-  const veioDoInventario = dados.origem === "inventario" && !!dados.itemSnapshot;
 
+  // Releitura + reivindicação dentro da transação: duas chamadas
+  // simultâneas não podem devolver a unidade duas vezes — só a que
+  // remover o registro (changes === 1) executa a devolução.
+  let jaProcessado = false;
   await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { jaProcessado = true; return; }
+    const dTx = (eqpTx.data ?? {}) as typeof dados;
+    const veioDoInventario = dTx.origem === "inventario" && !!dTx.itemSnapshot;
+
     if (veioDoInventario) {
-      devolverUnidadeAoInventario(tx, a.personagem.id, dados.itemSnapshot!, dados.inventoryEntryId);
-      tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id)).run();
+      // Reivindica o registro primeiro: se outra requisição já o removeu,
+      // changes === 0 e nenhuma unidade é devolvida.
+      const del = tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqpTx.id)).run();
+      if (del.changes !== 1) { jaProcessado = true; return; }
+      devolverUnidadeAoInventario(tx, a.personagem.id, dTx.itemSnapshot!, dTx.inventoryEntryId);
     } else {
-      tx.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id)).run();
-      const invId = dados.inventoryEntryId;
+      const upd = tx.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() })
+        .where(and(eq(equipmentEntries.id, eqpTx.id), eq(equipmentEntries.equipped, true))).run();
+      if (upd.changes !== 1) { jaProcessado = true; return; }
+      const invId = dTx.inventoryEntryId;
       if (invId) {
         const [item] = tx.select().from(inventoryEntries).where(eq(inventoryEntries.id, invId)).limit(1).all();
         if (item) {
@@ -452,6 +488,7 @@ patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
       }
     }
   });
+  if (jaProcessado) { res.json({ ok: true, jaProcessado: true }); return; }
   await audit(req, "equipamento.desequipado", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
@@ -467,21 +504,34 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  // Ocupação de slot: valida também no PATCH (equipar/guardar mudando de
-  // posição), ignorando o próprio registro.
+  // Releitura + validação de slot + atualização na MESMA transação:
+  // dois PATCH simultâneos não ocupam o mesmo slot ao mesmo tempo.
   const d = somenteEnviados(body.data, req.body);
-  const slotFinal = d.slot !== undefined ? d.slot : eqp.slot;
-  const equipadoFinal = d.equipped !== undefined ? d.equipped : eqp.equipped;
-  if (slotFinal && equipadoFinal) {
-    const [ocupado] = await db.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries).where(and(
-      eq(equipmentEntries.characterId, a.personagem.id),
-      eq(equipmentEntries.slot, slotFinal),
-      eq(equipmentEntries.equipped, true),
-      sql`${equipmentEntries.id} != ${eqp.id}`,
-    )).limit(1);
-    if (ocupado) { res.status(409).json({ erro: `Slot "${slotFinal}" já ocupado por "${ocupado.name}"` }); return; }
+  let slotOcupado: string | null = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { sumiu = true; return; }
+    const slotFinal = d.slot !== undefined ? d.slot : eqpTx.slot;
+    const equipadoFinal = d.equipped !== undefined ? d.equipped : eqpTx.equipped;
+    if (slotFinal && equipadoFinal) {
+      const [ocupado] = tx.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries).where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        eq(equipmentEntries.slot, slotFinal),
+        eq(equipmentEntries.equipped, true),
+        sql`${equipmentEntries.id} != ${eqpTx.id}`,
+      )).limit(1).all();
+      if (ocupado) { slotOcupado = ocupado.name; return; }
+    }
+    tx.update(equipmentEntries).set({ ...d, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqpTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
+  if (slotOcupado !== null) {
+    const slotFinal = d.slot !== undefined ? d.slot : eqp.slot;
+    res.status(409).json({ erro: `Slot "${slotFinal}" já ocupado por "${slotOcupado}"` }); return;
   }
-  await db.update(equipmentEntries).set({ ...d, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -495,16 +545,23 @@ patrimonioRouter.delete("/equipamentos/:equipId", async (req, res) => {
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
   // Equipamento originado do inventário: a unidade volta ao estoque antes
-  // de remover o registro — nada é perdido nem duplicado.
-  const dados = (eqp.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
-  if (dados.origem === "inventario" && dados.itemSnapshot) {
-    await db.transaction((tx) => {
-      devolverUnidadeAoInventario(tx, a.personagem.id, dados.itemSnapshot!, dados.inventoryEntryId);
-      tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id)).run();
-    });
-  } else {
-    await db.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id));
-  }
+  // de remover o registro — nada é perdido nem duplicado. A reivindicação
+  // é atômica: só a requisição que remove o registro (changes === 1)
+  // devolve a unidade; chamadas simultâneas não duplicam.
+  let jaRemovido = false;
+  await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { jaRemovido = true; return; }
+    const dTx = (eqpTx.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
+    const del = tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqpTx.id)).run();
+    if (del.changes !== 1) { jaRemovido = true; return; }
+    if (dTx.origem === "inventario" && dTx.itemSnapshot) {
+      devolverUnidadeAoInventario(tx, a.personagem.id, dTx.itemSnapshot, dTx.inventoryEntryId);
+    }
+  });
+  if (jaRemovido) { res.json({ ok: true, jaRemovido: true }); return; }
   await audit(req, "equipamento.removido", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
