@@ -213,8 +213,23 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.stroke();
         const center = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length] as number[], [0,0]);
         const faceValue = labels[item.i];
+        // Filete interno dá leitura de aresta/bevel sem depender de WebGL.
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          const insetX = center[0] + (pts[i][0] - center[0]) * 0.86;
+          const insetY = center[1] + (pts[i][1] - center[1]) * 0.86;
+          if (i === 0) ctx.moveTo(insetX, insetY);
+          else ctx.lineTo(insetX, insetY);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = "rgba(255,255,255,.19)";
+        ctx.lineWidth = Math.max(0.7, size * 0.012);
+        ctx.stroke();
+
         const edge = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]];
-        const labelAngle = Math.atan2(edge[1], edge[0]);
+        let labelAngle = Math.atan2(edge[1], edge[0]);
+        // Mantém os algarismos legíveis, sem ficarem de cabeça para baixo.
+        if (labelAngle > Math.PI / 2 || labelAngle < -Math.PI / 2) labelAngle += Math.PI;
         ctx.save();
         ctx.translate(center[0], center[1]);
         ctx.rotate(labelAngle);
