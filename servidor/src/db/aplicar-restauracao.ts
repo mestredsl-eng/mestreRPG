@@ -9,9 +9,11 @@ import { dirname } from "node:path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ = process.env.MESTRE_HOME ?? resolve(__dirname, "..", "..", "..");
-const DB_VIVA = resolve(RAIZ, "banco", "mestre-rpg.db");
-const DIR_ARQUIVOS = resolve(RAIZ, "arquivos", "campanhas");
-const DIR_BACKUPS = resolve(RAIZ, "backups");
+// Mesmos overrides do servidor (db/index.ts) — o restaurador DEVE operar
+// sobre os mesmos caminhos que o servidor usará, senão restaura o arquivo errado.
+const DB_VIVA = process.env.MESTRE_BANCO ? resolve(process.env.MESTRE_BANCO) : resolve(RAIZ, "banco", "mestre-rpg.db");
+const DIR_ARQUIVOS = process.env.MESTRE_ARQUIVOS ? resolve(process.env.MESTRE_ARQUIVOS) : resolve(RAIZ, "arquivos", "campanhas");
+const DIR_BACKUPS = process.env.MESTRE_BACKUPS ? resolve(process.env.MESTRE_BACKUPS) : resolve(RAIZ, "backups");
 
 function log(msg: string) { console.log(`[restauracao] ${msg}`); }
 
@@ -36,10 +38,12 @@ async function principal() {
   }
   const backupDir = pendente?.filePath;
   if (!backupDir || !existsSync(backupDir)) {
-    // backup alvo não existe mais (ex.: removido por retenção) — nada foi alterado; limpa a flag p/ não repetir o aviso a cada boot
+    // backup alvo não existe mais — nada foi alterado; limpa a flag, mas
+    // sai com código de erro para o inicializador NÃO subir sobre um
+    // pedido de restauração que não aconteceu (admin precisa decidir).
     log(`ERRO: pasta do backup não existe: ${backupDir} — restauração cancelada, sistema segue com dados atuais.`);
     limparFlag();
-    return;
+    process.exit(2);
   }
 
   // 2) valida o banco do backup antes de tocar em qualquer coisa
@@ -47,15 +51,20 @@ async function principal() {
   if (!existsSync(dbBackup)) {
     log("ERRO: backup sem mestre-rpg.db — restauração cancelada.");
     limparFlag();
-    return;
+    process.exit(2);
   }
-  const chk = new Database(dbBackup, { readonly: true });
-  const integ = chk.pragma("integrity_check", { simple: true });
-  chk.close();
+  let integ = "erro";
+  try {
+    const chk = new Database(dbBackup, { readonly: true });
+    integ = String(chk.pragma("integrity_check", { simple: true }));
+    chk.close();
+  } catch (e) {
+    integ = `exceção: ${e}`;
+  }
   if (integ !== "ok") {
-    log(`ERRO: backup corrompido (${integ}) — restauração cancelada.`);
+    log(`ERRO: backup corrompido (${String(integ).slice(0, 120)}) — restauração cancelada.`);
     limparFlag();
-    return;
+    process.exit(2);
   }
 
   // 3) move o banco atual para área de segurança e aplica o backup

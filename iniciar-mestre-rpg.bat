@@ -63,7 +63,12 @@ if not errorlevel 1 (
 
 if not exist node_modules (
     echo [INFO] Instalando dependencias pela primeira vez...
-    call npm install
+    rem npm ci e reproduzivel (respeita package-lock); se falhar, tenta npm install
+    call npm ci
+    if errorlevel 1 (
+        echo [AVISO] npm ci falhou - tentando npm install...
+        call npm install
+    )
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar dependencias.
         pause
@@ -110,19 +115,28 @@ if errorlevel 1 (
     )
 )
 
+rem ORDEM OBRIGATORIA: restauracao pendente ANTES das migrations —
+rem o restaurador troca o arquivo do banco, entao as migrations devem
+rem rodar sobre o banco efetivamente restaurado, nunca o contrario.
+echo [INFO] Verificando restauracao pendente...
+node servidor\dist\db\aplicar-restauracao.js
+if errorlevel 1 (
+    echo.
+    echo [ERRO] A restauracao de backup FALHOU ou foi cancelada.
+    echo        O servidor NAO sera iniciado sobre estado incerto.
+    echo        Verifique o detalhe acima e o arquivo logs\servidor.log.
+    echo        O banco anterior foi preservado em backups\pre_restore_*.
+    echo        Corrija o problema e execute este script novamente.
+    pause
+    exit /b 1
+)
+
 echo [INFO] Aplicando migracoes...
 call npm run db:migrate -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha ao migrar banco de dados.
     pause
     exit /b 1
-)
-
-rem Se houver restauracao de backup pendente, aplica ANTES de subir o servidor
-echo [INFO] Verificando restauracao pendente...
-node servidor\dist\db\aplicar-restauracao.js
-if errorlevel 1 (
-    echo [AVISO] Restauracao falhou ou foi revertida. Verifique logs\servidor.log
 )
 
 echo.
