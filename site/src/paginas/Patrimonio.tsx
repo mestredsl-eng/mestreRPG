@@ -168,7 +168,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               </td>
               <td>
                 {editando === item.id ? (
-                  <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }}
+                  <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }} aria-label="Quantidade"
                     onBlur={async (e) => {
                       const q = Number(e.target.value);
                       try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
@@ -208,7 +208,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo">
               <span className="registro-rotulo">Qtd</span>
               {editando === item.id ? (
-                <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }}
+                <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }} aria-label="Quantidade"
                   onBlur={async (e) => {
                     const q = Number(e.target.value);
                     try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }

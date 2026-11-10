@@ -533,7 +533,7 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
             pools[i] = { ...pool, nome: e.target.value };
             setPontos({ pools });
           }} />
-          <input type="number" placeholder="Pontos" value={pool.pontos} onChange={(e) => {
+          <input type="number" placeholder="Pontos" aria-label="Pontos do pool" value={pool.pontos} onChange={(e) => {
             const pools = [...form.pontos.pools];
             pools[i] = { ...pool, pontos: Number(e.target.value) };
             setPontos({ pools });
@@ -742,7 +742,7 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
                 }}>
                   {unicos.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <input type="number" placeholder="Limite (opcional)" value={t.limite ?? ""} onChange={(e) => {
+                <input type="number" placeholder="Limite (opcional)" aria-label="Limite da transferência" value={t.limite ?? ""} onChange={(e) => {
                   const transferencias = [...form.transferencias];
                   transferencias[i] = { ...t, limite: e.target.value === "" ? undefined : Number(e.target.value) };
                   setForm((f) => ({ ...f, transferencias }));
@@ -927,7 +927,7 @@ function ModalElemento({
                   niveis[i] = { ...n, descricao: e.target.value };
                   setForm({ ...form, niveis });
                 }} />
-                <input type="number" step="any" placeholder="Custo (+gasta / −concede)" value={n.custo} onChange={(e) => {
+                <input type="number" step="any" placeholder="Custo (+gasta / −concede)" aria-label="Custo do nível" value={n.custo} onChange={(e) => {
                   const niveis = [...form.niveis];
                   niveis[i] = { ...n, custo: e.target.value };
                   setForm({ ...form, niveis });

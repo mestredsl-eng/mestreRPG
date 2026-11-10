@@ -907,6 +907,7 @@ function CarteiraView({ campo, valor, somenteLeitura, aoMudar, resumo, saldoEnvi
                 step="0.01"
                 min="0"
                 placeholder="Valor"
+                aria-label="Valor da movimentação"
                 value={l.valor === undefined || l.valor === null ? "" : String(l.valor)}
                 onChange={(e) => setLinha(i, "valor", e.target.value === "" ? "" : Number(e.target.value))}
               />
