@@ -363,12 +363,29 @@ try {
 
   sec("PATCH não altera nem apaga procedência");
   {
-    // equipamento legítimo originado do inventário
+    // equipamento legítimo originado do inventário COM requestId —
+    // garante que os 4 campos reservados existem com valores reais.
     const item = await novoItem("Machado", 2);
-    const eqR = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} });
+    const ridLegit = `legit-${crypto.randomUUID()}`;
+    const eqR = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: { requestId: ridLegit } });
     const eqId = eqR.json.id;
-    const snapOriginal = (await eqs()).find((e) => e.id === eqId)?.data?.itemSnapshot;
-    // PATCH malicioso tentando sobrescrever procedência
+    const dadosOriginais = (await eqs()).find((e) => e.id === eqId)?.data ?? {};
+    t("setup: 4 campos reservados presentes",
+      dadosOriginais.origem === "inventario" &&
+      typeof dadosOriginais.inventoryEntryId === "string" &&
+      !!dadosOriginais.itemSnapshot &&
+      dadosOriginais.requestId === ridLegit,
+      JSON.stringify(dadosOriginais).slice(0, 240));
+
+    const confereProcedencia = async (rotulo) => {
+      const d = (await eqs()).find((e) => e.id === eqId)?.data ?? {};
+      t(`${rotulo}: origem preservada`, d.origem === "inventario", JSON.stringify(d.origem));
+      t(`${rotulo}: inventoryEntryId preservado`, d.inventoryEntryId === dadosOriginais.inventoryEntryId, `${d.inventoryEntryId} vs ${dadosOriginais.inventoryEntryId}`);
+      t(`${rotulo}: itemSnapshot preservado`, JSON.stringify(d.itemSnapshot) === JSON.stringify(dadosOriginais.itemSnapshot));
+      t(`${rotulo}: requestId preservado`, d.requestId === ridLegit, `${d.requestId} vs ${ridLegit}`);
+    };
+
+    // PATCH malicioso tentando sobrescrever os 4 campos reservados
     const p1 = await req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqId}`, {
       cookie, body: {
         name: "Machado Renomeado",
@@ -378,15 +395,23 @@ try {
     t("PATCH malicioso → 200", p1.status === 200, `status=${p1.status}`);
     const eqDepois = (await eqs()).find((e) => e.id === eqId);
     t("nome legítimo aplicado", eqDepois?.name === "Machado Renomeado");
-    t("origem preservada = inventario", eqDepois?.data?.origem === "inventario", JSON.stringify(eqDepois?.data).slice(0, 200));
-    t("itemSnapshot preservado", JSON.stringify(eqDepois?.data?.itemSnapshot) === JSON.stringify(snapOriginal));
-    t("requestId preservado/removido conforme original", eqDepois?.data?.requestId === undefined || typeof eqDepois?.data?.requestId === "string");
+    await confereProcedencia("após PATCH forjado");
     t("campo custom do PATCH aplicado", eqDepois?.data?.anexo === "campo ok");
-    // PATCH tentando apagar data por completo
+
+    // PATCH com data:{} — não pode apagar nenhum campo reservado
     const p2 = await req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqId}`, { cookie, body: { data: {} } });
     t("PATCH data:{} → 200", p2.status === 200);
-    const eqFinal = (await eqs()).find((e) => e.id === eqId);
-    t("procedência intacta após data:{}", eqFinal?.data?.origem === "inventario" && !!eqFinal?.data?.itemSnapshot);
+    await confereProcedencia("após PATCH data:{}");
+
+    // demais campos editáveis continuam funcionando
+    const p3 = await req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqId}`, {
+      cookie, body: { kind: "arma", slot: "mao", equipped: true, description: "descrição nova" },
+    });
+    t("PATCH campos editáveis → 200", p3.status === 200, `status=${p3.status}`);
+    const eqEdit = (await eqs()).find((e) => e.id === eqId);
+    t("kind/slot/description aplicados", eqEdit?.kind === "arma" && eqEdit?.slot === "mao" && eqEdit?.description === "descrição nova", JSON.stringify({ k: eqEdit?.kind, s: eqEdit?.slot, d: eqEdit?.description }));
+    await confereProcedencia("após PATCH editáveis");
+
     // fluxo legítimo continua: deselect devolve exatamente 1
     const antes = (await qtdItemPorNome("Machado"));
     await req(BASE, "POST", `/characters/${charId}/equipamentos/${eqId}/desequipar`, { cookie, body: {} });
