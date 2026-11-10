@@ -464,8 +464,17 @@ async function processarEnvelope(body: unknown): Promise<{ ok: true; livros: Liv
     if (dup) return { ok: false, erro: `Livro "${livro.titulo}": item duplicado ${dup}` };
   }
   const livros: LivroProcessado[] = [];
+  const destinos = new Set<string>();
   for (const entrada of parsed.data.livros) {
     const { book, itensDb } = await resolverLivro(entrada);
+    // O mesmo livro não pode aparecer duas vezes no envelope: além de gerar
+    // snapshots redundantes, as duas aplicações partiriam da mesma versão
+    // e poderiam sobrescrever uma à outra dentro da mesma transação.
+    const destino = book ? `id:${book.id}` : `novo:${normTitulo(entrada.titulo)}`;
+    if (destinos.has(destino)) {
+      return { ok: false, erro: `Livro duplicado no envelope: "${entrada.titulo}"` };
+    }
+    destinos.add(destino);
     livros.push({ entrada, existente: book, itensDb, diff: diffLivro(entrada, book, itensDb) });
   }
   return { ok: true, livros };
@@ -540,6 +549,22 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
   }
   const bid = bookId; // narrowing de `let` não sobrevive a closures
 
+  // Resolve previamente tudo o que realmente será alterado. Uma importação
+  // idêntica (ou decisões "atualizar" sem divergências) não deve criar
+  // snapshot nem avançar a versão.
+  const conflitos = new Set(p.diff.itensAlterados.map((i) => chaveConflito(i.kind, i.key)));
+  const mapaDb = new Map(p.itensDb.map((i) => [chaveConflito(i.kind, i.key), i]));
+  const atualizaMeta = dec?.metadados === "atualizar" && p.diff.metadadosAlterados.length > 0;
+  const itensParaAtualizar = p.diff.itensAlterados.filter((it) => {
+    const ck = chaveConflito(it.kind, it.key);
+    const dbItem = mapaDb.get(ck);
+    return !!dbItem && conflitos.has(ck) && dec?.itens?.[ck] === "atualizar" && !mesmoItem(it, dbItem);
+  });
+  const temAlteracao = atualizaMeta || p.diff.itensNovos.length > 0 || itensParaAtualizar.length > 0;
+  if (!temAlteracao) {
+    return { bookId: bid, acao: "atualizado", adicionados: 0, atualizados: 0 };
+  }
+
   // Livro existente: snapshot completo ANTES de alterar (mesma transação).
   const snapshot = livroParaEnvelope(
     { ...p.existente!, formatoVersao: p.existente!.formatoVersao ?? VERSAO_FORMATO },
@@ -552,14 +577,8 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
     createdAt: t,
   }).run();
 
-  // Conjunto de conflitos (itens que divergem do banco).
-  const conflitos = new Set(p.diff.itensAlterados.map((i) => chaveConflito(i.kind, i.key)));
-  const mapaDb = new Map(p.itensDb.map((i) => [chaveConflito(i.kind, i.key), i]));
-
-  // Metadados: só com decisão explícita "atualizar".
-  const atualizaMeta = dec?.metadados === "atualizar";
   const e = p.entrada;
-  let adicionados = 0, atualizados = 0, alterou = atualizaMeta;
+  let adicionados = 0, atualizados = 0;
 
   if (atualizaMeta) {
     tx.update(ruleBooks).set({
@@ -602,7 +621,7 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
     }
   }
 
-  if (alterou) {
+  if (temAlteracao) {
     tx.update(ruleBooks).set({
       versao: (p.existente!.versao ?? 1) + 1,
       formatoVersao: VERSAO_FORMATO,
