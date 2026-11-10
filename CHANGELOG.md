@@ -63,6 +63,7 @@
 - **`homologacao-dados3d.mjs`: 22/22** — canvas 3D real dos 5 tipos, múltiplos dados, cores personalizadas com persistência, histórico compartilhado, desafio D10 e mobile
 - **`homologacao-patrimonio.mjs`: 11/11** — movimentação financeira real (saldo 100 → +50 → −30 → 120) com histórico "Saldo após", transferência de item entre personagens e visão idêntica mestre/jogador/mobile
 - **`teste-fisica-dados.mjs`: 48/48** — simulação física isolada: faces finais corretas por tipo e limites de trajetória
+- **`teste-atualizacao-instalacao.mjs`: 29/29** — homologação de atualização de instalação existente: banco no schema 0013 com dados reais → backup pré-update → `db:migrate` real (0014–0017) → comparação registro a registro sem perdas → servidor sobe, login e dados legados servidos pela API → restauração do backup pré-update via restaurador real → re-atualização com dados preservados
 
 - Suítes principais:
   - `homologacao-final-v1.mjs`: 73/73 — cenário E2E completo (mestre + 2 jogadores, convite, fichas, aprovação, patrimônio, mesa, restart, retorno)
