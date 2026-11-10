@@ -21,7 +21,7 @@ const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-let proc, ids, cm, cj1, cj2, sid;
+let proc, ids, cm, cj1, cj2, sid, testId;
 const sockets = [];
 
 // fetch cru que devolve Set-Cookie (cadastro/login públicos)
@@ -69,6 +69,7 @@ try {
       hp: { habilitado: true, base: 100, porNivel: 10, campoId: "for", edicaoPor: "ambos" },
       financeiro: { casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "BRL", nome: "Real" }] },
       patrimonio: { jogadorAdicionaItens: true, jogadorRemoveItens: true, jogadorCompraVenda: true, jogadorPix: true },
+      dados: { d10SucessoMinimo: 7 },
     },
   });
   ids = { camp: cenario.campId, admin: cenario.adminId };
@@ -124,6 +125,14 @@ try {
   const ficha = (await req(BASE, "GET", `/characters/${idJ1}`, { cookie: cj1 })).json;
   t("ficha aprovada visível ao jogador", ficha?.personagem?.status === "aprovada" || ficha?.status === "aprovada", JSON.stringify(ficha).slice(0, 140));
 
+  // jogador2 percorre o mesmo ciclo completo: criar → enviar → aprovar → consultar
+  const envio2 = await req(BASE, "PATCH", `/characters/${idJ2}`, { cookie: cj2, body: { status: "aguardando_aprovacao" } });
+  t("jogador2 envia p/ aprovação", envio2.status === 200, `status=${envio2.status}`);
+  const aprov2 = await req(BASE, "PATCH", `/characters/${idJ2}`, { cookie: cm, body: { status: "aprovada" } });
+  t("mestre aprova ficha de J2", aprov2.status === 200, `status=${aprov2.status}`);
+  const ficha2 = (await req(BASE, "GET", `/characters/${idJ2}`, { cookie: cj2 })).json;
+  t("ficha de J2 aprovada visível ao dono", ficha2?.personagem?.status === "aprovada" || ficha2?.status === "aprovada", JSON.stringify(ficha2).slice(0, 140));
+
   // ===== 4. Patrimônio: inventário + financeiro =====
   sec("Patrimônio e financeiro");
   {
@@ -141,7 +150,7 @@ try {
       cookie: cj1, body: { tipo: "compra", accountId: conta, valor: 30, item: { name: "Tônico", quantity: 1 } },
     });
     t("compra → 201", op.status === 201, `status=${op.status}`);
-    ids.contaJ1 = conta;
+    ids.contaJ1 = conta; ids.itemJ1 = item;
   }
 
   // ===== 5. Sessão multiplayer =====
@@ -166,20 +175,82 @@ try {
     await ouveRoll;
     t("rolagem compartilhada", roll.ok === true);
 
-    // teste de habilidade D10: mestre pede no personagem da jogadora1,
-    // a dona rola, todos veem o resultado com sucessos/falhas do servidor
+    // cobertura de dados livres: D4, D6, D8, D10 e D20 numa única rolagem
+    const ouveDados = esperar(s2, "mesa:rolagem", 8000);
+    const livres = await emitirCb(s1, "mesa:rolar", {
+      sessionId: sid, motivo: "cobertura D4-D20",
+      dados: [
+        { sides: 4, count: 2 }, { sides: 6, count: 2 }, { sides: 8, count: 2 },
+        { sides: 10, count: 2 }, { sides: 20, count: 2 },
+      ],
+    });
+    const rollDados = await ouveDados;
+    t("rolagem D4/D6/D8/D10/D20 → ok", livres.ok === true, JSON.stringify(livres).slice(0, 160));
+    const ladosEsperados = [4, 6, 8, 10, 20];
+    const gruposRoll = rollDados?.grupos ?? [];
+    t("grupos com lados e quantidades corretos",
+      gruposRoll.length === 5 && gruposRoll.every((g, i) =>
+        g.lados === ladosEsperados[i] && g.resultados.length === 2
+        && g.resultados.every((v) => Number.isInteger(v) && v >= 1 && v <= g.lados)),
+      JSON.stringify(gruposRoll).slice(0, 220));
+    const somaGrupos = gruposRoll.reduce((s, g) => s + g.resultados.reduce((a, b) => a + b, 0), 0);
+    t("total = soma dos resultados", rollDados?.total === somaGrupos, `total=${rollDados?.total} soma=${somaGrupos}`);
+
+    // lançador D10 livre: 5 positivos − 2 negativos = 3 dados, mínimo 7
+    const ouveD10L = esperar(s2, "mesa:rolagem", 8000);
+    const d10L = await emitirCb(s1, "mesa:rolar", {
+      sessionId: sid, dados: [{ sides: 10, count: 3 }],
+      d10: { positivos: 5, negativos: 2, minimo: 7 }, motivo: "lançador D10",
+    });
+    t("lançador D10 → ok", d10L.ok === true, JSON.stringify(d10L).slice(0, 160));
+    const rollD10L = await ouveD10L;
+    const d10Livre = d10L.d10 ?? rollD10L?.d10;
+    t("D10 livre: positivo/negativo/mínimo registrados",
+      d10Livre?.positivos === 5 && d10Livre?.negativos === 2 && d10Livre?.minimo === 7, JSON.stringify(d10Livre));
+    const resD10 = d10L.grupos?.[0]?.resultados ?? [];
+    t("D10 livre: 3 dados efetivos dentro de 1–10",
+      d10Livre?.lancados === 3 && resD10.length === 3 && resD10.every((v) => v >= 1 && v <= 10), JSON.stringify(resD10));
+    const sucD10 = resD10.filter((v) => v >= 7).length;
+    t("D10 livre: sucessos/falhas coerentes", d10Livre?.sucessos === sucD10 && d10Livre?.falhas === 3 - sucD10, JSON.stringify(d10Livre));
+
+    // teste de habilidade D10 (campo "for" → 14d10, mínimo da campanha = 7):
+    // mestre pede para J1; J2 NÃO pode rolar; J1 rola; servidor calcula.
     const pedir = await emitirCb(sM, "mesa:teste:pedir", {
       sessionId: sid, characterId: ids.charJ1, campoId: "for", visibilidade: "publica",
     });
-    t("mestre pede teste D10", pedir.ok === true && !!(pedir.testId ?? pedir.id), JSON.stringify(pedir).slice(0, 160));
-    const testId = pedir.testId ?? pedir.id;
-    const ouveD10 = esperar(s2, "mesa:rolagem", 8000);
+    testId = pedir.testId ?? pedir.id;
+    t("mestre pede teste D10", pedir.ok === true && !!testId, JSON.stringify(pedir).slice(0, 160));
+
+    // J2 tenta rolar ANTES da dona — tem que falhar por autorização
+    const negAntes = await emitirCb(s2, "mesa:teste:rolar", { testId });
+    t("J2 rolar antes de J1 → negado por autorização",
+      negAntes.ok === false && negAntes.erro && !negAntes.jaRolado, JSON.stringify(negAntes).slice(0, 140));
+    const stPendente = comDb(BANCO, (db) => db.prepare("select status from tests where id=?").get(testId)?.status);
+    t("teste continua pendente após tentativa de J2", stPendente === "pendente", `status=${stPendente}`);
+
+    // dona rola — resultado compartilhado com cálculo D10 do servidor
+    const ouveD10 = esperar(s2, "mesa:rolagem", 8000, (d) => d?.testId === testId);
     const rolarD10 = await emitirCb(s1, "mesa:teste:rolar", { testId });
-    t("dona rola D10 → 200", rolarD10.ok === true, JSON.stringify(rolarD10).slice(0, 160));
+    t("dona rola D10 → ok", rolarD10.ok === true, JSON.stringify(rolarD10).slice(0, 160));
     const rollD10 = await ouveD10;
-    t("D10 compartilhado com dados/sucessos", !!rollD10 && (rollD10.d10 != null || Array.isArray(rollD10.dados)), JSON.stringify(rollD10).slice(0, 160));
-    const rollNegado = await emitirCb(s2, "mesa:teste:rolar", { testId });
-    t("jogador2 NÃO rola teste alheio", rollNegado.ok === false || rollNegado.jaRolado === true, JSON.stringify(rollNegado).slice(0, 120));
+    const d10Calc = rolarD10.d10 ?? rollD10?.d10;
+    t("D10 presente com minimo/lancados/sucessos/falhas",
+      !!d10Calc && d10Calc.minimo === 7 && Number.isInteger(d10Calc.lancados)
+        && Number.isInteger(d10Calc.sucessos) && Number.isInteger(d10Calc.falhas),
+      JSON.stringify(d10Calc));
+    const dadosD10 = rolarD10.dados ?? rollD10?.dados ?? [];
+    t("lancados = dados efetivamente lançados, todos em 1–10",
+      d10Calc?.lancados === dadosD10.length && dadosD10.length === 14
+        && dadosD10.every((v) => Number.isInteger(v) && v >= 1 && v <= 10),
+      `lancados=${d10Calc?.lancados} dados=${dadosD10.length}`);
+    const sucCalc = dadosD10.filter((v) => v >= 7).length;
+    t("sucessos/falhas batem com resultados e mínimo da campanha",
+      d10Calc?.sucessos === sucCalc && d10Calc?.falhas === dadosD10.length - sucCalc,
+      `min=${d10Calc?.minimo} esperado=${sucCalc} obtido=${d10Calc?.sucessos}`);
+    const stRolado = comDb(BANCO, (db) => db.prepare("select status from tests where id=?").get(testId)?.status);
+    t("teste passa para rolado no banco", stRolado === "rolado", `status=${stRolado}`);
+    const negDepois = await emitirCb(s2, "mesa:teste:rolar", { testId });
+    t("J2 continua sem autorização mesmo após rolado", negDepois.ok === false, JSON.stringify(negDepois).slice(0, 120));
 
     // turno + ampulheta do mestre
     const neg = await emitirCb(s1, "mesa:turno", { sessionId: sid, acao: "iniciar" });
@@ -208,13 +279,41 @@ try {
     t("jogador lê diário público", (lista.json?.anotacoes ?? []).some((n) => /Sessão 1/.test(n.title ?? "")), `n=${lista.json?.anotacoes?.length}`);
   }
 
-  // ===== 7. Snapshot (salvar) =====
-  sec("Snapshot de segurança");
+  // ===== 7. Snapshot: criar → alterar → restaurar → conferir =====
+  sec("Snapshot de segurança e restauração");
+  let snapId;
   {
     const snap = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cm, body: { description: "pré-homologação" } });
+    snapId = snap.json?.snapshot?.id ?? snap.json?.id;
     t("snapshot criado", snap.status === 201 || snap.status === 200, `status=${snap.status} ${JSON.stringify(snap.json).slice(0, 120)}`);
     const lista = await req(BASE, "GET", `/campaigns/${ids.camp}/snapshots`, { cookie: cm });
-    t("snapshot listado", (lista.json?.snapshots ?? []).length >= 1);
+    t("snapshot listado", (lista.json?.snapshots ?? []).some((s) => s.id === snapId));
+
+    // altera dado persistido via API: quantidade do item Poção 2 → 5
+    const patch = await req(BASE, "PATCH", `/characters/${idJ1}/inventario/${ids.itemJ1}`, {
+      cookie: cm, body: { quantity: 5 },
+    });
+    t("alteração persistida via API", patch.status === 200, `status=${patch.status} ${JSON.stringify(patch.json).slice(0, 120)}`);
+    const invAlt = (await req(BASE, "GET", `/characters/${idJ1}/inventario`, { cookie: cj1 })).json?.itens ?? [];
+    t("quantidade alterada para 5", invAlt.find((i) => i.id === ids.itemJ1)?.quantity === 5, JSON.stringify(invAlt.map((i) => [i.name, i.quantity])));
+
+    // restaura o snapshot pela API real (exige confirmação literal)
+    const rest = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapId}/restaurar`, {
+      cookie: cm, body: { confirmacao: "RESTAURAR" },
+    });
+    t("restauração executada pela API", rest.status === 200 && rest.json?.ok === true && !!rest.json?.preSnapshotId,
+      `status=${rest.status} ${JSON.stringify(rest.json).slice(0, 160)}`);
+
+    const invVolta = (await req(BASE, "GET", `/characters/${idJ1}/inventario`, { cookie: cj1 })).json?.itens ?? [];
+    t("dado original restaurado (Poção volta a 2)", invVolta.find((i) => i.id === ids.itemJ1)?.quantity === 2,
+      JSON.stringify(invVolta.map((i) => [i.name, i.quantity])));
+
+    // snapshot automático pré-restauração foi criado
+    const lista2 = await req(BASE, "GET", `/campaigns/${ids.camp}/snapshots`, { cookie: cm });
+    const snaps = lista2.json?.snapshots ?? [];
+    const auto = snaps.find((s) => s.id === rest.json?.preSnapshotId);
+    t("snapshot automático pré-restauração existe", !!auto && /Automático/i.test(auto.description ?? ""),
+      JSON.stringify(snaps.map((s) => [s.id, s.description])).slice(0, 200));
   }
 
   // ===== 8. Reinício + retorno de todos =====
@@ -254,8 +353,46 @@ try {
     t("rolagem funciona após restart", roll2.ok === true);
     for (const s of [sM2, s12, s22]) s.disconnect();
 
-    // saída definitiva: logout não é necessário — dados já verificados
-    t("dados dos 3 preservados integralmente", true);
+    // ===== conferência integral dos dados preservados (nada de assert fixo) =====
+    sec("Conferência integral pós-restart");
+
+    // 1) os 3 continuam membros ativos da campanha
+    const membros = comDb(BANCO, (db) => db.prepare(
+      "select u.username, m.role, m.status from memberships m join users u on u.id=m.user_id where m.campaign_id=? order by u.username",
+    ).all(ids.camp));
+    t("3 membros ativos (mestre + 2 jogadores)",
+      membros.length === 3 && membros.every((m) => m.status === "ativo")
+        && membros.some((m) => m.role === "mestre") && membros.filter((m) => m.role === "jogador").length === 2,
+      JSON.stringify(membros));
+
+    // 2) os dois personagens continuam acessíveis aos respectivos donos
+    const fichaJ1 = await req(BASE, "GET", `/characters/${idJ1}`, { cookie: cj1 });
+    const fichaJ2 = await req(BASE, "GET", `/characters/${idJ2}`, { cookie: cj2 });
+    t("ficha J1 acessível ao dono", fichaJ1.status === 200);
+    t("ficha J2 acessível ao dono e aprovada", fichaJ2.status === 200
+      && (fichaJ2.json?.personagem?.status === "aprovada" || fichaJ2.json?.status === "aprovada"));
+
+    // 3) sessão continua disponível + turnos preservados (via endpoint de estado)
+    const estado = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/estado`, { cookie: cm });
+    t("sessão disponível após restart", estado.status === 200 && !!estado.json?.sessao, `status=${estado.status}`);
+    t("turnos preservados", estado.json?.turnos?.ativo === true, JSON.stringify(estado.json?.turnos).slice(0, 140));
+
+    // 4) histórico de mensagens, testes e rolagens preservado (API real)
+    const hist = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie: cm });
+    const hj = hist.json ?? {};
+    t("histórico: chat preservado", (hj.eventos ?? []).some((e) => /uso uma pocao/i.test(e.content ?? "")), `eventos=${hj.eventos?.length}`);
+    t("histórico: teste D10 rolado preservado",
+      (hj.testes ?? []).some((x) => x.id === testId && x.status === "rolado"), `testes=${hj.testes?.length}`);
+    t("histórico: rolagens preservadas", (hj.rolagens ?? []).length >= 5, `rolagens=${hj.rolagens?.length}`);
+
+    // 5) inventário e saldo continuam corretos (já conferidos acima — reafirma Tônico)
+    const invFinal = (await req(BASE, "GET", `/characters/${idJ1}/inventario`, { cookie: cj1 })).json?.itens ?? [];
+    t("inventário final íntegro (Poção 2 + Tônico 1)",
+      invFinal.find((i) => i.name === "Poção")?.quantity === 2 && invFinal.find((i) => i.name === "Tônico")?.quantity === 1);
+
+    // 6) permissões continuam funcionando após restart
+    const hpNeg2 = await req(BASE, "POST", `/characters/${idJ2}/hp`, { cookie: cj1, body: { acao: "dano", quantidade: 5 } });
+    t("J1 não altera HP de J2", hpNeg2.status === 403 || hpNeg2.status === 404, `status=${hpNeg2.status}`);
   }
 } finally {
   for (const s of sockets) { try { s.disconnect(); } catch { } }
