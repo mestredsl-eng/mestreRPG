@@ -744,28 +744,40 @@ interface SnapshotLivro {
  * Gera backup do estado atual ANTES de substituir; tudo numa transação.
  */
 bibliotecaRouter.post("/backups/:backupId/restaurar", requireAdmin, async (req, res) => {
-  const [backup] = await db.select().from(ruleBookBackups).where(eq(ruleBookBackups.id, req.params.backupId)).limit(1);
-  if (!backup) { res.status(404).json({ erro: "Backup não encontrado" }); return; }
-  const snap = backup.snapshot as { livros?: SnapshotLivro[] };
-  const livroSnap = snap?.livros?.[0];
-  if (!livroSnap) { res.status(400).json({ erro: "Snapshot inválido" }); return; }
-  const bookId = backup.bookId;
-  const b = await livroPorId(bookId);
-  if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
-  // Lê o estado atual ANTES da transação (leituras são assíncronas).
-  const itensAtuais = await itensDoLivro(bookId);
-
+  let falha: "backup" | "livro" | "snapshot" | null = null;
+  let bookId: string | null = null;
+  let backupId: string | null = null;
   try {
     db.transaction((tx) => {
+      // Releitura de backup, livro e itens dentro da mesma transação:
+      // o snapshot de segurança precisa representar o estado imediatamente
+      // anterior à restauração, não uma leitura feita antes do BEGIN.
+      const backup = tx.select().from(ruleBookBackups)
+        .where(eq(ruleBookBackups.id, req.params.backupId)).limit(1).get();
+      if (!backup) { falha = "backup"; return; }
+      const b = tx.select().from(ruleBooks)
+        .where(eq(ruleBooks.id, backup.bookId)).limit(1).get();
+      if (!b || b.excluidoEm) { falha = "livro"; return; }
+      const snap = backup.snapshot as { livros?: SnapshotLivro[] };
+      const livroSnap = snap?.livros?.[0];
+      if (!livroSnap) { falha = "snapshot"; return; }
+
+      bookId = b.id;
+      backupId = backup.id;
+      const itensAtuais = tx.select().from(ruleBookItems)
+        .where(eq(ruleBookItems.bookId, b.id)).all();
+      const itens: ItemDb[] = itensAtuais.map((r) => ({
+        id: r.id, kind: r.kind, key: r.key, name: r.name,
+        category: r.category, parentKey: r.parentKey,
+        definition: r.definition, ordem: r.ordem,
+      }));
       const t = agora();
-      // 1) backup do estado atual antes de sobrescrever
       tx.insert(ruleBookBackups).values({
-        id: novoId(), bookId,
-        snapshot: { formato: FORMATO_ACERVO, versao: VERSAO_FORMATO, livros: [livroParaEnvelope({ ...b, formatoVersao: VERSAO_FORMATO }, itensAtuais)] },
+        id: novoId(), bookId: b.id,
+        snapshot: { formato: FORMATO_ACERVO, versao: VERSAO_FORMATO, livros: [livroParaEnvelope({ ...b, formatoVersao: b.formatoVersao ?? VERSAO_FORMATO }, itens)] },
         motivo: `antes da restauração do backup ${backup.id}`,
         createdAt: t,
       }).run();
-      // 2) metadados do snapshot
       tx.update(ruleBooks).set({
         titulo: livroSnap.titulo ?? b.titulo,
         descricao: livroSnap.descricao ?? null,
@@ -777,12 +789,11 @@ bibliotecaRouter.post("/backups/:backupId/restaurar", requireAdmin, async (req, 
         formatoVersao: VERSAO_FORMATO,
         origem: "importado",
         updatedAt: t,
-      }).where(eq(ruleBooks.id, bookId)).run();
-      // 3) substitui itens pelos do snapshot
-      tx.delete(ruleBookItems).where(eq(ruleBookItems.bookId, bookId)).run();
+      }).where(eq(ruleBooks.id, b.id)).run();
+      tx.delete(ruleBookItems).where(eq(ruleBookItems.bookId, b.id)).run();
       (livroSnap.itens ?? []).forEach((it, i) => {
         tx.insert(ruleBookItems).values({
-          id: novoId(), bookId, kind: it.kind, key: it.key, name: it.name,
+          id: novoId(), bookId: b.id, kind: it.kind, key: it.key, name: it.name,
           category: it.category ?? null, parentKey: it.parentKey ?? null,
           definition: it.definition ?? {}, ordem: it.ordem ?? i,
           createdAt: t, updatedAt: t,
@@ -793,6 +804,10 @@ bibliotecaRouter.post("/backups/:backupId/restaurar", requireAdmin, async (req, 
     res.status(500).json({ erro: "Falha na restauração — nada foi alterado", detalhe: e instanceof Error ? e.message : String(e) });
     return;
   }
-  await audit(req, "biblioteca.backup.restaurado", { bookId, backupId: backup.id });
+  if (falha === "backup") { res.status(404).json({ erro: "Backup não encontrado" }); return; }
+  if (falha === "livro") { res.status(404).json({ erro: "Livro não encontrado" }); return; }
+  if (falha === "snapshot") { res.status(400).json({ erro: "Snapshot inválido" }); return; }
+  if (!bookId || !backupId) { res.status(500).json({ erro: "Falha inesperada na restauração" }); return; }
+  await audit(req, "biblioteca.backup.restaurado", { bookId, backupId });
   res.json({ ok: true });
 });
