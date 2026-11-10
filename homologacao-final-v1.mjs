@@ -166,6 +166,21 @@ try {
     await ouveRoll;
     t("rolagem compartilhada", roll.ok === true);
 
+    // teste de habilidade D10: mestre pede no personagem da jogadora1,
+    // a dona rola, todos veem o resultado com sucessos/falhas do servidor
+    const pedir = await emitirCb(sM, "mesa:teste:pedir", {
+      sessionId: sid, characterId: ids.charJ1, campoId: "for", visibilidade: "publica",
+    });
+    t("mestre pede teste D10", pedir.ok === true && !!(pedir.testId ?? pedir.id), JSON.stringify(pedir).slice(0, 160));
+    const testId = pedir.testId ?? pedir.id;
+    const ouveD10 = esperar(s2, "mesa:rolagem", 8000);
+    const rolarD10 = await emitirCb(s1, "mesa:teste:rolar", { testId });
+    t("dona rola D10 → 200", rolarD10.ok === true, JSON.stringify(rolarD10).slice(0, 160));
+    const rollD10 = await ouveD10;
+    t("D10 compartilhado com dados/sucessos", !!rollD10 && (rollD10.d10 != null || Array.isArray(rollD10.dados)), JSON.stringify(rollD10).slice(0, 160));
+    const rollNegado = await emitirCb(s2, "mesa:teste:rolar", { testId });
+    t("jogador2 NÃO rola teste alheio", rollNegado.ok === false || rollNegado.jaRolado === true, JSON.stringify(rollNegado).slice(0, 120));
+
     // turno + ampulheta do mestre
     const neg = await emitirCb(s1, "mesa:turno", { sessionId: sid, acao: "iniciar" });
     t("jogador não controla turno", neg.ok === false);
@@ -218,6 +233,14 @@ try {
       JSON.stringify(invVolta.map((i) => [i.name, i.quantity])));
     const finVolta = (await req(BASE, "GET", `/characters/${idJ1}/financeiro`, { cookie: cj1 })).json;
     t("saldo persiste (70.00)", finVolta?.contas?.[0]?.saldo === 70, `saldo=${finVolta?.contas?.[0]?.saldo}`);
+
+    // permissões: jogador2 não acessa inventário/financeiro da jogadora1
+    const invNeg = await req(BASE, "GET", `/characters/${idJ1}/inventario`, { cookie: cj2 });
+    t("jogador2 NÃO lê inventário alheio", invNeg.status === 403 || invNeg.status === 404, `status=${invNeg.status}`);
+    const finNeg = await req(BASE, "GET", `/characters/${idJ1}/financeiro`, { cookie: cj2 });
+    t("jogador2 NÃO lê financeiro alheio", finNeg.status === 403 || finNeg.status === 404, `status=${finNeg.status}`);
+    const hpNeg = await req(BASE, "POST", `/characters/${idJ1}/hp`, { cookie: cj2, body: { acao: "dano", quantidade: 5 } });
+    t("jogador2 NÃO altera HP alheio", hpNeg.status === 403 || hpNeg.status === 404, `status=${hpNeg.status}`);
 
     // volta à mesa: mestre + jogadores re-entram e veem estado
     const sM2 = conectar(cm), s12 = conectar(cj1), s22 = conectar(cj2);
