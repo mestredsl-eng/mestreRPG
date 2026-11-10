@@ -337,10 +337,15 @@ try {
     t("doc_bk.txt do backup removido pelo rollback", !existsSync(join(arqPath(r9), "doc_bk.txt")));
   }
 
-  // ===== 11. banco vivo COM WAL/SHM travado por conexão aberta =====
+  // ===== 11. banco vivo COM WAL/SHM aberto por conexão ativa =====
   // Com o servidor parado o restaurador lê a flag (o que consolida o WAL);
-  // aqui uma conexão de teste segura os sidecars — a remoção falha com
-  // EPERM e a operação DEVE abortar com o estado anterior preservado.
+  // aqui uma conexão de teste segura os sidecars. Duas garantias por
+  // plataforma, ambas exigindo abort sem estado misto:
+  //  - Windows: a remoção do sidecar travado falha com EPERM DEPOIS da
+  //    preservação → pre_restore_* existe com o trio completo;
+  //  - Linux: unlink não trava, então o restaurador detecta o banco em
+  //    uso via /proc ANTES de qualquer escrita → exit 2 sem pre_restore
+  //    (garantia mais forte: nada foi tocado, flag fica para retry).
   sec("Sidecars: vivo tem WAL/SHM em uso — falha segura sem estado misto");
   {
     const r11 = join(RAIZ, "wal_vivo");
@@ -353,10 +358,14 @@ try {
     const rest = restaurar(r11);
     t("restaurador bloqueado por sidecar em uso → exit != 0", rest.code !== 0, `code=${rest.code}`);
     const pre = readdirSync(join(r11, "backups")).filter((d) => d.startsWith("pre_restore_"));
-    t("estado anterior (com sidecars) preservado em pre_restore_*", pre.length >= 1);
-    const ladoDb = join(r11, "backups", pre[0], "mestre-rpg.db");
-    t("trio preservado inclui -wal e -shm",
-      existsSync(ladoDb + "-wal") && existsSync(ladoDb + "-shm"));
+    if (process.platform === "linux") {
+      t("abort antes de escrever: sem pre_restore_*", pre.length === 0);
+    } else {
+      t("estado anterior (com sidecars) preservado em pre_restore_*", pre.length >= 1);
+      const ladoDb = join(r11, "backups", pre[0], "mestre-rpg.db");
+      t("trio preservado inclui -wal e -shm",
+        existsSync(ladoDb + "-wal") && existsSync(ladoDb + "-shm"));
+    }
     t("banco vivo NÃO foi substituído (sidecars ainda presentes)",
       existsSync(dbPath(r11) + "-wal") && existsSync(dbPath(r11) + "-shm"));
     conn.close();
