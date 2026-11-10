@@ -95,6 +95,17 @@ function devolverUnidadeAoInventario(
   }).run();
 }
 
+// Campos internos de procedência inventário↔equipamento: escritos
+// EXCLUSIVAMENTE pelo fluxo oficial de equipar. O cliente nunca pode
+// forjá-los (POST) nem alterá-los/apagá-los (PATCH).
+const CAMPOS_PROCEDENCIA = ["origem", "inventoryEntryId", "itemSnapshot", "requestId"] as const;
+function limparProcedencia(data: Record<string, unknown> | undefined) {
+  if (!data) return data;
+  const limpo = { ...data };
+  for (const k of CAMPOS_PROCEDENCIA) delete limpo[k];
+  return limpo;
+}
+
 /** Quantos equipamentos do personagem referenciam este item de inventário
  *  (via data.inventoryEntryId) — usado para bloquear exclusão/transferência. */
 function equipamentosDoItem(
@@ -334,7 +345,16 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
       )).limit(1).all();
       if (ocupado) { slotOcupado = ocupado.name; return; }
     }
-    tx.insert(equipmentEntries).values({ id, characterId: a.personagem.id, ...body.data, createdAt: agora, updatedAt: agora }).run();
+    // Campos explícitos: nada de ...body.data — o cliente não pode
+    // injetar procedência falsa via data/origem/inventoryEntryId.
+    tx.insert(equipmentEntries).values({
+      id, characterId: a.personagem.id,
+      name: body.data.name, kind: body.data.kind ?? null,
+      slot: body.data.slot ?? null, equipped: body.data.equipped,
+      description: body.data.description ?? null,
+      data: limparProcedencia(body.data.data) ?? {},
+      createdAt: agora, updatedAt: agora,
+    }).run();
   });
   if (slotOcupado !== null) {
     res.status(409).json({ erro: `Slot "${body.data.slot}" já ocupado por "${slotOcupado}"` }); return;
@@ -525,7 +545,22 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
       )).limit(1).all();
       if (ocupado) { slotOcupado = ocupado.name; return; }
     }
-    tx.update(equipmentEntries).set({ ...d, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqpTx.id)).run();
+    // Lista explícita de campos editáveis — o cliente não pode alterar
+    // nem apagar a procedência (origem/inventoryEntryId/itemSnapshot/
+    // requestId), que é mesclada preservando os valores do servidor.
+    const { data: dataEnviada, ...resto } = d;
+    const dataFinal = dataEnviada !== undefined
+      ? { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limparProcedencia(dataEnviada) }
+      : eqpTx.data;
+    tx.update(equipmentEntries).set({
+      name: resto.name ?? eqpTx.name,
+      kind: resto.kind !== undefined ? resto.kind : eqpTx.kind,
+      slot: resto.slot !== undefined ? resto.slot : eqpTx.slot,
+      equipped: resto.equipped !== undefined ? resto.equipped : eqpTx.equipped,
+      description: resto.description !== undefined ? resto.description : eqpTx.description,
+      ...(dataEnviada !== undefined ? { data: dataFinal } : {}),
+      updatedAt: new Date(),
+    }).where(eq(equipmentEntries.id, eqpTx.id)).run();
   });
   if (sumiu) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
   if (slotOcupado !== null) {
