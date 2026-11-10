@@ -148,7 +148,7 @@ try {
     t("dano concorrente é persistido → 200", dano.status === 200, `status=${dano.status}`);
     const final = (await req(BASE, "GET", `/characters/${ids.charJ1}`, { cookie: cj1 })).json;
     t("nome editado não é perdido", final?.name === "Jogador Um atualizado", `nome=${final?.name}`);
-    t("HP preserva o dano concorrente (125→120)", final?.ficha?.vida?.hp?.atual === 120, `hp=${final?.ficha?.vida?.hp?.atual}`);
+    t("HP preserva o dano concorrente (130→125)", final?.ficha?.vida?.hp?.atual === 125, `hp=${final?.ficha?.vida?.hp?.atual}`);
   }
 
   // ===== 4. Vitalidade com motivo =====
