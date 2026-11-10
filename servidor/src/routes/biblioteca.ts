@@ -480,6 +480,39 @@ async function processarEnvelope(body: unknown): Promise<{ ok: true; livros: Liv
   return { ok: true, livros };
 }
 
+/** Recalcula o destino e o diff usando exclusivamente leituras da transação de confirmação. */
+function processarEnvelopeTx(tx: Tx, body: unknown): { ok: true; livros: LivroProcessado[] } | { ok: false; erro: string; detalhes?: unknown } {
+  const parsed = envelopeImportacaoSchema.safeParse(body);
+  if (!parsed.success) return { ok: false, erro: "Envelope inválido", detalhes: parsed.error.issues.slice(0, 20) };
+  const livros: LivroProcessado[] = [];
+  const destinos = new Set<string>();
+  const ativos = tx.select().from(ruleBooks).where(isNull(ruleBooks.excluidoEm)).all();
+  for (const [li, entrada] of parsed.data.livros.entries()) {
+    for (const [ii, item] of entrada.itens.entries()) {
+      if (JSON.stringify(item.definition ?? {}).length > TAM_MAX_DEFINITION)
+        return { ok: false, erro: `Livro ${li} item ${ii} (${item.kind}:${item.key}): definition excede 64KB` };
+    }
+    const dup = duplicadosKindKey(entrada.itens);
+    if (dup) return { ok: false, erro: `Livro "${entrada.titulo}": item duplicado ${dup}` };
+    let book = entrada.id ? ativos.find((x) => x.id === entrada.id) ?? null : null;
+    if (!book) {
+      const alvo = normTitulo(entrada.titulo);
+      book = ativos.find((x) => normTitulo(x.titulo) === alvo) ?? null;
+    }
+    const itensDb: ItemDb[] = book
+      ? tx.select().from(ruleBookItems).where(eq(ruleBookItems.bookId, book.id)).all().map((i) => ({
+          id: i.id, kind: i.kind, key: i.key, name: i.name,
+          category: i.category, parentKey: i.parentKey, definition: i.definition, ordem: i.ordem,
+        }))
+      : [];
+    const destino = book ? `id:${book.id}` : `novo:${normTitulo(entrada.titulo)}`;
+    if (destinos.has(destino)) return { ok: false, erro: `Livro duplicado no envelope: "${entrada.titulo}"` };
+    destinos.add(destino);
+    livros.push({ entrada, existente: book, itensDb, diff: diffLivro(entrada, book, itensDb) });
+  }
+  return { ok: true, livros };
+}
+
 function previewDe(p: LivroProcessado, indice: number) {
   return {
     indice,
@@ -644,17 +677,18 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
  */
 bibliotecaRouter.post("/importar/confirmar", requireAdmin, async (req, res) => {
   const body = req.body as { envelope?: unknown; decisoes?: unknown } | undefined;
-  const r = await processarEnvelope(body?.envelope);
-  if (!r.ok) { res.status(400).json(r); return; }
-
   const decParse = decisoesImportacaoSchema.safeParse(body?.decisoes ?? { decisoes: [] });
   if (!decParse.success) { res.status(400).json({ erro: "Decisões inválidas", detalhes: decParse.error.issues }); return; }
   const decisoes = new Map(decParse.data.decisoes.map((d) => [d.indice, d as Decisao]));
-
   const t = agora();
   const resultados: { indice: number; titulo: string; acao: string; bookId: string; adicionados: number; atualizados: number }[] = [];
+  let falhaValidacao: { erro: string; detalhes?: unknown } | null = null;
   try {
     db.transaction((tx) => {
+      // A prévia pode ficar obsoleta enquanto o usuário decide. Resolver
+      // destinos, reler itens e recalcular diffs imediatamente antes de aplicar.
+      const r = processarEnvelopeTx(tx, body?.envelope);
+      if (!r.ok) { falhaValidacao = { erro: r.erro, detalhes: r.detalhes }; return; }
       r.livros.forEach((p, indice) => {
         const res2 = aplicarLivro(tx, p, decisoes.get(indice), t);
         resultados.push({ indice, titulo: p.entrada.titulo, ...res2 });
@@ -664,6 +698,7 @@ bibliotecaRouter.post("/importar/confirmar", requireAdmin, async (req, res) => {
     res.status(500).json({ erro: "Falha na importação — nada foi gravado", detalhe: e instanceof Error ? e.message : String(e) });
     return;
   }
+  if (falhaValidacao) { res.status(400).json({ erro: falhaValidacao.erro, detalhes: falhaValidacao.detalhes }); return; }
   await audit(req, "biblioteca.importar", { livros: resultados.length, usuario: req.usuario!.username });
   res.json({ ok: true, resultados });
 });
