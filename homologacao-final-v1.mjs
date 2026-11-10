@@ -163,11 +163,15 @@ try {
     const [rM, r1, r2] = await Promise.all([entrar(sM, sid), entrar(s1, sid), entrar(s2, sid)]);
     t("3 participantes na mesa", rM.ok && r1.ok && r2.ok, `m=${rM.papel} j1=${r1.papel} j2=${r2.papel}`);
 
-    // chat
-    const ouve = esperar(s2, "mesa:mensagem", 8000, (d) => /pocao/i.test(d?.content ?? ""));
-    await emitirCb(s1, "mesa:mensagem", { sessionId: sid, content: "uso uma pocao", clientId: "m1" });
-    await ouve;
-    t("chat chega aos 3", true);
+    // chat: listener instalado nos TRÊS sockets antes do envio;
+    // cada participante precisa receber a mensagem de verdade
+    const ouveM = esperar(sM, "mesa:mensagem", 8000, (d) => /pocao/i.test(d?.content ?? ""));
+    const ouve1 = esperar(s1, "mesa:mensagem", 8000, (d) => /pocao/i.test(d?.content ?? ""));
+    const ouve2 = esperar(s2, "mesa:mensagem", 8000, (d) => /pocao/i.test(d?.content ?? ""));
+    const enviou = await emitirCb(s1, "mesa:mensagem", { sessionId: sid, content: "uso uma pocao", clientId: "m1" });
+    const [msgM, msg1, msg2] = await Promise.all([ouveM, ouve1, ouve2]);
+    t("chat chega aos 3", enviou.ok === true && !!msgM && !!msg1 && !!msg2,
+      `envio=${JSON.stringify(enviou)} recebidos=${!!msgM},${!!msg1},${!!msg2}`);
 
     // rolagem compartilhada
     const ouveRoll = esperar(s2, "mesa:rolagem", 8000);
@@ -263,9 +267,11 @@ try {
     t("ampulheta pausada", pausa.ok === true && pausa.timer?.status === "pausado");
     await emitirCb(sM, "mesa:timer", { sessionId: sid, acao: "encerrar" });
 
-    // todos saem da mesa (mesa:sair) e desconectam
-    for (const s of [sM, s1, s2]) { await emitirCb(s, "mesa:sair", { sessionId: sid }); s.disconnect(); }
-    t("3 participantes saíram", true);
+    // todos saem da mesa — callback mesa:sair de cada socket tem que confirmar
+    const saidas = await Promise.all([sM, s1, s2].map((s) => emitirCb(s, "mesa:sair", { sessionId: sid })));
+    t("3 participantes saíram (callbacks confirmados)", saidas.every((r) => r?.ok === true),
+      JSON.stringify(saidas));
+    for (const s of [sM, s1, s2]) s.disconnect();
   }
 
   // ===== 6. Diário =====
