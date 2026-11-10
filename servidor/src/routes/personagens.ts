@@ -655,13 +655,7 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     res.status(400).json({ erro: "Pontos de vida não estão habilitados nesta campanha" });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
   const estrutura = await estruturaDoPersonagem(p);
-  const maximo = hpMaximo(cfg, estrutura, dados);
-  if (maximo === null) {
-    res.status(400).json({ erro: "Não foi possível calcular o HP máximo (verifique o atributo configurado)" });
-    return;
-  }
   if (!ehMestre && !(ehDono && cfg.edicaoPor !== "mestre")) {
     res.status(403).json({ erro: "Sem permissão para alterar o HP deste personagem" });
     return;
@@ -684,25 +678,41 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     delta = acao === "dano" ? -Math.abs(q) : Math.abs(q);
   }
 
-  const estado = lerHp(dados);
+  // Releitura + cálculo + gravação na MESMA transação: duas alterações
+  // simultâneas não perdem entradas do histórico (read-modify-write atômico).
   const agora = new Date();
   const autorNome = await nomeUsuario(req.usuario!.id);
-  const { estado: novo, erro } = aplicarHp(estado, maximo, delta, {
-    em: agora.toISOString(),
-    tipo: acao === "dano" ? "dano" : acao === "recuperar" ? "recuperacao" : "ajuste",
-    motivo: motivo?.trim() || (acao === "dano" ? "Dano" : acao === "recuperar" ? "Recuperação" : "Ajuste"),
-    autorId: req.usuario!.id,
-    autorNome,
+  let resposta: { hp: unknown; deltaHp: number } | null = null;
+  let erroHp: string | null = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { sumiu = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const maxTx = hpMaximo(cfg, estrutura, dadosTx);
+    if (maxTx === null) { erroHp = "maximo"; return; }
+    const estado = lerHp(dadosTx);
+    const { estado: novo, erro } = aplicarHp(estado, maxTx, delta, {
+      em: agora.toISOString(),
+      tipo: acao === "dano" ? "dano" : acao === "recuperar" ? "recuperacao" : "ajuste",
+      motivo: motivo?.trim() || (acao === "dano" ? "Dano" : acao === "recuperar" ? "Recuperação" : "Ajuste"),
+      autorId: req.usuario!.id,
+      autorNome,
+    });
+    if (erro) { erroHp = erro; return; }
+    const novosDados = { ...dadosTx, [CHAVE_HP]: novo };
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: novo.atual - (estado?.atual ?? maxTx) };
   });
-  if (erro) {
-    res.status(400).json({ erro });
+  if (sumiu) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (erroHp === "maximo") {
+    res.status(400).json({ erro: "Não foi possível calcular o HP máximo (verifique o atributo configurado)" });
     return;
   }
-  const novosDados = { ...dados, [CHAVE_HP]: novo };
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
-  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: novo.atual - (estado?.atual ?? maximo) });
+  if (erroHp) { res.status(400).json({ erro: erroHp }); return; }
+  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, hp: resumoHp(cfg, estrutura, novosDados) });
+  res.json({ ok: true, hp: resposta!.hp });
 });
 
 const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });
@@ -730,32 +740,42 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
     res.status(403).json({ erro: "Sem permissão para alterar a vitalidade deste personagem" });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
+  // Releitura + cálculo + gravação na MESMA transação: alterações
+  // simultâneas não perdem entradas do histórico.
   const agora = new Date();
-  const anterior = lerVitalidade(dados);
   const autorNome = await nomeUsuario(req.usuario!.id);
-  const estado = {
-    ...anterior,
-    nivel: body.data.nivel,
-    alteradoEm: agora.toISOString(),
-    alteradoPor: req.usuario!.id,
-    historico: [
-      ...(anterior.historico ?? []),
-      {
-        em: agora.toISOString(),
-        nivelAnterior: anterior.nivel,
-        nivelNovo: body.data.nivel,
-        motivo: body.data.motivo?.trim() || null,
-        autorId: req.usuario!.id,
-        autorNome,
-      },
-    ].slice(-100),
-  };
-  const novosDados = { ...dados, [CHAVE_VITALIDADE]: estado };
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  let resposta: unknown = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { sumiu = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const anterior = lerVitalidade(dadosTx);
+    const estado = {
+      ...anterior,
+      nivel: body.data.nivel,
+      alteradoEm: agora.toISOString(),
+      alteradoPor: req.usuario!.id,
+      historico: [
+        ...(anterior.historico ?? []),
+        {
+          em: agora.toISOString(),
+          nivelAnterior: anterior.nivel,
+          nivelNovo: body.data.nivel,
+          motivo: body.data.motivo?.trim() || null,
+          autorId: req.usuario!.id,
+          autorNome,
+        },
+      ].slice(-100),
+    };
+    const novosDados = { ...dadosTx, [CHAVE_VITALIDADE]: estado };
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = resumoVitalidade(cfg, novosDados);
+  });
+  if (sumiu) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
   await audit(req, "personagem.vitalidade", { characterId: p.id, nivel: body.data.nivel });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, vitalidade: resumoVitalidade(cfg, novosDados) });
+  res.json({ ok: true, vitalidade: resposta });
 });
 
 // ---------- Bônus individual de pontos (somente mestre) ----------
