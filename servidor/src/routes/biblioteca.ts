@@ -15,6 +15,7 @@ import {
   diffLivro,
   livroParaEnvelope,
   mesmoItem,
+  canonical,
   chaveConflito,
   type LivroExportado,
   type ItemDb,
@@ -194,10 +195,22 @@ bibliotecaRouter.patch("/livros/:id", requireAdmin, async (req, res) => {
   const b = await livroPorId(req.params.id);
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
   const t = agora();
-  const campos: Record<string, unknown> = { updatedAt: t };
+  // Ignora campos enviados com o mesmo valor — PATCH no-op não gera
+  // backup nem incremento de versão.
+  const campos: Record<string, unknown> = {};
   for (const k of ["titulo", "descricao", "autor", "sistema", "edicao", "tipo"] as const) {
-    if (body.data[k] !== undefined) campos[k] = body.data[k] ?? null;
+    if (body.data[k] !== undefined) {
+      const novo = body.data[k] ?? null;
+      const velho = (b as Record<string, unknown>)[k] ?? null;
+      if (novo !== velho) campos[k] = novo;
+    }
   }
+  if (!Object.keys(campos).length) {
+    const total = (await itensDoLivro(b.id)).length;
+    res.json({ livro: metaResposta(b, total), semAlteracao: true });
+    return;
+  }
+  campos.updatedAt = t;
   db.transaction((tx) => {
     backupAntesMutacao(tx, b.id, "antes de editar metadados", t);
     tx.update(ruleBooks).set(campos).where(eq(ruleBooks.id, b.id)).run();
@@ -249,7 +262,17 @@ bibliotecaRouter.post("/livros/:id/itens", requireAdmin, async (req, res) => {
   res.status(201).json({ ok: true, id });
 });
 
-const editarItemSchema = itemLivroSchema.partial();
+// .partial() vazaria os .default() de definition/ordem — campos ausentes
+// chegariam como {} e 0 e sobrescreveriam o item. Schema explícito, sem defaults.
+const editarItemSchema = z.object({
+  kind: itemLivroSchema.shape.kind.optional(),
+  key: itemLivroSchema.shape.key.optional(),
+  name: itemLivroSchema.shape.name.optional(),
+  category: itemLivroSchema.shape.category.optional(),
+  parentKey: itemLivroSchema.shape.parentKey.optional(),
+  definition: z.record(z.string(), z.unknown()).optional(),
+  ordem: z.number().int().min(0).max(1_000_000).optional(),
+});
 
 /** PATCH /api/biblioteca/livros/:id/itens/:itemId — edita item. */
 bibliotecaRouter.patch("/livros/:id/itens/:itemId", requireAdmin, async (req, res) => {
@@ -272,10 +295,25 @@ bibliotecaRouter.patch("/livros/:id/itens/:itemId", requireAdmin, async (req, re
     }
   }
   const t = agora();
-  const campos: Record<string, unknown> = { updatedAt: t };
+  // Idem: PATCH de item sem mudança real não gera backup nem versão.
+  const campos: Record<string, unknown> = {};
+  const iguais: Record<string, boolean> = {
+    kind: body.data.kind === undefined || body.data.kind === item.kind,
+    key: body.data.key === undefined || body.data.key === item.key,
+    name: body.data.name === undefined || body.data.name === item.name,
+    category: body.data.category === undefined || (body.data.category ?? null) === item.category,
+    parentKey: body.data.parentKey === undefined || (body.data.parentKey ?? null) === item.parentKey,
+    definition: body.data.definition === undefined || canonical(body.data.definition ?? {}) === canonical(item.definition ?? {}),
+    ordem: body.data.ordem === undefined || body.data.ordem === item.ordem,
+  };
   for (const k of ["kind", "key", "name", "category", "parentKey", "definition", "ordem"] as const) {
-    if (body.data[k] !== undefined) campos[k] = body.data[k] ?? null;
+    if (body.data[k] !== undefined && !iguais[k]) campos[k] = body.data[k] ?? null;
   }
+  if (!Object.keys(campos).length) {
+    res.json({ ok: true, semAlteracao: true });
+    return;
+  }
+  campos.updatedAt = t;
   try {
     db.transaction((tx) => {
       backupAntesMutacao(tx, b.id, "antes de editar item", t);

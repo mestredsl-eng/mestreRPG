@@ -319,6 +319,91 @@ try {
   r = await apiM("GET", `/api/biblioteca/livros?q=${encodeURIComponent(SUFIXO)}`);
   ok("busca por sufixo encontra livros de teste", r.status === 200 && r.json.total >= 2, `total=${r.json?.total}`);
 
+  // ---------- 19-26) backups automáticos em mutações manuais ----------
+  const livroM = {
+    titulo: `${SUFIXO} Mutações`, tipo: "livro",
+    itens: [
+      { kind: "atributo", key: "agilidade", name: "Agilidade", ordem: 0 },
+      { kind: "habilidade", key: "percepcao", name: "Percepção", ordem: 1 },
+    ],
+  };
+  r = await apiM("POST", "/api/biblioteca/livros", livroM);
+  const idM = r.json?.livro?.id;
+  livrosTeste.push(idM);
+  ok("19. livro p/ mutações criado", r.status === 201 && !!idM, `status=${r.status}`);
+  const backupsDe = async () => (await apiM("GET", `/api/biblioteca/livros/${idM}/backups`)).json.backups;
+  const livroMAtual = async () => (await apiM("GET", `/api/biblioteca/livros/${idM}`)).json;
+  const versaoM = async () => (await livroMAtual()).livro.versao;
+  ok("19b. livro novo sem backups", (await backupsDe()).length === 0);
+  const v0 = await versaoM();
+
+  // 20) PATCH metadados -> backup + versão
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idM}`, { sistema: "Sistema M" });
+  let bks = await backupsDe();
+  ok("20. PATCH metadados gera backup", r.status === 200 && bks.length === 1 && bks[0].motivo === "antes de editar metadados",
+    `backups=${bks.length} motivo=${bks[0]?.motivo}`);
+  ok("20b. versão incrementada", (await versaoM()) === v0 + 1, `v=${await versaoM()}`);
+  // snapshot contém o estado ANTERIOR (sem sistema)
+  const snapMeta = (await apiM("GET", `/api/biblioteca/backups/${bks[0].id}`)).json.backup.snapshot;
+  ok("20c. snapshot tem metadados anteriores", snapMeta?.livros?.[0]?.sistema == null && snapMeta?.livros?.[0]?.titulo === livroM.titulo,
+    JSON.stringify(snapMeta?.livros?.[0]?.sistema));
+  const backupMetaId = bks[0].id;
+
+  // 21) PATCH no-op -> sem backup, sem versão
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idM}`, { sistema: "Sistema M" });
+  ok("21. PATCH idêntico não gera backup", r.status === 200 && (await backupsDe()).length === 1 && r.json?.semAlteracao === true,
+    `backups=${(await backupsDe()).length}`);
+  ok("21b. versão estável após no-op", (await versaoM()) === v0 + 1);
+
+  // 22) adicionar item -> backup
+  r = await apiM("POST", `/api/biblioteca/livros/${idM}/itens`, { kind: "vantagem", key: "sorte", name: "Sorte", ordem: 2 });
+  const itemSorte = (await livroMAtual()).itens.find((i) => i.key === "sorte");
+  bks = await backupsDe();
+  ok("22. adicionar item gera backup", r.status === 201 && bks.length === 2 && bks.some((b) => b.motivo === "antes de adicionar item"),
+    `backups=${bks.length}`);
+  ok("22b. versão incrementada", (await versaoM()) === v0 + 2, `v=${await versaoM()}`);
+
+  // 23) editar item -> backup
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idM}/itens/${itemSorte.id}`, { name: "Sorte Grande", ordem: 5 });
+  bks = await backupsDe();
+  ok("23. editar item gera backup", r.status === 200 && bks.length === 3 && bks.some((b) => b.motivo === "antes de editar item"),
+    `backups=${bks.length}`);
+  ok("23b. versão incrementada", (await versaoM()) === v0 + 3, `v=${await versaoM()}`);
+
+  // 23c) PATCH item no-op -> sem backup
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idM}/itens/${itemSorte.id}`, { name: "Sorte Grande" });
+  ok("23c. PATCH item idêntico não gera backup", r.status === 200 && r.json?.semAlteracao === true && (await backupsDe()).length === 3,
+    `backups=${(await backupsDe()).length}`);
+
+  // 24) remover item -> backup
+  r = await apiM("DELETE", `/api/biblioteca/livros/${idM}/itens/${itemSorte.id}`);
+  bks = await backupsDe();
+  ok("24. remover item gera backup", r.status === 200 && bks.length === 4 && bks.some((b) => b.motivo === "antes de remover item"),
+    `backups=${bks.length}`);
+  ok("24b. versão incrementada", (await versaoM()) === v0 + 4, `v=${await versaoM()}`);
+
+  // 25) reordenar -> backup só quando há mudança real
+  const itensOrd = (await livroMAtual()).itens;
+  r = await apiM("PUT", `/api/biblioteca/livros/${idM}/itens/ordem`, { itens: itensOrd.map((i) => ({ id: i.id, ordem: i.ordem })) });
+  ok("25. reordenar sem mudança não gera backup", r.status === 200 && r.json?.alterados === 0 && (await backupsDe()).length === 4,
+    `backups=${(await backupsDe()).length}`);
+  r = await apiM("PUT", `/api/biblioteca/livros/${idM}/itens/ordem`, { itens: itensOrd.map((i) => ({ id: i.id, ordem: 10 - i.ordem })) });
+  bks = await backupsDe();
+  ok("25b. reordenar com mudança gera backup", r.status === 200 && r.json?.alterados === 2 && bks.length === 5 && bks.some((b) => b.motivo === "antes de reordenar itens"),
+    `backups=${bks.length} alterados=${r.json?.alterados}`);
+  ok("25c. versão incrementada", (await versaoM()) === v0 + 5, `v=${await versaoM()}`);
+
+  // 26) restaurar backup de metadados -> volta ao estado de criação
+  r = await apiM("POST", `/api/biblioteca/backups/${backupMetaId}/restaurar`, {});
+  ok("26. restaurar backup de metadados", r.status === 200, `status=${r.status} ${r.json?.erro ?? ""}`);
+  const livroRestaurado = await livroMAtual();
+  ok("26b. metadados voltam ao estado anterior", livroRestaurado.livro.sistema == null && livroRestaurado.livro.titulo === livroM.titulo,
+    `sistema=${livroRestaurado.livro.sistema}`);
+  ok("26c. itens voltam ao snapshot (2 itens, sem 'sorte')", livroRestaurado.itens.length === 2 && !livroRestaurado.itens.some((i) => i.key === "sorte"),
+    `itens=${livroRestaurado.itens.length}`);
+  ok("26d. restauração gera backup do estado atual", (await backupsDe()).some((b) => b.motivo.includes("restauração")),
+    JSON.stringify((await backupsDe()).map((b) => b.motivo)));
+
 } finally {
   // ---------- limpeza ----------
   for (const id of livrosTeste.filter(Boolean)) {
