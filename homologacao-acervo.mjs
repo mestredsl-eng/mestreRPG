@@ -243,12 +243,12 @@ try {
 
   // ---------- 14) restaurar backup ----------
   if (backupImport) {
-    // estado atual tem custo=2; backup tem custo=1
+    // estado atual tem custo=2 (aplicado pelo import); backup tem custo=5 (edição concorrente pré-import)
     r = await apiM("POST", `/api/biblioteca/backups/${backupImport.id}/restaurar`, {});
     ok("14a. restaurar backup", r.status === 200, `status=${r.status} ${r.json?.erro ?? ""}`);
     const livroRest = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json;
     const forcaRest = livroRest.itens.find((i) => i.kind === "atributo" && i.key === "forca");
-    ok("14b. estado restaurado (custo volta a 1)", forcaRest?.definition?.custo === 1, `custo=${forcaRest?.definition?.custo}`);
+    ok("14b. estado restaurado (custo volta a 5)", forcaRest?.definition?.custo === 5, `custo=${forcaRest?.definition?.custo}`);
     ok("14c. edição restaurada (volta de 2ª)", livroRest.livro.edicao !== "2ª", `ed=${livroRest.livro.edicao}`);
     // o snapshot do passo 12 já continha nova_regra (commit do passo 11) -> 7 itens
     ok("14d. itens restaurados conforme snapshot", livroRest.itens.length === 7, `total=${livroRest.itens.length}`);
