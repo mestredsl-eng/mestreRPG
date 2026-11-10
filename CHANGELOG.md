@@ -59,6 +59,10 @@
 - **`homologacao-primeira-partida.mjs`: 26/26** — primeira partida real via navegador (Playwright, 3 sessões independentes): setup admin → campanha → convite com aprovação → jogadores cadastram/entram → mestre aprova entradas → fichas criadas e enviadas → mestre aprova fichas → mesa com mestre+2 jogadores → chat → rolagens d4/d6/d8/d10/d20 → desafio D10 rolado pelo jogador → ordem de turno → item de inventário → restart do servidor com persistência de campanha, personagens, sessão e chat
 - **`homologacao-v1-cobertura.mjs`: 12/12** — cobertura de interface das demais funcionalidades: veículo, conta financeira + movimentação, anotação de diário, ponto de recuperação (snapshot), livro+item no Acervo global, aplicação de livro à campanha (aba Regras → Acervo) e acesso de espectador à mesa
 - **`teste-acessibilidade.mjs`: 22/22** — nomes acessíveis em todos os controles das abas da campanha e do patrimônio, navegação por Tab, foco visível, modal rotulado; correção: campo de busca do Acervo na campanha ganhou `aria-label`
+- **Dados 3D integrados à mesa** — física de corpo rígido (`fisicaDado.ts`) com poliedros reais d4/d6/d8/d10/d20, animação, geometria corrigida do D10 (faces planas/opostas), cores externa e de números independentes persistidas no servidor e atualizadas sem nova rolagem; resultado continua autoritativo do servidor
+- **`homologacao-dados3d.mjs`: 22/22** — canvas 3D real dos 5 tipos, múltiplos dados, cores personalizadas com persistência, histórico compartilhado, desafio D10 e mobile
+- **`homologacao-patrimonio.mjs`: 11/11** — movimentação financeira real (saldo 100 → +50 → −30 → 120) com histórico "Saldo após", transferência de item entre personagens e visão idêntica mestre/jogador/mobile
+- **`teste-fisica-dados.mjs`: 48/48** — simulação física isolada: faces finais corretas por tipo e limites de trajetória
 
 - Suítes principais:
   - `homologacao-final-v1.mjs`: 73/73 — cenário E2E completo (mestre + 2 jogadores, convite, fichas, aprovação, patrimônio, mesa, restart, retorno)
