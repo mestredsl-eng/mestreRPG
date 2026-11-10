@@ -17,6 +17,7 @@ const BKS = join(DIR, "backups");
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 let proc;
+let browser;
 let pass = 0, fail = 0;
 
 function t(desc, ok, details = "") {
@@ -80,7 +81,10 @@ try {
   const idB = await mkLivro("Livro Beta Corrida", "Item Beta Unico", "item_beta");
   const idLento = await mkLivro("Livro Lento Corrida", "Item Lento Unico", "item_lento");
 
-  const browser = await chromium.launch();
+  browser = await chromium.launch();
+  // MRPG_CORRIDAS_FALHO=1: falha controlada logo após abrir o browser —
+  // prova que finally fecha browser, servidor e diretório temporário.
+  if (process.env.MRPG_CORRIDAS_FALHO === "1") throw new Error("falha controlada de limpeza");
   const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
   const page = await ctx.newPage();
   const errosJs = [];
@@ -209,9 +213,8 @@ try {
   t("importar livro via UI", await page.locator("td:has-text('Livro Importado UI')").count() >= 1);
 
   t("sem erros de JS na página", errosJs.length === 0, errosJs.join(" | ").slice(0, 300));
-
-  await browser.close();
 } finally {
+  if (browser) await browser.close().catch(() => {});
   await encerrarServidor(proc);
   limparDir(DIR);
 }
