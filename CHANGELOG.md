@@ -41,6 +41,7 @@
 - **Homologação** — asserts fixos substituídos por verificações reais de estado pós-restart
 - **Homologação** — validação D10 agora exige campos calculados do servidor (`minimo`, `lancados`, `sucessos`, `falhas`) e não apenas array de dados
 - **Acessibilidade** — campos dinâmicos de ficha, filtros de acervo/arquivos/regras/patrimônio, papéis/status de participantes e formulário de bônus de pontos ganharam `aria-label`; auditoria visual em 3 viewports sem achados
+- **Documentação** — `docs/PRIMEIRA-PARTIDA.md`: roteiro não técnico do zero à mesa (instalação, mestre, convites, fichas, patrimônio, mesa, persistência, backup e recuperação), complementando `docs/GUIA-OPERACAO.md`. Instalação validada em checkout limpo (`npm ci` + build + migrate + boot + health)
 
 ### Notas de migração
 
