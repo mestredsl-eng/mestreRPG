@@ -135,10 +135,17 @@ try {
     JSON.stringify({ va: item3?.versaoAplicada, v: item3?.versao }));
 
   // aplicar sem decisões -> 409 com conflito explícito
+  const elAntesConflito = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
   const conflita = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
   t("conflito sem decisão → 409", conflita.status === 409, `status=${conflita.status}`);
   t("conflito aponta a chave", JSON.stringify(conflita.json?.detalhes ?? conflita.json).includes("atributo:forca_bib"),
     JSON.stringify(conflita.json).slice(0, 200));
+  const elDepoisConflito = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
+  t("409 não alterou elementos", elAntesConflito === elDepoisConflito, "estado inalterado após 409");
+  const listaDepoisConflito = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const itemDepoisConflito = (listaDepoisConflito.json?.livros ?? []).find((l) => l.id === bookId);
+  t("409 não criou/alterou vínculo", itemDepoisConflito?.aplicado === false || !itemDepoisConflito?.aplicadoAt,
+    JSON.stringify(itemDepoisConflito).slice(0, 120));
 
   // com decisão manter_campanha -> ok e campanha preserva versão local
   const comDecisao = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, {
@@ -149,6 +156,30 @@ try {
   const elDepois = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
   const elJsonDepois = JSON.stringify(elDepois.json);
   t("versão local preservada após manter_campanha", elJsonDepois.includes("versão local da campanha"), elJsonDepois.slice(0, 200));
+
+  // cenário independente para usar_livro: usa o mesmo livro já aplicado, mas força conflito
+  // estado atual: campanha tem "versão local da campanha" (manter_campanha)
+  // alterar livro para v3 para criar novo conflito, então usar_livro
+  const editaLivroV3 = await req(BASE, "PATCH", `/biblioteca/livros/${bookId}/itens/${itemForca.id}`, {
+    cookie: cm, body: { definition: { descricao: "v3 do livro para usar_livro" } },
+  });
+  t("livro editado para v3", editaLivroV3.status === 200, `status=${editaLivroV3.status}`);
+  const listaV3 = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const itemV3 = (listaV3.json?.livros ?? []).find((l) => l.id === bookId);
+  t("nova atualização disponível sinalizada", itemV3?.atualizacaoDisponivel === true && itemV3?.versaoAplicada < itemV3?.versao,
+    JSON.stringify({ va: itemV3?.versaoAplicada, v: itemV3?.versao }));
+  const elAntesUsar = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
+  const elAntesUsarJson = JSON.stringify(elAntesUsar.json);
+  t("antes de usar_livro: versão local presente", elAntesUsarJson.includes("versão local da campanha"), elAntesUsarJson.slice(0, 120));
+  const usarLivro = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, {
+    cookie: cm, body: { decisoes: { "atributo:forca_bib": "usar_livro" } },
+  });
+  t("aplicar com decisão usar_livro → ok", usarLivro.status === 200 && usarLivro.json?.ok === true && (usarLivro.json?.aplicados >= 1 || usarLivro.json?.atualizados >= 1),
+    `status=${usarLivro.status} ${JSON.stringify(usarLivro.json).slice(0, 160)}`);
+  const elDepoisUsar = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
+  const elDepoisUsarJson = JSON.stringify(elDepoisUsar.json);
+  t("após usar_livro: valor do livro v3 aplicado", elDepoisUsarJson.includes("v3 do livro para usar_livro") && !elDepoisUsarJson.includes("versão local da campanha"),
+    elDepoisUsarJson.slice(0, 200));
 
   // ===== 5. atomicidade =====
   sec("Atomicidade da aplicação");
