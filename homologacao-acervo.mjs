@@ -6,10 +6,35 @@
 // Sobe um servidor próprio na porta 3002 com o banco real (WAL) e limpa
 // os livros de teste ao final.
 import { spawn } from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import { resolve } from "node:path";
 import Database from "better-sqlite3";
 import { hashToken } from "./servidor/dist/lib/password.js";
 
-const PORTA = 3002;
+// Homologa sempre em cópia descartável: nunca escreve no banco real.
+const DIR = resolve("simulacao-limpeza", "homologacao-acervo");
+const BANCO = resolve(DIR, "mestre-rpg-teste.db");
+mkdirSync(DIR, { recursive: true });
+for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
+{
+  const origem = new Database("banco/mestre-rpg.db", { readonly: true });
+  const destino = BANCO.replace(/\\\\/g, "/").replace(/'/g, "''");
+  origem.prepare(`VACUUM INTO '${destino}'`).run();
+  origem.close();
+}
+
+function portaLivre() {
+  return new Promise((resolvePorta, reject) => {
+    const servidor = createServer();
+    servidor.once("error", reject);
+    servidor.listen(0, "127.0.0.1", () => {
+      const porta = servidor.address().port;
+      servidor.close(() => resolvePorta(porta));
+    });
+  });
+}
+const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 const CID = "7a1c9c2e-3c7a-4805-9145-d8622d755a36"; // Caçadores & Caças
 const SUFIXO = `__TESTE_${Date.now()}`;
@@ -23,7 +48,13 @@ const ok = (nome, cond, extra = "") => {
 
 // ---------- servidor ----------
 const srv = spawn(process.execPath, ["servidor/dist/index.js"], {
-  env: { ...process.env, MESTRE_PORTA: String(PORTA) },
+  env: {
+    ...process.env,
+    MESTRE_PORTA: String(PORTA),
+    MESTRE_BANCO: BANCO,
+    MESTRE_ARQUIVOS: resolve(DIR, "arquivos"),
+    MESTRE_BACKUPS: resolve(DIR, "backups"),
+  },
   stdio: ["ignore", "pipe", "pipe"],
 });
 srv.stderr.on("data", (d) => process.stderr.write(`[srv] ${d}`));
@@ -40,7 +71,7 @@ async function esperarServidor() {
 }
 
 // ---------- sessões ----------
-const db = new Database("banco/mestre-rpg.db");
+const db = new Database(BANCO);
 const sessao = (userId, tag) => {
   const token = `${tag}-` + crypto.randomUUID();
   db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
@@ -293,6 +324,7 @@ try {
   }
   try { srv.kill(); } catch { }
   db.close();
+  rmSync(DIR, { recursive: true, force: true });
 }
 
 const falhas = resultados.filter((x) => !x.ok);
