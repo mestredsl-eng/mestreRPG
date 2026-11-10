@@ -185,7 +185,7 @@ export async function criarCenario(base, banco, opts = {}) {
       pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
     };
     const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
-    db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+    db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,1,?,?)")
       .run(tplId, campId, "Ficha Teste", null, adminId, agora, agora);
     db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
       .run(verId, tplId, JSON.stringify(estrutura), agora, agora);
