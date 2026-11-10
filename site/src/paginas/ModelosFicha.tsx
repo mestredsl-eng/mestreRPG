@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type EstruturaFicha, type ModeloResumo, type VersaoModelo } from "../api";
 import EditorFicha from "../EditorFicha";
 import { ModalConfirmar } from "../Modal";
@@ -22,6 +22,8 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   const [criando, setCriando] = useState(false);
   const [confirmandoPublicar, setConfirmandoPublicar] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  // Impede que uma resposta antiga sobrescreva o modelo selecionado mais recentemente.
+  const aberturaAtual = useRef(0);
 
   const carregar = useCallback(async () => {
     try {
@@ -41,15 +43,18 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
 
   useEffect(() => {
     void carregar();
+    return () => { aberturaAtual.current += 1; };
   }, [carregar]);
 
   const abrirModelo = async (id: string) => {
+    const requisicao = ++aberturaAtual.current;
     setSelecionado(id);
     setDetalhe(null);
     setVersaoSel(null);
     setEstrutura(null);
     try {
       const d = await api.obterModelo(campaignId, id);
+      if (requisicao !== aberturaAtual.current) return;
       setDetalhe(d);
       // Versão atual = rascunho mais recente, senão a publicada atual
       const rascunho = d.versoes.find((v) => v.rascunho);
@@ -57,6 +62,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       setVersaoSel(versao ?? null);
       setEstrutura(versao?.estrutura ? { ...versao.estrutura } : estruturaVazia());
     } catch (e) {
+      if (requisicao !== aberturaAtual.current) return;
       setErro(e instanceof Error ? e.message : "Erro ao abrir modelo");
     }
   };
