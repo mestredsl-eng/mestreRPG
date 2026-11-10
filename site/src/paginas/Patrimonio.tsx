@@ -297,6 +297,8 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
   const [nome, setNome] = useState("");
   const [slot, setSlot] = useState("");
   const [descricao, setDescricao] = useState("");
+  const [busca, setBusca] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState<"todos" | "equipados" | "guardados">("todos");
 
   const carregar = useCallback(async () => {
     try {
@@ -306,6 +308,11 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
   }, [characterId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
+  const filtrados = lista.filter((eq) =>
+    (filtroEstado === "todos" || (filtroEstado === "equipados" ? eq.equipped : !eq.equipped)) &&
+    (!busca || [eq.name, eq.description ?? "", eq.slot ?? ""].some((v) => v.toLocaleLowerCase("pt-BR").includes(busca.toLocaleLowerCase("pt-BR"))))
+  );
+
   return (
     <div>
       <div className="linha">
@@ -313,6 +320,15 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
           const ocupado = lista.find((e) => e.slot === s && e.equipped);
           return <span key={s} className="tag">{s}: {ocupado?.name ?? "—"}</span>;
         })}
+      </div>
+      <div className="linha">
+        <input aria-label="Buscar equipamento" placeholder="Buscar por nome, descrição ou posição…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        <select aria-label="Filtrar equipamentos por estado" value={filtroEstado} onChange={(e) => setFiltroEstado(e.target.value as typeof filtroEstado)}>
+          <option value="todos">Todos os estados</option>
+          <option value="equipados">Equipados</option>
+          <option value="guardados">Guardados</option>
+        </select>
+        <span className="meta">{filtrados.length} de {lista.length} equipamento(s)</span>
       </div>
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
@@ -334,7 +350,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
       <table className="tabela">
         <thead><tr><th>Equipamento</th><th>Posição</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          {lista.map((eq) => (
+          {filtrados.map((eq) => (
             <tr key={eq.id}>
               <td>{eq.name}{eq.description && <div className="meta">{eq.description}</div>}</td>
               <td>{eq.slot ?? "—"}</td>
@@ -352,7 +368,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
               </td>
             </tr>
           ))}
-          {lista.length === 0 && <tr><td colSpan={4} className="meta">Nenhum equipamento.</td></tr>}
+          {filtrados.length === 0 && <tr><td colSpan={4} className="meta">{lista.length === 0 ? "Nenhum equipamento cadastrado." : "Nenhum equipamento corresponde aos filtros."}</td></tr>}
         </tbody>
       </table>
     </div>
@@ -369,6 +385,9 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
   const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
+  const [filtroPosse, setFiltroPosse] = useState<"todas" | "propriedade" | "compartilhado">("todas");
 
   const carregar = useCallback(async () => {
     try { setLista((await api.listarVeiculos(characterId)).veiculos); } catch (e) { aoErro(e); }
@@ -376,6 +395,11 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
   const TIPOS = ["carro", "motocicleta", "caminhao", "barco", "helicoptero", "aviao", "militar", "futurista", "outro"];
+  const filtrados = lista.filter((v) =>
+    (!filtroTipo || v.kind === filtroTipo) &&
+    (filtroPosse === "todas" || (filtroPosse === "compartilhado" ? v.ownership === "compartilhado" : v.ownership !== "compartilhado")) &&
+    (!busca || [v.name, v.kind ?? "", v.brand ?? "", v.model ?? "", v.plate ?? "", String(v.year ?? "")].some((x) => x.toLocaleLowerCase("pt-BR").includes(busca.toLocaleLowerCase("pt-BR"))))
+  );
 
   return (
     <div>
@@ -405,10 +429,23 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
         </div>
         <button type="submit">Adicionar veículo</button>
       </form>
+      <div className="linha">
+        <input aria-label="Buscar veículo" placeholder="Buscar por nome, marca, modelo, placa ou ano…" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        <select aria-label="Filtrar veículos por tipo" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {Array.from(new Set(lista.map((v) => v.kind).filter(Boolean) as string[])).sort().map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+        <select aria-label="Filtrar veículos por posse" value={filtroPosse} onChange={(e) => setFiltroPosse(e.target.value as typeof filtroPosse)}>
+          <option value="todas">Todas as posses</option>
+          <option value="propriedade">Propriedade</option>
+          <option value="compartilhado">Compartilhado</option>
+        </select>
+        <span className="meta">{filtrados.length} de {lista.length} veículo(s)</span>
+      </div>
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Veículo</th><th>Tipo</th><th>Marca/Modelo</th><th>Ano</th><th>Placa</th><th>Posse</th><th></th></tr></thead>
         <tbody>
-          {lista.map((v) => (
+          {filtrados.map((v) => (
             <tr key={v.id}>
               <td>{v.name}</td>
               <td>{v.kind ?? "—"}</td>
@@ -419,11 +456,11 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
               <td><button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button></td>
             </tr>
           ))}
-          {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
+          {filtrados.length === 0 && <tr><td colSpan={7} className="meta">{lista.length === 0 ? "Nenhum veículo cadastrado." : "Nenhum veículo corresponde aos filtros."}</td></tr>}
         </tbody>
       </table>
       <div className="cartoes-registro">
-        {lista.map((v) => (
+        {filtrados.map((v) => (
           <div key={v.id} className="registro-cartao">
             <div className="registro-campo"><strong>{v.name}</strong><span className="tag">{v.kind ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Marca/Modelo</span><span>{[v.brand, v.model].filter(Boolean).join(" ") || "—"}</span></div>
@@ -435,7 +472,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
             </div>
           </div>
         ))}
-        {lista.length === 0 && <p className="meta">Nenhum veículo.</p>}
+        {filtrados.length === 0 && <p className="meta">{lista.length === 0 ? "Nenhum veículo cadastrado." : "Nenhum veículo corresponde aos filtros."}</p>}
       </div>
       {confirmandoVeiculo && (
         <ModalConfirmar
