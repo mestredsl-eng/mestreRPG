@@ -106,6 +106,16 @@ function limparProcedencia(data: Record<string, unknown> | undefined) {
   return limpo;
 }
 
+// O sinalizador legado "equipped" em inventoryEntries.data é estado interno:
+// DELETE/transferência o usam para impedir movimentações de itens equipados.
+// O cliente não pode forjá-lo por POST/PATCH e bloquear o próprio item.
+function limparEstadoInventario(data: Record<string, unknown> | undefined) {
+  if (!data) return data;
+  const limpo = { ...data };
+  delete limpo.equipped;
+  return limpo;
+}
+
 /** Quantos equipamentos do personagem referenciam este item de inventário
  *  (via data.inventoryEntryId) — usado para bloquear exclusão/transferência. */
 function equipamentosDoItem(
@@ -167,7 +177,7 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   const id = crypto.randomUUID();
   const { templateId, valueCents, transferable, data, ...resto } = body.data;
   await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto, data: { ...data, valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
+    id, characterId: a.personagem.id, ...resto, data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
   });
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
@@ -205,7 +215,7 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
     tx.update(inventoryEntries).set({
       ...resto,
       quantity: d.quantity ?? itemTx.quantity,
-      data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      data: { ...dataAtual, ...(limparEstadoInventario(data) ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
       updatedAt: new Date(),
     }).where(eq(inventoryEntries.id, itemTx.id)).run();
   });
