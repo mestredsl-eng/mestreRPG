@@ -186,13 +186,16 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
   const d = somenteEnviados(body.data, req.body);
   if (!a.ehMestre) {
-    const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-    if (d.quantity !== undefined && d.quantity <= 0) {
-      if (!config.patrimonio.jogadorRemoveItens) { res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return; }
+    // Reduzir quantidade remove unidades → exige jogadorRemoveItens.
+    // Aumentar quantidade ou editar demais campos → jogadorAdicionaItens.
+    const reduz = d.quantity !== undefined && d.quantity < item.quantity;
+    if (reduz) {
+      if (!config.patrimonio.jogadorRemoveItens) {
+        res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return;
+      }
     } else if (!config.patrimonio.jogadorAdicionaItens) {
       res.status(403).json({ erro: "Edição de itens não permitida" }); return;
     }
-    void dadosItem;
   }
   const { data, valueCents, transferable, ...resto } = d;
   const dataAtual = (item.data ?? {}) as Record<string, unknown>;
@@ -740,7 +743,7 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   if (saldoInicial !== 0) {
     await db.insert(moneyTransactions).values({
       id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-      kind: "saldo_inicial", amount: saldoInicial / 100, currency: moeda, account: body.data.type,
+      kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
       accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
       description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
     });
@@ -839,7 +842,7 @@ patrimonioRouter.post("/financeiro/movimentar", async (req, res) => {
       tx.insert(moneyTransactions).values({
         id: txId, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: body.data.tipo === "ajuste" ? "ajuste_mestre" : body.data.tipo,
-        amount: (sinal * cents) / 100, currency: contaTx.currency, account: contaTx.type,
+        amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
         accountId: contaTx.id, amountCents: sinal * cents,
         balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
         description: body.data.descricao ?? null, requestId,
@@ -931,7 +934,7 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
       // Saída na origem
       tx.insert(moneyTransactions).values({
         id: crypto.randomUUID(), characterId: origemTx.characterId, campaignId: origemTx.campaignId,
-        kind, amount: -cents / 100, currency: origemTx.currency, account: origemTx.type,
+        kind, amount: deCentavos(-cents, casas), currency: origemTx.currency, account: origemTx.type,
         accountId: origemTx.id, amountCents: -cents, balanceBeforeCents: origemTx.balanceCents, balanceAfterCents: novoOrigem,
         counterpartyCharacterId: destinoTx.characterId, counterparty: destinoTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:out`,
@@ -941,7 +944,7 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
       // Entrada no destino
       tx.insert(moneyTransactions).values({
         id: crypto.randomUUID(), characterId: destinoTx.characterId, campaignId: destinoTx.campaignId,
-        kind, amount: cents / 100, currency: destinoTx.currency, account: destinoTx.type,
+        kind, amount: deCentavos(cents, casas), currency: destinoTx.currency, account: destinoTx.type,
         accountId: destinoTx.id, amountCents: cents, balanceBeforeCents: destinoTx.balanceCents, balanceAfterCents: novoDestino,
         counterpartyCharacterId: origemTx.characterId, counterparty: origemTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:in`,
@@ -1045,7 +1048,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
       tx.insert(moneyTransactions).values({
         id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: isCompra ? "compra" : "venda",
-        amount: (sinal * cents) / 100, currency: contaTx.currency, account: contaTx.type,
+        amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
         accountId: contaTx.id, amountCents: sinal * cents,
         balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
         counterparty: body.data.contraparte ?? null,
