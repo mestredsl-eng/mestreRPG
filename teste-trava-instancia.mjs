@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readd
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir } from "./teste-base.mjs";
-import { adquirirTravaInstancia, liberarTravaInstancia, verificarTravaInstancia, caminhoTrava } from "./servidor/dist/db/trava-instancia.js";
+import { pathToFileURL } from "node:url";
+import { adquirirTravaInstancia, adquirirTravaRestauracao, liberarTravaInstancia, verificarTravaInstancia, caminhoTrava } from "./servidor/dist/db/trava-instancia.js";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -312,6 +313,50 @@ try {
       chmodSync(join(r, "configuracao"), 0o755);
       try { r1.p.kill("SIGKILL"); } catch { }
     }
+  }
+
+  sec("Fechamento do banco — trava só libera com close confirmado");
+  {
+    const r = join(RAIZ, "fechamento");
+    mkdirSync(join(r, "banco"), { recursive: true });
+    // db/index lê MESTRE_* na carga do módulo — define ANTES do import
+    process.env.MESTRE_BANCO = dbEm(r);
+    process.env.MESTRE_ARQUIVOS = join(r, "arquivos", "campanhas");
+    process.env.MESTRE_BACKUPS = join(r, "backups");
+    const { getDb, fecharBanco } = await import("./servidor/dist/db/index.js");
+
+    getDb();
+    t("após getDb → trava em_uso", verificarTravaInstancia(dbEm(r)) === "em_uso");
+    fecharBanco();
+    t("fechamento normal → trava livre", verificarTravaInstancia(dbEm(r)) === "livre");
+
+    // Reabre e simula falha no close(): a trava NÃO pode ser liberada
+    getDb();
+    const instanciaAntes = getDb();
+    let excecao = null;
+    try {
+      fecharBanco({ fecharSqlite: () => { throw new Error("close simulado"); } });
+    } catch (e) { excecao = e; }
+    t("falha no close propaga a exceção original", excecao?.message === "close simulado", String(excecao));
+    t("trava NÃO liberada com close não comprovado", verificarTravaInstancia(dbEm(r)) === "em_uso");
+    t("instância segue registrada (estado não inconsistente)", getDb() === instanciaAntes);
+    t("2ª aquisição bloqueada enquanto fechamento não comprovado", (() => {
+      // conexão nova no mesmo processo → BEGIN EXCLUSIVE → SQLITE_BUSY
+      try { adquirirTravaRestauracao(dbEm(r)); return false; } catch { return true; }
+    })());
+    // retry com close real → confirma e libera normalmente (idempotente)
+    fecharBanco();
+    t("retry de fechamento confirma e libera trava", verificarTravaInstancia(dbEm(r)) === "livre");
+
+    // Encerramento definitivo: processo que segura a trava e morre →
+    // o SO libera o lock (mesmo mecanismo do kill -9).
+    const urlTrava = pathToFileURL(join(RAIZ_REPO, "servidor", "dist", "db", "trava-instancia.js")).href;
+    const filho = spawnSync("node", ["--input-type=module", "-e",
+      `import { adquirirTravaInstancia } from ${JSON.stringify(urlTrava)}; adquirirTravaInstancia(process.env.BANCO_TRAVA);`],
+      { env: { ...process.env, BANCO_TRAVA: dbEm(r) }, encoding: "utf8" });
+    t("processo-filho adquiriu e encerrou", filho.status === 0, filho.stderr?.slice(-200));
+    t("após morte do processo → trava livre pelo SO", verificarTravaInstancia(dbEm(r)) === "livre");
+    delete process.env.MESTRE_BANCO; delete process.env.MESTRE_ARQUIVOS; delete process.env.MESTRE_BACKUPS;
   }
 
   sec("Inicialização limpa sem trava prévia");

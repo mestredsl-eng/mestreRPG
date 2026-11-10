@@ -206,15 +206,26 @@ async function desligar(sinal: string) {
   // para de aceitar novas conexões e desconecta sockets existentes
   try { ioServer?.close(); } catch { }
   try { httpServer.closeIdleConnections?.(); } catch { }
+  // fecharBanco pode lançar se o close() do SQLite falhar — nesse caso a
+  // trava permanece presa de propósito e o processo DEVE morrer (o SO
+  // libera conexão e trava juntos), nunca seguir servindo sem trava.
+  const encerrarBanco = () => {
+    try {
+      fecharBanco();
+    } catch (e) {
+      log("erro", "falha ao fechar o banco no encerramento — forçando saída com trava presa", { erro: String(e) });
+      process.exit(1);
+    }
+  };
   httpServer.close(() => {
     log("info", "servidor encerrado", { sinal });
-    fecharBanco();
+    encerrarBanco();
     process.exit(0);
   });
   // fallback: se conexões não drenarem, força após 8s
   setTimeout(() => {
     log("aviso", "encerramento graceful expirou — forçando saída", { sinal });
-    fecharBanco();
+    encerrarBanco();
     process.exit(0);
   }, 8000).unref();
 }

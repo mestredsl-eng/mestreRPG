@@ -40,15 +40,24 @@ export function getDb(): Db {
   return instancia;
 }
 
-/** Fecha a conexão SQLite compartilhada (encerramento gracioso). */
-export function fecharBanco() {
-  // Ordem obrigatória: a conexão operacional fecha PRIMEIRO; a trava só
-  // é liberada depois — nunca com o banco ainda aberto.
-  try {
-    try { sqliteInstancia?.close(); } catch { }
-    sqliteInstancia = null;
-    instancia = null;
-  } finally {
+/**
+ * Fecha a conexão SQLite compartilhada (encerramento gracioso).
+ * A trava de instância só é liberada DEPOIS de o close() ser confirmado:
+ * se o fechamento falhar, a exceção original é propagada e a trava
+ * permanece presa — o processo deve encerrar (o SO libera tudo na morte),
+ * nunca continuar servindo tráfego nem permitir que outra instância
+ * assuma o banco com a conexão potencialmente aberta.
+ * `fecharSqlite` é injetável apenas para teste do caminho de falha.
+ */
+export function fecharBanco(opcoes?: { fecharSqlite?: () => void }) {
+  const fechar = opcoes?.fecharSqlite ?? (() => { sqliteInstancia?.close(); });
+  if (!sqliteInstancia && !instancia) {
+    // nada aberto — enceramento idempotente: só garante trava livre
     liberarTravaInstancia();
+    return;
   }
+  fechar(); // lança em caso de falha → trava NÃO é liberada
+  sqliteInstancia = null;
+  instancia = null;
+  liberarTravaInstancia();
 }
