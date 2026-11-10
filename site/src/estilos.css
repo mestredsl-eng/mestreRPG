@@ -1654,3 +1654,17 @@ code {
   margin: 0.35rem 0 0;
   padding-left: 1.1rem;
 }
+
+/* ---- Foco visível consistente (acessibilidade) ----
+   Regras :focus acima removem o outline; :focus-visible (foco de
+   teclado) restaura um indicador claro sem afetar clique de mouse. */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #8ab4ff;
+  outline-offset: 2px;
+}

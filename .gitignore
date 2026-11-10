@@ -32,3 +32,6 @@ simulacao-limpeza/
 
 # screenshots/dados do teste visual de ficha
 visual-ficha-limpeza/
+
+# evidências da homologação visual (screenshots gerados por homologacao-visual.mjs)
+_evidencias/
