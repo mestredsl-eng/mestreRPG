@@ -156,10 +156,12 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const duration = reduced ? 0 : 1050 + Math.min(indice, 8) * 95;
+    // Simulação local de corpo rígido simplificado: gravidade, impulso no
+    // contato com a mesa, atrito, paredes da área do dado e amortecimento.
+    // O destino continua sendo exclusivamente o valor recebido do servidor.
     let raf = 0;
     let width = 0, height = 0, dpr = 1;
-    let finalizado = false;
+    let finalizado = reduced;
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       width = Math.max(32, rect.width); height = Math.max(32, rect.height);
@@ -179,22 +181,40 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     // Paridade com o SVG anterior: sucesso/falha tingem o número.
     const textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
     const started = performance.now();
-    const render = (eased: number) => {
+    let orientation = start;
+    let position: Vec3 = [0, 0, 1.42];
+    let velocity: Vec3 = [
+      Math.sin(indice * 1.7 + 0.4) * 1.65,
+      Math.cos(indice * 1.13 + 0.8) * 1.25,
+      0.35 + (indice % 3) * 0.18,
+    ];
+    let angularVelocity: Vec3 = [7.2 + (indice % 3), 8.1, 6.4 + (indice % 4) * 0.35];
+    let lastFrame = started;
+    let simulationTime = 0;
+    let settleTime = 0;
+    const lowestVertex = (q: Quat) => {
+      let min = Infinity, index = 0;
+      vertices.forEach((v, i) => {
+        const z = rotate(v, q)[2];
+        if (z < min) { min = z; index = i; }
+      });
+      return { min, index };
+    };
+    const alturaDeRepouso = (q: Quat) => -lowestVertex(q).min + 0.025;
+    const render = (eased: number, physical?: { orientation: Quat; x: number; y: number; z: number }) => {
       const base = slerp(start, target, eased);
       const axis = unit([0.72, 0.31, 0.62]);
       const angle = Math.PI * 6 * eased;
       const tumble: Quat = [Math.cos(angle / 2), axis[0] * Math.sin(angle / 2), axis[1] * Math.sin(angle / 2), axis[2] * Math.sin(angle / 2)];
-      const q = qMultiply(base, tumble);
+      const q = physical?.orientation ?? qMultiply(base, tumble);
       ctx.clearRect(0, 0, width, height);
       const size = Math.min(width, height);
-      // Pequena queda com quique amortecido e sombra de contato: movimento
-      // determinístico, apenas visual; não interfere no resultado do servidor.
       const restante = 1 - eased;
-      const quique = Math.abs(Math.sin(eased * Math.PI * 4)) * restante * 0.085;
-      const elevacao = (restante * 0.105 + quique) * size;
-      const deslocamento = Math.sin(eased * Math.PI * 2 + indice * 0.7) * restante * size * 0.055;
+      const elevacao = physical ? Math.max(0, physical.z) * size * 0.31 : restante * size * 0.105;
+      const deslocamento = physical ? physical.x * size * 0.16 : Math.sin(eased * Math.PI * 2 + indice * 0.7) * restante * size * 0.055;
+      const deslocamentoY = physical ? physical.y * size * 0.16 : 0;
       ctx.save();
-      ctx.translate(width / 2 + deslocamento, height / 2 + size * 0.29);
+      ctx.translate(width / 2 + deslocamento, height / 2 + deslocamentoY + size * 0.29);
       ctx.globalAlpha = 0.22 + eased * 0.18;
       ctx.shadowColor = "rgba(0,0,0,.75)";
       ctx.shadowBlur = 2 + elevacao * 0.35;
@@ -206,7 +226,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       const projected = vertices.map((v) => {
         const p = rotate(v, q);
         const perspective = 3.8 / (3.8 - p[2] * 0.22);
-        return [width / 2 + deslocamento + p[0] * size * 0.31 * perspective, height / 2 - elevacao - p[1] * size * 0.31 * perspective, p[2]] as const;
+        return [width / 2 + deslocamento + p[0] * size * 0.31 * perspective, height / 2 + deslocamentoY - elevacao - p[1] * size * 0.31 * perspective, p[2]] as const;
       });
       const visible = faces.map((face, i) => {
         const n = rotate(normalFor(vertices, face), q);
@@ -268,19 +288,85 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.restore();
       }
     };
-    const renderFinal = () => render(1);
+    const renderFinal = () => render(1, { orientation: target, x: 0, y: 0, z: alturaDeRepouso(target) });
     const draw = (now: number) => {
-      const raw = duration === 0 ? 1 : Math.min(1, (now - started) / duration);
-      render(1 - Math.pow(1 - raw, 3));
-      if (raw < 1) raf = requestAnimationFrame(draw);
-      else finalizado = true;
+      if (reduced || finalizado) { renderFinal(); return; }
+      const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
+      lastFrame = now;
+      simulationTime += dt;
+
+      // Gravidade e integração da rotação por velocidade angular.
+      velocity[2] -= 8.6 * dt;
+      position = add(position, scale(velocity, dt));
+      const angularSpeed = length(angularVelocity);
+      if (angularSpeed > 0.0001) {
+        const half = angularSpeed * dt * 0.5;
+        const axis = unit(angularVelocity);
+        const delta: Quat = [Math.cos(half), axis[0] * Math.sin(half), axis[1] * Math.sin(half), axis[2] * Math.sin(half)];
+        orientation = qNormalize(qMultiply(delta, orientation));
+      }
+
+      // Colisão com o tampo: corrige penetração, aplica restituição e
+      // transfere parte do impulso para a rotação no ponto de contato.
+      const contact = lowestVertex(orientation);
+      const penetration = position[2] + contact.min;
+      if (penetration < 0) {
+        position[2] -= penetration;
+        if (velocity[2] < 0) {
+          const impact = -velocity[2];
+          const impulse = impact * 1.38;
+          velocity[2] = impact > 0.72 ? impact * 0.38 : 0;
+          const arm = rotate(vertices[contact.index], orientation);
+          const torque = cross(arm, [0, 0, impulse]);
+          angularVelocity = add(angularVelocity, scale(torque, 0.48));
+          velocity[0] *= 0.78;
+          velocity[1] *= 0.78;
+        }
+      }
+
+      // Limites da área de rolagem: o dado rebate nas quatro bordas.
+      for (const axis of [0, 1] as const) {
+        if (position[axis] > 0.82) { position[axis] = 0.82; velocity[axis] = -Math.abs(velocity[axis]) * 0.42; }
+        if (position[axis] < -0.82) { position[axis] = -0.82; velocity[axis] = Math.abs(velocity[axis]) * 0.42; }
+      }
+
+      const noChao = position[2] + lowestVertex(orientation).min <= 0.04;
+      const damping = noChao ? 2.25 : 0.42;
+      angularVelocity = scale(angularVelocity, Math.exp(-damping * dt));
+      velocity[0] *= Math.exp(-1.45 * dt);
+      velocity[1] *= Math.exp(-1.45 * dt);
+
+      // A energia se dissipa progressivamente; quando o corpo quase para,
+      // assenta na face que representa o resultado recebido do servidor.
+      if (simulationTime > 1.15) {
+        angularVelocity = scale(angularVelocity, Math.exp(-2.1 * dt));
+        if (noChao && length(angularVelocity) < 1.05 && Math.hypot(velocity[0], velocity[1], velocity[2]) < 0.72) {
+          settleTime += dt;
+          orientation = slerp(orientation, target, Math.min(1, dt * 5.5));
+          position[2] += (alturaDeRepouso(target) - position[2]) * Math.min(1, dt * 5);
+          position[0] *= Math.exp(-3.2 * dt);
+          position[1] *= Math.exp(-3.2 * dt);
+          velocity = scale(velocity, Math.exp(-5 * dt));
+          if (settleTime >= 0.28) finalizado = true;
+        }
+      }
+      if (simulationTime >= 2.9) finalizado = true;
+
+      if (finalizado) {
+        renderFinal();
+        return;
+      }
+      render(1, { orientation, x: position[0], y: position[1], z: position[2] });
+      raf = requestAnimationFrame(draw);
     };
-    raf = requestAnimationFrame(draw);
+    if (reduced) renderFinal();
+    else raf = requestAnimationFrame(draw);
     const observer = new ResizeObserver(() => {
       resize();
       // Redimensionar limpa o bitmap interno; redesenha mesmo após a animação.
       if (raf) cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(draw);
+      if (finalizado || reduced) renderFinal();
+      else raf = requestAnimationFrame(draw);
     });
     observer.observe(canvas);
     return () => { cancelAnimationFrame(raf); observer.disconnect(); };
