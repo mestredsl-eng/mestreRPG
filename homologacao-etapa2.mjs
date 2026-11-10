@@ -97,7 +97,7 @@ try {
   sec("Item marcado como não transferível");
   {
     const bloqueado = await req(BASE, "POST", `/characters/${ids.charJ1}/inventario`, {
-      cookie: cj1, body: { name: "Relíquia vinculada", quantity: 1, data: { transferable: false } },
+      cookie: cj1, body: { name: "Relíquia vinculada", quantity: 1, transferable: false },
     });
     const itemBloqueado = bloqueado.json?.id;
     t("jogador cria item com política não transferível", bloqueado.status === 201 && !!itemBloqueado, `status=${bloqueado.status}`);
