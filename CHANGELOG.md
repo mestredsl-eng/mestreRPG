@@ -56,7 +56,8 @@
   - `teste-acervo-campanha.mjs`: 43/43 — aplicação atômica de livros, conflitos, rollback 409, decisões manter_campanha/usar_livro
   - `homologacao-acervo.mjs`: 123/123 — biblioteca global, import/export, backups, soft delete
   - `teste-acervo-diff.mjs`: 2/2 — diff de livros
-  - `homologacao-mesa.mjs`: 29/29 — multiplayer, chat, rolagens, turnos, ampulheta, persistência
+  - `homologacao-mesa.mjs`: 36/36 — multiplayer, chat, rolagens, turnos, ampulheta (pausa/retomada/encerrar/expiração explícita), persistência
+  - `teste-mesa-seguranca.mjs`: 18/18 — permissões Socket.IO, privacidade, reconexão, idempotência
   - `homologacao-etapa2.mjs`: 46/46 — patrimônio, financeiro, diário, snapshots, concorrência PATCH×HP
   - `homologacao-equipamentos.mjs`: 31/31 — equipamentos, concorrência, persistência
   - `teste-equipamentos.mjs`: 79/79 — equipamento/desequipamento
@@ -66,4 +67,6 @@
   - `homologacao-hp-historico.mjs`: 16/16 — histórico de HP
   - `teste-venda-estoque.mjs`: 29/29 — venda de itens
   - `teste-pontos-concorrencia.mjs`: 16/16 — concessões/remoções simultâneas de pontos, corrida com PATCH, autorização e ausência de escrita parcial
+  - `teste-acervo-corridas.mjs`: 14/14 — corridas assíncronas do Acervo com respostas atrasadas (Playwright)
+  - `teste-docs-operacao.mjs`: 12/12 — guia operacional validado em ambiente isolado (backup/restauração)
 - Auditoria visual/acessibilidade: `auditoria-visual.mjs` percorre login, painel, campanhas, todas as abas da campanha, detalhe de personagem, acervo, administração e conta em desktop (1366×768), tablet (768×1024) e celular (390×844) — 0 achados de rolagem horizontal, elementos cortados, botões sem nome ou campos sem label após as correções de `aria-label`.
