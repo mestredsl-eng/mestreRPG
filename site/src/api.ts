@@ -353,21 +353,6 @@ export const api = {
     requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
 
   // ---- Acervo global de livros de regras ----
-export interface LivroAcervoCampanha {
-  id: string;
-  titulo: string;
-  descricao: string | null;
-  autor: string | null;
-  sistema: string | null;
-  edicao: string | null;
-  tipo: string;
-  versao: number;
-  totalItens: number;
-  aplicado: boolean;
-  versaoAplicada: number | null;
-  aplicadoEm: string | null;
-  atualizacaoDisponivel: boolean;
-}
 
   listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false) => {
     const params = new URLSearchParams();
@@ -1077,6 +1062,22 @@ export interface LogServidor { ts: string; nivel: string; msg: string; detalhe?:
 export interface BackupServidor { id: string; kind: string; filePath: string; sizeBytes: number | null; note: string | null; createdAt: string; sucesso?: boolean }
 
 // ---- Acervo global de livros de regras ----
+
+export interface LivroAcervoCampanha {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  autor: string | null;
+  sistema: string | null;
+  edicao: string | null;
+  tipo: string;
+  versao: number;
+  totalItens: number;
+  aplicado: boolean;
+  versaoAplicada: number | null;
+  aplicadoEm: string | null;
+  atualizacaoDisponivel: boolean;
+}
 
 export interface LivroAcervoResumo {
   id: string;
