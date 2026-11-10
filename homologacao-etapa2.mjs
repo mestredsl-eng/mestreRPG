@@ -147,7 +147,7 @@ try {
     t("PATCH genérico conclui ou acusa conflito recuperável → 200/409", patch.status === 200 || patch.status === 409, `status=${patch.status}`);
     t("dano concorrente é persistido → 200", dano.status === 200, `status=${dano.status}`);
     const final = (await req(BASE, "GET", `/characters/${ids.charJ1}`, { cookie: cj1 })).json;
-    t("nome editado não é perdido", final?.name === "Jogador Um atualizado", `nome=${final?.name}`);
+    t("nome editado não é perdido", final?.personagem?.name === "Jogador Um atualizado", `nome=${final?.personagem?.name}`);
     t("HP preserva o dano concorrente (130→125)", final?.ficha?.vida?.hp?.atual === 125, `hp=${final?.ficha?.vida?.hp?.atual}`);
   }
 
