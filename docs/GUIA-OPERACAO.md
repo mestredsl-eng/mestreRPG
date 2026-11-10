@@ -109,8 +109,8 @@ Com o servidor **parado**: copie `banco/mestre-rpg.db` + `arquivos/campanhas/` +
 
 1. **Administração → Servidor → Backups** → escolha o backup → **Restaurar**.
 2. Digite `RESTAURAR` para confirmar. O sistema valida a integridade, cria um **backup de segurança do estado atual** e grava a restauração como pendente.
-3. **Encerre o servidor** (`parar-mestre-rpg.bat`). Na próxima subida, o `.bat` executa `node servidor/dist/db/aplicar-restauracao.js` **antes** de abrir o banco.
-4. Se falhar, o estado anterior é restaurado automaticamente; o banco antigo fica em `backups/pre_restore_*/` para rollback.
+3. **Encerre o servidor** (`parar-mestre-rpg.bat`). Na próxima subida, o `.bat` executa `node servidor/dist/db/aplicar-restauracao.js` **antes** das migrations e da abertura do banco — a ordem é obrigatória: o restaurador troca o arquivo do banco, então as migrations rodam sobre o banco efetivamente restaurado.
+4. **Se a restauração falhar ou for cancelada** (backup ausente/corrompido), o `.bat` **interrompe o boot** — o servidor nunca sobe sobre estado incerto. Corrija o problema e execute o script de novo; o banco anterior fica em `backups/pre_restore_*/` para rollback e a flag de pendência é preservada quando a falha acontece durante a aplicação (nova tentativa no próximo boot).
 
 Apenas o **administrador global** restaura. Backups nunca são servidos publicamente.
 

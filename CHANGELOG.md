@@ -41,6 +41,8 @@
 - **Homologação** — asserts fixos substituídos por verificações reais de estado pós-restart
 - **Homologação** — validação D10 agora exige campos calculados do servidor (`minimo`, `lancados`, `sucessos`, `falhas`) e não apenas array de dados
 - **Acessibilidade** — campos dinâmicos de ficha, filtros de acervo/arquivos/regras/patrimônio, papéis/status de participantes e formulário de bônus de pontos ganharam `aria-label`; auditoria visual em 3 viewports sem achados
+- **Inicialização e restauração** — `iniciar-mestre-rpg.bat` agora aplica restauração pendente **antes** das migrations (schema do backup nunca fica desatualizado) e **interrompe o boot** se a restauração falhar/cancelar; `npm ci` com fallback para `npm install`; frontend recompilado quando `site/src` é mais novo que o build
+- **Restaurador** — respeita `MESTRE_BANCO`/`MESTRE_ARQUIVOS`/`MESTRE_BACKUPS` (mesmos overrides do servidor); backup corrompido/ausente sai com código de erro e limpa a flag; falha durante aplicação preserva a flag para retry
 - **Documentação** — `docs/PRIMEIRA-PARTIDA.md`: roteiro não técnico do zero à mesa (instalação, mestre, convites, fichas, patrimônio, mesa, persistência, backup e recuperação), complementando `docs/GUIA-OPERACAO.md`. Instalação validada em checkout limpo (`npm ci` + build + migrate + boot + health)
 
 ### Notas de migração
@@ -70,4 +72,5 @@
   - `teste-pontos-concorrencia.mjs`: 22/22 — concessões/remoções simultâneas de pontos, corrida com PATCH, autorização, ausência de escrita parcial, TOCTOU com barreira determinística (gate restrito a `NODE_ENV=test`) e negativo de produção
   - `teste-acervo-corridas.mjs`: 14/14 — corridas assíncronas do Acervo com respostas atrasadas (Playwright)
   - `teste-docs-operacao.mjs`: 12/12 — guia operacional validado em ambiente isolado (backup/restauração)
+  - `teste-restauracao-boot.mjs`: 24/24 — ordem restore→migrate, schema antigo, backup corrompido/ausente, falha com preservação, overrides MESTRE_*
 - Auditoria visual/acessibilidade: `auditoria-visual.mjs` percorre login, painel, campanhas, todas as abas da campanha, detalhe de personagem, acervo, administração e conta em desktop (1366×768), tablet (768×1024) e celular (390×844) — 0 achados de rolagem horizontal, elementos cortados, botões sem nome ou campos sem label após as correções de `aria-label`.
