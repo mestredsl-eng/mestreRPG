@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
@@ -44,6 +44,69 @@ const deCentavos = (cents: number, casas: number) => cents / 10 ** casas;
 
 function emitir(personagem: typeof characters.$inferSelect) {
   emitirCampanha(personagem.campaignId, "patrimonio:atualizado", { characterId: personagem.id });
+}
+
+// ---------- integridade inventário ↔ equipamentos ----------
+// Regra do projeto: equipar separa EXATAMENTE 1 unidade do estoque.
+// O equipamento carrega um snapshot completo do item para poder devolver
+// a unidade ao inventário mesmo que a pilha original tenha zerado.
+
+type ItemInventario = typeof inventoryEntries.$inferSelect;
+
+function snapshotItem(item: ItemInventario) {
+  return {
+    name: item.name,
+    description: item.description ?? undefined,
+    category: item.category ?? undefined,
+    location: item.location ?? undefined,
+    condition: item.condition ?? undefined,
+    weight: item.weight ?? undefined,
+    data: (item.data ?? {}) as Record<string, unknown>,
+  };
+}
+
+/** Devolve 1 unidade ao inventário dentro da transação: funde na pilha
+ *  original se ela ainda existir, senão recria o item a partir do snapshot. */
+function devolverUnidadeAoInventario(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  characterId: string,
+  snap: ReturnType<typeof snapshotItem>,
+  inventoryEntryId: string | undefined,
+) {
+  if (inventoryEntryId) {
+    const [pilha] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, inventoryEntryId), eq(inventoryEntries.characterId, characterId)))
+      .limit(1).all();
+    if (pilha) {
+      tx.update(inventoryEntries)
+        .set({ quantity: pilha.quantity + 1, updatedAt: new Date() })
+        .where(eq(inventoryEntries.id, pilha.id)).run();
+      return;
+    }
+  }
+  const agora = new Date();
+  tx.insert(inventoryEntries).values({
+    id: crypto.randomUUID(), characterId,
+    name: snap.name, quantity: 1, description: snap.description ?? null,
+    category: snap.category ?? null, location: snap.location ?? null,
+    condition: snap.condition ?? null, weight: snap.weight ?? null,
+    data: { ...(snap.data ?? {}), origemEquipamento: true },
+    createdAt: agora, updatedAt: agora,
+  }).run();
+}
+
+/** Quantos equipamentos do personagem referenciam este item de inventário
+ *  (via data.inventoryEntryId) — usado para bloquear exclusão/transferência. */
+function equipamentosDoItem(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  characterId: string,
+  itemId: string,
+) {
+  return tx.select({ id: equipmentEntries.id }).from(equipmentEntries)
+    .where(and(
+      eq(equipmentEntries.characterId, characterId),
+      sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${itemId}`,
+    )).all();
 }
 
 // =====================================================================
@@ -141,6 +204,17 @@ patrimonioRouter.delete("/inventario/:itemId", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorRemoveItens) {
     res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return;
   }
+  // Não deixar equipamento órfão: se alguma unidade deste item está
+  // equipada/registrada como equipamento, a exclusão é bloqueada.
+  const vinculados = await db.select({ id: equipmentEntries.id }).from(equipmentEntries).where(and(
+    eq(equipmentEntries.characterId, a.personagem.id),
+    sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${item.id}`,
+  )).limit(1);
+  const dadosItem = (item.data ?? {}) as { equipped?: boolean };
+  if (vinculados.length || dadosItem.equipped === true) {
+    res.status(409).json({ erro: "Item possui equipamento vinculado — desequipe ou exclua o equipamento antes" });
+    return;
+  }
   await db.delete(inventoryEntries).where(eq(inventoryEntries.id, item.id));
   await audit(req, "inventario.item.removido", { characterId: a.personagem.id, itemId: item.id, name: item.name });
   emitir(a.personagem);
@@ -169,6 +243,18 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   }
   const qtd = body.data.quantidade ?? item.quantity;
   if (qtd > item.quantity) { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
+  // Item equipado ou com equipamento vinculado não pode ser transferido.
+  const dadosItemTr = (item.data ?? {}) as { equipped?: boolean; transferable?: boolean };
+  if (dadosItemTr.equipped === true) {
+    res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return;
+  }
+  const vinculos = await db.select({ id: equipmentEntries.id }).from(equipmentEntries).where(and(
+    eq(equipmentEntries.characterId, a.personagem.id),
+    sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${item.id}`,
+  )).limit(1);
+  if (vinculos.length) {
+    res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return;
+  }
 
   await db.transaction((tx) => {
     if (qtd >= item.quantity) {
@@ -237,38 +323,106 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   res.status(201).json({ id });
 });
 
-/** POST /api/characters/:id/inventario/:itemId/equipar — equipa item do inventário */
+/** POST /api/characters/:id/inventario/:itemId/equipar — equipa 1 unidade do inventário */
 patrimonioRouter.post("/inventario/:itemId/equipar", async (req, res) => {
   const a = await acessoOuErro(req, res); if (!a) return;
   const slot = typeof req.body?.slot === "string" ? req.body.slot : undefined;
+  const requestId = typeof req.body?.requestId === "string" ? req.body.requestId.slice(0, 120) : undefined;
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Equipar não permitido" }); return;
   }
+  // Fast-path de idempotência: o item pode já ter sido consumido pela
+  // primeira requisição (estoque zerado → linha removida → 404 abaixo).
+  // A checagem autoritativa continua dentro da transação.
+  if (requestId) {
+    const [existente] = await db.select({ id: equipmentEntries.id }).from(equipmentEntries)
+      .where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        sql`json_extract(${equipmentEntries.data}, '$.requestId') = ${requestId}`,
+      )).limit(1);
+    if (existente) { res.status(200).json({ id: existente.id, deduplicado: true }); return; }
+  }
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  if (slot) {
-    const ocupado = await db.select().from(equipmentEntries).where(and(
-      eq(equipmentEntries.characterId, a.personagem.id), eq(equipmentEntries.slot, slot), eq(equipmentEntries.equipped, true),
-    )).limit(1);
-    if (ocupado.length) { res.status(409).json({ erro: `Slot "${slot}" já ocupado por "${ocupado[0].name}"` }); return; }
+
+  let novoEquipId: string | null = null;
+  let jaExistia = false;
+  let semEstoque = false;
+  try {
+    db.transaction((tx) => {
+      // Idempotência: mesmo requestId → devolve o equipamento já criado,
+      // sem consumir outra unidade do estoque.
+      if (requestId) {
+        const [existente] = tx.select({ id: equipmentEntries.id }).from(equipmentEntries)
+          .where(and(
+            eq(equipmentEntries.characterId, a.personagem.id),
+            sql`json_extract(${equipmentEntries.data}, '$.requestId') = ${requestId}`,
+          )).limit(1).all();
+        if (existente) { novoEquipId = existente.id; jaExistia = true; return; }
+      }
+
+      // Re-lê o item dentro da transação: quantidade validada sobre o
+      // valor atual (outra requisição pode ter consumido unidades antes).
+      const [itemTx] = tx.select().from(inventoryEntries)
+        .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!itemTx || itemTx.quantity < 1) { semEstoque = true; return; }
+
+      if (slot) {
+        const [ocupado] = tx.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries)
+          .where(and(
+            eq(equipmentEntries.characterId, a.personagem.id),
+            eq(equipmentEntries.slot, slot),
+            eq(equipmentEntries.equipped, true),
+          )).limit(1).all();
+        if (ocupado) throw new Error(`slot_ocupado:${ocupado.name}`);
+      }
+
+      // Consome exatamente 1 unidade do estoque.
+      const restante = itemTx.quantity - 1;
+      if (restante <= 0) {
+        tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+      } else {
+        tx.update(inventoryEntries).set({ quantity: restante, updatedAt: new Date() })
+          .where(eq(inventoryEntries.id, itemTx.id)).run();
+      }
+
+      const snap = snapshotItem(itemTx);
+      const id = crypto.randomUUID();
+      const agora = new Date();
+      tx.insert(equipmentEntries).values({
+        id, characterId: a.personagem.id, name: itemTx.name, slot: slot ?? null,
+        equipped: true, description: itemTx.description,
+        data: {
+          ...((itemTx.data ?? {}) as Record<string, unknown>),
+          origem: "inventario",
+          inventoryEntryId: itemTx.id,
+          itemSnapshot: snap,
+          ...(requestId ? { requestId } : {}),
+        },
+        createdAt: agora, updatedAt: agora,
+      }).run();
+      novoEquipId = id;
+    });
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("slot_ocupado:")) {
+      res.status(409).json({ erro: `Slot "${slot}" já ocupado por "${msg.split("slot_ocupado:")[1]}"` }); return;
+    }
+    throw e;
   }
-  const dadosItem = (item.data ?? {}) as Record<string, unknown>;
-  const agora = new Date();
-  const id = crypto.randomUUID();
-  await db.insert(equipmentEntries).values({
-    id, characterId: a.personagem.id, name: item.name, slot: slot ?? null,
-    equipped: true, description: item.description,
-    data: { ...dadosItem, inventoryEntryId: item.id },
-    createdAt: agora, updatedAt: agora,
-  });
-  await db.update(inventoryEntries).set({ data: { ...dadosItem, equipado: true }, updatedAt: agora }).where(eq(inventoryEntries.id, item.id));
+  if (semEstoque) { res.status(409).json({ erro: "Sem unidades disponíveis para equipar" }); return; }
+  if (jaExistia) { res.status(200).json({ id: novoEquipId, deduplicado: true }); return; }
   await audit(req, "equipamento.vestido", { characterId: a.personagem.id, itemId: item.id, slot });
   emitir(a.personagem);
-  res.status(201).json({ id });
+  res.status(201).json({ id: novoEquipId });
 });
 
-/** POST /api/characters/:id/equipamentos/:equipId/desequipar */
+/** POST /api/characters/:id/equipamentos/:equipId/desequipar —
+ *  Equipamento originado do inventário: devolve a unidade à pilha e remove
+ *  o registro (a unidade volta a ser item comum). Equipamento manual sem
+ *  origem mantém o comportamento anterior (fica "Guardado"). */
 patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
   const a = await acessoOuErro(req, res); if (!a) return;
   const config = await configPatrimonio(a.personagem.campaignId);
@@ -277,16 +431,27 @@ patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
   }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
-  const invId = (eqp.data as { inventoryEntryId?: string })?.inventoryEntryId;
-  if (invId) {
-    const [item] = await db.select().from(inventoryEntries).where(eq(inventoryEntries.id, invId)).limit(1);
-    if (item) {
-      const d = { ...((item.data ?? {}) as Record<string, unknown>) };
-      delete d.equipped;
-      await db.update(inventoryEntries).set({ data: d, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id));
+
+  const dados = (eqp.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
+  const veioDoInventario = dados.origem === "inventario" && !!dados.itemSnapshot;
+
+  await db.transaction((tx) => {
+    if (veioDoInventario) {
+      devolverUnidadeAoInventario(tx, a.personagem.id, dados.itemSnapshot!, dados.inventoryEntryId);
+      tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id)).run();
+    } else {
+      tx.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id)).run();
+      const invId = dados.inventoryEntryId;
+      if (invId) {
+        const [item] = tx.select().from(inventoryEntries).where(eq(inventoryEntries.id, invId)).limit(1).all();
+        if (item) {
+          const d = { ...((item.data ?? {}) as Record<string, unknown>) };
+          delete d.equipped;
+          tx.update(inventoryEntries).set({ data: d, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id)).run();
+        }
+      }
     }
-  }
+  });
   await audit(req, "equipamento.desequipado", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
@@ -302,7 +467,21 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.update(equipmentEntries).set({ ...somenteEnviados(body.data, req.body), updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
+  // Ocupação de slot: valida também no PATCH (equipar/guardar mudando de
+  // posição), ignorando o próprio registro.
+  const d = somenteEnviados(body.data, req.body);
+  const slotFinal = d.slot !== undefined ? d.slot : eqp.slot;
+  const equipadoFinal = d.equipped !== undefined ? d.equipped : eqp.equipped;
+  if (slotFinal && equipadoFinal) {
+    const [ocupado] = await db.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries).where(and(
+      eq(equipmentEntries.characterId, a.personagem.id),
+      eq(equipmentEntries.slot, slotFinal),
+      eq(equipmentEntries.equipped, true),
+      sql`${equipmentEntries.id} != ${eqp.id}`,
+    )).limit(1);
+    if (ocupado) { res.status(409).json({ erro: `Slot "${slotFinal}" já ocupado por "${ocupado.name}"` }); return; }
+  }
+  await db.update(equipmentEntries).set({ ...d, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -315,7 +494,18 @@ patrimonioRouter.delete("/equipamentos/:equipId", async (req, res) => {
   }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id));
+  // Equipamento originado do inventário: a unidade volta ao estoque antes
+  // de remover o registro — nada é perdido nem duplicado.
+  const dados = (eqp.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
+  if (dados.origem === "inventario" && dados.itemSnapshot) {
+    await db.transaction((tx) => {
+      devolverUnidadeAoInventario(tx, a.personagem.id, dados.itemSnapshot!, dados.inventoryEntryId);
+      tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id)).run();
+    });
+  } else {
+    await db.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id));
+  }
+  await audit(req, "equipamento.removido", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
 });
