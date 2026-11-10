@@ -63,7 +63,7 @@ if not errorlevel 1 (
 
 if not exist node_modules (
     echo [INFO] Instalando dependencias pela primeira vez...
-    rem npm ci e reproduzivel (respeita package-lock); se falhar, tenta npm install
+    rem npm ci e reproduzivel - respeita package-lock; se falhar, tenta npm install
     call npm ci
     if errorlevel 1 (
         echo [AVISO] npm ci falhou - tentando npm install...
@@ -106,7 +106,7 @@ rem servir frontend desatualizado apos atualizacao do codigo, sem
 rem deixar toda inicializacao lenta (~1s de verificacao).
 powershell -NoProfile -Command "$d='site\dist\index.html'; if(-not (Test-Path $d)){exit 1}; $s=Get-ChildItem site\src -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $s -or $s.LastWriteTime -gt (Get-Item $d).LastWriteTime){exit 1}; exit 0"
 if errorlevel 1 (
-    echo [INFO] Compilando frontend (primeira vez ou codigo mais novo que o build)...
+    echo [INFO] Compilando frontend - primeira vez ou codigo mais novo que o build...
     call npm run build -w site
     if errorlevel 1 (
         echo [ERRO] Falha ao compilar o frontend.

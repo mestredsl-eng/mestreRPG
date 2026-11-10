@@ -37,6 +37,7 @@
 - **Acervo** — `campaign_rule_books.appliedAt` estava mapeado para `created_at`; corrigido para a coluna `applied_at` (feature inteira quebrada)
 - **Acervo** — restauração de backup relê estado atual antes de aplicar para evitar sobrescrever estado mais recente
 - **Acervo** — importação recalcula destino e diff dentro da transação para evitar validação com estado obsoleto
+- **Inicialização** — `iniciar-mestre-rpg.bat` abortava com "... foi inesperado neste momento" após compilar o servidor: `)` dentro de `echo`/`rem` fechava blocos `if` prematuramente (bug introduzido na verificação de frontend desatualizado). Corrigido — boot completo verificado até `/api/health` OK
 - **Homologação** — cenário de teste (criarCenario) gerava modelo não-default, bloqueando criação de fichas em campanhas novas
 - **Homologação** — asserts fixos substituídos por verificações reais de estado pós-restart
 - **Homologação** — validação D10 agora exige campos calculados do servidor (`minimo`, `lancados`, `sucessos`, `falhas`) e não apenas array de dados
