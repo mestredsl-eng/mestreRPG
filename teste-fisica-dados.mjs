@@ -23,6 +23,26 @@ for (const [lados, esperado] of [[4, 4], [6, 6], [8, 8], [10, 10], [20, 20]]) {
   const ordenado = [...labels].sort((a, b) => a - b);
   ok(`d${lados}: rótulos são permutação 1..${lados}`, ordenado.every((v, i) => v === i + 1), labels.join(","));
 }
+// D10: cada kite precisa ser plano e ter uma face oposta com valor complementar.
+{
+  const { vertices, faces } = geometry(10);
+  const labels = faceValues(10, vertices, faces);
+  const facesPlanar = faces.length === 10 && faces.every((face) => {
+    if (face.length !== 4) return false;
+    const n = normalFor(vertices, face);
+    const a = vertices[face[0]], d = vertices[face[3]];
+    const distancia = dot([d[0] - a[0], d[1] - a[1], d[2] - a[2]], n);
+    return Math.abs(distancia) < 1e-7;
+  });
+  ok("d10: as 10 faces são quadriláteros coplanares", facesPlanar);
+  const opostasCompletas = faces.every((face, i) => {
+    const n = normalFor(vertices, face);
+    const oposta = faces.findIndex((outra, j) => j !== i && dot(n, normalFor(vertices, outra)) < -0.999999);
+    return oposta >= 0 && labels[i] + labels[oposta] === 11;
+  });
+  ok("d10: faces opostas têm valores que somam 11", opostasCompletas, labels.join(","));
+}
+
 // faces opostas somam lados+1 (d6: 1+6, 2+5, 3+4)
 {
   const { vertices, faces } = geometry(6);
