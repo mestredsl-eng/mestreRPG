@@ -93,6 +93,24 @@ try {
     t("jogador1 ficou com 3", (await req(BASE, "GET", `/characters/${ids.charJ1}/inventario`, { cookie: cj1 })).json?.itens?.find((i) => i.name === "Espada")?.quantity === 3);
   }
 
+  // ===== 2b. Política de transferência do item =====
+  sec("Item marcado como não transferível");
+  {
+    const bloqueado = await req(BASE, "POST", `/characters/${ids.charJ1}/inventario`, {
+      cookie: cj1, body: { name: "Relíquia vinculada", quantity: 1, data: { transferable: false } },
+    });
+    const itemBloqueado = bloqueado.json?.id;
+    t("jogador cria item com política não transferível", bloqueado.status === 201 && !!itemBloqueado, `status=${bloqueado.status}`);
+    const tentativa = await req(BASE, "POST", `/characters/${ids.charJ1}/inventario/${itemBloqueado}/transferir`, {
+      cookie: cj1, body: { destinoCharacterId: ids.charJ2 },
+    });
+    t("jogador não transfere item marcado como não transferível → 403", tentativa.status === 403, `status=${tentativa.status}`);
+    const origem = (await req(BASE, "GET", `/characters/${ids.charJ1}/inventario`, { cookie: cj1 })).json?.itens ?? [];
+    const destino = (await req(BASE, "GET", `/characters/${ids.charJ2}/inventario`, { cookie: cj2 })).json?.itens ?? [];
+    t("bloqueio não remove item da origem", origem.some((i) => i.id === itemBloqueado && i.quantity === 1));
+    t("bloqueio não cria item no destino", !destino.some((i) => i.name === "Relíquia vinculada"));
+  }
+
   // ===== 3. HP: dano + recuperação + histórico =====
   sec("HP e histórico");
   {
