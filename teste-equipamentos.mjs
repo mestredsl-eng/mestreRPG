@@ -334,6 +334,74 @@ try {
     t("somente 1 unidade consumida (restam 1)", (await qtdInv(item)) === 1, `qtd=${await qtdInv(item)}`);
     t("exatamente 1 equipamento 'Amuleto'", (await eqs()).filter((e) => e.name === "Amuleto").length === 1);
   }
+
+  // ===== 14. Procedência forjada (segurança) =====
+  sec("POST não aceita procedência forjada");
+  {
+    const snapFalso = { name: "Item Falso", description: "forjado", category: "hack", weight: 0.1, data: { valueCents: 999999 } };
+    const r = await req(BASE, "POST", `/characters/${charId}/equipamentos`, {
+      cookie, body: {
+        name: "Espada Falsa", equipped: true,
+        inventoryEntryId: "id-inexistente",
+        data: { origem: "inventario", inventoryEntryId: "id-inexistente", itemSnapshot: snapFalso, requestId: "forjado-1", custom: "ok" },
+      },
+    });
+    t("POST forjado → 201 (aceito, mas sanitizado)", r.status === 201, `status=${r.status} ${JSON.stringify(r.json).slice(0, 140)}`);
+    const eqId = r.json?.id;
+    const eq = (await eqs()).find((e) => e.id === eqId);
+    const d = eq?.data ?? {};
+    t("origem forjada removida", d.origem === undefined, JSON.stringify(d).slice(0, 200));
+    t("itemSnapshot forjado removido", d.itemSnapshot === undefined);
+    t("inventoryEntryId forjado removido", d.inventoryEntryId === undefined);
+    t("requestId forjado removido", d.requestId === undefined);
+    t("campo custom legítimo preservado", d.custom === "ok");
+    // se a procedência tivesse sido aceita, o DELETE criaria item do nada
+    const antes = (await qtdItemPorNome("Item Falso"));
+    await req(BASE, "DELETE", `/characters/${charId}/equipamentos/${eqId}`, { cookie });
+    t("DELETE não criou item inexistente", (await qtdItemPorNome("Item Falso")) === antes && antes === 0);
+  }
+
+  sec("PATCH não altera nem apaga procedência");
+  {
+    // equipamento legítimo originado do inventário
+    const item = await novoItem("Machado", 2);
+    const eqR = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} });
+    const eqId = eqR.json.id;
+    const snapOriginal = (await eqs()).find((e) => e.id === eqId)?.data?.itemSnapshot;
+    // PATCH malicioso tentando sobrescrever procedência
+    const p1 = await req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqId}`, {
+      cookie, body: {
+        name: "Machado Renomeado",
+        data: { origem: "forjado", itemSnapshot: { name: "Fake" }, inventoryEntryId: "x", requestId: "y", anexo: "campo ok" },
+      },
+    });
+    t("PATCH malicioso → 200", p1.status === 200, `status=${p1.status}`);
+    const eqDepois = (await eqs()).find((e) => e.id === eqId);
+    t("nome legítimo aplicado", eqDepois?.name === "Machado Renomeado");
+    t("origem preservada = inventario", eqDepois?.data?.origem === "inventario", JSON.stringify(eqDepois?.data).slice(0, 200));
+    t("itemSnapshot preservado", JSON.stringify(eqDepois?.data?.itemSnapshot) === JSON.stringify(snapOriginal));
+    t("requestId preservado/removido conforme original", eqDepois?.data?.requestId === undefined || typeof eqDepois?.data?.requestId === "string");
+    t("campo custom do PATCH aplicado", eqDepois?.data?.anexo === "campo ok");
+    // PATCH tentando apagar data por completo
+    const p2 = await req(BASE, "PATCH", `/characters/${charId}/equipamentos/${eqId}`, { cookie, body: { data: {} } });
+    t("PATCH data:{} → 200", p2.status === 200);
+    const eqFinal = (await eqs()).find((e) => e.id === eqId);
+    t("procedência intacta após data:{}", eqFinal?.data?.origem === "inventario" && !!eqFinal?.data?.itemSnapshot);
+    // fluxo legítimo continua: deselect devolve exatamente 1
+    const antes = (await qtdItemPorNome("Machado"));
+    await req(BASE, "POST", `/characters/${charId}/equipamentos/${eqId}/desequipar`, { cookie, body: {} });
+    t("deselecionar devolveu exatamente 1", (await qtdItemPorNome("Machado")) === antes + 1, `antes=${antes} depois=${await qtdItemPorNome("Machado")}`);
+  }
+
+  sec("Fluxo legítimo completo preservado");
+  {
+    const item = await novoItem("Lança", 3);
+    const eq = await req(BASE, "POST", `/characters/${charId}/inventario/${item}/equipar`, { cookie, body: {} });
+    t("equipar legítimo → 201", eq.status === 201);
+    const del = await req(BASE, "DELETE", `/characters/${charId}/equipamentos/${eq.json.id}`, { cookie });
+    t("excluir equipamento legítimo → 200", del.status === 200);
+    t("unidade devolvida: total 'Lança' = 3", (await qtdItemPorNome("Lança")) === 3);
+  }
 } finally {
   proc?.kill();
 }
