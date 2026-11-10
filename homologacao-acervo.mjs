@@ -193,6 +193,29 @@ try {
   ok("5d. reimportação idempotente: 0 novos/0 alterados", prevRe?.resumo?.itensNovos === 0 && prevRe?.resumo?.itensAlterados === 0 && prevRe?.resumo?.itensIdenticos === 6,
     JSON.stringify(prevRe?.resumo));
 
+  // 5e) confirmar uma importação idêntica não cria backup nem avança versão.
+  const backupsNoOpAntes = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const versaoNoOpAntes = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  r = await apiM("POST", "/api/biblioteca/importar/confirmar", {
+    envelope: envRe,
+    decisoes: { decisoes: [{ indice: 0, metadados: "atualizar", itens: {} }] },
+  });
+  const backupsNoOpDepois = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const versaoNoOpDepois = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  ok("5e. importação idêntica não cria backup", r.status === 200 && backupsNoOpDepois === backupsNoOpAntes,
+    `backups=${backupsNoOpAntes} -> ${backupsNoOpDepois}`);
+  ok("5f. importação idêntica não avança versão", versaoNoOpDepois === versaoNoOpAntes,
+    `versão=${versaoNoOpAntes} -> ${versaoNoOpDepois}`);
+
+  // 5g) duas entradas que resolvem para o mesmo livro devem ser rejeitadas.
+  const mesmoLivroSemId = JSON.parse(JSON.stringify(envRe.livros[0]));
+  delete mesmoLivroSemId.id;
+  r = await apiM("POST", "/api/biblioteca/importar/previa", envelopeDe([
+    JSON.parse(JSON.stringify(envRe.livros[0])), mesmoLivroSemId,
+  ]));
+  ok("5g. prévia rejeita livro repetido por ID/título", r.status === 400 && /duplicado/i.test(r.json?.erro ?? ""),
+    `status=${r.status} erro=${r.json?.erro ?? ""}`);
+
   // ---------- 6-10) prévia, merge e conflitos ----------
   // envelope de atualização do livro A: 1 item alterado, 1 novo, 1 ausente (forca fica de fora)
   const livroAAtual = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json;
