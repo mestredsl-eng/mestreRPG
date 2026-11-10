@@ -682,13 +682,13 @@ bibliotecaRouter.post("/importar/confirmar", requireAdmin, async (req, res) => {
   const decisoes = new Map(decParse.data.decisoes.map((d) => [d.indice, d as Decisao]));
   const t = agora();
   const resultados: { indice: number; titulo: string; acao: string; bookId: string; adicionados: number; atualizados: number }[] = [];
-  let falhaValidacao: { erro: string; detalhes?: unknown } | null = null;
+  const estado = { falhaValidacao: null as { erro: string; detalhes?: unknown } | null };
   try {
     db.transaction((tx) => {
       // A prévia pode ficar obsoleta enquanto o usuário decide. Resolver
       // destinos, reler itens e recalcular diffs imediatamente antes de aplicar.
       const r = processarEnvelopeTx(tx, body?.envelope);
-      if (!r.ok) { falhaValidacao = { erro: r.erro, detalhes: r.detalhes }; return; }
+      if (!r.ok) { estado.falhaValidacao = { erro: r.erro, detalhes: r.detalhes }; return; }
       r.livros.forEach((p, indice) => {
         const res2 = aplicarLivro(tx, p, decisoes.get(indice), t);
         resultados.push({ indice, titulo: p.entrada.titulo, ...res2 });
@@ -698,7 +698,7 @@ bibliotecaRouter.post("/importar/confirmar", requireAdmin, async (req, res) => {
     res.status(500).json({ erro: "Falha na importação — nada foi gravado", detalhe: e instanceof Error ? e.message : String(e) });
     return;
   }
-  if (falhaValidacao) { res.status(400).json({ erro: falhaValidacao.erro, detalhes: falhaValidacao.detalhes }); return; }
+  if (estado.falhaValidacao) { res.status(400).json({ erro: estado.falhaValidacao.erro, detalhes: estado.falhaValidacao.detalhes }); return; }
   await audit(req, "biblioteca.importar", { livros: resultados.length, usuario: req.usuario!.username });
   res.json({ ok: true, resultados });
 });
