@@ -219,7 +219,10 @@ try {
   ok("8. prévia detecta item alterado", prevU?.resumo?.itensAlterados === 1 && prevU?.conflitos?.some((c) => c.kind === "atributo" && c.key === "forca"),
     JSON.stringify(prevU?.conflitos));
   ok("9. prévia conta idênticos", prevU?.resumo?.itensIdenticos === 1, `ident=${prevU?.resumo?.itensIdenticos}`);
-  ok("10. prévia informa ausentes preservados", prevU?.resumo?.itensAusentesPreservados === 3, `preserv=${prevU?.resumo?.itensAusentesPreservados}`);
+  // DB tem 6 itens; arquivo traz 3 (forca, furtividade, nova_regra).
+  // Ausentes = chaves do banco que não vieram no arquivo: vantagem_ataque,
+  // dano_fogo, machado e foco = 4 (o item novo "nova_regra" não pode mascarar).
+  ok("10. prévia informa ausentes preservados", prevU?.resumo?.itensAusentesPreservados === 4, `preserv=${prevU?.resumo?.itensAusentesPreservados}`);
   ok("prévia mostra metadados alterados", prevU?.metadadosAlterados?.some((m) => m.campo === "edicao"), JSON.stringify(prevU?.metadadosAlterados));
 
   // ---------- 11) confirmação sem decisões -> nada sobrescreve ----------
