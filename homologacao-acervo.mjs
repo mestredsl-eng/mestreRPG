@@ -3,39 +3,19 @@
 // round-trip, prévia sem persistência, merge por kind:key, conflitos,
 // backup automático, restauração, rollback, permissões, payloads inválidos
 // e compatibilidade com a biblioteca por campanha.
-// Sobe um servidor próprio em porta livre, usando cópia descartável do banco.
-import { spawn } from "node:child_process";
-import { mkdirSync, rmSync } from "node:fs";
-import { createServer } from "node:net";
-import { resolve } from "node:path";
-import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
+// Banco 100% sintético via teste-base.mjs — nunca toca banco/mestre-rpg.db.
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, encerrarServidor, limparDir,
+} from "./teste-base.mjs";
 
-// Homologa sempre em cópia descartável: nunca escreve no banco real.
-const DIR = resolve("simulacao-limpeza", "homologacao-acervo");
-const BANCO = resolve(DIR, "mestre-rpg-teste.db");
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const origem = new Database("banco/mestre-rpg.db", { readonly: true });
-  const destino = BANCO.replace(/\\\\/g, "/").replace(/'/g, "''");
-  origem.prepare(`VACUUM INTO '${destino}'`).run();
-  origem.close();
-}
+const DIR = dirTeste("acervo");
+const BANCO = `${DIR}/teste.db`;
+const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 
-function portaLivre() {
-  return new Promise((resolvePorta, reject) => {
-    const servidor = createServer();
-    servidor.once("error", reject);
-    servidor.listen(0, "127.0.0.1", () => {
-      const porta = servidor.address().port;
-      servidor.close(() => resolvePorta(porta));
-    });
-  });
-}
+await prepararBanco(BANCO);
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
-const CID = "7a1c9c2e-3c7a-4805-9145-d8622d755a36"; // Caçadores & Caças
 const SUFIXO = `__TESTE_${Date.now()}`;
 const FORMATO = "mestre-rpg-biblioteca";
 
@@ -45,60 +25,33 @@ const ok = (nome, cond, extra = "") => {
   console.log(`${cond ? "ok" : "FALHOU"} ${nome}${extra ? " — " + extra : ""}`);
 };
 
-// ---------- servidor ----------
-const srv = spawn(process.execPath, ["servidor/dist/index.js"], {
-  env: {
-    ...process.env,
-    MESTRE_PORTA: String(PORTA),
-    MESTRE_BANCO: BANCO,
-    MESTRE_ARQUIVOS: resolve(DIR, "arquivos"),
-    MESTRE_BACKUPS: resolve(DIR, "backups"),
-  },
-  stdio: ["ignore", "pipe", "pipe"],
-});
-srv.stderr.on("data", (d) => process.stderr.write(`[srv] ${d}`));
+let srv, cenario, CID;
 
-async function esperarServidor() {
-  for (let i = 0; i < 60; i++) {
-    try {
-      const r = await fetch(`${BASE}/api/health`);
-      if (r.ok) return;
-    } catch { }
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  throw new Error("servidor não subiu");
-}
-
-// ---------- sessões ----------
-const db = new Database(BANCO);
-const sessao = (userId, tag) => {
-  const token = `${tag}-` + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), userId, hashToken(token), "hom-acervo", "127.0.0.1", Date.now() + 3600000, Date.now());
-  return token;
-};
-const admin = db.prepare("select id from users where username='administrador'").get();
-const jog = db.prepare("select id from users where username='fernandoqc_@hotmail.com'").get();
-const tokM = sessao(admin.id, "acervo-m");
-const tokJ = sessao(jog.id, "acervo-j");
-
-async function req(m, path, body, token) {
+async function req(m, path, body, cookie) {
   const r = await fetch(BASE + path, {
     method: m,
-    headers: { "content-type": "application/json", cookie: `mestre_rpg_session=${token}` },
+    headers: { "content-type": "application/json", cookie: cookie ?? "" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   let j = null; try { j = await r.json(); } catch { }
   return { status: r.status, json: j };
 }
-const apiM = (m, p, b) => req(m, p, b, tokM);
-const apiJ = (m, p, b) => req(m, p, b, tokJ);
 
 const livrosTeste = [];
 const envelopeDe = (env) => ({ formato: FORMATO, versao: 1, livros: env });
 
 try {
-  await esperarServidor();
+  srv = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  srv.stderr.on("data", (d) => process.stderr.write(`[srv] ${d}`));
+  await esperarSaudavel(BASE, srv);
+  cenario = await criarCenario(BASE, BANCO, {
+    campanha: "Campanha Acervo Teste",
+    jogadores: { jogador1: "jog_acervo" },
+    ficha: false,
+  });
+  CID = cenario.campId;
+  const apiM = (m, p, b) => req(m, p, b, cenario.cookieMestre);
+  const apiJ = (m, p, b) => req(m, p, b, cenario.jogadores.jogador1.cookie);
   console.log("servidor ok — iniciando testes\n");
 
   // ---------- 16) permissões (antecipado: não-admin não modifica) ----------
@@ -575,13 +528,8 @@ try {
   for (const id of livrosTeste.filter(Boolean)) {
     try { await apiM("DELETE", `/api/biblioteca/livros/${id}`); } catch { }
   }
-  if (srv.exitCode === null) {
-    const encerrado = new Promise((resolve) => srv.once("exit", resolve));
-    try { srv.kill(); } catch { }
-    await encerrado;
-  }
-  db.close();
-  rmSync(DIR, { recursive: true, force: true });
+  await encerrarServidor(srv);
+  limparDir(DIR);
 }
 
 const falhas = resultados.filter((x) => !x.ok);
