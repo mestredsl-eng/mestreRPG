@@ -133,7 +133,84 @@ try {
   const elJsonDepois = JSON.stringify(elDepois.json);
   t("versão local preservada após manter_campanha", elJsonDepois.includes("versão local da campanha"), elJsonDepois.slice(0, 200));
 
-  // ===== 5. rejeições =====
+  // ===== 5. atomicidade =====
+  sec("Atomicidade da aplicação");
+
+  // 5a) três aplicações simultâneas do mesmo livro: serializadas pela
+  // transação — nenhuma 500, estado final consistente, sem duplicatas.
+  const livroConc = await req(BASE, "POST", "/biblioteca/livros", {
+    cookie: cm,
+    body: {
+      titulo: "Concorrência", tipo: "livro",
+      itens: [
+        { kind: "talento", key: "conc_a", name: "Talento A", definition: {} },
+        { kind: "pericia", key: "conc_b", name: "Perícia B", definition: {} },
+      ],
+    },
+  });
+  const bookConc = livroConc.json?.livro?.id;
+  t("livro p/ teste de concorrência criado", livroConc.status === 201 && !!bookConc, `status=${livroConc.status}`);
+
+  const [a1, a2, a3] = await Promise.all([1, 2, 3].map(() =>
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: {} })));
+  t("3 aplicações simultâneas → todas 200 (sem 500)",
+    [a1, a2, a3].every((r) => r.status === 200 && r.json?.ok === true),
+    JSON.stringify([a1.status, a2.status, a3.status]));
+  const inseriram = [a1, a2, a3].filter((r) => (r.json?.inseridos ?? 0) > 0).length;
+  const noOps = [a1, a2, a3].filter((r) => r.json?.semAlteracao === true).length;
+  t("exatamente uma aplicação insere, demais são no-op",
+    inseriram === 1 && noOps === 2, `inseriram=${inseriram} noOp=${noOps}`);
+
+  // estado final: cada chave aparece UMA vez; vínculo aponta para a versão do livro
+  const elConc = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
+  const elConcJson = JSON.stringify(elConc.json?.elementos ?? {});
+  const contaA = (elConcJson.match(/conc_a/g) ?? []).length;
+  const contaB = (elConcJson.match(/conc_b/g) ?? []).length;
+  t("elementos sem duplicação após corrida", contaA === 1 && contaB === 1, `a=${contaA} b=${contaB}`);
+  const listaConc = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const itemConc = (listaConc.json?.livros ?? []).find((l) => l.id === bookConc);
+  t("vínculo aplicado na versão correta", itemConc?.aplicado === true && itemConc?.versaoAplicada === itemConc?.versao
+    && itemConc?.atualizacaoDisponivel === false, JSON.stringify(itemConc).slice(0, 160));
+
+  // 5b) decisões concorrentes divergentes: resultado é uma das duas opções,
+  // nunca estado corromido nem duplicata.
+  const elPatch = await req(BASE, "PATCH", `/campaigns/${camp}/regras/elementos/${comDbElementId(BANCO, camp, "talento", "conc_a")}`, {
+    cookie: cm, body: { name: "Talento A local" },
+  });
+  t("elemento diverge localmente", elPatch.status === 200, `status=${elPatch.status}`);
+  const editaLivro = await req(BASE, "PATCH", `/biblioteca/livros/${bookConc}/itens/${(await req(BASE, "GET", `/biblioteca/livros/${bookConc}`, { cookie: cm })).json.itens.find((i) => i.key === "conc_a").id}`, {
+    cookie: cm, body: { name: "Talento A do livro v2" },
+  });
+  t("livro evolui (v2)", editaLivro.status === 200, `status=${editaLivro.status}`);
+  const [d1, d2] = await Promise.all([
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { decisoes: { "talento:conc_a": "manter_campanha" } } }),
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { decisoes: { "talento:conc_a": "usar_livro" } } }),
+  ]);
+  // serialized: a segunda vê o estado já atualizado pela primeira —
+  // pode dar 409 se a primeira aplicou "usar_livro"? Não: depois da
+  // primeira, campanha == livro → sem conflito → 200. Ordem serial
+  // garante resultado determinístico e íntegro.
+  t("aplicações concorrentes com decisões → ambas 200",
+    d1.status === 200 && d2.status === 200, `d1=${d1.status} d2=${d2.status}`);
+  const elFinal = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
+  const nomeFinal = JSON.stringify(elFinal.json?.elementos ?? {});
+  t("estado final íntegro (nome é local OU do livro, nunca corrompido)",
+    nomeFinal.includes("Talento A local") || nomeFinal.includes("Talento A do livro v2"),
+    nomeFinal.slice(0, 200));
+  const contaA2 = (nomeFinal.match(/conc_a/g) ?? []).length;
+  t("sem duplicata de chave após decisões concorrentes", contaA2 === 1, `ocorrências=${contaA2}`);
+
+  // 5c) falha de validação não deixa efeito colateral: livro incompatível
+  // rejeitado com 422 não pode criar vínculo nem elemento na campanha.
+  const listaPre = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const vincIncomp = (listaPre.json?.livros ?? []).find((l) => l.id === bookIncomp);
+  t("422 não criou vínculo livro-campanha", vincIncomp?.aplicado === false || !vincIncomp, JSON.stringify(vincIncomp).slice(0, 140));
+  const elSemIncomp = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
+  t("422 não inseriu elementos", !elSemIncomp.includes("vant_ataque"), elSemIncomp.slice(0, 160));
+
+  await req(BASE, "DELETE", `/biblioteca/livros/${bookConc}`, { cookie: cm });
+
+  // ===== 6. rejeições =====
   sec("Rejeições");
   const incomp = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookIncomp}/aplicar`, { cookie: cm, body: {} });
   t("kind incompatível → 422", incomp.status === 422, `status=${incomp.status} ${JSON.stringify(incomp.json).slice(0, 140)}`);
