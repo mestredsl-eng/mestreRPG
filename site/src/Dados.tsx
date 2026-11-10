@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { api } from "./api";
 import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
+import Dado3D from "./Dado3D";
 
 // ---------- Preferências visuais de dados (por usuário, persistidas no servidor) ----------
 
@@ -71,27 +72,7 @@ interface FaceDadoProps {
  * preferências do usuário — cada jogador vê os próprios dados.
  */
 export function FaceDado({ lados, valor, indice = 0, estado, className }: FaceDadoProps) {
-  const [face, setFace] = useState<number | null>(null);
-  useEffect(() => {
-    setFace(null);
-    const iv = window.setInterval(() => setFace(1 + Math.floor(Math.random() * lados)), 80);
-    const t = window.setTimeout(() => { window.clearInterval(iv); setFace(valor); }, 550 + indice * 110);
-    return () => { window.clearInterval(iv); window.clearTimeout(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [valor, lados, indice]);
-  const pontos = POLIGONOS[lados] ?? POLIGONOS[20];
-  const girando = face === null;
-  return (
-    <span
-      className={`dado-shape dado-3d d${lados} ${girando ? "girando" : ""} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
-      title={`d${lados} = ${valor}`}
-    >
-      <svg viewBox="0 0 40 40" aria-hidden="true">
-        <polygon className="dado-poligono" points={pontos} />
-        <text className="dado-numero" x="20" y="25" textAnchor="middle">{face ?? "?"}</text>
-      </svg>
-    </span>
-  );
+  return <Dado3D lados={lados} valor={valor} indice={indice} estado={estado} className={className} />;
 }
 
 // ---------- Seletor de cores com pré-visualização e contraste ----------
