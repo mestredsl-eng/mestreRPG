@@ -642,7 +642,7 @@ function SeletorAtributo({ campo, valor, somenteLeitura, aoMudar, ctx }: {
   };
 
   return (
-    <div className={`seletor-atributos${somenteLeitura ? " somente-leitura" : ""}`}>
+    <div className={`seletor-atributos seletor-bolinhas${somenteLeitura ? " somente-leitura" : ""}`}>
       <div className="bolinhas" role={somenteLeitura ? undefined : "radiogroup"} aria-label={campo.label}>
         {Array.from({ length: faixa.total }, (_, i) => {
           const v = faixa.inicio + i;
