@@ -158,7 +158,9 @@ export function diffLivro(livro: LivroExportado, existente: LivroDb | null, iten
     conflitos.push({ kind: item.kind, key: item.key, name: item.name, campos });
   }
 
-  const ausentes = itensDb.length - vistos.size;
+  // Conte somente chaves existentes no banco que não vieram no arquivo.
+  // `vistos.size` também inclui itens novos e subcontava os ausentes.
+  const ausentes = [...mapaDb.keys()].filter((ck) => !vistos.has(ck)).length;
 
   const metadadosAlterados: DiffLivro["metadadosAlterados"] = [];
   if (existente) {
