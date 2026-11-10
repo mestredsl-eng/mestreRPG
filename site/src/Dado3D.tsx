@@ -161,7 +161,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     // O destino continua sendo exclusivamente o valor recebido do servidor.
     let raf = 0;
     let width = 0, height = 0, dpr = 1;
-    let finalizado = reduced;
+    let finalizado = false;
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       width = Math.max(32, rect.width); height = Math.max(32, rect.height);
@@ -201,6 +201,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       return { min, index };
     };
     const alturaDeRepouso = (q: Quat) => -lowestVertex(q).min + 0.025;
+    position[2] = alturaDeRepouso(start) + 1.15;
     const render = (eased: number, physical?: { orientation: Quat; x: number; y: number; z: number }) => {
       const base = slerp(start, target, eased);
       const axis = unit([0.72, 0.31, 0.62]);
@@ -210,7 +211,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       ctx.clearRect(0, 0, width, height);
       const size = Math.min(width, height);
       const restante = 1 - eased;
-      const elevacao = physical ? Math.max(0, physical.z) * size * 0.31 : restante * size * 0.105;
+      const elevacao = physical ? Math.max(0, physical.z - alturaDeRepouso(target)) * size * 0.20 : restante * size * 0.105;
       const deslocamento = physical ? physical.x * size * 0.16 : Math.sin(eased * Math.PI * 2 + indice * 0.7) * restante * size * 0.055;
       const deslocamentoY = physical ? physical.y * size * 0.16 : 0;
       ctx.save();
