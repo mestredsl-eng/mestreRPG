@@ -106,7 +106,14 @@ function inspecionarPid(pid: string, pidDir: string, alvos: Set<string>, meuUid:
       alvo = readlinkSync(`${pidDir}/fd/${fd}`);
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") continue;
+      if (code === "ENOENT") continue; // fd fechou durante a varredura
+      // EACCES num fd individual = processo não-dumpable: o /proc lista
+      // os descritores mas não resolve os alvos — limite do próprio
+      // procfs, não uma falha de leitura transitória. Processos
+      // não-dumpable não são clientes normais do banco (o servidor e
+      // qualquer cliente SQLite rodam dumpable); pular o fd é o máximo
+      // que a plataforma permite inspecionar.
+      if (code === "EACCES") continue;
       return { r: "negado", detalhe: `fd ${fd} de pid ${pid} ilegível (${code ?? e})` };
     }
     if (alvos.has(resolve(alvo))) return { r: "em_uso" };
