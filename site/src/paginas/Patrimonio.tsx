@@ -139,7 +139,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
       )}
       <div className="linha">
         <input placeholder="Buscar item…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        <select value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
+        <select aria-label="Filtrar por categoria" value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
           <option value="">Todas as categorias</option>
           {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
@@ -331,7 +331,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
         } catch (err) { aoErro(err); }
       }}>
         <input placeholder="Nome do equipamento" value={nome} onChange={(e) => setNome(e.target.value)} required />
-        <select value={slot} onChange={(e) => setSlot(e.target.value)}>
+        <select aria-label="Posição do equipamento" value={slot} onChange={(e) => setSlot(e.target.value)}>
           <option value="">Sem posição</option>
           {slots.map((s) => <option key={s} value={s}>{s}</option>)}
           {!slots.includes(slot) && slot && <option value={slot}>{slot}</option>}

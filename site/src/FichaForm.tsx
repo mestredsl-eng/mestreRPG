@@ -351,6 +351,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <input
           type="text"
+          aria-label={campo.label}
           value={String(atual ?? "")}
           maxLength={campo.maxCaracteres}
           onChange={(e) => mudar(e.target.value)}
@@ -360,6 +361,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <textarea
           rows={4}
+          aria-label={campo.label}
           value={String(atual ?? "")}
           maxLength={campo.maxCaracteres}
           onChange={(e) => mudar(e.target.value)}
@@ -371,6 +373,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <input
           type="number"
+          aria-label={campo.label}
           step={campo.tipo === "inteiro" ? 1 : "any"}
           min={campo.minimo}
           max={campo.maximo}
@@ -385,7 +388,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     case "data":
       return editavel(
-        <input type="date" value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)} />
+        <input type="date" aria-label={campo.label} value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)} />
       );
     case "checkbox":
       return editavel(
@@ -399,7 +402,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
         ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
         : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
       return editavel(
-        <select value={String(atual ?? "")} onChange={(e) => {
+        <select aria-label={campo.label} value={String(atual ?? "")} onChange={(e) => {
           const v = e.target.value;
           if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
           else mudar(v);

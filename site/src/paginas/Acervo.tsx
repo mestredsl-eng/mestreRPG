@@ -302,7 +302,7 @@ export default function Acervo() {
             value={busca} onChange={(e) => setBusca(e.target.value)}
             style={{ flex: "1 1 220px" }}
           />
-          <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+          <select aria-label="Filtrar por tipo" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
             <option value="">Todos os tipos</option>
             <option value="livro">Livros</option>
             <option value="suplemento">Suplementos</option>

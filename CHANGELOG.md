@@ -10,6 +10,7 @@
 - **Patrimônio (inventário e equipamentos)** — gestão de itens no inventário, equipamento/desequipamento, permissões granulares (`jogadorAdicionaItens`, `jogadorRemoveItens`, `transferable`)
 - **Financeiro** — contas por personagem, saldo inicial configurável, movimentações (entrada, saída, compra, venda, PIX fictício), suporte a 0–4 casas decimais configuráveis por campanha
 - **HP e Vitalidade** — alterações de HP e Vitalidade com histórico completo de transições (`nivelAnterior → nivelNovo`, motivo)
+- **Bônus individual de pontos** — o mestre concede/remove pontos extras do pool principal de um personagem com motivo e histórico auditável (`POST /characters/:id/pontos`)
 - **Mesa multiplayer** — presença em tempo real, chat público/privado/secreto, rolagens compartilhadas (D4, D6, D8, D10, D20), testes de habilidade D10 com cálculo de sucessos/falhas no servidor, turnos, ampulheta/timer
 - **Diário de campanha** — anotações do mestre, visibilidade pública para jogadores
 - **Snapshots de campanha** — criação manual de snapshots, restauração com snapshot automático pré-restauração de segurança
@@ -23,6 +24,7 @@
   - HP/Vitalidade: leitura, cálculo e gravação dentro da mesma transação para evitar lost updates
   - Aplicação de livro do acervo: decisão e escrita em transação única síncrona
   - Validação de redução de inventário com releitura do estado atual dentro da transação
+  - Bônus de pontos (`/pontos`): releitura da ficha, cálculo e gravação dentro de `db.transaction` síncrona; auditoria e Socket.IO somente após o commit — concessões e remoções simultâneas não se perdem
 - **Decimais configuráveis** — `moneyTransactions.amount` e `amountCents` respeitam `casasDecimais` da campanha em todos os fluxos financeiros
 - **Teardown rigoroso** — `encerrarServidor` aguarda evento `exit` real (SIGTERM → timeout → SIGKILL → aguarda exit novamente)
 - **Limpeza resiliente** — `limparDir` com retentativas e relatório explícito de falha; falhas de cleanup são fatais em testes
@@ -38,6 +40,7 @@
 - **Homologação** — cenário de teste (criarCenario) gerava modelo não-default, bloqueando criação de fichas em campanhas novas
 - **Homologação** — asserts fixos substituídos por verificações reais de estado pós-restart
 - **Homologação** — validação D10 agora exige campos calculados do servidor (`minimo`, `lancados`, `sucessos`, `falhas`) e não apenas array de dados
+- **Acessibilidade** — campos dinâmicos de ficha, filtros de acervo/arquivos/regras/patrimônio, papéis/status de participantes e formulário de bônus de pontos ganharam `aria-label`; auditoria visual em 3 viewports sem achados
 
 ### Notas de migração
 
@@ -62,3 +65,5 @@
   - `teste-vitalidade-historico.mjs`: 24/24 — histórico de vitalidade
   - `homologacao-hp-historico.mjs`: 16/16 — histórico de HP
   - `teste-venda-estoque.mjs`: 29/29 — venda de itens
+  - `teste-pontos-concorrencia.mjs`: 16/16 — concessões/remoções simultâneas de pontos, corrida com PATCH, autorização e ausência de escrita parcial
+- Auditoria visual/acessibilidade: `auditoria-visual.mjs` percorre login, painel, campanhas, todas as abas da campanha, detalhe de personagem, acervo, administração e conta em desktop (1366×768), tablet (768×1024) e celular (390×844) — 0 achados de rolagem horizontal, elementos cortados, botões sem nome ou campos sem label após as correções de `aria-label`.

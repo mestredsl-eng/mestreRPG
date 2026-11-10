@@ -245,7 +245,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
         <div>
           <div className="linha-ferramentas">
             <input placeholder="Buscar por nome, chave ou categoria..." value={busca} onChange={(e) => setBusca(e.target.value)} />
-            <select value={filtroKind} onChange={(e) => setFiltroKind(e.target.value)}>
+            <select aria-label="Filtrar por tipo de elemento" value={filtroKind} onChange={(e) => setFiltroKind(e.target.value)}>
               <option value="">Todos os tipos</option>
               {KINDS.map((k) => <option key={k} value={k}>{ROTULO_KIND[k]}</option>)}
             </select>
