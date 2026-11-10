@@ -6,7 +6,7 @@
 // banco, nos arquivos, na config e na limpeza da flag — cada uma com
 // verificação do estado resultante (banco, sidecars, arquivos, config, flag).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { dirTeste, abrirDb, limparDir, portaLivre, subirServidor, esperarSaudavel, encerrarServidor } from "./teste-base.mjs";
 
@@ -621,6 +621,98 @@ try {
     t("migrate com MESTRE_BANCO custom → exit 0 e arquivo criado", m.code === 0 && existsSync(bancoCustom), m.saida.slice(-150));
     const rest = rodar("node", [RESTAURADOR], env);
     t("restaurador respeita MESTRE_BANCO (sem pendência → 0)", rest.code === 0, rest.saida.slice(-150));
+  }
+
+  // ===== 21. verificação fail-safe de banco em uso (procfs) =====
+  // MESTRE_PROC_FS força a inspeção de descritores de arquivo em
+  // qualquer plataforma — uma árvore falsa reproduz /proc indisponível,
+  // permissão negada, fd inválido e processo encerrado. Em TODOS os
+  // casos de verificação inconclusiva o restaurador deve abortar com
+  // exit != 0 ANTES de qualquer escrita: banco, arquivos, config e flag
+  // permanecem intactos.
+  sec("Fail-safe: verificação de banco em uso inconclusiva aborta sem tocar nada");
+  {
+    const raizArmada = (sufixo) => {
+      const r = join(RAIZ, sufixo);
+      mkdirSync(join(r, "banco"), { recursive: true });
+      migrar(r);
+      mkdirSync(arqPath(r), { recursive: true });
+      writeFileSync(join(arqPath(r), "doc_vivo.txt"), "vivo");
+      mkdirSync(join(r, "configuracao"), { recursive: true });
+      writeFileSync(cfgPath(r), JSON.stringify({ atual: true }));
+      const bk = fazerBackup(r, "bk_" + sufixo);
+      armarFlag(r, bk);
+      return r;
+    };
+    const intacto = (r) =>
+      !!flagPendenteDb(dbPath(r)) &&
+      readFileSync(join(arqPath(r), "doc_vivo.txt"), "utf8") === "vivo" &&
+      JSON.parse(readFileSync(cfgPath(r), "utf8")).atual === true &&
+      !readdirSync(join(r, "backups")).some((d) => d.startsWith("pre_restore_"));
+
+    // 21a. /proc indisponível → indeterminado → aborta
+    {
+      const r = raizArmada("proc_ausente");
+      const rest = restaurar(r, envRaiz(r, { MESTRE_PROC_FS: join(RAIZ, "proc_que_nao_existe") }));
+      t("procfs ausente → exit != 0", rest.code !== 0, `code=${rest.code}`);
+      t("nada alterado: flag, doc, config e sem pre_restore", intacto(r));
+    }
+
+    // 21b. fd de pid não é diretório (ENOTDIR) → indeterminado → aborta
+    {
+      const r = raizArmada("proc_fd_arquivo");
+      const fake = join(RAIZ, "fake_proc_fd_arq");
+      mkdirSync(join(fake, "1234"), { recursive: true });
+      writeFileSync(join(fake, "1234", "fd"), "nao-e-diretorio");
+      const rest = restaurar(r, envRaiz(r, { MESTRE_PROC_FS: fake }));
+      t("fd como arquivo → exit != 0", rest.code !== 0, `code=${rest.code}`);
+      t("nada alterado: flag, doc, config e sem pre_restore", intacto(r));
+    }
+
+    // 21c. entrada de fd não é link simbólico (EINVAL no readlink) → indeterminado → aborta
+    {
+      const r = raizArmada("proc_fd_comum");
+      const fake = join(RAIZ, "fake_proc_fd_comum");
+      mkdirSync(join(fake, "1234", "fd"), { recursive: true });
+      writeFileSync(join(fake, "1234", "fd", "3"), "arquivo-comum");
+      const rest = restaurar(r, envRaiz(r, { MESTRE_PROC_FS: fake }));
+      t("fd sem ser symlink → exit != 0", rest.code !== 0, `code=${rest.code}`);
+      t("nada alterado: flag, doc, config e sem pre_restore", intacto(r));
+    }
+
+    // 21d. pid sem diretório fd (processo encerrou) → ignorado com segurança → restore prossegue
+    {
+      const r = raizArmada("proc_pid_morto");
+      const fake = join(RAIZ, "fake_proc_pid_morto");
+      mkdirSync(join(fake, "1234"), { recursive: true }); // sem subdir fd → ENOENT
+      const rest = restaurar(r, envRaiz(r, { MESTRE_PROC_FS: fake }));
+      t("processo encerrado durante inspeção → restore segue → exit 0", rest.code === 0, rest.saida.slice(-200));
+      t("restore aplicado: flag limpa e doc do backup presente",
+        flagPendenteDb(dbPath(r)) === null && existsSync(join(arqPath(r), "doc_bk.txt")));
+    }
+
+    // 21e. somente Linux: fd simbólico apontando para o banco → em_uso → aborta
+    if (process.platform === "linux") {
+      const r = raizArmada("proc_em_uso");
+      const fake = join(RAIZ, "fake_proc_em_uso");
+      mkdirSync(join(fake, "4321", "fd"), { recursive: true });
+      symlinkSync(dbPath(r), join(fake, "4321", "fd", "7"));
+      const rest = restaurar(r, envRaiz(r, { MESTRE_PROC_FS: fake }));
+      t("fd apontando para o banco → exit != 0", rest.code !== 0, `code=${rest.code}`);
+      t("nada alterado: flag, doc, config e sem pre_restore", intacto(r));
+
+      // 21f. somente Linux: fd ilegível por permissão → indeterminado → aborta
+      const r2 = raizArmada("proc_sem_perm");
+      const fake2 = join(RAIZ, "fake_proc_sem_perm");
+      mkdirSync(join(fake2, "4321", "fd"), { recursive: true });
+      chmodSync(join(fake2, "4321", "fd"), 0o000);
+      const rest2 = restaurar(r2, envRaiz(r2, { MESTRE_PROC_FS: fake2 }));
+      chmodSync(join(fake2, "4321", "fd"), 0o755);
+      t("fd sem permissão de leitura → exit != 0", rest2.code !== 0, `code=${rest2.code}`);
+      t("nada alterado: flag, doc, config e sem pre_restore", intacto(r2));
+    } else {
+      t("casos com symlink/permissão POSIX (linux-only) — cobertos no CI", true);
+    }
   }
 } finally {
   limparDir(RAIZ);

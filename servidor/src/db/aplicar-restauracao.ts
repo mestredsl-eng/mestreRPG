@@ -11,7 +11,7 @@
 //  - qualquer falha desfaz banco E arquivos/config e sai com código != 0;
 //  - sucesso só é declarado após confirmar que a flag foi removida do banco
 //    restaurado; falha na limpeza dispara rollback completo.
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
@@ -27,33 +27,80 @@ const ARQ_CFG = resolve(RAIZ, "configuracao", "servidor.json");
 
 function log(msg: string) { console.log(`[restauracao] ${msg}`); }
 
+type VerificacaoBanco =
+  | { status: "livre" }
+  | { status: "em_uso"; pid: string }
+  | { status: "indeterminado"; motivo: string };
+
+const PROC_FS = process.env.MESTRE_PROC_FS ?? "/proc";
+// MESTRE_PROC_FS permite apontar para uma árvore falsa em testes e força
+// a inspeção mesmo fora do Linux.
+const INSPECAO_ATIVA = process.platform === "linux" || !!process.env.MESTRE_PROC_FS;
+
 /**
- * Detecta se o banco vivo (ou seus sidecars) está aberto por OUTRO
- * processo. No Windows a trava de arquivo (EPERM) já aborta a remoção;
- * no Linux unlink sempre sucede mesmo com o arquivo aberto — sem esta
- * checagem o restore trocaria o conteúdo sob uma conexão ativa e o
- * processo antigo continuaria escrevendo num inode substituído.
- * Varre os descritores de /proc (Linux); em outras plataformas retorna
- * null e a proteção continua sendo a trava de arquivo do SO.
+ * Verifica se o banco vivo (ou seus sidecars) está aberto por OUTRO
+ * processo — fail-safe: só retorna "livre" quando a inspeção foi
+ * concluída por completo. No Windows a trava de arquivo (EPERM) já
+ * aborta a remoção; no Linux unlink sempre sucede mesmo com o arquivo
+ * aberto — sem esta checagem o restore trocaria o conteúdo sob uma
+ * conexão ativa (split-brain). Qualquer falha de leitura que impeça
+ * provar que o banco está livre retorna "indeterminado" e o chamador
+ * aborta ANTES de qualquer escrita.
+ *
+ * Processos de outros usuários são ignorados: um uid diferente não
+ * consegue abrir um banco dentro do MESTRE_HOME do usuário (permissão
+ * de diretório), e o /proc/<pid>/fd deles é ilegível por desenho.
+ * Processo que some durante a varredura (ENOENT/ESRCH) já liberou os
+ * descritores — ignorá-lo é seguro.
  */
-function bancoEmUso(): string | null {
-  if (process.platform !== "linux") return null;
-  const alvos = new Set(
-    ["", "-wal", "-shm"].map((s) => resolve(DB_VIVA + s)),
-  );
+function verificarBancoEmUso(): VerificacaoBanco {
+  if (!INSPECAO_ATIVA) return { status: "livre" };
+  const alvos = new Set(["", "-wal", "-shm"].map((s) => resolve(DB_VIVA + s)));
+  const meuUid = typeof process.getuid === "function" ? process.getuid() : null;
   let pids: string[];
-  try { pids = readdirSync("/proc"); } catch { return null; }
+  try {
+    pids = readdirSync(PROC_FS);
+  } catch (e) {
+    return { status: "indeterminado", motivo: `não foi possível ler ${PROC_FS}: ${e instanceof Error ? e.message : e}` };
+  }
   for (const pid of pids) {
     if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
+    const pidDir = `${PROC_FS}/${pid}`;
+    // Processo de outro usuário: não pode deter o banco do MESTRE_HOME.
+    if (meuUid !== null) {
+      let uid: number;
+      try { uid = statSync(pidDir).uid; }
+      catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === "ENOENT" || code === "ENOTDIR") continue; // encerrou
+        return { status: "indeterminado", motivo: `stat de pid ${pid} falhou: ${code ?? e}` };
+      }
+      if (uid !== meuUid) continue;
+    }
     let fds: string[];
-    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+    try {
+      fds = readdirSync(`${pidDir}/fd`);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      // ENOENT: o processo encerrou entre a listagem e a leitura — já
+      // liberou os descritores, ignorar é seguro. ENOTDIR/EACCES/etc:
+      // estrutura inesperada ou sem permissão — inspeção inconclusiva.
+      if (code === "ENOENT") continue;
+      return { status: "indeterminado", motivo: `sem permissão para inspecionar pid ${pid} (${code ?? e})` };
+    }
     for (const fd of fds) {
+      let alvo: string;
       try {
-        if (alvos.has(resolve(readlinkSync(`/proc/${pid}/fd/${fd}`)))) return `pid ${pid}`;
-      } catch { /* fd pode ter sumido entre listagem e leitura */ }
+        alvo = readlinkSync(`${pidDir}/fd/${fd}`);
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") continue; // fd fechou durante a varredura
+        return { status: "indeterminado", motivo: `leitura de fd de pid ${pid} falhou: ${code ?? e}` };
+      }
+      if (alvos.has(resolve(alvo))) return { status: "em_uso", pid };
     }
   }
-  return null;
+  return { status: "livre" };
 }
 
 /** Remove a flag de restauração pendente do banco em DB_VIVA e CONFIRMA a remoção. */
@@ -142,13 +189,17 @@ async function principal() {
     process.exit(2);
   }
 
-  // 3) o banco vivo não pode estar aberto por outro processo — no Linux
-  //    não há trava de arquivo, então detectamos via /proc antes de
-  //    preservar/aplicar qualquer coisa. Nada foi tocado: a flag fica
-  //    para retry após o processo invasor encerrar.
-  const emUso = bancoEmUso();
-  if (emUso) {
-    log(`ERRO: banco em uso por ${emUso} — restauração exige o servidor parado. Nada foi alterado; flag preservada para retry.`);
+  // 3) fail-safe: o banco vivo não pode estar aberto por outro processo
+  //    E a verificação precisa ter sido concluída. "indeterminado" aborta
+  //    igual a "em_uso" — falha de inspeção nunca autoriza a escrita.
+  //    Nada foi tocado: a flag fica para retry.
+  const verif = verificarBancoEmUso();
+  if (verif.status === "em_uso") {
+    log(`ERRO: banco em uso por pid ${verif.pid} — restauração exige o servidor parado. Nada foi alterado; flag preservada para retry.`);
+    process.exit(2);
+  }
+  if (verif.status === "indeterminado") {
+    log(`ERRO: verificação de banco em uso inconclusiva (${verif.motivo}) — restauração abortada por segurança antes de qualquer escrita; flag preservada para retry.`);
     process.exit(2);
   }
 
