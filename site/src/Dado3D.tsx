@@ -149,7 +149,8 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     if (!canvas || !ctx) { setCanvasUnavailable(true); return; }
     setCanvasUnavailable(false);
     const { vertices, faces } = geometry(lados);
-    const labels = faceValues(lados, vertices, faces);\n    const indexDaFace = labels.indexOf(Math.round(valor));\n    const faceIndex = indexDaFace >= 0 ? indexDaFace : 0;
+    const labels = faceValues(lados, vertices, faces);
+    const indexDaFace = labels.indexOf(Math.round(valor));\n    const faceIndex = indexDaFace >= 0 ? indexDaFace : 0;
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
@@ -211,14 +212,23 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.stroke();
         const center = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length] as number[], [0,0]);
         const faceValue = labels[item.i];
+        const edge = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]];
+        const labelAngle = Math.atan2(edge[1], edge[0]);
+        ctx.save();
+        ctx.translate(center[0], center[1]);
+        ctx.rotate(labelAngle);
         ctx.fillStyle = text;
         ctx.font = `800 ${Math.max(9, size * (lados === 20 ? 0.13 : 0.16))}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.shadowColor = "rgba(0,0,0,.5)";
+        ctx.lineJoin = "round";
+        ctx.strokeStyle = "rgba(0,0,0,.58)";
+        ctx.lineWidth = Math.max(1.2, size * 0.025);
+        ctx.strokeText(String(faceValue), 0, 0);
+        ctx.shadowColor = "rgba(0,0,0,.45)";
         ctx.shadowBlur = 2;
-        ctx.fillText(String(faceValue), center[0], center[1]);
-        ctx.shadowBlur = 0;
+        ctx.fillText(String(faceValue), 0, 0);
+        ctx.restore();
       }
       if (raw < 1) raf = requestAnimationFrame(draw);
     };
