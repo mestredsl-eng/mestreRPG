@@ -410,7 +410,6 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
       sistema: e.sistema ?? null,
       edicao: e.edicao ?? null,
       tipo: e.tipo ?? "livro",
-      versao: (p.existente!.versao ?? 1) + 1,
       formatoVersao: VERSAO_FORMATO,
       origem: "importado",
       updatedAt: t,
