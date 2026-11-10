@@ -85,6 +85,18 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   const [slots, setSlots] = useState<string[]>([]);
   const [confirmandoItem, setConfirmandoItem] = useState<ItemInventario | null>(null);
   const [ocupadoItem, setOcupadoItem] = useState(false);
+  // Idempotência de equipar: uma intenção = um requestId, reutilizado em
+  // duplo clique e retries; uma nova ação após sucesso gera outro ID.
+  const equipReqIds = useRef(new Map<string, string>()).current;
+  const equiparUnidade = async (itemId: string) => {
+    if (!equipReqIds.has(itemId)) equipReqIds.set(itemId, crypto.randomUUID());
+    const rid = equipReqIds.get(itemId)!;
+    try {
+      await api.equiparItem(characterId, itemId, slots[0], rid);
+      equipReqIds.delete(itemId);
+      await carregar();
+    } catch (e) { aoErro(e); }
+  };
 
   const carregar = useCallback(async () => {
     try {
@@ -170,9 +182,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               <td>{item.weight != null ? `${item.weight} kg` : "—"}</td>
               <td>{item.location ?? "—"}</td>
               <td className="linha">
-                <button className="secundario" title="Equipar" onClick={async () => {
-                  try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-                }}>Equipar</button>
+                <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
@@ -212,9 +222,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo"><span className="registro-rotulo">Peso</span><span>{item.weight != null ? `${item.weight} kg` : "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
             <div className="registro-acoes">
-              <button className="secundario" title="Equipar" onClick={async () => {
-                try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-              }}>Equipar</button>
+              <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
               <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
@@ -489,7 +497,9 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
 
   if (!fin) return <p className="meta">Carregando…</p>;
   const cfg = fin.config;
-  const fmt = (cents: number | null | undefined) => fmtMoeda(cents, cfg.casasDecimais);
+  // O backend escala os inteiros financeiros por 10 ** casasDecimais (não sempre por 100).
+  const fmt = (unidades: number | null | undefined) =>
+    unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
   return (
     <div>

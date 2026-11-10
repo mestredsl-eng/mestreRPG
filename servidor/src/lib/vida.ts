@@ -31,10 +31,20 @@ export interface NivelVitalidade {
   bloqueiaAcoes: boolean;
 }
 
+export interface EventoVitalidade {
+  em: string;                    // ISO
+  nivelAnterior: number;
+  nivelNovo: number;
+  motivo: string | null;
+  autorId: string | null;
+  autorNome: string | null;
+}
+
 export interface EstadoVitalidade {
   nivel: number; // índice em config.vitalidade.niveis
   alteradoEm?: string;
   alteradoPor?: string | null;
+  historico?: EventoVitalidade[];
 }
 
 const num = (v: unknown): number | null =>
@@ -110,7 +120,13 @@ export function aplicarHp(
 export function lerVitalidade(dados: Record<string, unknown>): EstadoVitalidade {
   const bruto = dados[CHAVE_VITALIDADE] as EstadoVitalidade | undefined;
   const nivel = bruto && typeof bruto === "object" ? num(bruto.nivel) : null;
-  return { nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0 };
+  const historico = bruto && typeof bruto === "object" && Array.isArray(bruto.historico) ? bruto.historico : undefined;
+  return {
+    nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0,
+    alteradoEm: bruto?.alteradoEm,
+    alteradoPor: bruto?.alteradoPor ?? null,
+    historico,
+  };
 }
 
 /** Resumo para a ficha e para as rolagens. */
@@ -127,5 +143,6 @@ export function resumoVitalidade(cfg: ConfigRegras["vitalidade"], dados: Record<
     niveis: cfg.niveis.map((n, i) => ({ indice: i, nome: n.nome, penalidadeDados: n.penalidadeDados, bloqueiaAcoes: n.bloqueiaAcoes })),
     alteradoEm: estado.alteradoEm ?? null,
     alteradoPor: estado.alteradoPor ?? null,
+    historico: (estado.historico ?? []).slice(-100),
   };
 }

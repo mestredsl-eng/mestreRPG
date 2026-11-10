@@ -154,8 +154,8 @@ export const api = {
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
     requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"] }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
-  alterarVitalidade: (charId: string, nivel: number) =>
-    requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel }) }),
+  alterarVitalidade: (charId: string, nivel: number, motivo?: string) =>
+    requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel, motivo }) }),
   /** Bônus individual de pontos — somente mestre. */
   adminPontos: (charId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
     requisicao<{ ok: boolean; pontos: { bonus: number; selado: boolean; historico: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] } }>(`/characters/${charId}/pontos`, { method: "POST", body: JSON.stringify(dados) }),
@@ -194,8 +194,8 @@ export const api = {
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}`, { method: "DELETE" }),
   transferirItem: (charId: string, itemId: string, destinoCharacterId: string, quantidade?: number) =>
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}/transferir`, { method: "POST", body: JSON.stringify({ destinoCharacterId, quantidade }) }),
-  equiparItem: (charId: string, itemId: string, slot?: string) =>
-    requisicao<{ id: string }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot }) }),
+  equiparItem: (charId: string, itemId: string, slot?: string, requestId?: string) =>
+    requisicao<{ id: string; deduplicado?: boolean }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot, requestId }) }),
   listarEquipamentos: (charId: string) =>
     requisicao<{ equipamentos: Equipamento[]; slots: string[] }>(`/characters/${charId}/equipamentos`),
   adicionarEquipamento: (charId: string, dados: { name: string; kind?: string; slot?: string; equipped?: boolean; description?: string }) =>
@@ -459,7 +459,7 @@ export interface FichaRenderizada {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   vida?: {
     hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null }[] } | null;
     podeEditarHp: boolean;
     podeEditarVitalidade: boolean;
   } | null;
@@ -580,7 +580,7 @@ export interface ResultadoValidacaoRegras {
 /** Resumo de HP/Vitalidade (vida.ts) — ficha real ou simulação. */
 export interface VidaResumo {
   hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null }[] } | null;
 }
 
 /** Resposta do simulador da prévia do editor (POST /regras/simulacao). */
