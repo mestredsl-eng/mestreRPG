@@ -157,17 +157,52 @@ try {
     const av = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "avancar" });
     t("avançar turno → atual=1", av.ok === true && av.turnos?.atual === 1, JSON.stringify(av.turnos).slice(0, 120));
 
-    // timer 3s para ver tick real
-    const timer = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 3 });
-    t("mestre inicia ampulheta", timer.ok === true && timer.timer?.status === "rodando", JSON.stringify(timer.timer).slice(0, 140));
-    const tick = await esperar(sockJ1, "mesa:timer", 8000);
-    t("tick do timer chega ao jogador", tick?.status === "rodando" && tick?.remainingMs > 0, JSON.stringify(tick).slice(0, 140));
-    // espera encerrar naturalmente
-    await new Promise((r) => setTimeout(r, 3500));
-    const fim = await esperar(sockM, "mesa:timer", 8000).catch(() => null);
-    t("timer expirou → parado persistido", fim === null || fim?.status === "parado" || fim?.remainingMs === 0, JSON.stringify(fim).slice(0, 140));
-    const tsDb = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
-    t("timer_state persistido no banco", tsDb && JSON.parse(tsDb).status !== "rodando", tsDb);
+    // ampulheta: listeners instalados ANTES de iniciar — evento final não pode passar despercebido
+    const eventosTimer = [];
+    const hTimerM = (d) => { if (d?.sessionId === sid) eventosTimer.push(d); };
+    const hTimerJ = (d) => { if (d?.sessionId === sid) eventosTimer.push(d); };
+    sockM.on("mesa:timer", hTimerM); sockJ1.on("mesa:timer", hTimerJ);
+    try {
+      const timer = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 30 });
+      t("mestre inicia ampulheta", timer.ok === true && timer.timer?.status === "rodando", JSON.stringify(timer.timer).slice(0, 140));
+      const tickJ = await esperar(sockJ1, "mesa:timer", 8000,
+        (d) => d?.sessionId === sid && d.status === "rodando" && d.remainingMs > 0 && d.remainingMs < 30000).catch(() => null);
+      t("tick do timer chega ao jogador", !!tickJ && tickJ.remainingMs > 0, JSON.stringify(tickJ).slice(0, 140));
+
+      // pausa: status pausado, sem evento de parada durante a pausa
+      const pausado = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "pausar" });
+      t("pausar → status pausado", pausado.ok === true && pausado.timer?.status === "pausado" && pausado.timer?.remainingMs > 0, JSON.stringify(pausado.timer).slice(0, 140));
+      const dbPausa = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
+      t("pausa persistida no banco", dbPausa && JSON.parse(dbPausa).status === "pausado", dbPausa);
+      await new Promise((r) => setTimeout(r, 1500));
+      t("nenhum 'parado' emitido durante a pausa", !eventosTimer.some((d) => d.status === "parado"));
+
+      // retomada: volta a rodando com tempo restante
+      const retomado = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "retomar" });
+      t("retomar → rodando com restante", retomado.ok === true && retomado.timer?.status === "rodando" && retomado.timer?.remainingMs > 0, JSON.stringify(retomado.timer).slice(0, 140));
+
+      // encerramento manual: evento + persistência imediatos
+      const encerrado = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "encerrar" });
+      t("encerrar manual → parado", encerrado.ok === true && encerrado.timer?.status === "parado" && encerrado.timer?.remainingMs === 0, JSON.stringify(encerrado.timer).slice(0, 140));
+      const dbEnc = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
+      t("encerramento manual persistido", dbEnc && JSON.parse(dbEnc).status === "parado" && JSON.parse(dbEnc).remainingMs === 0, dbEnc);
+
+      // expiração natural: duração curta, evento final EXPLÍCITO exigido
+      eventosTimer.length = 0;
+      const timer2 = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 3 });
+      t("ampulheta reaberta por 3s", timer2.ok === true && timer2.timer?.status === "rodando", JSON.stringify(timer2.timer).slice(0, 140));
+      // MRPG_TIMER_FALSO=1 é o controle de resistência: exige status impossível → deve FALHAR
+      const statusFinal = process.env.MRPG_TIMER_FALSO === "1" ? "status-inexistente" : "parado";
+      const fim = await esperar(sockM, "mesa:timer", 15000,
+        (d) => d?.sessionId === sid && d.status === statusFinal && d.remainingMs === 0).catch(() => null);
+      t("expiração emite evento final explícito ('parado', remainingMs=0)",
+        !!fim && fim.status === "parado" && fim.remainingMs === 0, JSON.stringify(fim).slice(0, 140));
+      const tsDb = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
+      const tsFim = tsDb ? JSON.parse(tsDb) : null;
+      t("expiração persistida como 'parado' no banco", tsFim?.status === "parado" && tsFim?.remainingMs === 0, tsDb);
+    } finally {
+      sockM.off("mesa:timer", hTimerM); sockJ1.off("mesa:timer", hTimerJ);
+    }
   }
 
   // ===== Persistência após reinício =====
