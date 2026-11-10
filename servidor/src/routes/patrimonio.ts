@@ -182,29 +182,36 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
   const body = itemPatchSchema.safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
   const config = await configPatrimonio(a.personagem.campaignId);
-  const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
-  if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
   const d = somenteEnviados(body.data, req.body);
-  if (!a.ehMestre) {
-    // Reduzir quantidade remove unidades → exige jogadorRemoveItens.
-    // Aumentar quantidade ou editar demais campos → jogadorAdicionaItens.
-    const reduz = d.quantity !== undefined && d.quantity < item.quantity;
-    if (reduz) {
-      if (!config.patrimonio.jogadorRemoveItens) {
-        res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return;
-      }
-    } else if (!config.patrimonio.jogadorAdicionaItens) {
-      res.status(403).json({ erro: "Edição de itens não permitida" }); return;
-    }
-  }
+  // Releitura + validação de permissão + gravação na MESMA transação:
+  // a redução de quantidade é comparada com o valor atual do banco,
+  // não com um snapshot lido antes (sem corrida entre PATCHes).
+  let item: typeof inventoryEntries.$inferSelect | undefined;
+  let negado: "remover" | "editar" | null = null;
+  let sumiu = false;
   const { data, valueCents, transferable, ...resto } = d;
-  const dataAtual = (item.data ?? {}) as Record<string, unknown>;
-  await db.update(inventoryEntries).set({
-    ...resto,
-    quantity: d.quantity ?? item.quantity,
-    data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
-    updatedAt: new Date(),
-  }).where(eq(inventoryEntries.id, item.id));
+  await db.transaction((tx) => {
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { sumiu = true; return; }
+    item = itemTx;
+    if (!a.ehMestre) {
+      const reduz = d.quantity !== undefined && d.quantity < itemTx.quantity;
+      if (reduz && !config.patrimonio.jogadorRemoveItens) { negado = "remover"; return; }
+      if (!reduz && !config.patrimonio.jogadorAdicionaItens) { negado = "editar"; return; }
+    }
+    const dataAtual = (itemTx.data ?? {}) as Record<string, unknown>;
+    tx.update(inventoryEntries).set({
+      ...resto,
+      quantity: d.quantity ?? itemTx.quantity,
+      data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      updatedAt: new Date(),
+    }).where(eq(inventoryEntries.id, itemTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (negado === "remover") { res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return; }
+  if (negado === "editar") { res.status(403).json({ erro: "Edição de itens não permitida" }); return; }
   emitir(a.personagem);
   res.json({ ok: true });
 });

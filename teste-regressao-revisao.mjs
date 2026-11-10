@@ -171,6 +171,29 @@ try {
     const saidaPix = txs.find((x) => x.amount_cents === -2500);
     t("PIX saída: amount=-0.25", !!saidaPix && Math.abs(saidaPix.amount - -0.25) < 1e-9, JSON.stringify(saidaPix));
     t("compra: amountCents=-7500 e amount=-0.75", confere("compra", -7500, -0.75), JSON.stringify(porKind.compra));
+
+    // Regressão pedida: casas 0, 2 e 3 — amount deve bater com a escala
+    for (const [casas, saldoIni, entrada] of [[0, 10, 2], [2, 5.5, 1.25], [3, 1.234, 0.5]]) {
+      setCfg(ids.camp, "financeiro", { casasDecimais: casas });
+      const c = (await req(BASE, "POST", `/characters/${ids.charM}/financeiro/contas`, {
+        cookie: cm, body: { type: "especie", name: `C${casas}`, balanceReais: saldoIni },
+      })).json?.id;
+      await req(BASE, "POST", `/characters/${ids.charM}/financeiro/movimentar`, {
+        cookie: cm, body: { accountId: c, tipo: "entrada", valor: entrada, descricao: "reg" },
+      });
+      const txs2 = comDb(BANCO, (db) => db.prepare(
+        "select kind, amount, amount_cents from money_transactions where account_id=? order by created_at"
+      ).all(c));
+      const ini = txs2.find((x) => x.kind === "saldo_inicial");
+      const ent = txs2.find((x) => x.kind === "entrada");
+      const fator = 10 ** casas;
+      t(`casas=${casas}: saldo_inicial amount=${saldoIni}`,
+        ini && Math.abs(ini.amount - saldoIni) < 1e-9 && ini.amount_cents === Math.round(saldoIni * fator),
+        JSON.stringify(ini));
+      t(`casas=${casas}: entrada amount=${entrada}`,
+        ent && Math.abs(ent.amount - entrada) < 1e-9 && ent.amount_cents === Math.round(entrada * fator),
+        JSON.stringify(ent));
+    }
     setCfg(ids.camp, "financeiro", { casasDecimais: 2 });
   }
 } finally {
