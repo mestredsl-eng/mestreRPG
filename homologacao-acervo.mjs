@@ -211,6 +211,14 @@ try {
   ok("11d. item novo entra mesmo sem decisão", livroAposVazio.itens.some((i) => i.key === "nova_regra"), `total=${livroAposVazio.itens.length}`);
   ok("11e. ausentes preservados após merge", livroAposVazio.itens.length === 7, `total=${livroAposVazio.itens.length}`);
 
+  // Altera o registro depois da prévia. A confirmação precisa capturar
+  // esse estado atual no backup, não o snapshot que existia ao abrir a prévia.
+  const forcaAntesImport = livroAposVazio.itens.find((i) => i.kind === "atributo" && i.key === "forca");
+  const edicaoConcorrente = await apiM("PATCH", `/api/biblioteca/livros/${idA}/itens/${forcaAntesImport.id}`, {
+    name: "Força editada após prévia", definition: { custo: 5 },
+  });
+  ok("11f. edição após prévia persiste antes da confirmação", edicaoConcorrente.status === 200, `status=${edicaoConcorrente.status}`);
+
   // ---------- 12/13) confirmação com decisão -> atualiza + backup ----------
   const backupsAntes = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
   r = await apiM("POST", "/api/biblioteca/importar/confirmar", {
@@ -226,6 +234,12 @@ try {
   ok("13. backup automático antes da atualização", backupsDepois.length === backupsAntes + 1, `${backupsAntes} -> ${backupsDepois.length}`);
   const backupImport = backupsDepois.find((b) => b.motivo === "antes da importação");
   ok("13b. snapshot contém estado anterior", !!backupImport, JSON.stringify(backupsDepois.map((b) => b.motivo)));
+  if (backupImport) {
+    const backupDetalhe = await apiM("GET", `/api/biblioteca/backups/${backupImport.id}`);
+    const forcaSnapshot = backupDetalhe.json?.backup?.snapshot?.livros?.[0]?.itens?.find((i) => i.kind === "atributo" && i.key === "forca");
+    ok("13c. backup captura a edição mais recente feita após a prévia", forcaSnapshot?.definition?.custo === 5,
+      `custo no snapshot=${forcaSnapshot?.definition?.custo}`);
+  }
 
   // ---------- 14) restaurar backup ----------
   if (backupImport) {
