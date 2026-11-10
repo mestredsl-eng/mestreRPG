@@ -5,12 +5,12 @@ const root = process.cwd();
 const repo = process.env.GITHUB_REPOSITORY ?? "local";
 const token = process.env.GITHUB_TOKEN;
 const apiBase = process.env.GITHUB_API_URL ?? "https://api.github.com";
-const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(token ? { Authorization: \`Bearer \${token}\` } : {}) };
+const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", ...(token ? { Authorization: \`Bearer ${token}\` } : {}) };
 
 async function github(endpoint) {
   if (!token) return null;
-  const response = await fetch(\`\${apiBase}/repos/\${repo}\${endpoint}\`, { headers });
-  if (!response.ok) throw new Error(\`GitHub API \${response.status} em \${endpoint}: \${(await response.text()).slice(0, 300)}\`);
+  const response = await fetch(\`${apiBase}/repos/${repo}${endpoint}\`, { headers });
+  if (!response.ok) throw new Error(\`GitHub API ${response.status} em ${endpoint}: ${(await response.text()).slice(0, 300)}\`);
   return response.json();
 }
 
@@ -49,8 +49,8 @@ async function inspectPullRequests() {
   const pulls = await github("/pulls?state=open&per_page=100") ?? [];
   return Promise.all(pulls.map(async (pr) => {
     const [commits, checks] = await Promise.all([
-      github(\`/pulls/\${pr.number}/commits?per_page=20\`).catch(() => []),
-      github(\`/commits/\${pr.head.sha}/check-runs\`).catch(() => ({ check_runs: [] })),
+      github(\`/pulls/${pr.number}/commits?per_page=20\`).catch(() => []),
+      github(\`/commits/${pr.head.sha}/check-runs\`).catch(() => ({ check_runs: [] })),
     ]);
     const runs = checks?.check_runs ?? [];
     const failed = runs.filter((check) => check.status === "completed" && !["success", "neutral", "skipped"].includes(check.conclusion));
@@ -73,12 +73,12 @@ async function inspectPullRequests() {
 function priorityList(prs, markers, readme) {
   const tasks = [];
   for (const pr of prs) {
-    if (pr.checks.failed) tasks.push({ priority: "P0", title: \`Corrigir CI da PR #\${pr.number}\`, detail: pr.checks.failedNames.join(", "), url: pr.url });
-    if (pr.mergeable === false) tasks.push({ priority: "P1", title: \`Resolver conflitos da PR #\${pr.number}\`, detail: \`\${pr.head} → \${pr.base}\`, url: pr.url });
-    if (pr.ageDays >= 14) tasks.push({ priority: "P2", title: \`Revisar PR #\${pr.number} sem atualização há \${pr.ageDays} dias\`, detail: pr.title, url: pr.url });
-    if (pr.base !== "main") tasks.push({ priority: "P2", title: \`Verificar ordem da PR empilhada #\${pr.number}\`, detail: \`\${pr.head} depende de \${pr.base}\`, url: pr.url });
+    if (pr.checks.failed) tasks.push({ priority: "P0", title: \`Corrigir CI da PR #${pr.number}\`, detail: pr.checks.failedNames.join(", "), url: pr.url });
+    if (pr.mergeable === false) tasks.push({ priority: "P1", title: \`Resolver conflitos da PR #${pr.number}\`, detail: \`${pr.head} → ${pr.base}\`, url: pr.url });
+    if (pr.ageDays >= 14) tasks.push({ priority: "P2", title: \`Revisar PR #${pr.number} sem atualização há ${pr.ageDays} dias\`, detail: pr.title, url: pr.url });
+    if (pr.base !== "main") tasks.push({ priority: "P2", title: \`Verificar ordem da PR empilhada #${pr.number}\`, detail: \`${pr.head} depende de ${pr.base}\`, url: pr.url });
   }
-  if (markers.total) tasks.push({ priority: "P2", title: \`Revisar \${markers.total} marcadores TODO/FIXME/XXX\`, detail: "Pistas para avaliação humana; não são defeitos confirmados.", url: null });
+  if (markers.total) tasks.push({ priority: "P2", title: \`Revisar ${markers.total} marcadores TODO/FIXME/XXX\`, detail: "Pistas para avaliação humana; não são defeitos confirmados.", url: null });
   const pending = readme.match(/### Pendências que dependem de decisão do mestre([\s\S]*?)(?:\n### |\n## |$)/i)?.[1]?.trim();
   if (pending && pending !== "- Nenhuma.") tasks.push({ priority: "P3", title: "Revisar pendências documentadas que dependem de decisão", detail: pending.replace(/\s+/g, " ").slice(0, 500), url: null });
   const rank = { P0: 0, P1: 1, P2: 2, P3: 3 };
@@ -101,19 +101,19 @@ const report = {
 };
 const lines = [
   "# Mestre RPG — relatório do Assistente de Desenvolvimento", "",
-  \`- Gerado: \${now}\`, \`- Repositório: \${repo}\`, \`- Ref: \${report.ref}\`, \`- Commit: \${report.sha}\`, \`- Evento: \${report.event}\`, "",
-  "## Resumo", "", \`- PRs abertas: **\${prs.length}**\`,
-  \`- Commits atribuídos ao Devin nas PRs abertas: **\${devin.length}**\`,
-  \`- Arquivos de código inspecionados: **\${markers.filesScanned}**\`,
-  \`- Marcadores TODO/FIXME/XXX: **\${markers.total}**\`, "",
+  \`- Gerado: ${now}\`, \`- Repositório: ${repo}\`, \`- Ref: ${report.ref}\`, \`- Commit: ${report.sha}\`, \`- Evento: ${report.event}\`, "",
+  "## Resumo", "", \`- PRs abertas: **${prs.length}**\`,
+  \`- Commits atribuídos ao Devin nas PRs abertas: **${devin.length}**\`,
+  \`- Arquivos de código inspecionados: **${markers.filesScanned}**\`,
+  \`- Marcadores TODO/FIXME/XXX: **${markers.total}**\`, "",
   "## Prioridades", "",
-  ...(tasks.length ? tasks.map((t) => \`- **\${t.priority} — \${t.title}**\${t.url ? \` ([abrir](\${t.url}))\` : ""}\n  \${t.detail}\`) : ["Nenhuma pendência automática identificada."]),
+  ...(tasks.length ? tasks.map((t) => \`- **${t.priority} — ${t.title}**${t.url ? \` ([abrir](${t.url}))\` : ""}\n  ${t.detail}\`) : ["Nenhuma pendência automática identificada."]),
   "", "## PRs abertas", "",
-  ...(prs.length ? prs.map((pr) => \`- [#\${pr.number} — \${pr.title}](\${pr.url})\n  - \${pr.head} → \${pr.base}; atualizada há \${pr.ageDays} dia(s); mergeable: \${pr.mergeable ?? "não informado"}; checks: \${pr.checks.failed} falha(s), \${pr.checks.pending} pendente(s).\`) : ["Nenhuma PR aberta encontrada ou consulta indisponível."]),
+  ...(prs.length ? prs.map((pr) => \`- [#${pr.number} — ${pr.title}](${pr.url})\n  - ${pr.head} → ${pr.base}; atualizada há ${pr.ageDays} dia(s); mergeable: ${pr.mergeable ?? "não informado"}; checks: ${pr.checks.failed} falha(s), ${pr.checks.pending} pendente(s).\`) : ["Nenhuma PR aberta encontrada ou consulta indisponível."]),
   "", "## Atividade do Devin", "",
-  ...(devin.length ? devin.map((c) => \`- PR #\${c.pr}: \${c.message} (\${c.author}, \${c.date ?? "data desconhecida"}) — [commit](\${c.url})\`) : ["Nenhum commit identificável como Devin nas PRs abertas consultadas."]),
+  ...(devin.length ? devin.map((c) => \`- PR #${c.pr}: ${c.message} (${c.author}, ${c.date ?? "data desconhecida"}) — [commit](${c.url})\`) : ["Nenhum commit identificável como Devin nas PRs abertas consultadas."]),
   "", "## Marcadores no código", "",
-  ...(markers.markers.length ? markers.markers.map((m) => \`- \${m.file}:\${m.line} — \${m.marker.replaceAll("\`", "'")}\`) : ["Nenhum TODO/FIXME/XXX encontrado em servidor/src e site/src."]),
+  ...(markers.markers.length ? markers.markers.map((m) => \`- ${m.file}:${m.line} — ${m.marker.replaceAll("\`", "'")}\`) : ["Nenhum TODO/FIXME/XXX encontrado em servidor/src e site/src."]),
   "", "## Limites desta auditoria", "",
   "- A CI executa os builds do servidor e do site; não executa homologações que dependem de banco persistente, contas de teste ou dados locais.",
   "- A identificação do Devin usa login/committer e marcas de coautoria; outras identidades podem não ser reconhecidas.",
@@ -124,4 +124,4 @@ const lines = [
 await writeFile("assistente-dev-relatorio.md", lines, "utf8");
 await writeFile("assistente-dev-relatorio.json", JSON.stringify(report, null, 2) + "\n", "utf8");
 if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, lines, "utf8");
-console.log(\`Relatório gerado: \${prs.length} PRs, \${devin.length} commits Devin, \${markers.total} marcadores.\`);
+console.log(\`Relatório gerado: ${prs.length} PRs, ${devin.length} commits Devin, ${markers.total} marcadores.\`);
