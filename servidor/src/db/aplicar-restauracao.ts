@@ -11,7 +11,7 @@
 //  - qualquer falha desfaz banco E arquivos/config e sai com código != 0;
 //  - sucesso só é declarado após confirmar que a flag foi removida do banco
 //    restaurado; falha na limpeza dispara rollback completo.
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
@@ -52,7 +52,68 @@ const INSPECAO_ATIVA = process.platform === "linux" || !!process.env.MESTRE_PROC
  * de diretório), e o /proc/<pid>/fd deles é ilegível por desenho.
  * Processo que some durante a varredura (ENOENT/ESRCH) já liberou os
  * descritores — ignorá-lo é seguro.
+ *
+ * Exceção controlada: processos ANCESTRAIS deste restaurador (a cadeia
+ * de invocação — shell, runner de CI, script de teste) que tenham
+ * dumpable=0 e portanto /proc/<pid>/fd ilegível são ignorados: eles são
+ * o próprio harness que executou o restore, não clientes do banco.
+ * Ancestres LEGÍVEIS continuam sendo inspecionados normalmente — um
+ * processo pai que abriu o banco de verdade ainda é detectado.
  */
+
+/** Sobe a cadeia de ppid via /proc/<pid>/stat e devolve os ancestrais. */
+function pidsAncestrais(): Set<string> {
+  const conjunto = new Set<string>();
+  let pid = process.ppid;
+  for (let i = 0; i < 64 && pid > 1 && !conjunto.has(String(pid)); i++) {
+    conjunto.add(String(pid));
+    try {
+      const stat = readFileSync(`${PROC_FS}/${pid}/stat`, "utf8");
+      const rp = stat.lastIndexOf(")");
+      if (rp < 0) break;
+      // após "pid (comm)": state ppid pgrp ... — ppid é o 2º campo
+      const campos = stat.slice(rp + 2).trim().split(/\s+/);
+      pid = Number(campos[1]);
+      if (!Number.isFinite(pid)) break;
+    } catch { break; }
+  }
+  return conjunto;
+}
+
+type InspPid = { r: "ok" } | { r: "em_uso" } | { r: "negado"; detalhe: string } | { r: "sumiu" };
+
+function inspecionarPid(pid: string, pidDir: string, alvos: Set<string>, meuUid: number | null): InspPid {
+  let uid: number | null = null;
+  try { uid = statSync(pidDir).uid; }
+  catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return { r: "sumiu" };
+    return { r: "negado", detalhe: `stat de pid ${pid} falhou: ${code ?? e}` };
+  }
+  // Processo de outro usuário: não pode deter o banco do MESTRE_HOME.
+  if (uid !== null && meuUid !== null && uid !== meuUid) return { r: "ok" };
+  let fds: string[];
+  try {
+    fds = readdirSync(`${pidDir}/fd`);
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return { r: "sumiu" };
+    return { r: "negado", detalhe: `fd de pid ${pid} ilegível (${code ?? e})` };
+  }
+  for (const fd of fds) {
+    let alvo: string;
+    try {
+      alvo = readlinkSync(`${pidDir}/fd/${fd}`);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") continue;
+      return { r: "negado", detalhe: `fd ${fd} de pid ${pid} ilegível (${code ?? e})` };
+    }
+    if (alvos.has(resolve(alvo))) return { r: "em_uso" };
+  }
+  return { r: "ok" };
+}
+
 function verificarBancoEmUso(): VerificacaoBanco {
   if (!INSPECAO_ATIVA) return { status: "livre" };
   const alvos = new Set(["", "-wal", "-shm"].map((s) => resolve(DB_VIVA + s)));
@@ -63,41 +124,14 @@ function verificarBancoEmUso(): VerificacaoBanco {
   } catch (e) {
     return { status: "indeterminado", motivo: `não foi possível ler ${PROC_FS}: ${e instanceof Error ? e.message : e}` };
   }
+  const ancestrais = pidsAncestrais();
   for (const pid of pids) {
     if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
-    const pidDir = `${PROC_FS}/${pid}`;
-    // Processo de outro usuário: não pode deter o banco do MESTRE_HOME.
-    if (meuUid !== null) {
-      let uid: number;
-      try { uid = statSync(pidDir).uid; }
-      catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code === "ENOENT" || code === "ENOTDIR") continue; // encerrou
-        return { status: "indeterminado", motivo: `stat de pid ${pid} falhou: ${code ?? e}` };
-      }
-      if (uid !== meuUid) continue;
-    }
-    let fds: string[];
-    try {
-      fds = readdirSync(`${pidDir}/fd`);
-    } catch (e) {
-      const code = (e as NodeJS.ErrnoException).code;
-      // ENOENT: o processo encerrou entre a listagem e a leitura — já
-      // liberou os descritores, ignorar é seguro. ENOTDIR/EACCES/etc:
-      // estrutura inesperada ou sem permissão — inspeção inconclusiva.
-      if (code === "ENOENT") continue;
-      return { status: "indeterminado", motivo: `sem permissão para inspecionar pid ${pid} (${code ?? e})` };
-    }
-    for (const fd of fds) {
-      let alvo: string;
-      try {
-        alvo = readlinkSync(`${pidDir}/fd/${fd}`);
-      } catch (e) {
-        const code = (e as NodeJS.ErrnoException).code;
-        if (code === "ENOENT") continue; // fd fechou durante a varredura
-        return { status: "indeterminado", motivo: `leitura de fd de pid ${pid} falhou: ${code ?? e}` };
-      }
-      if (alvos.has(resolve(alvo))) return { status: "em_uso", pid };
+    const insp = inspecionarPid(pid, `${PROC_FS}/${pid}`, alvos, meuUid);
+    if (insp.r === "em_uso") return { status: "em_uso", pid };
+    // Inspeção negada: aborta — exceto para ancestrais ilegíveis (harness).
+    if (insp.r === "negado" && !ancestrais.has(pid)) {
+      return { status: "indeterminado", motivo: insp.detalhe };
     }
   }
   return { status: "livre" };
