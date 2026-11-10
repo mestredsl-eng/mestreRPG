@@ -11,7 +11,7 @@
 //  - qualquer falha desfaz banco E arquivos/config e sai com código != 0;
 //  - sucesso só é declarado após confirmar que a flag foi removida do banco
 //    restaurado; falha na limpeza dispara rollback completo.
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "node:url";
@@ -26,6 +26,35 @@ const DIR_BACKUPS = process.env.MESTRE_BACKUPS ? resolve(process.env.MESTRE_BACK
 const ARQ_CFG = resolve(RAIZ, "configuracao", "servidor.json");
 
 function log(msg: string) { console.log(`[restauracao] ${msg}`); }
+
+/**
+ * Detecta se o banco vivo (ou seus sidecars) está aberto por OUTRO
+ * processo. No Windows a trava de arquivo (EPERM) já aborta a remoção;
+ * no Linux unlink sempre sucede mesmo com o arquivo aberto — sem esta
+ * checagem o restore trocaria o conteúdo sob uma conexão ativa e o
+ * processo antigo continuaria escrevendo num inode substituído.
+ * Varre os descritores de /proc (Linux); em outras plataformas retorna
+ * null e a proteção continua sendo a trava de arquivo do SO.
+ */
+function bancoEmUso(): string | null {
+  if (process.platform !== "linux") return null;
+  const alvos = new Set(
+    ["", "-wal", "-shm"].map((s) => resolve(DB_VIVA + s)),
+  );
+  let pids: string[];
+  try { pids = readdirSync("/proc"); } catch { return null; }
+  for (const pid of pids) {
+    if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
+    let fds: string[];
+    try { fds = readdirSync(`/proc/${pid}/fd`); } catch { continue; }
+    for (const fd of fds) {
+      try {
+        if (alvos.has(resolve(readlinkSync(`/proc/${pid}/fd/${fd}`)))) return `pid ${pid}`;
+      } catch { /* fd pode ter sumido entre listagem e leitura */ }
+    }
+  }
+  return null;
+}
 
 /** Remove a flag de restauração pendente do banco em DB_VIVA e CONFIRMA a remoção. */
 function limparFlag() {
@@ -113,7 +142,17 @@ async function principal() {
     process.exit(2);
   }
 
-  // 3) preserva o estado anterior ANTES de aplicar — SOMENTE CÓPIAS:
+  // 3) o banco vivo não pode estar aberto por outro processo — no Linux
+  //    não há trava de arquivo, então detectamos via /proc antes de
+  //    preservar/aplicar qualquer coisa. Nada foi tocado: a flag fica
+  //    para retry após o processo invasor encerrar.
+  const emUso = bancoEmUso();
+  if (emUso) {
+    log(`ERRO: banco em uso por ${emUso} — restauração exige o servidor parado. Nada foi alterado; flag preservada para retry.`);
+    process.exit(2);
+  }
+
+  // 4) preserva o estado anterior ANTES de aplicar — SOMENTE CÓPIAS:
   //    banco+sidecars, arquivos de campanha e configuração vão para
   //    backups/pre_restore_<ts>. Os originais ficam no lugar; se a
   //    preservação falhar, nada foi alterado e o boot é abortado.
@@ -137,7 +176,7 @@ async function principal() {
     process.exit(1);
   }
 
-  // 4) aplicação: banco, arquivos, config e flag — qualquer falha desfaz
+  // 5) aplicação: banco, arquivos, config e flag — qualquer falha desfaz
   //    TUDO a partir das cópias em `lado` (inclusive removendo o que a
   //    aplicação criou quando não existia antes).
   const reverter = () => {
