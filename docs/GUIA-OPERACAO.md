@@ -114,6 +114,8 @@ Com o servidor **parado**: copie `banco/mestre-rpg.db` + `arquivos/campanhas/` +
 
 Apenas o **administrador global** restaura. Backups nunca são servidos publicamente.
 
+**Fidelidade do snapshot:** a restauração reproduz exatamente o que o backup contém. Se o backup não tiver pasta `arquivos/`, os arquivos de campanha atuais são **removidos**; se não tiver `configuracao/servidor.json`, a configuração atual é **removida** e o servidor volta aos valores padrão. Tipos inválidos no backup (ex.: `arquivos` como arquivo) abortam com rollback completo.
+
 ## 10. Atualizar para uma versão nova
 
 1. **Backup manual** (painel → Backups) ou confirme o automático mais recente.
