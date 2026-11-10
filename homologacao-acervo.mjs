@@ -461,6 +461,11 @@ try {
   const bksApos = await backupsX();
   ok("29. backups preservados após exclusão", bksApos.length === totalAntesX, `${totalAntesX} -> ${bksApos.length}`);
   ok("29b. snapshot do backup continua legível", (await apiM("GET", `/api/biblioteca/backups/${bksApos[0].id}`)).status === 200);
+  // não-admin não pode consultar nem enumerar backups de livro excluído.
+  r = await apiJ("GET", `/api/biblioteca/livros/${idX}/backups`);
+  ok("29b1. não-admin não lista backups de excluído", r.status === 404, `status=${r.status}`);
+  r = await apiJ("GET", `/api/biblioteca/backups/${bksApos[0].id}`);
+  ok("29b2. não-admin não lê snapshot de excluído", r.status === 404, `status=${r.status}`);
   // restore de backup em livro excluído -> 404
   r = await apiM("POST", `/api/biblioteca/backups/${bksApos[0].id}/restaurar`, {});
   ok("29c. restore de backup em excluído -> 404", r.status === 404, `status=${r.status}`);

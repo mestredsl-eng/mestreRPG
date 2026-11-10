@@ -685,7 +685,7 @@ bibliotecaRouter.get("/livros/:id/exportar", async (req, res) => {
  *  mas a consulta segue a regra de leitura do acervo. */
 bibliotecaRouter.get("/livros/:id/backups", async (req, res) => {
   const b = await livroPorIdQualquer(req.params.id);
-  if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
+  if (!b || (b.excluidoEm && !req.usuario?.isAdmin)) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
   const rows = await db.select().from(ruleBookBackups).where(eq(ruleBookBackups.bookId, b.id)).orderBy(desc(ruleBookBackups.createdAt));
   res.json({
     backups: rows.map((r) => {
@@ -699,6 +699,10 @@ bibliotecaRouter.get("/livros/:id/backups", async (req, res) => {
 bibliotecaRouter.get("/backups/:backupId", async (req, res) => {
   const [r] = await db.select().from(ruleBookBackups).where(eq(ruleBookBackups.id, req.params.backupId)).limit(1);
   if (!r) { res.status(404).json({ erro: "Backup não encontrado" }); return; }
+  const livro = await livroPorIdQualquer(r.bookId);
+  if (!livro || (livro.excluidoEm && !req.usuario?.isAdmin)) {
+    res.status(404).json({ erro: "Backup não encontrado" }); return;
+  }
   res.json({ backup: { id: r.id, bookId: r.bookId, motivo: r.motivo, createdAt: r.createdAt, snapshot: r.snapshot } });
 });
 
