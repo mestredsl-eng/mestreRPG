@@ -72,17 +72,26 @@ export function comDb(banco, fn) {
  */
 export async function encerrarServidor(proc, timeoutMs = 10000) {
   if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
-  const exited = new Promise((res) => proc.once("exit", res));
-  proc.kill();
-  const graceful = await Promise.race([exited.then(() => true), new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
-  if (!graceful) {
-    try { proc.kill("SIGKILL"); } catch { }
-    // Mesmo após SIGKILL aguardamos o exit de verdade (com teto de
-    // segurança) — só assim os handles do SQLite são liberados.
-    await Promise.race([exited, new Promise((r) => setTimeout(r, timeoutMs))]);
+  const esperarExit = () => new Promise((resolve, reject) => {
+    if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
+    const timer = setTimeout(() => {
+      proc.removeListener("exit", onExit);
+      reject(new Error("timeout aguardando encerramento real do servidor"));
+    }, timeoutMs);
+    const onExit = () => { clearTimeout(timer); resolve(); };
+    proc.once("exit", onExit);
+  });
+
+  proc.kill("SIGTERM");
+  try {
+    await esperarExit();
+  } catch {
+    try { proc.kill("SIGKILL"); } catch (erro) {
+      if (proc.exitCode === null && proc.signalCode === null) throw erro;
+    }
+    await esperarExit();
   }
 }
-
 /**
  * Remove o diretório temporário da suíte com retentativas (Windows/AV).
  * Retorna true se removido; em falha, emite aviso explícito no stderr —
@@ -94,6 +103,7 @@ export function limparDir(dir) {
     return true;
   } catch (e) {
     console.error(`[limpeza] FALHA ao remover ${dir}: ${e?.message ?? e}`);
+    process.exitCode = 1;
     return false;
   }
 }
