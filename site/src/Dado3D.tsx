@@ -277,7 +277,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
 
   return (
     <>
-      <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />
+      <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${canvasUnavailable ? "dado-3d-indisponivel" : ""} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />
       {canvasUnavailable && <span className={`dado-3d-fallback ${className ?? ""}`} title={`d${lados} = ${valor}`}>{valor}</span>}
     </>
   );
