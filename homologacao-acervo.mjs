@@ -506,6 +506,44 @@ try {
   r = await apiM("GET", `/api/biblioteca/livros/${idA}`);
   ok("33. livro antigo sem excluidoEm funciona", r.status === 200 && r.json.livro.excluidoEm == null, `status=${r.status}`);
 
+  // ---------- 34-37) auditoria: import idempotente não gera backup ----------
+  // Reimportar o acervo inteiro (idêntico) não pode criar backups novos.
+  const bksIdA_antes = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const vA_antes = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  r = await apiM("GET", "/api/biblioteca/exportar");
+  const envIdem = r.json;
+  r = await apiM("POST", "/api/biblioteca/importar/confirmar", { envelope: envIdem, decisoes: { decisoes: [] } });
+  ok("34. reimportação idempotente confirmada", r.status === 200, `status=${r.status}`);
+  const bksIdA_depois = (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length;
+  const vA_depois = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.livro.versao;
+  ok("34b. import idempotente não cria backup", bksIdA_depois === bksIdA_antes, `${bksIdA_antes} -> ${bksIdA_depois}`);
+  ok("34c. import idempotente não incrementa versão", vA_depois === vA_antes, `v=${vA_antes} -> ${vA_depois}`);
+  // mas uma importação COM novidade continua gerando backup
+  const envComNovo = JSON.parse(JSON.stringify(envIdem));
+  const alvo = envComNovo.livros.find((l) => l.id === idA);
+  alvo.itens.push({ kind: "condicao", key: "auditoria_nova", name: "Condição auditoria", ordem: 99 });
+  r = await apiM("POST", "/api/biblioteca/importar/confirmar", { envelope: envComNovo, decisoes: { decisoes: [] } });
+  ok("35. import com item novo aplica", r.status === 200, `status=${r.status}`);
+  ok("35b. import com novidade gera backup", (await apiM("GET", `/api/biblioteca/livros/${idA}/backups`)).json.backups.length === bksIdA_antes + 1);
+
+  // 36) PATCH de item trocando kind/key -> duplicata rejeitada
+  const itensA = (await apiM("GET", `/api/biblioteca/livros/${idA}`)).json.itens;
+  const i1 = itensA.find((i) => i.kind === "atributo");
+  const i2 = itensA.find((i) => i.kind === "habilidade");
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idA}/itens/${i1.id}`, { kind: i2.kind, key: i2.key });
+  ok("36. PATCH kind/key para duplicata -> 409", r.status === 409, `status=${r.status}`);
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idA}/itens/${i1.id}`, { kind: "atributo_especial", key: "forca_mao" });
+  ok("36b. PATCH kind/key válido aplica", r.status === 200, `status=${r.status}`);
+  // reverte para não afetar cleanup (livro será excluído de qq forma)
+
+  // 37) permissões de leitura: não-admin exporta e lista backups de livro ativo
+  r = await apiJ("GET", `/api/biblioteca/livros/${idA}/exportar`);
+  ok("37. não-admin exporta livro ativo", r.status === 200 && r.json?.formato === FORMATO, `status=${r.status}`);
+  r = await apiJ("GET", `/api/biblioteca/livros/${idA}/backups`);
+  ok("37b. não-admin lista backups de livro ativo", r.status === 200, `status=${r.status}`);
+  r = await apiJ("GET", `/api/biblioteca/exportar`);
+  ok("37c. não-admin exporta acervo", r.status === 200, `status=${r.status}`);
+
 } finally {
   // ---------- limpeza ----------
   for (const id of livrosTeste.filter(Boolean)) {

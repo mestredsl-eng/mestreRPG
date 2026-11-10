@@ -540,7 +540,32 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
   }
   const bid = bookId; // narrowing de `let` não sobrevive a closures
 
-  // Livro existente: snapshot completo ANTES de alterar (mesma transação).
+  // Conjunto de conflitos (itens que divergem do banco).
+  const conflitos = new Set(p.diff.itensAlterados.map((i) => chaveConflito(i.kind, i.key)));
+  const mapaDb = new Map(p.itensDb.map((i) => [chaveConflito(i.kind, i.key), i]));
+
+  // Metadados: só com decisão explícita "atualizar" E diferença real.
+  const atualizaMeta = dec?.metadados === "atualizar" && p.diff.metadadosAlterados.length > 0;
+  const e = p.entrada;
+  let adicionados = 0, atualizados = 0, alterou = atualizaMeta;
+
+  // Conflitos que realmente serão aplicados (decisão + conteúdo divergente).
+  const conflitosAplicados = new Set(
+    p.diff.itensAlterados
+      .filter((it) => {
+        const ck = chaveConflito(it.kind, it.key);
+        const dbItem = mapaDb.get(ck);
+        return dec?.itens?.[ck] === "atualizar" && dbItem != null && !mesmoItem(it, dbItem);
+      })
+      .map((it) => chaveConflito(it.kind, it.key))
+  );
+
+  // Nada muda de fato? Nem backup nem versão — igual ao PATCH no-op.
+  if (!atualizaMeta && p.diff.itensNovos.length === 0 && conflitosAplicados.size === 0) {
+    return { bookId: bid, acao: "atualizado", adicionados: 0, atualizados: 0 };
+  }
+
+  // Livro existente com alteração real: snapshot completo ANTES (mesma tx).
   const snapshot = livroParaEnvelope(
     { ...p.existente!, formatoVersao: p.existente!.formatoVersao ?? VERSAO_FORMATO },
     p.itensDb
@@ -551,15 +576,6 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
     motivo: "antes da importação",
     createdAt: t,
   }).run();
-
-  // Conjunto de conflitos (itens que divergem do banco).
-  const conflitos = new Set(p.diff.itensAlterados.map((i) => chaveConflito(i.kind, i.key)));
-  const mapaDb = new Map(p.itensDb.map((i) => [chaveConflito(i.kind, i.key), i]));
-
-  // Metadados: só com decisão explícita "atualizar".
-  const atualizaMeta = dec?.metadados === "atualizar";
-  const e = p.entrada;
-  let adicionados = 0, atualizados = 0, alterou = atualizaMeta;
 
   if (atualizaMeta) {
     tx.update(ruleBooks).set({
@@ -589,7 +605,7 @@ function aplicarLivro(tx: Tx, p: LivroProcessado, dec: Decisao | undefined, t: D
       continue;
     }
     // Idêntico → mantém. Conflito → só atualiza com decisão "atualizar".
-    if (conflitos.has(ck) && dec?.itens?.[ck] === "atualizar" && !mesmoItem(it, dbItem)) {
+    if (conflitosAplicados.has(ck) && !mesmoItem(it, dbItem)) {
       tx.update(ruleBookItems).set({
         name: it.name,
         category: it.category ?? null,
