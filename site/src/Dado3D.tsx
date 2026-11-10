@@ -88,8 +88,13 @@ const qMultiply = (a: Quat, b: Quat): Quat => [
   a[0]*b[3]+a[1]*b[2]-a[2]*b[1]+a[3]*b[0],
 ];
 function fromTo(a: Vec3, b: Vec3): Quat {
+  const cosine = dot(a, b);
   const axis = cross(a, b);
-  return qNormalize([1 + dot(a, b), axis[0], axis[1], axis[2]]);
+  if (cosine < -0.9999) {
+    const perpendicular = Math.abs(a[0]) < 0.8 ? unit(cross(a, [1, 0, 0])) : unit(cross(a, [0, 1, 0]));
+    return [0, perpendicular[0], perpendicular[1], perpendicular[2]];
+  }
+  return qNormalize([1 + cosine, axis[0], axis[1], axis[2]]);
 }
 function rotate(v: Vec3, q: Quat): Vec3 {
   const p: Quat = [0, v[0], v[1], v[2]];
