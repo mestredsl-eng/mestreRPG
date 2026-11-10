@@ -750,22 +750,42 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   const agora = new Date();
   const id = crypto.randomUUID();
   const saldoInicial = paraCentavos(body.data.balanceReais ?? 0, cfg.casasDecimais);
-  await db.insert(financialAccounts).values({
-    id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-    type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
-    agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
-    holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
-    creditLimitCents: body.data.creditLimitReais !== undefined ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais) : null,
-    data: body.data.data, createdAt: agora, updatedAt: agora,
-  });
-  if (saldoInicial !== 0) {
-    await db.insert(moneyTransactions).values({
-      id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-      kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
-      accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
-      description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+  const limiteCreditoCents = body.data.creditLimitReais !== undefined
+    ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais)
+    : 0;
+  // A política vale também para a abertura da conta: saldo negativo não
+  // pode entrar por um atalho que contorne as validações de movimentação.
+  const pisoInicial = cfg.permitirSaldoNegativo
+    ? -Infinity
+    : body.data.type === "cartao_credito" ? -limiteCreditoCents : 0;
+  if (saldoInicial < pisoInicial) {
+    res.status(400).json({
+      erro: body.data.type === "cartao_credito"
+        ? "Saldo inicial ultrapassa o limite de crédito permitido"
+        : "Saldo inicial negativo não permitido nesta campanha",
     });
+    return;
   }
+  // Conta e lançamento de abertura formam uma única operação contábil.
+  // Se qualquer insert falhar, o SQLite desfaz ambos.
+  db.transaction((tx) => {
+    tx.insert(financialAccounts).values({
+      id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+      type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
+      agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
+      holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
+      creditLimitCents: body.data.creditLimitReais !== undefined ? limiteCreditoCents : null,
+      data: body.data.data, createdAt: agora, updatedAt: agora,
+    }).run();
+    if (saldoInicial !== 0) {
+      tx.insert(moneyTransactions).values({
+        id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+        kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
+        accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
+        description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+      }).run();
+    }
+  });
   await audit(req, "financeiro.conta.criada", { characterId: a.personagem.id, contaId: id, type: body.data.type });
   emitir(a.personagem);
   res.status(201).json({ id });
