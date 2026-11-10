@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type Vec3 = [number, number, number];
 type Face = number[];
@@ -118,11 +118,13 @@ function normalFor(vertices: Vec3[], face: Face): Vec3 {
 
 export default function Dado3D({ lados, valor, indice = 0, estado, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [canvasUnavailable, setCanvasUnavailable] = useState(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx) return;
+    if (!canvas || !ctx) { setCanvasUnavailable(true); return; }
+    setCanvasUnavailable(false);
     const { vertices, faces } = geometry(lados);
     const faceIndex = Math.max(0, Math.min(faces.length - 1, Math.round(valor) - 1));
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
@@ -149,7 +151,11 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     const draw = (now: number) => {
       const raw = duration === 0 ? 1 : Math.min(1, (now - started) / duration);
       const eased = 1 - Math.pow(1 - raw, 3);
-      const q = slerp(start, target, eased);
+      const base = slerp(start, target, eased);
+      const axis = unit([0.72, 0.31, 0.62]);
+      const angle = Math.PI * 6 * eased;
+      const tumble: Quat = [Math.cos(angle / 2), axis[0] * Math.sin(angle / 2), axis[1] * Math.sin(angle / 2), axis[2] * Math.sin(angle / 2)];
+      const q = qMultiply(base, tumble);
       ctx.clearRect(0, 0, width, height);
       const size = Math.min(width, height);
       const projected = vertices.map((v) => {
@@ -200,5 +206,10 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     return () => { cancelAnimationFrame(raf); observer.disconnect(); };
   }, [lados, valor, indice, estado]);
 
-  return <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />;
+  return (
+    <>
+      <canvas ref={canvasRef} className={`dado-3d-canvas dado-shape d${lados} ${estado ? `estado-${estado}` : ""} ${className ?? ""}`} role="img" aria-label={`Dado de ${lados} lados: resultado ${valor}`} title={`d${lados} = ${valor}`} />
+      {canvasUnavailable && <span className={`dado-3d-fallback ${className ?? ""}`} title={`d${lados} = ${valor}`}>{valor}</span>}
+    </>
+  );
 }
