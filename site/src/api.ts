@@ -344,6 +344,46 @@ export const api = {
     requisicao<{ ok: boolean; seguranca?: string; mensagem?: string; proximoPasso?: string }>(`/admin/servidor/backups/${id}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR", modo }) }),
   desligarServidor: () =>
     requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
+
+  // ---- Acervo global de livros de regras ----
+  listarLivrosAcervo: (q?: string, tipo?: string) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (tipo) params.set("tipo", tipo);
+    const qs = params.toString();
+    return requisicao<{ livros: LivroAcervoResumo[]; total: number }>(`/biblioteca/livros${qs ? `?${qs}` : ""}`);
+  },
+  obterLivroAcervo: (id: string) =>
+    requisicao<{ livro: LivroAcervoResumo; itens: ItemLivroAcervo[] }>(`/biblioteca/livros/${id}`),
+  criarLivroAcervo: (dados: LivroAcervoInput) =>
+    requisicao<{ livro: LivroAcervoResumo }>("/biblioteca/livros", { method: "POST", body: JSON.stringify(dados) }),
+  atualizarLivroAcervo: (id: string, dados: Partial<LivroAcervoInput>) =>
+    requisicao<{ livro: LivroAcervoResumo }>(`/biblioteca/livros/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerLivroAcervo: (id: string) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${id}`, { method: "DELETE" }),
+  adicionarItemLivro: (bookId: string, dados: ItemLivroInput) =>
+    requisicao<{ ok: boolean; id: string }>(`/biblioteca/livros/${bookId}/itens`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarItemLivro: (bookId: string, itemId: string, dados: Partial<ItemLivroInput>) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/${itemId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerItemLivro: (bookId: string, itemId: string) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/${itemId}`, { method: "DELETE" }),
+  reordenarItensLivro: (bookId: string, itens: { id: string; ordem: number }[]) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/ordem`, { method: "PUT", body: JSON.stringify({ itens }) }),
+  previaImportacaoAcervo: (envelope: EnvelopeAcervo) =>
+    requisicao<PreviaImportacaoAcervo>("/biblioteca/importar/previa", { method: "POST", body: JSON.stringify(envelope) }),
+  confirmarImportacaoAcervo: (envelope: EnvelopeAcervo, decisoes: DecisaoImportacao[]) =>
+    requisicao<{ ok: boolean; resultados: { indice: number; titulo: string; acao: string; bookId: string }[] }>(
+      "/biblioteca/importar/confirmar",
+      { method: "POST", body: JSON.stringify({ envelope, decisoes: { decisoes } }) }
+    ),
+  urlExportarAcervo: () => `${API_BASE}/biblioteca/exportar`,
+  urlExportarLivro: (id: string) => `${API_BASE}/biblioteca/livros/${id}/exportar`,
+  listarBackupsLivro: (bookId: string) =>
+    requisicao<{ backups: BackupLivro[] }>(`/biblioteca/livros/${bookId}/backups`),
+  obterBackupLivro: (backupId: string) =>
+    requisicao<{ backup: { id: string; bookId: string; motivo: string; createdAt: string; snapshot: unknown } }>(`/biblioteca/backups/${backupId}`),
+  restaurarBackupLivro: (backupId: string) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/backups/${backupId}/restaurar`, { method: "POST", body: "{}" }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -1009,3 +1049,106 @@ export interface ConfigServidor {
 }
 export interface LogServidor { ts: string; nivel: string; msg: string; detalhe?: unknown }
 export interface BackupServidor { id: string; kind: string; filePath: string; sizeBytes: number | null; note: string | null; createdAt: string; sucesso?: boolean }
+
+// ---- Acervo global de livros de regras ----
+
+export interface LivroAcervoResumo {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  autor: string | null;
+  sistema: string | null;
+  edicao: string | null;
+  tipo: "livro" | "suplemento" | string;
+  versao: number;
+  formatoVersao: number;
+  origem: "manual" | "importado" | string;
+  totalItens?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ItemLivroAcervo {
+  id: string;
+  bookId?: string;
+  kind: string;
+  key: string;
+  name: string;
+  category: string | null;
+  parentKey: string | null;
+  definition: Record<string, unknown>;
+  ordem: number;
+}
+
+export interface LivroAcervoInput {
+  titulo: string;
+  descricao?: string | null;
+  autor?: string | null;
+  sistema?: string | null;
+  edicao?: string | null;
+  tipo?: "livro" | "suplemento";
+  itens?: ItemLivroInput[];
+}
+
+export interface ItemLivroInput {
+  kind: string;
+  key: string;
+  name: string;
+  category?: string | null;
+  parentKey?: string | null;
+  definition?: Record<string, unknown>;
+  ordem?: number;
+}
+
+export interface LivroEnvelope {
+  id?: string;
+  titulo: string;
+  descricao?: string | null;
+  autor?: string | null;
+  sistema?: string | null;
+  edicao?: string | null;
+  tipo?: "livro" | "suplemento";
+  versao?: number;
+  formatoVersao?: number;
+  itens: (ItemLivroInput & { id?: string })[];
+}
+
+export interface EnvelopeAcervo {
+  formato: "mestre-rpg-biblioteca";
+  versao: number;
+  livros: LivroEnvelope[];
+  exportadoEm?: string;
+}
+
+export interface PreviaLivro {
+  indice: number;
+  titulo: string;
+  acao: "novo" | "atualizar";
+  bookId: string | null;
+  metadadosAlterados: { campo: string; de: unknown; para: unknown }[];
+  resumo: { itensNovos: number; itensAlterados: number; itensIdenticos: number; itensAusentesPreservados: number };
+  conflitos: { kind: string; key: string; name: string; campos: string[] }[];
+  aviso: string;
+}
+
+export interface PreviaImportacaoAcervo {
+  formato: string;
+  versao: number;
+  totalLivros: number;
+  novos: number;
+  atualizacoes: number;
+  livros: PreviaLivro[];
+}
+
+export interface DecisaoImportacao {
+  indice: number;
+  metadados: "atualizar" | "manter";
+  itens: Record<string, "atualizar" | "manter">;
+}
+
+export interface BackupLivro {
+  id: string;
+  motivo: string;
+  createdAt: string;
+  itens: number;
+}

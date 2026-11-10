@@ -181,6 +181,52 @@ export const ruleDefinitions = sqliteTable("rule_definitions", {
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("rule_definitions_set_kind_key_idx").on(t.ruleSetId, t.kind, t.key)]);
 
+// ---------- Acervo global de livros de regras (independente de campanha) ----------
+// Livros e suplementos agrupam elementos de regras (kind/key/definition
+// flexíveis — estendem os tipos da biblioteca por campanha sem substituí-la).
+
+export const ruleBooks = sqliteTable("rule_books", {
+  id: id(),
+  titulo: text("titulo").notNull(),
+  descricao: text("descricao"),
+  autor: text("autor"),
+  sistema: text("sistema"),
+  edicao: text("edicao"),
+  tipo: text("tipo").notNull().default("livro"), // livro|suplemento
+  versao: integer("versao").notNull().default(1), // revisão interna do conteúdo
+  formatoVersao: integer("formato_versao").notNull().default(1), // versão do envelope de import/export
+  origem: text("origem").notNull().default("manual"), // manual|importado
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("rule_books_titulo_idx").on(t.titulo)]);
+
+export const ruleBookItems = sqliteTable("rule_book_items", {
+  id: id(),
+  bookId: text("book_id").notNull().references(() => ruleBooks.id, { onDelete: "cascade" }),
+  kind: text("kind").notNull(), // tipo extensível: atributo|habilidade|regra_combate|tabela|...
+  key: text("key").notNull(),
+  name: text("name").notNull(),
+  category: text("category"),
+  parentKey: text("parent_key"),
+  definition: text("definition", { mode: "json" }).notNull().default({}),
+  ordem: integer("ordem").notNull().default(0),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("rule_book_items_book_kind_key_idx").on(t.bookId, t.kind, t.key),
+  index("rule_book_items_book_idx").on(t.bookId),
+]);
+
+// Snapshots completos do livro (metadados + itens) antes de atualizações
+// em massa — base do mecanismo de reversão do acervo.
+export const ruleBookBackups = sqliteTable("rule_book_backups", {
+  id: id(),
+  bookId: text("book_id").notNull().references(() => ruleBooks.id, { onDelete: "cascade" }),
+  snapshot: text("snapshot", { mode: "json" }).notNull(),
+  motivo: text("motivo").notNull(),
+  createdAt: createdAt(),
+}, (t) => [index("rule_book_backups_book_idx").on(t.bookId)]);
+
 // Inventário dentro da ficha (spec §9.1)
 export const inventoryEntries = sqliteTable("inventory_entries", {
   id: id(),
