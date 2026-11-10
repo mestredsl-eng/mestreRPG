@@ -104,7 +104,10 @@ rem O backend serve o frontend pronto (site/dist) na mesma porta.
 rem Recompila o site quando o fonte e mais novo que o build — evita
 rem servir frontend desatualizado apos atualizacao do codigo, sem
 rem deixar toda inicializacao lenta (~1s de verificacao).
-powershell -NoProfile -Command "$d='site\dist\index.html'; if(-not (Test-Path $d)){exit 1}; $s=Get-ChildItem site\src -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $s -or $s.LastWriteTime -gt (Get-Item $d).LastWriteTime){exit 1}; exit 0"
+rem Compara o arquivo MAIS RECENTE de site\src com o mais recente de
+rem site\dist inteiro (index.html + assets) — um index.html isolado mais
+rem novo nao garante bundle atualizado.
+powershell -NoProfile -Command "$d=Get-ChildItem site\dist -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $d){exit 1}; $s=Get-ChildItem site\src -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $s -or $s.LastWriteTime -gt $d.LastWriteTime){exit 1}; exit 0"
 if errorlevel 1 (
     echo [INFO] Compilando frontend - primeira vez ou codigo mais novo que o build...
     call npm run build -w site

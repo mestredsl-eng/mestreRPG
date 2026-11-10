@@ -37,6 +37,7 @@
 - **Acervo** — `campaign_rule_books.appliedAt` estava mapeado para `created_at`; corrigido para a coluna `applied_at` (feature inteira quebrada)
 - **Acervo** — restauração de backup relê estado atual antes de aplicar para evitar sobrescrever estado mais recente
 - **Acervo** — importação recalcula destino e diff dentro da transação para evitar validação com estado obsoleto
+- **Frontend desatualizado servido** — `site/dist` podia ficar com bundle velho enquanto `index.html` parecia novo (o `.bat` comparava só o html): a tela Acervo e demais recursos recentes não apareciam. Verificação de build agora compara o arquivo mais recente de `site/src` com o mais recente de **todo** `site/dist` (assets incluídos)
 - **Inicialização** — `iniciar-mestre-rpg.bat` abortava com "... foi inesperado neste momento" após compilar o servidor: `)` dentro de `echo`/`rem` fechava blocos `if` prematuramente (bug introduzido na verificação de frontend desatualizado). Corrigido — boot completo verificado até `/api/health` OK
 - **Homologação** — cenário de teste (criarCenario) gerava modelo não-default, bloqueando criação de fichas em campanhas novas
 - **Homologação** — asserts fixos substituídos por verificações reais de estado pós-restart
@@ -56,6 +57,7 @@
 ### Testes
 
 - **`homologacao-primeira-partida.mjs`: 26/26** — primeira partida real via navegador (Playwright, 3 sessões independentes): setup admin → campanha → convite com aprovação → jogadores cadastram/entram → mestre aprova entradas → fichas criadas e enviadas → mestre aprova fichas → mesa com mestre+2 jogadores → chat → rolagens d4/d6/d8/d10/d20 → desafio D10 rolado pelo jogador → ordem de turno → item de inventário → restart do servidor com persistência de campanha, personagens, sessão e chat
+- **`homologacao-v1-cobertura.mjs`: 12/12** — cobertura de interface das demais funcionalidades: veículo, conta financeira + movimentação, anotação de diário, ponto de recuperação (snapshot), livro+item no Acervo global, aplicação de livro à campanha (aba Regras → Acervo) e acesso de espectador à mesa
 
 - Suítes principais:
   - `homologacao-final-v1.mjs`: 73/73 — cenário E2E completo (mestre + 2 jogadores, convite, fichas, aprovação, patrimônio, mesa, restart, retorno)
