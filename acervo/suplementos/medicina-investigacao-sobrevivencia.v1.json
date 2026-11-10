@@ -1,0 +1,550 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento II — Medicina, Investigação e Sobrevivência",
+      "descricao": "Catálogo de equipamentos para atendimento em campo, proteção individual, investigação, observação, navegação, comunicação, resgate e sobrevivência em campanhas modernas de Caçadores Caçados. Conteúdo descritivo; regras, custos, peso e disponibilidade são definidos por campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — catálogo de campo",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "kit_sutura",
+          "name": "Kit de sutura",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo com materiais para fechamento de ferimentos, destinado a profissionais habilitados. O uso inadequado pode agravar lesões e deixar marcas.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "desfibrilador_portatil",
+          "name": "Desfibrilador portátil",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de emergência para situações específicas de parada cardíaca. Exige treinamento e avaliação do cenário.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "oximetro",
+          "name": "Oxímetro",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo que estima a saturação de oxigênio e a frequência cardíaca. Leituras devem ser interpretadas no contexto clínico.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "estetoscopio",
+          "name": "Estetoscópio",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para auscultar sons cardíacos, respiratórios e outros sinais corporais.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 3
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "termometro_digital",
+          "name": "Termômetro digital",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento portátil para aferição de temperatura corporal.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 4
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "tala_imobilizacao",
+          "name": "Kit de imobilização",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de talas e faixas para restringir movimentos de membros lesionados durante o transporte.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 5
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "maca_dobravel",
+          "name": "Maca dobrável",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maca portátil para remoção de pessoas feridas. Requer espaço e mais de um operador em muitos cenários.",
+            "subcategoria": "Resgate",
+            "ordem": 6
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "cobertor_termico",
+          "name": "Manta térmica",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Manta leve para auxiliar na conservação de calor corporal em situações de exposição.",
+            "subcategoria": "Resgate",
+            "ordem": 7
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "mascara_pff2",
+          "name": "Máscaras de proteção respiratória",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Máscaras para reduzir a inalação de partículas. A proteção depende do ajuste, conservação e tipo de contaminante.",
+            "subcategoria": "Proteção individual",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "luvas_descartaveis",
+          "name": "Luvas descartáveis",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Barreira de uso único para procedimentos e manipulação de materiais. Não substituem higiene adequada.",
+            "subcategoria": "Proteção individual",
+            "ordem": 9
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "oculos_laboratorio",
+          "name": "Óculos vedados",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Proteção ocular contra respingos e partículas em ambientes de risco.",
+            "subcategoria": "Proteção individual",
+            "ordem": 10
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "macacao_descartavel",
+          "name": "Macacão de proteção descartável",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vestimenta de barreira para reduzir contaminação de roupas em locais específicos. Deve ser descartada conforme o protocolo aplicável.",
+            "subcategoria": "Proteção individual",
+            "ordem": 11
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "kit_descontaminacao",
+          "name": "Kit de descontaminação",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para limpeza inicial de pessoas e objetos expostos a contaminantes conhecidos. O procedimento depende da substância.",
+            "subcategoria": "Proteção individual",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_evidencias",
+          "name": "Kit de coleta de evidências",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embalagens, etiquetas e instrumentos básicos para acondicionar vestígios sem misturá-los. A cadeia de custódia deve ser registrada.",
+            "subcategoria": "Investigação",
+            "ordem": 13
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "camera_fotografica",
+          "name": "Câmera fotográfica",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera para registro de cenas, objetos e documentos. Data, contexto e escala das imagens devem ser preservados.",
+            "subcategoria": "Investigação",
+            "ordem": 14
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "camera_termica",
+          "name": "Câmera termográfica",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo que registra diferenças de temperatura aparente. Não identifica sozinho pessoas ou causas de calor.",
+            "subcategoria": "Investigação",
+            "ordem": 15
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "gravador_audio",
+          "name": "Gravador de áudio",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Gravador portátil para entrevistas e registros autorizados. O uso deve respeitar a legislação e o consentimento aplicável.",
+            "subcategoria": "Investigação",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "lupa_luz",
+          "name": "Lupa com iluminação",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lupa portátil com luz para examinar detalhes de superfícies, documentos e pequenos objetos.",
+            "subcategoria": "Investigação",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "lanterna_uv",
+          "name": "Lanterna ultravioleta",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte UV para observações específicas em materiais compatíveis. Fluorescência não comprova, por si só, a origem de um vestígio.",
+            "subcategoria": "Investigação",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "maleta_documentos",
+          "name": "Maleta para documentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maleta rígida para transportar papéis, mapas, fotografias e registros sem danificá-los.",
+            "subcategoria": "Investigação",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "scanner_portatil",
+          "name": "Scanner portátil",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para digitalizar documentos em campo, preservando cópias de consulta.",
+            "subcategoria": "Investigação",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "gravador_video",
+          "name": "Câmera de vídeo portátil",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registrar entrevistas, deslocamentos e ocorrências, conforme autorização e regras locais.",
+            "subcategoria": "Investigação",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "binoculo",
+          "name": "Binóculo",
+          "category": "Observação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento óptico para observar pontos distantes sem aproximação. O desempenho varia conforme ampliação e luminosidade.",
+            "subcategoria": "Observação",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "mapa_topografico",
+          "name": "Mapa topográfico",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Mapa com relevo, curvas de nível e referências geográficas para planejamento de deslocamentos.",
+            "subcategoria": "Navegação",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "gps_portatil",
+          "name": "GPS portátil",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Receptor de posicionamento por satélite. Pode perder precisão em ambientes fechados, cânions ou áreas com interferência.",
+            "subcategoria": "Navegação",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "bussola",
+          "name": "Bússola",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento magnético para orientação quando usado com mapa e referências adequadas.",
+            "subcategoria": "Navegação",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "radio_base",
+          "name": "Rádio comunicador de base",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Unidade de comunicação de maior porte para uma equipe ou ponto de apoio. Depende de energia, antena e frequências autorizadas.",
+            "subcategoria": "Comunicação",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "bateria_externa",
+          "name": "Bateria externa",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte portátil para recarregar dispositivos compatíveis. Capacidade e conectores devem ser anotados.",
+            "subcategoria": "Energia",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "painel_solar_portatil",
+          "name": "Painel solar portátil",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Painel dobrável para recarga em locais com luz solar. A geração varia com clima, posição e equipamento conectado.",
+            "subcategoria": "Energia",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_reparo_campo",
+          "name": "Kit de reparo de campo",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas e consumíveis para pequenos reparos em equipamentos, roupas e acessórios.",
+            "subcategoria": "Manutenção",
+            "ordem": 29
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "corda_estatica",
+          "name": "Corda de uso técnico",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Corda destinada a atividades técnicas específicas. Carga, inspeção, ancoragem e treinamento são indispensáveis.",
+            "subcategoria": "Resgate",
+            "ordem": 30
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "item",
+          "key": "mosquetao_certificado",
+          "name": "Mosquetões certificados",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conectores para sistemas de segurança compatíveis. Devem ser inspecionados e usados conforme especificação.",
+            "subcategoria": "Resgate",
+            "ordem": 31
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "item",
+          "key": "capacete_resgate",
+          "name": "Capacete de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capacete para proteção em atividades de busca e salvamento, compatível com os riscos do ambiente.",
+            "subcategoria": "Resgate",
+            "ordem": 32
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "item",
+          "key": "barraca_campo",
+          "name": "Barraca de campo",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Abrigo portátil para pernoite e proteção contra intempéries. Capacidade e resistência dependem do modelo.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 33
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "item",
+          "key": "saco_dormir",
+          "name": "Saco de dormir",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Isolamento térmico para descanso em campo. A faixa de temperatura adequada depende do modelo e das condições.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 34
+          },
+          "ordem": 34
+        },
+        {
+          "kind": "item",
+          "key": "filtro_agua",
+          "name": "Filtro portátil de água",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo para tratamento de água conforme os contaminantes para os quais foi projetado. Nem todo filtro remove agentes químicos.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 35
+          },
+          "ordem": 35
+        },
+        {
+          "kind": "item",
+          "key": "cantíl",
+          "name": "Cantíl de água",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Recipiente reutilizável para transporte de água potável.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 36
+          },
+          "ordem": 36
+        },
+        {
+          "kind": "item",
+          "key": "fogareiro_camping",
+          "name": "Fogareiro portátil",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fogareiro compacto para preparo de alimentos em área ventilada e segura, usando combustível compatível.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 37
+          },
+          "ordem": 37
+        },
+        {
+          "kind": "item",
+          "key": "kit_alimentacao",
+          "name": "Ração de campo",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de alimentos não perecíveis para deslocamentos e períodos sem acesso a cozinha.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 38
+          },
+          "ordem": 38
+        },
+        {
+          "kind": "item",
+          "key": "poncho_impermeavel",
+          "name": "Poncho impermeável",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capa leve para chuva, útil em deslocamentos e atividades externas.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 39
+          },
+          "ordem": 39
+        },
+        {
+          "kind": "item",
+          "key": "bota_tatica",
+          "name": "Bota de campo",
+          "category": "Vestuário",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Calçado resistente para caminhadas e terrenos irregulares. Ajuste e conservação influenciam conforto e segurança.",
+            "subcategoria": "Vestuário",
+            "ordem": 40
+          },
+          "ordem": 40
+        }
+      ]
+    }
+  ]
+}
