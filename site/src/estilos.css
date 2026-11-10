@@ -314,6 +314,27 @@ textarea {
 .badge-bloqueada,
 .badge-falha,
 .badge-falha_critica { background: #7f3b3b; color: #fff; }
+.badge-reaberta { background: #6d5a1f; color: #fff; }
+.badge-npc { background: #5b3a7f; color: #fff; }
+.badge-selo { background: #274a63; color: #cfe3ff; }
+
+.painel-pontos {
+  margin-top: 0.75rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  background: #0e1118;
+}
+.painel-pontos .historico-pontos {
+  margin: 0.25rem 0 0.5rem;
+  padding-left: 1.1rem;
+}
+.painel-pontos form.linha {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
 
 .sistema { color: #8ab4ff; font-size: 0.9rem; }
 .meta { color: #9aa0a6; font-size: 0.85rem; }

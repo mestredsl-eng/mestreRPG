@@ -350,7 +350,7 @@ export async function carregarRegras(campaignId: string): Promise<RegrasCampanha
  * `config.pontos.habilitado`; senão usa a `pontos` da estrutura da ficha
  * (compatibilidade com fichas publicadas antes da Etapa 5).
  */
-export function pontosEfetivos(estrutura: EstruturaFicha, regras: RegrasCampanha): PontosConfig {
+export function pontosEfetivos(estrutura: EstruturaFicha, regras: RegrasCampanha, bonusIndividual = 0): PontosConfig {
   const cfg = regras.config.pontos;
   if (cfg.habilitado) {
     // Garante um pool "principal" implícito: pontos iniciais/extras são o
@@ -362,11 +362,13 @@ export function pontosEfetivos(estrutura: EstruturaFicha, regras: RegrasCampanha
     ];
     return {
       ...cfg,
-      pontosIniciais: cfg.pontosIniciais + regras.config.pontosExtras,
+      pontosIniciais: cfg.pontosIniciais + regras.config.pontosExtras + bonusIndividual,
       pools,
     };
   }
-  return estrutura.pontos;
+  // Bônus individual também vale quando a campanha usa os pontos do
+  // próprio modelo de ficha (legado, sem ruleset de pontos).
+  return { ...estrutura.pontos, pontosIniciais: (estrutura.pontos.pontosIniciais ?? 0) + bonusIndividual };
 }
 
 // ---------- Escolhas na ficha ----------
@@ -430,10 +432,10 @@ export interface ErroRegra {
  * Estrutura efetiva para cálculo de pontos: campos vinculados a elementos
  * da biblioteca (campo.regra) herdam custo/limites do elemento.
  */
-export function estruturaComCustosDeElementos(estrutura: EstruturaFicha, regras: RegrasCampanha): EstruturaFicha {
+export function estruturaComCustosDeElementos(estrutura: EstruturaFicha, regras: RegrasCampanha, bonusIndividual = 0): EstruturaFicha {
   return {
     ...estrutura,
-    pontos: pontosEfetivos(estrutura, regras),
+    pontos: pontosEfetivos(estrutura, regras, bonusIndividual),
     secoes: estrutura.secoes.map((s) => ({
       ...s,
       campos: s.campos.map((campo) => {
@@ -645,7 +647,7 @@ export function validarRegras(
   estrutura: EstruturaFicha,
   dados: Record<string, unknown>,
   regras: RegrasCampanha,
-  opcoes?: { pontosIniciais?: number }
+  opcoes?: { pontosIniciais?: number; bonusPontos?: number }
 ): { ok: boolean; erros: ErroRegra[]; escolhas: Escolha[]; calculos: Record<string, number>; pontos: ReturnType<typeof calcularPontos> } {
   const erros: ErroRegra[] = [];
   const escolhas = extrairEscolhas(estrutura, dados, regras);
@@ -845,7 +847,7 @@ export function validarRegras(
 
   // 5) Pontos — estrutura efetiva (custos de elementos) + custos de seleção
   //    + transferências entre reservas quando configuradas (spec §5.3)
-  const estruturaEfetiva = estruturaComCustosDeElementos(estrutura, regras);
+  const estruturaEfetiva = estruturaComCustosDeElementos(estrutura, regras, opcoes?.bonusPontos ?? 0);
   // Simulador da prévia do editor: orçamento fictício substitui o saldo
   // inicial do pool padrão (reservas declaradas mantêm seus pontos).
   if (opcoes?.pontosIniciais !== undefined) {
@@ -867,8 +869,8 @@ export function validarRegras(
 
 // ---------- Config efetiva para resposta de ficha ----------
 
-export function pontosParaFicha(estrutura: EstruturaFicha, regras: RegrasCampanha) {
-  return pontosEfetivos(estrutura, regras);
+export function pontosParaFicha(estrutura: EstruturaFicha, regras: RegrasCampanha, bonusIndividual = 0) {
+  return pontosEfetivos(estrutura, regras, bonusIndividual);
 }
 
 // Re-export para uso em rotas

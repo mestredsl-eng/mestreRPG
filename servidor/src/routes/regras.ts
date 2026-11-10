@@ -16,6 +16,7 @@ import {
 } from "../lib/regras.js";
 import { estruturaFichaSchema, todosCampos, avaliarFormula, validarFicha } from "../lib/ficha.js";
 import { resumoHp, resumoVitalidade, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
+import { bonusPontos } from "../lib/pontos.js";
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -303,7 +304,9 @@ regrasRouter.get("/validacao/:characterId", requirePapel("mestre", "jogador"), a
     return;
   }
   const regras = await carregarRegras(campaignId);
-  const resultado = validarRegras(parse.data, (p.data ?? {}) as Record<string, unknown>, regras);
+  const resultado = validarRegras(parse.data, (p.data ?? {}) as Record<string, unknown>, regras, {
+    bonusPontos: bonusPontos((p.data ?? {}) as Record<string, unknown>),
+  });
   res.json({
     ok: resultado.ok,
     erros: resultado.erros,

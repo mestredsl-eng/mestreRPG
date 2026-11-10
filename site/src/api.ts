@@ -144,7 +144,7 @@ export const api = {
   // Personagens (Etapa 4)
   listarPersonagens: (cid: string) =>
     requisicao<{ personagens: PersonagemResumo[] }>(`/campaigns/${cid}/characters`),
-  criarPersonagem: (cid: string, dados: { name: string; templateVersionId?: string; data?: Record<string, unknown> }) =>
+  criarPersonagem: (cid: string, dados: { name: string; templateVersionId?: string; data?: Record<string, unknown>; isNpc?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/campaigns/${cid}/characters`, { method: "POST", body: JSON.stringify(dados) }),
   obterPersonagem: (charId: string) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`),
@@ -156,6 +156,9 @@ export const api = {
     requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"] }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
   alterarVitalidade: (charId: string, nivel: number) =>
     requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel }) }),
+  /** Bônus individual de pontos — somente mestre. */
+  adminPontos: (charId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
+    requisicao<{ ok: boolean; pontos: { bonus: number; selado: boolean; historico: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] } }>(`/characters/${charId}/pontos`, { method: "POST", body: JSON.stringify(dados) }),
 
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
@@ -424,6 +427,7 @@ export interface PersonagemResumo {
   displayName: string | null;
   membershipId: string;
   ehEu: boolean;
+  isNpc?: boolean;
   updatedAt: string;
 }
 
@@ -459,6 +463,8 @@ export interface FichaRenderizada {
     podeEditarHp: boolean;
     podeEditarVitalidade: boolean;
   } | null;
+  /** Bônus individual de pontos concedido pelo mestre (__pontos). */
+  pontosBonus?: { bonus: number; selado: boolean; historico?: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] };
 }
 
 /** Configuração Poderes×Defeitos da campanha (regras). */
@@ -813,6 +819,7 @@ export interface PersonagemDetalhe {
     templateVersionId: string | null;
     templateId?: string;
     donoNome?: string | null;
+    isNpc?: boolean;
     createdAt?: string;
     updatedAt?: string;
   };

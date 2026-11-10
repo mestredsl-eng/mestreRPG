@@ -135,7 +135,8 @@ export const characters = sqliteTable("characters", {
   data: text("data", { mode: "json" }).notNull().default({}),
   // Ajustes por personagem definidos pelo mestre: visibilidade/edição por campo (spec §8)
   overrides: text("overrides", { mode: "json" }).notNull().default({}),
-  status: text("status").notNull().default("rascunho"), // rascunho|aguardando_aprovacao|devolvida|aprovada|bloqueada (spec §6.7)
+  status: text("status").notNull().default("rascunho"), // rascunho|aguardando_aprovacao|devolvida|reaberta|aprovada|bloqueada (spec §6.7)
+  isNpc: integer("is_npc", { mode: "boolean" }).notNull().default(false), // personagem controlado pelo mestre (NPC/inimigo)
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [index("characters_campaign_idx").on(t.campaignId)]);

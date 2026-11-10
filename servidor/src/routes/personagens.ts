@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users, campaigns } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
@@ -20,6 +20,7 @@ import {
   type EditavelPor,
 } from "../lib/ficha.js";
 import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
+import { lerPontos, bonusPontos, comSeloPontos, aplicarBonusPontos } from "../lib/pontos.js";
 import {
   carregarRegras,
   validarRegras,
@@ -129,8 +130,11 @@ function montarFicha(
 
   // Saldo de pontos calculado no servidor (spec §8.5); com Etapa 5,
   // a config do ruleset da campanha tem prioridade e campos vinculados
-  // a elementos herdam custos da biblioteca.
-  const basePontos = regras ? estruturaComCustosDeElementos(estrutura, regras) : estrutura;
+  // a elementos herdam custos da biblioteca. O bônus individual do
+  // personagem (__pontos.bonus, concedido pelo mestre) soma no pool
+  // principal — vale também na prévia de pontos.
+  const bonus = bonusPontos((personagem.data ?? {}) as Record<string, unknown>);
+  const basePontos = regras ? estruturaComCustosDeElementos(estrutura, regras, bonus) : estrutura;
   const estruturaPontosVisivel = ehMestre
     ? basePontos
     : { ...basePontos, secoes: estruturaFiltrada.secoes };
@@ -144,7 +148,7 @@ function montarFicha(
   // Para não-mestre, filtra erros de campos que ele não pode ver (privacidade).
   let validacao: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[]; calculos?: Record<string, number> } | null = null;
   if (regras) {
-    const r = validarRegras(estrutura, dados, regras);
+    const r = validarRegras(estrutura, dados, regras, { bonusPontos: bonus });
     const visiveis = new Set(estruturaFiltrada.secoes.flatMap((s) => s.campos.map((c) => c.id)));
     const erros = ehMestre ? r.erros : r.erros.filter((e) => !e.campoId || visiveis.has(e.campoId));
     validacao = { ok: erros.length === 0, erros, calculos: ehMestre ? r.calculos : undefined };
@@ -188,6 +192,12 @@ function montarFicha(
     // Config Poderes×Defeitos da campanha — a ficha usa p/ UX (limite,
     // aviso de defeito obrigatório). A validação real é do backend.
     poderes: regras?.config.poderes ?? null,
+    // Bônus individual de pontos (__pontos): valor sempre visível;
+    // histórico só para o mestre.
+    pontosBonus: (() => {
+      const est = lerPontos((personagem.data ?? {}) as Record<string, unknown>);
+      return { bonus: est.bonus, selado: est.selo !== null, historico: ehMestre ? est.historico : undefined };
+    })(),
   };
 }
 
@@ -220,6 +230,7 @@ async function personagemPublico(
       templateVersionId: p.templateVersionId,
       templateId: carregada.templateId,
       donoNome: dono?.displayName ?? dono?.username ?? null,
+      isNpc: p.isNpc,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     },
@@ -260,6 +271,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       displayName: r.user.displayName,
       membershipId: r.personagem.membershipId,
       ehEu: r.membership.userId === req.usuario!.id,
+      isNpc: r.personagem.isNpc,
       updatedAt: r.personagem.updatedAt,
     })),
   });
@@ -271,6 +283,9 @@ const criarSchema = z.object({
   name: z.string().min(1).max(120),
   templateVersionId: z.string().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
+  // NPC: personagem controlado pelo mestre (inimigo, aliado, figurante).
+  // Nasce aprovado e com pontos selados; só o mestre cria.
+  isNpc: z.boolean().optional(),
 });
 
 /** POST /api/campaigns/:campaignId/characters — jogador cria o próprio personagem */
@@ -313,6 +328,11 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
   }
 
   const ehMestreCriacao = req.membership!.role === "mestre";
+  const isNpc = body.data.isNpc === true;
+  if (isNpc && !ehMestreCriacao) {
+    res.status(403).json({ erro: "Apenas o mestre pode criar personagens NPC" });
+    return;
+  }
   const carteirasSaldoCriacao = new Set<string>();
   for (const c of todosCampos(carregada.estrutura)) {
     if (!c.carteira) continue;
@@ -336,13 +356,17 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
   }
 
   // HP começa cheio na criação quando a campanha habilita Pontos de Vida.
-  const dadosCriacao = { ...validacao.dados } as Record<string, unknown>;
+  let dadosCriacao = { ...validacao.dados } as Record<string, unknown>;
   const hpMax = hpMaximo(regras.config.hp, carregada.estrutura, dadosCriacao);
   if (hpMax !== null) {
     dadosCriacao[CHAVE_HP] = {
       atual: hpMax,
       historico: [{ em: new Date().toISOString(), tipo: "inicial", quantidade: hpMax, motivo: "HP inicial", autorId: req.usuario!.id, autorNome: null }],
     };
+  }
+  // NPC nasce aprovado e com pontos selados (ninguém disputa aprovação).
+  if (isNpc) {
+    dadosCriacao = comSeloPontos(dadosCriacao, { id: req.usuario!.id, nome: await nomeUsuario(req.usuario!.id) });
   }
 
   const agora = new Date();
@@ -355,7 +379,8 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
     name: body.data.name,
     data: dadosCriacao,
     overrides: {},
-    status: "rascunho",
+    status: isNpc ? "aprovada" : "rascunho",
+    isNpc,
     createdAt: agora,
     updatedAt: agora,
   });
@@ -436,7 +461,7 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
 const atualizarSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   data: z.record(z.string(), z.unknown()).optional(),
-  status: z.enum(["rascunho", "aguardando_aprovacao", "devolvida", "aprovada", "bloqueada"]).optional(),
+  status: z.enum(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]).optional(),
   overrides: z.record(z.string(), z.object({
     visibilidade: z.enum(["todos", "dono_mestre", "mestre", "selecionados"]).optional(),
     editavelPor: z.enum(["jogador", "mestre", "ambos"]).optional(),
@@ -500,11 +525,28 @@ personagensRouter.patch("/:characterId", async (req, res) => {
 
   // Validação do motor de regras (spec §9): jogador sempre validado;
   // mestre também, salvo ajuste administrativo explícito (ignorarPontos).
+  // O bônus individual (__pontos.bonus) entra no pool principal.
   const regras = await carregarRegras(p.campaignId);
-  let validacaoRegras = validarRegras(estrutura, dadosFinais, regras);
+  const bonusAtual = bonusPontos((p.data ?? {}) as Record<string, unknown>);
+  let validacaoRegras = validarRegras(estrutura, dadosFinais, regras, { bonusPontos: bonusAtual });
   if (!(ehMestre && body.data.ignorarPontos) && !validacaoRegras.ok) {
     res.status(400).json({ erro: "Ficha viola as regras da campanha", detalhes: { erros: validacaoRegras.erros } });
     return;
+  }
+
+  // Trava de pontos selados: ficha já aprovada não pode ter o total de
+  // pontos alterado pelo jogador — só o mestre (edição direta ou o
+  // endpoint /pontos). A comparação usa o pipeline real do servidor,
+  // nunca um total enviado pelo cliente.
+  const dadosAntigos = (p.data ?? {}) as Record<string, unknown>;
+  if (!ehMestre && lerPontos(dadosAntigos).selo) {
+    const pontosAntes = validarRegras(estrutura, dadosAntigos, regras, { bonusPontos: bonusAtual }).pontos;
+    const assinatura = (pts: typeof validacaoRegras.pontos) =>
+      JSON.stringify(pts.pools.map((x) => [x.id, x.disponiveis, x.gastos, x.saldo, x.cedidos ?? 0, x.recebidos ?? 0]));
+    if (assinatura(pontosAntes) !== assinatura(validacaoRegras.pontos)) {
+      res.status(403).json({ erro: "Ficha selada: o total de pontos só pode ser alterado pelo mestre" });
+      return;
+    }
   }
 
   // Personagens antigos sem estado de HP: inicializa cheio na primeira gravação.
@@ -523,20 +565,27 @@ personagensRouter.patch("/:characterId", async (req, res) => {
 
   // Transições de status
   let novoStatus = body.data.status ?? p.status;
-  if (!ehMestre && body.data.status && body.data.status !== "aguardando_aprovacao" && body.data.status !== "rascunho") {
-    res.status(403).json({ erro: "Apenas o mestre pode aprovar, reprovar ou bloquear fichas" });
+  // Jogador não tira a ficha de aprovada/bloqueada — só o mestre reabre
+  // ("reaberta") ou desbloqueia. Sem isso daria para contornar a trava
+  // de pontos voltando o status para rascunho.
+  if (!ehMestre && (p.status === "aprovada" || p.status === "bloqueada") && body.data.status && body.data.status !== p.status) {
+    res.status(403).json({ erro: "Apenas o mestre pode alterar o status de uma ficha aprovada ou bloqueada" });
     return;
   }
-  if (!ehMestre && body.data.status === "aguardando_aprovacao" && p.status === "aprovada") {
-    // edição em ficha aprovada volta para análise se a campanha exigir aprovação
-    const [camp] = await db.select().from(campaigns).where(eq(campaigns.id, p.campaignId)).limit(1);
-    const exige = (camp?.settings as { exigirAprovacaoFicha?: boolean } | null)?.exigirAprovacaoFicha;
-    if (exige) novoStatus = "aguardando_aprovacao";
+  if (!ehMestre && body.data.status && body.data.status !== "aguardando_aprovacao" && body.data.status !== "rascunho") {
+    res.status(403).json({ erro: "Apenas o mestre pode aprovar, reprovar, reabrir ou bloquear fichas" });
+    return;
   }
   if (ehMestre) {
-    const permitidos = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "aprovada", "bloqueada"]);
+    const permitidos = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
     if (body.data.status && !permitidos.has(body.data.status)) {
       res.status(400).json({ erro: "Status inválido" });
+      return;
+    }
+    // "Reabrir" só faz sentido sobre ficha aprovada — libera edição
+    // narrativa sem remover o selo de pontos.
+    if (body.data.status === "reaberta" && p.status !== "aprovada") {
+      res.status(400).json({ erro: "Só é possível reabrir uma ficha aprovada" });
       return;
     }
   }
@@ -550,6 +599,13 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     validacaoRegras.ok
   ) {
     novoStatus = "aprovada";
+  }
+
+  // Aprovação sela os pontos: a partir daqui o jogador não altera mais
+  // campos que mudem o total de pontos (o selo nunca é removido por
+  // Reabrir/Devolver — só o mestre concede/remove via /pontos).
+  if (novoStatus === "aprovada" && !lerPontos(dadosFinais).selo) {
+    dadosFinais = comSeloPontos(dadosFinais, { id: req.usuario!.id, nome: await nomeUsuario(req.usuario!.id) });
   }
 
   await db
@@ -682,4 +738,49 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
   await audit(req, "personagem.vitalidade", { characterId: p.id, nivel: body.data.nivel });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, vitalidade: resumoVitalidade(cfg, novosDados) });
+});
+
+// ---------- Bônus individual de pontos (somente mestre) ----------
+
+const pontosSchema = z.object({
+  acao: z.enum(["conceder", "remover"]),
+  quantidade: z.number().int().min(1).max(10000),
+  motivo: z.string().trim().min(1).max(300),
+});
+
+/**
+ * POST /api/characters/:characterId/pontos — concede/remove pontos do
+ * bônus individual (__pontos.bonus), com motivo e histórico. Somente o
+ * mestre: o bônus soma no pool principal do personagem e pode ser
+ * distribuído por ele mesmo quando a ficha está selada.
+ */
+personagensRouter.post("/:characterId/pontos", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode conceder ou remover pontos" });
+    return;
+  }
+  const body = pontosSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const dados = (p.data ?? {}) as Record<string, unknown>;
+  const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
+  const autorNome = await nomeUsuario(req.usuario!.id);
+  const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
+    motivo: body.data.motivo,
+    autorId: req.usuario!.id,
+    autorNome,
+  });
+  const agora = new Date();
+  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  await audit(req, "personagem.pontos", { characterId: p.id, acao: body.data.acao, quantidade: body.data.quantidade, motivo: body.data.motivo });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, pontos: { bonus: estado.bonus, selado: estado.selo !== null, historico: estado.historico } });
 });

@@ -9,6 +9,7 @@ const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
   aguardando_aprovacao: "Aguardando aprovação",
   devolvida: "Devolvida",
+  reaberta: "Reaberta",
   aprovada: "Aprovada",
   bloqueada: "Bloqueada",
 };
@@ -88,6 +89,10 @@ export default function Personagens({ campaignId, campanha }: Props) {
           setSelecionado(atualizado);
           await carregar();
         }}
+        aoRecarregar={async () => {
+          setSelecionado(await api.obterPersonagem(selecionado.personagem.id));
+          await carregar();
+        }}
       />
     );
   }
@@ -108,8 +113,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
         {criando && modelosPublicados.length > 0 && (
           <NovoPersonagem
             modelos={modelosPublicados}
-            aoCriar={async (nome, templateVersionId) => {
-              const criado = await api.criarPersonagem(campaignId, { name: nome, templateVersionId });
+            souMestre={souMestre === true}
+            aoCriar={async (nome, templateVersionId, isNpc) => {
+              const criado = await api.criarPersonagem(campaignId, { name: nome, templateVersionId, isNpc });
               setCriando(false);
               setSelecionado(criado);
             }}
@@ -129,7 +135,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             <tbody>
               {personagens.map((p) => (
                 <tr key={p.id} className="clicavel" onClick={() => void abrir(p.id)}>
-                  <td>{p.name}</td>
+                  <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
                   <td>{p.displayName ?? p.dono}</td>
                   <td><span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span></td>
                   <td>{new Date(p.updatedAt).toLocaleString("pt-BR")}</td>
@@ -143,13 +149,15 @@ export default function Personagens({ campaignId, campanha }: Props) {
   );
 }
 
-function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
+function NovoPersonagem({ modelos, souMestre, aoCriar, aoCancelar }: {
   modelos: ModeloResumo[];
-  aoCriar: (nome: string, templateVersionId?: string) => Promise<void>;
+  souMestre: boolean;
+  aoCriar: (nome: string, templateVersionId?: string, isNpc?: boolean) => Promise<void>;
   aoCancelar: () => void;
 }) {
   const [nome, setNome] = useState("");
   const [modeloId, setModeloId] = useState("");
+  const [isNpc, setIsNpc] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
 
@@ -159,7 +167,7 @@ function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
     setErro(null);
     try {
       const modelo = modelos.find((m) => m.id === modeloId);
-      await aoCriar(nome, modelo?.versaoAtual?.id);
+      await aoCriar(nome, modelo?.versaoAtual?.id, isNpc || undefined);
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao criar");
     } finally {
@@ -178,23 +186,30 @@ function NovoPersonagem({ modelos, aoCriar, aoCancelar }: {
           </select>
         </label>
       </div>
+      {souMestre && (
+        <label className="check">
+          <input type="checkbox" checked={isNpc} onChange={(e) => setIsNpc(e.target.checked)} />
+          NPC — personagem do mestre (inimigo, aliado ou figurante; nasce aprovado)
+        </label>
+      )}
       {erro && <p className="erro">{erro}</p>}
       <div className="linha">
         <button type="submit" disabled={enviando}>{enviando ? "Criando…" : "Criar e preencher"}</button>
         <button type="button" className="secundario" onClick={aoCancelar}>Cancelar</button>
       </div>
-      <p className="meta">O personagem será criado como rascunho — você pode salvar e continuar depois.</p>
+      <p className="meta">{isNpc ? "O NPC nasce aprovado, com pontos selados — só você poderá editá-lo." : "O personagem será criado como rascunho — você pode salvar e continuar depois."}</p>
     </form>
   );
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar }: {
+function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
   biblioteca: Record<string, ElementoVinculavel[]> | null;
   campaignId: string;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
+  aoRecarregar: () => Promise<void>;
 }) {
   const { personagem, ficha } = detalhe;
   const estrutura = ficha?.estrutura ?? null;
@@ -206,7 +221,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  const podeEditar = souMestre || personagem.status !== "bloqueada";
+  // Ficha aprovada fica trancada para o jogador até o mestre reabrir;
+  // bloqueada idem. O mestre sempre edita.
+  const podeEditar = souMestre || (personagem.status !== "bloqueada" && personagem.status !== "aprovada");
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
 
   const salvar = async (status?: string) => {
@@ -240,11 +257,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       <section className="cartao">
         <div className="linha-entre">
           <div>
-            <h2>{personagem.name}</h2>
+            <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}</h2>
             <p className="meta ficha-dono">
-              Jogador: <strong>{personagem.donoNome ?? "—"}</strong>
+              Jogador: <strong>{personagem.isNpc ? "Mestre (NPC)" : (personagem.donoNome ?? "—")}</strong>
               {" · "}
               <span className={`badge badge-${personagem.status}`}>{STATUS_LABEL[personagem.status] ?? personagem.status}</span>
+              {ficha?.pontosBonus?.selado && <span className="badge badge-selo" title="Os pontos desta ficha estão selados — só o mestre pode alterá-los"> pontos selados</span>}
             </p>
           </div>
           <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
@@ -267,7 +285,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           {souMestre && !editando && (
             <>
               {personagem.status !== "aprovada" && <button onClick={() => void salvar("aprovada")}>Aprovar</button>}
-              {personagem.status !== "devolvida" && <button className="secundario" onClick={() => void salvar("devolvida")}>Devolver</button>}
+              {personagem.status === "aprovada" && <button className="secundario" onClick={() => void salvar("reaberta")}>Reabrir</button>}
+              {personagem.status !== "devolvida" && personagem.status !== "aprovada" && <button className="secundario" onClick={() => void salvar("devolvida")}>Devolver</button>}
               {personagem.status !== "bloqueada" ? (
                 <button className="perigo" onClick={() => void salvar("bloqueada")}>Bloquear</button>
               ) : (
@@ -293,6 +312,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
               <span key={i} className="tag">{t.de} → {t.para}: {t.pontos} pts</span>
             ))}
           </div>
+        )}
+        {souMestre && ficha && (
+          <PainelPontosMestre ficha={ficha} characterId={personagem.id} aoMudar={aoRecarregar} />
         )}
         {ficha?.validacao && !ficha.validacao.ok && ficha.validacao.erros.length > 0 && (
           <div className="caixa-validacao erro">
@@ -325,5 +347,70 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
 
       <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} />
     </>
+  );
+}
+
+/** Painel do mestre: concede/remove o bônus individual de pontos
+ *  (__pontos) com motivo — funciona mesmo com a ficha selada. */
+function PainelPontosMestre({ ficha, characterId, aoMudar }: {
+  ficha: NonNullable<PersonagemDetalhe["ficha"]>;
+  characterId: string;
+  aoMudar: () => Promise<void>;
+}) {
+  const pb = ficha.pontosBonus;
+  const [acao, setAcao] = useState<"conceder" | "remover">("conceder");
+  const [quantidade, setQuantidade] = useState("1");
+  const [motivo, setMotivo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const enviar = async (e: FormEvent) => {
+    e.preventDefault();
+    const q = Number(quantidade);
+    if (!Number.isInteger(q) || q < 1) { setErro("Quantidade deve ser um inteiro positivo"); return; }
+    if (!motivo.trim()) { setErro("Informe o motivo"); return; }
+    setEnviando(true);
+    setErro(null);
+    setMsg(null);
+    try {
+      await api.adminPontos(characterId, { acao, quantidade: q, motivo: motivo.trim() });
+      setMsg(acao === "conceder" ? `+${q} pontos concedidos.` : `−${q} pontos removidos.`);
+      setMotivo("");
+      await aoMudar();
+    } catch (err2) {
+      setErro(err2 instanceof Error ? err2.message : "Erro ao alterar pontos");
+    } finally {
+      setEnviando(false);
+    }
+  };
+
+  return (
+    <div className="painel-pontos">
+      <p className="meta">
+        Bônus do mestre: <strong>{pb?.bonus ?? 0}</strong> pts
+        {pb?.selado && " · pontos selados (jogador não altera)"}
+      </p>
+      {pb?.historico && pb.historico.length > 0 && (
+        <ul className="historico-pontos">
+          {pb.historico.slice(-5).reverse().map((h, i) => (
+            <li key={i} className="meta">
+              {h.quantidade > 0 ? "+" : ""}{h.quantidade} — {h.motivo} ({h.autorNome ?? "?"}, {new Date(h.em).toLocaleDateString("pt-BR")})
+            </li>
+          ))}
+        </ul>
+      )}
+      <form className="linha" onSubmit={enviar}>
+        <select value={acao} onChange={(e) => setAcao(e.target.value as "conceder" | "remover")}>
+          <option value="conceder">Conceder</option>
+          <option value="remover">Remover</option>
+        </select>
+        <input type="number" min={1} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} style={{ width: "5rem" }} required />
+        <input type="text" placeholder="Motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required style={{ flex: 1 }} />
+        <button type="submit" disabled={enviando}>{enviando ? "…" : "Aplicar"}</button>
+      </form>
+      {erro && <p className="erro">{erro}</p>}
+      {msg && <p className="online">{msg}</p>}
+    </div>
   );
 }

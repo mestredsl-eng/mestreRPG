@@ -1,0 +1,1 @@
+ALTER TABLE `characters` ADD `is_npc` integer DEFAULT false NOT NULL;
