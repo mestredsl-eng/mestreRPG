@@ -163,6 +163,13 @@ export const api = {
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
     requisicao<RegrasCampanha>(`/campaigns/${cid}/regras`),
+  listarAcervoCampanha: (cid: string) =>
+    requisicao<{ livros: LivroAcervoCampanha[] }>("/campaigns/" + cid + "/regras/acervo"),
+  aplicarLivroAcervo: (cid: string, bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) =>
+    requisicao<{ ok: boolean; livroId: string; versaoAplicada: number; inseridos: number; atualizados: number; mantidos: number }>(
+      "/campaigns/" + cid + "/regras/acervo/" + bookId + "/aplicar",
+      { method: "POST", body: JSON.stringify({ decisoes }) },
+    ),
   criarElementoRegra: (cid: string, dados: ElementoRegraInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/regras/elementos`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarElementoRegra: (cid: string, elementId: string, dados: Partial<ElementoRegraInput>) =>
@@ -346,6 +353,22 @@ export const api = {
     requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
 
   // ---- Acervo global de livros de regras ----
+export interface LivroAcervoCampanha {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  autor: string | null;
+  sistema: string | null;
+  edicao: string | null;
+  tipo: string;
+  versao: number;
+  totalItens: number;
+  aplicado: boolean;
+  versaoAplicada: number | null;
+  aplicadoEm: string | null;
+  atualizacaoDisponivel: boolean;
+}
+
   listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
