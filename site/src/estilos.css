@@ -1654,3 +1654,41 @@ code {
   margin: 0.35rem 0 0;
   padding-left: 1.1rem;
 }
+
+
+/* Dados 3D em canvas: dimensões e fallback acessível. */
+.dado-3d-canvas {
+  display: inline-block;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  vertical-align: middle;
+  overflow: visible;
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.42));
+}
+.dado-3d-canvas.d10-face { width: 44px; height: 44px; }
+.dado-3d-canvas.estado-sucesso { filter: drop-shadow(0 3px 4px rgba(46, 143, 91, .45)); }
+.dado-3d-canvas.estado-falha { filter: drop-shadow(0 3px 4px rgba(138, 58, 58, .45)); }
+@media (max-width: 600px) {
+  .dado-3d-canvas { width: 28px; height: 28px; }
+  .dado-3d-canvas.d10-face { width: 36px; height: 36px; }
+}
+.dado-3d-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--dado-fundo, #2b3350);
+  color: var(--dado-texto, #e8ecf7);
+  border: 1px solid var(--dado-borda, #46538a);
+  font-weight: 800;
+}
+.dado-3d-fallback.d10-face { width: 44px; height: 44px; }
+@media (max-width: 600px) {
+  .dado-3d-fallback { width: 28px; height: 28px; }
+  .dado-3d-fallback.d10-face { width: 36px; height: 36px; }
+}
+.dado-3d-canvas.dado-3d-indisponivel { display: none; }
