@@ -67,7 +67,7 @@
   - `teste-vitalidade-historico.mjs`: 24/24 — histórico de vitalidade
   - `homologacao-hp-historico.mjs`: 16/16 — histórico de HP
   - `teste-venda-estoque.mjs`: 29/29 — venda de itens
-  - `teste-pontos-concorrencia.mjs`: 16/16 — concessões/remoções simultâneas de pontos, corrida com PATCH, autorização e ausência de escrita parcial
+  - `teste-pontos-concorrencia.mjs`: 22/22 — concessões/remoções simultâneas de pontos, corrida com PATCH, autorização, ausência de escrita parcial, TOCTOU com barreira determinística (gate restrito a `NODE_ENV=test`) e negativo de produção
   - `teste-acervo-corridas.mjs`: 14/14 — corridas assíncronas do Acervo com respostas atrasadas (Playwright)
   - `teste-docs-operacao.mjs`: 12/12 — guia operacional validado em ambiente isolado (backup/restauração)
 - Auditoria visual/acessibilidade: `auditoria-visual.mjs` percorre login, painel, campanhas, todas as abas da campanha, detalhe de personagem, acervo, administração e conta em desktop (1366×768), tablet (768×1024) e celular (390×844) — 0 achados de rolagem horizontal, elementos cortados, botões sem nome ou campos sem label após as correções de `aria-label`.

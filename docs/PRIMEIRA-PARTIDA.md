@@ -84,8 +84,9 @@ restauração e variáveis ficam em `docs/GUIA-OPERACAO.md`.
 Antes da primeira sessão real, faça um backup completo — ver
 `docs/GUIA-OPERACAO.md`, seção "Backup e restauração". Em resumo:
 
-- O backup copia `banco/mestre-rpg.db` + `arquivos/campanhas/` para
-  `backups/<data>_<tipo>/` com manifesto e hashes.
+- O backup copia `banco/mestre-rpg.db` + `arquivos/campanhas/` +
+  `configuracao/servidor.json` para `backups/<data>_<tipo>/` com
+  manifesto e hashes.
 - Para restaurar: admin → backup → restaurar → **parar o servidor** →
   reiniciar (o script aplica a restauração antes de subir).
 - **Nunca apague** `banco/`, `arquivos/`, `backups/`, `configuracao/`
