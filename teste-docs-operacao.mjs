@@ -69,7 +69,9 @@ try {
   const bk = await req(BASE, "POST", "/admin/servidor/backups", { cookie: c.cookieMestre, body: {} });
   t("backup criado", bk.status === 200 || bk.status === 201, JSON.stringify(bk.json).slice(0, 200));
   const lista = await req(BASE, "GET", "/admin/servidor/backups", { cookie: c.cookieMestre });
-  const backupId = lista.json?.backups?.[0]?.id;
+  // backups[0] pode empatar no mesmo segundo com o automático de boot;
+  // o cenário exige o backup MANUAL (estado com campanha+personagem).
+  const backupId = (lista.json?.backups ?? []).find((b) => b.kind === "manual")?.id;
   t("backup listado", !!backupId, JSON.stringify(lista.json).slice(0, 200));
 
   // 5) altera dado para provar que a restauração volta atrás
