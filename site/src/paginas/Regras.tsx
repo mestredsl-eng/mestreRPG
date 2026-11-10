@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -66,6 +66,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [personagemSel, setPersonagemSel] = useState("");
   const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const arquivoBibliotecaRef = useRef<HTMLInputElement>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -163,6 +164,105 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     }
   };
 
+  const exportarBiblioteca = () => {
+    if (!regras) return;
+    const pacote = {
+      formato: "mestre-rpg-biblioteca",
+      versao: 1,
+      exportadoEm: new Date().toISOString(),
+      config: regras.config,
+      elementos: regras.elementos.map(({ kind, key, name, category, parentKey, definition }) => ({
+        kind, key, name, category, parentKey, definition,
+      })),
+    };
+    const blob = new Blob([JSON.stringify(pacote, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `livro-regras-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setAviso(`Livro exportado com ${pacote.elementos.length} elementos.`);
+  };
+
+  const importarBiblioteca = async (event: ChangeEvent<HTMLInputElement>) => {
+    const arquivo = event.target.files?.[0];
+    event.target.value = "";
+    if (!arquivo) return;
+    setErro(null);
+    setAviso(null);
+    try {
+      const pacote = JSON.parse(await arquivo.text()) as {
+        formato?: unknown;
+        versao?: unknown;
+        config?: unknown;
+        elementos?: unknown;
+      };
+      if (pacote.formato !== "mestre-rpg-biblioteca" || pacote.versao !== 1 || !Array.isArray(pacote.elementos)) {
+        throw new Error("Arquivo incompatível. Selecione um livro exportado pelo Mestre RPG.");
+      }
+      const itens = pacote.elementos as Record<string, unknown>[];
+      const chaves = new Set<string>();
+      for (const item of itens) {
+        if (!item || typeof item !== "object"
+          || typeof item.kind !== "string" || !KINDS.includes(item.kind as TipoRegra)
+          || typeof item.key !== "string" || !/^[a-z0-9_]{1,80}$/.test(item.key)
+          || typeof item.name !== "string" || !item.name.trim()
+          || (item.definition !== undefined && (typeof item.definition !== "object" || item.definition === null || Array.isArray(item.definition)))) {
+          throw new Error("O livro contém um elemento inválido. Nenhuma alteração foi feita.");
+        }
+        const chave = `${item.kind}:${item.key}`;
+        if (chaves.has(chave)) throw new Error(`O livro contém a chave duplicada "${chave}".`);
+        chaves.add(chave);
+      }
+      const temConfig = pacote.config !== undefined;
+      if (temConfig && (!pacote.config || typeof pacote.config !== "object" || Array.isArray(pacote.config))) {
+        throw new Error("A configuração do livro está inválida.");
+      }
+      const atualizar = window.confirm(
+        `Importar "${arquivo.name}" com ${itens.length} elementos?\n\nA importação mescla o livro à campanha: elementos com a mesma chave serão atualizados; os demais serão adicionados.${temConfig ? "\nA configuração de regras da campanha também será substituída." : ""}`
+      );
+      if (!atualizar) return;
+
+      setOcupado(true);
+      const atuais = await api.obterRegras(campaignId);
+      let criados = 0;
+      let atualizados = 0;
+      if (temConfig) await api.atualizarConfigRegras(campaignId, pacote.config as ConfigRegras);
+      for (const bruto of itens) {
+        const item = bruto as unknown as ElementoRegraInput;
+        const existente = atuais.elementos.find((el) => el.kind === item.kind && el.key === item.key);
+        if (existente) {
+          await api.atualizarElementoRegra(campaignId, existente.id, {
+            name: item.name,
+            category: item.category ?? undefined,
+            parentKey: item.parentKey ?? undefined,
+            definition: item.definition ?? {},
+          });
+          atualizados++;
+        } else {
+          await api.criarElementoRegra(campaignId, {
+            kind: item.kind,
+            key: item.key,
+            name: item.name,
+            category: item.category ?? undefined,
+            parentKey: item.parentKey ?? undefined,
+            definition: item.definition ?? {},
+          });
+          criados++;
+        }
+      }
+      await carregar();
+      setAviso(`Livro importado: ${criados} adicionados e ${atualizados} atualizados.`);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível importar o livro de regras.");
+    } finally {
+      setOcupado(false);
+    }
+  };
+
   const salvarConfig = async (config: ConfigRegras) => {
     try {
       await api.atualizarConfigRegras(campaignId, config);
@@ -211,7 +311,16 @@ export default function Regras({ campaignId }: { campaignId: string }) {
               {KINDS.map((k) => <option key={k} value={k}>{ROTULO_KIND[k]}</option>)}
             </select>
             <button className="secundario" onClick={() => setEditando("novo")}>+ Novo elemento</button>
-            <button className="secundario" onClick={() => void semear()}>Carregar biblioteca inicial</button>
+            <button className="secundario" onClick={exportarBiblioteca} disabled={!regras || ocupado}>Exportar livro</button>
+            <button className="secundario" onClick={() => arquivoBibliotecaRef.current?.click()} disabled={ocupado}>Importar livro</button>
+            <input
+              ref={arquivoBibliotecaRef}
+              type="file"
+              accept="application/json,.json"
+              onChange={(e) => void importarBiblioteca(e)}
+              hidden
+            />
+            <button className="secundario" onClick={() => void semear()} disabled={ocupado}>Carregar biblioteca inicial</button>
           </div>
           <p className="dica">{regras?.total ?? 0} elementos cadastrados. Cada elemento pode ser vinculado a um campo da ficha no editor de fichas.</p>
 
