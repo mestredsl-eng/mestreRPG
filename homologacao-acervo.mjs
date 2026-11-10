@@ -3,8 +3,7 @@
 // round-trip, prévia sem persistência, merge por kind:key, conflitos,
 // backup automático, restauração, rollback, permissões, payloads inválidos
 // e compatibilidade com a biblioteca por campanha.
-// Sobe um servidor próprio na porta 3002 com o banco real (WAL) e limpa
-// os livros de teste ao final.
+// Sobe um servidor próprio em porta livre, usando cópia descartável do banco.
 import { spawn } from "node:child_process";
 import { mkdirSync, rmSync } from "node:fs";
 import { createServer } from "node:net";
@@ -322,7 +321,11 @@ try {
   for (const id of livrosTeste.filter(Boolean)) {
     try { await apiM("DELETE", `/api/biblioteca/livros/${id}`); } catch { }
   }
-  try { srv.kill(); } catch { }
+  if (srv.exitCode === null) {
+    const encerrado = new Promise((resolve) => srv.once("exit", resolve));
+    try { srv.kill(); } catch { }
+    await encerrado;
+  }
   db.close();
   rmSync(DIR, { recursive: true, force: true });
 }
