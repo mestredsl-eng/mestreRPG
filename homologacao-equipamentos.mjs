@@ -35,9 +35,9 @@ const BASE = `http://localhost:${porta}`;
 let proc, ids, cm, cj;
 
 
-async function novoItem(cookie, charId, nome, qtd) {
+async function novoItem(cookie, charId, nome, qtd, extra = {}) {
   const r = await req(BASE, "POST", `/characters/${charId}/inventario`, {
-    cookie, body: { name: nome, quantity: qtd, category: "arma" },
+    cookie, body: { name: nome, quantity: qtd, category: "arma", ...extra },
   });
   return r.json?.id ?? r.json?.item?.id;
 }
