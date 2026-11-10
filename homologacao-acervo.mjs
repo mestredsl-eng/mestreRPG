@@ -404,6 +404,103 @@ try {
   ok("26d. restauração gera backup do estado atual", (await backupsDe()).some((b) => b.motivo.includes("restauração")),
     JSON.stringify((await backupsDe()).map((b) => b.motivo)));
 
+  // ---------- 27-34) ciclo de vida: soft delete preserva backups ----------
+  // Livro novo dedicado ao teste de exclusão/restauração.
+  r = await apiM("POST", "/api/biblioteca/livros", {
+    titulo: `${SUFIXO} Excluível`, tipo: "livro",
+    itens: [
+      { kind: "atributo", key: "vigor", name: "Vigor", ordem: 0 },
+      { kind: "tabela", key: "dano", name: "Tabela de dano", definition: { dados: "2d6" }, ordem: 1 },
+    ],
+  });
+  const idX = r.json?.livro?.id;
+  ok("27. livro p/ exclusão criado", r.status === 201 && !!idX, `status=${r.status}`);
+  // gera 2 backups via mutações manuais
+  await apiM("PATCH", `/api/biblioteca/livros/${idX}`, { sistema: "Sis X" });
+  const [itemX] = (await apiM("GET", `/api/biblioteca/livros/${idX}`)).json.itens;
+  await apiM("PATCH", `/api/biblioteca/livros/${idX}/itens/${itemX.id}`, { name: "Vigor Maior" });
+  const backupsX = async () => (await apiM("GET", `/api/biblioteca/livros/${idX}/backups`)).json.backups;
+  const livroX = async () => (await apiM("GET", `/api/biblioteca/livros/${idX}`)).json;
+  const totalAntesX = (await backupsX()).length;
+  ok("27b. backups gerados antes da exclusão", totalAntesX >= 2, `backups=${totalAntesX}`);
+
+  // 28) exclusão lógica
+  r = await apiM("DELETE", `/api/biblioteca/livros/${idX}`);
+  ok("28. DELETE faz soft delete", r.status === 200 && r.json?.excluido === true, `status=${r.status} ${JSON.stringify(r.json)}`);
+  // some da listagem normal
+  r = await apiM("GET", "/api/biblioteca/livros");
+  ok("28b. excluído some da listagem normal", !r.json.livros.some((l) => l.id === idX), `total=${r.json.total}`);
+  // admin vê com incluirExcluidos
+  r = await apiM("GET", "/api/biblioteca/livros?incluirExcluidos=1");
+  ok("28c. admin lista excluídos com flag", r.json.livros.some((l) => l.id === idX && l.excluidoEm), `total=${r.json.total}`);
+  // não-admin não vê excluídos nem detalhe
+  r = await apiJ("GET", "/api/biblioteca/livros?incluirExcluidos=1");
+  ok("28d. não-admin não vê excluídos", !r.json.livros.some((l) => l.id === idX), `total=${r.json.total}`);
+  r = await apiJ("GET", `/api/biblioteca/livros/${idX}`);
+  ok("28e. não-admin recebe 404 no excluído", r.status === 404, `status=${r.status}`);
+  // admin ainda abre o excluído
+  r = await apiM("GET", `/api/biblioteca/livros/${idX}`);
+  ok("28f. admin abre livro excluído", r.status === 200 && r.json.livro.excluidoEm, `status=${r.status}`);
+  // mutações bloqueadas em livro excluído
+  r = await apiM("PATCH", `/api/biblioteca/livros/${idX}`, { sistema: "Tentativa" });
+  ok("28g. PATCH em excluído -> 404", r.status === 404, `status=${r.status}`);
+  r = await apiM("POST", `/api/biblioteca/livros/${idX}/itens`, { kind: "x", key: "y", name: "y" });
+  ok("28h. item em excluído -> 404", r.status === 404, `status=${r.status}`);
+  // exportação não inclui excluído
+  r = await apiM("GET", "/api/biblioteca/exportar");
+  ok("28i. export não inclui excluído", !r.json.livros.some((l) => l.id === idX), `livros=${r.json.livros.length}`);
+  // importação com mesmo título cria livro NOVO (não ressuscita o excluído)
+  const envExcluido = envelopeDe([{ titulo: `${SUFIXO} Excluível`, itens: [] }]);
+  r = await apiM("POST", "/api/biblioteca/importar/confirmar", { envelope: envExcluido, decisoes: { decisoes: [] } });
+  const novoId = r.json?.resultados?.[0]?.bookId;
+  ok("28j. import com título de excluído cria novo", r.status === 200 && r.json?.resultados?.[0]?.acao === "criado" && novoId !== idX,
+    `acao=${r.json?.resultados?.[0]?.acao}`);
+  livrosTeste.push(novoId);
+
+  // 29) backups preservados após exclusão
+  const bksApos = await backupsX();
+  ok("29. backups preservados após exclusão", bksApos.length === totalAntesX, `${totalAntesX} -> ${bksApos.length}`);
+  ok("29b. snapshot do backup continua legível", (await apiM("GET", `/api/biblioteca/backups/${bksApos[0].id}`)).status === 200);
+  // restore de backup em livro excluído -> 404
+  r = await apiM("POST", `/api/biblioteca/backups/${bksApos[0].id}/restaurar`, {});
+  ok("29c. restore de backup em excluído -> 404", r.status === 404, `status=${r.status}`);
+
+  // 30) restaurar livro excluído
+  r = await apiM("POST", `/api/biblioteca/livros/${idX}/restaurar`, {});
+  ok("30. restaurar livro excluído", r.status === 200 && r.json?.livro && !r.json.livro.excluidoEm, `status=${r.status} ${r.json?.erro ?? ""}`);
+  const livroXRestaurado = await livroX();
+  ok("30b. itens recuperados", livroXRestaurado.itens.length === 2, `itens=${livroXRestaurado.itens.length}`);
+  ok("30c. metadados preservados (sistema=Sis X)", livroXRestaurado.livro.sistema === "Sis X", `sis=${livroXRestaurado.livro.sistema}`);
+  ok("30d. edição de item preservada (Vigor Maior)", livroXRestaurado.itens.some((i) => i.name === "Vigor Maior"),
+    JSON.stringify(livroXRestaurado.itens.map((i) => i.name)));
+  ok("30e. histórico de backups continua", (await backupsX()).length === totalAntesX);
+  ok("30f. versão preservada", livroXRestaurado.livro.versao >= 3, `v=${livroXRestaurado.livro.versao}`);
+  // voltar a aparecer nas consultas
+  r = await apiM("GET", "/api/biblioteca/livros");
+  ok("30g. restaurado volta à listagem", r.json.livros.some((l) => l.id === idX), `total=${r.json.total}`);
+  // restaurar de novo -> 409 (não está excluído)
+  r = await apiM("POST", `/api/biblioteca/livros/${idX}/restaurar`, {});
+  ok("31. restaurar livro ativo -> 409", r.status === 409, `status=${r.status}`);
+  // excluir de novo funciona (idempotente)
+  r = await apiM("DELETE", `/api/biblioteca/livros/${idX}`);
+  ok("31b. re-excluir funciona", r.status === 200 && r.json?.excluido === true, `status=${r.status}`);
+  r = await apiM("DELETE", `/api/biblioteca/livros/${idX}`);
+  ok("31c. excluir já excluído é idempotente", r.status === 200 && r.json?.jaExcluido === true, `status=${r.status}`);
+
+  // 32) exclusão definitiva apaga livro + itens + backups
+  const bksAntesDef = (await backupsX()).length;
+  r = await apiM("DELETE", `/api/biblioteca/livros/${idX}?definitivo=1`);
+  ok("32. exclusão definitiva", r.status === 200 && r.json?.definitivo === true, `status=${r.status}`);
+  r = await apiM("GET", `/api/biblioteca/livros/${idX}`);
+  ok("32b. definitivo some de vez", r.status === 404, `status=${r.status}`);
+  r = await apiM("GET", `/api/biblioteca/backups/${bksApos[0].id}`);
+  ok("32c. backups apagados na exclusão definitiva", r.status === 404, `status=${r.status}`);
+  ok("32d. contagem de backups zerada", bksAntesDef > 0); // sanity
+
+  // 33) compatibilidade: livro antigo (criado antes do soft delete) funciona
+  r = await apiM("GET", `/api/biblioteca/livros/${idA}`);
+  ok("33. livro antigo sem excluidoEm funciona", r.status === 200 && r.json.livro.excluidoEm == null, `status=${r.status}`);
+
 } finally {
   // ---------- limpeza ----------
   for (const id of livrosTeste.filter(Boolean)) {

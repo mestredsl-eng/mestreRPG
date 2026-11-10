@@ -196,6 +196,9 @@ export const ruleBooks = sqliteTable("rule_books", {
   versao: integer("versao").notNull().default(1), // revisão interna do conteúdo
   formatoVersao: integer("formato_versao").notNull().default(1), // versão do envelope de import/export
   origem: text("origem").notNull().default("manual"), // manual|importado
+  // Soft delete: livro "excluído" sai das consultas mas mantém itens e
+  // backups — exclusão definitiva só via DELETE ?definitivo=1.
+  excluidoEm: integer("excluido_em", { mode: "timestamp_ms" }),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [index("rule_books_titulo_idx").on(t.titulo)]);

@@ -31,6 +31,7 @@ export default function Acervo() {
   const [livros, setLivros] = useState<LivroAcervoResumo[]>([]);
   const [busca, setBusca] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
+  const [mostrarExcluidos, setMostrarExcluidos] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -58,14 +59,14 @@ export default function Acervo() {
   const carregarLivros = useCallback(async () => {
     setCarregando(true);
     try {
-      const r = await api.listarLivrosAcervo(busca || undefined, filtroTipo || undefined);
+      const r = await api.listarLivrosAcervo(busca || undefined, filtroTipo || undefined, ehAdmin && mostrarExcluidos);
       setLivros(r.livros);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar acervo");
     } finally {
       setCarregando(false);
     }
-  }, [busca, filtroTipo]);
+  }, [busca, filtroTipo, mostrarExcluidos, ehAdmin]);
 
   useEffect(() => { void carregarLivros(); }, [carregarLivros]);
 
@@ -122,14 +123,38 @@ export default function Acervo() {
   };
 
   const excluirLivro = async (l: LivroAcervoResumo) => {
-    if (!window.confirm(`Excluir "${l.titulo}" e todos os seus itens?`)) return;
+    const excluido = !!l.excluidoEm;
+    if (excluido) {
+      // Já excluído logicamente: oferece exclusão definitiva ( irreversível )
+      if (!window.confirm(`"${l.titulo}" já está excluído. Excluir DEFINITIVAMENTE (apaga itens e backups para sempre)?`)) return;
+      try {
+        await api.removerLivroAcervo(l.id, true);
+        notificar("Livro excluído definitivamente.", "sucesso");
+        setLivroAberto(null);
+        await carregarLivros();
+      } catch (e) {
+        notificar(e instanceof Error ? e.message : "Erro ao excluir", "erro");
+      }
+      return;
+    }
+    if (!window.confirm(`Excluir "${l.titulo}"? Ele sairá do acervo, mas itens e backups ficam preservados e podem ser restaurados.`)) return;
     try {
       await api.removerLivroAcervo(l.id);
-      notificar("Livro excluído.", "sucesso");
+      notificar("Livro excluído — pode ser restaurado depois.", "sucesso");
       if (livroAberto?.id === l.id) setLivroAberto(null);
       await carregarLivros();
     } catch (e) {
       notificar(e instanceof Error ? e.message : "Erro ao excluir livro", "erro");
+    }
+  };
+
+  const restaurarLivro = async (l: LivroAcervoResumo) => {
+    try {
+      await api.restaurarLivroAcervo(l.id);
+      notificar(`"${l.titulo}" restaurado.`, "sucesso");
+      await carregarLivros();
+    } catch (e) {
+      notificar(e instanceof Error ? e.message : "Erro ao restaurar livro", "erro");
     }
   };
 
@@ -282,6 +307,12 @@ export default function Acervo() {
             <option value="livro">Livros</option>
             <option value="suplemento">Suplementos</option>
           </select>
+          {ehAdmin && (
+            <label className="linha" style={{ gap: "0.35rem" }}>
+              <input type="checkbox" checked={mostrarExcluidos} onChange={(e) => setMostrarExcluidos(e.target.checked)} />
+              Mostrar excluídos
+            </label>
+          )}
         </div>
         <input ref={arquivoRef} type="file" accept=".json,application/json" hidden
           onChange={(e) => { const f = e.target.files?.[0]; if (f) void lerArquivo(f); e.target.value = ""; }} />
@@ -299,14 +330,22 @@ export default function Acervo() {
             <tbody>
               {livros.map((l) => (
                 <tr key={l.id}>
-                  <td><strong>{l.titulo}</strong>{l.descricao ? <div className="suave">{l.descricao.slice(0, 80)}{l.descricao.length > 80 ? "…" : ""}</div> : null}</td>
+                  <td>
+                    <strong>{l.titulo}</strong>
+                    {l.excluidoEm && <span className="suave"> <em>(excluído)</em></span>}
+                    {l.descricao ? <div className="suave">{l.descricao.slice(0, 80)}{l.descricao.length > 80 ? "…" : ""}</div> : null}
+                  </td>
                   <td>{l.tipo === "suplemento" ? "Suplemento" : "Livro"}</td>
                   <td>{l.autor ?? "—"}</td>
                   <td>{l.sistema ?? "—"}</td>
                   <td>{l.edicao ?? "—"}</td>
                   <td>{l.totalItens ?? 0}</td>
                   <td className="linha">
-                    <button className="secundario" onClick={() => void abrirLivro(l)}>Abrir</button>
+                    {l.excluidoEm ? (
+                      <button className="secundario" onClick={() => void restaurarLivro(l)}>Restaurar</button>
+                    ) : (
+                      <button className="secundario" onClick={() => void abrirLivro(l)}>Abrir</button>
+                    )}
                     {ehAdmin && <button className="secundario" onClick={() => baixar(api.urlExportarLivro(l.id), `${l.titulo}.json`)}>Exportar</button>}
                   </td>
                 </tr>

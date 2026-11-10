@@ -346,10 +346,11 @@ export const api = {
     requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
 
   // ---- Acervo global de livros de regras ----
-  listarLivrosAcervo: (q?: string, tipo?: string) => {
+  listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (tipo) params.set("tipo", tipo);
+    if (incluirExcluidos) params.set("incluirExcluidos", "1");
     const qs = params.toString();
     return requisicao<{ livros: LivroAcervoResumo[]; total: number }>(`/biblioteca/livros${qs ? `?${qs}` : ""}`);
   },
@@ -359,8 +360,10 @@ export const api = {
     requisicao<{ livro: LivroAcervoResumo }>("/biblioteca/livros", { method: "POST", body: JSON.stringify(dados) }),
   atualizarLivroAcervo: (id: string, dados: Partial<LivroAcervoInput>) =>
     requisicao<{ livro: LivroAcervoResumo }>(`/biblioteca/livros/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
-  removerLivroAcervo: (id: string) =>
-    requisicao<{ ok: boolean }>(`/biblioteca/livros/${id}`, { method: "DELETE" }),
+  removerLivroAcervo: (id: string, definitivo = false) =>
+    requisicao<{ ok: boolean; excluido?: boolean; definitivo?: boolean }>(`/biblioteca/livros/${id}${definitivo ? "?definitivo=1" : ""}`, { method: "DELETE" }),
+  restaurarLivroAcervo: (id: string) =>
+    requisicao<{ livro: LivroAcervoResumo }>(`/biblioteca/livros/${id}/restaurar`, { method: "POST", body: "{}" }),
   adicionarItemLivro: (bookId: string, dados: ItemLivroInput) =>
     requisicao<{ ok: boolean; id: string }>(`/biblioteca/livros/${bookId}/itens`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarItemLivro: (bookId: string, itemId: string, dados: Partial<ItemLivroInput>) =>
@@ -1063,6 +1066,7 @@ export interface LivroAcervoResumo {
   versao: number;
   formatoVersao: number;
   origem: "manual" | "importado" | string;
+  excluidoEm?: string | null;
   totalItens?: number;
   createdAt: string;
   updatedAt: string;

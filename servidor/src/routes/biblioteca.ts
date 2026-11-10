@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { ruleBooks, ruleBookItems, ruleBookBackups } from "../db/schema.js";
@@ -69,7 +69,15 @@ function backupAntesMutacao(tx: Tx, bookId: string, motivo: string, t: Date): vo
   }).where(eq(ruleBooks.id, bookId)).run();
 }
 
+/** Livro ativo (não excluído logicamente). Uso em consultas e mutações. */
 async function livroPorId(id: string): Promise<LivroRow | null> {
+  const [b] = await db.select().from(ruleBooks)
+    .where(and(eq(ruleBooks.id, id), isNull(ruleBooks.excluidoEm))).limit(1);
+  return b ?? null;
+}
+
+/** Livro em qualquer estado — só para administração (backups, restauração). */
+async function livroPorIdQualquer(id: string): Promise<LivroRow | null> {
   const [b] = await db.select().from(ruleBooks).where(eq(ruleBooks.id, id)).limit(1);
   return b ?? null;
 }
@@ -86,6 +94,7 @@ function metaResposta(b: LivroRow, totalItens?: number) {
     versao: b.versao,
     formatoVersao: b.formatoVersao,
     origem: b.origem,
+    excluidoEm: b.excluidoEm ?? null,
     totalItens,
     createdAt: b.createdAt,
     updatedAt: b.updatedAt,
@@ -98,12 +107,16 @@ function metaResposta(b: LivroRow, totalItens?: number) {
 bibliotecaRouter.get("/livros", async (req, res) => {
   const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
   const tipo = typeof req.query.tipo === "string" ? req.query.tipo : "";
+  // Excluídos (soft delete) só aparecem para admin com ?incluirExcluidos=1.
+  const incluirExcluidos = req.query.incluirExcluidos === "1" && req.usuario?.isAdmin === true;
   const livros = await db.select().from(ruleBooks).orderBy(asc(ruleBooks.titulo));
   const contagens = new Map<string, number>();
   for (const row of await db.select({ bookId: ruleBookItems.bookId }).from(ruleBookItems)) {
     contagens.set(row.bookId, (contagens.get(row.bookId) ?? 0) + 1);
   }
-  let lista = livros.map((b) => metaResposta(b, contagens.get(b.id) ?? 0));
+  let lista = livros
+    .filter((b) => incluirExcluidos || b.excluidoEm == null)
+    .map((b) => metaResposta(b, contagens.get(b.id) ?? 0));
   if (q) {
     const needle = q.toLowerCase();
     lista = lista.filter((b) =>
@@ -115,10 +128,18 @@ bibliotecaRouter.get("/livros", async (req, res) => {
   res.json({ livros: lista, total: lista.length });
 });
 
-/** GET /api/biblioteca/livros/:id — livro completo com itens. */
+/** GET /api/biblioteca/livros/:id — livro completo com itens.
+ *  Livro excluído (soft delete): admin consulta, demais recebem 404. */
 bibliotecaRouter.get("/livros/:id", async (req, res) => {
-  const b = await livroPorId(req.params.id);
-  if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
+  let b = await livroPorId(req.params.id);
+  if (!b) {
+    const excluido = await livroPorIdQualquer(req.params.id);
+    if (!excluido?.excluidoEm || !req.usuario?.isAdmin) {
+      res.status(404).json({ erro: "Livro não encontrado" });
+      return;
+    }
+    b = excluido;
+  }
   const itens = await itensDoLivro(b.id);
   res.json({ livro: metaResposta(b, itens.length), itens });
 });
@@ -221,13 +242,47 @@ bibliotecaRouter.patch("/livros/:id", requireAdmin, async (req, res) => {
   res.json({ livro: metaResposta(atualizado!, total) });
 });
 
-/** DELETE /api/biblioteca/livros/:id — remove livro e itens (cascade). */
+/**
+ * DELETE /api/biblioteca/livros/:id — exclusão lógica (soft delete).
+ * Itens e backups são preservados; o livro some das consultas e pode ser
+ * restaurado via POST /livros/:id/restaurar. `?definitivo=1` faz a exclusão
+ * real em cascata (itens + backups) — ação irreversível, explícita.
+ */
 bibliotecaRouter.delete("/livros/:id", requireAdmin, async (req, res) => {
-  const b = await livroPorId(req.params.id);
+  const definitivo = req.query.definitivo === "1";
+  // Ambos os caminhos usam qualquer estado: soft delete é idempotente
+  // (já excluído -> jaExcluido) e definitivo também funciona em excluído.
+  const b = await livroPorIdQualquer(req.params.id);
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
-  await db.delete(ruleBooks).where(eq(ruleBooks.id, b.id)); // cascade: itens e backups
-  await audit(req, "biblioteca.livro.removido", { bookId: b.id, titulo: b.titulo });
-  res.json({ ok: true });
+  if (definitivo) {
+    if (!b.excluidoEm) {
+      // exclusão definitiva de livro ativo: exige que já esteja excluído?
+      // Não — é a saída para quem quer apagar de vez; faz direto.
+    }
+    await db.delete(ruleBooks).where(eq(ruleBooks.id, b.id)); // cascade: itens e backups
+    await audit(req, "biblioteca.livro.removido_definitivo", { bookId: b.id, titulo: b.titulo });
+    res.json({ ok: true, definitivo: true });
+    return;
+  }
+  if (b.excluidoEm) { res.json({ ok: true, jaExcluido: true }); return; }
+  await db.update(ruleBooks).set({ excluidoEm: agora(), updatedAt: agora() }).where(eq(ruleBooks.id, b.id));
+  await audit(req, "biblioteca.livro.excluido", { bookId: b.id, titulo: b.titulo });
+  res.json({ ok: true, excluido: true });
+});
+
+/** POST /api/biblioteca/livros/:id/restaurar — reverte soft delete.
+ *  O livro volta com itens, backups e versão intactos (mesma row — sem duplicar). */
+bibliotecaRouter.post("/livros/:id/restaurar", requireAdmin, async (req, res) => {
+  const b = await livroPorIdQualquer(req.params.id);
+  if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
+  if (!b.excluidoEm) { res.status(409).json({ erro: "Livro não está excluído" }); return; }
+  // Colisão de título com livro ativo? A restauração não renomeia —
+  // títulos duplicados são permitidos no acervo (imports usam id primeiro).
+  await db.update(ruleBooks).set({ excluidoEm: null, updatedAt: agora() }).where(eq(ruleBooks.id, b.id));
+  await audit(req, "biblioteca.livro.restaurado", { bookId: b.id, titulo: b.titulo });
+  const restaurado = await livroPorId(b.id);
+  const total = (await itensDoLivro(b.id)).length;
+  res.json({ livro: metaResposta(restaurado!, total) });
 });
 
 // ---------- Itens ----------
@@ -386,7 +441,9 @@ async function resolverLivro(entrada: LivroExportado): Promise<{ book: LivroRow 
     if (b) return { book: b, itensDb: await itensDoLivro(b.id) };
   }
   const alvo = normTitulo(entrada.titulo);
-  const todos = await db.select().from(ruleBooks);
+  // Livros excluídos (soft delete) não participam do match de importação —
+  // um envelope que cite o título de um excluído cria livro novo.
+  const todos = await db.select().from(ruleBooks).where(isNull(ruleBooks.excluidoEm));
   const b = todos.find((x) => normTitulo(x.titulo) === alvo) ?? null;
   return { book: b, itensDb: b ? await itensDoLivro(b.id) : [] };
 }
@@ -590,9 +647,10 @@ bibliotecaRouter.post("/importar/confirmar", requireAdmin, async (req, res) => {
 
 // ---------- Exportação ----------
 
-/** GET /api/biblioteca/exportar — acervo completo no envelope oficial. */
+/** GET /api/biblioteca/exportar — acervo completo no envelope oficial.
+ *  Livros excluídos (soft delete) não entram na exportação. */
 bibliotecaRouter.get("/exportar", async (_req, res) => {
-  const livros = await db.select().from(ruleBooks).orderBy(asc(ruleBooks.titulo));
+  const livros = await db.select().from(ruleBooks).where(isNull(ruleBooks.excluidoEm)).orderBy(asc(ruleBooks.titulo));
   const itens = await db.select().from(ruleBookItems);
   const porLivro = new Map<string, ItemDb[]>();
   for (const i of itens) {
@@ -621,9 +679,12 @@ bibliotecaRouter.get("/livros/:id/exportar", async (req, res) => {
 
 // ---------- Backups e restauração ----------
 
-/** GET /api/biblioteca/livros/:id/backups — histórico de snapshots. */
+/** GET /api/biblioteca/livros/:id/backups — histórico de snapshots.
+ *  Funciona também para livros excluídos (o histórico é justamente o que
+ *  se quer preservar); admin-only implícito via requireAdmin nas mutações,
+ *  mas a consulta segue a regra de leitura do acervo. */
 bibliotecaRouter.get("/livros/:id/backups", async (req, res) => {
-  const b = await livroPorId(req.params.id);
+  const b = await livroPorIdQualquer(req.params.id);
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
   const rows = await db.select().from(ruleBookBackups).where(eq(ruleBookBackups.bookId, b.id)).orderBy(desc(ruleBookBackups.createdAt));
   res.json({
