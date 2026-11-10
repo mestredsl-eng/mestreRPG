@@ -1435,8 +1435,22 @@ code {
 .dado-shape {
   display: inline-flex; align-items: center; justify-content: center;
   width: 34px; height: 34px; flex: none;
+  perspective: 180px;
+  transform-style: preserve-3d;
+  backface-visibility: visible;
+  filter: drop-shadow(0 3px 2px rgba(0, 0, 0, 0.38));
 }
-.dado-shape svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.dado-shape svg {
+  width: 100%; height: 100%; display: block; overflow: visible;
+  transform: translateZ(2px) rotateX(24deg) rotateY(-18deg);
+  transform-style: preserve-3d;
+  filter: drop-shadow(1px 2px 1px rgba(0, 0, 0, 0.42));
+  transition: transform 220ms ease, filter 220ms ease;
+}
+.dado-shape:not(.girando):hover svg {
+  transform: translateZ(5px) rotateX(12deg) rotateY(-10deg) scale(1.08);
+  filter: drop-shadow(2px 4px 2px rgba(0, 0, 0, 0.5));
+}
 .dado-poligono {
   fill: var(--dado-fundo, #2b3350);
   stroke: var(--dado-borda, #46538a);
@@ -1449,13 +1463,20 @@ code {
   font-family: inherit;
   pointer-events: none;
 }
-.dado-shape.girando { animation: dado-gira 0.6s ease-in-out infinite; }
+.dado-shape.girando { animation: dado-gira-3d 0.72s cubic-bezier(.22,.68,.25,1) infinite; }
+@keyframes dado-gira-3d {
+  0% { transform: perspective(180px) rotateX(0deg) rotateY(0deg) rotateZ(0deg) scale(1); }
+  25% { transform: perspective(180px) rotateX(105deg) rotateY(80deg) rotateZ(45deg) scale(1.12); }
+  55% { transform: perspective(180px) rotateX(220deg) rotateY(205deg) rotateZ(155deg) scale(.94); }
+  80% { transform: perspective(180px) rotateX(315deg) rotateY(285deg) rotateZ(265deg) scale(1.06); }
+  100% { transform: perspective(180px) rotateX(360deg) rotateY(360deg) rotateZ(360deg) scale(1); }
+}
 .dado-shape.estado-sucesso .dado-poligono { stroke: #2e8f5b; }
 .dado-shape.estado-sucesso .dado-numero { fill: #8fe6b0; }
 .dado-shape.estado-falha .dado-poligono { stroke: #8a3a3a; }
 .dado-shape.estado-falha .dado-numero { fill: #e8a0a0; }
 .d10-face { width: 44px; height: 44px; }
-.d10-face.girando { animation: d10-gira 0.7s ease-in-out infinite; }
+.d10-face.girando { animation: dado-gira-3d 0.82s cubic-bezier(.22,.68,.25,1) infinite; }
 @media (max-width: 600px) {
   .d10-face { width: 36px; height: 36px; }
   .dado-shape { width: 28px; height: 28px; }
@@ -1653,4 +1674,15 @@ code {
 .simulacao-erros ul {
   margin: 0.35rem 0 0;
   padding-left: 1.1rem;
+}
+
+
+/* Dados com perspectiva 3D leve: mantém a face/valor autoritativos do servidor. */
+@media (prefers-reduced-motion: reduce) {
+  .dado-shape.girando,
+  .d10-face.girando {
+    animation: none;
+    transform: perspective(180px) rotateX(12deg) rotateY(-12deg);
+  }
+  .dado-shape svg { transition: none; }
 }
