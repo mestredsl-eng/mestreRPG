@@ -53,11 +53,13 @@ try {
   mkdirSync(BKS, { recursive: true });
 
   // Barreira determinística de teste (TOCTOU): o endpoint só ativa o gate
-  // quando MESTRE_PONTOS_GATE_DIR está definido E o arquivo "armar" existe.
-  // Inerte em produção — sem env e sem "armar", nenhum efeito.
+  // com TRÊS condições — NODE_ENV=test, MESTRE_PONTOS_GATE_DIR definido e
+  // arquivo "armar" presente. O servidor filho é iniciado explicitamente
+  // em modo de teste, sem depender do ambiente do terminal.
   const GATE = join(DIR, "gate");
   mkdirSync(GATE, { recursive: true });
   process.env.MESTRE_PONTOS_GATE_DIR = GATE;
+  process.env.NODE_ENV = "test";
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   proc.stdout.on("data", (d) => process.stdout.write(d));
@@ -188,6 +190,30 @@ try {
   });
   const pFinal = await pontosDe(ficha, cm);
   t("mestre ativo segue operando normalmente", r8.status === 200 && pFinal?.bonus === (pAntes?.bonus ?? 0) + 2, `status=${r8.status} bonus=${pFinal?.bonus}`);
+
+  // ===== 7. Gate inerte sem modo de teste (negativo de produção) =====
+  // Segundo servidor SEM NODE_ENV=test, mas com GATE_DIR e "armar"
+  // presentes: a requisição não pode esperar por "liberar" — prova de
+  // comportamento, não só de variável.
+  const GATE2 = join(DIR, "gate2");
+  mkdirSync(GATE2, { recursive: true });
+  writeFileSync(join(GATE2, "armar"), "1"); // propositalmente SEM "liberar"
+  process.env.MESTRE_PONTOS_GATE_DIR = GATE2;
+  delete process.env.NODE_ENV; // servidor filho nasce sem modo de teste
+  const PORTA2 = await portaLivre();
+  const BASE2 = `http://localhost:${PORTA2}`;
+  const proc2 = subirServidor(PORTA2, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  process.env.NODE_ENV = "test"; // restaura para o restante do teste
+  await esperarSaudavel(BASE2, proc2);
+  const t0 = Date.now();
+  const rGate = await req(BASE2, "POST", `/characters/${ficha}/pontos`, {
+    cookie: cm, body: { acao: "conceder", quantidade: 1, motivo: "gate inativo" },
+  });
+  const dtGate = Date.now() - t0;
+  await encerrarServidor(proc2);
+  t("sem NODE_ENV=test o gate é ignorado (não espera 'liberar')",
+    rGate.status === 200 && dtGate < 3000 && !existsSync(join(GATE2, "chegou")),
+    `status=${rGate.status} ms=${dtGate} chegou=${existsSync(join(GATE2, "chegou"))}`);
 
 } finally {
   await encerrarServidor(proc);
