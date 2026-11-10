@@ -1705,3 +1705,22 @@ code {
   .dado-3d-canvas { width: 28px; height: 28px; }
   .dado-3d-canvas.d10-face { width: 36px; height: 36px; }
 }
+
+.dado-3d-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--dado-fundo, #2b3350);
+  color: var(--dado-texto, #e8ecf7);
+  border: 1px solid var(--dado-borda, #46538a);
+  font-weight: 800;
+}
+.dado-3d-fallback.d10-face { width: 44px; height: 44px; }
+@media (max-width: 600px) {
+  .dado-3d-fallback { width: 28px; height: 28px; }
+  .dado-3d-fallback.d10-face { width: 36px; height: 36px; }
+}
