@@ -110,7 +110,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
                 )}
               </div>
             )}
-            {[...hp.historico].reverse().slice(0, historicoExpandido ? undefined : 8).map((ev, i) => (
+            {(historicoExpandido ? [...hp.historico].reverse() : [...hp.historico].reverse().slice(0, 8)).map((ev, i) => (
               <div key={i} className="hp-evento">
                 <span className={`hp-qtd ${ev.quantidade < 0 ? "negativo" : ev.quantidade > 0 ? "positivo" : ""}`}>
                   {ev.quantidade > 0 ? "+" : ""}{ev.quantidade}
