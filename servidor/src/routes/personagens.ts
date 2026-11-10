@@ -1,5 +1,7 @@
 import { Router, type Request } from "express";
 import { and, eq, desc } from "drizzle-orm";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { characters, sheetTemplates, sheetVersions, memberships, users } from "../db/schema.js";
@@ -836,10 +838,21 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
   const autorNome = await nomeUsuario(req.usuario!.id);
 
-  // MESTRE_PONTOS_ATRASO_MS: atraso exclusivo para testes de TOCTOU —
-  // sem efeito quando a variável não está definida (produção).
-  const atrasoMs = Number(process.env.MESTRE_PONTOS_ATRASO_MS ?? 0);
-  if (atrasoMs > 0) await new Promise((r) => setTimeout(r, atrasoMs));
+  // Barreira determinística exclusiva de teste (TOCTOU): inerte em
+  // produção — só ativa quando MESTRE_PONTOS_GATE_DIR está definido E o
+  // arquivo "armar" existe no diretório. Sinaliza "chegou" (requisição já
+  // passou pela autorização inicial, imediatamente antes da transação) e
+  // aguarda "liberar", com teto de 10s para nunca travar o endpoint.
+  const gateDir = process.env.MESTRE_PONTOS_GATE_DIR;
+  if (gateDir && existsSync(join(gateDir, "armar"))) {
+    try {
+      writeFileSync(join(gateDir, "chegou"), String(Date.now()));
+      const limite = Date.now() + 10_000;
+      while (!existsSync(join(gateDir, "liberar")) && Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    } catch { /* gate é best-effort; nunca bloqueia a requisição por erro de FS */ }
+  }
 
   // Transação: relê vínculo, ficha, calcula, grava atomicamente
   const agora = new Date();

@@ -15,7 +15,7 @@ let proc;
 let pass = 0, fail = 0;
 
 import { join } from "path";
-import { mkdirSync } from "fs";
+import { mkdirSync, existsSync, writeFileSync, rmSync } from "fs";
 
 function t(desc, ok, details = "") {
   if (ok) {
@@ -25,6 +25,16 @@ function t(desc, ok, details = "") {
     console.log(`  FALHOU ${desc} ${details}`);
     fail++;
   }
+}
+
+// Espera determinística por arquivo-sinal (barreira do gate TOCTOU).
+async function esperarArquivo(caminho, timeoutMs = 8000) {
+  const limite = Date.now() + timeoutMs;
+  while (Date.now() < limite) {
+    if (existsSync(caminho)) return true;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return false;
 }
 
 async function fichaDe(fichaId, cookie) {
@@ -42,9 +52,12 @@ try {
   mkdirSync(ARQ, { recursive: true });
   mkdirSync(BKS, { recursive: true });
 
-  // Atraso exclusivo de teste (TOCTOU): dá janela para rebaixar o vínculo
-  // entre a autorização inicial e a transação. Sem efeito em produção.
-  process.env.MESTRE_PONTOS_ATRASO_MS = "1000";
+  // Barreira determinística de teste (TOCTOU): o endpoint só ativa o gate
+  // quando MESTRE_PONTOS_GATE_DIR está definido E o arquivo "armar" existe.
+  // Inerte em produção — sem env e sem "armar", nenhum efeito.
+  const GATE = join(DIR, "gate");
+  mkdirSync(GATE, { recursive: true });
+  process.env.MESTRE_PONTOS_GATE_DIR = GATE;
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   proc.stdout.on("data", (d) => process.stdout.write(d));
@@ -129,9 +142,9 @@ try {
   t("saldo inalterado após falha", p4?.bonus === 15, `bonus=${p4?.bonus}`);
 
   // ===== 6. TOCTOU: mestre rebaixado entre autorização e mutação =====
-  // Segundo mestre sintético; o vínculo é rebaixado para 'jogador' durante
-  // o atraso MESTRE_PONTOS_ATRASO_MS — depois da checagem inicial, antes da
-  // transação. A revalidação interna deve responder 403 sem tocar a ficha.
+  // Barreira determinística: o endpoint sinaliza "chegou" (já passou pela
+  // autorização inicial, imediatamente antes da transação) e só prossegue
+  // quando o teste grava "liberar". Sem sleep: a sincronia é por arquivo.
   const uidM2 = crypto.randomUUID();
   const agoraMs = Date.now();
   {
@@ -145,19 +158,25 @@ try {
   }
   const cm2 = sessao(BANCO, uidM2);
   const pAntes = await pontosDe(ficha, cm);
+  // arma o gate: só a próxima requisição a /pontos ficará na barreira
+  writeFileSync(join(GATE, "armar"), "1");
   const reqRevogada = req(BASE, "POST", `/characters/${ficha}/pontos`, {
     cookie: cm2, headers: { connection: "close" },
     body: { acao: "conceder", quantidade: 7, motivo: "tentativa rebaixado" },
   });
-  // espera o pedido passar pela autorização inicial e entrar no atraso
-  await new Promise((r) => setTimeout(r, 300));
+  // barreira determinística: espera o endpoint sinalizar que chegou ao
+  // ponto imediatamente anterior à transação (autorização inicial já passou)
+  const chegou = await esperarArquivo(join(GATE, "chegou"), 8000);
+  t("requisição alcançou a barreira pós-autorização", chegou);
   {
     const dbw = abrirDb(BANCO);
     try {
       dbw.prepare("update memberships set role='jogador' where campaign_id=? and user_id=?").run(c.campId, uidM2);
     } finally { dbw.close(); }
   }
+  writeFileSync(join(GATE, "liberar"), "1");
   const r7 = await reqRevogada;
+  rmSync(join(GATE, "armar"), { force: true }); // desarma: próximas chamadas não passam pela barreira
   t("mestre rebaixado durante a requisição → 403", r7.status === 403, `status=${r7.status}`);
   const pDepois = await pontosDe(ficha, cm);
   t("saldo inalterado após revogação", pDepois?.bonus === pAntes?.bonus, `antes=${pAntes?.bonus} depois=${pDepois?.bonus}`);
