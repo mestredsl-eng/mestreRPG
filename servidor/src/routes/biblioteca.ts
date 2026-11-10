@@ -193,6 +193,13 @@ bibliotecaRouter.patch("/livros/:id", requireAdmin, async (req, res) => {
   }
   const b = await livroPorId(req.params.id);
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
+  const alterouMetadados = (["titulo", "descricao", "autor", "sistema", "edicao", "tipo"] as const)
+    .some((k) => body.data[k] !== undefined && (b[k] ?? null) !== (body.data[k] ?? null));
+  if (!alterouMetadados) {
+    const total = (await itensDoLivro(b.id)).length;
+    res.json({ livro: metaResposta(b, total) });
+    return;
+  }
   const t = agora();
   const campos: Record<string, unknown> = { updatedAt: t };
   for (const k of ["titulo", "descricao", "autor", "sistema", "edicao", "tipo"] as const) {
@@ -271,9 +278,18 @@ bibliotecaRouter.patch("/livros/:id/itens/:itemId", requireAdmin, async (req, re
       return;
     }
   }
+  const camposEditaveis = ["kind", "key", "name", "category", "parentKey", "definition", "ordem"] as const;
+  const alterouItem = camposEditaveis.some((k) => {
+    if (body.data[k] === undefined) return false;
+    const atual = item[k] ?? null;
+    const novo = body.data[k] ?? null;
+    if (k === "definition") return JSON.stringify(atual) !== JSON.stringify(novo);
+    return atual !== novo;
+  });
+  if (!alterouItem) { res.json({ ok: true, alterado: false }); return; }
   const t = agora();
   const campos: Record<string, unknown> = { updatedAt: t };
-  for (const k of ["kind", "key", "name", "category", "parentKey", "definition", "ordem"] as const) {
+  for (const k of camposEditaveis) {
     if (body.data[k] !== undefined) campos[k] = body.data[k] ?? null;
   }
   try {
