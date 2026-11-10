@@ -349,6 +349,10 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
           position[1] *= Math.exp(-3.2 * dt);
           velocity = scale(velocity, Math.exp(-5 * dt));
           if (settleTime >= 0.28) finalizado = true;
+        } else {
+          // O período de estabilidade precisa ser contínuo: se o dado
+          // voltar a ganhar energia, começa a contar novamente do zero.
+          settleTime = 0;
         }
       }
       if (simulationTime >= 2.9) finalizado = true;
