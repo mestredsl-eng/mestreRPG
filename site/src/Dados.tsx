@@ -44,15 +44,7 @@ export function usePreferenciasDados() {
   return { prefs, pronto, salvar };
 }
 
-// ---------- Formas geométricas dos dados (SVG) ----------
-
-const POLIGONOS: Record<number, string> = {
-  4: "20,2 38,36 2,36", // tetraedro
-  6: "7,2 33,2 38,20 33,38 7,38 2,20", // cubo
-  8: "20,1 33,8 39,20 33,32 20,39 7,32 1,20 7,8", // octaedro
-  10: "20,2 36,10 38,30 2,30 4,10", // trapézio trapezoidal (d10)
-  20: "20,1 32,9 38,20 32,31 20,39 8,31 2,20 8,9", // icosaedro
-};
+// ---------- Tipos de dados disponíveis ----------
 
 export const LADOS_DADOS = [4, 6, 8, 10, 20] as const;
 
