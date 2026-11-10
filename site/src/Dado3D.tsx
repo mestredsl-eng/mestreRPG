@@ -49,12 +49,17 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       if (finalizado) renderFinal();
     };
     resize();
-    const colors = getComputedStyle(canvas);
-    const fill = colors.getPropertyValue("--dado-fundo").trim() || "#2b3350";
-    const text = colors.getPropertyValue("--dado-texto").trim() || "#e8ecf7";
+    const lerCores = () => {
+      const colors = getComputedStyle(canvas);
+      fill = colors.getPropertyValue("--dado-fundo").trim() || "#2b3350";
+      const text = colors.getPropertyValue("--dado-texto").trim() || "#e8ecf7";
+      // Paridade com o SVG anterior: sucesso/falha tingem o número.
+      textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
+    };
+    let fill = "#2b3350";
+    let textColor = "#e8ecf7";
+    lerCores();
     const border = estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#8290bd";
-    // Paridade com o SVG anterior: sucesso/falha tingem o número.
-    const textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
     const started = performance.now();
     let lastFrame = started;
     const fisica = criarEstadoFisica(vertices, start, indice);
@@ -167,7 +172,19 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
       else raf = requestAnimationFrame(draw);
     });
     observer.observe(canvas);
-    return () => { cancelAnimationFrame(raf); observer.disconnect(); };
+    // O canvas guarda pixels já desenhados: mudar as variáveis CSS não o
+    // atualiza automaticamente. Releia as preferências e redesenhe o dado
+    // assentado quando o usuário troca as cores no painel.
+    const prefsObserver = new MutationObserver(() => {
+      lerCores();
+      if (finalizado || reduced) renderFinal();
+    });
+    prefsObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
+    return () => {
+      cancelAnimationFrame(raf);
+      observer.disconnect();
+      prefsObserver.disconnect();
+    };
   }, [lados, valor, indice, estado]);
 
   return (
