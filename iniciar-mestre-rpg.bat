@@ -95,17 +95,24 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem O backend serve o frontend pronto (site/dist) na mesma porta —
-rem compila o site se ainda nao houver build.
-if not exist site\dist\index.html (
-    echo [INFO] Compilando frontend pela primeira vez...
-    call npm run build -w site
-    if errorlevel 1 (
-        echo [ERRO] Falha ao compilar o frontend.
-        pause
-        exit /b 1
-    )
+rem O backend serve o frontend pronto (site/dist) na mesma porta.
+rem O site é compilado em TODA inicialização: nunca subir com build
+rem antigo. Se qualquer etapa falhar, a inicialização é interrompida.
+echo [INFO] Compilando frontend...
+call npm run build -w site
+if errorlevel 1 (
+    echo [ERRO] Falha ao compilar o frontend - servidor NAO sera iniciado.
+    pause
+    exit /b 1
 )
+
+if not exist site\dist\index.html (
+    echo [ERRO] Build do frontend concluido, mas site\dist\index.html nao existe.
+    echo        Servidor NAO sera iniciado com build ausente ou antigo.
+    pause
+    exit /b 1
+)
+echo [OK] Frontend compilado: site\dist\index.html
 
 echo [INFO] Aplicando migracoes...
 call npm run db:migrate -w servidor
