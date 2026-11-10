@@ -105,6 +105,38 @@ function estadoVivo(raiz) {
   };
 }
 
+// Abre o banco em WAL com tabela de prova própria e devolve a conexão
+// ABERTA — enquanto ela estiver aberta, o SQLite não consolida nem apaga
+// os sidecars, então -wal/-shm persistem em disco durante o restore.
+// O trio db/-wal/-shm é consistente (o WAL contém os frames novos).
+function ladoComWal(arquivoDb) {
+  const db = abrirDb(arquivoDb);
+  db.pragma("journal_mode = wal");
+  db.exec("create table if not exists wal_probe (k text primary key, v text)");
+  db.prepare("insert or replace into wal_probe (k,v) values ('m','wal-ok')").run();
+  return db;
+}
+// Materializa um trio REAL ao lado do banco: copia db/-wal/-shm com a
+// conexão aberta, fecha (consolida o arquivo principal) e repõe a cópia
+// pré-checkpoint — resultado: sidecars autênticos, marcador só no WAL.
+function materializarTrio(arquivoDb) {
+  const db = ladoComWal(arquivoDb);
+  for (const suf of ["", "-wal", "-shm"]) {
+    const src = arquivoDb + suf;
+    if (existsSync(src)) copyFileSync(src, arquivoDb + "__t" + suf);
+  }
+  db.close();
+  for (const suf of ["", "-wal", "-shm"]) {
+    const tmp = arquivoDb + "__t" + suf;
+    if (existsSync(tmp)) { copyFileSync(tmp, arquivoDb + suf); rmSync(tmp); }
+  }
+}
+function probeWalDb(arquivo) {
+  try {
+    return comDbRw(arquivo, (db) =>
+      db.prepare("select v from wal_probe where k='m'").get()?.v ?? null);
+  } catch { return "ERRO_LEITURA"; }
+}
 const RAIZ = dirTeste("restore-boot");
 try {
   // ===== 1. primeira instalação: raiz SEM nenhum diretório =====
@@ -308,6 +340,105 @@ try {
     t("banco revertido ao antigo (tabela nova + flag)", st.tabelaNova === true && !!st.flag);
     t("arquivos revertidos (doc_vivo de volta, sem doc_bk)", readFileSync(join(arqPath(r9), "doc_vivo.txt"), "utf8") === "vivo" && !st.arqDocBk);
     t("doc_bk.txt do backup removido pelo rollback", !existsSync(join(arqPath(r9), "doc_bk.txt")));
+  }
+
+  // ===== 11. banco vivo COM WAL/SHM travado por conexão aberta =====
+  // Com o servidor parado o restaurador lê a flag (o que consolida o WAL);
+  // aqui uma conexão de teste segura os sidecars — a remoção falha com
+  // EPERM e a operação DEVE abortar com o estado anterior preservado.
+  sec("Sidecars: vivo tem WAL/SHM em uso — falha segura sem estado misto");
+  {
+    const r11 = join(RAIZ, "wal_vivo");
+    mkdirSync(join(r11, "banco"), { recursive: true });
+    migrar(r11);
+    const bk = fazerBackup(r11, "bk_sem_side"); // copia só o .db principal
+    armarFlag(r11, bk);
+    const conn = ladoComWal(dbPath(r11)); // sidecars reais em disco
+    t("banco vivo possui -wal e -shm", existsSync(dbPath(r11) + "-wal") && existsSync(dbPath(r11) + "-shm"));
+    const rest = restaurar(r11);
+    t("restaurador bloqueado por sidecar em uso → exit != 0", rest.code !== 0, `code=${rest.code}`);
+    const pre = readdirSync(join(r11, "backups")).filter((d) => d.startsWith("pre_restore_"));
+    t("estado anterior (com sidecars) preservado em pre_restore_*", pre.length >= 1);
+    const ladoDb = join(r11, "backups", pre[0], "mestre-rpg.db");
+    t("trio preservado inclui -wal e -shm",
+      existsSync(ladoDb + "-wal") && existsSync(ladoDb + "-shm"));
+    t("banco vivo NÃO foi substituído (sidecars ainda presentes)",
+      existsSync(dbPath(r11) + "-wal") && existsSync(dbPath(r11) + "-shm"));
+    conn.close();
+    t("conteúdo do WAL legível após fechar", probeWalDb(dbPath(r11)) === "wal-ok", String(probeWalDb(dbPath(r11))));
+    t("flag preservada para retry", !!flagPendenteDb(dbPath(r11)));
+  }
+
+  // ===== 12. backup COM WAL/SHM, banco vivo SEM sidecars =====
+  sec("Sidecars: backup tem WAL/SHM, vivo não — restore aplica o trio");
+  {
+    const r12 = join(RAIZ, "wal_backup");
+    mkdirSync(join(r12, "banco"), { recursive: true });
+    migrar(r12);
+    const bk = fazerBackup(r12, "bk_com_side");
+    materializarTrio(join(bk, "mestre-rpg.db")); // trio real dentro do backup
+    t("backup possui -wal e -shm",
+      existsSync(join(bk, "mestre-rpg.db-wal")) && existsSync(join(bk, "mestre-rpg.db-shm")));
+    armarFlag(r12, bk);
+    const rest = restaurar(r12);
+    t("restaurador → exit 0", rest.code === 0, rest.saida.slice(-300));
+    // o SQLite consolida o WAL na primeira abertura (limparFlag) e remove
+    // os sidecars — a prova real é o dado que SÓ existia no WAL ser lido.
+    t("conteúdo do WAL aplicado (wal_probe)", probeWalDb(dbPath(r12)) === "wal-ok", String(probeWalDb(dbPath(r12))));
+    t("flag limpa após sucesso", flagPendenteDb(dbPath(r12)) === null);
+  }
+
+  // ===== 13. rollback após falha — sidecars do backup NÃO ficam residuais =====
+  sec("Rollback com sidecars do backup — nenhum residual no banco recuperado");
+  {
+    const r13 = join(RAIZ, "wal_rollback");
+    mkdirSync(join(r13, "banco"), { recursive: true });
+    migrar(r13);
+    const bk = fazerBackup(r13, "bk_falha_flag");
+    // sabotagem: backup sem server_settings → limparFlag lança → rollback;
+    // e COM sidecars → o rollback precisa removê-los (não existiam antes).
+    {
+      const d = abrirDb(join(bk, "mestre-rpg.db"));
+      d.exec("drop table server_settings");
+      d.close();
+    }
+    materializarTrio(join(bk, "mestre-rpg.db")); // trio real no backup
+    armarFlag(r13, bk);
+    t("vivo sem sidecars antes do restore", !existsSync(dbPath(r13) + "-wal") && !existsSync(dbPath(r13) + "-shm"));
+    const rest = restaurar(r13);
+    t("restaurador com falha na flag → exit != 0", rest.code !== 0, `code=${rest.code}`);
+    t("NENHUM sidecar residual no banco recuperado",
+      !existsSync(dbPath(r13) + "-wal") && !existsSync(dbPath(r13) + "-shm"));
+    t("exatos arquivos esperados no diretório banco/",
+      readdirSync(join(r13, "banco")).filter((f) => f.startsWith("mestre-rpg.db")).sort().join(",") === "mestre-rpg.db");
+    t("banco revertido abre e tem flag para retry", !!flagPendenteDb(dbPath(r13)));
+    t("tabela nova presente no banco revertido", temTabelaDb(dbPath(r13), TABELA_NOVA));
+  }
+
+  // ===== 14. MESTRE_HOME inexistente =====
+  sec("MESTRE_HOME que ainda não existe — primeira inicialização real");
+  {
+    const r14 = join(RAIZ, "raiz_inexistente");
+    t("raiz realmente não existe", !existsSync(r14));
+    const rest = restaurar(r14);
+    t("restaurador → exit 0 mesmo sem raiz", rest.code === 0, rest.saida.slice(-200));
+    t("diretório banco/ criado no caminho configurado", existsSync(join(r14, "banco")));
+    const m = migrar(r14);
+    t("migrate → exit 0", m.code === 0, m.saida.slice(-200));
+    t("schema completo", temTabelaDb(dbPath(r14), TABELA_NOVA));
+    const porta = await portaLivre();
+    const proc = spawn("node", [INDICE], {
+      env: { ...envRaiz(r14), MESTRE_PORTA: String(porta) },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    try {
+      await esperarSaudavel(`http://127.0.0.1:${porta}`, proc, 30000);
+      t("servidor sobe de raiz inexistente e responde /api/health", true);
+    } catch (e) {
+      t("servidor sobe de raiz inexistente e responde /api/health", false, String(e));
+    } finally {
+      await encerrarServidor(proc);
+    }
   }
 
   // ===== 10. overrides MESTRE_* respeitados =====

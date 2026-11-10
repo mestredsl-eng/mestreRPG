@@ -121,6 +121,10 @@ async function principal() {
   //    TUDO a partir das cópias em `lado` (inclusive removendo o que a
   //    aplicação criou quando não existia antes).
   const reverter = () => {
+    // remove sidecars que a tentativa possa ter deixado e restaura
+    // somente os que existiam na preservação — nunca mistura WAL de
+    // um banco com o arquivo de outro.
+    for (const suf of ["-wal", "-shm"]) rmSync(DB_VIVA + suf, { force: true });
     for (const suf of ["", "-wal", "-shm"]) {
       const ladoArq = join(lado, `mestre-rpg.db${suf}`);
       if (existsSync(ladoArq)) copyFileSync(ladoArq, DB_VIVA + suf);
@@ -141,7 +145,15 @@ async function principal() {
     }
   };
   try {
+    // remove sidecars do banco anterior ANTES de trocar o arquivo —
+    // um WAL/SHM órfão não pode ficar associado ao banco restaurado.
+    for (const suf of ["-wal", "-shm"]) rmSync(DB_VIVA + suf, { force: true });
     copyFileSync(dbBackup, DB_VIVA);
+    // sidecars do próprio backup (quando existirem) acompanham o banco
+    for (const suf of ["-wal", "-shm"]) {
+      const bkSide = join(backupDir, `mestre-rpg.db${suf}`);
+      if (existsSync(bkSide)) copyFileSync(bkSide, DB_VIVA + suf);
+    }
     const dirArqBackup = join(backupDir, "arquivos");
     if (existsSync(dirArqBackup)) {
       if (!statSync(dirArqBackup).isDirectory()) throw new Error("backup/arquivos não é um diretório");
