@@ -71,19 +71,31 @@ export function comDb(banco, fn) {
  * limpeza do diretório — essencial no Windows.
  */
 export async function encerrarServidor(proc, timeoutMs = 10000) {
-  if (!proc || proc.exitCode !== null || proc.killed) return;
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  const exited = new Promise((res) => proc.once("exit", res));
   proc.kill();
-  await new Promise((res) => {
-    const limite = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { } res(); }, timeoutMs);
-    proc.once("exit", () => { clearTimeout(limite); res(); });
-  });
+  const graceful = await Promise.race([exited.then(() => true), new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+  if (!graceful) {
+    try { proc.kill("SIGKILL"); } catch { }
+    // Mesmo após SIGKILL aguardamos o exit de verdade (com teto de
+    // segurança) — só assim os handles do SQLite são liberados.
+    await Promise.race([exited, new Promise((r) => setTimeout(r, timeoutMs))]);
+  }
 }
 
-/** Remove o diretório temporário da suíte com retentativas (Windows/AV). */
+/**
+ * Remove o diretório temporário da suíte com retentativas (Windows/AV).
+ * Retorna true se removido; em falha, emite aviso explícito no stderr —
+ * nunca oculta o erro de limpeza.
+ */
 export function limparDir(dir) {
   try {
     rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
-  } catch { /* melhor esforço — tmpdir do SO limpa depois */ }
+    return true;
+  } catch (e) {
+    console.error(`[limpeza] FALHA ao remover ${dir}: ${e?.message ?? e}`);
+    return false;
+  }
 }
 
 export function abrirDb(banco) {
