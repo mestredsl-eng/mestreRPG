@@ -71,7 +71,7 @@
   - `teste-acervo-campanha.mjs`: 43/43 — aplicação atômica de livros, conflitos, rollback 409, decisões manter_campanha/usar_livro
   - `homologacao-acervo.mjs`: 123/123 — biblioteca global, import/export, backups, soft delete
   - `teste-acervo-diff.mjs`: 2/2 — diff de livros
-  - `homologacao-mesa.mjs`: 36/36 — multiplayer, chat, rolagens, turnos, ampulheta (pausa/retomada/encerrar/expiração explícita), persistência
+  - `homologacao-mesa.mjs`: 37/37 — multiplayer, chat, rolagens, turnos, ampulheta (pausa/retomada/encerrar/expiração explícita), presença dos 3 participantes capturada antes da entrada (resistência `MRPG_PRESENCA_FALSO`), persistência
   - `teste-mesa-seguranca.mjs`: 18/18 — permissões Socket.IO, privacidade, reconexão, idempotência
   - `homologacao-etapa2.mjs`: 46/46 — patrimônio, financeiro, diário, snapshots, concorrência PATCH×HP
   - `homologacao-equipamentos.mjs`: 31/31 — equipamentos, concorrência, persistência
