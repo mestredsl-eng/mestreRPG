@@ -508,8 +508,10 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
   if (semDecisao.length) {
     res.status(409).json({
       erro: "Há elementos com a mesma chave na campanha. Escolha qual versão manter.",
-      conflitos: semDecisao,
-      opcoes: ["manter_campanha", "usar_livro"],
+      detalhes: {
+        conflitos: semDecisao,
+        opcoes: ["manter_campanha", "usar_livro"],
+      },
     });
     return;
   }
