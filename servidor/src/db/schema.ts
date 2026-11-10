@@ -230,6 +230,23 @@ export const ruleBookBackups = sqliteTable("rule_book_backups", {
   createdAt: createdAt(),
 }, (t) => [index("rule_book_backups_book_idx").on(t.bookId)]);
 
+// Aplicação explícita de livros do Acervo em campanhas (snapshot, nunca vínculo vivo).
+export const campaignRuleBooks = sqliteTable("campaign_rule_books", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  bookId: text("book_id").notNull().references(() => ruleBooks.id, { onDelete: "cascade" }),
+  appliedVersion: integer("applied_version").notNull(),
+  // Snapshot da origem no momento da aplicação; permite diff/sync futuro sem
+  // confundir regras personalizadas da campanha com conteúdo do Acervo.
+  snapshot: text("snapshot", { mode: "json" }).notNull().default([]),
+  appliedAt: createdAt(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("campaign_rule_books_campaign_book_idx").on(t.campaignId, t.bookId),
+  index("campaign_rule_books_campaign_idx").on(t.campaignId),
+]);
+
 // Inventário dentro da ficha (spec §9.1)
 export const inventoryEntries = sqliteTable("inventory_entries", {
   id: id(),
