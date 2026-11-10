@@ -4,6 +4,7 @@
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -127,8 +128,7 @@ try {
     t("equipar p/ restart → 201", eqAtivo.status === 201, `status=${eqAtivo.status}`);
     const estoqueAntes = await qtdItem(BASE, cj, ids.charJ, "Lança");
     const eqAntesRestart = await nEquip(BASE, cj, ids.charJ);
-    proc.kill();
-    await new Promise((r) => setTimeout(r, 800));
+    await encerrarServidor(proc);
     proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     t("estoque persiste após restart", (await qtdItem(BASE, cj, ids.charJ, "Lança")) === estoqueAntes, `qtd=${await qtdItem(BASE, cj, ids.charJ, "Lança")}`);
@@ -142,7 +142,8 @@ try {
     t("snapshot do item preservado", snap?.origem === "inventario" && snap?.itemSnapshot?.name === "Lança", JSON.stringify(snap?.itemSnapshot?.name));
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

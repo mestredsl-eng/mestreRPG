@@ -4,6 +4,7 @@
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, req, abrirDb,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -367,7 +368,8 @@ try {
     t("unidade devolvida: total 'Lança' = 3", (await qtdItemPorNome("Lança")) === 3);
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

@@ -5,10 +5,10 @@
 // valida a UI com Playwright real: 8 eventos iniciais, "Ver histórico
 // completo", "Mostrar recentes", histórico vazio e curto — desktop/mobile.
 import { chromium } from "playwright";
-import { rmSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, sessao, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -131,9 +131,8 @@ try {
   }
 } finally {
   await browser.close().catch(() => {});
-  proc?.kill();
-  await new Promise((r) => setTimeout(r, 1200));
-  rmSync(DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

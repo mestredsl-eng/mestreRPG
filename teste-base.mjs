@@ -65,6 +65,27 @@ export function comDb(banco, fn) {
   try { return fn(db); } finally { db.close(); }
 }
 
+/**
+ * Encerra o processo do servidor e AGUARDA a saída (com timeout de
+ * segurança). Garante que handles do SQLite/WAL são liberados antes da
+ * limpeza do diretório — essencial no Windows.
+ */
+export async function encerrarServidor(proc, timeoutMs = 10000) {
+  if (!proc || proc.exitCode !== null || proc.killed) return;
+  proc.kill();
+  await new Promise((res) => {
+    const limite = setTimeout(() => { try { proc.kill("SIGKILL"); } catch { } res(); }, timeoutMs);
+    proc.once("exit", () => { clearTimeout(limite); res(); });
+  });
+}
+
+/** Remove o diretório temporário da suíte com retentativas (Windows/AV). */
+export function limparDir(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 500 });
+  } catch { /* melhor esforço — tmpdir do SO limpa depois */ }
+}
+
 export function abrirDb(banco) {
   return new Database(banco);
 }

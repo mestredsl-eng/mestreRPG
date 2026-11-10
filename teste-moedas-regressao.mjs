@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, abrirDb, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -139,7 +140,8 @@ try {
     t("jogador PATCH metadados próprios → 200", patchJMeta.status === 200, `status=${patchJMeta.status}`);
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

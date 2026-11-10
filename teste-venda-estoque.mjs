@@ -9,6 +9,7 @@ import Database from "better-sqlite3";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -183,7 +184,8 @@ try {
     t("nenhuma transação gravada", txCount(conta) === txAntes, `tx=${txCount(conta)} antes=${txAntes}`);
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

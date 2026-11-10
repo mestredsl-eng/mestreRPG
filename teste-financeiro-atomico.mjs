@@ -14,6 +14,7 @@ import Database from "better-sqlite3";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -217,7 +218,8 @@ try {
     t("nenhuma conta com saldo corrompido (null/inválido)", [contaA, contaB, contaC, contaCartao].every((id) => Number.isInteger(saldoDb(id))), `soma=${soma}`);
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);

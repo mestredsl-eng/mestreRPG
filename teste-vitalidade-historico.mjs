@@ -4,6 +4,7 @@
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, abrirDb, sessao, req,
+  encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -120,8 +121,7 @@ try {
   // ===== 6. Persistência após reinício =====
   sec("Persistência após reinício do servidor");
   {
-    proc.kill();
-    await new Promise((r) => setTimeout(r, 800));
+    await encerrarServidor(proc);
     proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
     await esperarSaudavel(BASE, proc);
     const vit = await vitalidadeDe(ids.charId);
@@ -130,7 +130,8 @@ try {
     t("evento mais recente por último na resposta", vit?.historico?.[1]?.nivelNovo === 4);
   }
 } finally {
-  proc?.kill();
+  await encerrarServidor(proc);
+  limparDir(DIR);
 }
 
 console.log(`\n==== ${pass} ok, ${fail} falhas ====`);
