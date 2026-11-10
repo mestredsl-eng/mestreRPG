@@ -262,7 +262,7 @@ patrimonioRouter.post("/inventario/:itemId/equipar", async (req, res) => {
     data: { ...dadosItem, inventoryEntryId: item.id },
     createdAt: agora, updatedAt: agora,
   });
-  await db.update(inventoryEntries).set({ data: { ...dadosItem, equipado: true }, updatedAt: agora }).where(eq(inventoryEntries.id, item.id));
+  await db.update(inventoryEntries).set({ data: { ...dadosItem, equipped: true }, updatedAt: agora }).where(eq(inventoryEntries.id, item.id));
   await audit(req, "equipamento.vestido", { characterId: a.personagem.id, itemId: item.id, slot });
   emitir(a.personagem);
   res.status(201).json({ id });
