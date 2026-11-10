@@ -53,12 +53,16 @@ const INSPECAO_ATIVA = process.platform === "linux" || !!process.env.MESTRE_PROC
  * Processo que some durante a varredura (ENOENT/ESRCH) já liberou os
  * descritores — ignorá-lo é seguro.
  *
- * Limite do procfs: processos não-dumpable (dumpable=0) têm fd/cmdline
- * ilegíveis por desenho do kernel — NENHUM usuário sem CAP_SYS_PTRACE
- * consegue inspecioná-los. São detectados quando a inspeção de fd falha
- * mas /proc/<pid>/cmdline também está vazio/negado; esses são ignorados
- * (o servidor e qualquer cliente SQLite normal rodam dumpable). Qualquer
- * OUTRA falha de inspeção continua retornando "indeterminado" e aborta.
+ * Limite do procfs: quando o kernel nega a inspeção de fd de um
+ * processo (não-dumpable, helper de sessão como sd-pam, outro mount/
+ * user namespace), NENHUM usuário sem CAP_SYS_PTRACE consegue ver seus
+ * descritores — não existe inspeção "mais completa" possível. Esses
+ * processos são ignorados e contados no log. O que continua fail-safe:
+ * procfs ausente/ilegível, estrutura malformada e erros inesperados
+ * retornam "indeterminado" e abortam ANTES de qualquer escrita.
+ * Risco residual documentado: um processo capaz de esconder seus fds
+ * do procfs poderia teoricamente deter o banco sem ser detectado —
+ * mitigado porque só o servidor abre o banco e o boot o exige parado.
  */
 
 /**
@@ -129,21 +133,26 @@ function verificarBancoEmUso(): VerificacaoBanco {
   } catch (e) {
     return { status: "indeterminado", motivo: `não foi possível ler ${PROC_FS}: ${e instanceof Error ? e.message : e}` };
   }
+  let ignorados = 0;
   for (const pid of pids) {
     if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
     const insp = inspecionarPid(pid, `${PROC_FS}/${pid}`, alvos, meuUid);
     if (insp.r === "em_uso") return { status: "em_uso", pid };
     if (insp.r === "negado") {
-      // Só o limite do procfs (processo não-dumpable) é ignorado;
-      // qualquer outra falha de inspeção aborta por segurança.
+      // O kernel negou a inspeção de fd: limite do procfs, não falha de
+      // leitura. Confirmamos a classe via cmdline — se nem isso for
+      // legível de forma classificável, a estrutura é inesperada e
+      // abortamos (fail-safe). Processos ignorados são contados.
       const { classe, cmdline } = classePidAposFalha(pid);
-      if (classe === "nao_dumpable") continue;
-      return {
-        status: "indeterminado",
-        motivo: `${insp.detalhe} — ${classe === "dumpable" ? `dumpable: ${cmdline}` : `cmdline do pid ${pid} indisponível`}`,
-      };
+      if (classe === "indeterminado") {
+        return { status: "indeterminado", motivo: `${insp.detalhe} — cmdline do pid ${pid} indisponível` };
+      }
+      ignorados++;
+      if (ignorados <= 3) log(`pid ${pid} não inspecionável via procfs (${insp.detalhe})${cmdline ? ` — ${cmdline}` : ""}`);
+      continue;
     }
   }
+  if (ignorados) log(`${ignorados} processo(s) não inspecionáveis ignorados (limite do procfs)`);
   return { status: "livre" };
 }
 
