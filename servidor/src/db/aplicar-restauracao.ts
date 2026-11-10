@@ -53,31 +53,31 @@ const INSPECAO_ATIVA = process.platform === "linux" || !!process.env.MESTRE_PROC
  * Processo que some durante a varredura (ENOENT/ESRCH) já liberou os
  * descritores — ignorá-lo é seguro.
  *
- * Exceção controlada: processos ANCESTRAIS deste restaurador (a cadeia
- * de invocação — shell, runner de CI, script de teste) que tenham
- * dumpable=0 e portanto /proc/<pid>/fd ilegível são ignorados: eles são
- * o próprio harness que executou o restore, não clientes do banco.
- * Ancestres LEGÍVEIS continuam sendo inspecionados normalmente — um
- * processo pai que abriu o banco de verdade ainda é detectado.
+ * Limite do procfs: processos não-dumpable (dumpable=0) têm fd/cmdline
+ * ilegíveis por desenho do kernel — NENHUM usuário sem CAP_SYS_PTRACE
+ * consegue inspecioná-los. São detectados quando a inspeção de fd falha
+ * mas /proc/<pid>/cmdline também está vazio/negado; esses são ignorados
+ * (o servidor e qualquer cliente SQLite normal rodam dumpable). Qualquer
+ * OUTRA falha de inspeção continua retornando "indeterminado" e aborta.
  */
 
-/** Sobe a cadeia de ppid via /proc/<pid>/stat e devolve os ancestrais. */
-function pidsAncestrais(): Set<string> {
-  const conjunto = new Set<string>();
-  let pid = process.ppid;
-  for (let i = 0; i < 64 && pid > 1 && !conjunto.has(String(pid)); i++) {
-    conjunto.add(String(pid));
-    try {
-      const stat = readFileSync(`${PROC_FS}/${pid}/stat`, "utf8");
-      const rp = stat.lastIndexOf(")");
-      if (rp < 0) break;
-      // após "pid (comm)": state ppid pgrp ... — ppid é o 2º campo
-      const campos = stat.slice(rp + 2).trim().split(/\s+/);
-      pid = Number(campos[1]);
-      if (!Number.isFinite(pid)) break;
-    } catch { break; }
+/**
+ * Classifica um pid cuja inspeção de fd falhou:
+ *  - "nao_dumpable": cmdline vazio ou negado — limite do procfs, ignora;
+ *  - "dumpable": cmdline legível — processo normal com fd quebrado,
+ *    inspeção realmente inconclusiva;
+ *  - "indeterminado": cmdline ausente/erro inesperado — não dá para
+ *    distinguir, fail-safe.
+ */
+function classePidAposFalha(pid: string): "nao_dumpable" | "dumpable" | "indeterminado" {
+  try {
+    const cmd = readFileSync(`${PROC_FS}/${pid}/cmdline`, "utf8");
+    return cmd.trim().length ? "dumpable" : "nao_dumpable";
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM") return "nao_dumpable";
+    return "indeterminado";
   }
-  return conjunto;
 }
 
 type InspPid = { r: "ok" } | { r: "em_uso" } | { r: "negado"; detalhe: string } | { r: "sumiu" };
@@ -107,13 +107,6 @@ function inspecionarPid(pid: string, pidDir: string, alvos: Set<string>, meuUid:
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") continue; // fd fechou durante a varredura
-      // EACCES num fd individual = processo não-dumpable: o /proc lista
-      // os descritores mas não resolve os alvos — limite do próprio
-      // procfs, não uma falha de leitura transitória. Processos
-      // não-dumpable não são clientes normais do banco (o servidor e
-      // qualquer cliente SQLite rodam dumpable); pular o fd é o máximo
-      // que a plataforma permite inspecionar.
-      if (code === "EACCES") continue;
       return { r: "negado", detalhe: `fd ${fd} de pid ${pid} ilegível (${code ?? e})` };
     }
     if (alvos.has(resolve(alvo))) return { r: "em_uso" };
@@ -131,14 +124,21 @@ function verificarBancoEmUso(): VerificacaoBanco {
   } catch (e) {
     return { status: "indeterminado", motivo: `não foi possível ler ${PROC_FS}: ${e instanceof Error ? e.message : e}` };
   }
-  const ancestrais = pidsAncestrais();
   for (const pid of pids) {
     if (!/^\d+$/.test(pid) || Number(pid) === process.pid) continue;
     const insp = inspecionarPid(pid, `${PROC_FS}/${pid}`, alvos, meuUid);
     if (insp.r === "em_uso") return { status: "em_uso", pid };
-    // Inspeção negada: aborta — exceto para ancestrais ilegíveis (harness).
-    if (insp.r === "negado" && !ancestrais.has(pid)) {
-      return { status: "indeterminado", motivo: insp.detalhe };
+    if (insp.r === "negado") {
+      // Só o limite do procfs (processo não-dumpable) é ignorado;
+      // qualquer outra falha de inspeção aborta por segurança.
+      const classe = classePidAposFalha(pid);
+      if (classe === "nao_dumpable") continue;
+      return {
+        status: "indeterminado",
+        motivo: classe === "dumpable"
+          ? `${insp.detalhe} — processo dumpable com fd ilegível`
+          : `${insp.detalhe} — cmdline do pid ${pid} indisponível`,
+      };
     }
   }
   return { status: "livre" };
