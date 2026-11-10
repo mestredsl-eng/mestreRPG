@@ -42,13 +42,35 @@ export function geometry(sides: number): { vertices: Vec3[]; faces: Face[] } {
     return { vertices: v, faces: orientFaces(v, [[0, 2, 4], [2, 1, 4], [1, 3, 4], [3, 0, 4], [2, 0, 5], [1, 2, 5], [3, 1, 5], [0, 3, 5]]) };
   }
   if (sides === 10) {
-    const v: Vec3[] = [[0, 0, 1], [0, 0, -1]];
-    for (let i = 0; i < 10; i++) {
-      const a = i * Math.PI / 5;
-      v.push([Math.cos(a), Math.sin(a), i % 2 === 0 ? 0.34 : -0.34]);
-    }
-    const faces: Face[] = [];
-    for (let i = 0; i < 10; i++) faces.push([0, 2 + i, 1, 2 + ((i + 1) % 10)]);
+    // D10 trapezoidal correto: dual de um antiprisma pentagonal regular.
+    // Cada face é um kite coplanar; a versão anterior ligava os dois polos
+    // a vértices consecutivos e criava quadriláteros empenados (não planos).
+    const v: Vec3[] = [
+      [0.8944271910, -0.6498393925, 0.2111456180],
+      [1.1055728090, 0, -0.2111456180],
+      [-1.1055728090, 0, 0.2111456180],
+      [-0.8944271910, 0.6498393925, -0.2111456180],
+      [0.3416407865, -1.0514622242, -0.2111456180],
+      [-0.3416407865, -1.0514622242, 0.2111456180],
+      [-0.8944271910, -0.6498393925, -0.2111456180],
+      [0.3416407865, 1.0514622242, -0.2111456180],
+      [0.8944271910, 0.6498393925, 0.2111456180],
+      [-0.3416407865, 1.0514622242, 0.2111456180],
+      [0, 0, -2],
+      [0, 0, 2],
+    ];
+    const faces: Face[] = [
+      [8, 11, 0, 1],
+      [8, 7, 9, 11],
+      [11, 9, 3, 2],
+      [5, 11, 2, 6],
+      [4, 0, 11, 5],
+      [8, 1, 10, 7],
+      [7, 10, 3, 9],
+      [2, 3, 10, 6],
+      [10, 4, 5, 6],
+      [1, 0, 4, 10],
+    ];
     return { vertices: v, faces: orientFaces(v, faces) };
   }
   const phi = (1 + Math.sqrt(5)) / 2;
