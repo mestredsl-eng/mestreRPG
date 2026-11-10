@@ -1,4 +1,5 @@
 name: Assistente de Desenvolvimento
+# Executa builds e gera relatório somente de leitura.
 
 on:
   pull_request:
