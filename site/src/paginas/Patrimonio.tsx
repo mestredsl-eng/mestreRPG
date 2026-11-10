@@ -489,7 +489,9 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
 
   if (!fin) return <p className="meta">Carregando…</p>;
   const cfg = fin.config;
-  const fmt = (cents: number | null | undefined) => fmtMoeda(cents, cfg.casasDecimais);
+  // O backend escala os inteiros financeiros por 10 ** casasDecimais (não sempre por 100).
+  const fmt = (unidades: number | null | undefined) =>
+    unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
   return (
     <div>
