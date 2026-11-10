@@ -248,7 +248,9 @@ try {
   // ===== 7. Concorrência mista: entradas+saídas+transferências na mesma conta =====
   sec("Carga mista concorrente");
   {
-    // contaB tem 200; dispara entradas, saídas e transferências concorrentes
+    // contaB tem saldo variável; captura o valor ANTES de disparar as
+    // requisições (req() inicia o fetch imediatamente ao ser chamada).
+    const saldoBAntes = saldoDb(contaB);
     const ops = [
       ...Array.from({ length: 4 }, () => req(BASE, "POST", `/characters/${charId}/financeiro/movimentar`, {
         cookie, body: { accountId: contaB, tipo: "entrada", valor: 25 },
@@ -260,7 +262,6 @@ try {
         cookie, body: { origemAccountId: contaB, destinoAccountId: contaC, valor: 40 },
       })),
     ];
-    const saldoBAntes = saldoDb(contaB);
     const rs = await Promise.all(ops);
     const entradas = rs.slice(0, 4).filter((r) => r.status === 201).length;
     const saidas = rs.slice(4, 10).filter((r) => r.status === 201).length;
