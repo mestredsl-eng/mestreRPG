@@ -134,22 +134,27 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     const duration = reduced ? 0 : 1050 + Math.min(indice, 8) * 95;
     let raf = 0;
     let width = 0, height = 0, dpr = 1;
+    let finalizado = false;
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       width = Math.max(32, rect.width); height = Math.max(32, rect.height);
       dpr = Math.min(window.devicePixelRatio || 1, 2);
       canvas.width = Math.round(width * dpr); canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Redefinir canvas.width apaga o bitmap: se a animação já terminou
+      // (ou motion reduzido, que desenha um único frame), redesenha o
+      // estado final — senão o dado ficaria em branco até remontar.
+      if (finalizado) renderFinal();
     };
     resize();
     const colors = getComputedStyle(canvas);
     const fill = colors.getPropertyValue("--dado-fundo").trim() || "#2b3350";
     const text = colors.getPropertyValue("--dado-texto").trim() || "#e8ecf7";
     const border = estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#8290bd";
+    // Paridade com o SVG anterior: sucesso/falha tingem o número.
+    const textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
     const started = performance.now();
-    const draw = (now: number) => {
-      const raw = duration === 0 ? 1 : Math.min(1, (now - started) / duration);
-      const eased = 1 - Math.pow(1 - raw, 3);
+    const render = (eased: number) => {
       const base = slerp(start, target, eased);
       const axis = unit([0.72, 0.31, 0.62]);
       const angle = Math.PI * 6 * eased;
@@ -188,7 +193,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.stroke();
         const center = pts.reduce((s, p) => [s[0] + p[0] / pts.length, s[1] + p[1] / pts.length] as number[], [0,0]);
         const faceValue = item.i + 1;
-        ctx.fillStyle = text;
+        ctx.fillStyle = textColor;
         ctx.font = `800 ${Math.max(9, size * (lados === 20 ? 0.13 : 0.16))}px system-ui, sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
@@ -197,7 +202,13 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
         ctx.fillText(String(faceValue), center[0], center[1]);
         ctx.shadowBlur = 0;
       }
+    };
+    const renderFinal = () => render(1);
+    const draw = (now: number) => {
+      const raw = duration === 0 ? 1 : Math.min(1, (now - started) / duration);
+      render(1 - Math.pow(1 - raw, 3));
       if (raw < 1) raf = requestAnimationFrame(draw);
+      else finalizado = true;
     };
     raf = requestAnimationFrame(draw);
     const observer = new ResizeObserver(resize);

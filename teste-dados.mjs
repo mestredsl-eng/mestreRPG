@@ -219,10 +219,23 @@ for (const lados of [4, 6, 8, 10, 20]) {
   const corInput = p.locator('.cores-dados-controles input[type="color"]').first();
   await setCor(corInput, "#aa3300");
   await p.waitForTimeout(400);
-  const fill = await p.locator(".mesa-view .dado-poligono").first().evaluate((el) => getComputedStyle(el).fill);
-  ok("UI. cor externa aplicada aos dados", fill === "rgb(170, 51, 0)", fill);
-  const texto = await p.locator(".mesa-view .dado-numero").first().evaluate((el) => getComputedStyle(el).fill);
-  ok("UI. cor dos números aplicada", texto === "rgb(232, 236, 247)", texto);
+  // renderer canvas: a cor externa é a variável --dado-fundo herdada pelo canvas
+  const varFundo = await p.locator(".mesa-view .dado-3d-canvas").first()
+    .evaluate((el) => getComputedStyle(el).getPropertyValue("--dado-fundo").trim());
+  ok("UI. cor externa aplicada aos dados", varFundo === "#aa3300", varFundo);
+  const varTexto = await p.locator(".mesa-view .dado-3d-canvas").first()
+    .evaluate((el) => getComputedStyle(el).getPropertyValue("--dado-texto").trim());
+  ok("UI. cor dos números aplicada", varTexto === "#e8ecf7", varTexto);
+  // o canvas realmente desenha pixels (não está em branco)
+  const px = await p.locator(".mesa-view .dado-3d-canvas").first().evaluate((el) => {
+    const c = el;
+    const g = c.getContext("2d");
+    const d = g.getImageData(0, 0, c.width, c.height).data;
+    let pintados = 0;
+    for (let i = 3; i < d.length; i += 40) if (d[i] > 0) pintados++;
+    return pintados;
+  });
+  ok("UI. canvas renderiza faces", px > 50, `px=${px}`);
 
   // contraste baixo gera aviso
   const corInt = p.locator('.cores-dados-controles input[type="color"]').nth(1);
@@ -233,8 +246,9 @@ for (const lados of [4, 6, 8, 10, 20]) {
   // restaura padrão
   await p.locator(".cores-dados-controles button", { hasText: "Restaurar padrão" }).click();
   await p.waitForTimeout(400);
-  const fillPadrao = await p.locator(".mesa-view .dado-poligono").first().evaluate((el) => getComputedStyle(el).fill);
-  ok("UI. restaurar padrão volta cor original", fillPadrao === "rgb(43, 51, 80)", fillPadrao);
+  const fillPadrao = await p.locator(".mesa-view .dado-3d-canvas").first()
+    .evaluate((el) => getComputedStyle(el).getPropertyValue("--dado-fundo").trim());
+  ok("UI. restaurar padrão volta cor original", fillPadrao === "#2b3350", fillPadrao);
 
   // persistência: define cor, recarrega, confere
   await setCor(corInput, "#004488");
@@ -248,8 +262,9 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await p.waitForTimeout(800);
   await p.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await p.waitForTimeout(1800);
-  const fillPers = await p.locator(".mesa-view .dado-poligono").first().evaluate((el) => getComputedStyle(el).fill);
-  ok("UI. preferência persiste após reload", fillPers === "rgb(0, 68, 136)", fillPers);
+  const fillPers = await p.locator(".mesa-view .dado-3d-canvas").first()
+    .evaluate((el) => getComputedStyle(el).getPropertyValue("--dado-fundo").trim());
+  ok("UI. preferência persiste após reload", fillPers === "#004488", fillPers);
   // limpa para o padrão
   await p.locator(".cores-dados-controles button", { hasText: "Restaurar padrão" }).click();
   await p.waitForTimeout(300);
@@ -269,8 +284,9 @@ for (const lados of [4, 6, 8, 10, 20]) {
   await pj.waitForTimeout(800);
   await pj.locator("tr", { hasText: "Sessão Dados" }).first().click();
   await pj.waitForTimeout(1800);
-  const fillJ = await pj.locator(".mesa-view .dado-poligono").first().evaluate((el) => getComputedStyle(el).fill).catch(() => "n/a");
-  ok("UI. jogador não herda cor do mestre", fillJ === "rgb(43, 51, 80)", fillJ);
+  const fillJ = await pj.locator(".mesa-view .dado-3d-canvas").first()
+    .evaluate((el) => getComputedStyle(el).getPropertyValue("--dado-fundo").trim()).catch(() => "n/a");
+  ok("UI. jogador não herda cor do mestre", fillJ === "#2b3350", fillJ);
   await ctxJ.close();
   await p.locator(".cores-dados-controles button", { hasText: "Restaurar padrão" }).click();
 
