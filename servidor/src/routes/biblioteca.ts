@@ -44,6 +44,37 @@ async function itensDoLivro(bookId: string): Promise<ItemDb[]> {
   }));
 }
 
+/**
+ * Registra um snapshot do livro no estado atual da transação e incrementa
+ * sua versão. Chamado antes de cada mutação manual para manter backup,
+ * conteúdo e versão atomicamente consistentes.
+ */
+function backupAntesMutacao(tx: Tx, bookId: string, motivo: string, t: Date): void {
+  const b = tx.select().from(ruleBooks).where(eq(ruleBooks.id, bookId)).get();
+  if (!b) throw new Error("Livro não encontrado durante a mutação");
+  const rows = tx.select().from(ruleBookItems).where(eq(ruleBookItems.bookId, bookId)).all();
+  const itens: ItemDb[] = rows.map((r) => ({
+    id: r.id, kind: r.kind, key: r.key, name: r.name,
+    category: r.category, parentKey: r.parentKey,
+    definition: r.definition, ordem: r.ordem,
+  }));
+  const snapshot = livroParaEnvelope(
+    { ...b, formatoVersao: b.formatoVersao ?? VERSAO_FORMATO },
+    itens,
+  );
+  tx.insert(ruleBookBackups).values({
+    id: novoId(),
+    bookId,
+    snapshot: { formato: FORMATO_ACERVO, versao: VERSAO_FORMATO, livros: [snapshot] },
+    motivo,
+    createdAt: t,
+  }).run();
+  tx.update(ruleBooks).set({
+    versao: (b.versao ?? 1) + 1,
+    updatedAt: t,
+  }).where(eq(ruleBooks.id, bookId)).run();
+}
+
 async function livroPorId(id: string): Promise<LivroRow | null> {
   const [b] = await db.select().from(ruleBooks).where(eq(ruleBooks.id, id)).limit(1);
   return b ?? null;
@@ -169,11 +200,15 @@ bibliotecaRouter.patch("/livros/:id", requireAdmin, async (req, res) => {
   }
   const b = await livroPorId(req.params.id);
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
-  const campos: Record<string, unknown> = { updatedAt: agora(), versao: (b.versao ?? 1) + 1 };
+  const t = agora();
+  const campos: Record<string, unknown> = { updatedAt: t };
   for (const k of ["titulo", "descricao", "autor", "sistema", "edicao", "tipo"] as const) {
     if (body.data[k] !== undefined) campos[k] = body.data[k] ?? null;
   }
-  await db.update(ruleBooks).set(campos).where(eq(ruleBooks.id, b.id));
+  db.transaction((tx) => {
+    backupAntesMutacao(tx, b.id, "antes de editar metadados", t);
+    tx.update(ruleBooks).set(campos).where(eq(ruleBooks.id, b.id)).run();
+  });
   await audit(req, "biblioteca.livro.atualizado", { bookId: b.id });
   const atualizado = await livroPorId(b.id);
   const total = (await itensDoLivro(b.id)).length;
@@ -203,12 +238,20 @@ bibliotecaRouter.post("/livros/:id/itens", requireAdmin, async (req, res) => {
   if (existe) { res.status(409).json({ erro: `Já existe item ${chaveConflito(body.data.kind, body.data.key)} neste livro` }); return; }
   const t = agora();
   const id = novoId();
-  await db.insert(ruleBookItems).values({
-    id, bookId: b.id, kind: body.data.kind, key: body.data.key, name: body.data.name,
-    category: body.data.category ?? null, parentKey: body.data.parentKey ?? null,
-    definition: body.data.definition ?? {}, ordem: body.data.ordem ?? 0,
-    createdAt: t, updatedAt: t,
-  });
+  try {
+    db.transaction((tx) => {
+      backupAntesMutacao(tx, b.id, "antes de adicionar item", t);
+      tx.insert(ruleBookItems).values({
+        id, bookId: b.id, kind: body.data.kind, key: body.data.key, name: body.data.name,
+        category: body.data.category ?? null, parentKey: body.data.parentKey ?? null,
+        definition: body.data.definition ?? {}, ordem: body.data.ordem ?? 0,
+        createdAt: t, updatedAt: t,
+      }).run();
+    });
+  } catch (e) {
+    res.status(409).json({ erro: "Não foi possível adicionar o item", detalhe: e instanceof Error ? e.message : String(e) });
+    return;
+  }
   await audit(req, "biblioteca.item.criado", { bookId: b.id, item: chaveConflito(body.data.kind, body.data.key) });
   res.status(201).json({ ok: true, id });
 });
@@ -224,11 +267,32 @@ bibliotecaRouter.patch("/livros/:id/itens/:itemId", requireAdmin, async (req, re
   const [item] = await db.select().from(ruleBookItems)
     .where(and(eq(ruleBookItems.id, req.params.itemId), eq(ruleBookItems.bookId, b.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  const campos: Record<string, unknown> = { updatedAt: agora() };
-  for (const k of ["name", "category", "parentKey", "definition", "ordem"] as const) {
+  const novoKind = body.data.kind ?? item.kind;
+  const novaKey = body.data.key ?? item.key;
+  if (novoKind !== item.kind || novaKey !== item.key) {
+    const [duplicado] = await db.select({ id: ruleBookItems.id }).from(ruleBookItems)
+      .where(and(eq(ruleBookItems.bookId, b.id), eq(ruleBookItems.kind, novoKind), eq(ruleBookItems.key, novaKey)))
+      .limit(1);
+    if (duplicado && duplicado.id !== item.id) {
+      res.status(409).json({ erro: `Já existe item ${chaveConflito(novoKind, novaKey)} neste livro` });
+      return;
+    }
+  }
+  const t = agora();
+  const campos: Record<string, unknown> = { updatedAt: t };
+  for (const k of ["kind", "key", "name", "category", "parentKey", "definition", "ordem"] as const) {
     if (body.data[k] !== undefined) campos[k] = body.data[k] ?? null;
   }
-  await db.update(ruleBookItems).set(campos).where(eq(ruleBookItems.id, item.id));
+  try {
+    db.transaction((tx) => {
+      backupAntesMutacao(tx, b.id, "antes de editar item", t);
+      tx.update(ruleBookItems).set(campos).where(eq(ruleBookItems.id, item.id)).run();
+    });
+  } catch (e) {
+    res.status(409).json({ erro: "Não foi possível editar o item", detalhe: e instanceof Error ? e.message : String(e) });
+    return;
+  }
+  await audit(req, "biblioteca.item.atualizado", { bookId: b.id, item: chaveConflito(novoKind, novaKey) });
   res.json({ ok: true });
 });
 
@@ -239,7 +303,11 @@ bibliotecaRouter.delete("/livros/:id/itens/:itemId", requireAdmin, async (req, r
   const [item] = await db.select().from(ruleBookItems)
     .where(and(eq(ruleBookItems.id, req.params.itemId), eq(ruleBookItems.bookId, b.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  await db.delete(ruleBookItems).where(eq(ruleBookItems.id, item.id));
+  const t = agora();
+  db.transaction((tx) => {
+    backupAntesMutacao(tx, b.id, "antes de remover item", t);
+    tx.delete(ruleBookItems).where(eq(ruleBookItems.id, item.id)).run();
+  });
   await audit(req, "biblioteca.item.removido", { bookId: b.id, item: `${item.kind}:${item.key}` });
   res.json({ ok: true });
 });
@@ -254,16 +322,19 @@ bibliotecaRouter.put("/livros/:id/itens/ordem", requireAdmin, async (req, res) =
   if (!b) { res.status(404).json({ erro: "Livro não encontrado" }); return; }
   const body = ordemSchema.safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
-  const atuais = await db.select({ id: ruleBookItems.id }).from(ruleBookItems).where(eq(ruleBookItems.bookId, b.id));
-  const ids = new Set(atuais.map((a) => a.id));
+  const atuais = await db.select({ id: ruleBookItems.id, ordem: ruleBookItems.ordem }).from(ruleBookItems).where(eq(ruleBookItems.bookId, b.id));
+  const mapa = new Map(atuais.map((a) => [a.id, a.ordem]));
+  const alteracoes = body.data.itens.filter((it) => mapa.has(it.id) && mapa.get(it.id) !== it.ordem);
+  if (!alteracoes.length) { res.json({ ok: true, alterados: 0 }); return; }
   const t = agora();
   db.transaction((tx) => {
-    for (const it of body.data.itens) {
-      if (!ids.has(it.id)) continue;
+    backupAntesMutacao(tx, b.id, "antes de reordenar itens", t);
+    for (const it of alteracoes) {
       tx.update(ruleBookItems).set({ ordem: it.ordem, updatedAt: t }).where(eq(ruleBookItems.id, it.id)).run();
     }
   });
-  res.json({ ok: true });
+  await audit(req, "biblioteca.itens.reordenados", { bookId: b.id, quantidade: alteracoes.length });
+  res.json({ ok: true, alterados: alteracoes.length });
 });
 
 // ---------- Importação: prévia e confirmação ----------
