@@ -173,6 +173,24 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           </ul>
         </div>
       )}
+      {estrutura.secoes.filter((s) => !s.parentId).length >= 3 && (
+        <nav className="ficha-navegacao" aria-label="Navegação das seções da ficha">
+          <span className="ficha-navegacao-titulo">Ir para:</span>
+          {estrutura.secoes
+            .filter((s) => !s.parentId)
+            .sort((a, b) => a.ordem - b.ordem)
+            .map((secao, indice) => (
+              <button
+                key={secao.id}
+                type="button"
+                className="mini secundario"
+                onClick={() => document.getElementById(`ficha-secao-${indice}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+              >
+                {secao.titulo}
+              </button>
+            ))}
+        </nav>
+      )}
       {estrutura.secoes
         .filter((s) => !s.parentId)
         .sort((a, b) => a.ordem - b.ordem)
@@ -183,7 +201,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           const camposDaSecao = [...secao.campos, ...subsecoes.flatMap((s) => s.campos)];
           const densa = camposDaSecao.filter((c) => TIPOS_SELECAO.has(c.tipo)).length >= 2;
           return (
-            <div key={secao.id} className={`ficha-secao${indice === 0 ? " ficha-secao-capa" : ""}${densa ? " ficha-secao-densa" : ""}`}>
+            <div key={secao.id} id={`ficha-secao-${indice}`} className={`ficha-secao${indice === 0 ? " ficha-secao-capa" : ""}${densa ? " ficha-secao-densa" : ""}`}>
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
