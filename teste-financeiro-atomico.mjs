@@ -59,6 +59,30 @@ try {
   const contaCartao = cartao.json?.id;
   t("contas criadas", !!(contaA && contaB && contaC && contaCartao));
 
+  // ===== 0. Política de saldo inicial e histórico atômico =====
+  sec("Saldo inicial respeita política da campanha");
+  {
+    const antes = comDb(BANCO, (db) => db.prepare("select count(*) c from financial_accounts").get().c);
+    const bancoNegativo = await req(BASE, "POST", `/characters/${charId}/financeiro/contas`, {
+      cookie, body: { type: "banco", name: "Banco negativo", balanceReais: -1 },
+    });
+    t("banco com saldo inicial -1 → 400", bancoNegativo.status === 400, `status=${bancoNegativo.status}`);
+    t("banco negativo não é persistido", comDb(BANCO, (db) => db.prepare("select count(*) c from financial_accounts").get().c) === antes);
+    const cartaoExcedido = await req(BASE, "POST", `/characters/${charId}/financeiro/contas`, {
+      cookie, body: { type: "cartao_credito", name: "Cartão excedido", creditLimitReais: 50, balanceReais: -50.01 },
+    });
+    t("cartão com saldo inicial abaixo do limite → 400", cartaoExcedido.status === 400, `status=${cartaoExcedido.status}`);
+    const cartaoNoLimite = await req(BASE, "POST", `/characters/${charId}/financeiro/contas`, {
+      cookie, body: { type: "cartao_credito", name: "Cartão no limite", creditLimitReais: 50, balanceReais: -50 },
+    });
+    t("cartão no limite exato → 201", cartaoNoLimite.status === 201, `status=${cartaoNoLimite.status}`);
+    if (cartaoNoLimite.json?.id) {
+      t("saldo inicial e lançamento de abertura persistidos juntos",
+        saldoDb(cartaoNoLimite.json.id) === -5000 && txCount(cartaoNoLimite.json.id) === 1,
+        `saldo=${saldoDb(cartaoNoLimite.json.id)} tx=${txCount(cartaoNoLimite.json.id)}`);
+    }
+  }
+
   // ===== 1. Entradas concorrentes na mesma conta =====
   sec("Entradas concorrentes");
   {

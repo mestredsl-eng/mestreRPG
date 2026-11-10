@@ -106,6 +106,16 @@ function limparProcedencia(data: Record<string, unknown> | undefined) {
   return limpo;
 }
 
+// O sinalizador legado "equipped" em inventoryEntries.data é estado interno:
+// DELETE/transferência o usam para impedir movimentações de itens equipados.
+// O cliente não pode forjá-lo por POST/PATCH e bloquear o próprio item.
+function limparEstadoInventario(data: Record<string, unknown> | undefined) {
+  if (!data) return data;
+  const limpo = { ...data };
+  delete limpo.equipped;
+  return limpo;
+}
+
 /** Quantos equipamentos do personagem referenciam este item de inventário
  *  (via data.inventoryEntryId) — usado para bloquear exclusão/transferência. */
 function equipamentosDoItem(
@@ -167,7 +177,7 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   const id = crypto.randomUUID();
   const { templateId, valueCents, transferable, data, ...resto } = body.data;
   await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto, data: { ...data, valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
+    id, characterId: a.personagem.id, ...resto, data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
   });
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
@@ -205,7 +215,7 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
     tx.update(inventoryEntries).set({
       ...resto,
       quantity: d.quantity ?? itemTx.quantity,
-      data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      data: { ...dataAtual, ...(limparEstadoInventario(data) ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
       updatedAt: new Date(),
     }).where(eq(inventoryEntries.id, itemTx.id)).run();
   });
@@ -262,10 +272,8 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-  if (dadosItem.transferable === false && !a.ehMestre) {
-    res.status(403).json({ erro: "Este item não pode ser transferido" }); return;
-  }
+  // A política de transferência é revalidada sobre o registro lido
+  // dentro da transação; não confiar no snapshot anterior à transação.
   const [destino] = await db.select().from(characters).where(eq(characters.id, body.data.destinoCharacterId)).limit(1);
   if (!destino || destino.campaignId !== a.personagem.campaignId || destino.id === a.personagem.id) {
     res.status(400).json({ erro: "Destino inválido" }); return;
@@ -275,12 +283,14 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   // Releitura do item, verificação de vínculos/equipado e mutação na
   // MESMA transação — um equipar concorrente não cria vínculo no meio
   // da transferência, e vice-versa.
-  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | null = null;
+  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | "nao_transferivel" | null = null;
   await db.transaction((tx) => {
     const [itemTx] = tx.select().from(inventoryEntries)
       .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
       .limit(1).all();
     if (!itemTx) { falha = "sumiu"; return; }
+    const dadosItemTx = (itemTx.data ?? {}) as { transferable?: boolean };
+    if (dadosItemTx.transferable === false && !a.ehMestre) { falha = "nao_transferivel"; return; }
     const qtd = qtdPedida ?? itemTx.quantity;
     if (qtd > itemTx.quantity) { falha = "qtd"; return; }
     const dadosItemTr = (itemTx.data ?? {}) as { equipped?: boolean };
@@ -303,6 +313,7 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
     }).run();
   });
   if (falha === "sumiu") { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (falha === "nao_transferivel") { res.status(403).json({ erro: "Este item não pode ser transferido" }); return; }
   if (falha === "qtd") { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
   if (falha === "equipado") { res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return; }
   if (falha === "vinculado") { res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return; }
@@ -739,22 +750,42 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   const agora = new Date();
   const id = crypto.randomUUID();
   const saldoInicial = paraCentavos(body.data.balanceReais ?? 0, cfg.casasDecimais);
-  await db.insert(financialAccounts).values({
-    id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-    type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
-    agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
-    holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
-    creditLimitCents: body.data.creditLimitReais !== undefined ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais) : null,
-    data: body.data.data, createdAt: agora, updatedAt: agora,
-  });
-  if (saldoInicial !== 0) {
-    await db.insert(moneyTransactions).values({
-      id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-      kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
-      accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
-      description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+  const limiteCreditoCents = body.data.creditLimitReais !== undefined
+    ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais)
+    : 0;
+  // A política vale também para a abertura da conta: saldo negativo não
+  // pode entrar por um atalho que contorne as validações de movimentação.
+  const pisoInicial = cfg.permitirSaldoNegativo
+    ? -Infinity
+    : body.data.type === "cartao_credito" ? -limiteCreditoCents : 0;
+  if (saldoInicial < pisoInicial) {
+    res.status(400).json({
+      erro: body.data.type === "cartao_credito"
+        ? "Saldo inicial ultrapassa o limite de crédito permitido"
+        : "Saldo inicial negativo não permitido nesta campanha",
     });
+    return;
   }
+  // Conta e lançamento de abertura formam uma única operação contábil.
+  // Se qualquer insert falhar, o SQLite desfaz ambos.
+  db.transaction((tx) => {
+    tx.insert(financialAccounts).values({
+      id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+      type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
+      agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
+      holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
+      creditLimitCents: body.data.creditLimitReais !== undefined ? limiteCreditoCents : null,
+      data: body.data.data, createdAt: agora, updatedAt: agora,
+    }).run();
+    if (saldoInicial !== 0) {
+      tx.insert(moneyTransactions).values({
+        id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+        kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
+        accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
+        description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+      }).run();
+    }
+  });
   await audit(req, "financeiro.conta.criada", { characterId: a.personagem.id, contaId: id, type: body.data.type });
   emitir(a.personagem);
   res.status(201).json({ id });

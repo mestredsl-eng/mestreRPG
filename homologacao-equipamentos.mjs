@@ -35,9 +35,9 @@ const BASE = `http://localhost:${porta}`;
 let proc, ids, cm, cj;
 
 
-async function novoItem(cookie, charId, nome, qtd) {
+async function novoItem(cookie, charId, nome, qtd, extra = {}) {
   const r = await req(BASE, "POST", `/characters/${charId}/inventario`, {
-    cookie, body: { name: nome, quantity: qtd, category: "arma" },
+    cookie, body: { name: nome, quantity: qtd, category: "arma", ...extra },
   });
   return r.json?.id ?? r.json?.item?.id;
 }
@@ -84,6 +84,32 @@ try {
   const delM = await req(BASE, "DELETE", `/characters/${ids.charJ}/equipamentos/${eqId2}`, { cookie: cm });
   t("mestre exclui equipamento → 200", delM.status === 200, `status=${delM.status}`);
   t("unidade devolvida (estoque 5)", (await qtdItem(BASE, cj, ids.charJ, "Lança")) === 5, `qtd=${await qtdItem(BASE, cj, ids.charJ, "Lança")}`);
+
+  // ===== Estado interno do inventário não pode ser forjado =====
+  sec("Estado interno equipped não pode ser forjado pelo cliente");
+  {
+    const item = await novoItem(cj, ids.charJ, "Item sem bloqueio forjado", 1, {
+      data: { equipped: true, anotacao: "metadado legítimo" },
+    });
+    const lerItem = async () => {
+      const itens = (await req(BASE, "GET", `/characters/${ids.charJ}/inventario`, { cookie: cj })).json?.itens ?? [];
+      return itens.find((i) => i.id === item);
+    };
+    let salvo = await lerItem();
+    t("POST remove equipped forjado", salvo && !Object.prototype.hasOwnProperty.call(salvo.data ?? {}, "equipped"),
+      JSON.stringify(salvo?.data));
+    t("POST preserva metadado legítimo", salvo?.data?.anotacao === "metadado legítimo");
+    const patch = await req(BASE, "PATCH", `/characters/${ids.charJ}/inventario/${item}`, {
+      cookie: cj, body: { data: { equipped: true, anotacao: "editado" } },
+    });
+    salvo = await lerItem();
+    t("PATCH → 200", patch.status === 200, `status=${patch.status}`);
+    t("PATCH não injeta equipped", salvo && !Object.prototype.hasOwnProperty.call(salvo.data ?? {}, "equipped"),
+      JSON.stringify(salvo?.data));
+    t("PATCH preserva edição legítima", salvo?.data?.anotacao === "editado");
+    const del = await req(BASE, "DELETE", `/characters/${ids.charJ}/inventario/${item}`, { cookie: cj });
+    t("item não fica bloqueado por estado forjado → 200", del.status === 200, `status=${del.status} ${JSON.stringify(del.json)}`);
+  }
 
   // ===== Equipamento manual não cria item =====
   sec("Equipamento manual");
