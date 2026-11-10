@@ -274,15 +274,18 @@ try {
     mkdirSync(gate, { recursive: true });
     const env = envRaiz(r, { MESTRE_TRAVA_GATE_DIR: gate });
 
-    // configuracao/ somente-leitura: a aplicação falha ao substituir a
-    // config E o rollback falha ao recolocá-la → ROLLBACK FALHOU.
+    // configuracao/ somente-leitura E o arquivo 0444: a aplicação falha
+    // ao remover a config e o rollback falha ao sobrescrevê-la
+    // (copyFileSync precisa de escrita no ARQUIVO, não no diretório) →
+    // ROLLBACK FALHOU de verdade.
     chmodSync(join(r, "configuracao"), 0o555);
+    chmodSync(join(r, "configuracao", "servidor.json"), 0o444);
     const r1 = restaurarProc(r, env);
     try {
       await esperarCond(() => verificarTravaInstancia(dbEm(r)) === "em_uso");
       writeFileSync(join(gate, "apos-trava"), "1"); // passa o 1º gate → vai para aplicação
-      // espera o processo chegar ao gate pós-rollback (log ROLLBACK antes dele)
-      const chegou = await esperarCond(() => /ROLLBACK/.test(r1.saida()), 30000, 100);
+      // espera o processo chegar ao gate pós-rollback (log de rollback antes dele)
+      const chegou = await esperarCond(() => /Rollback (concluído|FALHOU)/.test(r1.saida()), 30000, 100);
       t("rollback executado e processo pausado no gate pós-rollback", chegou, r1.saida().slice(-300));
 
       // Trava AINDA segurada durante a pausa pós-rollback: 2º restaurador bloqueado
@@ -305,6 +308,7 @@ try {
       t("flag preservada para retry manual", flagPendente(dbEm(r)) !== null);
       t("trava liberada só após encerramento", verificarTravaInstancia(dbEm(r)) === "livre");
     } finally {
+      chmodSync(join(r, "configuracao", "servidor.json"), 0o644);
       chmodSync(join(r, "configuracao"), 0o755);
       try { r1.p.kill("SIGKILL"); } catch { }
     }
