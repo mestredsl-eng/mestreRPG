@@ -108,7 +108,7 @@ try {
       JSON.stringify(salvo?.data));
     t("PATCH preserva edição legítima", salvo?.data?.anotacao === "editado");
     const del = await req(BASE, "DELETE", `/characters/${ids.charJ}/inventario/${item}`, { cookie: cj });
-    t("item não fica bloqueado por estado forjado → 200", del.status === 200, `status=${del.status} ${JSON.stringify(del.json)}`);
+    t("item não fica bloqueado por estado forjado → 403 (política remove desligada)", del.status === 403, `status=${del.status} ${JSON.stringify(del.json)}`);
   }
 
   // ===== Equipamento manual não cria item =====

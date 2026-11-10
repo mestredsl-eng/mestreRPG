@@ -53,11 +53,11 @@
   - `teste-acervo-campanha.mjs`: 36/36 — aplicação atômica de livros, conflitos, permissões
   - `homologacao-acervo.mjs`: 123/123 — biblioteca global, import/export, backups, soft delete
   - `homologacao-mesa.mjs`: 29/29 — multiplayer, chat, rolagens, turnos, ampulheta, persistência
-  - `homologacao-etapa2.mjs`: 38/38 — patrimônio, financeiro, diário, snapshots
+  - `homologacao-etapa2.mjs`: 46/46 — patrimônio, financeiro, diário, snapshots, concorrência PATCH×HP
   - `teste-equipamentos.mjs`: 79/79 — equipamento/desequipamento
-  - `teste-financeiro-atomico.mjs`: 35/35 — movimentações financeiras atômicas
+  - `teste-financeiro-atomico.mjs`: 40/40 — movimentações financeiras atômicas
   - `teste-moedas-regressao.mjs`: 30/30 — decimais configuráveis
   - `teste-vitalidade-historico.mjs`: 24/24 — histórico de vitalidade
   - `homologacao-hp-historico.mjs`: 16/16 — histórico de HP
   - `teste-venda-estoque.mjs`: 29/29 — venda de itens
-  - `homologacao-equipamentos.mjs`: 25/25 — equipamentos
+  - `homologacao-equipamentos.mjs`: 31/31 — equipamentos, concorrência, persistência
