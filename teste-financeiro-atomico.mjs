@@ -1,9 +1,14 @@
 // Testes — atomicidade do saldo financeiro (lost update).
 // Roda contra CÓPIA isolada do banco em porta livre — nunca toca o definitivo.
-// Concorrência: disparadas N requisições HTTP em paralelo (Promise.all); o
-// better-sqlite3 é síncrono/ single-connection, então a corrida real ocorre
-// nas leituras assíncronas ANTES da transação — exatamente o bug corrigido.
-// O teste verifica os valores PERSISTIDOS no banco, não só as respostas HTTP.
+//
+// Sobre "concorrência": as requisições HTTP são disparadas em paralelo
+// (Promise.all), mas o better-sqlite3 executa cada operação de forma
+// SÍNCRONA em uma única conexão — não existe corrida real entre conexões
+// SQLite independentes neste cenário. O que os testes exercitam é a
+// coerência das decisões financeiras quando múltiplas requisições se
+// intercalam nas etapas assíncronas do servidor (auth, leituras pré-tx)
+// antes de cada transação síncrona. O teste verifica os valores
+// PERSISTIDOS no banco, não só as respostas HTTP.
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
@@ -55,10 +60,15 @@ function cookieAdmin() {
   db.close();
   return `mestre_rpg_session=${encodeURIComponent(token)}`;
 }
-const dbLeitura = () => new Database(BANCO, { readonly: true });
-const saldoDb = (contaId) => dbLeitura().prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents;
-const txCount = (contaId) => dbLeitura().prepare("select count(*) c from money_transactions where account_id=?").get(contaId).c;
-const itemQtd = (itemId) => { const r = dbLeitura().prepare("select quantity from inventory_entries where id=?").get(itemId); return r?.quantity ?? null; };
+// Leituras auxiliares: cada função abre e fecha sua própria conexão
+// (try/finally) para o teste terminar sem handles abertos.
+function comDb(fn) {
+  const db = new Database(BANCO, { readonly: true });
+  try { return fn(db); } finally { db.close(); }
+}
+const saldoDb = (contaId) => comDb((db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
+const txCount = (contaId) => comDb((db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(contaId).c);
+const itemQtd = (itemId) => comDb((db) => db.prepare("select quantity from inventory_entries where id=?").get(itemId)?.quantity ?? null);
 
 async function req(base, metodo, path, { cookie, body } = {}) {
   const r = await fetch(base + "/api" + path, {
@@ -80,10 +90,10 @@ try {
   // ---------- cenário: campanha 'teste' + personagem + contas ----------
   // Personagem inserido direto no banco isolado: as rotas de patrimônio só
   // exigem a linha em `characters` + membership ativa do usuário.
-  const cid = dbLeitura().prepare("select id from campaigns where name='teste'").get().id;
-  const memb = dbLeitura().prepare(
+  const cid = comDb((db) => db.prepare("select id from campaigns where name='teste'").get().id);
+  const memb = comDb((db) => db.prepare(
     "select m.id from memberships m join users u on u.id=m.user_id where m.campaign_id=? and u.username='administrador' and m.status='ativo'"
-  ).get(cid);
+  ).get(cid));
   const charId = crypto.randomUUID();
   {
     const w = new Database(BANCO);
@@ -164,8 +174,30 @@ try {
     t("1×201 + 1×409", statuses[0] === 201 && statuses[1] === 409, statuses.join(","));
     const antes = saldoDb(contaA);
     t("saldo creditado uma única vez (+5.00 → 15.00)", antes === 1500, `db=${antes}`);
-    const txs = dbLeitura().prepare("select count(*) c from money_transactions where request_id=?").get(rid).c;
+    const txs = comDb((db) => db.prepare("select count(*) c from money_transactions where request_id=?").get(rid).c);
     t("1 transação com o requestId", txs === 1, `tx=${txs}`);
+  }
+
+  // ===== 4b. Idempotência de transferência: requestId duplicado =====
+  sec("Idempotência de transferência");
+  {
+    // contaB=200.00, contaC=0.00 neste ponto
+    const rid = `dup-trf-${crypto.randomUUID()}`;
+    const antesB = saldoDb(contaB), antesC = saldoDb(contaC);
+    const corpo = { origemAccountId: contaB, destinoAccountId: contaC, valor: 30, requestId: rid };
+    const [r1, r2] = await Promise.all([
+      req(BASE, "POST", `/characters/${charId}/financeiro/transferir`, { cookie, body: corpo }),
+      req(BASE, "POST", `/characters/${charId}/financeiro/transferir`, { cookie, body: corpo }),
+    ]);
+    const statuses = [r1.status, r2.status].sort((a, b) => a - b);
+    t("transferência duplicada → 1×201 + 1×409", statuses[0] === 201 && statuses[1] === 409, statuses.join(","));
+    t("origem debitada uma única vez (-30.00)", saldoDb(contaB) === antesB - 3000, `antes=${antesB} depois=${saldoDb(contaB)}`);
+    t("destino creditado uma única vez (+30.00)", saldoDb(contaC) === antesC + 3000, `antes=${antesC} depois=${saldoDb(contaC)}`);
+    const par = comDb((db) => db.prepare(
+      "select request_id, kind, amount_cents from money_transactions where request_id in (?,?) order by request_id"
+    ).all(`${rid}:in`, `${rid}:out`));
+    t("exatamente 1 tx de saída e 1 de entrada", par.length === 2 && par.every((x) => x.kind === "transferencia"), JSON.stringify(par));
+    t("valores das txs: -3000 e +3000", par.some((x) => x.amount_cents === -3000) && par.some((x) => x.amount_cents === 3000), JSON.stringify(par.map((x) => x.amount_cents)));
   }
 
   // ===== 5. Compra e venda consistentes =====
@@ -177,7 +209,7 @@ try {
     });
     t("compra 201", compra.status === 201, JSON.stringify(compra.json).slice(0, 120));
     t("saldo após compra = 5.00 (15-10)", saldoDb(contaA) === 500, `db=${saldoDb(contaA)}`);
-    const item = dbLeitura().prepare("select id,quantity from inventory_entries where character_id=? and name='Poção'").get(charId);
+    const item = comDb((db) => db.prepare("select id,quantity from inventory_entries where character_id=? and name='Poção'").get(charId));
     t("item Poção criado com qtd 4", item?.quantity === 4, JSON.stringify(item));
 
     // venda parcial
@@ -228,13 +260,14 @@ try {
         cookie, body: { origemAccountId: contaB, destinoAccountId: contaC, valor: 40 },
       })),
     ];
+    const saldoBAntes = saldoDb(contaB);
     const rs = await Promise.all(ops);
     const entradas = rs.slice(0, 4).filter((r) => r.status === 201).length;
     const saidas = rs.slice(4, 10).filter((r) => r.status === 201).length;
     const transfs = rs.slice(10).filter((r) => r.status === 201).length;
-    // saldo final = 200 + 4×25 - saidasOk×30 - transfsOk×40
+    // saldo final = saldo anterior + entradasOk×25 - saidasOk×30 - transfsOk×40
     const saldoB = saldoDb(contaB);
-    const esperado = 20000 + entradas * 2500 - saidas * 3000 - transfs * 4000;
+    const esperado = saldoBAntes + entradas * 2500 - saidas * 3000 - transfs * 4000;
     t("entradas concorrentes todas ok", entradas === 4, `=${entradas}`);
     t("saldo final bate com soma das operações aceitas", saldoB === esperado, `db=${saldoB} esperado=${esperado}`);
     t("saldo nunca negativo", saldoB >= 0, `db=${saldoB}`);
