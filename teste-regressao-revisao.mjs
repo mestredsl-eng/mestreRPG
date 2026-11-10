@@ -126,8 +126,28 @@ try {
     t("histórico ganhou exatamente 6 eventos", (depois?.historico?.length ?? 0) === nAntes + 6,
       `antes=${nAntes} depois=${depois?.historico?.length}`);
     const ultimos = depois.historico.slice(-6);
-    t("níveis anteriores encadeados sem salto", ultimos.every((e, i) => e.nivelNovo === [0, 1, 2, 1, 0, 1][i]),
-      JSON.stringify(ultimos.map((e) => [e.nivelAnterior, e.nivelNovo])));
+    // Promise.all não garante ordem de chegada ao servidor. A ordem correta
+    // é a ordem serializada no histórico: cada evento parte do nível deixado
+    // pelo anterior, e o motivo identifica qual requisição produziu o evento.
+    const nivelPorMotivo = new Map([
+      ["conc-0", 0], ["conc-1", 1], ["conc-2", 2],
+      ["conc-3", 1], ["conc-4", 0], ["conc-5", 1],
+    ]);
+    const motivos = ultimos.map((e) => e.motivo);
+    const encadeados = ultimos.every((e, i) =>
+      Number.isInteger(e.nivelAnterior) &&
+      Number.isInteger(e.nivelNovo) &&
+      e.nivelNovo === nivelPorMotivo.get(e.motivo) &&
+      e.nivelAnterior === (i === 0 ? (antes?.nivel ?? 0) : ultimos[i - 1].nivelNovo)
+    );
+    t("seis requisições distintas aparecem no histórico",
+      motivos.length === 6 && new Set(motivos).size === 6 &&
+      motivos.every((m) => nivelPorMotivo.has(m)), JSON.stringify(motivos));
+    t("transições persistidas encadeadas sem perda ou salto", encadeados,
+      JSON.stringify(ultimos.map((e) => [e.motivo, e.nivelAnterior, e.nivelNovo])));
+    t("nível atual corresponde ao último evento persistido",
+      depois.nivel === ultimos.at(-1)?.nivelNovo,
+      "nivel=" + depois.nivel + " ultimo=" + ultimos.at(-1)?.nivelNovo);
   }
 
   // ===== 4. amount × casasDecimais =====
