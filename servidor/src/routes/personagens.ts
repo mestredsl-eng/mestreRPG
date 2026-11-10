@@ -608,16 +608,41 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     dadosFinais = comSeloPontos(dadosFinais, { id: req.usuario!.id, nome: await nomeUsuario(req.usuario!.id) });
   }
 
-  await db
-    .update(characters)
-    .set({
-      name: body.data.name ?? p.name,
-      data: dadosFinais,
-      overrides: ehMestre ? overrides : overridesDe(p), // dono não altera overrides
-      status: novoStatus,
-      updatedAt: new Date(),
-    })
-    .where(eq(characters.id, p.id));
+  // O PATCH foi validado a partir do snapshot carregado no início da
+  // requisição. Antes de gravar, compara esse snapshot dentro de uma
+  // transação síncrona: HP, Vitalidade, pontos ou outro PATCH que tenham
+  // sido salvos enquanto validávamos não podem ser sobrescritos por JSON velho.
+  const conflito = db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) return "ausente" as const;
+    const mesmaData = JSON.stringify(atual.data ?? {}) === JSON.stringify(p.data ?? {});
+    const mesmosOverrides = JSON.stringify(atual.overrides ?? {}) === JSON.stringify(p.overrides ?? {});
+    const mesmoUpdatedAt = atual.updatedAt instanceof Date && p.updatedAt instanceof Date
+      ? atual.updatedAt.getTime() === p.updatedAt.getTime()
+      : String(atual.updatedAt) === String(p.updatedAt);
+    if (!mesmaData || !mesmosOverrides || !mesmoUpdatedAt || atual.name !== p.name || atual.status !== p.status) {
+      return "conflito" as const;
+    }
+    tx.update(characters)
+      .set({
+        name: body.data.name ?? atual.name,
+        data: dadosFinais,
+        overrides: ehMestre ? overrides : (atual.overrides ?? {}),
+        status: novoStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(characters.id, p.id))
+      .run();
+    return null;
+  });
+  if (conflito === "ausente") {
+    res.status(404).json({ erro: "Personagem não encontrado" });
+    return;
+  }
+  if (conflito === "conflito") {
+    res.status(409).json({ erro: "A ficha foi alterada por outra operação. Atualize os dados e tente novamente." });
+    return;
+  }
 
   await audit(req, "personagem.atualizado", { characterId: p.id, status: novoStatus });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
