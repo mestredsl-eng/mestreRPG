@@ -838,12 +838,11 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
   const autorNome = await nomeUsuario(req.usuario!.id);
 
-  // Barreira determinística exclusiva de teste (TOCTOU): inerte em
-  // produção — só ativa quando MESTRE_PONTOS_GATE_DIR está definido E o
-  // arquivo "armar" existe no diretório. Sinaliza "chegou" (requisição já
-  // passou pela autorização inicial, imediatamente antes da transação) e
-  // aguarda "liberar", com teto de 10s para nunca travar o endpoint.
-  const gateDir = process.env.MESTRE_PONTOS_GATE_DIR;
+  // Barreira determinística exclusiva de teste (TOCTOU): exige modo de
+  // teste explícito (NODE_ENV=test) E MESTRE_PONTOS_GATE_DIR definido E o
+  // arquivo "armar" no diretório. Em produção qualquer um dos três
+  // ausente faz o endpoint ignorar a configuração por completo.
+  const gateDir = process.env.NODE_ENV === "test" ? process.env.MESTRE_PONTOS_GATE_DIR : undefined;
   if (gateDir && existsSync(join(gateDir, "armar"))) {
     try {
       writeFileSync(join(gateDir, "chegou"), String(Date.now()));
