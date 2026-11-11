@@ -56,6 +56,8 @@ try {
         // campo oculto p/ jogador: requisito pode estar salvo aqui sem que
         // o jogador o veja ou edite — a prévia precisa preservá-lo
         { id: "f-hab", label: "Habilidades", tipo: "selecao_multipla", regraKind: "habilidade", visibilidade: "mestre", editavelPor: "mestre" },
+        // visível para todos, mas só o mestre altera
+        { id: "f-nota", label: "Anotação do mestre", tipo: "texto", editavelPor: "mestre" },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [{ id: "principal", nome: "Principal", pontos: 10 }], custos: { atributo: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } },
@@ -205,6 +207,44 @@ try {
     // e nada disso foi persistido: poderes do jogador continuam vazios
     const gJ = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
     t("prévia segue sem persistir", !JSON.stringify(gJ.json?.ficha?.campos?.["f-poderes"] ?? "").match(/labia|furtivo/), JSON.stringify(gJ.json?.ficha?.campos?.["f-poderes"]));
+  }
+
+  sec("Autorização — campo exclusivo do mestre");
+  {
+    const seed = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-nota": "segredo", "f-hab": ["manipulacao"] } } });
+    t("mestre grava campo exclusivo", seed.status === 200, `status=${seed.status} ${JSON.stringify(seed.json).slice(0, 150)}`);
+
+    // jogador tenta alterar f-nota via PATCH direto -> 400 atômico
+    const atk = await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: J,
+      body: { data: { "f-nota": "hackeado", "f-apelido": "NaoDeviaGravar" } },
+    });
+    t("PATCH em campo exclusivo -> 400", atk.status === 400, `status=${atk.status} ${JSON.stringify(atk.json).slice(0, 200)}`);
+    t("erro indica campo sem permissão", JSON.stringify(atk.json).includes("sem_permissao") || JSON.stringify(atk.json).includes("mestre"), JSON.stringify(atk.json).slice(0, 200));
+    const g1 = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
+    const d1 = g1.json?.ficha?.campos ?? {};
+    t("valor original preservado", d1["f-nota"] === "segredo", JSON.stringify(d1["f-nota"]));
+    t("campo legítimo junto NÃO gravado", d1["f-apelido"] === "Val", JSON.stringify(d1["f-apelido"]));
+
+    // jogador reenvia o MESMO valor -> não é tentativa de alteração
+    const ok = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: J, body: { data: { "f-nota": "segredo", "f-int": 5 } } });
+    t("valor idêntico não rejeita", ok.status === 200, `status=${ok.status} ${JSON.stringify(ok.json).slice(0, 150)}`);
+
+    // escalation: jogador tenta se autoconceder editavelPor via overrides
+    const esc = await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: J,
+      body: { overrides: { "f-nota": { editavelPor: "jogador" }, "f-hab": { editavelPor: "jogador" } }, data: { "f-nota": "hackeado2", "f-hab": [] } },
+    });
+    t("escalation via overrides rejeitada", esc.status === 400, `status=${esc.status}`);
+    const g2 = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: M });
+    const d2 = g2.json?.ficha?.campos ?? {};
+    t("persistido continua 'segredo'", d2["f-nota"] === "segredo", JSON.stringify(d2["f-nota"]));
+    t("f-hab persistido intacto", JSON.stringify(d2["f-hab"] ?? "").includes("manipulacao"), JSON.stringify(d2["f-hab"]));
+    t("overrides do jogador não persistiram", !JSON.stringify(g2.json?.personagem?.overrides ?? g2.json?.overrides ?? {}).includes("f-nota"), JSON.stringify(g2.json?.personagem?.overrides ?? {}).slice(0, 150));
+
+    // mestre altera normalmente (e pode ajustar overrides)
+    const m2 = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-nota": "novo-valor" } } });
+    t("mestre altera campo exclusivo", m2.status === 200, `status=${m2.status}`);
   }
 
   sec("Dados preservados após falha");

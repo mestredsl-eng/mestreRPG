@@ -198,7 +198,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -206,7 +206,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
                       ))}
                     </div>
                   ))}
@@ -261,6 +261,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       {campo.label}
       {campo.obrigatorio && <em className="obrigatorio">*</em>}
       {campo.descricao && <small className="meta">{campo.descricao}</small>}
+      {campo.editavel === false && <small className="meta">somente o mestre altera</small>}
     </span>
   );
 

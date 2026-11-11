@@ -452,6 +452,8 @@ export interface CampoDef {
   visibilidade: string;
   destinatarios?: string[];
   editavelPor: string;
+  /** Editabilidade efetiva para o requisitante (template + overrides + status). */
+  editavel?: boolean;
   usadoEmTestes?: boolean;
   custoPontos?: number;
   custoProgressivo?: number[];
