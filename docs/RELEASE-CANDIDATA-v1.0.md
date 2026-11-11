@@ -5,8 +5,18 @@ tag `v1.0.0` e a publicação da release estão pendentes de autorização
 explícita do responsável.
 
 - **Branch de referência:** `main`
-- **SHA da candidata:** `33090407e354cbd4ac369225a0142b920d5af2a9`
-  (merge da PR #46 — Central de Novidades).
+- **SHAs da candidata (três momentos distintos):**
+  - *Base funcional validada:* `33090407e354cbd4ac369225a0142b920d5af2a9`
+    (merge da PR #46 — Central de Novidades). Todo o código funcional e
+    os resultados de CI documentados abaixo referem-se a esta base e aos
+    merges posteriores de documentação/CI que não alteram funcionalidades.
+  - *Revisão documental final:* merge da PR #47
+    (`2edae410c862330b04d202cf7e18e222806089bd`), que incorporou este
+    documento e a correção do workflow de CI da PR #48
+    (`1bb129f1222685ebb7f6fa2cf1da6eec119fb5b7`).
+  - *SHA efetivo da tag:* a tag `v1.0.0` deverá apontar para o HEAD da
+    `main` conferido imediatamente antes da publicação — **não** para um
+    SHA registrado antecipadamente neste documento.
 - **PRs integradas:** #37 (Etapa 2), #43 (Acervo/suplementos/restauração/
   dados 3D), #44 (financeiro com compras e vendas), #45 (conversão de
   ferimentos em Vitalidade) e #46 (Central de Novidades). A Issue #42 foi
