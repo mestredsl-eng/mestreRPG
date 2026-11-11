@@ -27,6 +27,8 @@ interface Props {
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
+  /** IDs de campos com erro de validação do salvamento — destacam visualmente. */
+  camposComErro?: ReadonlySet<string>;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -37,7 +39,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
@@ -187,7 +189,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -195,7 +197,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
                       ))}
                     </div>
                   ))}
@@ -214,7 +216,7 @@ const TIPOS_LARGOS = new Set(["texto_longo", "tabela", "selecao_nivel", "selecao
 /** Tipos de campo que listam elementos da biblioteca/opções — indicam seção densa. */
 const TIPOS_SELECAO = new Set(["selecao_nivel", "selecao_multipla", "lista"]);
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, destaque }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, comErro, destaque }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
@@ -226,6 +228,8 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   carteiraResumo?: { saldoInicial: number; entradas: number; saidas: number; saldo: number };
   saldoEnviado?: unknown;
   ehMestre?: boolean;
+  /** Campo apontado por erro de validação — ganha destaque e âncora de navegação. */
+  comErro?: boolean;
   /** Primeiro campo da seção de capa (identificação) — ocupa a linha toda. */
   destaque?: boolean;
 }) {
@@ -238,6 +242,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     `campo-tipo-${campo.tipo}`,
     kind ? `campo-kind-${kind}` : "campo-kind-manual",
     (TIPOS_LARGOS.has(campo.tipo) || destaque) ? "campo-largo" : "",
+    comErro ? "campo-com-erro" : "",
   ].filter(Boolean).join(" ");
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
   const opcoesBiblioteca = campo.regraKind ? (biblioteca?.[campo.regraKind] ?? []) : [];
@@ -252,7 +257,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
 
   if (campo.tipo === "calculado") {
     return (
-      <div className={cls}>
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
         {rotulo}
         <output className="calculado">{calculado ?? "—"}</output>
       </div>
@@ -265,7 +270,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   // no input numérico porque faixaAtributo retorna null.
   if (campo.tipo === "inteiro" && faixaAtributo(campo) && (campo.semantico === "atributo" || !!ctxPontos)) {
     return (
-      <div className={cls}>
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
         {rotulo}
         <SeletorAtributo campo={campo} valor={valor ?? campo.padrao} somenteLeitura={somenteLeitura} aoMudar={aoMudar} ctx={ctxPontos} />
       </div>
@@ -275,7 +280,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   if (somenteLeitura) {
     if (campo.tipo === "tabela" && campo.carteira) {
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <CarteiraView campo={campo} valor={valor} somenteLeitura resumo={carteiraResumo} saldoEnviado={saldoEnviado} podeSaldo={false} />
         </div>
@@ -285,7 +290,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       const linhas = valor as Record<string, unknown>[];
       const tot = inventarioTotals(campo, linhas);
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <div className="tabela-leitura">
             {linhas.map((linha, i) => {
@@ -312,7 +317,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     if (campo.tipo === "selecao_nivel") {
       const itens = Array.isArray(valor) ? (valor as { key: string; nivel: number }[]) : [];
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <div className="valor-leitura selecao-nivel-leitura">
             {itens.length === 0 && "—"}
@@ -336,14 +341,14 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
         ? nomeDe(valor)
         : undefined;
     return (
-      <div className={cls}>
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
         {rotulo}
         <div className="valor-leitura">{exibido ?? formatarValor(campo, valor)}</div>
       </div>
     );
   }
 
-  const editavel = (conteudo: ReactNode) => <div className={cls}>{rotulo}{conteudo}</div>;
+  const editavel = (conteudo: ReactNode) => <div id={`ficha-campo-${campo.id}`} className={cls}>{rotulo}{conteudo}</div>;
   const atual = valor ?? campo.padrao;
 
   switch (campo.tipo) {
