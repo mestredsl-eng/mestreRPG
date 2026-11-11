@@ -21,7 +21,7 @@ import {
   type Visibilidade,
   type EditavelPor,
 } from "../lib/ficha.js";
-import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
+import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, nivelExigidoPorHp, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { lerPontos, bonusPontos, comSeloPontos, aplicarBonusPontos } from "../lib/pontos.js";
 import {
   carregarRegras,
@@ -709,7 +709,7 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
   // simultâneas não perdem entradas do histórico (read-modify-write atômico).
   const agora = new Date();
   const autorNome = await nomeUsuario(req.usuario!.id);
-  let resposta: { hp: unknown; deltaHp: number } | null = null;
+  let resposta: { hp: unknown; deltaHp: number; vitalidade?: unknown; ferimento?: { de: number; para: number } } | null = null;
   let erroHp: string | null = null;
   let sumiu = false;
   await db.transaction((tx) => {
@@ -727,9 +727,51 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
       autorNome,
     });
     if (erro) { erroHp = erro; return; }
-    const novosDados = { ...dadosTx, [CHAVE_HP]: novo };
+    const deltaEfetivo = novo.atual - (estado?.atual ?? maxTx);
+    let novosDados: Record<string, unknown> = { ...dadosTx, [CHAVE_HP]: novo };
+    // Conversão de ferimentos: somente quando o HP caiu de fato e a
+    // campanha habilitou a regra. O nível nunca desce automaticamente.
+    let vitalidadeNova: unknown;
+    let ferimento: { de: number; para: number } | undefined;
+    if (deltaEfetivo < 0) {
+      const conv = regras.config.conversaoFerimento;
+      const cfgVit = regras.config.vitalidade;
+      const totalNiveis = cfgVit?.niveis?.length ?? 0;
+      if (conv?.habilitada && totalNiveis > 0) {
+        const pctHp = maxTx > 0 ? (novo.atual / maxTx) * 100 : 0;
+        const exigido = nivelExigidoPorHp(conv, pctHp);
+        if (exigido !== null) {
+          const vitAnt = lerVitalidade(dadosTx);
+          const nivelBase = Math.min(vitAnt.nivel, totalNiveis - 1);
+          const nivelNovo = Math.min(exigido, totalNiveis - 1);
+          if (nivelNovo > nivelBase) {
+            const estadoVit = {
+              ...vitAnt,
+              nivel: nivelNovo,
+              alteradoEm: agora.toISOString(),
+              alteradoPor: req.usuario!.id,
+              historico: [
+                ...(vitAnt.historico ?? []),
+                {
+                  em: agora.toISOString(),
+                  nivelAnterior: nivelBase,
+                  nivelNovo,
+                  motivo: `Ferimento por dano de ${Math.abs(deltaEfetivo)} HP`,
+                  autorId: req.usuario!.id,
+                  autorNome,
+                  origem: "conversao-ferimento" as const,
+                },
+              ].slice(-100),
+            };
+            novosDados = { ...novosDados, [CHAVE_VITALIDADE]: estadoVit };
+            vitalidadeNova = resumoVitalidade(cfgVit, novosDados);
+            ferimento = { de: nivelBase, para: nivelNovo };
+          }
+        }
+      }
+    }
     tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
-    resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: novo.atual - (estado?.atual ?? maxTx) };
+    resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: deltaEfetivo, vitalidade: vitalidadeNova, ferimento };
   });
   if (sumiu) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
   if (erroHp === "maximo") {
@@ -737,9 +779,9 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     return;
   }
   if (erroHp) { res.status(400).json({ erro: erroHp }); return; }
-  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp });
+  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp, ferimento: resposta!.ferimento ?? null });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, hp: resposta!.hp });
+  res.json({ ok: true, hp: resposta!.hp, vitalidade: resposta!.vitalidade, ferimento: resposta!.ferimento });
 });
 
 const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });
@@ -792,6 +834,7 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
           motivo: body.data.motivo?.trim() || null,
           autorId: req.usuario!.id,
           autorNome,
+          origem: "manual" as const,
         },
       ].slice(-100),
     };

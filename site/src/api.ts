@@ -153,7 +153,7 @@ export const api = {
   atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
-    requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"] }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
+    requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"]; vitalidade?: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"]; ferimento?: { de: number; para: number } }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
   alterarVitalidade: (charId: string, nivel: number, motivo?: string) =>
     requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel, motivo }) }),
   /** Bônus individual de pontos — somente mestre. */
@@ -510,7 +510,7 @@ export interface FichaRenderizada {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   vida?: {
     hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null }[] } | null;
+    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null; origem?: string | null }[] } | null;
     podeEditarHp: boolean;
     podeEditarVitalidade: boolean;
   } | null;
@@ -597,6 +597,10 @@ export interface ConfigRegras {
     niveis: { nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[];
     edicaoPor: string;
   };
+  conversaoFerimento?: {
+    habilitada: boolean;
+    limiares: { ate: number; nivel: number }[];
+  };
   dados?: {
     d10SucessoMinimo: number;
   };
@@ -631,7 +635,7 @@ export interface ResultadoValidacaoRegras {
 /** Resumo de HP/Vitalidade (vida.ts) — ficha real ou simulação. */
 export interface VidaResumo {
   hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null }[] } | null;
+  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null; origem?: string | null }[] } | null;
 }
 
 /** Resposta do simulador da prévia do editor (POST /regras/simulacao). */

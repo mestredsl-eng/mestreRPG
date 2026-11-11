@@ -38,6 +38,10 @@ export interface EventoVitalidade {
   motivo: string | null;
   autorId: string | null;
   autorNome: string | null;
+  // Origem da alteração: "manual" (endpoint /vitalidade) ou
+  // "conversao-ferimento" (subida automática por dano de HP).
+  // Ausente em eventos antigos = tratado como manual.
+  origem?: "manual" | "conversao-ferimento";
 }
 
 export interface EstadoVitalidade {
@@ -127,6 +131,21 @@ export function lerVitalidade(dados: Record<string, unknown>): EstadoVitalidade 
     alteradoPor: bruto?.alteradoPor ?? null,
     historico,
   };
+}
+
+/** Nível de vitalidade exigido pelos limiares de HP restante.
+ *  Retorna o maior `nivel` entre as faixas em que `pctHp <= ate`;
+ *  null quando a conversão está desabilitada ou sem limiares. */
+export function nivelExigidoPorHp(
+  conv: ConfigRegras["conversaoFerimento"],
+  pctHp: number
+): number | null {
+  if (!conv?.habilitada || !conv.limiares?.length) return null;
+  let exigido: number | null = null;
+  for (const l of conv.limiares) {
+    if (pctHp <= l.ate && (exigido === null || l.nivel > exigido)) exigido = l.nivel;
+  }
+  return exigido;
 }
 
 /** Resumo para a ficha e para as rolagens. */

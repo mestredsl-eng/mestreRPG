@@ -1185,6 +1185,15 @@ button.vit-nivel:hover { border-color: #4d7ec4; }
 .vit-penalidade { font-size: 0.72rem; color: #8a8f98; }
 .vit-nivel.atual .vit-penalidade { color: #8ab4ff; }
 
+.vit-origem {
+  font-size: 0.68rem;
+  color: #8ab4ff;
+  border: 1px solid #2c4a7c;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+
 .vitalidade-rolagem {
   color: #8ab4ff;
 }

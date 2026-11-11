@@ -8,6 +8,7 @@ import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
   carregarRegras,
   configRegrasSchema,
+  errosConversaoFerimento,
   definicaoElementoSchema,
   validarRegras,
   pontosParaFicha,
@@ -237,6 +238,11 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   }
   const configAtual = { ...(regras.config as Record<string, unknown>) };
   const novo = configRegrasSchema.parse(mesclarParcial(configAtual, body.data as Record<string, unknown>, req.body));
+  const errosConv = errosConversaoFerimento(novo);
+  if (errosConv.length) {
+    res.status(400).json({ erro: errosConv.join(" ") });
+    return;
+  }
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));
   await audit(req, "regras.config.atualizada", {});
   emitirCampanha(req.params.campaignId, "regras:atualizadas", {});

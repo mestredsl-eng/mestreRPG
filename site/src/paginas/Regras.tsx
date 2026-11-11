@@ -495,6 +495,19 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
     if (form.dados && (!Number.isInteger(form.dados.d10SucessoMinimo) || form.dados.d10SucessoMinimo < 2 || form.dados.d10SucessoMinimo > 10)) {
       setErroLocal("Dados (D10): o sucesso mínimo deve ser um número inteiro entre 2 e 10."); return;
     }
+    const conv = form.conversaoFerimento;
+    if (conv?.habilitada) {
+      if (!form.hp?.habilitado) { setErroLocal("Conversão de ferimentos exige Pontos de Vida habilitados."); return; }
+      const totalVit = form.vitalidade?.niveis?.length ?? 0;
+      if (totalVit === 0) { setErroLocal("Conversão de ferimentos exige ao menos um nível de Vitalidade."); return; }
+      const vistos = new Set<number>();
+      for (const [i, l] of (conv.limiares ?? []).entries()) {
+        if (!Number.isFinite(l.ate) || l.ate < 0 || l.ate > 100) { setErroLocal(`Conversão de ferimentos: limiar ${i + 1} com percentual inválido (0 a 100).`); return; }
+        if (vistos.has(l.ate)) { setErroLocal(`Conversão de ferimentos: percentual ${l.ate}% duplicado.`); return; }
+        vistos.add(l.ate);
+        if (!Number.isInteger(l.nivel) || l.nivel < 0 || l.nivel >= totalVit) { setErroLocal(`Conversão de ferimentos: limiar ${i + 1} com nível de vitalidade inválido.`); return; }
+      }
+    }
     // Interpreta custos "semantico: 1,2,3"
     const custos: Record<string, number[]> = {};
     for (const linha of custosTxt.split("\n")) {
@@ -701,6 +714,69 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
           </select>
         </label>
       </div>
+
+      <h4>Conversão de ferimentos</h4>
+      <p className="dica">Ao atingir os limiares configurados de HP, a Vitalidade pode aumentar automaticamente. Recuperar HP não reduz a Vitalidade.</p>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={!!form.conversaoFerimento?.habilitada}
+          onChange={(e) => setForm((f) => ({
+            ...f,
+            conversaoFerimento: { habilitada: e.target.checked, limiares: f.conversaoFerimento?.limiares ?? [] },
+          }))}
+        />
+        Ativar conversão automática de ferimentos
+      </label>
+      {form.conversaoFerimento?.habilitada && (
+        <>
+          {(form.conversaoFerimento.limiares ?? []).map((l, i) => (
+            <div className="linha-ferramentas" key={i}>
+              <label className="checkbox-inline">HP restante ≤
+                <input
+                  type="number" min="0" max="100"
+                  value={l.ate}
+                  onChange={(e) => {
+                    const limiares = [...form.conversaoFerimento!.limiares];
+                    limiares[i] = { ...l, ate: Number(e.target.value) };
+                    setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+                  }}
+                />%
+              </label>
+              <label className="checkbox-inline">→ nível
+                <select
+                  value={l.nivel}
+                  onChange={(e) => {
+                    const limiares = [...form.conversaoFerimento!.limiares];
+                    limiares[i] = { ...l, nivel: Number(e.target.value) };
+                    setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+                  }}
+                >
+                  {(form.vitalidade?.niveis ?? []).map((n, j) => (
+                    <option key={j} value={j}>{n.nome || `Nível ${j + 1}`}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" className="mini perigo" onClick={() => {
+                const limiares = form.conversaoFerimento!.limiares.filter((_, j) => j !== i);
+                setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+              }}>✕</button>
+            </div>
+          ))}
+          <div className="linha-ferramentas">
+            <button type="button" className="secundario" onClick={() => setForm((f) => ({
+              ...f,
+              conversaoFerimento: {
+                habilitada: true,
+                // Índice inicial sempre válido para a escala atual:
+                // escala de 1 nível só aceita índice 0.
+                limiares: [...(f.conversaoFerimento?.limiares ?? []), { ate: 50, nivel: Math.min(1, (f.vitalidade?.niveis?.length ?? 1) - 1) }],
+              },
+            }))}>+ Limite</button>
+          </div>
+          <p className="dica">Ex.: "HP restante ≤ 50% → nível Machucado". Quando o HP cair até o percentual, a Vitalidade sobe para ao menos esse nível. Funciona somente com HP e Vitalidade habilitados.</p>
+        </>
+      )}
 
       <h4>Dados (D10)</h4>
       <div className="grade-form">
