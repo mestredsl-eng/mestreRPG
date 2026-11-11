@@ -55,6 +55,17 @@ const A = cenario.jogadores.a.cookie;
 const B = cenario.jogadores.b.cookie;
 console.log(`servidor teste em ${BASE}`);
 
+// Marca como lida usando a revisão da versão publicada atual
+// (obrigatória desde a correção de leitura desatualizada).
+async function marcarLida(id, cookie, revisao) {
+  let rev = revisao;
+  if (rev === undefined) {
+    const det = await req(BASE, "GET", `/novidades/${id}`, { cookie });
+    rev = det.json?.novidade?.revisao;
+  }
+  return req(BASE, "POST", `/novidades/${id}/lida`, { cookie, body: { revisao: rev } });
+}
+
 let pub1, pub2, pub3;
 try {
   sec("1-4. CRUD administrativo");
@@ -125,10 +136,12 @@ try {
     t("rascunho não aparece para usuário", !ids.includes(pub1.id), ids.join(","));
     const det = await req(BASE, "GET", `/novidades/${pub1.id}`, { cookie: A });
     t("GET detalhe de rascunho -> 404", det.status === 404);
-    const lidaRasc = await req(BASE, "POST", `/novidades/${pub1.id}/lida`, { cookie: A });
+    const lidaRasc = await req(BASE, "POST", `/novidades/${pub1.id}/lida`, { cookie: A, body: { revisao: "x" } });
     t("marcar rascunho como lida -> 404", lidaRasc.status === 404);
-    const inexistent = await req(BASE, "POST", "/novidades/id-inexistente/lida", { cookie: A });
+    const inexistent = await req(BASE, "POST", "/novidades/id-inexistente/lida", { cookie: A, body: { revisao: "x" } });
     t("marcar publicação inexistente -> 404", inexistent.status === 404);
+    const semRev = await req(BASE, "POST", `/novidades/${pub2.id}/lida`, { cookie: A });
+    t("marcar sem revisão -> 400", semRev.status === 400);
 
     // Ordenação determinística: ajusta publicado_em direto no banco
     {
@@ -161,7 +174,7 @@ try {
     const lidasAposLista = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where user_id=?").get(cenario.jogadores.a.id).c);
     t("zero registros de leitura após listagem", lidasAposLista === 0, String(lidasAposLista));
 
-    const marcar = await req(BASE, "POST", `/novidades/${pub2.id}/lida`, { cookie: A });
+    const marcar = await marcarLida(pub2.id, A);
     t("A abre publicação -> marca lida", marcar.status === 200 && marcar.json?.ok === true);
 
     const depois = await req(BASE, "GET", "/novidades", { cookie: A });
@@ -176,7 +189,7 @@ try {
     t("contador de B continua 2", listaB.json?.naoLidas === 2, String(listaB.json?.naoLidas));
 
     // reabrir não duplica
-    await req(BASE, "POST", `/novidades/${pub2.id}/lida`, { cookie: A });
+    await marcarLida(pub2.id, A);
     const duplicatas = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=? and user_id=?").get(pub2.id, cenario.jogadores.a.id).c);
     t("reabrir não duplica registro", duplicatas === 1, String(duplicatas));
   }
@@ -192,8 +205,9 @@ try {
 
   sec("14-15. Remoção e concorrência");
   {
-    // concorrência: 6 marcações simultâneas da pub3 por B
-    await Promise.all(Array.from({ length: 6 }, () => req(BASE, "POST", `/novidades/${pub3.id}/lida`, { cookie: B })));
+    // concorrência: 6 marcações simultâneas da pub3 por B (mesma revisão)
+    const revPub3 = (await req(BASE, "GET", `/novidades/${pub3.id}`, { cookie: B })).json?.novidade?.revisao;
+    await Promise.all(Array.from({ length: 6 }, () => req(BASE, "POST", `/novidades/${pub3.id}/lida`, { cookie: B, body: { revisao: revPub3 } })));
     const regsB = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=? and user_id=?").get(pub3.id, cenario.jogadores.b.id).c);
     t("marcações concorrentes não duplicam", regsB === 1, String(regsB));
 
@@ -218,8 +232,8 @@ try {
       cookie: M, body: { titulo: "Patch notes v1", conteudo: "versão inicial", estado: "publicada" },
     })).json?.novidade;
     t("pub4 criada publicada", !!p4?.id);
-    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: A });
-    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: B });
+    await marcarLida(p4.id, A);
+    await marcarLida(p4.id, B);
     const lidasAntes = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
     t("A e B leram pub4", lidasAntes === 2, String(lidasAntes));
 
@@ -232,8 +246,8 @@ try {
     t("A vê pub4 como não lida", listaA.json?.novidades?.find((n) => n.id === p4.id)?.lida === false);
 
     // releem; PATCH sem mudança efetiva -> preserva
-    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: A });
-    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: B });
+    await marcarLida(p4.id, A);
+    await marcarLida(p4.id, B);
     const edMesmo = await req(BASE, "PATCH", `/admin/novidades/${p4.id}`, { cookie: M, body: { titulo: "Patch notes v1.1", resumo: null } });
     t("PATCH sem mudança efetiva -> leiturasInvalidas=false", edMesmo.json?.leiturasInvalidas === false);
     const lidasPreservadas = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
@@ -281,6 +295,76 @@ try {
     await req(BASE, "POST", `/admin/novidades/${p5.id}/despublicar`, { cookie: M });
     const auditsDes = comDb(BANCO, (db) => db.prepare("select count(*) c from audit_logs where action='novidade.despublicada' and json_extract(detail,'$.novidadeId')=?").get(p5.id).c);
     t("despublicar duplicado não duplica auditoria", auditsDes === 1, String(auditsDes));
+  }
+
+  sec("18. Leitura vinculada à revisão exibida");
+  {
+    const p6 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Com revisão", conteudo: "v1", estado: "publicada" },
+    })).json?.novidade;
+    // usuário obtém a listagem (revisão R1)
+    const listaAntiga = (await req(BASE, "GET", "/novidades", { cookie: A })).json?.novidades?.find((n) => n.id === p6.id);
+    const revAntiga = listaAntiga?.revisao;
+    t("listagem expõe token de revisão", typeof revAntiga === "string" && revAntiga.length > 0, String(revAntiga));
+
+    // admin altera o conteúdo -> leituras invalidadas e revisão muda
+    await req(BASE, "PATCH", `/admin/novidades/${p6.id}`, { cookie: M, body: { conteudo: "v2 editado" } });
+    const listaNova = (await req(BASE, "GET", "/novidades", { cookie: A })).json?.novidades?.find((n) => n.id === p6.id);
+    t("revisão muda após edição de conteúdo", listaNova?.revisao !== revAntiga, `${revAntiga} -> ${listaNova?.revisao}`);
+
+    // aba antiga tenta marcar com a revisão velha -> rejeitada
+    const velha = await req(BASE, "POST", `/novidades/${p6.id}/lida`, { cookie: A, body: { revisao: revAntiga } });
+    t("revisão desatualizada -> 409", velha.status === 409, `status=${velha.status}`);
+    const regs = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=? and user_id=?").get(p6.id, cenario.jogadores.a.id).c);
+    t("nenhuma leitura indevida registrada", regs === 0, String(regs));
+
+    // revisão inventada também é rejeitada
+    const fake = await req(BASE, "POST", `/novidades/${p6.id}/lida`, { cookie: A, body: { revisao: "deadbeefdeadbeef" } });
+    t("revisão inexistente -> 409", fake.status === 409);
+
+    // usuário atualiza (nova revisão) e marca a versão atual -> ok
+    const atual = await marcarLida(p6.id, A);
+    t("versão atual marca como lida", atual.status === 200 && atual.json?.ok === true);
+    const listaFinal = (await req(BASE, "GET", "/novidades", { cookie: A })).json?.novidades?.find((n) => n.id === p6.id);
+    t("publicação aparece lida após atualização", listaFinal?.lida === true);
+  }
+
+  sec("19. Normalização de resumo/versão persistida");
+  {
+    // campos null: espaços/não-preenchimento NÃO podem gerar "alteração"
+    const p7 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Normalização", estado: "publicada" },
+    })).json?.novidade;
+    await marcarLida(p7.id, A);
+
+    const edEspacoV = await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { versao: "   " } });
+    t("versao null->espaços: sem invalidação", edEspacoV.json?.leiturasInvalidas === false);
+    t("versao espaços persistida como null", edEspacoV.json?.novidade?.versao === null, JSON.stringify(edEspacoV.json?.novidade?.versao));
+
+    const edEspacoR = await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { resumo: "   " } });
+    t("resumo null->espaços: sem invalidação", edEspacoR.json?.leiturasInvalidas === false);
+    t("resumo espaços persistido como null", edEspacoR.json?.novidade?.resumo === null);
+
+    // preenchido -> vazio MUDA o exibido -> invalida
+    await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { versao: "1.0", resumo: "texto" } });
+    await marcarLida(p7.id, A);
+    const edEsvazia = await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { resumo: null, versao: "" } });
+    t("preenchido->vazio invalida leituras", edEsvazia.json?.leiturasInvalidas === true);
+    t("valores esvaziados persistem null", edEsvazia.json?.novidade?.resumo === null && edEsvazia.json?.novidade?.versao === null);
+
+    // PATCH repetido com os mesmos valores normalizados -> preserva
+    await marcarLida(p7.id, A);
+    const edRep1 = await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { resumo: "  ", versao: " " } });
+    const edRep2 = await req(BASE, "PATCH", `/admin/novidades/${p7.id}`, { cookie: M, body: { resumo: null, versao: null } });
+    t("PATCH normalizado repetido não invalida", edRep1.json?.leiturasInvalidas === false && edRep2.json?.leiturasInvalidas === false);
+    const leiturasFim = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p7.id).c);
+    t("leituras preservadas no ciclo idempotente", leiturasFim === 1, String(leiturasFim));
+
+    // criação já normaliza: versao " " não vira selo "v "
+    const p8 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Versão espaços", versao: "  ", resumo: "   ", estado: "publicada" },
+    })).json?.novidade;
+    t("criação normaliza versao/resumo vazios", p8?.versao === null && p8?.resumo === null, JSON.stringify({ v: p8?.versao, r: p8?.resumo }));
   }
 
   sec("Validações e integridade extra");

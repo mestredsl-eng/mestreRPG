@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
+import { createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
 import { novidades, novidadesLeituras } from "../db/schema.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
@@ -41,6 +42,18 @@ function conteudoAlterado(
   });
 }
 
+/**
+ * Token de revisão do conteúdo visível — hash estável dos campos que o
+ * usuário vê. Qualquer alteração efetiva muda o token; republicar sem
+ * edição mantém o mesmo token (e as leituras continuam válidas).
+ */
+function revisaoDe(n: typeof novidades.$inferSelect): string {
+  return createHash("sha256")
+    .update(JSON.stringify([n.titulo, n.resumo, n.conteudo, n.versao, n.categoria]))
+    .digest("hex")
+    .slice(0, 16);
+}
+
 function publico(n: typeof novidades.$inferSelect, lida = false) {
   return {
     id: n.id,
@@ -52,6 +65,7 @@ function publico(n: typeof novidades.$inferSelect, lida = false) {
     estado: n.estado,
     publicadoEm: n.publicadoEm,
     criadoEm: n.createdAt,
+    revisao: revisaoDe(n),
     lida,
   };
 }
@@ -99,22 +113,42 @@ novidadesRouter.get("/:id", async (req, res) => {
   res.json({ novidade: publico(row.n, row.lidaEm != null) });
 });
 
+const lidaSchema = z.object({ revisao: z.string().min(1).max(64) });
+
 /**
  * POST /api/novidades/:id/lida — marca como lida SOMENTE o usuário da
- * sessão. Publicação precisa existir e estar publicada. INSERT OR IGNORE
- * + índice único → idempotente e seguro sob concorrência.
+ * sessão. Exige `revisao` = token devolvido pela listagem/detalhe da
+ * versão EFETIVAMENTE exibida. Verificação + gravação acontecem na mesma
+ * transação síncrona: se o admin alterou o conteúdo entre a listagem e a
+ * abertura, a revisão não bate → 409 e NENHUMA leitura é registrada.
+ * INSERT OR IGNORE + índice único → idempotente sob concorrência.
  */
 novidadesRouter.post("/:id/lida", async (req, res) => {
-  const [pub] = await db
-    .select({ id: novidades.id })
-    .from(novidades)
-    .where(and(eq(novidades.id, req.params.id), eq(novidades.estado, "publicada")))
-    .limit(1);
-  if (!pub) {
+  const body = lidaSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Informe a revisão da publicação exibida" });
+    return;
+  }
+  const resultado = db.transaction((tx) => {
+    const [pub] = tx
+      .select()
+      .from(novidades)
+      .where(and(eq(novidades.id, req.params.id), eq(novidades.estado, "publicada")))
+      .limit(1)
+      .all();
+    if (!pub) return "inexistente" as const;
+    if (revisaoDe(pub) !== body.data.revisao) return "desatualizada" as const;
+    tx.run(sql`insert or ignore into novidade_leituras (id, novidade_id, user_id, lida_em) values (${crypto.randomUUID()}, ${pub.id}, ${req.usuario!.id}, ${Date.now()})`);
+    return "ok" as const;
+  });
+  if (resultado === "inexistente") {
     res.status(404).json({ erro: "Publicação não encontrada" });
     return;
   }
-  await db.run(sql`insert or ignore into novidade_leituras (id, novidade_id, user_id, lida_em) values (${crypto.randomUUID()}, ${pub.id}, ${req.usuario!.id}, ${Date.now()})`);
+  if (resultado === "desatualizada") {
+    res.status(409).json({ erro: "Publicação atualizada", mensagem: "O conteúdo mudou desde que você o abriu. Recarregue para ver a versão nova." });
+    return;
+  }
   res.json({ ok: true });
 });
 
@@ -158,9 +192,9 @@ novidadesAdminRouter.post("/", async (req, res) => {
   await db.insert(novidades).values({
     id,
     titulo: d.titulo,
-    resumo: d.resumo ?? null,
+    resumo: normTexto(d.resumo),
     conteudo: d.conteudo ?? "",
-    versao: d.versao ?? null,
+    versao: normTexto(d.versao),
     categoria: d.categoria ?? "novidade",
     estado: d.estado ?? "rascunho",
     publicadoEm: publicada ? agora : null,
@@ -188,9 +222,11 @@ novidadesAdminRouter.patch("/:id", async (req, res) => {
   const d = body.data;
   const dados: Partial<typeof novidades.$inferInsert> = { updatedAt: new Date() };
   if (d.titulo !== undefined) dados.titulo = d.titulo;
-  if (d.resumo !== undefined) dados.resumo = d.resumo ?? null;
+  // normaliza ANTES de persistir: vazio/espaços viram null — o que está
+  // gravado é exatamente o que a comparação e a UI enxergam.
+  if (d.resumo !== undefined) dados.resumo = normTexto(d.resumo);
   if (d.conteudo !== undefined) dados.conteudo = d.conteudo;
-  if (d.versao !== undefined) dados.versao = d.versao ?? null;
+  if (d.versao !== undefined) dados.versao = normTexto(d.versao);
   if (d.categoria !== undefined) dados.categoria = d.categoria;
   if (d.estado !== undefined) {
     dados.estado = d.estado;

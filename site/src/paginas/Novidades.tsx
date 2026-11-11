@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Novidade } from "../api";
+import { ApiError, api, type Novidade } from "../api";
 import { Modal } from "../Modal";
+import { useNotificar } from "../Notificacoes";
 
 const CATEGORIA_LABEL: Record<Novidade["categoria"], string> = {
   novidade: "Novidade",
@@ -18,6 +19,7 @@ export default function Novidades({ aoMudarLeitura }: { aoMudarLeitura?: () => v
   const [itens, setItens] = useState<Novidade[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aberta, setAberta] = useState<Novidade | null>(null);
+  const { notificar } = useNotificar();
 
   const carregar = useCallback(async () => {
     try {
@@ -36,14 +38,22 @@ export default function Novidades({ aoMudarLeitura }: { aoMudarLeitura?: () => v
 
   const abrir = async (n: Novidade) => {
     setAberta(n);
-    // Marca como lida somente ao abrir de fato; já lida → API é idempotente.
+    // Marca como lida somente ao abrir de fato, vinculada à revisão do
+    // conteúdo exibido — se o admin editou nesse meio-tempo, o servidor
+    // rejeita (409) e recarregamos a lista para mostrar a versão nova.
     if (!n.lida) {
       try {
-        await api.marcarNovidadeLida(n.id);
+        await api.marcarNovidadeLida(n.id, n.revisao);
         setItens((lista) => lista?.map((x) => (x.id === n.id ? { ...x, lida: true } : x)) ?? lista);
         setAberta((atual) => (atual ? { ...atual, lida: true } : atual));
         aoMudarLeitura?.();
-      } catch {
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 409) {
+          notificar("Esta publicação foi atualizada. Reabra para ver a versão nova.", "info");
+          setAberta(null);
+          await carregar();
+          aoMudarLeitura?.();
+        }
         // Falha de marcação não impede a leitura do conteúdo.
       }
     }

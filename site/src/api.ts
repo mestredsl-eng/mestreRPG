@@ -24,9 +24,11 @@ export interface UsuarioAdmin extends Usuario {
 
 export class ApiError extends Error {
   detalhes?: unknown;
-  constructor(mensagem: string, detalhes?: unknown) {
+  status: number;
+  constructor(mensagem: string, detalhes?: unknown, status = 0) {
     super(mensagem);
     this.detalhes = detalhes;
+    this.status = status;
   }
 }
 
@@ -38,8 +40,8 @@ async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise
   });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const c = corpo as { erro?: string; detalhes?: unknown };
-    throw new ApiError(c.erro ?? `HTTP ${res.status}`, c.detalhes);
+    const c = corpo as { erro?: string; mensagem?: string; detalhes?: unknown };
+    throw new ApiError(c.mensagem ?? c.erro ?? `HTTP ${res.status}`, c.detalhes, res.status);
   }
   return corpo as T;
 }
@@ -302,8 +304,8 @@ export const api = {
     requisicao<{ naoLidas: number }>("/novidades/nao-lidas"),
   obterNovidade: (id: string) =>
     requisicao<{ novidade: Novidade }>(`/novidades/${id}`),
-  marcarNovidadeLida: (id: string) =>
-    requisicao<{ ok: boolean }>(`/novidades/${id}/lida`, { method: "POST" }),
+  marcarNovidadeLida: (id: string, revisao: string) =>
+    requisicao<{ ok: boolean }>(`/novidades/${id}/lida`, { method: "POST", body: JSON.stringify({ revisao }) }),
   // Administração de novidades (somente admin)
   listarNovidadesAdmin: () =>
     requisicao<{ novidades: NovidadeAdmin[] }>("/admin/novidades"),
@@ -1224,6 +1226,8 @@ export interface Novidade {
   estado: EstadoNovidade;
   publicadoEm: string | null;
   criadoEm: string;
+  /** Token da versão do conteúdo exibido — obrigatório para marcar como lida. */
+  revisao: string;
   lida?: boolean;
 }
 
