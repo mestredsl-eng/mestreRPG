@@ -1134,24 +1134,25 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           category: itemDados?.category ?? tplTx?.category ?? undefined,
           location: itemDados?.location, condition: itemDados?.condition,
           weight: itemDados?.weight ?? (tplData.weight as number | undefined),
-          data: {
+          data: (() => {
             // Mescla rasa e consciente: dados do template são a base e a
             // personalização do item sobrescreve campo a campo — o schema
             // aplica default {} em item.data, então nunca usar
-            // `item.data ?? tplData` ({} não é ausência). Campos internos
-            // (valueCents, aquisicao, origem, operacaoId, templateId) são
-            // gravados depois e sempre definidos pelo servidor.
-            ...tplData,
-            ...(itemDados?.data ?? {}),
-            // templateId vem exclusivamente do template validado na
-            // transação (tplTx.id) — identificadores enviados pelo
-            // cliente no item nunca são fonte de autoridade.
-            ...(tplTx ? { templateId: tplTx.id } : {}),
-            valueCents: unitCents ?? undefined,
-            totalValueCents: cents,
-            aquisicao: { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd },
-            origem: "compra", operacaoId: requestId,
-          },
+            // `item.data ?? tplData` ({} não é ausência).
+            const mesclado: Record<string, unknown> = { ...tplData, ...(itemDados?.data ?? {}) };
+            // Sanitização explícita: templateId nunca é aceito de
+            // item.data, item.templateId ou tplData — só tplTx.id
+            // (template relido e validado na transação) pode persistir.
+            delete mesclado.templateId;
+            if (tplTx) mesclado.templateId = tplTx.id;
+            // Campos internos sempre definidos pelo servidor.
+            mesclado.valueCents = unitCents ?? undefined;
+            mesclado.totalValueCents = cents;
+            mesclado.aquisicao = { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd };
+            mesclado.origem = "compra";
+            mesclado.operacaoId = requestId;
+            return mesclado;
+          })(),
           createdAt: agora, updatedAt: agora,
         }).run();
       } else if (itemTx) {

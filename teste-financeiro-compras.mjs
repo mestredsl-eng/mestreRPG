@@ -498,6 +498,58 @@ try {
     t("C: auditoria e item apontam o mesmo template", auditC2?.templateId === tpl2Id && dC2?.templateId === tpl2Id, `audit=${auditC2?.templateId} item=${dC2?.templateId}`);
     t("C: personalização preservada", dC2?.poder === 7);
     t("C: requestId vincula operação", auditC2?.requestId === ridA2, JSON.stringify(auditC2));
+
+    // ===== Sanitização de templateId dentro de item.data =====
+    // Caso D: compra avulsa com templateId falso DENTRO de item.data
+    const ridD = crypto.randomUUID();
+    const compraD = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 10,
+      item: { name: "Avulso com data falsa", data: { templateId: "template-falso-enviado-pelo-cliente", cor: "azul" } },
+      requestId: ridD,
+    });
+    t("D: compra avulsa com data.templateId falso → 201", compraD.status === 201, `status=${compraD.status}`);
+    const dD = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridD);
+    t("D: templateId falso NÃO persistido", dD?.templateId === undefined, JSON.stringify(dD?.templateId));
+    t("D: demais dados personalizados preservados", dD?.cor === "azul");
+    const auditD = JSON.parse(
+      comDb(BANCO, (db) => db.prepare("select detail from audit_logs where action='financeiro.operacao' and detail like ? order by created_at desc limit 1").get(`%${ridD}%`)?.detail) ?? "{}",
+    );
+    t("D: auditoria com templateId null", auditD?.templateId === null, JSON.stringify(auditD));
+    t("D: requestId coerente na auditoria", auditD?.requestId === ridD);
+
+    // Caso E: template válido + item.data.templateId falso → validado vence
+    const ridE = crypto.randomUUID();
+    const compraE = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id,
+      item: { name: "Relíquia Antiga", data: { templateId: "outro-template-falso", poder: 5 } },
+      requestId: ridE,
+    });
+    t("E: template válido + data.templateId falso → 201", compraE.status === 201, `status=${compraE.status}`);
+    const dE = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridE);
+    t("E: data.templateId = tplTx.id validado", dE?.templateId === tpl2Id, JSON.stringify(dE?.templateId));
+    t("E: personalização preservada", dE?.poder === 5 && dE?.raridade === "lendaria");
+    const auditE = JSON.parse(
+      comDb(BANCO, (db) => db.prepare("select detail from audit_logs where action='financeiro.operacao' and detail like ? order by created_at desc limit 1").get(`%${ridE}%`)?.detail) ?? "{}",
+    );
+    t("E: auditoria = mesmo ID validado", auditE?.templateId === tpl2Id && auditE?.requestId === ridE);
+
+    // Caso F: templateId falso dentro de tplData não prevalece
+    // (adultera o data do template via API do catálogo)
+    await req(BASE, "PATCH", `/campaigns/${cenario.campId}/inventario/${tpl2Id}`, {
+      cookie: mestre, body: { data: { raridade: "rara", templateId: "tpl-falso-no-template" } },
+    });
+    const ridF = crypto.randomUUID();
+    const compraF = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id, requestId: ridF,
+    });
+    t("F: compra com tplData adulterado → 201", compraF.status === 201, `status=${compraF.status}`);
+    const dF = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridF);
+    t("F: templateId persistido = tplTx.id (não o do tplData)", dF?.templateId === tpl2Id, JSON.stringify(dF?.templateId));
+    t("F: atributos do template preservados", dF?.raridade === "rara");
+    // restaura o template original para não afetar outras seções
+    await req(BASE, "PATCH", `/campaigns/${cenario.campId}/inventario/${tpl2Id}`, {
+      cookie: mestre, body: { data: { raridade: "lendaria", poder: 10, cargas: 3 } },
+    });
   }
 
   // ===== Correção: unitário não representável não vira sugestão =====
