@@ -33,6 +33,10 @@ try {
   await req(BASE, "POST", ep, { cookie: M, body: { kind: "defeito", key: "covardia", name: "Covardia", definition: { disponivel: true } } });
   await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "teleporte", name: "Teleporte", definition: { dependencias: [{ kind: "defeito", key: "covardia" }], disponivel: true } } });
   await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "mente", name: "Mente aguçada", definition: { prerequisitos: [{ kind: "atributo", key: "inteligencia", nivel: 3 }], disponivel: true } } });
+  await req(BASE, "POST", ep, { cookie: M, body: { kind: "habilidade", key: "manipulacao", name: "Manipulação", definition: { disponivel: true } } });
+  await req(BASE, "POST", ep, { cookie: M, body: { kind: "habilidade", key: "furtividade", name: "Furtividade", definition: { disponivel: true } } });
+  await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "labia", name: "Lábia", definition: { dependencias: [{ kind: "habilidade", key: "manipulacao" }], disponivel: true } } });
+  await req(BASE, "POST", ep, { cookie: M, body: { kind: "poder", key: "furtivo", name: "Presença furtiva", definition: { dependencias: [{ kind: "habilidade", key: "furtividade" }], disponivel: true } } });
 
   // modelo de ficha com atributos + seleções de biblioteca + obrigatório
   const mod = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Validação" } });
@@ -49,6 +53,11 @@ try {
         // IDs legítimos que colidem com chaves internas do payload de erro
         { id: "pontos", label: "Pontos", tipo: "inteiro", minimo: 0 },
         { id: "erros", label: "Erros", tipo: "inteiro", minimo: 0 },
+        // campo oculto p/ jogador: requisito pode estar salvo aqui sem que
+        // o jogador o veja ou edite — a prévia precisa preservá-lo
+        { id: "f-hab", label: "Habilidades", tipo: "selecao_multipla", regraKind: "habilidade", visibilidade: "mestre", editavelPor: "mestre" },
+        // visível para todos, mas só o mestre altera
+        { id: "f-nota", label: "Anotação do mestre", tipo: "texto", editavelPor: "mestre" },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [{ id: "principal", nome: "Principal", pontos: 10 }], custos: { atributo: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } },
@@ -102,6 +111,140 @@ try {
     const detP = r.json?.detalhes;
     t("chave 'pontos' presente", detP && detP["pontos"] !== undefined, JSON.stringify(detP).slice(0, 200));
     t("chave 'erros' presente", detP && detP["erros"] !== undefined, JSON.stringify(detP).slice(0, 200));
+  }
+
+  sec("Prévia de pontos retorna erros de regras (somente leitura)");
+  {
+    const base = { "f-apelido": "Val", "f-forca": 2, "f-int": 3 };
+    // rascunho com Teleporte sem Covardia -> dependência aparece na prévia
+    const r1 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [], "f-poderes": ["teleporte"] } },
+    });
+    t("prévia 200", r1.status === 200, `status=${r1.status}`);
+    const errs1 = r1.json?.validacao?.erros ?? [];
+    t("prévia expõe dependência", errs1.some((e) => e.mensagem.includes("Teleporte") && e.mensagem.includes("Covardia")), JSON.stringify(errs1).slice(0, 300));
+    // corrigindo o rascunho o erro some
+    const r2 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte"] } },
+    });
+    const errs2 = r2.json?.validacao?.erros ?? [];
+    t("prévia sem erro após corrigir", !errs2.some((e) => e.mensagem.includes("Teleporte")), JSON.stringify(errs2).slice(0, 300));
+    // removendo o defeito o erro reaparece
+    const r3 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [], "f-poderes": ["teleporte"] } },
+    });
+    t("prévia reflete remoção do requisito", (r3.json?.validacao?.erros ?? []).some((e) => e.mensagem.includes("Teleporte")));
+    // pontos insuficientes aparecem na prévia
+    const r4 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-forca": 9, "f-int": 9 } },
+    });
+    t("prévia expõe pontos insuficientes", (r4.json?.validacao?.erros ?? []).some((e) => e.codigo === "pontos" || e.mensagem.toLowerCase().includes("ponto")), JSON.stringify(r4.json?.validacao?.erros).slice(0, 300));
+    // limite de poderes excedido aparece na prévia (máx. 1 por personagem)
+    const r5 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte", "mente"] } },
+    });
+    const errs5 = r5.json?.validacao?.erros ?? [];
+    t("prévia expõe limite excedido", errs5.some((e) => e.codigo === "limite_poderes" || e.mensagem.includes("Limite")), JSON.stringify(errs5).slice(0, 300));
+    // voltando ao limite o erro some (Mente tem pré-requisito próprio — ok ter outros erros)
+    const r6 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte"] } },
+    });
+    const errs6 = r6.json?.validacao?.erros ?? [];
+    t("prévia limpa limite ao respeitar", !errs6.some((e) => e.codigo === "limite_poderes" || e.mensagem.includes("Limite")), JSON.stringify(errs6).slice(0, 300));
+    // nada foi gravado: ficha salva não ganhou os poderes do rascunho
+    const g = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
+    const d = g.json?.ficha?.campos ?? {};
+    t("prévia não gravou nada", !JSON.stringify(d["f-poderes"] ?? "").includes("teleporte"), JSON.stringify(d["f-poderes"]));
+  }
+
+  sec("Prévia preserva campos ocultos/não-editáveis");
+  {
+    // Lábia depende de Manipulação — que vive no campo oculto f-hab
+    // (visibilidade/edição: mestre). O mestre grava o requisito.
+    const seed = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-hab": ["manipulacao"] } } });
+    t("mestre grava campo oculto", seed.status === 200, `status=${seed.status} ${JSON.stringify(seed.json).slice(0, 150)}`);
+
+    const base2 = { "f-apelido": "Val", "f-forca": 2, "f-int": 3 };
+    const errosDe = (r) => r.json?.validacao?.erros ?? [];
+
+    // rascunho do jogador não inclui f-hab (ele não a vê): a prévia deve
+    // mesclar sobre os persistidos e NÃO acusar dependência ausente.
+    const r1 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J, body: { dados: { ...base2, "f-poderes": ["labia"] } },
+    });
+    t("prévia reconhece requisito em campo oculto", !errosDe(r1).some((e) => e.mensagem.includes("Lábia")), JSON.stringify(errosDe(r1)).slice(0, 300));
+
+    // jogador tenta enviar f-hab vazio para "remover" o requisito:
+    // o campo não é editável por ele -> valor ignorado, persistido mantido.
+    const r2 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J, body: { dados: { ...base2, "f-hab": [], "f-poderes": ["labia"] } },
+    });
+    t("alteração em campo oculto é ignorada", !errosDe(r2).some((e) => e.mensagem.includes("Lábia")), JSON.stringify(errosDe(r2)).slice(0, 300));
+    const gM = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: M });
+    t("dado persistido do campo oculto intacto", JSON.stringify(gM.json?.ficha?.campos?.["f-hab"] ?? "").includes("manipulacao"), JSON.stringify(gM.json?.ficha?.campos?.["f-hab"]));
+
+    // dependência realmente ausente: Presença furtiva exige Furtividade,
+    // que não está em nenhum campo -> erro deve aparecer.
+    const r3 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J, body: { dados: { ...base2, "f-poderes": ["furtivo"] } },
+    });
+    const errs3 = errosDe(r3);
+    t("prévia acusa dependência realmente ausente", errs3.some((e) => e.mensagem.includes("Presença furtiva") && e.mensagem.includes("Furtividade")), JSON.stringify(errs3).slice(0, 300));
+    t("sem vazamento de campo oculto nas mensagens", !errs3.some((e) => e.campoId === "f-hab" || e.mensagem.includes("Habilidades")), JSON.stringify(errs3).slice(0, 300));
+
+    // corrigir: rascunho com Lábia (requisito oculto presente) -> sem erro
+    const r4 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: M, body: { dados: { ...base2, "f-hab": ["manipulacao"], "f-poderes": ["labia"] } },
+    });
+    t("mestre pré-visualiza com campo oculto editável", !errosDe(r4).some((e) => e.mensagem.includes("Lábia")), JSON.stringify(errosDe(r4)).slice(0, 300));
+
+    // e nada disso foi persistido: poderes do jogador continuam vazios
+    const gJ = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
+    t("prévia segue sem persistir", !JSON.stringify(gJ.json?.ficha?.campos?.["f-poderes"] ?? "").match(/labia|furtivo/), JSON.stringify(gJ.json?.ficha?.campos?.["f-poderes"]));
+  }
+
+  sec("Autorização — campo exclusivo do mestre");
+  {
+    const seed = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-nota": "segredo", "f-hab": ["manipulacao"] } } });
+    t("mestre grava campo exclusivo", seed.status === 200, `status=${seed.status} ${JSON.stringify(seed.json).slice(0, 150)}`);
+
+    // jogador tenta alterar f-nota via PATCH direto -> 400 atômico
+    const atk = await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: J,
+      body: { data: { "f-nota": "hackeado", "f-apelido": "NaoDeviaGravar" } },
+    });
+    t("PATCH em campo exclusivo -> 400", atk.status === 400, `status=${atk.status} ${JSON.stringify(atk.json).slice(0, 200)}`);
+    t("erro indica campo sem permissão", JSON.stringify(atk.json).includes("sem_permissao") || JSON.stringify(atk.json).includes("mestre"), JSON.stringify(atk.json).slice(0, 200));
+    const g1 = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
+    const d1 = g1.json?.ficha?.campos ?? {};
+    t("valor original preservado", d1["f-nota"] === "segredo", JSON.stringify(d1["f-nota"]));
+    t("campo legítimo junto NÃO gravado", d1["f-apelido"] === "Val", JSON.stringify(d1["f-apelido"]));
+
+    // jogador reenvia o MESMO valor -> não é tentativa de alteração
+    const ok = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: J, body: { data: { "f-nota": "segredo", "f-int": 5 } } });
+    t("valor idêntico não rejeita", ok.status === 200, `status=${ok.status} ${JSON.stringify(ok.json).slice(0, 150)}`);
+
+    // escalation: jogador tenta se autoconceder editavelPor via overrides
+    const esc = await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: J,
+      body: { overrides: { "f-nota": { editavelPor: "jogador" }, "f-hab": { editavelPor: "jogador" } }, data: { "f-nota": "hackeado2", "f-hab": [] } },
+    });
+    t("escalation via overrides rejeitada", esc.status === 400, `status=${esc.status}`);
+    const g2 = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: M });
+    const d2 = g2.json?.ficha?.campos ?? {};
+    t("persistido continua 'segredo'", d2["f-nota"] === "segredo", JSON.stringify(d2["f-nota"]));
+    t("f-hab persistido intacto", JSON.stringify(d2["f-hab"] ?? "").includes("manipulacao"), JSON.stringify(d2["f-hab"]));
+    t("overrides do jogador não persistiram", !JSON.stringify(g2.json?.personagem?.overrides ?? g2.json?.overrides ?? {}).includes("f-nota"), JSON.stringify(g2.json?.personagem?.overrides ?? {}).slice(0, 150));
+
+    // mestre altera normalmente (e pode ajustar overrides)
+    const m2 = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-nota": "novo-valor" } } });
+    t("mestre altera campo exclusivo", m2.status === 200, `status=${m2.status}`);
   }
 
   sec("Dados preservados após falha");

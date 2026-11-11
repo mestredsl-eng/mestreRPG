@@ -41,6 +41,8 @@ try {
         { id: "f-defeitos", label: "Defeitos", tipo: "selecao_nivel", regraKind: "defeito" },
         { id: "f-poderes", label: "Poderes", tipo: "selecao_multipla", regraKind: "poder" },
         { id: "f-apelido", label: "Apelido", tipo: "texto", obrigatorio: true },
+        // visível para todos, mas só o mestre altera — deve ficar somente leitura
+        { id: "f-nota", label: "Anotação do mestre", tipo: "texto", editavelPor: "mestre" },
         // IDs legítimos que colidem com chaves internas do payload de erro
         { id: "pontos", label: "Pontos", tipo: "tabela", colunas: [{ key: "sit", label: "Situação", tipo: "selecao", opcoes: ["ativo", "inativo"] }] },
         { id: "erros", label: "Erros", tipo: "tabela", colunas: [{ key: "mot", label: "Motivo", tipo: "selecao", opcoes: ["x", "y"] }] },
@@ -78,9 +80,21 @@ try {
 
     await p.getByRole("button", { name: "Editar ficha" }).click();
     await p.waitForTimeout(1000);
+    // campo exclusivo do mestre: sem input editável + dica visível
+    const notaInputs = await p.locator("#ficha-campo-f-nota input, #ficha-campo-f-nota textarea, #ficha-campo-f-nota select").count();
+    t(`${nome}: campo do mestre sem input`, notaInputs === 0, `inputs=${notaInputs}`);
+    const notaTexto = await p.locator("#ficha-campo-f-nota").innerText().catch(() => "");
+    t(`${nome}: dica 'somente o mestre' visível`, notaTexto.includes("somente o mestre"), notaTexto.slice(0, 150));
     // marca Teleporte sem Covardia -> dependência violada
     await p.locator("#ficha-campo-f-poderes").getByText("Teleporte").click();
-    await p.waitForTimeout(600);
+    await p.waitForTimeout(1400); // debounce 300ms + requisição
+
+    // prévia ao vivo: erro de regra aparece antes mesmo de salvar
+    const previa = p.locator(".simulacao-erros");
+    const previaVisivel = await previa.isVisible().catch(() => false);
+    const previaTexto = previaVisivel ? await previa.innerText() : "";
+    t(`${nome}: prévia mostra dependência ao vivo`, previaVisivel && previaTexto.includes("Teleporte") && previaTexto.includes("Covardia"), previaTexto.slice(0, 300));
+
     await p.getByRole("button", { name: "Salvar" }).click();
     await p.waitForTimeout(1200);
 
@@ -116,7 +130,10 @@ try {
     await p.waitForTimeout(400);
     const bolinha = p.locator("#ficha-campo-f-defeitos .bolinha").first();
     if (await bolinha.count()) await bolinha.click();
-    await p.waitForTimeout(400);
+    await p.waitForTimeout(1400); // debounce + requisição
+    // prévia: erro some assim que o requisito é atendido
+    const previaApos = await p.locator(".simulacao-erros").innerText().catch(() => "");
+    t(`${nome}: prévia limpa após corrigir`, !previaApos.includes("Teleporte") || !(await p.locator(".simulacao-erros").isVisible().catch(() => false)), previaApos.slice(0, 200));
     await p.getByRole("button", { name: "Salvar" }).click();
     await p.waitForTimeout(1500);
     const salvo = await p.locator("text=Ficha salva").count();

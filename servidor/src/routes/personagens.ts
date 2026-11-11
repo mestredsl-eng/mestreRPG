@@ -75,6 +75,18 @@ function overridesDe(personagem: typeof characters.$inferSelect): Overrides {
   return (personagem.overrides ?? {}) as Overrides;
 }
 
+/** Comparação tolerante para detectar alteração real de um campo:
+ *  null/undefined/"" equivalem a "vazio"; escalares comparam por valor. */
+function mesmoValorCampo(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown) => (v === undefined || v === null || v === "" ? null : v);
+  const na = norm(a), nb = norm(b);
+  if (na === nb) return true;
+  if (typeof na === "object" || typeof nb === "object") {
+    return JSON.stringify(na ?? null) === JSON.stringify(nb ?? null);
+  }
+  return String(na) === String(nb);
+}
+
 /**
  * Monta a ficha para resposta:
  * - ehMestre: tudo + calculados
@@ -110,7 +122,16 @@ function montarFicha(
   for (const secao of estrutura.secoes) {
     const camposVisiveis = visMap.get(secao.id) ?? [];
     if (!camposVisiveis.length && !temFilhoVisivel(secao.id)) continue;
-    estruturaFiltrada.secoes.push({ ...secao, campos: camposVisiveis });
+    estruturaFiltrada.secoes.push({
+      ...secao,
+      // editável efetivo para ESTE requisitante (template + overrides +
+      // status) — o frontend usa para desabilitar campos exclusivos do
+      // mestre em vez de deixar o jogador "achar" que salvou.
+      campos: camposVisiveis.map((c) => ({
+        ...c,
+        editavel: campoEditavelPor(c, overrides[c.id], ehMestre, personagem.status),
+      })),
+    });
     for (const c of camposVisiveis) {
       if (c.tipo === "calculado") continue;
       // Carteira: o valor do campo são só as movimentações (array);
@@ -425,10 +446,11 @@ const previaPontosSchema = z.object({
 });
 
 /**
- * POST /api/characters/:characterId/pontos-previa — saldo de pontos para um
- * rascunho de dados, sem salvar. Usa exatamente o mesmo pipeline do GET
- * (custos da biblioteca, seleção e transferências de reservas), respeitando
- * a visibilidade do solicitante. Não substitui a validação do PATCH.
+ * POST /api/characters/:characterId/pontos-previa — saldo de pontos e erros
+ * de regras para um rascunho de dados, sem salvar. Usa exatamente o mesmo
+ * pipeline do GET (custos da biblioteca, seleção e transferências de
+ * reservas + validarRegras), respeitando a visibilidade do solicitante.
+ * Não substitui a validação do PATCH.
  */
 personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
@@ -447,6 +469,42 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     return;
   }
   const regras = await carregarRegras(acesso.personagem.campaignId);
+
+  // Mesma semântica do PATCH: o rascunho só altera campos que o solicitante
+  // pode editar (template + overrides + status); campos ocultos ou
+  // não-editáveis preservam o valor persistido — um jogador não consegue
+  // influenciar a validação enviando valores artificiais para campos
+  // que não deveria ver. Nada é persistido.
+  const p = acesso.personagem;
+  const overrides = overridesDe(p);
+  const dadosPersistidos = (p.data ?? {}) as Record<string, unknown>;
+  const estruturaPrev = carregada.estrutura;
+  const carteirasSaldoPrev = new Set<string>();
+  for (const c of todosCampos(estruturaPrev)) {
+    if (!c.carteira) continue;
+    const saldoOk = acesso.ehMestre || c.carteira.saldoEditavelPor !== "mestre";
+    const campoOk = acesso.ehMestre || campoEditavelPor(c, overrides[c.id], false, p.status);
+    if (saldoOk && campoOk) carteirasSaldoPrev.add(c.id);
+  }
+  let dadosMesclados = dadosPersistidos;
+  const rascunho = body.data.dados ?? {};
+  if (Object.keys(rascunho).length > 0) {
+    const vf = acesso.ehMestre
+      ? validarFicha(estruturaPrev, rascunho, { estrito: false, aplicarPadroes: false, carteirasSaldo: carteirasSaldoPrev })
+      : validarFicha(estruturaPrev, rascunho, {
+          apenasCamposPermitidos: new Set(
+            todosCampos(estruturaPrev)
+              .filter((c) => campoEditavelPor(c, overrides[c.id], false, p.status))
+              .map((c) => c.id)
+          ),
+          aplicarPadroes: false,
+          carteirasSaldo: carteirasSaldoPrev,
+        });
+    // vf.dados só contém campos permitidos e normalizados — chaves ocultas
+    // ou inválidas enviadas pelo cliente são descartadas aqui.
+    dadosMesclados = { ...dadosPersistidos, ...(vf.dados ?? {}) };
+  }
+
   const ficha = montarFicha(
     acesso.personagem,
     carregada.estrutura,
@@ -455,9 +513,11 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     req.usuario!.id,
     acesso.membershipId,
     regras,
-    body.data.dados
+    dadosMesclados
   );
-  res.json({ pontos: ficha.pontos });
+  // ficha.validacao já reflete o rascunho (dadosOverride) e filtra erros
+  // de campos invisíveis para não-mestre — mesma regra do GET.
+  res.json({ pontos: ficha.pontos, validacao: ficha.validacao });
 });
 
 const atualizarSchema = z.object({
@@ -489,7 +549,12 @@ personagensRouter.patch("/:characterId", async (req, res) => {
 
   const carregada = p.templateVersionId ? await carregarEstrutura(p.templateVersionId) : null;
   const estrutura = carregada?.estrutura ?? { versao: 1 as const, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
-  const overrides = { ...overridesDe(p), ...(body.data.overrides ?? {}) } as Overrides;
+  const overridesPersistidos = overridesDe(p);
+  // Overrides enviados pelo cliente só valem para o mestre (que pode
+  // ajustar permissões do campo). Para o jogador a autorização usa
+  // EXCLUSIVAMENTE os overrides persistidos — caso contrário ele se
+  // concederia editavelPor:"jogador" num único request.
+  const overrides = { ...overridesPersistidos, ...(ehMestre ? (body.data.overrides ?? {}) : {}) } as Overrides;
   const dados = { ...((p.data ?? {}) as Record<string, unknown>), ...(body.data.data ?? {}) };
 
   // Carteiras cujo saldo inicial o requerente pode alterar: mestre sempre;
@@ -509,6 +574,18 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     for (const campo of todosCampos(estrutura)) {
       const ov = overrides[campo.id];
       if (campoEditavelPor(campo, ov, false, p.status)) permitidos.add(campo.id);
+    }
+    // Rejeita tentativa de alterar campo não editável: valor enviado
+    // diferente do persistido -> 400 atômico (nada é gravado, inclusive
+    // os campos legítimos que vieram junto). Valor idêntico ao salvo é
+    // ignorado silenciosamente — a ficha pode reenviar a ficha inteira.
+    const dadosAtuais = (p.data ?? {}) as Record<string, unknown>;
+    for (const campo of todosCampos(estrutura)) {
+      if (permitidos.has(campo.id) || !(campo.id in body.data.data)) continue;
+      if (!mesmoValorCampo(body.data.data[campo.id], dadosAtuais[campo.id])) {
+        res.status(400).json({ erro: `Sem permissão para alterar o campo "${campo.label}"`, detalhes: { campoId: campo.id, codigo: "sem_permissao", mensagem: `O campo "${campo.label}" só pode ser alterado pelo mestre` } });
+        return;
+      }
     }
     const validacao = validarFicha(estrutura, body.data.data, { apenasCamposPermitidos: permitidos, aplicarPadroes: false, carteirasSaldo });
     if (!validacao.ok) {
