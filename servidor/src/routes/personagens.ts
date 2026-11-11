@@ -448,6 +448,42 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     return;
   }
   const regras = await carregarRegras(acesso.personagem.campaignId);
+
+  // Mesma semântica do PATCH: o rascunho só altera campos que o solicitante
+  // pode editar (template + overrides + status); campos ocultos ou
+  // não-editáveis preservam o valor persistido — um jogador não consegue
+  // influenciar a validação enviando valores artificiais para campos
+  // que não deveria ver. Nada é persistido.
+  const p = acesso.personagem;
+  const overrides = overridesDe(p);
+  const dadosPersistidos = (p.data ?? {}) as Record<string, unknown>;
+  const estruturaPrev = carregada.estrutura;
+  const carteirasSaldoPrev = new Set<string>();
+  for (const c of todosCampos(estruturaPrev)) {
+    if (!c.carteira) continue;
+    const saldoOk = acesso.ehMestre || c.carteira.saldoEditavelPor !== "mestre";
+    const campoOk = acesso.ehMestre || campoEditavelPor(c, overrides[c.id], false, p.status);
+    if (saldoOk && campoOk) carteirasSaldoPrev.add(c.id);
+  }
+  let dadosMesclados = dadosPersistidos;
+  const rascunho = body.data.dados ?? {};
+  if (Object.keys(rascunho).length > 0) {
+    const vf = acesso.ehMestre
+      ? validarFicha(estruturaPrev, rascunho, { estrito: false, aplicarPadroes: false, carteirasSaldo: carteirasSaldoPrev })
+      : validarFicha(estruturaPrev, rascunho, {
+          apenasCamposPermitidos: new Set(
+            todosCampos(estruturaPrev)
+              .filter((c) => campoEditavelPor(c, overrides[c.id], false, p.status))
+              .map((c) => c.id)
+          ),
+          aplicarPadroes: false,
+          carteirasSaldo: carteirasSaldoPrev,
+        });
+    // vf.dados só contém campos permitidos e normalizados — chaves ocultas
+    // ou inválidas enviadas pelo cliente são descartadas aqui.
+    dadosMesclados = { ...dadosPersistidos, ...(vf.dados ?? {}) };
+  }
+
   const ficha = montarFicha(
     acesso.personagem,
     carregada.estrutura,
@@ -456,7 +492,7 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     req.usuario!.id,
     acesso.membershipId,
     regras,
-    body.data.dados
+    dadosMesclados
   );
   // ficha.validacao já reflete o rascunho (dadosOverride) e filtra erros
   // de campos invisíveis para não-mestre — mesma regra do GET.
