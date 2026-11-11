@@ -66,8 +66,15 @@ jobs:
       - run: npm ci
       - name: Build workspaces
         run: npm run build
+      # Sem --with-deps: a etapa apt é ponto único de falha (o mirror
+      # azure.archive.ubuntu.com dos runners ficou indisponível por DNS e
+      # derrubou o job antes dos testes). A imagem ubuntu-latest já traz
+      # as libs gráficas necessárias (Chrome/Firefox/Edge pré-instalados);
+      # o step seguinte comprova o launch antes das suítes.
       - name: Chromium para Playwright
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
+      - name: Verificar inicialização do Chromium
+        run: node -e "import('playwright').then(async ({ chromium }) => { const b = await chromium.launch(); await b.close(); console.log('chromium launch ok'); })"
       - name: Suítes de navegador
         run: |
           set -e
