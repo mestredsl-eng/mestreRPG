@@ -254,6 +254,108 @@ try {
     t("saldo creditado uma única vez (+10.00)", saldoDb(contaJ1b) === antes + 1000, `antes=${antes} depois=${saldoDb(contaJ1b)}`);
   }
 
+  // ===== Correção: valor abaixo da menor unidade monetária =====
+  sec("Valor que arredonda para zero é rejeitado");
+  {
+    const saldoAntes = saldoDb(contaJ1b);
+    const itensAntes = itensDb(charJ1).length;
+    const txAntes = txCount(contaJ1b);
+    const casos = [
+      ["compra 0.001", { tipo: "compra", accountId: contaJ1b, valor: 0.001, item: { name: "Centavo fracionado" } }],
+      ["compra 0.004", { tipo: "compra", accountId: contaJ1b, valor: 0.004, item: { name: "Quase zero" } }],
+      ["compra -1", { tipo: "compra", accountId: contaJ1b, valor: -1, item: { name: "Negativo" } }],
+      ["compra NaN→null", { tipo: "compra", accountId: contaJ1b, valor: null, item: { name: "NaN" } }],
+    ];
+    for (const [nome, body] of casos) {
+      const r = await operacao(charJ1, j1.cookie, body);
+      t(`${nome} → 400`, r.status === 400, `status=${r.status}`);
+    }
+    // 0.005 arredonda para 1 centavo (meio centavo para cima) → aceito
+    const r005 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 0.005, item: { name: "Meio centavo" },
+    });
+    t("compra 0.005 → 201 (1 centavo)", r005.status === 201, `status=${r005.status}`);
+    const saldoApos005 = saldoDb(contaJ1b);
+    t("débito de exatamente 1 centavo", saldoApos005 === saldoAntes - 1, `antes=${saldoAntes} depois=${saldoApos005}`);
+    // 0.01 e 1.00 aceitos
+    const r001 = await operacao(charJ1, j1.cookie, { tipo: "compra", accountId: contaJ1b, valor: 0.01, item: { name: "Um centavo" } });
+    t("compra 0.01 → 201", r001.status === 201, `status=${r001.status}`);
+    const r100 = await operacao(charJ1, j1.cookie, { tipo: "compra", accountId: contaJ1b, valor: 1, item: { name: "Um real" } });
+    t("compra 1.00 → 201", r100.status === 201, `status=${r100.status}`);
+    // nada das rejeitadas vazou (0.01→1 cent + 1.00→100 cent = 101)
+    t("saldo consistente após rejeições", saldoDb(contaJ1b) === saldoApos005 - 101, `depois=${saldoDb(contaJ1b)}`);
+    t("itens rejeitados não gravados", !itensDb(charJ1).some((i) => ["Centavo fracionado", "Quase zero", "Negativo", "NaN"].includes(i.name)));
+
+    // mesmos valores na VENDA — usa o item "Um real"
+    const itemReal = itensDb(charJ1).find((i) => i.name === "Um real");
+    const saldoVendAntes = saldoDb(contaJ1b);
+    const txVendAntes = txCount(contaJ1b);
+    for (const [nome, valor] of [["venda 0.001", 0.001], ["venda 0.004", 0.004], ["venda -1", -1]]) {
+      const r = await operacao(charJ1, j1.cookie, { tipo: "venda", accountId: contaJ1b, valor, itemId: itemReal.id });
+      t(`${nome} → 400`, r.status === 400, `status=${r.status}`);
+    }
+    t("estoque intacto após vendas rejeitadas", itemDb(itemReal.id)?.quantity === 1);
+    t("saldo intacto após vendas rejeitadas", saldoDb(contaJ1b) === saldoVendAntes);
+    t("sem tx de venda rejeitada", txCount(contaJ1b) === txVendAntes);
+  }
+
+  // ===== Correção: moeda da conta selecionada =====
+  sec("Operação na moeda da conta");
+  {
+    // configura EUR como moeda secundária da campanha
+    const cfgRes = await req(BASE, "PUT", `/campaigns/${cenario.campId}/regras/config`, {
+      cookie: mestre, body: { financeiro: { moedas: [{ codigo: "EUR", nome: "Euro", simbolo: "€" }] } },
+    });
+    t("moeda EUR configurada", cfgRes.status === 200, `status=${cfgRes.status}`);
+    const contaEur = await mkConta(charJ1, j1.cookie, "Conta Euro", 50, { currency: "EUR" });
+    t("conta EUR criada", !!contaEur);
+    const rid = crypto.randomUUID();
+    const compra = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaEur, valor: 10, quantidade: 1,
+      item: { name: "Mapa EUR" }, requestId: rid,
+    });
+    t("compra em EUR → 201", compra.status === 201, `status=${compra.status} ${JSON.stringify(compra.json).slice(0, 120)}`);
+    const txEur = comDb(BANCO, (db) => db.prepare("select currency,amount_cents,kind from money_transactions where request_id=?").get(rid));
+    t("tx registrada em EUR (-10.00)", txEur?.currency === "EUR" && txEur?.amount_cents === -1000, JSON.stringify(txEur));
+    const itemEur = itensDb(charJ1).find((i) => i.name === "Mapa EUR");
+    const venda = await operacao(charJ1, j1.cookie, {
+      tipo: "venda", accountId: contaEur, valor: 12, itemId: itemEur?.id,
+    });
+    t("venda em EUR → 201", venda.status === 201, `status=${venda.status}`);
+    const txVenda = comDb(BANCO, (db) => db.prepare("select currency,amount_cents from money_transactions where kind='venda' and account_id=? order by created_at desc limit 1").get(contaEur));
+    t("crédito em EUR (+12.00)", txVenda?.currency === "EUR" && txVenda?.amount_cents === 1200, JSON.stringify(txVenda));
+    // saldo EUR: 50 - 10 + 12 = 52
+    t("saldo EUR final = 52.00", saldoDb(contaEur) === 5200, `db=${saldoDb(contaEur)}`);
+  }
+
+  // ===== Correção: valor unitário de referência após venda parcial =====
+  sec("Preço unitário estável após venda parcial");
+  {
+    // 2 unidades por 20 cada → total 40; depois vende 1 por 20
+    const compra = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 40, quantidade: 2,
+      item: { name: "Machado de prova" },
+    });
+    t("compra 2×20 → 201", compra.status === 201, `status=${compra.status}`);
+    const item = itensDb(charJ1).find((i) => i.name === "Machado de prova");
+    const d1 = JSON.parse(item?.data ?? "{}");
+    t("valueCents = unitário (2000), não total", d1.valueCents === 2000, `valueCents=${d1.valueCents}`);
+    t("totalValueCents = 4000 preservado", d1.totalValueCents === 4000, `total=${d1.totalValueCents}`);
+    const venda = await operacao(charJ1, j1.cookie, {
+      tipo: "venda", accountId: contaJ1b, valor: 20, itemId: item.id, quantidade: 1,
+    });
+    t("venda de 1 unidade → 201", venda.status === 201, `status=${venda.status}`);
+    const d2 = JSON.parse(itemDb(item.id)?.data ?? "{}");
+    t("unitário permanece 20 após venda parcial (não vira 40)", d2.valueCents === 2000, `valueCents=${d2.valueCents}`);
+    t("estoque restante = 1", itemDb(item.id)?.quantity === 1);
+    // segunda venda parcial sucessiva
+    const v2 = await operacao(charJ1, j1.cookie, {
+      tipo: "venda", accountId: contaJ1b, valor: 20, itemId: item.id, quantidade: 1,
+    });
+    t("segunda venda parcial → 201 (item some)", v2.status === 201, `status=${v2.status}`);
+    t("item removido após venda total", !itensDb(charJ1).some((i) => i.id === item.id));
+  }
+
   // ===== 17. Históricos coerentes =====
   sec("Histórico financeiro ↔ patrimônio");
   {

@@ -347,9 +347,12 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
   const [ocupado, setOcupado] = useState(false);
   const reqId = useRef(crypto.randomUUID()).current;
   const casas = fin?.config.casasDecimais ?? 2;
-  const moeda = fin?.config.moedaPrincipal ?? "";
+  // A moeda do valor é a da CONTA selecionada — nunca a principal por
+  // padrão (o backend movimenta o valor nominal na moeda da conta).
+  const contaSel = fin?.contas.find((c) => c.id === contaId);
+  const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
-  const valido = !!contaId && Number(qtd) > 0 && Number(valorUnit) >= 0 && (templateId !== "" || nome.trim().length > 0);
+  const valido = !!contaId && Number(qtd) > 0 && Number(valorUnit) > 0 && (templateId !== "" || nome.trim().length > 0);
   const submeter = async (e: FormEvent) => {
     e.preventDefault();
     if (ocupado || !valido) return;
@@ -394,6 +397,7 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
               ))}
             </select>
           </label>
+          {contaSel && <p className="meta">Valor movimentado na moeda da conta: {moeda}.</p>}
           <p className="meta">Total: {fmtOp(total, casas)} {moeda}</p>
           <div className="linha">
             <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar compra"}</button>
@@ -419,18 +423,21 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
   const [ocupado, setOcupado] = useState(false);
   const reqId = useRef(crypto.randomUUID()).current;
   const casas = fin?.config.casasDecimais ?? 2;
-  const moeda = fin?.config.moedaPrincipal ?? "";
+  const contaSel = fin?.contas.find((c) => c.id === contaId);
+  const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
 
   useEffect(() => {
     if (fin && valorUnit === "") {
       const vc = Number(item.data?.valueCents ?? 0);
-      if (vc > 0) setValorUnit(+(vc / 10 ** casas / item.quantity).toFixed(casas));
+      // valueCents é o valor UNITÁRIO de aquisição — não dividir pela
+      // quantidade restante (vendas parciais não alteram o unitário).
+      if (vc > 0) setValorUnit(+(vc / 10 ** casas).toFixed(casas));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fin]);
 
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
-  const valido = !!contaId && Number(qtd) > 0 && Number(qtd) <= item.quantity && Number(valorUnit) >= 0;
+  const valido = !!contaId && Number(qtd) > 0 && Number(qtd) <= item.quantity && Number(valorUnit) > 0;
   const submeter = async (e: FormEvent) => {
     e.preventDefault();
     if (ocupado || !valido) return;
@@ -463,6 +470,7 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
               ))}
             </select>
           </label>
+          {contaSel && <p className="meta">Valor creditado na moeda da conta: {moeda}.</p>}
           <p className="meta">Total a receber: {fmtOp(total, casas)} {moeda}</p>
           <div className="linha">
             <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar venda"}</button>

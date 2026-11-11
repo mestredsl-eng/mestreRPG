@@ -1037,6 +1037,12 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
 
   const casas = cfg.casasDecimais;
   const cents = paraCentavos(body.data.valor, casas);
+  // valor positivo no schema pode arredondar para zero na unidade interna
+  // (ex.: 0,001 com 2 casas) — rejeita antes de qualquer escrita.
+  if (!Number.isFinite(cents) || cents <= 0) {
+    res.status(400).json({ erro: "Valor inválido ou abaixo da menor unidade monetária" });
+    return;
+  }
   const isCompra = body.data.tipo === "compra";
   const sinal = isCompra ? -1 : 1;
 
@@ -1122,7 +1128,10 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           data: {
             ...(itemDados?.data ?? tplData),
             ...(itemDados?.templateId || body.data.templateId ? { templateId: itemDados?.templateId ?? body.data.templateId } : {}),
-            valueCents: cents, origem: "compra", operacaoId: requestId,
+            // valueCents = valor UNITÁRIO de aquisição (referência de preço);
+            // totalValueCents preserva o total pago pela operação.
+            valueCents: Math.round(cents / qtd), totalValueCents: cents,
+            origem: "compra", operacaoId: requestId,
           },
           createdAt: agora, updatedAt: agora,
         }).run();
