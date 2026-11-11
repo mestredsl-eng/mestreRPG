@@ -46,6 +46,7 @@ jobs:
             teste-moedas-regressao.mjs \
             teste-vitalidade-historico.mjs \
             teste-venda-estoque.mjs \
+            teste-financeiro-compras.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs
           do echo "===== $s ====="; node "$s"; done
@@ -74,6 +75,7 @@ jobs:
             teste-acessibilidade.mjs \
             homologacao-hp-historico.mjs \
             homologacao-patrimonio.mjs \
+            homologacao-compras-vendas.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs

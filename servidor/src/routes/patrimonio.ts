@@ -9,6 +9,7 @@ import {
   vehicles,
   financialAccounts,
   moneyTransactions,
+  itemTemplates,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
@@ -1012,9 +1013,10 @@ const operacaoSchema = z.object({
   accountId: z.string().min(1),
   valor: z.number().positive(),
   descricao: z.string().max(500).optional(),
-  // compra: dados do item; venda: itemId do inventário
+  // compra: dados do item (ou templateId do catálogo); venda: itemId do inventário
   itemId: z.string().optional(),
   item: itemSchema.optional(),
+  templateId: z.string().optional(),
   quantidade: z.number().positive().optional(),
   contraparte: z.string().max(160).optional(),
   requestId: z.string().max(120).optional(),
@@ -1035,6 +1037,12 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
 
   const casas = cfg.casasDecimais;
   const cents = paraCentavos(body.data.valor, casas);
+  // valor positivo no schema pode arredondar para zero na unidade interna
+  // (ex.: 0,001 com 2 casas) — rejeita antes de qualquer escrita.
+  if (!Number.isFinite(cents) || cents <= 0) {
+    res.status(400).json({ erro: "Valor inválido ou abaixo da menor unidade monetária" });
+    return;
+  }
   const isCompra = body.data.tipo === "compra";
   const sinal = isCompra ? -1 : 1;
 
@@ -1048,8 +1056,8 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
       res.status(400).json({ erro: `Quantidade indisponível (estoque: ${it.quantity})` });
       return;
     }
-  } else if (!body.data.item) {
-    res.status(400).json({ erro: "Compra requer dados do item" }); return;
+  } else if (!body.data.item && !body.data.templateId) {
+    res.status(400).json({ erro: "Compra requer dados do item ou templateId do catálogo" }); return;
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
@@ -1057,6 +1065,9 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   let novoSaldo = 0;
   let saldoInsuficiente = false;
   let estoqueInsuficiente = false;
+  // ID do template EFETIVAMENTE validado na transação — única fonte
+  // autorizada para data.templateId e para a auditoria.
+  let templateValidado: string | null = null;
   try {
     db.transaction((tx) => {
       // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
@@ -1069,8 +1080,11 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
       const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
       if (saldoNovo < piso) { saldoInsuficiente = true; return; }
 
-      // 2) Re-lê o item dentro da transação (venda): estoque atual.
+      // 2) Re-lê o item/template dentro da transação: estoque atual e
+      //    dados do catálogo são lidos no momento da escrita — um item
+      //    do catálogo desativado ou alterado não é confiado do cliente.
       let itemTx: typeof inventoryEntries.$inferSelect | null = null;
+      let tplTx: typeof itemTemplates.$inferSelect | null = null;
       let qtdVenda = 0;
       if (!isCompra) {
         const [it] = tx.select().from(inventoryEntries)
@@ -1080,6 +1094,13 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         qtdVenda = body.data.quantidade ?? it.quantity;
         if (qtdVenda > it.quantity) { estoqueInsuficiente = true; return; }
         itemTx = it;
+      } else if (body.data.templateId) {
+        const [tpl] = tx.select().from(itemTemplates)
+          .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
+          .limit(1).all();
+        if (!tpl) throw new Error("template_sumiu");
+        tplTx = tpl;
+        templateValidado = tpl.id;
       }
 
       // 3) Movimentação financeira (requestId → idempotência por UNIQUE)
@@ -1089,21 +1110,49 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
         accountId: contaTx.id, amountCents: sinal * cents,
         balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
-        counterparty: body.data.contraparte ?? null,
-        description: body.data.descricao ?? (isCompra ? "Compra" : "Venda"),
+        counterparty: body.data.contraparte ?? (itemTx ? itemTx.name : null),
+        description: body.data.descricao ?? (isCompra ? (tplTx ? `Compra: ${tplTx.name}` : "Compra") : `Venda: ${itemTx?.name ?? "item"}`),
         requestId, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
       tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
 
-      // 4) Inventário
-      if (isCompra && body.data.item) {
-        const qtd = body.data.quantidade ?? body.data.item.quantity ?? 1;
+      // 4) Inventário — o item criado guarda operacaoId (= requestId da
+      //    movimentação financeira) para vincular patrimônio ↔ financeiro.
+      if (isCompra) {
+        const tplData = (tplTx?.data ?? {}) as Record<string, unknown>;
+        const itemDados = body.data.item;
+        const qtd = body.data.quantidade ?? itemDados?.quantity ?? 1;
+        // Referência de preço unitário só existe quando cents/qtd é
+        // inteiro na menor unidade — totais ínfimos por unidade
+        // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
+        const unitExato = cents / qtd;
+        const unitCents = Number.isInteger(unitExato) ? unitExato : null;
         tx.insert(inventoryEntries).values({
           id: crypto.randomUUID(), characterId: a.personagem.id,
-          name: body.data.item.name, quantity: qtd, description: body.data.item.description,
-          category: body.data.item.category, location: body.data.item.location,
-          condition: body.data.item.condition, weight: body.data.item.weight,
-          data: { ...body.data.item.data, valueCents: cents, origem: "compra" },
+          name: itemDados?.name ?? tplTx!.name, quantity: qtd,
+          description: itemDados?.description ?? tplTx?.description ?? undefined,
+          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          location: itemDados?.location, condition: itemDados?.condition,
+          weight: itemDados?.weight ?? (tplData.weight as number | undefined),
+          data: (() => {
+            // Mescla rasa e consciente: dados do template são a base e a
+            // personalização do item sobrescreve campo a campo — o schema
+            // aplica default {} em item.data, então nunca usar
+            // `item.data ?? tplData` ({} não é ausência).
+            const mesclado: Record<string, unknown> = { ...tplData, ...(itemDados?.data ?? {}) };
+            // Sanitização explícita: templateId nunca é aceito de
+            // item.data, item.templateId ou tplData — só tplTx.id
+            // (template relido e validado na transação) pode persistir.
+            delete mesclado.templateId;
+            if (tplTx) mesclado.templateId = tplTx.id;
+            // Campos internos sempre definidos pelo servidor.
+            mesclado.valueCents = unitCents ?? undefined;
+            mesclado.totalValueCents = cents;
+            mesclado.aquisicao = { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd };
+            mesclado.origem = "compra";
+            mesclado.operacaoId = requestId;
+            return mesclado;
+          })(),
           createdAt: agora, updatedAt: agora,
         }).run();
       } else if (itemTx) {
@@ -1129,6 +1178,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada" }); return; }
     if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     if (msg.includes("item_sumiu")) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+    if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
     if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
   }
@@ -1140,7 +1190,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     res.status(400).json({ erro: "Quantidade indisponível no estoque" });
     return;
   }
-  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents });
+  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId, itemId: body.data.itemId ?? null, templateId: templateValidado });
   emitir(a.personagem);
   res.status(201).json({ ok: true, saldo: deCentavos(novoSaldo, casas) });
 });
