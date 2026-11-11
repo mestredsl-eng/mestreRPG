@@ -202,6 +202,41 @@ function NovoPersonagem({ modelos, souMestre, aoCriar, aoCancelar }: {
   );
 }
 
+interface ErroValidacao {
+  mensagem: string;
+  campoId?: string;
+  codigo?: string;
+}
+
+/** Interpreta as três formas de erro que o backend pode devolver:
+ *  - { erros: [{campoId?, codigo, mensagem}] }  (motor de regras)
+ *  - { campoId: mensagem, ... }               (validarFicha — mapa)
+ *  - [{ campoId?, mensagem }]                (lista simples) */
+function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
+  if (!detalhes || typeof detalhes !== "object") return [];
+  const d = detalhes as Record<string, unknown>;
+  if (Array.isArray(d.erros)) {
+    return (d.erros as Record<string, unknown>[])
+      .map((e) => ({
+        mensagem: String(e.mensagem ?? e.erro ?? "Requisito não atendido"),
+        campoId: typeof e.campoId === "string" ? e.campoId : undefined,
+        codigo: typeof e.codigo === "string" ? e.codigo : undefined,
+      }))
+      .filter((e) => e.mensagem);
+  }
+  if (Array.isArray(detalhes)) {
+    return (detalhes as Record<string, unknown>[])
+      .map((e) => ({
+        mensagem: String(e.mensagem ?? "Dado inválido"),
+        campoId: typeof e.campoId === "string" ? e.campoId : undefined,
+      }))
+      .filter((e) => e.mensagem);
+  }
+  // mapa campoId -> mensagem (validarFicha). Todas as chaves são preservadas:
+  // "erros" e "pontos" podem ser IDs legítimos de campos do modelo.
+  return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
+}
+
 function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
@@ -220,6 +255,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+  const [errosValidacao, setErrosValidacao] = useState<ErroValidacao[] | null>(null);
 
   // Ficha aprovada fica trancada para o jogador até o mestre reabrir;
   // bloqueada idem. O mestre sempre edita.
@@ -230,26 +266,41 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
     setSalvando(true);
     setErro(null);
     setMsg(null);
+    setErrosValidacao(null);
     try {
       await aoSalvar(nome, valores, status);
       setMsg(status === "aguardando_aprovacao" ? "Ficha enviada para aprovação." : "Ficha salva.");
       setEditando(false);
     } catch (e) {
-      const det = e instanceof ApiError ? e.detalhes : undefined;
-      if (det && typeof det === "object") {
-        const d = det as { erros?: { mensagem: string }[]; pontos?: string[] };
-        const msgs = d.erros?.map((x) => x.mensagem) ?? d.pontos ?? [];
-        if (msgs.length) {
-          setErro(`${e instanceof Error ? e.message : "Erro"}: ${msgs.join("; ")}`);
-        } else {
-          setErro(e instanceof Error ? e.message : "Erro ao salvar");
-        }
+      const estruturados = extrairErrosValidacao(e instanceof ApiError ? e.detalhes : undefined);
+      if (estruturados.length > 0) {
+        // Painel persistente com TODOS os motivos — dados preenchidos
+        // permanecem intactos para correção e nova tentativa.
+        setErrosValidacao(estruturados);
+        setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
       } else {
         setErro(e instanceof Error ? e.message : "Erro ao salvar");
       }
     } finally {
       setSalvando(false);
     }
+  };
+
+  // Rótulo do campo para localizar o erro dentro da ficha.
+  const rotuloCampo = (campoId?: string) => {
+    if (!campoId || !estrutura) return null;
+    for (const s of estrutura.secoes) {
+      const c = [...s.campos, ...estrutura.secoes.filter((x) => x.parentId === s.id).flatMap((x) => x.campos)].find((x) => x.id === campoId);
+      if (c) return c.label;
+    }
+    return null;
+  };
+  const irParaCampo = (campoId?: string) => {
+    if (!campoId) return;
+    const el = document.getElementById(`ficha-campo-${campoId}`);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.classList.add("campo-pulso");
+    setTimeout(() => el?.classList.remove("campo-pulso"), 1600);
   };
 
   return (
@@ -274,12 +325,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
-          {!editando && podeEditar && <button onClick={() => setEditando(true)}>Editar ficha</button>}
+          {!editando && podeEditar && <button onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>Editar ficha</button>}
           {editando && (
             <>
               <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
               {!souMestre && <button className="secundario" onClick={() => void salvar("aguardando_aprovacao")} disabled={salvando}>Enviar para aprovação</button>}
-              <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); }}>Cancelar</button>
+              <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); setErrosValidacao(null); setErro(null); }}>Cancelar</button>
             </>
           )}
           {souMestre && !editando && (
@@ -324,6 +375,22 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             </ul>
           </div>
         )}
+        {errosValidacao && errosValidacao.length > 0 && (
+          <div className="caixa-validacao erro erros-salvamento" role="alert">
+            <p><strong>Não foi possível salvar — corrija os itens abaixo:</strong></p>
+            <ul>
+              {errosValidacao.map((e, i) => (
+                <li key={i}>
+                  {rotuloCampo(e.campoId) && <strong>{rotuloCampo(e.campoId)}: </strong>}
+                  {e.mensagem}
+                  {e.campoId && estrutura?.secoes.some((s) => [...s.campos, ...estrutura.secoes.filter((x) => x.parentId === s.id).flatMap((x) => x.campos)].some((c) => c.id === e.campoId)) && (
+                    <button type="button" className="mini" onClick={() => irParaCampo(e.campoId)}> ir para o campo</button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {estruturaVazia && <p className="meta">Esta ficha ainda não possui campos configurados.</p>}
         {ficha?.vida && (
           <Vida vidaInicial={ficha.vida} characterId={personagem.id} aoErro={setErro} />
@@ -341,6 +408,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             poderesCfg={ficha?.poderes ?? null}
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
+            camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
         )}
       </section>
