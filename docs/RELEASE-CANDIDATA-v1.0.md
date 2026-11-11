@@ -60,14 +60,19 @@ explícita do responsável.
 
 O repositório possui workflow `.github/workflows/ci.yml` executado em
 pull requests para `main` e pushes na branch de integração histórica.
-No SHA da candidata, a árvore é idêntica ao HEAD revisado da PR #46
-(`0b0d5d5`), cujo CI completo passou:
+O job Navegador foi corrigido na PR #48 (instalação do Chromium sem
+`apt`, com verificação de `launch` real antes das suítes).
 
-- Run [42962742162](https://github.com/mestredsl-eng/mestreRPG/actions/runs/42962742162):
-  job **Servidor** (typecheck, build e suítes sem navegador) ✅ e job
-  **Navegador** (homologações Playwright) ✅.
+Evidência de CI no HEAD da PR #47 (`5fece91`, workflow já corrigido):
 
-## Testes (resultados reais do CI no SHA da candidata)
+- Run [43061103557](https://github.com/mestredsl-eng/mestreRPG/actions/runs/43061103557):
+  job **Servidor** (typecheck, build e 23 suítes sem navegador) ✅ e
+  job **Navegador** (`chromium launch ok` + 11 suítes Playwright) ✅.
+- Resultados comprovados nos logs: Servidor 1.238 verificações,
+  Navegador 217 verificações — **34 suítes, 1.455 verificações,
+  0 falhas**.
+
+## Testes (resultados reais do CI — run 43061103557, HEAD `5fece91` da PR #47)
 
 34 suítes somando **1.455 verificações, 0 falhas**:
 
