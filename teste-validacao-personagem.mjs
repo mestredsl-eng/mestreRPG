@@ -134,6 +134,20 @@ try {
       body: { dados: { ...base, "f-forca": 9, "f-int": 9 } },
     });
     t("prévia expõe pontos insuficientes", (r4.json?.validacao?.erros ?? []).some((e) => e.codigo === "pontos" || e.mensagem.toLowerCase().includes("ponto")), JSON.stringify(r4.json?.validacao?.erros).slice(0, 300));
+    // limite de poderes excedido aparece na prévia (máx. 1 por personagem)
+    const r5 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte", "mente"] } },
+    });
+    const errs5 = r5.json?.validacao?.erros ?? [];
+    t("prévia expõe limite excedido", errs5.some((e) => e.codigo === "limite_poderes" || e.mensagem.includes("Limite")), JSON.stringify(errs5).slice(0, 300));
+    // voltando ao limite o erro some (Mente tem pré-requisito próprio — ok ter outros erros)
+    const r6 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte"] } },
+    });
+    const errs6 = r6.json?.validacao?.erros ?? [];
+    t("prévia limpa limite ao respeitar", !errs6.some((e) => e.codigo === "limite_poderes" || e.mensagem.includes("Limite")), JSON.stringify(errs6).slice(0, 300));
     // nada foi gravado: ficha salva não ganhou os poderes do rascunho
     const g = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
     const d = g.json?.ficha?.campos ?? {};
