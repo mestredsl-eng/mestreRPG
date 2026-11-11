@@ -1,0 +1,1 @@
+ALTER TABLE `rule_books` ADD `excluido_em` integer;

@@ -8,9 +8,10 @@ import Campanhas from "./paginas/Campanhas";
 import Campanha from "./paginas/Campanha";
 import Convite from "./paginas/Convite";
 import ConviteCadastro from "./paginas/ConviteCadastro";
+import Acervo from "./paginas/Acervo";
 import { ProvedorNotificacoes } from "./Notificacoes";
 
-type Aba = "painel" | "campanhas" | "admin" | "conta";
+type Aba = "painel" | "campanhas" | "acervo" | "admin" | "conta";
 
 function Painel() {
   const { estado } = useAuth();
@@ -104,6 +105,7 @@ function Shell() {
         <nav>
           <button className={aba === "painel" ? "ativo" : ""} onClick={() => { setAba("painel"); setCampanhaAberta(null); }}>Painel</button>
           <button className={aba === "campanhas" ? "ativo" : ""} onClick={() => { setAba("campanhas"); setCampanhaAberta(null); }}>Campanhas</button>
+          <button className={aba === "acervo" ? "ativo" : ""} onClick={() => { setAba("acervo"); setCampanhaAberta(null); }}>Acervo</button>
           {usuario?.isAdmin && (
             <button className={aba === "admin" ? "ativo" : ""} onClick={() => setAba("admin")}>Administração</button>
           )}
@@ -118,6 +120,7 @@ function Shell() {
         {aba === "campanhas" && campanhaAberta && (
           <Campanha id={campanhaAberta} aoVoltar={() => setCampanhaAberta(null)} />
         )}
+        {aba === "acervo" && <Acervo />}
         {aba === "admin" && usuario?.isAdmin && <Admin />}
         {aba === "conta" && <Conta />}
       </main>

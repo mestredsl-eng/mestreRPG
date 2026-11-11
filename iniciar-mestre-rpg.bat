@@ -63,7 +63,12 @@ if not errorlevel 1 (
 
 if not exist node_modules (
     echo [INFO] Instalando dependencias pela primeira vez...
-    call npm install
+    rem npm ci e reproduzivel - respeita package-lock; se falhar, tenta npm install
+    call npm ci
+    if errorlevel 1 (
+        echo [AVISO] npm ci falhou - tentando npm install...
+        call npm install
+    )
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar dependencias.
         pause
@@ -95,10 +100,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem O backend serve o frontend pronto (site/dist) na mesma porta —
-rem compila o site se ainda nao houver build.
-if not exist site\dist\index.html (
-    echo [INFO] Compilando frontend pela primeira vez...
+rem O backend serve o frontend pronto (site/dist) na mesma porta.
+rem Recompila o site quando o fonte e mais novo que o build — evita
+rem servir frontend desatualizado apos atualizacao do codigo, sem
+rem deixar toda inicializacao lenta (~1s de verificacao).
+rem Compara o arquivo MAIS RECENTE de site\src com o mais recente de
+rem site\dist inteiro (index.html + assets) — um index.html isolado mais
+rem novo nao garante bundle atualizado.
+powershell -NoProfile -Command "$d=Get-ChildItem site\dist -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $d){exit 1}; $s=Get-ChildItem site\src -Recurse -File | Sort-Object LastWriteTime -Descending | Select-Object -First 1; if(-not $s -or $s.LastWriteTime -gt $d.LastWriteTime){exit 1}; exit 0"
+if errorlevel 1 (
+    echo [INFO] Compilando frontend - primeira vez ou codigo mais novo que o build...
     call npm run build -w site
     if errorlevel 1 (
         echo [ERRO] Falha ao compilar o frontend.
@@ -107,19 +118,28 @@ if not exist site\dist\index.html (
     )
 )
 
+rem ORDEM OBRIGATORIA: restauracao pendente ANTES das migrations —
+rem o restaurador troca o arquivo do banco, entao as migrations devem
+rem rodar sobre o banco efetivamente restaurado, nunca o contrario.
+echo [INFO] Verificando restauracao pendente...
+node servidor\dist\db\aplicar-restauracao.js
+if errorlevel 1 (
+    echo.
+    echo [ERRO] A restauracao de backup FALHOU ou foi cancelada.
+    echo        O servidor NAO sera iniciado sobre estado incerto.
+    echo        Verifique o detalhe acima e o arquivo logs\servidor.log.
+    echo        O banco anterior foi preservado em backups\pre_restore_*.
+    echo        Corrija o problema e execute este script novamente.
+    pause
+    exit /b 1
+)
+
 echo [INFO] Aplicando migracoes...
 call npm run db:migrate -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha ao migrar banco de dados.
     pause
     exit /b 1
-)
-
-rem Se houver restauracao de backup pendente, aplica ANTES de subir o servidor
-echo [INFO] Verificando restauracao pendente...
-node servidor\dist\db\aplicar-restauracao.js
-if errorlevel 1 (
-    echo [AVISO] Restauracao falhou ou foi revertida. Verifique logs\servidor.log
 )
 
 echo.

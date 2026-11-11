@@ -16,6 +16,7 @@ import { sessoesRouter } from "./routes/sessoes.js";
 import { anotacoesRouter } from "./routes/anotacoes.js";
 import { snapshotsRouter } from "./routes/snapshots.js";
 import { arquivosRouter } from "./routes/arquivos.js";
+import { bibliotecaRouter } from "./routes/biblioteca.js";
 import { campanhaIORouter } from "./routes/campanha-io.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { configurarSockets } from "./sockets/index.js";
@@ -65,6 +66,8 @@ function blindar(router: Router) {
 
 // pacotes de importação de campanha podem ser grandes (arquivos embutidos em base64)
 app.use("/api/campaigns/importar", express.json({ limit: "80mb" }));
+// acervo de livros: envelopes de importação podem trazer bibliotecas inteiras
+app.use("/api/biblioteca/importar", express.json({ limit: "20mb" }));
 app.use(express.json({ limit: "2mb" }));
 
 // Rotas da API
@@ -72,7 +75,7 @@ const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
   personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
-  sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter,
+  sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
 ];
 for (const r of routers) blindar(r);
 
@@ -95,6 +98,7 @@ app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
 app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/campaigns/:campaignId/arquivos", arquivosRouter);
 app.use("/api/characters", personagensRouter);
+app.use("/api/biblioteca", bibliotecaRouter);
 
 // 404 consistente para rotas de API inexistentes
 app.use("/api", (_req, res) => {
@@ -202,15 +206,26 @@ async function desligar(sinal: string) {
   // para de aceitar novas conexões e desconecta sockets existentes
   try { ioServer?.close(); } catch { }
   try { httpServer.closeIdleConnections?.(); } catch { }
+  // fecharBanco pode lançar se o close() do SQLite falhar — nesse caso a
+  // trava permanece presa de propósito e o processo DEVE morrer (o SO
+  // libera conexão e trava juntos), nunca seguir servindo sem trava.
+  const encerrarBanco = () => {
+    try {
+      fecharBanco();
+    } catch (e) {
+      log("erro", "falha ao fechar o banco no encerramento — forçando saída com trava presa", { erro: String(e) });
+      process.exit(1);
+    }
+  };
   httpServer.close(() => {
     log("info", "servidor encerrado", { sinal });
-    fecharBanco();
+    encerrarBanco();
     process.exit(0);
   });
   // fallback: se conexões não drenarem, força após 8s
   setTimeout(() => {
     log("aviso", "encerramento graceful expirou — forçando saída", { sinal });
-    fecharBanco();
+    encerrarBanco();
     process.exit(0);
   }, 8000).unref();
 }

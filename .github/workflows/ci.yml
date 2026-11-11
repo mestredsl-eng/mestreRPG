@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [integracao/acervo]
+
+jobs:
+  servidor:
+    name: Servidor — typecheck, build e suítes sem navegador
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TypeScript servidor
+        run: npx tsc --noEmit -p servidor/tsconfig.json
+      - name: TypeScript site
+        run: npx tsc --noEmit -p site/tsconfig.json
+      - name: Build workspaces
+        run: npm run build
+      - name: Suítes residuais Acervo + dados 3D (sem navegador)
+        run: |
+          set -e
+          for s in \
+            homologacao-acervo.mjs \
+            teste-acervo-campanha.mjs \
+            teste-acervo-diff.mjs \
+            teste-fisica-dados.mjs \
+            teste-restauracao-boot.mjs \
+            teste-trava-instancia.mjs \
+            teste-atualizacao-instalacao.mjs \
+            teste-docs-operacao.mjs \
+            homologacao-etapa2.mjs \
+            homologacao-final-v1.mjs \
+            homologacao-mesa.mjs \
+            teste-mesa-seguranca.mjs \
+            homologacao-equipamentos.mjs \
+            teste-equipamentos.mjs \
+            teste-financeiro-atomico.mjs \
+            teste-moedas-regressao.mjs \
+            teste-vitalidade-historico.mjs \
+            teste-venda-estoque.mjs \
+            teste-regressao-revisao.mjs \
+            teste-pontos-concorrencia.mjs
+          do echo "===== $s ====="; node "$s"; done
+
+  navegador:
+    name: Navegador — homologações Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build workspaces
+        run: npm run build
+      - name: Chromium para Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Suítes de navegador
+        run: |
+          set -e
+          for s in \
+            homologacao-dados3d.mjs \
+            teste-acervo-corridas.mjs \
+            teste-acessibilidade.mjs \
+            homologacao-hp-historico.mjs \
+            homologacao-patrimonio.mjs \
+            homologacao-v1-cobertura.mjs \
+            homologacao-primeira-partida.mjs \
+            homologacao-visual.mjs
+          do echo "===== $s ====="; node "$s"; done

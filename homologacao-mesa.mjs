@@ -84,13 +84,36 @@ try {
   // ===== Entrada e presença =====
   sec("Entrada, presença e reconexão");
   sockM = conectar(cm); sockJ1 = conectar(cj1); sockJ2 = conectar(cj2);
+  // listeners de presença ANTES de qualquer entrada — mesa:presenca é
+  // emitida durante mesa:entrar e não pode passar despercebido.
+  const presencas = [];
+  const hPres = (d) => { if (d?.sessionId === sid) presencas.push(d); };
+  sockM.on("mesa:presenca", hPres);
   const [rM, rJ1, rJ2] = await Promise.all([entrar(sockM, sid), entrar(sockJ1, sid), entrar(sockJ2, sid)]);
   t("mestre entra como mestre", rM.ok === true && rM.papel === "mestre", JSON.stringify(rM).slice(0, 120));
   t("jogador1 entra como jogador", rJ1.ok === true && rJ1.papel === "jogador", JSON.stringify(rJ1).slice(0, 120));
   t("jogador2 entra", rJ2.ok === true, JSON.stringify(rJ2).slice(0, 120));
 
-  const presenca = await esperar(sockM, "mesa:presenca");
-  t("presença emitida para a sala", Array.isArray(presenca?.online), JSON.stringify(presenca).slice(0, 100));
+  // espera ativa: a presença completa (3 participantes) tem que chegar;
+  // MRPG_PRESENCA_FALSO=1 é o controle de resistência — ids impossíveis → deve FALHAR
+  const idsEsp = process.env.MRPG_PRESENCA_FALSO === "1"
+    ? ["fake-mestre", "fake-j1", "fake-j2"]
+    : [ids.admin, ids.j1, ids.j2];
+  let completa = null;
+  const limitePres = Date.now() + 8000;
+  while (Date.now() < limitePres) {
+    completa = [...presencas].reverse().find((d) =>
+      d?.sessionId === sid && idsEsp.every((id) => (d.online ?? []).includes(id)));
+    if (completa) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const ultimo = [...presencas].reverse().find((d) => d?.sessionId === sid);
+  t("evento mesa:presenca emitido para a sala", presencas.length > 0 && Array.isArray(ultimo?.online),
+    `eventos=${presencas.length}`);
+  t("presença contém os 3 participantes esperados",
+    !!completa && completa.online.length === idsEsp.length,
+    JSON.stringify(completa ?? ultimo).slice(0, 200));
+  sockM.off("mesa:presenca", hPres);
 
   // ===== Chat =====
   sec("Chat público e privado");

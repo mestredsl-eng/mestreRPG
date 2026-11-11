@@ -194,7 +194,10 @@ try {
   // ===== 7. Gate inerte sem modo de teste (negativo de produção) =====
   // Segundo servidor SEM NODE_ENV=test, mas com GATE_DIR e "armar"
   // presentes: a requisição não pode esperar por "liberar" — prova de
-  // comportamento, não só de variável.
+  // comportamento, não só de variável. A trava de instância exige UM
+  // servidor por banco: encerramos o primeiro antes de subir o segundo
+  // (a sessão cm vive no banco, segue válida).
+  await encerrarServidor(proc);
   const GATE2 = join(DIR, "gate2");
   mkdirSync(GATE2, { recursive: true });
   writeFileSync(join(GATE2, "armar"), "1"); // propositalmente SEM "liberar"

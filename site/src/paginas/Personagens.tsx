@@ -401,11 +401,11 @@ function PainelPontosMestre({ ficha, characterId, aoMudar }: {
         </ul>
       )}
       <form className="linha" onSubmit={enviar}>
-        <select value={acao} onChange={(e) => setAcao(e.target.value as "conceder" | "remover")}>
+        <select aria-label="Ação de pontos" value={acao} onChange={(e) => setAcao(e.target.value as "conceder" | "remover")}>
           <option value="conceder">Conceder</option>
           <option value="remover">Remover</option>
         </select>
-        <input type="number" min={1} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} style={{ width: "5rem" }} required />
+        <input type="number" aria-label="Quantidade de pontos" min={1} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} style={{ width: "5rem" }} required />
         <input type="text" placeholder="Motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required style={{ flex: 1 }} />
         <button type="submit" disabled={enviando}>{enviando ? "…" : "Aplicar"}</button>
       </form>
