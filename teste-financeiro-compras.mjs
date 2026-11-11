@@ -356,6 +356,155 @@ try {
     t("item removido após venda total", !itensDb(charJ1).some((i) => i.id === item.id));
   }
 
+  // ===== Correção: formato explícito de aquisição + itens legados =====
+  sec("Compatibilidade com itens antigos");
+  {
+    // Simula itens persistidos ANTES da correção de semântica:
+    // valueCents = TOTAL da compra (não unitário), sem marcador aquisicao.
+    // via API (banco travado pelo servidor): valueCents=TOTAL da compra,
+    // sem marcador aquisicao — formato anterior à correção de semântica.
+    const legado = [
+      { name: "Legado qtd1", quantity: 1, valueCents: 2000, data: { origem: "compra", operacaoId: "leg-1" } },
+      { name: "Legado qtd2 parcial", quantity: 1, valueCents: 4000, data: { origem: "compra", operacaoId: "leg-2" } }, // era 2, restou 1
+      { name: "Legado sem metadados", quantity: 3, valueCents: 900, data: {} },
+      { name: "Manual com valor", quantity: 2, valueCents: 500, data: {} },
+    ];
+    for (const l of legado) {
+      const r = await req(BASE, "POST", `/characters/${charJ1}/inventario`, { cookie: j1.cookie, body: l });
+      t(`legado "${l.name}" criado → ${r.status}`, r.status === 201, `status=${r.status}`);
+    }
+    const inv = await req(BASE, "GET", `/characters/${charJ1}/inventario`, { cookie: j1.cookie });
+    t("itens legados carregam sem erro", inv.status === 200);
+    const nomes = (inv.json?.itens ?? []).map((i) => i.name);
+    t("todos os legados presentes", legado.every((l) => nomes.includes(l.name)), nomes.join(","));
+    // integridade: dados legados não foram reescritos pelo servidor
+    const dLegado = (inv.json?.itens ?? []).find((i) => i.name === "Legado qtd2 parcial")?.data;
+    t("valor total legado preservado (4000, não reinterpretado)", dLegado?.valueCents === 4000 && !dLegado?.aquisicao, JSON.stringify(dLegado));
+  }
+
+  // ===== Correção: item novo grava formato explícito =====
+  sec("Formato explícito de aquisição (item novo)");
+  {
+    const c = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 40, quantidade: 2,
+      item: { name: "Item formato v1" },
+    });
+    t("compra formato → 201", c.status === 201, `status=${c.status}`);
+    const item = itensDb(charJ1).find((i) => i.name === "Item formato v1");
+    const d = JSON.parse(item?.data ?? "{}");
+    t("aquisicao.formato = unitario-v1", d.aquisicao?.formato === "unitario-v1", JSON.stringify(d.aquisicao));
+    t("aquisicao.unitCents = 2000", d.aquisicao?.unitCents === 2000);
+    t("aquisicao.totalCents = 4000", d.aquisicao?.totalCents === 4000);
+    t("aquisicao.qtdOriginal = 2", d.aquisicao?.qtdOriginal === 2);
+    t("valueCents unitário = 2000", d.valueCents === 2000);
+    // venda parcial não altera o histórico de aquisição
+    await operacao(charJ1, j1.cookie, { tipo: "venda", accountId: contaJ1b, valor: 20, itemId: item.id, quantidade: 1 });
+    const d2 = JSON.parse(itemDb(item.id)?.data ?? "{}");
+    t("aquisicao preservada após venda parcial", d2.aquisicao?.unitCents === 2000 && d2.aquisicao?.qtdOriginal === 2 && d2.totalValueCents === 4000, JSON.stringify(d2.aquisicao));
+  }
+
+  // ===== Correção: preservação dos dados do catálogo =====
+  sec("Dados do template preservados na compra");
+  {
+    // garante saldo na conta de teste (seções anteriores já movimentaram)
+    await req(BASE, "POST", `/characters/${charJ1}/financeiro/movimentar`, {
+      cookie: j1.cookie,
+      body: { accountId: contaJ1b, tipo: "entrada", valor: 500, descricao: "fundo template" },
+    });
+    const tpl2 = await req(BASE, "POST", `/campaigns/${cenario.campId}/inventario`, {
+      cookie: mestre,
+      body: { name: "Relíquia Antiga", category: "Artefato", data: { raridade: "lendaria", poder: 10, cargas: 3 } },
+    });
+    const tpl2Id = tpl2.json?.id;
+    t("template com atributos criado", tpl2.status === 201 && !!tpl2Id, `status=${tpl2.status}`);
+
+    // Caso A: item sem data → atributos do template preservados
+    const ridA = crypto.randomUUID();
+    const compraA = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id,
+      item: { name: "Relíquia Antiga" }, requestId: ridA,
+    });
+    t("compra A (sem personalização) → 201", compraA.status === 201, `status=${compraA.status}`);
+    const itemA = itensDb(charJ1).find((i) => i.name === "Relíquia Antiga" && JSON.parse(i.data ?? "{}").operacaoId === ridA);
+    const dA = JSON.parse(itemA?.data ?? "{}");
+    t("A: raridade/poder/cargas do template preservados", dA.raridade === "lendaria" && dA.poder === 10 && dA.cargas === 3, JSON.stringify(dA));
+    t("A: templateId gravado", dA.templateId === tpl2Id);
+
+    // Caso B: personalização sobrepõe só o campo alterado
+    const ridB = crypto.randomUUID();
+    const compraB = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id,
+      item: { name: "Relíquia Antiga", data: { poder: 99 } }, requestId: ridB,
+    });
+    t("compra B (personalizada) → 201", compraB.status === 201, `status=${compraB.status}`);
+    const itemB = itensDb(charJ1).filter((i) => i.name === "Relíquia Antiga").map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridB);
+    t("B: poder personalizado prevalece (99)", itemB?.poder === 99, JSON.stringify(itemB));
+    t("B: demais atributos preservados", itemB?.raridade === "lendaria" && itemB?.cargas === 3);
+
+    // Caso C: tentativa de sobrescrever campos internos protegidos
+    const ridC = crypto.randomUUID();
+    const compraC = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id,
+      item: { name: "Relíquia Antiga", data: {
+        poder: 1, operacaoId: "hack", valueCents: 1, totalValueCents: 1,
+        aquisicao: { formato: "fake" }, origem: "manual", templateId: "outro",
+      } }, requestId: ridC,
+    });
+    t("compra C → 201", compraC.status === 201, `status=${compraC.status}`);
+    const dC = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridC);
+    t("C: operacaoId do servidor prevalece", dC?.operacaoId === ridC, JSON.stringify(dC?.operacaoId));
+    t("C: origem = compra (não manual)", dC?.origem === "compra");
+    t("C: aquisicao.formato = unitario-v1", dC?.aquisicao?.formato === "unitario-v1");
+    t("C: templateId do servidor prevalece", dC?.templateId === tpl2Id);
+    t("C: poder personalizado preservado", dC?.poder === 1);
+    t("C: raridade do template preservada", dC?.raridade === "lendaria");
+    // vínculo financeiro ↔ item ↔ auditoria
+    const txC = comDb(BANCO, (db) => db.prepare("select kind,request_id from money_transactions where request_id=?").get(ridC));
+    t("C: tx financeira vinculada por requestId", txC?.kind === "compra" && txC?.request_id === ridC);
+  }
+
+  // ===== Correção: unitário não representável não vira sugestão =====
+  sec("Preço unitário de baixo valor");
+  {
+    const cenarios = [
+      ["2un por 1 cent", 2, 0.01],
+      ["3un por 1 cent", 3, 0.01],
+      ["2un por 3 cents", 2, 0.03],
+      ["3un por 10 cents", 3, 0.10],
+    ];
+    for (const [nome, qtd, valor] of cenarios) {
+      const saldoAntes = saldoDb(contaJ1b);
+      const r = await operacao(charJ1, j1.cookie, {
+        tipo: "compra", accountId: contaJ1b, valor, quantidade: qtd,
+        item: { name: `Baixo valor ${nome}` },
+      });
+      t(`${nome} → 201 (operação válida)`, r.status === 201, `status=${r.status}`);
+      const esperado = Math.round(valor * 100);
+      t(`${nome}: débito exato de ${esperado} centavo(s)`, saldoDb(contaJ1b) === saldoAntes - esperado, `antes=${saldoAntes} depois=${saldoDb(contaJ1b)}`);
+      const item = itensDb(charJ1).find((i) => i.name === `Baixo valor ${nome}`);
+      const d = JSON.parse(item?.data ?? "{}");
+      t(`${nome}: unitCents = null (não inventa preço)`, d.aquisicao?.unitCents === null, JSON.stringify(d.aquisicao));
+      t(`${nome}: totalCents preservado`, d.aquisicao?.totalCents === esperado && d.totalValueCents === esperado);
+      t(`${nome}: qtdOriginal gravada`, d.aquisicao?.qtdOriginal === qtd);
+      t(`${nome}: valueCents ausente (sem sugestão)`, d.valueCents === undefined, `valueCents=${d.valueCents}`);
+      // venda parcial não deve criar unitário retroativo
+      if (qtd >= 2) {
+        await operacao(charJ1, j1.cookie, { tipo: "venda", accountId: contaJ1b, valor: 0.01, itemId: item.id, quantidade: 1 });
+        const d2 = JSON.parse(itemDb(item.id)?.data ?? "{}");
+        t(`${nome}: unitCents continua null após venda parcial`, d2.aquisicao?.unitCents === null);
+        t(`${nome}: totalCents histórico intacto`, d2.aquisicao?.totalCents === esperado);
+      }
+    }
+    // caso representável: 2un por 2 cents → unitário 1 centavo exato
+    const rOk = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 0.02, quantidade: 2,
+      item: { name: "Unitario exato" },
+    });
+    t("2un por 2 cents → 201", rOk.status === 201, `status=${rOk.status}`);
+    const dOk = JSON.parse(itensDb(charJ1).find((i) => i.name === "Unitario exato")?.data ?? "{}");
+    t("unitCents = 1 (representável)", dOk.aquisicao?.unitCents === 1 && dOk.valueCents === 1, JSON.stringify(dOk.aquisicao));
+  }
+
   // ===== 17. Históricos coerentes =====
   sec("Histórico financeiro ↔ patrimônio");
   {

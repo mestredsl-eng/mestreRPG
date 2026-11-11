@@ -1118,6 +1118,11 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         const tplData = (tplTx?.data ?? {}) as Record<string, unknown>;
         const itemDados = body.data.item;
         const qtd = body.data.quantidade ?? itemDados?.quantity ?? 1;
+        // Referência de preço unitário só existe quando cents/qtd é
+        // inteiro na menor unidade — totais ínfimos por unidade
+        // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
+        const unitExato = cents / qtd;
+        const unitCents = Number.isInteger(unitExato) ? unitExato : null;
         tx.insert(inventoryEntries).values({
           id: crypto.randomUUID(), characterId: a.personagem.id,
           name: itemDados?.name ?? tplTx!.name, quantity: qtd,
@@ -1126,11 +1131,18 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           location: itemDados?.location, condition: itemDados?.condition,
           weight: itemDados?.weight ?? (tplData.weight as number | undefined),
           data: {
-            ...(itemDados?.data ?? tplData),
+            // Mescla rasa e consciente: dados do template são a base e a
+            // personalização do item sobrescreve campo a campo — o schema
+            // aplica default {} em item.data, então nunca usar
+            // `item.data ?? tplData` ({} não é ausência). Campos internos
+            // (valueCents, aquisicao, origem, operacaoId, templateId) são
+            // gravados depois e sempre definidos pelo servidor.
+            ...tplData,
+            ...(itemDados?.data ?? {}),
             ...(itemDados?.templateId || body.data.templateId ? { templateId: itemDados?.templateId ?? body.data.templateId } : {}),
-            // valueCents = valor UNITÁRIO de aquisição (referência de preço);
-            // totalValueCents preserva o total pago pela operação.
-            valueCents: Math.round(cents / qtd), totalValueCents: cents,
+            valueCents: unitCents ?? undefined,
+            totalValueCents: cents,
+            aquisicao: { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd },
             origem: "compra", operacaoId: requestId,
           },
           createdAt: agora, updatedAt: agora,

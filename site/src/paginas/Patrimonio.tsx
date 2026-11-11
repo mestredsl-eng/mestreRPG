@@ -428,10 +428,22 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
 
   useEffect(() => {
     if (fin && valorUnit === "") {
-      const vc = Number(item.data?.valueCents ?? 0);
-      // valueCents é o valor UNITÁRIO de aquisição — não dividir pela
-      // quantidade restante (vendas parciais não alteram o unitário).
-      if (vc > 0) setValorUnit(+(vc / 10 ** casas).toFixed(casas));
+      const d = item.data ?? {};
+      const aq = d.aquisicao as { formato?: string; unitCents?: number | null } | undefined;
+      let inicial: number | "" = "";
+      if (aq?.formato === "unitario-v1") {
+        // Formato novo: unitCents só existe quando o unitário é
+        // representável em centavos — caso contrário sem sugestão.
+        const uc = Number(aq.unitCents);
+        if (Number.isFinite(uc) && uc > 0) inicial = +(uc / 10 ** casas).toFixed(casas);
+      } else if (d.origem !== "compra") {
+        // Item manual: valueCents é a referência unitária informada.
+        // Item legado de compra (sem aquisicao): valueCents era o TOTAL —
+        // sem quantidade original não há unitário confiável → vazio.
+        const vc = Number(d.valueCents ?? 0);
+        if (vc > 0) inicial = +(vc / 10 ** casas).toFixed(casas);
+      }
+      if (inicial !== "") setValorUnit(inicial);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fin]);

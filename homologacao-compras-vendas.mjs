@@ -106,6 +106,11 @@ try {
     cookie: cenario.cookieMestre,
     body: { name: "Poção de Cura", category: "Consumível", description: "Restaura PV" },
   });
+  // item "legado": valueCents=TOTAL de compra antiga, sem marcador aquisicao
+  await req(BASE, "POST", `/characters/${charJ}/inventario`, {
+    cookie: cookieJ,
+    body: { name: "Relíquia Legada", quantity: 1, valueCents: 4000, data: { origem: "compra", operacaoId: "leg-e2e" } },
+  });
 
   browser = await chromium.launch();
 
@@ -207,6 +212,40 @@ try {
   await modal.getByRole("button", { name: "Cancelar" }).click();
   await pgJ.waitForTimeout(400);
 
+  sec("5b. Sugestão de preço: legado e unitário não representável");
+  await abaPatrimonio(pgJ, "Inventário");
+  // legado: valueCents=4000 era TOTAL — não pode sugerir 40 de unitário
+  await (await btnVender(pgJ, "Relíquia Legada")).click();
+  modal = page_modal(pgJ);
+  await modal.waitFor({ timeout: 5000 });
+  await pgJ.waitForTimeout(500);
+  const valorLegado = await modal.locator('input[type="number"]').nth(1).inputValue();
+  t("item legado abre SEM sugestão de preço", valorLegado === "", `valor=${valorLegado}`);
+  await shot(pgJ, "09b-venda-legado-sem-sugestao");
+  await modal.getByRole("button", { name: "Cancelar" }).click();
+  await pgJ.waitForTimeout(400);
+  // compra de baixo valor: 2un por 0,005 cada = 0,01 total → unitário 0,005
+  // não é representável em centavos → sem sugestão
+  modal = await abrirCompra(pgJ);
+  await preencherCompra(pgJ, modal, { item: false, qtd: 2, valor: 0.005, contaIdx: 1 });
+  await modal.locator('input').first().fill("Brinde raro");
+  await shot(pgJ, "09c-compra-baixo-valor");
+  await modal.getByRole("button", { name: "Confirmar compra" }).click();
+  await pgJ.waitForTimeout(1500);
+  t("compra de baixo valor concluída", await pgJ.getByText("Brinde raro").first().isVisible().catch(() => false));
+  await (await btnVender(pgJ, "Brinde raro")).click();
+  modal = page_modal(pgJ);
+  await modal.waitFor({ timeout: 5000 });
+  await pgJ.waitForTimeout(500);
+  const valorBaixo = await modal.locator('input[type="number"]').nth(1).inputValue();
+  t("baixo valor abre SEM sugestão enganosa", valorBaixo === "", `valor=${valorBaixo}`);
+  await shot(pgJ, "09d-venda-baixo-valor-sem-sugestao");
+  await modal.getByRole("button", { name: "Cancelar" }).click();
+  await pgJ.waitForTimeout(400);
+  await abaPatrimonio(pgJ, "Dinheiro");
+  const saldoBaixo = await saldoTag(pgJ);
+  t("débito de 0,01 aplicado (90 → 89,99)", /89[.,]99/.test(saldoBaixo ?? ""), saldoBaixo?.trim());
+
   sec("6. Persistência após recarregar a página");
   await pgJ.reload();
   await pgJ.getByText("Servidor online").waitFor({ timeout: 15000 });
@@ -217,7 +256,7 @@ try {
   t("item persiste após reload (qtd 1)", await pgJ.getByText("Poção de Cura").first().isVisible().catch(() => false));
   await abaPatrimonio(pgJ, "Dinheiro");
   const saldo3 = await saldoTag(pgJ);
-  t("saldo 90 persiste após reload", /90/.test(saldo3 ?? ""), saldo3?.trim());
+  t("saldo 89,99 persiste após reload", /89[.,]99/.test(saldo3 ?? ""), saldo3?.trim());
   const saldoEur3 = await saldoTag(pgJ, "Euro");
   t("saldo EUR 45 persiste após reload", /45/.test(saldoEur3 ?? ""), saldoEur3?.trim());
   await shot(pgJ, "10-persistencia");
@@ -232,7 +271,7 @@ try {
   await abrirPersonagem(pgM, "Heroína CV");
   await abaPatrimonio(pgM, "Dinheiro");
   const saldoM = await saldoTag(pgM);
-  t("mestre vê saldo 90 idêntico", /90/.test(saldoM ?? ""), saldoM?.trim());
+  t("mestre vê saldo 89,99 idêntico", /89[.,]99/.test(saldoM ?? ""), saldoM?.trim());
   const histM = (await pgM.locator(".tabela-responsiva tbody tr").allTextContents()).join(" ");
   t("mestre vê compra e venda no histórico", /compra/i.test(histM) && /venda/i.test(histM), histM.slice(0, 300));
   await shot(pgM, "11-mestre-registros");
@@ -254,7 +293,7 @@ try {
   await pgMob.waitForTimeout(1500);
   await abaPatrimonio(pgMob, "Dinheiro");
   const saldoMob = await saldoTag(pgMob);
-  t("mobile: saldo 90 → 100 após venda total", /100/.test(saldoMob ?? ""), saldoMob?.trim());
+  t("mobile: saldo 89,99 → 99,99 após venda", /99[.,]99/.test(saldoMob ?? ""), saldoMob?.trim());
   await shot(pgMob, "13-mobile-saldo-final");
   await ctxMob.close();
 
