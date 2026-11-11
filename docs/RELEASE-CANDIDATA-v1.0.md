@@ -1,15 +1,19 @@
 # Release Candidate v1.0 — Mestre RPG
 
-Documento de preparação da candidata. **Não é uma release publicada**: sem
-tag, sem merge adicional, sem novas funcionalidades nesta etapa.
+Documento de preparação da candidata. **Não é uma release publicada**: a
+tag `v1.0.0` e a publicação da release estão pendentes de autorização
+explícita do responsável.
 
 - **Branch de referência:** `main`
 - **SHA da candidata:** `33090407e354cbd4ac369225a0142b920d5af2a9`
   (merge da PR #46 — Central de Novidades).
 - **PRs integradas:** #37 (Etapa 2), #43 (Acervo/suplementos/restauração/
   dados 3D), #44 (financeiro com compras e vendas), #45 (conversão de
-  ferimentos em Vitalidade) e #46 (Central de Novidades). Issues #33 e
-  #42 concluídas; #33 permanece registrada para referência histórica.
+  ferimentos em Vitalidade) e #46 (Central de Novidades). A Issue #42 foi
+  concluída e fechada. A Issue #33 permanece aberta como roteiro mestre
+  e registro de acompanhamento do projeto; a criação da tag `v1.0.0` e
+  a publicação da release continuam pendentes de autorização do
+  responsável.
 - **Última migration:** `0018_striped_firedrake` (tabelas `novidades` e
   `novidade_leituras`).
 
@@ -113,5 +117,6 @@ symlink/permissão POSIX).
   carregar a sessão e após ações do próprio usuário (sem polling).
 - Homologado no Windows; acesso externo depende de proxy/túnel do usuário.
 - Chunk do frontend >500 kB (warning do Vite, não funcional).
-- A Issue #33 permanece aberta como registro histórico; a conversão de
-  ferimentos foi entregue na PR #45 e a Issue #42 fechada na PR #46.
+- A Issue #33 permanece aberta como roteiro mestre e acompanhamento do
+  projeto; a tag `v1.0.0` e a publicação da release estão pendentes de
+  autorização explícita — esta candidata ainda não é uma release.
