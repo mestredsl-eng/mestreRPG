@@ -22,6 +22,25 @@ const novidadeSchema = z.object({
 
 const atualizarSchema = novidadeSchema.partial();
 
+// Campos apresentados ao usuário — alteração efetiva neles torna a
+// publicação uma "nova versão" e invalida as leituras anteriores.
+const CAMPOS_CONTEUDO = ["titulo", "resumo", "conteudo", "versao", "categoria"] as const;
+const normTexto = (v: string | null | undefined) => {
+  const s = (v ?? "").trim();
+  return s === "" ? null : s;
+};
+function conteudoAlterado(
+  atual: typeof novidades.$inferSelect,
+  d: Partial<z.infer<typeof novidadeSchema>>
+): boolean {
+  return CAMPOS_CONTEUDO.some((k) => {
+    if (d[k] === undefined) return false;
+    const novo = k === "resumo" || k === "versao" ? normTexto(d[k] as string | null) : d[k];
+    const velho = k === "resumo" || k === "versao" ? normTexto(atual[k] as string | null) : atual[k];
+    return novo !== velho;
+  });
+}
+
 function publico(n: typeof novidades.$inferSelect, lida = false) {
   return {
     id: n.id,
@@ -179,17 +198,31 @@ novidadesAdminRouter.patch("/:id", async (req, res) => {
     if (d.estado === "publicada" && atual.estado !== "publicada") dados.publicadoEm = new Date();
     if (d.estado === "rascunho" && atual.estado === "publicada") dados.publicadoEm = null;
   }
-  await db.update(novidades).set(dados).where(eq(novidades.id, atual.id));
+  const invalidar = conteudoAlterado(atual, d);
+  // Atualização + invalidação de leituras na MESMA transação: nunca
+  // fica conteúdo novo com leituras velhas (nem o contrário).
+  db.transaction((tx) => {
+    tx.update(novidades).set(dados).where(eq(novidades.id, atual.id)).run();
+    if (invalidar) {
+      tx.delete(novidadesLeituras).where(eq(novidadesLeituras.novidadeId, atual.id)).run();
+    }
+  });
   const [atualizada] = await db.select().from(novidades).where(eq(novidades.id, atual.id)).limit(1);
-  await audit(req, "novidade.atualizada", { novidadeId: atual.id, campos: Object.keys(d) });
-  res.json({ novidade: publico(atualizada) });
+  await audit(req, "novidade.atualizada", { novidadeId: atual.id, campos: Object.keys(d), leiturasInvalidas: invalidar });
+  res.json({ novidade: publico(atualizada), leiturasInvalidas: invalidar });
 });
 
-/** POST /api/admin/novidades/:id/publicar — rascunho → publicada. */
+/** POST /api/admin/novidades/:id/publicar — rascunho → publicada (idempotente). */
 novidadesAdminRouter.post("/:id/publicar", async (req, res) => {
   const [atual] = await db.select().from(novidades).where(eq(novidades.id, req.params.id)).limit(1);
   if (!atual) {
     res.status(404).json({ erro: "Publicação não encontrada" });
+    return;
+  }
+  // Já publicada → não toca em publicadoEm nem gera transição fictícia
+  // na auditoria; a ordenação da central permanece estável.
+  if (atual.estado === "publicada") {
+    res.json({ novidade: publico(atual) });
     return;
   }
   await db.update(novidades).set({ estado: "publicada", publicadoEm: new Date(), updatedAt: new Date() }).where(eq(novidades.id, atual.id));
@@ -198,11 +231,15 @@ novidadesAdminRouter.post("/:id/publicar", async (req, res) => {
   res.json({ novidade: publico(pub) });
 });
 
-/** POST /api/admin/novidades/:id/despublicar — publicada → rascunho (some da central). */
+/** POST /api/admin/novidades/:id/despublicar — publicada → rascunho (idempotente). */
 novidadesAdminRouter.post("/:id/despublicar", async (req, res) => {
   const [atual] = await db.select().from(novidades).where(eq(novidades.id, req.params.id)).limit(1);
   if (!atual) {
     res.status(404).json({ erro: "Publicação não encontrada" });
+    return;
+  }
+  if (atual.estado === "rascunho") {
+    res.json({ novidade: publico(atual) });
     return;
   }
   await db.update(novidades).set({ estado: "rascunho", publicadoEm: null, updatedAt: new Date() }).where(eq(novidades.id, atual.id));

@@ -211,6 +211,78 @@ try {
     t("removida some da listagem", !(listaApos.json?.novidades ?? []).some((n) => n.id === pub3.id));
   }
 
+  sec("16. Invalidação de leituras por alteração de conteúdo");
+  {
+    // pub dedicada: A e B leem, conteúdo muda -> ambas voltam a não lida
+    const p4 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Patch notes v1", conteudo: "versão inicial", estado: "publicada" },
+    })).json?.novidade;
+    t("pub4 criada publicada", !!p4?.id);
+    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: A });
+    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: B });
+    const lidasAntes = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
+    t("A e B leram pub4", lidasAntes === 2, String(lidasAntes));
+
+    // PATCH que altera título -> invalida
+    const ed = await req(BASE, "PATCH", `/admin/novidades/${p4.id}`, { cookie: M, body: { titulo: "Patch notes v1.1" } });
+    t("PATCH conteúdo -> leiturasInvalidas=true", ed.json?.leiturasInvalidas === true, JSON.stringify(ed.json).slice(0, 150));
+    const lidasDepois = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
+    t("leituras apagadas após mudança de conteúdo", lidasDepois === 0, String(lidasDepois));
+    const listaA = await req(BASE, "GET", "/novidades", { cookie: A });
+    t("A vê pub4 como não lida", listaA.json?.novidades?.find((n) => n.id === p4.id)?.lida === false);
+
+    // releem; PATCH sem mudança efetiva -> preserva
+    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: A });
+    await req(BASE, "POST", `/novidades/${p4.id}/lida`, { cookie: B });
+    const edMesmo = await req(BASE, "PATCH", `/admin/novidades/${p4.id}`, { cookie: M, body: { titulo: "Patch notes v1.1", resumo: null } });
+    t("PATCH sem mudança efetiva -> leiturasInvalidas=false", edMesmo.json?.leiturasInvalidas === false);
+    const lidasPreservadas = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
+    t("leituras preservadas sem mudança de conteúdo", lidasPreservadas === 2, String(lidasPreservadas));
+
+    // despublicar + republicar SEM edição -> leituras preservadas
+    await req(BASE, "POST", `/admin/novidades/${p4.id}/despublicar`, { cookie: M });
+    await req(BASE, "POST", `/admin/novidades/${p4.id}/publicar`, { cookie: M });
+    const lidasRep = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
+    t("republicar sem edição preserva leituras", lidasRep === 2, String(lidasRep));
+
+    // despublicar + EDITAR conteúdo + republicar -> invalida de novo
+    await req(BASE, "POST", `/admin/novidades/${p4.id}/despublicar`, { cookie: M });
+    const ed2 = await req(BASE, "PATCH", `/admin/novidades/${p4.id}`, { cookie: M, body: { conteudo: "conteúdo revisado" } });
+    t("edição em rascunho também invalida", ed2.json?.leiturasInvalidas === true);
+    await req(BASE, "POST", `/admin/novidades/${p4.id}/publicar`, { cookie: M });
+    const lidasFim = comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p4.id).c);
+    t("republicada editada volta a não lida", lidasFim === 0, String(lidasFim));
+  }
+
+  sec("17. Idempotência de publicação");
+  {
+    const p5 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Idempotente", estado: "rascunho" },
+    })).json?.novidade;
+    const pub1r = await req(BASE, "POST", `/admin/novidades/${p5.id}/publicar`, { cookie: M });
+    const data1 = pub1r.json?.novidade?.publicadoEm;
+    t("primeira publicação define data", !!data1);
+    await new Promise((r) => setTimeout(r, 30));
+    const pub2r = await req(BASE, "POST", `/admin/novidades/${p5.id}/publicar`, { cookie: M });
+    t("segunda publicação mantém a mesma data", pub2r.json?.novidade?.publicadoEm === data1, `${pub2r.json?.novidade?.publicadoEm} vs ${data1}`);
+    // ordem da listagem estável
+    const ordAntes = (await req(BASE, "GET", "/novidades", { cookie: A })).json?.novidades?.map((n) => n.id);
+    await req(BASE, "POST", `/admin/novidades/${p5.id}/publicar`, { cookie: M });
+    const ordDepois = (await req(BASE, "GET", "/novidades", { cookie: A })).json?.novidades?.map((n) => n.id);
+    t("ordenação inalterada após republicação", JSON.stringify(ordAntes) === JSON.stringify(ordDepois));
+    // auditoria: apenas UMA transição fictícia não pode existir
+    const audits = comDb(BANCO, (db) => db.prepare("select count(*) c from audit_logs where action='novidade.publicada' and json_extract(detail,'$.novidadeId')=?").get(p5.id).c);
+    t("auditoria registra uma única publicação", audits === 1, String(audits));
+    // PATCH repetindo estado publicada também não move a data
+    const patchRep = await req(BASE, "PATCH", `/admin/novidades/${p5.id}`, { cookie: M, body: { estado: "publicada" } });
+    t("PATCH estado=publicada repetido mantém data", patchRep.json?.novidade?.publicadoEm === data1);
+    // despublicar duas vezes: segunda é no-op sem auditoria extra
+    await req(BASE, "POST", `/admin/novidades/${p5.id}/despublicar`, { cookie: M });
+    await req(BASE, "POST", `/admin/novidades/${p5.id}/despublicar`, { cookie: M });
+    const auditsDes = comDb(BANCO, (db) => db.prepare("select count(*) c from audit_logs where action='novidade.despublicada' and json_extract(detail,'$.novidadeId')=?").get(p5.id).c);
+    t("despublicar duplicado não duplica auditoria", auditsDes === 1, String(auditsDes));
+  }
+
   sec("Validações e integridade extra");
   {
     const vazio = await req(BASE, "POST", "/admin/novidades", { cookie: M, body: { titulo: "" } });

@@ -167,8 +167,76 @@ try {
     await ctx.close();
   }
 
-  // ===== Mobile 390px =====
-  sec("Mobile 390px");
+  // ===== Admin em telas pequenas — cartões com todas as ações =====
+  sec("Admin mobile — ações em cartões");
+  {
+    // rascunho dedicado para exercitar publicar/despublicar/remover no mobile
+    const mob = await req(BASE, "POST", "/admin/novidades", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Rascunho mobile", conteudo: "editável pelo celular", estado: "rascunho" },
+    });
+    t("rascunho mobile criado", mob.status === 201);
+
+    for (const largura of [390, 600]) {
+      // cada viewport precisa do seu próprio rascunho (o de 390px é removido no fluxo)
+      const tituloAlvo = largura === 390 ? "Rascunho mobile" : "Rascunho mobile 600";
+      if (largura === 600) {
+        await req(BASE, "POST", "/admin/novidades", {
+          cookie: cenario.cookieMestre,
+          body: { titulo: tituloAlvo, conteudo: "ações em 600px", estado: "rascunho" },
+        });
+      }
+      const ctx = await browser.newContext({ viewport: { width: largura, height: 844 } });
+      const page = await ctx.newPage();
+      const erros = [];
+      page.on("pageerror", (e) => erros.push(String(e)));
+      await login(page, "mestre_teste", "senha-forte-123");
+      await btnNav(page, "Administração").click();
+      await page.waitForTimeout(800);
+
+      const tabela = page.locator("table.tabela-novidades");
+      const cartoes = page.locator(".cartoes-registro .registro-cartao");
+      t(`${largura}px: tabela ocultada`, !(await tabela.isVisible()));
+      t(`${largura}px: cartões visíveis`, await cartoes.count() >= 3, `n=${await cartoes.count()}`);
+
+      const cartao = page.locator(".registro-cartao", { hasText: tituloAlvo });
+      t(`${largura}px: cartão do rascunho existe`, await cartao.count() === 1);
+      const acoes = cartao.locator(".registro-acoes");
+      for (const rotulo of ["Editar", "Publicar", "Remover"]) {
+        t(`${largura}px: ação '${rotulo}' acessível`, await acoes.getByRole("button", { name: rotulo, exact: true }).isVisible());
+      }
+
+      if (largura === 390) {
+        // publicar -> despublicar -> editar -> remover, tudo pelo celular
+        await acoes.getByRole("button", { name: "Publicar", exact: true }).click();
+        await page.waitForTimeout(600);
+        t("390px: publicou pelo cartão", await cartao.locator(".badge", { hasText: "Publicada" }).count() === 1);
+        await cartao.locator(".registro-acoes").getByRole("button", { name: "Despublicar", exact: true }).click();
+        await page.waitForTimeout(600);
+        t("390px: despublicou pelo cartão", await cartao.locator(".badge", { hasText: "Rascunho" }).count() === 1);
+        await cartao.locator(".registro-acoes").getByRole("button", { name: "Editar", exact: true }).click();
+        await page.waitForTimeout(500);
+        await page.getByLabel("Título").fill("Rascunho mobile (editado)");
+        await page.getByRole("button", { name: "Salvar", exact: true }).click();
+        await page.waitForTimeout(700);
+        t("390px: editou pelo modal", await page.locator(".registro-cartao", { hasText: "Rascunho mobile (editado)" }).count() === 1);
+        await page.locator(".registro-cartao", { hasText: "Rascunho mobile (editado)" })
+          .locator(".registro-acoes").getByRole("button", { name: "Remover", exact: true }).click();
+        await page.waitForTimeout(400);
+        await page.locator(".modal").getByRole("button", { name: "Remover", exact: true }).click(); // ModalConfirmar
+        await page.waitForTimeout(700);
+        t("390px: removeu com confirmação", await page.locator(".registro-cartao", { hasText: "Rascunho mobile" }).count() === 0);
+        await shot(page, "04-admin-mobile-390");
+      } else {
+        await shot(page, "05-admin-mobile-600");
+      }
+      t(`${largura}px: sem erros de console`, erros.length === 0, erros.slice(0, 2).join(" | "));
+      await ctx.close();
+    }
+  }
+
+  // ===== Mobile 390px — usuário =====
+  sec("Mobile 390px — usuário");
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const page = await ctx.newPage();

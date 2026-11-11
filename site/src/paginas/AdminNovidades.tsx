@@ -61,6 +61,17 @@ export default function AdminNovidades() {
     }
   };
 
+  // Botões de ação compartilhados entre a tabela (desktop) e os cartões (mobile).
+  const acoes = (n: NovidadeAdmin) => (
+    <>
+      <button className="mini" onClick={() => setEditando(n)}>Editar</button>
+      <button className="mini" onClick={() => void alternarEstado(n)}>
+        {n.estado === "publicada" ? "Despublicar" : "Publicar"}
+      </button>
+      <button className="mini perigo" onClick={() => setConfirmandoRemocao(n)}>Remover</button>
+    </>
+  );
+
   const remover = async () => {
     if (!confirmandoRemocao || ocupado) return;
     setOcupado(true);
@@ -91,7 +102,8 @@ export default function AdminNovidades() {
       ) : itens.length === 0 ? (
         <p className="vazio">Nenhuma publicação ainda.</p>
       ) : (
-        <table className="tabela tabela-responsiva">
+        <>
+        <table className="tabela tabela-responsiva tabela-novidades">
           <thead>
             <tr>
               <th>Título</th>
@@ -112,17 +124,26 @@ export default function AdminNovidades() {
                 <td><span className={`badge badge-${n.estado}`}>{n.estado === "publicada" ? "Publicada" : "Rascunho"}</span></td>
                 <td>{formatarData(n.publicadoEm)}</td>
                 <td>{n.leituras}</td>
-                <td className="acoes">
-                  <button className="mini" onClick={() => setEditando(n)}>Editar</button>
-                  <button className="mini" onClick={() => void alternarEstado(n)}>
-                    {n.estado === "publicada" ? "Despublicar" : "Publicar"}
-                  </button>
-                  <button className="mini perigo" onClick={() => setConfirmandoRemocao(n)}>Remover</button>
-                </td>
+                <td className="acoes">{acoes(n)}</td>
               </tr>
             ))}
           </tbody>
         </table>
+        {/* Mesmos dados em cartões para telas ≤640px (a tabela é ocultada pelo CSS). */}
+        <div className="cartoes-registro">
+          {itens.map((n) => (
+            <div key={n.id} className="registro-cartao">
+              <div className="registro-campo"><span className="registro-rotulo">Título</span><strong>{n.titulo}</strong></div>
+              <div className="registro-campo"><span className="registro-rotulo">Categoria</span><span>{CATEGORIAS.find((c) => c.valor === n.categoria)?.rotulo ?? n.categoria}</span></div>
+              <div className="registro-campo"><span className="registro-rotulo">Versão</span><span>{n.versao ? `v${n.versao}` : "—"}</span></div>
+              <div className="registro-campo"><span className="registro-rotulo">Estado</span><span className={`badge badge-${n.estado}`}>{n.estado === "publicada" ? "Publicada" : "Rascunho"}</span></div>
+              <div className="registro-campo"><span className="registro-rotulo">Publicada em</span><span>{formatarData(n.publicadoEm)}</span></div>
+              <div className="registro-campo"><span className="registro-rotulo">Lidas</span><span>{n.leituras}</span></div>
+              <div className="registro-acoes">{acoes(n)}</div>
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       {editando && (
