@@ -461,6 +461,43 @@ try {
     // vínculo financeiro ↔ item ↔ auditoria
     const txC = comDb(BANCO, (db) => db.prepare("select kind,request_id from money_transactions where request_id=?").get(ridC));
     t("C: tx financeira vinculada por requestId", txC?.kind === "compra" && txC?.request_id === ridC);
+
+    // ===== Integridade do templateId (revisão) =====
+    // Caso A: templateId válido + item.templateId falso → servidor vence
+    const ridA2 = crypto.randomUUID();
+    const fakeTpl = crypto.randomUUID();
+    const compraA2 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 30, templateId: tpl2Id,
+      item: { name: "Relíquia Antiga", templateId: fakeTpl, data: { poder: 7 } }, requestId: ridA2,
+    });
+    t("A: compra com template válido + item.templateId falso → 201", compraA2.status === 201, `status=${compraA2.status}`);
+    const dA2 = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridA2);
+    t("A: data.templateId = ID validado (não o falso)", dA2?.templateId === tpl2Id && dA2?.templateId !== fakeTpl, JSON.stringify(dA2?.templateId));
+    t("A: dados do template correto usados", dA2?.raridade === "lendaria" && dA2?.poder === 7);
+    const auditA2 = JSON.parse(
+      comDb(BANCO, (db) => db.prepare("select detail from audit_logs where action='financeiro.operacao' and detail like ? order by created_at desc limit 1").get(`%${ridA2}%`)?.detail) ?? "{}",
+    );
+    t("A: auditoria registra o mesmo templateId validado", auditA2?.templateId === tpl2Id, JSON.stringify(auditA2));
+
+    // Caso B: sem templateId de topo, item.templateId arbitrário → não persiste
+    const ridB2 = crypto.randomUUID();
+    const compraB2 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1b, valor: 10,
+      item: { name: "Item avulso", templateId: fakeTpl }, requestId: ridB2,
+    });
+    t("B: compra avulsa com item.templateId arbitrário → 201", compraB2.status === 201, `status=${compraB2.status}`);
+    const dB2 = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridB2);
+    t("B: templateId arbitrário NÃO persistido", dB2?.templateId === undefined, JSON.stringify(dB2?.templateId));
+    t("B: nenhum vínculo falso com template", dB2?.origem === "compra" && dB2?.templateId === undefined);
+
+    // Caso C: consistência ponta a ponta — item persistido = auditoria
+    const dC2 = itensDb(charJ1).map((i) => JSON.parse(i.data ?? "{}")).find((d) => d.operacaoId === ridA2);
+    const auditC2 = JSON.parse(
+      comDb(BANCO, (db) => db.prepare("select detail from audit_logs where action='financeiro.operacao' and detail like ? order by created_at desc limit 1").get(`%${ridA2}%`)?.detail) ?? "{}",
+    );
+    t("C: auditoria e item apontam o mesmo template", auditC2?.templateId === tpl2Id && dC2?.templateId === tpl2Id, `audit=${auditC2?.templateId} item=${dC2?.templateId}`);
+    t("C: personalização preservada", dC2?.poder === 7);
+    t("C: requestId vincula operação", auditC2?.requestId === ridA2, JSON.stringify(auditC2));
   }
 
   // ===== Correção: unitário não representável não vira sugestão =====

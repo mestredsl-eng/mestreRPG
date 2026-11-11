@@ -1065,6 +1065,9 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   let novoSaldo = 0;
   let saldoInsuficiente = false;
   let estoqueInsuficiente = false;
+  // ID do template EFETIVAMENTE validado na transação — única fonte
+  // autorizada para data.templateId e para a auditoria.
+  let templateValidado: string | null = null;
   try {
     db.transaction((tx) => {
       // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
@@ -1097,6 +1100,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           .limit(1).all();
         if (!tpl) throw new Error("template_sumiu");
         tplTx = tpl;
+        templateValidado = tpl.id;
       }
 
       // 3) Movimentação financeira (requestId → idempotência por UNIQUE)
@@ -1139,7 +1143,10 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             // gravados depois e sempre definidos pelo servidor.
             ...tplData,
             ...(itemDados?.data ?? {}),
-            ...(itemDados?.templateId || body.data.templateId ? { templateId: itemDados?.templateId ?? body.data.templateId } : {}),
+            // templateId vem exclusivamente do template validado na
+            // transação (tplTx.id) — identificadores enviados pelo
+            // cliente no item nunca são fonte de autoridade.
+            ...(tplTx ? { templateId: tplTx.id } : {}),
             valueCents: unitCents ?? undefined,
             totalValueCents: cents,
             aquisicao: { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd },
@@ -1182,7 +1189,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     res.status(400).json({ erro: "Quantidade indisponível no estoque" });
     return;
   }
-  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId, itemId: body.data.itemId ?? null, templateId: body.data.templateId ?? null });
+  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId, itemId: body.data.itemId ?? null, templateId: templateValidado });
   emitir(a.personagem);
   res.status(201).json({ ok: true, saldo: deCentavos(novoSaldo, casas) });
 });
