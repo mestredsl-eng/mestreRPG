@@ -36,8 +36,12 @@ function conteudoAlterado(
 ): boolean {
   return CAMPOS_CONTEUDO.some((k) => {
     if (d[k] === undefined) return false;
+    // resumo/versao: o valor NOVO é normalizado antes de persistir; o
+    // valor ANTIGO é comparado bruto — registros legados com espaços
+    // (" 1.0 ") diferem de "1.0" e precisam invalidar as leituras,
+    // pois o persistido (e o token de revisão) realmente muda.
     const novo = k === "resumo" || k === "versao" ? normTexto(d[k] as string | null) : d[k];
-    const velho = k === "resumo" || k === "versao" ? normTexto(atual[k] as string | null) : atual[k];
+    const velho = atual[k];
     return novo !== velho;
   });
 }

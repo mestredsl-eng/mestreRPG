@@ -367,6 +367,50 @@ try {
     t("criação normaliza versao/resumo vazios", p8?.versao === null && p8?.resumo === null, JSON.stringify({ v: p8?.versao, r: p8?.resumo }));
   }
 
+  sec("20. Registros legados com espaços em resumo/versao");
+  {
+    // simula linha gravada antes da normalização: versao " 1.0 " com leitura
+    const p9 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Legado espaços", versao: "1.0", resumo: "res", estado: "publicada" },
+    })).json?.novidade;
+    const wdb = abrirDb(BANCO);
+    wdb.prepare(`update novidades set versao=' 1.0 ', resumo='  res  ' where id=?`).run(p9.id);
+    wdb.close();
+    const revAntes = (await req(BASE, "GET", `/novidades/${p9.id}`, { cookie: A })).json?.novidade?.revisao;
+    await marcarLida(p9.id, A);
+    t("leitura registrada sobre valor legado", comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p9.id).c) === 1);
+
+    // PATCH com o MESMO texto com espaços: normaliza p/ "1.0" -> persistido muda -> invalida
+    const edV = await req(BASE, "PATCH", `/admin/novidades/${p9.id}`, { cookie: M, body: { versao: " 1.0 " } });
+    t("legado versao: leiturasInvalidas=true", edV.json?.leiturasInvalidas === true, JSON.stringify(edV.json).slice(0, 140));
+    t("versao persistida normalizada", edV.json?.novidade?.versao === "1.0", JSON.stringify(edV.json?.novidade?.versao));
+    t("leitura legada removida", comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p9.id).c) === 0);
+    const revDepois = (await req(BASE, "GET", `/novidades/${p9.id}`, { cookie: A })).json?.novidade?.revisao;
+    t("revisao mudou após normalização do legado", revDepois !== revAntes, `${revAntes} -> ${revDepois}`);
+
+    // repete para resumo: volta a sujar no banco, lê, PATCH com espaços
+    const wdb2 = abrirDb(BANCO);
+    wdb2.prepare(`update novidades set resumo='  res  ' where id=?`).run(p9.id);
+    wdb2.close();
+    await marcarLida(p9.id, A);
+    const edR = await req(BASE, "PATCH", `/admin/novidades/${p9.id}`, { cookie: M, body: { resumo: "  res  " } });
+    t("legado resumo: leiturasInvalidas=true", edR.json?.leiturasInvalidas === true);
+    t("resumo persistido normalizado", edR.json?.novidade?.resumo === "res", JSON.stringify(edR.json?.novidade?.resumo));
+    t("leitura de resumo removida", comDb(BANCO, (db) => db.prepare("select count(*) c from novidade_leituras where novidade_id=?").get(p9.id).c) === 0);
+
+    // banco já null + PATCH com espaços continua sem invalidar
+    await marcarLida(p9.id, A);
+    const edNull = await req(BASE, "PATCH", `/admin/novidades/${p9.id}`, { cookie: M, body: { resumo: "   " } });
+    // resumo está "res" -> "   " esvazia = mudança real -> invalida; testar null->espaços:
+    const p10 = (await req(BASE, "POST", "/admin/novidades", {
+      cookie: M, body: { titulo: "Null estável", estado: "publicada" },
+    })).json?.novidade;
+    await marcarLida(p10.id, A);
+    const edNull2 = await req(BASE, "PATCH", `/admin/novidades/${p10.id}`, { cookie: M, body: { resumo: "  ", versao: " " } });
+    t("null->espaços segue sem invalidar", edNull2.json?.leiturasInvalidas === false);
+    t("resumo 'res'->espaços invalida (mudança real)", edNull.json?.leiturasInvalidas === true);
+  }
+
   sec("Validações e integridade extra");
   {
     const vazio = await req(BASE, "POST", "/admin/novidades", { cookie: M, body: { titulo: "" } });
