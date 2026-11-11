@@ -85,6 +85,9 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   const [slots, setSlots] = useState<string[]>([]);
   const [confirmandoItem, setConfirmandoItem] = useState<ItemInventario | null>(null);
   const [ocupadoItem, setOcupadoItem] = useState(false);
+  const [fin, setFin] = useState<Financeiro | null>(null);
+  const [comprando, setComprando] = useState(false);
+  const [vendendo, setVendendo] = useState<ItemInventario | null>(null);
   // Idempotência de equipar: uma intenção = um requestId, reutilizado em
   // duplo clique e retries; uma nova ação após sucesso gera outro ID.
   const equipReqIds = useRef(new Map<string, string>()).current;
@@ -110,8 +113,14 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
     } catch (e) { aoErro(e); }
   }, [characterId, campaignId, aoErro]);
 
+  const carregarFin = useCallback(async () => {
+    try { setFin(await api.obterFinanceiro(characterId)); }
+    catch (e) { aoErro(e); }
+  }, [characterId, aoErro]);
+
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
   useEffect(() => { api.listarEquipamentos(characterId).then((r) => setSlots(r.slots)).catch(() => undefined); }, [characterId]);
+  useEffect(() => { void carregarFin(); }, [carregarFin]);
 
   const categorias = [...new Set([...itens.map((i) => i.category).filter(Boolean) as string[], ...catalogo.map((c) => c.category).filter(Boolean) as string[]])].sort();
   const visiveis = itens.filter((i) =>
@@ -129,6 +138,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   };
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
+  const podeOperar = souMestre || (fin?.config.jogadorCompraVenda ?? false);
 
   return (
     <div>
@@ -153,6 +163,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
         <input placeholder="Peso (kg)" type="number" min="0" step="any" value={novo.weight ?? ""} onChange={(e) => setNovo({ ...novo, weight: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ width: 110 }} />
         <input placeholder="Local" value={novo.location ?? ""} onChange={(e) => setNovo({ ...novo, location: e.target.value })} />
         <button type="submit">Adicionar</button>
+        {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
 
       <table className="tabela tabela-responsiva">
@@ -183,6 +194,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               <td>{item.location ?? "—"}</td>
               <td className="linha">
                 <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+                {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
@@ -223,6 +235,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
             <div className="registro-acoes">
               <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+              {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
               <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
@@ -249,6 +262,26 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               .finally(() => setOcupadoItem(false));
           }}
           aoCancelar={() => { if (!ocupadoItem) setConfirmandoItem(null); }}
+        />
+      )}
+      {comprando && (
+        <ModalCompra
+          characterId={characterId}
+          catalogo={catalogo}
+          fin={fin}
+          aoErro={aoErro}
+          aoOk={async () => { setComprando(false); await carregar(); await carregarFin(); }}
+          aoFechar={() => setComprando(false)}
+        />
+      )}
+      {vendendo && (
+        <ModalVenda
+          characterId={characterId}
+          item={vendendo}
+          fin={fin}
+          aoErro={aoErro}
+          aoOk={async () => { setVendendo(null); await carregar(); await carregarFin(); }}
+          aoFechar={() => setVendendo(null)}
         />
       )}
     </div>
@@ -291,6 +324,153 @@ function TransferirButton({ item, personagens, proprioId, souMestre, onTransfer,
         </div>
       )}
     </>
+  );
+}
+
+// ================= COMPRA / VENDA COM CONTA =================
+
+const fmtOp = (v: number, casas: number) => v.toFixed(casas);
+
+function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
+  characterId: string;
+  catalogo: { id: string; name: string; category: string | null; data: Record<string, unknown> }[];
+  fin: Financeiro | null;
+  aoErro: (e: unknown) => void;
+  aoOk: () => Promise<void>;
+  aoFechar: () => void;
+}) {
+  const [templateId, setTemplateId] = useState("");
+  const [nome, setNome] = useState("");
+  const [qtd, setQtd] = useState(1);
+  const [valorUnit, setValorUnit] = useState<number | "">("");
+  const [contaId, setContaId] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const reqId = useRef(crypto.randomUUID()).current;
+  const casas = fin?.config.casasDecimais ?? 2;
+  const moeda = fin?.config.moedaPrincipal ?? "";
+  const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
+  const valido = !!contaId && Number(qtd) > 0 && Number(valorUnit) >= 0 && (templateId !== "" || nome.trim().length > 0);
+  const submeter = async (e: FormEvent) => {
+    e.preventDefault();
+    if (ocupado || !valido) return;
+    setOcupado(true);
+    try {
+      await api.operacaoFinanceira(characterId, {
+        tipo: "compra", accountId: contaId, valor: total, quantidade: Number(qtd),
+        templateId: templateId || undefined,
+        item: templateId ? undefined : { name: nome.trim(), quantity: 1 },
+        requestId: reqId,
+      });
+      await aoOk();
+    } catch (err) { aoErro(err); } finally { setOcupado(false); }
+  };
+  return (
+    <div className="modal-fundo" onClick={() => { if (!ocupado) aoFechar(); }}>
+      <div className="modal cartao" onClick={(e) => e.stopPropagation()}>
+        <h4>Comprar item</h4>
+        <form className="formulario" onSubmit={submeter}>
+          <label>Item do catálogo
+            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              <option value="">Item avulso…</option>
+              {catalogo.map((c) => <option key={c.id} value={c.id}>{c.name}{c.category ? ` (${c.category})` : ""}</option>)}
+            </select>
+          </label>
+          {templateId === "" && (
+            <label>Nome do item
+              <input value={nome} onChange={(e) => setNome(e.target.value)} required />
+            </label>
+          )}
+          <label>Quantidade
+            <input type="number" min="0.01" step="any" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} required />
+          </label>
+          <label>Valor unitário ({moeda})
+            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required />
+          </label>
+          <label>Conta que paga
+            <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
+              <option value="">Escolher conta…</option>
+              {(fin?.contas ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
+              ))}
+            </select>
+          </label>
+          <p className="meta">Total: {fmtOp(total, casas)} {moeda}</p>
+          <div className="linha">
+            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar compra"}</button>
+            <button type="button" className="secundario" onClick={aoFechar} disabled={ocupado}>Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
+  characterId: string;
+  item: ItemInventario;
+  fin: Financeiro | null;
+  aoErro: (e: unknown) => void;
+  aoOk: () => Promise<void>;
+  aoFechar: () => void;
+}) {
+  const [qtd, setQtd] = useState(1);
+  const [valorUnit, setValorUnit] = useState<number | "">("");
+  const [contaId, setContaId] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const reqId = useRef(crypto.randomUUID()).current;
+  const casas = fin?.config.casasDecimais ?? 2;
+  const moeda = fin?.config.moedaPrincipal ?? "";
+
+  useEffect(() => {
+    if (fin && valorUnit === "") {
+      const vc = Number(item.data?.valueCents ?? 0);
+      if (vc > 0) setValorUnit(+(vc / 10 ** casas / item.quantity).toFixed(casas));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fin]);
+
+  const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
+  const valido = !!contaId && Number(qtd) > 0 && Number(qtd) <= item.quantity && Number(valorUnit) >= 0;
+  const submeter = async (e: FormEvent) => {
+    e.preventDefault();
+    if (ocupado || !valido) return;
+    setOcupado(true);
+    try {
+      await api.operacaoFinanceira(characterId, {
+        tipo: "venda", accountId: contaId, valor: total,
+        itemId: item.id, quantidade: Number(qtd), requestId: reqId,
+      });
+      await aoOk();
+    } catch (err) { aoErro(err); } finally { setOcupado(false); }
+  };
+  return (
+    <div className="modal-fundo" onClick={() => { if (!ocupado) aoFechar(); }}>
+      <div className="modal cartao" onClick={(e) => e.stopPropagation()}>
+        <h4>Vender "{item.name}"</h4>
+        <p className="meta">Disponível: {item.quantity} un.</p>
+        <form className="formulario" onSubmit={submeter}>
+          <label>Quantidade
+            <input type="number" min="0.01" max={item.quantity} step="any" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} required />
+          </label>
+          <label>Valor unitário ({moeda})
+            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required />
+          </label>
+          <label>Conta que recebe
+            <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
+              <option value="">Escolher conta…</option>
+              {(fin?.contas ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
+              ))}
+            </select>
+          </label>
+          <p className="meta">Total a receber: {fmtOp(total, casas)} {moeda}</p>
+          <div className="linha">
+            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar venda"}</button>
+            <button type="button" className="secundario" onClick={aoFechar} disabled={ocupado}>Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
