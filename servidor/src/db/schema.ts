@@ -539,3 +539,33 @@ export const auditLogs = sqliteTable("audit_logs", {
   detail: text("detail", { mode: "json" }),
   createdAt: createdAt(),
 }, (t) => [index("audit_campaign_idx").on(t.campaignId, t.createdAt)]);
+
+// ---------- Central de Novidades (Issue #42) ----------
+// Publicações do administrador para todos os usuários autenticados.
+// estado: rascunho (invisível fora do admin) | publicada.
+// categoria: novidade | melhoria | correcao.
+export const novidades = sqliteTable("novidades", {
+  id: id(),
+  titulo: text("titulo").notNull(),
+  resumo: text("resumo"),
+  conteudo: text("conteudo").notNull().default(""),
+  versao: text("versao"),
+  categoria: text("categoria").notNull().default("novidade"), // novidade|melhoria|correcao
+  estado: text("estado").notNull().default("rascunho"), // rascunho|publicada
+  publicadoEm: integer("publicado_em", { mode: "timestamp_ms" }),
+  autorId: text("autor_id").references(() => users.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("novidades_estado_publicado_idx").on(t.estado, t.publicadoEm)]);
+
+// Leitura individual por usuário — unique(novidade_id, user_id) impede
+// duplicidade mesmo com marcações concorrentes (INSERT OR IGNORE).
+export const novidadesLeituras = sqliteTable("novidade_leituras", {
+  id: id(),
+  novidadeId: text("novidade_id").notNull().references(() => novidades.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  lidaEm: integer("lida_em", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [
+  uniqueIndex("novidade_leitura_unica_idx").on(t.novidadeId, t.userId),
+  index("novidade_leitura_user_idx").on(t.userId),
+]);

@@ -18,6 +18,7 @@ import { snapshotsRouter } from "./routes/snapshots.js";
 import { arquivosRouter } from "./routes/arquivos.js";
 import { bibliotecaRouter } from "./routes/biblioteca.js";
 import { campanhaIORouter } from "./routes/campanha-io.js";
+import { novidadesRouter, novidadesAdminRouter } from "./routes/novidades.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
@@ -76,6 +77,7 @@ const routers: Router[] = [
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
   personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
+  novidadesRouter, novidadesAdminRouter,
 ];
 for (const r of routers) blindar(r);
 
@@ -99,6 +101,8 @@ app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/campaigns/:campaignId/arquivos", arquivosRouter);
 app.use("/api/characters", personagensRouter);
 app.use("/api/biblioteca", bibliotecaRouter);
+app.use("/api/novidades", novidadesRouter);
+app.use("/api/admin/novidades", novidadesAdminRouter);
 
 // 404 consistente para rotas de API inexistentes
 app.use("/api", (_req, res) => {

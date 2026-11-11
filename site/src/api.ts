@@ -24,9 +24,11 @@ export interface UsuarioAdmin extends Usuario {
 
 export class ApiError extends Error {
   detalhes?: unknown;
-  constructor(mensagem: string, detalhes?: unknown) {
+  status: number;
+  constructor(mensagem: string, detalhes?: unknown, status = 0) {
     super(mensagem);
     this.detalhes = detalhes;
+    this.status = status;
   }
 }
 
@@ -38,8 +40,8 @@ async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise
   });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const c = corpo as { erro?: string; detalhes?: unknown };
-    throw new ApiError(c.erro ?? `HTTP ${res.status}`, c.detalhes);
+    const c = corpo as { erro?: string; mensagem?: string; detalhes?: unknown };
+    throw new ApiError(c.mensagem ?? c.erro ?? `HTTP ${res.status}`, c.detalhes, res.status);
   }
   return corpo as T;
 }
@@ -294,6 +296,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ pacote, modo, campaignId, confirmacao: modo === "substituir" ? "SUBSTITUIR" : undefined }),
     }),
+
+  // ---- Central de Novidades (Issue #42) ----
+  listarNovidades: () =>
+    requisicao<{ novidades: Novidade[]; naoLidas: number }>("/novidades"),
+  novidadesNaoLidas: () =>
+    requisicao<{ naoLidas: number }>("/novidades/nao-lidas"),
+  obterNovidade: (id: string) =>
+    requisicao<{ novidade: Novidade }>(`/novidades/${id}`),
+  marcarNovidadeLida: (id: string, revisao: string) =>
+    requisicao<{ ok: boolean }>(`/novidades/${id}/lida`, { method: "POST", body: JSON.stringify({ revisao }) }),
+  // Administração de novidades (somente admin)
+  listarNovidadesAdmin: () =>
+    requisicao<{ novidades: NovidadeAdmin[] }>("/admin/novidades"),
+  obterNovidadeAdmin: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`),
+  criarNovidade: (dados: NovidadeInput) =>
+    requisicao<{ novidade: NovidadeAdmin }>("/admin/novidades", { method: "POST", body: JSON.stringify(dados) }),
+  atualizarNovidade: (id: string, dados: Partial<NovidadeInput>) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  publicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/publicar`, { method: "POST" }),
+  despublicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/despublicar`, { method: "POST" }),
+  removerNovidade: (id: string) =>
+    requisicao<{ ok: boolean }>(`/admin/novidades/${id}`, { method: "DELETE" }),
 
   // ---- Etapa 9: biblioteca de arquivos ----
   listarArquivos: (cid: string) =>
@@ -1183,4 +1210,36 @@ export interface BackupLivro {
   motivo: string;
   createdAt: string;
   itens: number;
+}
+
+// ---- Central de Novidades (Issue #42) ----
+export type CategoriaNovidade = "novidade" | "melhoria" | "correcao";
+export type EstadoNovidade = "rascunho" | "publicada";
+
+export interface Novidade {
+  id: string;
+  titulo: string;
+  resumo: string | null;
+  conteudo: string;
+  versao: string | null;
+  categoria: CategoriaNovidade;
+  estado: EstadoNovidade;
+  publicadoEm: string | null;
+  criadoEm: string;
+  /** Token da versão do conteúdo exibido — obrigatório para marcar como lida. */
+  revisao: string;
+  lida?: boolean;
+}
+
+export interface NovidadeAdmin extends Novidade {
+  leituras: number;
+}
+
+export interface NovidadeInput {
+  titulo: string;
+  resumo?: string | null;
+  conteudo?: string;
+  versao?: string | null;
+  categoria?: CategoriaNovidade;
+  estado?: EstadoNovidade;
 }
