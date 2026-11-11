@@ -425,10 +425,11 @@ const previaPontosSchema = z.object({
 });
 
 /**
- * POST /api/characters/:characterId/pontos-previa — saldo de pontos para um
- * rascunho de dados, sem salvar. Usa exatamente o mesmo pipeline do GET
- * (custos da biblioteca, seleção e transferências de reservas), respeitando
- * a visibilidade do solicitante. Não substitui a validação do PATCH.
+ * POST /api/characters/:characterId/pontos-previa — saldo de pontos e erros
+ * de regras para um rascunho de dados, sem salvar. Usa exatamente o mesmo
+ * pipeline do GET (custos da biblioteca, seleção e transferências de
+ * reservas + validarRegras), respeitando a visibilidade do solicitante.
+ * Não substitui a validação do PATCH.
  */
 personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
@@ -457,7 +458,9 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     regras,
     body.data.dados
   );
-  res.json({ pontos: ficha.pontos });
+  // ficha.validacao já reflete o rascunho (dadosOverride) e filtra erros
+  // de campos invisíveis para não-mestre — mesma regra do GET.
+  res.json({ pontos: ficha.pontos, validacao: ficha.validacao });
 });
 
 const atualizarSchema = z.object({

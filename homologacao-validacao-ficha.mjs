@@ -80,7 +80,14 @@ try {
     await p.waitForTimeout(1000);
     // marca Teleporte sem Covardia -> dependência violada
     await p.locator("#ficha-campo-f-poderes").getByText("Teleporte").click();
-    await p.waitForTimeout(600);
+    await p.waitForTimeout(1400); // debounce 300ms + requisição
+
+    // prévia ao vivo: erro de regra aparece antes mesmo de salvar
+    const previa = p.locator(".simulacao-erros");
+    const previaVisivel = await previa.isVisible().catch(() => false);
+    const previaTexto = previaVisivel ? await previa.innerText() : "";
+    t(`${nome}: prévia mostra dependência ao vivo`, previaVisivel && previaTexto.includes("Teleporte") && previaTexto.includes("Covardia"), previaTexto.slice(0, 300));
+
     await p.getByRole("button", { name: "Salvar" }).click();
     await p.waitForTimeout(1200);
 
@@ -116,7 +123,10 @@ try {
     await p.waitForTimeout(400);
     const bolinha = p.locator("#ficha-campo-f-defeitos .bolinha").first();
     if (await bolinha.count()) await bolinha.click();
-    await p.waitForTimeout(400);
+    await p.waitForTimeout(1400); // debounce + requisição
+    // prévia: erro some assim que o requisito é atendido
+    const previaApos = await p.locator(".simulacao-erros").innerText().catch(() => "");
+    t(`${nome}: prévia limpa após corrigir`, !previaApos.includes("Teleporte") || !(await p.locator(".simulacao-erros").isVisible().catch(() => false)), previaApos.slice(0, 200));
     await p.getByRole("button", { name: "Salvar" }).click();
     await p.waitForTimeout(1500);
     const salvo = await p.locator("text=Ficha salva").count();

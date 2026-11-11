@@ -104,6 +104,42 @@ try {
     t("chave 'erros' presente", detP && detP["erros"] !== undefined, JSON.stringify(detP).slice(0, 200));
   }
 
+  sec("Prévia de pontos retorna erros de regras (somente leitura)");
+  {
+    const base = { "f-apelido": "Val", "f-forca": 2, "f-int": 3 };
+    // rascunho com Teleporte sem Covardia -> dependência aparece na prévia
+    const r1 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [], "f-poderes": ["teleporte"] } },
+    });
+    t("prévia 200", r1.status === 200, `status=${r1.status}`);
+    const errs1 = r1.json?.validacao?.erros ?? [];
+    t("prévia expõe dependência", errs1.some((e) => e.mensagem.includes("Teleporte") && e.mensagem.includes("Covardia")), JSON.stringify(errs1).slice(0, 300));
+    // corrigindo o rascunho o erro some
+    const r2 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [{ key: "covardia", nivel: 1 }], "f-poderes": ["teleporte"] } },
+    });
+    const errs2 = r2.json?.validacao?.erros ?? [];
+    t("prévia sem erro após corrigir", !errs2.some((e) => e.mensagem.includes("Teleporte")), JSON.stringify(errs2).slice(0, 300));
+    // removendo o defeito o erro reaparece
+    const r3 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-defeitos": [], "f-poderes": ["teleporte"] } },
+    });
+    t("prévia reflete remoção do requisito", (r3.json?.validacao?.erros ?? []).some((e) => e.mensagem.includes("Teleporte")));
+    // pontos insuficientes aparecem na prévia
+    const r4 = await req(BASE, "POST", `/characters/${CHAR}/pontos-previa`, {
+      cookie: J,
+      body: { dados: { ...base, "f-forca": 9, "f-int": 9 } },
+    });
+    t("prévia expõe pontos insuficientes", (r4.json?.validacao?.erros ?? []).some((e) => e.codigo === "pontos" || e.mensagem.toLowerCase().includes("ponto")), JSON.stringify(r4.json?.validacao?.erros).slice(0, 300));
+    // nada foi gravado: ficha salva não ganhou os poderes do rascunho
+    const g = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });
+    const d = g.json?.ficha?.campos ?? {};
+    t("prévia não gravou nada", !JSON.stringify(d["f-poderes"] ?? "").includes("teleporte"), JSON.stringify(d["f-poderes"]));
+  }
+
   sec("Dados preservados após falha");
   {
     const g = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: J });

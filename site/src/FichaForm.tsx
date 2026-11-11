@@ -43,6 +43,9 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
+  // Erros de regras vindos da prévia do personagem (pontos-previa) — mesmo
+  // pipeline do simulador, exibidos no bloco .simulacao-erros.
+  const [errosPrevia, setErrosPrevia] = useState<{ campoId?: string; codigo: string; mensagem: string }[] | null>(null);
 
   // Prévia de pontos: recalcula no servidor (mesmo pipeline do GET/PATCH) com
   // debounce a cada alteração da ficha. Em modo leitura usa o valor inicial.
@@ -53,6 +56,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
     if (!usarSimulacao && !usarPrevia) {
       setPontos(pontosInicial ?? null);
       setSim(null);
+      setErrosPrevia(null);
       return;
     }
     let vivo = true;
@@ -64,11 +68,16 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
             pontosFicticios: simulacao!.pontosFicticios ?? undefined,
           })
         : api.previaPontos(personagemId!, valores).then((r) => ({
-            ok: true, erros: [], calculos: {}, pontos: r.pontos,
+            ok: true, erros: r.validacao?.erros ?? [], calculos: {}, pontos: r.pontos,
             pontosCfg: undefined as unknown as EstruturaFicha["pontos"],
           }));
       promessa
-        .then((r) => { if (vivo) { setPontos(r.pontos); setSim(usarSimulacao ? (r as SimulacaoResultado) : null); } })
+        .then((r) => {
+          if (!vivo) return;
+          setPontos(r.pontos);
+          if (usarSimulacao) { setSim(r as SimulacaoResultado); setErrosPrevia(null); }
+          else { setSim(null); setErrosPrevia((r as { erros?: { campoId?: string; codigo: string; mensagem: string }[] }).erros ?? []); }
+        })
         .catch(() => { /* prévia é best-effort; a validação real é do PATCH */ });
     }, 300);
     return () => { vivo = false; clearTimeout(timer); };
@@ -167,11 +176,11 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           Poderes exigem ao menos 1 defeito como contrapartida — escolha um defeito para liberar o poder.
         </div>
       )}
-      {sim && sim.erros.filter((e) => e.codigo !== "pontos").length > 0 && (
+      {(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").length > 0 && (
         <div className="ficha-aviso simulacao-erros">
-          <strong>Regras ({sim.erros.filter((e) => e.codigo !== "pontos").length}):</strong>
+          <strong>Regras ({(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").length}):</strong>
           <ul>
-            {sim.erros.filter((e) => e.codigo !== "pontos").map((e, i) => <li key={i}>{e.mensagem}</li>)}
+            {(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").map((e, i) => <li key={i}>{e.mensagem}</li>)}
           </ul>
         </div>
       )}

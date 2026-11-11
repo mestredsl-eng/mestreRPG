@@ -151,7 +151,7 @@ export const api = {
   obterPersonagem: (charId: string) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`),
   previaPontos: (charId: string, dados: Record<string, unknown>) =>
-    requisicao<{ pontos: ResultadoPontos }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
+    requisicao<{ pontos: ResultadoPontos; validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
   atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
