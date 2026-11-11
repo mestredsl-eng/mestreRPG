@@ -50,7 +50,8 @@ jobs:
             teste-financeiro-compras.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
-            teste-novidades.mjs
+            teste-novidades.mjs \
+            teste-validacao-personagem.mjs
           do echo "===== $s ====="; node "$s"; done
 
   navegador:
@@ -89,5 +90,6 @@ jobs:
             homologacao-novidades.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
-            homologacao-visual.mjs
+            homologacao-visual.mjs \
+            homologacao-validacao-ficha.mjs
           do echo "===== $s ====="; node "$s"; done
