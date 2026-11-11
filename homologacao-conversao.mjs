@@ -147,6 +147,74 @@ try {
     }
   }
 
+  // ===== Regressão UI — índice inicial do "+ Limite" =====
+  sec("UI — '+ Limite' respeita o tamanho da escala");
+  {
+    const putCfg = (body) => req(BASE, "PUT", `/campaigns/${cenario.campId}/regras/config`, { cookie: cenario.cookieMestre, body });
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    await login(page, "mestre_teste", "senha-forte-123");
+    const abrirRegras = async () => {
+      await page.reload({ waitUntil: "networkidle" });
+      await irCampanha(page);
+      await aba(page, "Regras");
+      await page.waitForTimeout(700);
+      await page.locator(".abas button", { hasText: "Pontuação" }).first().click();
+      await page.waitForTimeout(1200);
+    };
+    const linhaLimiar = () => page.locator(".linha-ferramentas", { hasText: "HP restante" }).last();
+    const salvar = async () => {
+      await page.getByRole("button", { name: "Salvar configuração" }).click();
+      await page.waitForTimeout(1500);
+    };
+
+    // --- Campanha com UM nível de vitalidade: índice inicial deve ser 0 ---
+    await putCfg({
+      vitalidade: { niveis: [{ nome: "São", penalidadeDados: 0, bloqueiaAcoes: false }] },
+      conversaoFerimento: { habilitada: true, limiares: [] },
+    });
+    await abrirRegras();
+    await page.getByRole("button", { name: "+ Limite" }).click();
+    const sel1 = linhaLimiar().locator("select");
+    t("escala 1 nível: índice inicial = 0", (await sel1.inputValue()) === "0", await sel1.inputValue());
+    // edita o percentual e salva
+    await linhaLimiar().locator("input[type=number]").fill("30");
+    await salvar();
+    let cfgApi = (await req(BASE, "GET", `/campaigns/${cenario.campId}/regras`, { cookie: cenario.cookieMestre })).json?.config;
+    t("salvo: limiar {ate:30, nivel:0}", cfgApi?.conversaoFerimento?.limiares?.[0]?.ate === 30 && cfgApi?.conversaoFerimento?.limiares?.[0]?.nivel === 0, JSON.stringify(cfgApi?.conversaoFerimento?.limiares));
+    // reabre e confirma persistência
+    await abrirRegras();
+    t("reaberto: select mostra nível 0", (await linhaLimiar().locator("select").inputValue()) === "0");
+    // remove o limiar e salva
+    await linhaLimiar().getByRole("button", { name: "✕" }).click();
+    await salvar();
+    cfgApi = (await req(BASE, "GET", `/campaigns/${cenario.campId}/regras`, { cookie: cenario.cookieMestre })).json?.config;
+    t("remover limiar funciona", (cfgApi?.conversaoFerimento?.limiares ?? []).length === 0, JSON.stringify(cfgApi?.conversaoFerimento?.limiares));
+
+    // --- Campanha com DOIS níveis: índice inicial deve ser 1 ---
+    await putCfg({
+      vitalidade: { niveis: [{ nome: "Leve", penalidadeDados: 0, bloqueiaAcoes: false }, { nome: "Grave", penalidadeDados: 1, bloqueiaAcoes: false }] },
+      conversaoFerimento: { habilitada: true, limiares: [] },
+    });
+    await abrirRegras();
+    await page.getByRole("button", { name: "+ Limite" }).click();
+    const sel2 = linhaLimiar().locator("select");
+    t("escala 2 níveis: índice inicial = 1", (await sel2.inputValue()) === "1", await sel2.inputValue());
+    await salvar();
+    cfgApi = (await req(BASE, "GET", `/campaigns/${cenario.campId}/regras`, { cookie: cenario.cookieMestre })).json?.config;
+    t("salvo: limiar nivel=1", cfgApi?.conversaoFerimento?.limiares?.[0]?.nivel === 1, JSON.stringify(cfgApi?.conversaoFerimento?.limiares));
+
+    // --- Escala padrão (4 níveis): comportamento anterior preservado ---
+    await putCfg(CONFIG);
+    await abrirRegras();
+    await page.getByRole("button", { name: "+ Limite" }).click();
+    const sel4 = linhaLimiar().locator("select");
+    t("escala 4 níveis: índice inicial = 1 (inalterado)", (await sel4.inputValue()) === "1", await sel4.inputValue());
+    await linhaLimiar().getByRole("button", { name: "✕" }).click();
+    await salvar();
+    await ctx.close();
+  }
+
   // ===== Mobile 390px =====
   sec("Mobile 390px");
   {

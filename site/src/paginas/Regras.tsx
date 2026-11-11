@@ -766,7 +766,12 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
           <div className="linha-ferramentas">
             <button type="button" className="secundario" onClick={() => setForm((f) => ({
               ...f,
-              conversaoFerimento: { habilitada: true, limiares: [...(f.conversaoFerimento?.limiares ?? []), { ate: 50, nivel: 1 }] },
+              conversaoFerimento: {
+                habilitada: true,
+                // Índice inicial sempre válido para a escala atual:
+                // escala de 1 nível só aceita índice 0.
+                limiares: [...(f.conversaoFerimento?.limiares ?? []), { ate: 50, nivel: Math.min(1, (f.vitalidade?.niveis?.length ?? 1) - 1) }],
+              },
             }))}>+ Limite</button>
           </div>
           <p className="dica">Ex.: "HP restante ≤ 50% → nível Machucado". Quando o HP cair até o percentual, a Vitalidade sobe para ao menos esse nível. Funciona somente com HP e Vitalidade habilitados.</p>
