@@ -1714,3 +1714,79 @@ textarea:focus-visible,
   .dado-3d-fallback.d10-face { width: 36px; height: 36px; }
 }
 .dado-3d-canvas.dado-3d-indisponivel { display: none; }
+
+/* ---- Central de Novidades (Issue #42) ---- */
+.contador-nao-lidas {
+  display: inline-block;
+  min-width: 1.15rem;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.lista-novidades {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.novidade-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #16181d;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  color: inherit;
+}
+.novidade-item:hover { border-color: #3b5bdb; }
+.novidade-item.nao-lida { border-left: 3px solid #3b5bdb; }
+
+.novidade-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+
+.badge-cat-novidade { background: #1d4ed8; color: #fff; }
+.badge-cat-melhoria { background: #2e5c3a; color: #fff; }
+.badge-cat-correcao { background: #8a6d1f; color: #fff; }
+.badge-versao { background: #3a3f4a; color: #c9cdd3; }
+
+.ponto-nao-lida {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #3b5bdb;
+  flex: none;
+}
+
+.novidade-data { color: #8b93a7; font-size: 0.8rem; margin-left: auto; }
+.novidade-titulo { display: block; font-size: 1rem; }
+.novidade-resumo { display: block; color: #9aa0a6; font-size: 0.88rem; margin-top: 0.2rem; }
+
+.novidade-detalhe .novidade-topo { margin-bottom: 0.6rem; }
+.novidade-resumo-detalhe { color: #c9cdd3; font-size: 0.95rem; }
+.conteudo-novidade {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  color: #d7dae0;
+}
+
+.vazio { color: #8b93a7; }
+
+@media (max-width: 600px) {
+  .novidade-data { margin-left: 0; width: 100%; }
+}

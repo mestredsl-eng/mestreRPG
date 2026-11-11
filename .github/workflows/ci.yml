@@ -49,7 +49,8 @@ jobs:
             teste-venda-estoque.mjs \
             teste-financeiro-compras.mjs \
             teste-regressao-revisao.mjs \
-            teste-pontos-concorrencia.mjs
+            teste-pontos-concorrencia.mjs \
+            teste-novidades.mjs
           do echo "===== $s ====="; node "$s"; done
 
   navegador:
@@ -78,6 +79,7 @@ jobs:
             homologacao-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
             homologacao-conversao.mjs \
+            homologacao-novidades.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs

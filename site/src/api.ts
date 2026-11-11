@@ -295,6 +295,31 @@ export const api = {
       body: JSON.stringify({ pacote, modo, campaignId, confirmacao: modo === "substituir" ? "SUBSTITUIR" : undefined }),
     }),
 
+  // ---- Central de Novidades (Issue #42) ----
+  listarNovidades: () =>
+    requisicao<{ novidades: Novidade[]; naoLidas: number }>("/novidades"),
+  novidadesNaoLidas: () =>
+    requisicao<{ naoLidas: number }>("/novidades/nao-lidas"),
+  obterNovidade: (id: string) =>
+    requisicao<{ novidade: Novidade }>(`/novidades/${id}`),
+  marcarNovidadeLida: (id: string) =>
+    requisicao<{ ok: boolean }>(`/novidades/${id}/lida`, { method: "POST" }),
+  // Administração de novidades (somente admin)
+  listarNovidadesAdmin: () =>
+    requisicao<{ novidades: NovidadeAdmin[] }>("/admin/novidades"),
+  obterNovidadeAdmin: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`),
+  criarNovidade: (dados: NovidadeInput) =>
+    requisicao<{ novidade: NovidadeAdmin }>("/admin/novidades", { method: "POST", body: JSON.stringify(dados) }),
+  atualizarNovidade: (id: string, dados: Partial<NovidadeInput>) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  publicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/publicar`, { method: "POST" }),
+  despublicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/despublicar`, { method: "POST" }),
+  removerNovidade: (id: string) =>
+    requisicao<{ ok: boolean }>(`/admin/novidades/${id}`, { method: "DELETE" }),
+
   // ---- Etapa 9: biblioteca de arquivos ----
   listarArquivos: (cid: string) =>
     requisicao<{ arquivos: ArquivoBiblioteca[]; limites: { tamanhoMaxMb: number }; config: { jogadoresEnviam: boolean; espectadorVe: boolean } }>(`/campaigns/${cid}/arquivos`),
@@ -1183,4 +1208,34 @@ export interface BackupLivro {
   motivo: string;
   createdAt: string;
   itens: number;
+}
+
+// ---- Central de Novidades (Issue #42) ----
+export type CategoriaNovidade = "novidade" | "melhoria" | "correcao";
+export type EstadoNovidade = "rascunho" | "publicada";
+
+export interface Novidade {
+  id: string;
+  titulo: string;
+  resumo: string | null;
+  conteudo: string;
+  versao: string | null;
+  categoria: CategoriaNovidade;
+  estado: EstadoNovidade;
+  publicadoEm: string | null;
+  criadoEm: string;
+  lida?: boolean;
+}
+
+export interface NovidadeAdmin extends Novidade {
+  leituras: number;
+}
+
+export interface NovidadeInput {
+  titulo: string;
+  resumo?: string | null;
+  conteudo?: string;
+  versao?: string | null;
+  categoria?: CategoriaNovidade;
+  estado?: EstadoNovidade;
 }

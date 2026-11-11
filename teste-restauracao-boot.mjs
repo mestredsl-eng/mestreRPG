@@ -18,7 +18,7 @@ const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
-const TABELA_NOVA = "campaign_rule_books"; // criada pela migration 0017 (última)
+const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0018 (últimas)
 
 function envRaiz(raiz, extra = {}) {
   return {
@@ -62,18 +62,18 @@ function armarFlag(raiz, filePath) {
       "on conflict(key) do update set value=excluded.value").run(JSON.stringify({ filePath }));
   });
 }
-// Simula banco de versão anterior: remove a tabela da última migration e o
-// registro correspondente no journal do Drizzle.
+// Simula banco de versão anterior: remove as tabelas das duas últimas
+// migrations (0017 campaign_rule_books + 0018 novidades) e os registros
+// correspondentes no journal do Drizzle.
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"];
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
-    db.exec(`drop table if exists ${TABELA_NOVA}`);
+    for (const tb of TABELAS_ANTIGAS) db.exec(`drop table if exists ${tb}`);
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      const cols = db.prepare(`pragma table_info(${jt})`).all().map((c) => c.name);
-      const ordem = cols.includes("created_at") ? "created_at" : cols.includes("id") ? "id" : null;
-      if (ordem) db.exec(`delete from ${jt} where ${ordem} = (select max(${ordem}) from ${jt})`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 2)`);
     }
   } finally { db.close(); }
 }

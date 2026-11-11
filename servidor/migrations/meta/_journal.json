@@ -127,6 +127,13 @@
       "when": 1794312000000,
       "tag": "0017_campaign_rule_books",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1794369637491,
+      "tag": "0018_striped_firedrake",
+      "breakpoints": true
     }
   ]
 }
