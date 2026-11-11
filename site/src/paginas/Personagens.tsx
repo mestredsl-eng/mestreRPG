@@ -232,10 +232,9 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
       }))
       .filter((e) => e.mensagem);
   }
-  // mapa campoId -> mensagem (validarFicha)
-  return Object.entries(d)
-    .filter(([k]) => k !== "erros" && k !== "pontos")
-    .map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
+  // mapa campoId -> mensagem (validarFicha). Todas as chaves são preservadas:
+  // "erros" e "pontos" podem ser IDs legítimos de campos do modelo.
+  return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
 }
 
 function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
@@ -326,12 +325,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
-          {!editando && podeEditar && <button onClick={() => setEditando(true)}>Editar ficha</button>}
+          {!editando && podeEditar && <button onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>Editar ficha</button>}
           {editando && (
             <>
               <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
               {!souMestre && <button className="secundario" onClick={() => void salvar("aguardando_aprovacao")} disabled={salvando}>Enviar para aprovação</button>}
-              <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); }}>Cancelar</button>
+              <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); setErrosValidacao(null); setErro(null); }}>Cancelar</button>
             </>
           )}
           {souMestre && !editando && (

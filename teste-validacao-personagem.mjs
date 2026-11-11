@@ -46,6 +46,9 @@ try {
         { id: "f-defeitos", label: "Defeitos", tipo: "selecao_nivel", regraKind: "defeito" },
         { id: "f-poderes", label: "Poderes", tipo: "selecao_multipla", regraKind: "poder" },
         { id: "f-apelido", label: "Apelido", tipo: "texto", obrigatorio: true },
+        // IDs legítimos que colidem com chaves internas do payload de erro
+        { id: "pontos", label: "Pontos", tipo: "inteiro", minimo: 0 },
+        { id: "erros", label: "Erros", tipo: "inteiro", minimo: 0 },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [{ id: "principal", nome: "Principal", pontos: 10 }], custos: { atributo: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } },
@@ -90,6 +93,15 @@ try {
     const detF = r.json?.detalhes;
     t("detalhes identifica o campo", typeof detF === "object" && detF !== null && Object.keys(detF).length > 0, JSON.stringify(detF).slice(0, 200));
     t("campo apontado é f-forca", detF && detF["f-forca"] !== undefined, JSON.stringify(detF).slice(0, 200));
+  }
+
+  sec("IDs legítimos 'pontos'/'erros' não são descartados");
+  {
+    const r = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: J, body: { data: { "pontos": "abc", "erros": "xyz" } } });
+    t("valores inválidos -> 400", r.status === 400, `status=${r.status}`);
+    const detP = r.json?.detalhes;
+    t("chave 'pontos' presente", detP && detP["pontos"] !== undefined, JSON.stringify(detP).slice(0, 200));
+    t("chave 'erros' presente", detP && detP["erros"] !== undefined, JSON.stringify(detP).slice(0, 200));
   }
 
   sec("Dados preservados após falha");

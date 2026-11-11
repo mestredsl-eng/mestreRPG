@@ -41,6 +41,9 @@ try {
         { id: "f-defeitos", label: "Defeitos", tipo: "selecao_nivel", regraKind: "defeito" },
         { id: "f-poderes", label: "Poderes", tipo: "selecao_multipla", regraKind: "poder" },
         { id: "f-apelido", label: "Apelido", tipo: "texto", obrigatorio: true },
+        // IDs legítimos que colidem com chaves internas do payload de erro
+        { id: "pontos", label: "Pontos", tipo: "tabela", colunas: [{ key: "sit", label: "Situação", tipo: "selecao", opcoes: ["ativo", "inativo"] }] },
+        { id: "erros", label: "Erros", tipo: "tabela", colunas: [{ key: "mot", label: "Motivo", tipo: "selecao", opcoes: ["x", "y"] }] },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [{ id: "principal", nome: "Principal", pontos: 10 }], custos: { atributo: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] } },
@@ -94,9 +97,23 @@ try {
     const overflow = await p.evaluate(() => Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth));
     t(`${nome}: sem overflow horizontal`, overflow === 0, `overflow=${overflow}`);
 
-    // navega até o campo e corrige: escolhe Covardia nível 1
-    await painel.getByRole("button", { name: /ir para o campo/ }).first().click();
-    await p.waitForTimeout(900);
+    // Cancelar: restaura valores/nome e limpa painel + destaques
+    await p.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForTimeout(600);
+    t(`${nome}: cancelar sai da edição`, (await p.getByRole("button", { name: "Editar ficha" }).count()) > 0);
+    t(`${nome}: painel some ao cancelar`, !(await painel.isVisible().catch(() => false)));
+    t(`${nome}: destaques somem ao cancelar`, (await p.locator(".campo-com-erro").count()) === 0);
+    const apelidoAposCancelar = await p.locator("#ficha-campo-f-apelido .valor-leitura").innerText().catch(() => "");
+    t(`${nome}: valor original restaurado`, apelidoAposCancelar === apelidoEsp, `lido="${apelidoAposCancelar}"`);
+
+    // Nova edição não mostra erros antigos
+    await p.getByRole("button", { name: "Editar ficha" }).click();
+    await p.waitForTimeout(800);
+    t(`${nome}: reedição sem erros antigos`, !(await painel.isVisible().catch(() => false)) && (await p.locator(".campo-com-erro").count()) === 0);
+
+    // corrige: Teleporte + Covardia nível 1
+    await p.locator("#ficha-campo-f-poderes").getByText("Teleporte").click();
+    await p.waitForTimeout(400);
     const bolinha = p.locator("#ficha-campo-f-defeitos .bolinha").first();
     if (await bolinha.count()) await bolinha.click();
     await p.waitForTimeout(400);
@@ -106,6 +123,22 @@ try {
     const aindaErro = await painel.isVisible().catch(() => false);
     t(`${nome}: após corrigir salva`, salvo > 0 && !aindaErro, `salvo=${salvo} erro=${aindaErro}`);
     t(`${nome}: sem erros de página`, erros.length === 0, erros.slice(0, 2).join(" | "));
+
+    // IDs legítimos 'pontos'/'erros': valores inválidos devem aparecer no painel
+    await p.getByRole("button", { name: "Editar ficha" }).click();
+    await p.waitForTimeout(800);
+    for (const [campoId, placeholder] of [["pontos", "Situação"], ["erros", "Motivo"]]) {
+      await p.locator(`#ficha-campo-${campoId} button`, { hasText: "+ Adicionar" }).click();
+      await p.waitForTimeout(300);
+      await p.locator(`#ficha-campo-${campoId} input[placeholder="${placeholder}"]`).fill("zzz");
+    }
+    await p.waitForTimeout(300);
+    await p.getByRole("button", { name: "Salvar" }).click();
+    await p.waitForTimeout(1200);
+    const painel2 = await painel.innerText().catch(() => "");
+    t(`${nome}: erro do campo 'pontos' exibido`, painel2.includes("Pontos") && painel2.includes("Situação"), painel2.slice(0, 300));
+    t(`${nome}: erro do campo 'erros' exibido`, painel2.includes("Erros") && painel2.includes("Motivo"), painel2.slice(0, 300));
+    t(`${nome}: ambos destacados`, (await p.locator("#ficha-campo-pontos.campo-com-erro, #ficha-campo-erros.campo-com-erro").count()) === 2);
     await ctx.close();
   }
 
