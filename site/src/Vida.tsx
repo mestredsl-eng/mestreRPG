@@ -50,7 +50,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
     setOcupado(true);
     try {
       const r = await api.alterarHp(characterId, { acao, quantidade, motivo: motivo || undefined });
-      setVida((v) => (v ? { ...v, hp: r.hp } : v));
+      setVida((v) => (v ? { ...v, hp: r.hp, ...(r.vitalidade ? { vitalidade: r.vitalidade } : {}) } : v));
       setQtd(""); setMotivo("");
     } catch (e) {
       aoErro?.(e instanceof Error ? e.message : "Erro ao alterar HP");
@@ -184,6 +184,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               {(vitHistExpandido ? vit.historico : vit.historico.slice(-8)).slice().reverse().map((ev, i) => (
                 <div key={i} className="hp-evento">
                   <span className="hp-tipo">{vit.niveis.find((n) => n.indice === ev.nivelAnterior)?.nome ?? ev.nivelAnterior} → {vit.niveis.find((n) => n.indice === ev.nivelNovo)?.nome ?? ev.nivelNovo}</span>
+                  {ev.origem === "conversao-ferimento" && <span className="vit-origem">por ferimento</span>}
                   <span className="hp-motivo">{ev.motivo ?? ""}{ev.autorNome ? ` · ${ev.autorNome}` : ""}</span>
                   <span className="hp-data">{fmtData(ev.em)}</span>
                 </div>

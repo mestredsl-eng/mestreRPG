@@ -45,6 +45,7 @@ jobs:
             teste-financeiro-atomico.mjs \
             teste-moedas-regressao.mjs \
             teste-vitalidade-historico.mjs \
+            teste-vida-conversao.mjs \
             teste-venda-estoque.mjs \
             teste-financeiro-compras.mjs \
             teste-regressao-revisao.mjs \
@@ -76,6 +77,7 @@ jobs:
             homologacao-hp-historico.mjs \
             homologacao-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-conversao.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs
