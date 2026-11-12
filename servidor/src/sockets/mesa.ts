@@ -349,6 +349,11 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
         const vtt = await lerVtt(sessionId);
         if (payload.acao === "remover") {
           vtt.mapa = null;
@@ -398,6 +403,11 @@ function socket_handlers(
       if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
         const vtt = await lerVtt(sessionId);
         const t = payload.token ?? {};
         const acao = payload.acao;
@@ -491,6 +501,11 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre pode alterar a névoa" }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre pode alterar a névoa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
         const vtt = await lerVtt(sessionId);
         if (!vtt.nevoa || typeof vtt.nevoa !== "object") vtt.nevoa = nevoaPadrao();
         const acao = payload.acao;

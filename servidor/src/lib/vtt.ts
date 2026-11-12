@@ -210,12 +210,15 @@ export async function donosDosTokens(sessionId: string, tokens: TokenVtt[]): Pro
     for (const r of rows) uidValido.add(r.userId);
   }
   for (const t of tokens) {
-    let dono: string | null = null;
-    if (t.userId && uidValido.has(t.userId)) dono = t.userId;
-    else if (t.personagemId) {
-      const uid = pidDono.get(t.personagemId);
-      if (uid && uidValido.has(uid)) dono = uid;
-    }
+    // dono por userId direto e por personagemId são resolvidos de forma
+    // independente; se ambos existem e divergem, a exceção é NEGADA —
+    // nunca escolhemos silenciosamente um dos dois.
+    const donoUser = t.userId && uidValido.has(t.userId) ? t.userId : null;
+    const uidPers = t.personagemId ? pidDono.get(t.personagemId) : undefined;
+    const donoPers = uidPers && uidValido.has(uidPers) ? uidPers : null;
+    let dono: string | null;
+    if (donoUser && donoPers && donoUser !== donoPers) dono = null;
+    else dono = donoUser ?? donoPers;
     mapa.set(t.id, dono);
   }
   return mapa;

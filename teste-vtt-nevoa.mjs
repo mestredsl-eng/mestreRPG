@@ -16,7 +16,7 @@ const DIR = dirTeste("mesa-nevoa");
 const BANCO = `${DIR}/teste.db`;
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
-let proc, ids, sid;
+let proc, ids, sid, C;
 const sockets = [];
 const ultVtt = new Map();   // socket -> último payload mesa:vtt
 const cntVtt = new Map();   // socket -> contador mesa:vtt
@@ -75,6 +75,7 @@ try {
   await esperarSaudavel(BASE, proc);
 
   const c = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "nv_j1", jogador2: "nv_j2" } });
+  C = c;
   ids = { admin: c.adminId, j1: c.jogadores.jogador1.id, j2: c.jogadores.jogador2.id, camp: c.campId, cookieMestre: c.cookieMestre };
   const esp = novoUsuario(BANCO, { username: "nv_esp", role: "espectador" });
 
@@ -313,6 +314,39 @@ try {
     rM2r?.ok === true && vttR?.nevoa?.ativa === true && (vttR?.nevoa?.revelados?.length ?? 0) >= 1
     && vttR?.tokens?.some((x) => x.id === "tkocultoA1") && vttR?.tokens?.some((x) => x.id === "tkconcorr1"),
     JSON.stringify(vttR).slice(0, 300));
+
+  // ---------- H. auditoria: propriedade divergente e casos de borda ----------
+  sec("H. Auditoria — dono efetivo divergente");
+  // injeta tokens diretamente no vtt_state (validarVinculo bloquearia na API)
+  const pidA = C.novoPersonagem(C.jogadores.jogador1.membershipId, "PJ Ana");
+  const pidB = C.novoPersonagem(C.jogadores.jogador2.membershipId, "PJ Bruno");
+  const dbH = abrirDb(BANCO);
+  try {
+    const row = dbH.prepare("select vtt_state from sessions where id=?").get(sid);
+    const v = JSON.parse(row.vtt_state);
+    v.tokens.push(
+      { id: "tkdiverg1", nome: "Div", cor: "#111111", x: 0.02, y: 0.02, userId: ids.j1, personagemId: pidB, ativo: true }, // userId=A, pers=B → divergente
+      { id: "tkcoerente", nome: "Coer", cor: "#222222", x: 0.02, y: 0.03, userId: ids.j1, personagemId: pidA, ativo: true },  // mesmo dono
+      { id: "tkpersB", nome: "PersB", cor: "#333333", x: 0.02, y: 0.04, personagemId: pidB, ativo: true },                  // só personagem
+      { id: "tksemDon", nome: "Sem", cor: "#444444", x: 0.02, y: 0.05, ativo: true },                                       // sem dono
+    );
+    dbH.prepare("update sessions set vtt_state=? where id=?").run(JSON.stringify(v), sid);
+  } finally { dbH.close(); }
+  // visões frescas via HTTP (mesmo helper do socket)
+  const [hA, hB, hE, hM] = await Promise.all([
+    getHttp(`/campaigns/${ids.camp}/sessoes/${sid}`, c.jogadores.jogador1.cookie),
+    getHttp(`/campaigns/${ids.camp}/sessoes/${sid}`, c.jogadores.jogador2.cookie),
+    getHttp(`/campaigns/${ids.camp}/sessoes/${sid}`, esp.cookie),
+    getHttp(`/campaigns/${ids.camp}/sessoes/${sid}`, ids.cookieMestre),
+  ]);
+  const vt = (r) => { const s = typeof r?.sessao?.vttState === "string" ? JSON.parse(r.sessao.vttState) : r?.sessao?.vttState; return (s?.tokens ?? []).map((x) => x.id); };
+  const idsA = vt(hA), idsB = vt(hB), idsE2 = vt(hE), idsM2 = vt(hM);
+  t("divergente userId×personagem: Ana NÃO recebe exceção", !idsA.includes("tkdiverg1"), idsA.join(","));
+  t("divergente userId×personagem: Bruno NÃO recebe exceção", !idsB.includes("tkdiverg1"), idsB.join(","));
+  t("coerente userId+personagem do mesmo dono: Ana recebe", idsA.includes("tkcoerente"));
+  t("só personagemId: Bruno recebe o seu", idsB.includes("tkpersB"));
+  t("token sem dono verificável: ninguém recebe (exceto mestre)", !idsA.includes("tksemDon") && !idsB.includes("tksemDon") && !idsE2.includes("tksemDon"));
+  t("mestre recebe todos os tokens injetados", ["tkdiverg1", "tkcoerente", "tkpersB", "tksemDon"].every((x) => idsM2.includes(x)), idsM2.join(","));
 
   // sessão encerrada rejeita mutação de névoa
   await req(BASE, "PATCH", `/campaigns/${ids.camp}/sessoes/${sid}`, { cookie: ids.cookieMestre, body: { status: "encerrada" } });
