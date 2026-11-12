@@ -1350,6 +1350,7 @@ patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) =
   const [estornoRegistrado] = await db.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
     .where(and(
       eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+      eq(operacaoEstornos.characterId, a.personagem.id),
       eq(operacaoEstornos.operacaoId, opId),
     )).limit(1);
   const [itemSemPag] = txOriginal || estornoRegistrado ? [undefined] : await db.select().from(inventoryEntries)
@@ -1394,7 +1395,11 @@ patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) =
         //      segunda tentativa simultânea falha no insert e faz
         //      rollback completo (item preservado).
         const [estornoTx] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
-          .where(and(eq(operacaoEstornos.campaignId, a.personagem.campaignId), eq(operacaoEstornos.operacaoId, opId)))
+          .where(and(
+            eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+            eq(operacaoEstornos.characterId, a.personagem.id),
+            eq(operacaoEstornos.operacaoId, opId),
+          ))
           .limit(1).all();
         if (estornoTx) { jaEstornada = true; return; }
         const [itemTx] = tx.select().from(inventoryEntries)

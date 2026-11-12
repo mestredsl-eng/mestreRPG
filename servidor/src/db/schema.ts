@@ -369,7 +369,11 @@ export const moneyTransactions = sqliteTable("money_transactions", {
 // geram transação financeira (ex.: compra com pagar=false). Sem ele, a
 // segunda tentativa de estorno não teria como distinguir "operação já
 // estornada" de "operação inexistente" — o item já foi removido.
-// UNIQUE(campaign_id, operacao_id) torna o registro à prova de corrida.
+// O escopo de idempotência das operações sem pagamento é por
+// PERSONAGEM (characterId + requestId), então a unicidade aqui também
+// é por personagem: dois personagens podem usar o mesmo requestId e
+// estornar independentemente. UNIQUE(campaign, character, operacao)
+// torna o registro à prova de corrida.
 export const operacaoEstornos = sqliteTable("operacao_estornos", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
@@ -379,7 +383,7 @@ export const operacaoEstornos = sqliteTable("operacao_estornos", {
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
 }, (t) => [
-  uniqueIndex("operacao_estorno_op_idx").on(t.campaignId, t.operacaoId),
+  uniqueIndex("operacao_estorno_char_op_idx").on(t.campaignId, t.characterId, t.operacaoId),
 ]);
 
 // Sessões de jogo (spec §20)

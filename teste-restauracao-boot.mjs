@@ -18,7 +18,7 @@ const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
-const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0020 (últimas)
+const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0021 (últimas)
 
 function envRaiz(raiz, extra = {}) {
   return {
@@ -78,7 +78,7 @@ function rebaixarSchema(arquivoDb) {
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 4)`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 5)`);
     }
   } finally { db.close(); }
 }

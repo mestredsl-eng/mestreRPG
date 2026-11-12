@@ -346,6 +346,63 @@ try {
     t("estorno inexistente → 404", (await estornar(charJ1, j1.cookie, "op-fantasma")).status === 404);
   }
 
+  // ===== 13b. Mesmo requestId em personagens diferentes =====
+  sec("13b. Idempotência por personagem (mesmo requestId, chars distintos)");
+  {
+    // charJ1 e charJ2 são personagens DIFERENTES da mesma campanha.
+    // Ambos criam compra sem pagamento com o MESMO requestId — o escopo
+    // de idempotência é por personagem, então as duas devem passar.
+    const ridCompartilhado = "teste-compartilhado";
+    const saldoJ1Antes = saldoDb(contaJ1);
+    const saldoJ2Antes = comDb(BANCO, (db) => db.prepare("select coalesce(sum(amount_cents),0) s from money_transactions where character_id=?").get(charJ2).s);
+    const cA = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item CharA", quantity: 1 }, requestId: ridCompartilhado,
+    });
+    const cB = await operacao(charJ2, j2.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item CharB", quantity: 1 }, requestId: ridCompartilhado,
+    });
+    t("compra sem-pagamento charA com requestId X → 201", cA.status === 201, `status=${cA.status}`);
+    t("compra sem-pagamento charB com MESMO requestId → 201", cB.status === 201, `status=${cB.status}`);
+
+    // estorno de A → 200; estorno de B → 200 (registros distintos)
+    const eA1 = await estornar(charJ1, j1.cookie, ridCompartilhado);
+    const eB1 = await estornar(charJ2, j2.cookie, ridCompartilhado);
+    t("estorno da operação de A → 200", eA1.status === 200, `status=${eA1.status}`);
+    t("estorno da operação de B → 200", eB1.status === 200, `status=${eB1.status}`);
+    t("item de A removido", !itensDb(charJ1).some((i) => i.name === "Item CharA"));
+    t("item de B removido", !itensDb(charJ2).some((i) => i.name === "Item CharB"));
+
+    // repetições → 409 cada uma
+    t("2ª tentativa estorno A → 409", (await estornar(charJ1, j1.cookie, ridCompartilhado)).status === 409);
+    t("2ª tentativa estorno B → 409", (await estornar(charJ2, j2.cookie, ridCompartilhado)).status === 409);
+
+    // dois registros de estorno distintos (personagem + operação)
+    const regs = comDb(BANCO, (db) => db.prepare("select character_id, operacao_id from operacao_estornos where operacao_id=? order by character_id").all(ridCompartilhado));
+    t("dois registros de estorno distintos", regs.length === 2 && regs[0].character_id !== regs[1].character_id, JSON.stringify(regs));
+
+    // nenhum saldo alterado e nenhuma tx fictícia criada
+    t("saldo conta J1 inalterado", saldoDb(contaJ1) === saldoJ1Antes, `${saldoJ1Antes} vs ${saldoDb(contaJ1)}`);
+    const txFict = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where request_id like ?").get(`${ridCompartilhado}%`).c);
+    t("nenhuma transação financeira fictícia", txFict === 0, `tx=${txFict}`);
+    const somaJ2 = comDb(BANCO, (db) => db.prepare("select coalesce(sum(amount_cents),0) s from money_transactions where character_id=?").get(charJ2).s);
+    t("nenhuma tx para charJ2", somaJ2 === saldoJ2Antes, `${saldoJ2Antes} vs ${somaJ2}`);
+
+    // concorrência no MESMO personagem+operação: 1×200 + 1×409
+    await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item Corrida Pers", quantity: 1 }, requestId: "op-sem-pag-pers-corrida",
+    });
+    const [eA2, eB2] = await Promise.all([
+      estornar(charJ1, j1.cookie, "op-sem-pag-pers-corrida"),
+      estornar(charJ1, j1.cookie, "op-sem-pag-pers-corrida"),
+    ]);
+    t("corrida mesmo char+op: 1×200 + 1×409",
+      [eA2, eB2].filter((r) => r.status === 200).length === 1 &&
+      [eA2, eB2].filter((r) => r.status === 409).length === 1,
+      `${eA2.status},${eB2.status}`);
+    const regsPers = comDb(BANCO, (db) => db.prepare("select count(*) c from operacao_estornos where operacao_id=?").get("op-sem-pag-pers-corrida").c);
+    t("um único registro na corrida por personagem", regsPers === 1, `regs=${regsPers}`);
+  }
+
   // ===== 14. Permissões =====
   sec("14. Permissões");
   {
