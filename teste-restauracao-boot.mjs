@@ -18,7 +18,7 @@ const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
-const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0018 (últimas)
+const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0019 (últimas)
 
 function envRaiz(raiz, extra = {}) {
   return {
@@ -62,18 +62,23 @@ function armarFlag(raiz, filePath) {
       "on conflict(key) do update set value=excluded.value").run(JSON.stringify({ filePath }));
   });
 }
-// Simula banco de versão anterior: remove as tabelas das duas últimas
-// migrations (0017 campaign_rule_books + 0018 novidades) e os registros
-// correspondentes no journal do Drizzle.
+// Simula banco de versão anterior: remove as tabelas das migrations
+// 0017-0018 e as colunas da 0019, além dos registros correspondentes
+// no journal do Drizzle (últimas 3 migrations).
 const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"];
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
     for (const tb of TABELAS_ANTIGAS) db.exec(`drop table if exists ${tb}`);
+    // 0019 foi ALTER TABLE (sem tabela própria): desfaz as colunas.
+    // SQLite não aceita IF EXISTS em DROP COLUMN — verifica antes.
+    const cols = new Set(db.pragma("table_info(money_transactions)").map((c) => c.name));
+    if (cols.has("inventory_item_id")) db.exec("alter table money_transactions drop column inventory_item_id");
+    if (cols.has("operacao")) db.exec("alter table money_transactions drop column operacao");
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 2)`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 3)`);
     }
   } finally { db.close(); }
 }
