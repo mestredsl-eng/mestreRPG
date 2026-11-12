@@ -9,6 +9,7 @@ import {
   vehicles,
   financialAccounts,
   moneyTransactions,
+  operacaoEstornos,
   itemTemplates,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -1343,11 +1344,22 @@ patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) =
   }
 
   // Compra sem pagamento não gera transação: localiza pelo item.
-  const [itemSemPag] = txOriginal ? [undefined] : await db.select().from(inventoryEntries)
+  // Antes de procurar o item, verifica o registro persistente de
+  // estornos — depois de estornada, o item não existe mais e sem esse
+  // registro a segunda tentativa cairia em 404 em vez de 409.
+  const [estornoRegistrado] = await db.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+    .where(and(
+      eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+      eq(operacaoEstornos.operacaoId, opId),
+    )).limit(1);
+  const [itemSemPag] = txOriginal || estornoRegistrado ? [undefined] : await db.select().from(inventoryEntries)
     .where(and(
       eq(inventoryEntries.characterId, a.personagem.id),
       sql`json_extract(${inventoryEntries.data}, '$.operacaoId') = ${opId}`,
     )).limit(1);
+  if (!txOriginal && estornoRegistrado) {
+    res.status(409).json({ erro: "Operação já estornada" }); return;
+  }
   if (!txOriginal && !itemSemPag) {
     res.status(404).json({ erro: "Operação não encontrada" }); return;
   }
@@ -1375,7 +1387,16 @@ patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) =
       if (estornoExistente) { jaEstornada = true; return; }
 
       if (!txOriginal) {
-        // ---- Estorno de compra sem pagamento: remove o item intacto ----
+        // ---- Estorno de compra sem pagamento: remove o item intacto e
+        //      registra persistentemente o estorno NA MESMA transação —
+        //      sem tx financeira fictícia e sem saldo artificial. O
+        //      UNIQUE(campaign_id, operacao_id) resolve corridas: a
+        //      segunda tentativa simultânea falha no insert e faz
+        //      rollback completo (item preservado).
+        const [estornoTx] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+          .where(and(eq(operacaoEstornos.campaignId, a.personagem.campaignId), eq(operacaoEstornos.operacaoId, opId)))
+          .limit(1).all();
+        if (estornoTx) { jaEstornada = true; return; }
         const [itemTx] = tx.select().from(inventoryEntries)
           .where(and(eq(inventoryEntries.id, itemSemPag!.id), eq(inventoryEntries.characterId, a.personagem.id)))
           .limit(1).all();
@@ -1383,7 +1404,13 @@ patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) =
         const d = (itemTx.data ?? {}) as { aquisicao?: { qtdOriginal?: number } };
         const qtdOriginal = d.aquisicao?.qtdOriginal ?? itemTx.quantity;
         if (itemTx.quantity !== qtdOriginal) { itemMovimentado = true; return; }
-        tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+        const del = tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+        if (del.changes !== 1) { itemSumiu = true; return; }
+        tx.insert(operacaoEstornos).values({
+          id: crypto.randomUUID(), campaignId: a.personagem.campaignId,
+          characterId: a.personagem.id, operacaoId: opId,
+          tipo: "compra_sem_pagamento", createdBy: req.usuario!.id, createdAt: agora,
+        }).run();
         return;
       }
 

@@ -18,7 +18,7 @@ const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
-const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0019 (últimas)
+const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0020 (últimas)
 
 function envRaiz(raiz, extra = {}) {
   return {
@@ -63,9 +63,9 @@ function armarFlag(raiz, filePath) {
   });
 }
 // Simula banco de versão anterior: remove as tabelas das migrations
-// 0017-0018 e as colunas da 0019, além dos registros correspondentes
-// no journal do Drizzle (últimas 3 migrations).
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"];
+// 0017-0020 e as colunas da 0019, além dos registros correspondentes
+// no journal do Drizzle (últimas 4 migrations).
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos"];
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
@@ -78,7 +78,7 @@ function rebaixarSchema(arquivoDb) {
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 3)`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 4)`);
     }
   } finally { db.close(); }
 }

@@ -169,7 +169,7 @@ try {
   sec("4. Procedimento real de atualização (db:migrate)");
   const mig = rodar("node", [MIGRADOR], envRaiz(RAIZ));
   t("migrate executou com sucesso", mig.code === 0, mig.out.slice(-300));
-  t("journal agora registra 20 migrations", contarJournal(BANCO_VELHO) === 20, String(contarJournal(BANCO_VELHO)));
+  t("journal agora registra 21 migrations", contarJournal(BANCO_VELHO) === 21, String(contarJournal(BANCO_VELHO)));
   {
     const db = abrirDb(BANCO_VELHO);
     const ts = tabelas(db);
@@ -200,7 +200,7 @@ try {
   t("1 campanha preservada", depois.campaigns?.[0]?.name === "Campanha Legada");
   t("2 personagens preservados", depois.characters?.length === 2 && depois.characters.every((c) => c.status === "aprovada"));
   t("dados JSON das fichas intactos", depois.characters?.some((c) => c.name === "Herói Legado" && JSON.parse(c.data).forca === 14));
-  t("journal do drizzle consistente", depois.__drizzle_migrations?.length === 20 || contarJournal(BANCO_VELHO) === 20);
+  t("journal do drizzle consistente", depois.__drizzle_migrations?.length === 21 || contarJournal(BANCO_VELHO) === 21);
 
   // ===== 6. INICIALIZAÇÃO DO SISTEMA ATUALIZADO =====
   sec("6. Servidor atualizado inicializa e serve os dados");
@@ -270,7 +270,7 @@ try {
   // re-atualização pós-restore
   const mig2 = rodar("node", [MIGRADOR], env2);
   t("re-atualização pós-restore OK", mig2.code === 0, mig2.out.slice(-200));
-  t("journal 20 novamente", contarJournal(dbPath(RAIZ2)) === 20);
+  t("journal 21 novamente", contarJournal(dbPath(RAIZ2)) === 21);
   {
     const db = abrirDb(dbPath(RAIZ2));
     const pers = db.prepare("select count(*) c from characters").get().c;

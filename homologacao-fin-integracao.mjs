@@ -140,13 +140,40 @@ try {
 
   sec("4. Compra sem pagamento não gera lançamento financeiro");
   // compras sem pagamento não geram transação → não aparecem no
-  // histórico financeiro (o rastro fica no item/auditoria). O estorno
-  // delas existe na API via operacaoId, mas não é exposto na UI —
-  // limitação documentada no relatório.
+  // histórico financeiro (o rastro fica no item/auditoria).
   await abaPatrimonio(pg, "Dinheiro");
   await pg.waitForTimeout(600);
   const histSemPag = (await pg.locator(".tabela-responsiva tbody").textContent()) ?? "";
   t("histórico financeiro sem registro da compra não paga", !/Relíquia Achada/.test(histSemPag), histSemPag.slice(0, 200));
+
+  sec("5. Estorno de compra sem pagamento pela interface (desktop)");
+  await abaPatrimonio(pg, "Inventário");
+  await pg.waitForTimeout(600);
+  const linhaRelic = pg.locator(".tabela-responsiva tbody tr", { hasText: "Relíquia Achada" }).first();
+  const btnEstornarItem = linhaRelic.getByRole("button", { name: "Estornar compra" });
+  t("botão Estornar compra visível no item sem pagamento", await btnEstornarItem.isVisible().catch(() => false));
+  await btnEstornarItem.click();
+  const confItem = pg.locator(".modal");
+  await confItem.waitFor({ timeout: 5000 });
+  const msgItem = await confItem.textContent();
+  t("confirmação explica remoção do item", /removido do patrimônio/i.test(msgItem ?? "") && /sem pagamento/i.test(msgItem ?? ""), msgItem?.slice(0, 200));
+  await shot(pg, "09-confirmacao-estorno-item");
+  // cancelar não altera nada
+  await confItem.getByRole("button", { name: "Cancelar" }).click();
+  await pg.waitForTimeout(500);
+  t("cancelar mantém o item", await pg.locator("text=Relíquia Achada >> visible=true").first().isVisible().catch(() => false));
+  // confirmar executa e atualiza a interface
+  await btnEstornarItem.click();
+  await confItem.waitFor({ timeout: 5000 });
+  await confItem.getByRole("button", { name: "Estornar compra", exact: true }).click();
+  await pg.waitForTimeout(1500);
+  t("item removido após estorno confirmado", (await pg.locator("text=Relíquia Achada >> visible=true").count()) === 0);
+  t("botão estornar some com o item", (await pg.locator(".tabela-responsiva tbody tr", { hasText: "Relíquia Achada" }).count()) === 0);
+  await shot(pg, "10-pos-estorno-item");
+  // saldo continua intacto (nenhuma movimentação financeira)
+  await abaPatrimonio(pg, "Dinheiro");
+  const saldoApos = await saldoTag(pg);
+  t("saldo intacto após estorno sem pagamento (100)", /100/.test(saldoApos ?? ""), saldoApos?.trim());
 
   await ctx.close();
 
@@ -179,6 +206,24 @@ try {
   const saldoM = await saldoTag(pgM);
   t("saldo mobile intacto (100)", /100/.test(saldoM ?? ""), saldoM?.trim());
   await shot(pgM, "08-mobile-dinheiro");
+
+  sec("6. Mobile 390px — estorno de compra sem pagamento");
+  await abaPatrimonio(pgM, "Inventário");
+  await pgM.waitForTimeout(600);
+  const cartaoAmuleto = pgM.locator(".registro-cartao", { hasText: "Amuleto Mobile" }).first();
+  const btnEstM = cartaoAmuleto.getByRole("button", { name: "Estornar compra" });
+  t("mobile: botão Estornar compra no cartão", await btnEstM.isVisible().catch(() => false));
+  await btnEstM.click();
+  const confM = pgM.locator(".modal");
+  await confM.waitFor({ timeout: 5000 });
+  t("mobile: confirmação de estorno", /Estornar compra/i.test((await confM.textContent()) ?? ""));
+  t("mobile sem overflow no modal de estorno", await semOverflowX(pgM));
+  await shot(pgM, "11-mobile-estorno");
+  await confM.getByRole("button", { name: "Estornar compra", exact: true }).click();
+  await pgM.waitForTimeout(1500);
+  t("mobile: item removido após estorno", (await pgM.locator("text=Amuleto Mobile >> visible=true").count()) === 0);
+  t("mobile sem overflow após estorno", await semOverflowX(pgM));
+  await shot(pgM, "12-mobile-pos-estorno");
   await ctxM.close();
 
 } catch (e) {

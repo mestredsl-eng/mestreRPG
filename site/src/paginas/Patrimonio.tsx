@@ -90,6 +90,8 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   const [fin, setFin] = useState<Financeiro | null>(null);
   const [comprando, setComprando] = useState(false);
   const [vendendo, setVendendo] = useState<ItemInventario | null>(null);
+  const [estornandoItem, setEstornandoItem] = useState<ItemInventario | null>(null);
+  const [ocupadoEstornoItem, setOcupadoEstornoItem] = useState(false);
   // Idempotência de equipar: uma intenção = um requestId, reutilizado em
   // duplo clique e retries; uma nova ação após sucesso gera outro ID.
   const equipReqIds = useRef(new Map<string, string>()).current;
@@ -141,6 +143,25 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
   const podeOperar = !somenteLeitura && (souMestre || (fin?.config.jogadorCompraVenda ?? false));
+  // Compra registrada com pagar=false: sem transação financeira, o
+  // estorno só é localizável pelo operacaoId gravado nos dados do item.
+  const compraSemPagamento = (item: ItemInventario) => {
+    const d = item.data ?? {};
+    const aq = d.aquisicao as { semPagamento?: boolean } | undefined;
+    return aq?.semPagamento === true && typeof d.operacaoId === "string";
+  };
+  const operacaoIdDe = (item: ItemInventario) => (item.data?.operacaoId as string | undefined) ?? null;
+  const confirmarEstornoItem = async () => {
+    const opId = estornandoItem ? operacaoIdDe(estornandoItem) : null;
+    if (!opId || ocupadoEstornoItem) return;
+    setOcupadoEstornoItem(true);
+    try {
+      await api.estornarOperacao(characterId, opId);
+      setEstornandoItem(null);
+      await carregar();
+      await carregarFin();
+    } catch (e) { aoErro(e); } finally { setOcupadoEstornoItem(false); }
+  };
 
   return (
     <div>
@@ -200,6 +221,9 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
                 {!somenteLeitura && <>
                 <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
                 {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
+                {podeOperar && compraSemPagamento(item) && (
+                  <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
+                )}
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
@@ -243,6 +267,9 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
             <div className="registro-acoes">
               <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
               {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
+              {podeOperar && compraSemPagamento(item) && (
+                <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
+              )}
               <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
@@ -270,6 +297,17 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
               .finally(() => setOcupadoItem(false));
           }}
           aoCancelar={() => { if (!ocupadoItem) setConfirmandoItem(null); }}
+        />
+      )}
+      {estornandoItem && (
+        <ModalConfirmar
+          titulo="Estornar compra"
+          mensagem={`Estornar a compra de "${estornandoItem.name}"? O item será removido do patrimônio. Como a compra foi feita sem pagamento, nenhum saldo financeiro será alterado.`}
+          rotuloConfirmar="Estornar compra"
+          perigo
+          ocupado={ocupadoEstornoItem}
+          aoConfirmar={() => void confirmarEstornoItem()}
+          aoCancelar={() => { if (!ocupadoEstornoItem) setEstornandoItem(null); }}
         />
       )}
       {comprando && (

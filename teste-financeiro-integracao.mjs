@@ -290,10 +290,58 @@ try {
     t("unidades devolvidas (2→4)", itemDb(itemVenda.id)?.quantity === 4, `qtd=${itemDb(itemVenda.id)?.quantity}`);
     t("tx estorno venda -3000", txDe("op-venda-1:estorno")[0]?.amount_cents === -3000);
 
+    // ---- compra sem pagamento: estorno persistente e idempotente ----
     const e3 = await estornar(charJ1, j1.cookie, "op-sem-pag-1");
     t("estorno sem-pagamento 200", e3.status === 200 && e3.json?.semMovimentacao === true, `status=${e3.status}`);
     t("item sem-pagamento removido", !itensDb(charJ1).some((i) => i.name === "Relíquia Found"));
     t("sem tx de estorno para sem-pagamento", txDe("op-sem-pag-1:estorno").length === 0);
+    // saldo = antes + estorno da compra paga (e1); e3 não movimenta nada
+    t("saldo intacto no estorno sem-pagamento", saldoDb(contaJ1) === antes + 3000, `saldo=${saldoDb(contaJ1)}`);
+
+    // registro persistente do estorno (tabela dedicada, não volátil)
+    const regEstorno = comDb(BANCO, (db) => db.prepare("select * from operacao_estornos where campaign_id=? and operacao_id=?")
+      .get(cenario.campId, "op-sem-pag-1"));
+    t("estorno sem-pagamento gravado em operacao_estornos", !!regEstorno && regEstorno.tipo === "compra_sem_pagamento", JSON.stringify(regEstorno));
+    // reabre o arquivo do zero: o registro é persistente, não volátil
+    const regReaberto = (() => { const w = abrirDb(BANCO); try { return w.prepare("select operacao_id from operacao_estornos where operacao_id=?").get("op-sem-pag-1"); } finally { w.close(); } })();
+    t("registro de estorno sobrevive à reabertura do banco", !!regReaberto, "");
+
+    // segunda tentativa → 409 (não 404), mesmo com item já removido
+    const e3b = await estornar(charJ1, j1.cookie, "op-sem-pag-1");
+    t("2ª tentativa de estorno sem-pagamento → 409", e3b.status === 409, `status=${e3b.status}`);
+    t("2ª tentativa não cria tx fictícia", txDe("op-sem-pag-1:estorno").length === 0);
+    t("2ª tentativa não altera saldo", saldoDb(contaJ1) === antes + 3000);
+
+    // duas tentativas simultâneas → exatamente um sucesso
+    const dupSemPag = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Bugiganga", quantity: 1 }, requestId: "op-sem-pag-corrida",
+    });
+    t("setup compra sem-pagamento p/ corrida 201", dupSemPag.status === 201, `status=${dupSemPag.status}`);
+    const [eA, eB] = await Promise.all([
+      estornar(charJ1, j1.cookie, "op-sem-pag-corrida"),
+      estornar(charJ1, j1.cookie, "op-sem-pag-corrida"),
+    ]);
+    const estOks = [eA, eB].filter((r) => r.status === 200).length;
+    const estConflitos = [eA, eB].filter((r) => r.status === 409).length;
+    t("estornos simultâneos: 1×200 + 1×409", estOks === 1 && estConflitos === 1, `${eA.status},${eB.status}`);
+    t("item da corrida removido uma única vez", !itensDb(charJ1).some((i) => i.name === "Bugiganga"));
+    const regsCorrida = comDb(BANCO, (db) => db.prepare("select count(*) c from operacao_estornos where operacao_id=?").get("op-sem-pag-corrida").c);
+    t("um único registro de estorno na corrida", regsCorrida === 1, `regs=${regsCorrida}`);
+
+    // item alterado (quantidade diverge do original) → estorno bloqueado
+    const mv = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, quantidade: 2,
+      item: { name: "Pilha Proibida", quantity: 1 }, requestId: "op-sem-pag-mov",
+    });
+    t("setup compra sem-pagamento qtd2 201", mv.status === 201, `status=${mv.status}`);
+    const itemMov = itensDb(charJ1).find((i) => i.name === "Pilha Proibida");
+    await req(BASE, "PATCH", `/characters/${charJ1}/inventario/${itemMov.id}`, {
+      cookie: j1.cookie, body: { quantity: 3 },
+    });
+    const eMov = await estornar(charJ1, j1.cookie, "op-sem-pag-mov");
+    t("item com quantidade alterada → 409", eMov.status === 409, `status=${eMov.status}`);
+    t("item alterado preservado", itemDb(itemMov.id)?.quantity === 3);
+    t("sem registro de estorno para operação bloqueada", !comDb(BANCO, (db) => db.prepare("select id from operacao_estornos where operacao_id=?").get("op-sem-pag-mov")));
 
     t("estorno inexistente → 404", (await estornar(charJ1, j1.cookie, "op-fantasma")).status === 404);
   }
