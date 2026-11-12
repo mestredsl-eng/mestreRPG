@@ -134,13 +134,20 @@ try {
   t("reiniciar após expiração → 300s rodando", rRe2?.ok === true && rRe2.timer?.status === "rodando" && rRe2.timer?.totalMs === 300000, JSON.stringify(rRe2?.timer));
 
   sec("rejeição não altera estado persistido");
+  // pausa para estabilizar o estado (sem endsAt correndo) e captura o JSON completo
+  await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "pausar" });
   const antes = timerDb();
-  for (const dur of [59, 59.5, 60.5, 86400.4, 86401]) {
-    await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: dur });
-    await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "reiniciar", duracaoSegundos: dur });
+  t("estado pausado capturado para comparação", antes?.status === "pausado" && antes?.remainingMs > 0, JSON.stringify(antes));
+  for (const dur of [59, 59.5, 60.5, 86400.4, 86401, 0, -5, "abc"]) {
+    const ri = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: dur });
+    t(`iniciar ${dur} rejeitado com estado existente`, ri?.ok === false, JSON.stringify(ri));
+    const rr = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "reiniciar", duracaoSegundos: dur });
+    t(`reiniciar ${dur} rejeitado com estado existente`, rr?.ok === false, JSON.stringify(rr));
   }
-  t("timerState inalterado após rejeições", JSON.stringify(timerDb()) === JSON.stringify(antes),
+  t("timerState idêntico após rejeições com estado existente",
+    JSON.stringify(timerDb()) === JSON.stringify(antes),
     `antes=${JSON.stringify(antes)} depois=${JSON.stringify(timerDb())}`);
+  await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "retomar" });
 
   sec("controles exclusivos do mestre");
   for (const acao of ["iniciar", "pausar", "retomar", "reiniciar", "encerrar"]) {
