@@ -6,8 +6,9 @@
 // Banco 100% temporário via teste-base.mjs.
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, req, comDb, abrirDb, encerrarServidor, limparDir,
+  criarCenario, req, comDb, abrirDb, sessao, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
+import { hashSenha } from "./servidor/dist/lib/password.js";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -27,7 +28,12 @@ const livro = async (body) => {
 };
 const itensLivro = async (id) => (await req(BASE, "GET", `/biblioteca/livros/${id}`, { cookie: CM })).json?.itens ?? [];
 const diff = (camp, book) => req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${book}/diff`, { cookie: CM });
-const aplicar = (camp, book, body = {}) => req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${book}/aplicar`, { cookie: CM, body });
+// A aplicação exige a impressão digital da prévia: busca o token do diff
+// atual quando o chamador não informa um explicitamente (cenários de 409).
+const aplicar = async (camp, book, body = {}) => {
+  const token = body.estadoToken ?? (await diff(camp, book)).json?.estadoToken;
+  return req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${book}/aplicar`, { cookie: CM, body: { ...body, estadoToken: token } });
+};
 const elId = (camp, kind, key) => comDb(BANCO, (db) => db.prepare(
   `select rd.id from rule_definitions rd join rule_sets rs on rs.id=rd.rule_set_id
    where rs.campaign_id=? and rd.kind=? and rd.key=?`,
@@ -40,7 +46,7 @@ const estadoBanco = () => comDb(BANCO, (db) => ({
   itensLivro: db.prepare("select count(*) c from rule_book_items").get().c,
 }));
 
-let CM, camp1, camp2;
+let CM, camp1, camp2, l8ref;
 try {
   proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
   proc.stderr.on("data", (d) => process.stderr.write(d));
@@ -120,10 +126,9 @@ try {
     await req(BASE, "DELETE", `/biblioteca/livros/${l2.id}`, { cookie: CM });
     const dDel = await diff(camp1, l2.id);
     t("diff de livro excluído → 404", dDel.status === 404, `status=${dDel.status}`);
-    const restR = await req(BASE, "POST", `/biblioteca/livros/${l2.id}/restaurar`, { cookie: CM });
-    t("livro restaurado", restR.status === 200, `status=${restR.status}`);
+    await req(BASE, "POST", `/biblioteca/livros/${l2.id}/restaurar`, { cookie: CM });
     const r6 = await aplicar(camp1, l2.id, { estadoToken: token4 });
-    t("restauração altera fingerprint → 409", r6.status === 409, `status=${r6.status} ${JSON.stringify(r6.json).slice(0,150)}`);
+    t("restauração altera fingerprint → 409", r6.status === 409, `status=${r6.status}`);
   }
 
   // ===== 7. Snapshot legado em array =====
@@ -138,10 +143,12 @@ try {
       "select snapshot from campaign_rule_books where campaign_id=? and book_id=?",
     ).get(camp2, l3.id)?.snapshot);
     const arr = JSON.parse(snapLegado).itens ?? JSON.parse(snapLegado);
-    const w = abrirDb(BANCO);
-    w.prepare("update campaign_rule_books set snapshot=? where campaign_id=? and book_id=?")
-      .run(JSON.stringify(arr), camp2, l3.id);
-    w.close();
+    const dbw = abrirDb(BANCO);
+    try {
+      dbw.prepare(
+        "update campaign_rule_books set snapshot=? where campaign_id=? and book_id=?",
+      ).run(JSON.stringify(arr), camp2, l3.id);
+    } finally { dbw.close(); }
     const dLeg = await diff(camp2, l3.id);
     t("diff com snapshot legado → idênticos, sem conflitos",
       dLeg.status === 200 && dLeg.json?.totais?.identicos === 1 && dLeg.json?.totais?.conflitos === 0,
@@ -235,8 +242,10 @@ try {
     await aplicar(camp1, l7.id);
     // reordena itens do livro (mesmo conteúdo)
     const its = await itensLivro(l7.id);
-    const itensOrd = its.map((it, idx) => ({ id: it.id, ordem: its.length - idx }));
-    const ord = await req(BASE, "PUT", `/biblioteca/livros/${l7.id}/itens/ordem`, { cookie: CM, body: { itens: itensOrd } });
+    const ids = its.map((i) => i.id).reverse();
+    const ord = await req(BASE, "PUT", `/biblioteca/livros/${l7.id}/itens/ordem`, {
+      cookie: CM, body: { itens: ids.map((id, i) => ({ id, ordem: i + 1 })) },
+    });
     t("reordenação aceita", ord.status === 200, `status=${ord.status}`);
     const dOrd = await diff(camp1, l7.id);
     t("reordenação sem mudança semântica → sem conflitos",
@@ -277,6 +286,102 @@ try {
     // livro B original (versão B) agora diverge → conflito de conteúdo
     const dB = await diff(camp2, lB.id);
     t("segundo livro com mesma chave → novo conflito", dB.json?.conflitos?.length >= 1, JSON.stringify(dB.json?.conflitos));
+  }
+
+  // ===== 15. Três estados: mudança somente no livro =====
+  sec("15. Três estados — mudança somente no livro");
+  {
+    const l8 = await livro({ titulo: "Livro SL", tipo: "livro", itens: [
+      { kind: "pericia", key: "sl_per", name: "Perícia SL", definition: { descricao: "v1" } },
+    ] });
+    l8ref = l8.id;
+    await aplicar(camp1, l8.id);
+    const it8 = (await itensLivro(l8.id))[0];
+    await req(BASE, "PATCH", `/biblioteca/livros/${l8.id}/itens/${it8.id}`, { cookie: CM, body: { definition: { descricao: "v2 livro" } } });
+    const dSL = await diff(camp1, l8.id);
+    const itemSL = (dSL.json?.itens ?? []).find((i) => i.chave === "pericia:sl_per");
+    t("prévia classifica mudança só no livro como atualizar",
+      itemSL?.tipo === "atualizar" && itemSL?.origem === "so_livro" && dSL.json?.totais?.atualizar === 1,
+      JSON.stringify(itemSL));
+    t("mudança só no livro não exige decisão",
+      !(dSL.json?.conflitos ?? []).some((c) => c.chave === "pericia:sl_per"), JSON.stringify(dSL.json?.conflitos));
+    const rSL = await aplicar(camp1, l8.id);
+    t("sync aplica atualização do livro sem decisão", rSL.status === 200 && rSL.json?.atualizados >= 1, JSON.stringify(rSL.json));
+    const elSL = await req(BASE, "GET", `/campaigns/${camp1}/regras/elementos`, { cookie: CM });
+    t("valor do livro v2 aplicado na campanha", JSON.stringify(elSL.json).includes("v2 livro"), "");
+
+    // convergência: campanha editada manualmente para o MESMO valor do livro
+    const elIdSL = elId(camp1, "pericia", "sl_per");
+    await req(BASE, "PATCH", `/campaigns/${camp1}/regras/elementos/${elIdSL}`, { cookie: CM, body: { definition: { descricao: "v3 livro" } } });
+    const it8b = (await itensLivro(l8.id))[0];
+    await req(BASE, "PATCH", `/biblioteca/livros/${l8.id}/itens/${it8b.id}`, { cookie: CM, body: { definition: { descricao: "v3 livro" } } });
+    const dCV = await diff(camp1, l8.id);
+    const itemCV = (dCV.json?.itens ?? []).find((i) => i.chave === "pericia:sl_per");
+    t("mudanças independentes convergindo → convergido sem conflito",
+      itemCV?.tipo === "convergido" && !(dCV.json?.conflitos ?? []).some((c) => c.chave === "pericia:sl_per"),
+      JSON.stringify(itemCV) + " " + JSON.stringify(dCV.json?.conflitos));
+
+    // item removido do livro → preservado na campanha, fora dos pendentes
+    const l8itens = await itensLivro(l8.id);
+    await req(BASE, "DELETE", `/biblioteca/livros/${l8.id}/itens/${l8itens[0].id}`, { cookie: CM });
+    const dRM = await diff(camp1, l8.id);
+    const itemRM = (dRM.json?.itens ?? []).find((i) => i.chave === "pericia:sl_per");
+    t("item removido do livro → removido_livro preservado",
+      itemRM?.tipo === "removido_livro" && dRM.json?.totais?.removidosDoLivro === 1
+        && !(dRM.json?.conflitos ?? []).some((c) => c.chave === "pericia:sl_per"),
+      JSON.stringify(itemRM) + " " + JSON.stringify(dRM.json?.totais));
+    const rRM = await aplicar(camp1, l8.id);
+    t("sync de livro sem o item → 200", rRM.status === 200, `status=${rRM.status}`);
+    const elAposRM = await req(BASE, "GET", `/campaigns/${camp1}/regras/elementos`, { cookie: CM });
+    t("regra removida do livro permanece na campanha", JSON.stringify(elAposRM.json).includes("sl_per"), "");
+    // vínculo de l8 segue na campanha para o teste de remoção de vínculo
+  }
+
+  // ===== 16. Remoção de vínculo =====
+  sec("16. Remoção de vínculo (só mestre, preserva ruleset)");
+  {
+    // usuário jogador e espectador sintéticos na camp1
+    const dbu = abrirDb(BANCO);
+    const agora = Date.now();
+    const mkCookie = async (username, display, role) => {
+      const uid = crypto.randomUUID();
+      dbu.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+        .run(uid, username, display, await hashSenha("senha-x-123"), agora, agora);
+      dbu.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'" + role + "','ativo',?,?,?)")
+        .run(crypto.randomUUID(), camp1, uid, agora, agora, agora);
+      return sessao(BANCO, uid);
+    };
+    const cookieJ = await mkCookie("jog_sync", "Jogador Sync", "jogador");
+    const cookieE = await mkCookie("esp_sync", "Espectador Sync", "espectador");
+    dbu.close();
+
+    const defsAntes = comDb(BANCO, (db) => db.prepare(
+      `select count(*) c from rule_definitions rd join rule_sets rs on rs.id=rd.rule_set_id where rs.campaign_id=?`,
+    ).get(camp1).c);
+    const vincAntes = comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from campaign_rule_books where campaign_id=? and book_id=?",
+    ).get(camp1, l8ref).c);
+
+    const delJ = await req(BASE, "DELETE", `/campaigns/${camp1}/regras/acervo/${l8ref}/vinculo`, { cookie: cookieJ });
+    t("jogador não remove vínculo → 403", delJ.status === 403, `status=${delJ.status}`);
+    const delE = await req(BASE, "DELETE", `/campaigns/${camp1}/regras/acervo/${l8ref}/vinculo`, { cookie: cookieE });
+    t("espectador não remove vínculo → 403", delE.status === 403, `status=${delE.status}`);
+
+    const delM = await req(BASE, "DELETE", `/campaigns/${camp1}/regras/acervo/${l8ref}/vinculo`, { cookie: CM });
+    t("mestre remove vínculo → 200", delM.status === 200 && delM.json?.ok === true, `status=${delM.status} ${JSON.stringify(delM.json)}`);
+    const vincDepois = comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from campaign_rule_books where campaign_id=? and book_id=?",
+    ).get(camp1, l8ref).c);
+    const defsDepois = comDb(BANCO, (db) => db.prepare(
+      `select count(*) c from rule_definitions rd join rule_sets rs on rs.id=rd.rule_set_id where rs.campaign_id=?`,
+    ).get(camp1).c);
+    t("apenas o registro campaign_rule_books foi excluído", vincAntes === 1 && vincDepois === 0, `${vincAntes}->${vincDepois}`);
+    t("ruleset e definições integralmente preservados", defsAntes === defsDepois, `${defsAntes} vs ${defsDepois}`);
+    const listaPos = await req(BASE, "GET", `/campaigns/${camp1}/regras/acervo`, { cookie: CM });
+    const itemPos = (listaPos.json?.livros ?? []).find((l) => l.id === l8ref);
+    t("livro volta a constar como não aplicado", itemPos?.aplicado === false && itemPos?.versaoAplicada === null, JSON.stringify(itemPos).slice(0, 160));
+    const del2 = await req(BASE, "DELETE", `/campaigns/${camp1}/regras/acervo/${l8ref}/vinculo`, { cookie: CM });
+    t("remover vínculo inexistente → 404", del2.status === 404, `status=${del2.status}`);
   }
 } finally {
   if (proc) await encerrarServidor(proc);

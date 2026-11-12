@@ -492,10 +492,38 @@ type ItemLivro = typeof ruleBookItems.$inferSelect;
 type Vinculo = typeof campaignRuleBooks.$inferSelect;
 type RuleSet = typeof ruleSets.$inferSelect;
 
+/**
+ * Classificação de três estados por chave `kind:key`:
+ *  - snapshot anterior (o que este livro aplicou da última vez);
+ *  - livro atual (conteúdo vigente no Acervo);
+ *  - regras atuais da campanha (rule_definitions).
+ *
+ * tipos não pendentes: novo, identico, convergido (livro e campanha
+ * mudaram para o mesmo valor), atualizar (só o livro mudou — campanha
+ * intacta desde o snapshot), removido_livro (saiu do livro — preservado
+ * na campanha), resolvido (decisão persistida ainda válida).
+ * pendentes (exigem decisão explícita): personalizado (só a campanha
+ * mudou), divergente (mudanças independentes nos dois lados), colisao
+ * (chave de outro livro ou divergência sem snapshot), remocao (regra
+ * aplicada antes e removida manualmente da campanha).
+ */
+type TipoClasseAcervo =
+  | "novo" | "identico" | "convergido" | "atualizar"
+  | "personalizado" | "divergente" | "colisao" | "remocao"
+  | "removido_livro" | "resolvido";
+
 interface Classificacao {
   chave: string;
-  tipo: "novo" | "identico" | "conflito" | "resolvido";
-  item: ItemLivro;
+  tipo: TipoClasseAcervo;
+  pendente: boolean;
+  item: ItemLivro | null;
+  snap: ItemSnapshot | null;
+  atual: RegraDef | null;
+  nomeNoLivro: string;
+  nomeNaCampanha: string;
+  origem: string | null;
+  tipoDecisao: "conteudo" | "colisao" | "preservar_remocao" | null;
+  decisoesPossiveis: readonly string[];
 }
 
 interface AnaliseAcervo {
@@ -507,6 +535,22 @@ interface AnaliseAcervo {
   mapa?: Map<string, RegraDef>;
   classificacao?: Classificacao[];
   decisoesGravadas?: Record<string, DecisaoGravada>;
+}
+
+/** Canônico de conteúdo para comparar snapshot × livro × campanha. */
+function canonConteudo(e: { name?: unknown; category?: unknown; parentKey?: unknown; definition?: unknown } | null | undefined): string | null {
+  return e ? canonJson(normElemento(e)) : null;
+}
+
+/** Valores exibidos na prévia: nome + campos relevantes, sem ids/timestamps. */
+function resumoValor(e: { name?: unknown; category?: unknown; parentKey?: unknown; definition?: unknown } | null | undefined) {
+  if (!e) return null;
+  return {
+    name: typeof e.name === "string" ? e.name : "",
+    category: (e.category ?? null) as string | null,
+    parentKey: (e.parentKey ?? null) as string | null,
+    definition: e.definition ?? {},
+  };
 }
 
 /**
@@ -532,7 +576,6 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
   const [vinculo] = dbx.select().from(campaignRuleBooks)
     .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
   const { itens: antigosSnap, decisoes: decisoesGravadas } = lerSnapshotVinculo(vinculo?.snapshot);
-  const antigosPorChave = new Set(antigosSnap.map((i) => `${i.kind}:${i.key}`));
 
   // chaves presentes em OUTROS livros vinculados à campanha (colisão entre livros)
   const outrosVinculos = dbx.select().from(campaignRuleBooks)
@@ -543,56 +586,139 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
     for (const i of lerSnapshotVinculo(v.snapshot).itens) chavesOutrosLivros.add(`${i.kind}:${i.key}`);
   }
 
-  const classificacao: Classificacao[] = [];
-  const invalidosLista: string[] = [];
   // kinds fora de TIPOS_REGRA: a aplicação rejeita o livro inteiro (422) —
   // a prévia precisa identificar a mesma incompatibilidade e não contar
   // esses itens como novos/identicos aplicáveis.
   const incompativeis = itens.filter((i) => !TIPOS_REGRA.includes(i.kind as (typeof TIPOS_REGRA)[number]));
   const chavesIncompativeis = new Set(incompativeis.map((i) => `${i.kind}:${i.key}`));
-  const pendentes: { chave: string; nomeNoLivro: string; nomeNaCampanha: string; tipo: string }[] = [];
-  let novos = 0, identicos = 0, conflitos = 0, resolvidos = 0;
 
-  for (const item of itens) {
-    const chave = `${item.kind}:${item.key}`;
-    if (chavesIncompativeis.has(chave)) continue;
-    const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
-    if (!parsed.success) { invalidosLista.push(chave); continue; }
-    const atual = mapa.get(chave);
-    const normLivro = { ...normElemento(item), definition: parsed.data };
-    const normCampanha = atual ? normElemento(atual) : null;
-    const origemCanon = canonJson(normLivro);
-    const campanhaCanon = atual ? canonJson(normCampanha) : null;
-    const antigo = antigosPorChave.has(chave);
+  const livroPorChave = new Map(itens.map((i) => [`${i.kind}:${i.key}`, i]));
+  const snapPorChave = new Map(antigosSnap.map((i) => [`${i.kind}:${i.key}`, i]));
+  // união snapshot ∪ livro: cobre itens removidos do livro e da campanha
+  const chavesLivros = new Set([...livroPorChave.keys(), ...snapPorChave.keys()]);
+  const chavesOrdenadas = [
+    ...itens.map((i) => `${i.kind}:${i.key}`).filter((k) => chavesLivros.has(k)),
+    ...[...snapPorChave.keys()].filter((k) => !livroPorChave.has(k)).sort(),
+  ];
+
+  const classificacao: Classificacao[] = [];
+  const itensDiff: Record<string, unknown>[] = [];
+  const invalidosLista: string[] = [];
+  const pendentes: Record<string, unknown>[] = [];
+
+  for (const chave of chavesOrdenadas) {
+    const item = livroPorChave.get(chave) ?? null;
+    const snap = snapPorChave.get(chave) ?? null;
+    const atual = mapa.get(chave) ?? null;
+    if (item && chavesIncompativeis.has(chave)) continue;
+    if (item) {
+      const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
+      if (!parsed.success) { invalidosLista.push(chave); continue; }
+    }
+
+    const cL = canonConteudo(item);
+    const cS = canonConteudo(snap);
+    const cC = canonConteudo(atual);
     const outroLivro = chavesOutrosLivros.has(chave);
     const gravada = decisoesGravadas[chave];
+    // decisão persistida só vale se origem (livro) e campanha seguem idênticas
+    const decisaoGravadaOk = !!gravada && gravada.origem === cL && gravada.campanha === cC
+      && ((gravada.tipo === "manter_campanha" && cC !== null)
+        || (gravada.tipo === "preservar_remocao" && cC === null));
 
-    if (atual && canonJson(normCampanha) === origemCanon) {
-      if (!antigo && outroLivro) {
-        // item novo para ESTE livro mas chave já usada por outro vínculo → conflito mesmo idêntico
-        const d = gravada?.tipo === "manter_campanha" && gravada.origem === origemCanon && gravada.campanha === campanhaCanon ? gravada : undefined;
-        if (d) { resolvidos++; } else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name, tipo: "colisao" }); }
-        classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
+    const nomeNoLivro = item?.name ?? snap?.name ?? "";
+    const nomeNaCampanha = atual?.name ?? "(ausente na campanha)";
+    let tipo: TipoClasseAcervo;
+    let origem: string | null = null;
+    let pendente = false;
+    let tipoDecisao: Classificacao["tipoDecisao"] = null;
+    let decisoesPossiveis: readonly string[] = [];
+
+    if (!atual) {
+      if (item && !snap) {
+        tipo = "novo";
+      } else if (item && snap) {
+        // aplicado antes por este livro e removido manualmente da campanha
+        if (decisaoGravadaOk && gravada!.tipo === "preservar_remocao") {
+          tipo = "resolvido";
+        } else {
+          tipo = "remocao"; origem = "remocao"; pendente = true;
+          tipoDecisao = "preservar_remocao";
+          decisoesPossiveis = ["preservar_remocao", "usar_livro"];
+        }
       } else {
-        identicos++;
-        classificacao.push({ chave, tipo: "identico", item });
+        continue; // removido do livro E da campanha — nada a exibir
       }
-    } else if (atual) {
-      const d = gravada?.tipo === "manter_campanha" && gravada.origem === origemCanon && gravada.campanha === campanhaCanon ? gravada : undefined;
-      if (d) resolvidos++;
-      else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name, tipo: "conteudo" }); }
-      classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
-    } else if (antigo) {
-      // aplicado antes por este livro, removido manualmente da campanha → preservar remoção?
-      const d = gravada?.tipo === "preservar_remocao" && gravada.origem === origemCanon && gravada.campanha === null ? gravada : undefined;
-      if (d) resolvidos++;
-      else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: "(removido da campanha)", tipo: "preservar_remocao" }); }
-      classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
+    } else if (!item) {
+      // saiu do livro mas continua na campanha → preservado, só informativo
+      tipo = "removido_livro"; origem = "fora_do_livro";
+    } else if (!snap) {
+      // livro ainda não aplicado (ou chave nova no livro) com regra existente
+      if (cL === cC) {
+        if (outroLivro) {
+          if (decisaoGravadaOk && gravada!.tipo === "manter_campanha") tipo = "resolvido";
+          else {
+            tipo = "colisao"; origem = "colisao"; pendente = true;
+            tipoDecisao = "colisao"; decisoesPossiveis = ["manter_campanha", "usar_livro"];
+          }
+        } else {
+          tipo = "identico";
+        }
+      } else {
+        if (decisaoGravadaOk && gravada!.tipo === "manter_campanha") tipo = "resolvido";
+        else {
+          tipo = outroLivro ? "colisao" : "divergente";
+          origem = outroLivro ? "colisao" : "sem_snapshot";
+          pendente = true;
+          tipoDecisao = outroLivro ? "colisao" : "conteudo";
+          decisoesPossiveis = ["manter_campanha", "usar_livro"];
+        }
+      }
+    } else if (cL === cC) {
+      // livro e campanha convergem — idêntico ou ambos mudaram para o mesmo valor
+      tipo = cS === cL ? "identico" : "convergido"; origem = cS === cL ? null : "convergido";
+    } else if (cC === cS) {
+      // só o livro mudou; campanha intacta desde o snapshot → atualização segura
+      tipo = "atualizar"; origem = "so_livro";
     } else {
-      novos++;
-      classificacao.push({ chave, tipo: "novo", item });
+      // campanha diverge do snapshot
+      if (decisaoGravadaOk && gravada!.tipo === "manter_campanha") {
+        tipo = "resolvido";
+      } else {
+        tipo = cL === cS ? "personalizado" : "divergente";
+        origem = tipo === "personalizado" ? "so_campanha" : "ambos";
+        pendente = true;
+        tipoDecisao = outroLivro ? "colisao" : "conteudo";
+        decisoesPossiveis = ["manter_campanha", "usar_livro"];
+      }
     }
+
+    if (pendente) {
+      pendentes.push({
+        chave, nomeNoLivro, nomeNaCampanha,
+        tipo: tipoDecisao, origem, decisoesPossiveis,
+      });
+    }
+    classificacao.push({
+      chave, tipo, pendente, item, snap, atual,
+      nomeNoLivro, nomeNaCampanha, origem, tipoDecisao, decisoesPossiveis,
+    });
+    itensDiff.push({
+      chave, tipo, origem, pendente,
+      nomeNoLivro, nomeNaCampanha,
+      tipoDecisao, decisoesPossiveis,
+      anterior: resumoValor(snap),
+      livro: resumoValor(item),
+      campanha: resumoValor(atual),
+    });
   }
+
+  const conta = (tp: TipoClasseAcervo) => classificacao.filter((c) => c.tipo === tp).length;
+  const novos = conta("novo"), identicos = conta("identico"), convergidos = conta("convergido");
+  const atualizar = conta("atualizar"), resolvidos = conta("resolvido"),
+    removidosDoLivro = conta("removido_livro");
+  const conflitos = pendentes.length;
+  const chavesLivro = new Set(itens.map((i) => `${i.kind}:${i.key}`));
 
   // impressão digital determinística do estado relevante (book, itens, vínculos,
   // ruleset e definições) — cobre updatedAt/excluidoEm porque soft delete e
@@ -611,14 +737,14 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
   });
   const token = createHash("sha256").update(fingerprint).digest("hex");
 
-  const chavesLivro = new Set(itens.map((i) => `${i.kind}:${i.key}`));
   const snapshotNovoItens: ItemSnapshot[] = itens.map((i) => ({
     kind: i.kind, key: i.key, name: i.name,
     category: i.category ?? null, parentKey: i.parentKey ?? null,
     definition: i.definition ?? {}, ordem: i.ordem,
   }));
   const semDiferencas = incompativeis.length === 0
-    && novos === 0 && conflitos === 0 && invalidosLista.length === 0
+    && invalidosLista.length === 0
+    && novos === 0 && atualizar === 0 && conflitos === 0
     && (vinculo?.appliedVersion ?? null) === livro.versao
     && snapshotItensCanon(antigosSnap) === snapshotItensCanon(snapshotNovoItens)
     && canonJson(decisoesGravadas) === "{}";
@@ -629,18 +755,22 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
     payload: {
       ok: true,
       livroId: livro.id,
+      titulo: livro.titulo,
       versao: livro.versao,
       versaoAplicada: vinculo?.appliedVersion ?? null,
       estadoToken: token,
       totais: {
-        itensNoLivro: itens.length, novos, identicos,
+        itensNoLivro: itens.length, novos, identicos, convergidos, atualizar,
         conflitos, resolvidos, invalidos: invalidosLista.length,
         incompativeis: incompativeis.length,
+        removidosDoLivro,
+        removidosDaCampanha: pendentes.filter((p) => p.tipo === "preservar_remocao").length,
         preservadosNaCampanha: atuais.filter((e) => !chavesLivro.has(`${e.kind}:${e.key}`)).length,
       },
       tiposIncompativeis: [...new Set(incompativeis.map((i) => i.kind))],
-      aplicavelIntegralmente: incompativeis.length === 0,
+      aplicavelIntegralmente: incompativeis.length === 0 && invalidosLista.length === 0,
       conflitos: pendentes,
+      itens: itensDiff,
       semDiferencas,
     },
   };
@@ -666,13 +796,16 @@ regrasRouter.delete("/acervo/:bookId/vinculo", requirePapel("mestre"), async (re
 const TIPOS_DECISAO_ACERVO = ["manter_campanha", "usar_livro", "preservar_remocao"] as const;
 const aplicarLivroSchema = z.object({
   decisoes: z.record(z.string(), z.enum(TIPOS_DECISAO_ACERVO)).default({}),
-  estadoToken: z.string().max(128).optional(),
+  // impressão digital obrigatória: a confirmação só vale para a prévia exata
+  // que o mestre viu — conteúdo alterado depois da prévia exige nova prévia.
+  estadoToken: z.string().min(1).max(128),
 });
 
 /**
  * POST /api/campaigns/:campaignId/regras/acervo/:bookId/aplicar
- * Transacional: relê tudo, confere impressão digital da prévia (se enviada),
- * recalcula conflitos, valida o conjunto EXATO de decisões, e só então grava.
+ * Transacional: relê tudo, confere a impressão digital da prévia, recalcula
+ * a classificação de três estados, valida o conjunto EXATO de decisões e só
+ * então grava — a aplicação nunca diverge do que a prévia anunciou.
  */
 regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req, res) => {
   const body = aplicarLivroSchema.safeParse(req.body ?? {});
@@ -707,10 +840,10 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
       };
     }
     const tokenAtual = a.payload.estadoToken as string;
-    if (estadoTokenEnviado && estadoTokenEnviado !== tokenAtual) {
+    if (estadoTokenEnviado !== tokenAtual) {
       return { http: 409, payload: { erro: "O estado mudou desde a prévia — gere uma nova prévia", estadoToken: tokenAtual } };
     }
-    const pendentes = (a.classificacao ?? []).filter((c) => c.tipo === "conflito");
+    const pendentes = (a.classificacao ?? []).filter((c) => c.pendente);
     const chavesPendentes = new Set(pendentes.map((c) => c.chave));
     // chaves já resolvidas por decisão persistida também aceitam a mesma decisão
     // (retry idempotente não pode virar "chave extra")
@@ -727,8 +860,9 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
           erro: "Decisões de sincronização inválidas",
           detalhes: {
             conflitos: pendentes.map((c) => ({
-              chave: c.chave, nomeNoLivro: c.item.name,
-              nomeNaCampanha: a.mapa?.get(c.chave)?.name ?? "(ausente)",
+              chave: c.chave, nomeNoLivro: c.nomeNoLivro,
+              nomeNaCampanha: c.nomeNaCampanha,
+              tipo: c.tipoDecisao, origem: c.origem,
             })),
             chavesExtras: extras, chavesFaltantes: faltantes,
             opcoes: [...TIPOS_DECISAO_ACERVO],
@@ -739,11 +873,15 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
     // decisão compatível com o tipo de conflito
     for (const c of pendentes) {
       const d = decisoes[c.chave];
-      const ausente = !a.mapa?.get(c.chave);
+      const ausente = !c.atual;
       if (ausente && d === "manter_campanha") {
         return { http: 409, payload: { erro: "Decisão incompatível com o conflito", chave: c.chave } };
       }
       if (!ausente && d === "preservar_remocao") {
+        return { http: 409, payload: { erro: "Decisão incompatível com o conflito", chave: c.chave } };
+      }
+      // decisão precisa estar entre as opções do conflito exibido na prévia
+      if (!(c.decisoesPossiveis as readonly string[]).includes(d)) {
         return { http: 409, payload: { erro: "Decisão incompatível com o conflito", chave: c.chave } };
       }
     }
@@ -770,67 +908,62 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
     for (const [chave, d] of Object.entries(novasDecisoes)) {
       const item = itens.find((i) => `${i.kind}:${i.key}` === chave);
       const def = mapa.get(chave);
-      if (!item) { delete novasDecisoes[chave]; continue; }
-      const p = definicaoElementoSchema.safeParse(item.definition ?? {});
-      if (!p.success) { delete novasDecisoes[chave]; continue; }
-      const origem = canonJson({ ...normElemento({ ...item, definition: p.data }), definition: p.data });
-      const campanha = def ? canonJson(normElemento(def)) : null;
+      if (!item || !TIPOS_REGRA.includes(item.kind as (typeof TIPOS_REGRA)[number])) { delete novasDecisoes[chave]; continue; }
+      const origem = canonConteudo(item);
+      const campanha = canonConteudo(def);
       const tipoOk = d.tipo === "preservar_remocao" ? campanha === null
         : d.tipo === "manter_campanha" ? campanha !== null : false;
       if (d.origem !== origem || d.campanha !== campanha || !tipoOk) delete novasDecisoes[chave];
     }
 
-    for (const c of a.classificacao ?? []) {
-      const { item } = c;
+    // upsert do conteúdo do livro: usado por "novo", "atualizar" (só o livro
+    // mudou) e "usar_livro" (decisão sobre conflito) — a prévia garante que
+    // esses são exatamente os casos em que o valor do livro deve prevalecer.
+    const gravarDoLivro = (item: ItemLivro, atual: RegraDef | undefined) => {
       const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
-      if (!parsed.success) continue;
-      const chave = c.chave;
-      const atual = mapa.get(chave);
-      const normLivro = { ...normElemento(item), definition: parsed.data };
-      const origemCanon = canonJson(normLivro);
-      const campanhaCanon = atual ? canonJson(normElemento(atual)) : null;
+      if (!parsed.success) return;
       const valores = {
         name: item.name, category: item.category ?? null,
         parentKey: item.parentKey ?? null, definition: parsed.data, updatedAt: t,
       };
-
-      if (c.tipo === "identico" || c.tipo === "resolvido") continue;
-      if (c.tipo === "novo") {
-        tx.insert(ruleDefinitions).values({
-          id: crypto.randomUUID(), ruleSetId: rs.id,
-          kind: item.kind, key: item.key, ...valores, createdAt: t,
-        }).run();
-        inseridos++;
-        continue;
-      }
-      const decisao = decisoes[chave];
-      if (decisao === "manter_campanha" || decisao === "preservar_remocao") {
-        novasDecisoes[chave] = {
-          tipo: decisao === "preservar_remocao" ? "preservar_remocao" : "manter_campanha",
-          origem: origemCanon,
-          campanha: decisao === "preservar_remocao" ? null : campanhaCanon,
-          em: t.getTime(),
-        };
-        if (decisao === "manter_campanha") mantidos++; else preservados++;
-        continue;
-      }
-      // usar_livro
       if (!atual) {
         tx.insert(ruleDefinitions).values({
           id: crypto.randomUUID(), ruleSetId: rs.id,
           kind: item.kind, key: item.key, ...valores, createdAt: t,
         }).run();
         inseridos++;
-      } else {
-        const mudou = canonJson(normElemento(atual)) !== origemCanon
-          || atual.name !== valores.name
-          || (atual.category ?? null) !== valores.category
-          || (atual.parentKey ?? null) !== valores.parentKey;
-        if (mudou) {
-          tx.update(ruleDefinitions).set(valores).where(eq(ruleDefinitions.id, atual.id)).run();
-          atualizados++;
-        }
+        return;
       }
+      if (canonConteudo(atual) !== canonConteudo(item)) {
+        tx.update(ruleDefinitions).set(valores).where(eq(ruleDefinitions.id, atual.id)).run();
+        atualizados++;
+      }
+    };
+
+    for (const c of a.classificacao ?? []) {
+      const item = c.item;
+      if (!item) continue; // removido_livro: sem item do livro, nada a gravar
+      const chave = c.chave;
+      const atual = mapa.get(chave);
+
+      if (c.tipo === "novo" || c.tipo === "atualizar") {
+        gravarDoLivro(item, atual);
+        continue;
+      }
+      if (!c.pendente) continue; // identico/convergido/resolvido/removido_livro
+      const decisao = decisoes[chave];
+      if (decisao === "manter_campanha" || decisao === "preservar_remocao") {
+        novasDecisoes[chave] = {
+          tipo: decisao,
+          origem: canonConteudo(item)!,
+          campanha: decisao === "preservar_remocao" ? null : canonConteudo(atual),
+          em: t.getTime(),
+        };
+        if (decisao === "manter_campanha") mantidos++; else preservados++;
+        continue;
+      }
+      // usar_livro: produz exatamente a alteração mostrada na prévia
+      gravarDoLivro(item, atual);
     }
 
     const snapshot = {

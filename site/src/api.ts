@@ -173,13 +173,15 @@ export const api = {
     requisicao<RegrasCampanha>(`/campaigns/${cid}/regras`),
   listarAcervoCampanha: (cid: string) =>
     requisicao<{ livros: LivroAcervoCampanha[] }>("/campaigns/" + cid + "/regras/acervo"),
-  aplicarLivroAcervo: (cid: string, bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) =>
-    requisicao<{ ok: boolean; livroId: string; versaoAplicada: number; inseridos: number; atualizados: number; mantidos: number }>(
+  aplicarLivroAcervo: (cid: string, bookId: string, decisoes: Record<string, DecisaoAcervo>, estadoToken: string) =>
+    requisicao<ResultadoSyncAcervo>(
       "/campaigns/" + cid + "/regras/acervo/" + bookId + "/aplicar",
-      { method: "POST", body: JSON.stringify({ decisoes }) },
+      { method: "POST", body: JSON.stringify({ decisoes, estadoToken }) },
     ),
   previaLivroAcervo: (cid: string, bookId: string) =>
     requisicao<DiffAcervoCampanha>("/campaigns/" + cid + "/regras/acervo/" + bookId + "/diff"),
+  removerVinculoAcervo: (cid: string, bookId: string) =>
+    requisicao<{ ok: boolean }>("/campaigns/" + cid + "/regras/acervo/" + bookId + "/vinculo", { method: "DELETE" }),
   criarElementoRegra: (cid: string, dados: ElementoRegraInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/regras/elementos`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarElementoRegra: (cid: string, elementId: string, dados: Partial<ElementoRegraInput>) =>
@@ -1125,24 +1127,74 @@ export interface LivroAcervoCampanha {
   selecionavel?: boolean;
 }
 
+export interface ValorDiffAcervo {
+  name: string;
+  category: string | null;
+  parentKey: string | null;
+  definition: Record<string, unknown>;
+}
+
+export interface ItemDiffAcervo {
+  chave: string;
+  tipo: string;
+  origem: string | null;
+  pendente: boolean;
+  nomeNoLivro: string;
+  nomeNaCampanha: string;
+  tipoDecisao: "conteudo" | "colisao" | "preservar_remocao" | null;
+  decisoesPossiveis: string[];
+  anterior: ValorDiffAcervo | null;
+  livro: ValorDiffAcervo | null;
+  campanha: ValorDiffAcervo | null;
+}
+
+export type DecisaoAcervo = "manter_campanha" | "usar_livro" | "preservar_remocao";
+
 export interface DiffAcervoCampanha {
   ok: boolean;
   livroId: string;
+  titulo?: string;
   versao: number;
   versaoAplicada: number | null;
+  estadoToken: string;
   totais: {
     itensNoLivro: number;
     novos: number;
     identicos: number;
+    convergidos: number;
+    atualizar: number;
     conflitos: number;
+    resolvidos: number;
     invalidos: number;
     incompativeis: number;
+    removidosDoLivro: number;
+    removidosDaCampanha: number;
     preservadosNaCampanha: number;
   };
   tiposIncompativeis?: string[];
   aplicavelIntegralmente?: boolean;
-  conflitos: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[];
+  conflitos: {
+    chave: string;
+    nomeNoLivro: string;
+    nomeNaCampanha: string;
+    tipo: string | null;
+    origem: string | null;
+    decisoesPossiveis: string[];
+  }[];
+  itens: ItemDiffAcervo[];
   semDiferencas: boolean;
+}
+
+export interface ResultadoSyncAcervo {
+  ok: boolean;
+  livroId: string;
+  versaoAplicada: number;
+  inseridos: number;
+  atualizados: number;
+  mantidos: number;
+  preservados?: number;
+  semAlteracao?: boolean;
+  estadoToken: string;
 }
 
 export interface LivroAcervoResumo {

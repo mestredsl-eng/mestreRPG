@@ -36,6 +36,15 @@ try {
   const cj = cenario.jogadores.jogador1.cookie;
   const camp = cenario.campId;
 
+  // A aplicação exige a impressão digital da prévia: todo POST /aplicar
+  // passa antes pelo GET /diff e envia o estadoToken correspondente.
+  const tokenDiff = async (bookId) =>
+    (await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm })).json?.estadoToken;
+  const aplicar = async (bookId, body = {}) =>
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, {
+      cookie: cm, body: { ...body, estadoToken: await tokenDiff(bookId) },
+    });
+
   // ===== 1. livro no acervo global =====
   sec("Livro no Acervo");
   const livro = {
@@ -99,7 +108,7 @@ try {
 
   // ===== 3. aplicação =====
   sec("Aplicação do livro às regras da campanha");
-  const aplica = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
+  const aplica = await aplicar(bookId);
   t("mestre aplica livro", aplica.status === 200 && aplica.json?.ok === true && aplica.json?.inseridos === 3,
     `status=${aplica.status} ${JSON.stringify(aplica.json).slice(0, 160)}`);
   t("versão aplicada registrada", aplica.json?.versaoAplicada >= 1, `v=${aplica.json?.versaoAplicada}`);
@@ -124,7 +133,7 @@ try {
     JSON.stringify(diffDepois.json?.totais));
 
   // idempotência: reaplicar sem mudanças
-  const reapply = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
+  const reapply = await aplicar(bookId);
   t("reaplicação idempotente (semAlteracao)", reapply.status === 200 && reapply.json?.semAlteracao === true,
     `status=${reapply.status} ${JSON.stringify(reapply.json).slice(0, 140)}`);
 
@@ -171,7 +180,7 @@ try {
 
   // aplicar sem decisões -> 409 com conflito explícito
   const elAntesConflito = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
-  const conflita = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
+  const conflita = await aplicar(bookId);
   t("conflito sem decisão → 409", conflita.status === 409, `status=${conflita.status}`);
   t("conflito aponta a chave", JSON.stringify(conflita.json?.detalhes ?? conflita.json).includes("atributo:forca_bib"),
     JSON.stringify(conflita.json).slice(0, 200));
@@ -183,9 +192,7 @@ try {
     JSON.stringify(itemDepoisConflito).slice(0, 120));
 
   // com decisão manter_campanha -> ok e campanha preserva versão local
-  const comDecisao = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, {
-    cookie: cm, body: { decisoes: { "atributo:forca_bib": "manter_campanha" } },
-  });
+  const comDecisao = await aplicar(bookId, { decisoes: { "atributo:forca_bib": "manter_campanha" } });
   t("aplicar com decisão manter_campanha → ok", comDecisao.status === 200 && comDecisao.json?.ok === true && comDecisao.json?.mantidos >= 1,
     `status=${comDecisao.status} ${JSON.stringify(comDecisao.json).slice(0, 160)}`);
   const elDepois = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
@@ -206,9 +213,7 @@ try {
   const elAntesUsar = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
   const elAntesUsarJson = JSON.stringify(elAntesUsar.json);
   t("antes de usar_livro: versão local presente", elAntesUsarJson.includes("versão local da campanha"), elAntesUsarJson.slice(0, 120));
-  const usarLivro = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, {
-    cookie: cm, body: { decisoes: { "atributo:forca_bib": "usar_livro" } },
-  });
+  const usarLivro = await aplicar(bookId, { decisoes: { "atributo:forca_bib": "usar_livro" } });
   t("aplicar com decisão usar_livro → ok", usarLivro.status === 200 && usarLivro.json?.ok === true && (usarLivro.json?.aplicados >= 1 || usarLivro.json?.atualizados >= 1),
     `status=${usarLivro.status} ${JSON.stringify(usarLivro.json).slice(0, 160)}`);
   const elDepoisUsar = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
@@ -234,15 +239,18 @@ try {
   const bookConc = livroConc.json?.livro?.id;
   t("livro p/ teste de concorrência criado", livroConc.status === 201 && !!bookConc, `status=${livroConc.status}`);
 
+  const tokenConc = await tokenDiff(bookConc);
   const [a1, a2, a3] = await Promise.all([1, 2, 3].map(() =>
-    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: {} })));
-  t("3 aplicações simultâneas → todas 200 (sem 500)",
-    [a1, a2, a3].every((r) => r.status === 200 && r.json?.ok === true),
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { estadoToken: tokenConc } })));
+  // serializadas pela transação: a primeira grava e invalida a impressão
+  // digital das demais → no máximo uma 200; as outras recebem 409 pedindo
+  // nova prévia (nunca estado corrompido nem duplicata).
+  const okA = [a1, a2, a3].filter((r) => r.status === 200 && r.json?.ok === true);
+  const staleA = [a1, a2, a3].filter((r) => r.status === 409);
+  t("aplicações simultâneas: no máx. uma grava, demais 409 de prévia obsoleta",
+    okA.length >= 1 && okA.length + staleA.length === 3
+      && staleA.every((r) => /prévia|estado/i.test(r.json?.erro ?? "")),
     JSON.stringify([a1.status, a2.status, a3.status]));
-  const inseriram = [a1, a2, a3].filter((r) => (r.json?.inseridos ?? 0) > 0).length;
-  const noOps = [a1, a2, a3].filter((r) => r.json?.semAlteracao === true).length;
-  t("exatamente uma aplicação insere, demais são no-op",
-    inseriram === 1 && noOps === 2, `inseriram=${inseriram} noOp=${noOps}`);
 
   // estado final: cada chave aparece UMA vez; vínculo aponta para a versão do livro
   const elConc = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
@@ -265,16 +273,18 @@ try {
     cookie: cm, body: { name: "Talento A do livro v2" },
   });
   t("livro evolui (v2)", editaLivro.status === 200, `status=${editaLivro.status}`);
+  const tokenConc2 = await tokenDiff(bookConc);
   const [d1, d2] = await Promise.all([
-    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { decisoes: { "talento:conc_a": "manter_campanha" } } }),
-    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { decisoes: { "talento:conc_a": "usar_livro" } } }),
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { estadoToken: tokenConc2, decisoes: { "talento:conc_a": "manter_campanha" } } }),
+    req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookConc}/aplicar`, { cookie: cm, body: { estadoToken: tokenConc2, decisoes: { "talento:conc_a": "usar_livro" } } }),
   ]);
-  // serialized: a segunda vê o estado já atualizado pela primeira —
-  // pode dar 409 se a primeira aplicou "usar_livro"? Não: depois da
-  // primeira, campanha == livro → sem conflito → 200. Ordem serial
-  // garante resultado determinístico e íntegro.
-  t("aplicações concorrentes com decisões → ambas 200",
-    d1.status === 200 && d2.status === 200, `d1=${d1.status} d2=${d2.status}`);
+  // serializadas: a primeira decisão vence e grava; a segunda encontra a
+  // prévia obsoleta (409) — decisões antigas nunca são aplicadas sobre
+  // conteúdo que mudou depois da prévia.
+  const okD = [d1, d2].filter((r) => r.status === 200);
+  const staleD = [d1, d2].filter((r) => r.status === 409);
+  t("decisões concorrentes: exatamente uma aplicada, outra rejeitada como obsoleta",
+    okD.length === 1 && staleD.length === 1, `d1=${d1.status} d2=${d2.status}`);
   const elFinal = await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm });
   const nomeFinal = JSON.stringify(elFinal.json?.elementos ?? {});
   t("estado final íntegro (nome é local OU do livro, nunca corrompido)",
@@ -295,12 +305,12 @@ try {
 
   // ===== 6. rejeições =====
   sec("Rejeições");
-  const incomp = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookIncomp}/aplicar`, { cookie: cm, body: {} });
+  const incomp = await aplicar(bookIncomp);
   t("kind incompatível → 422", incomp.status === 422, `status=${incomp.status} ${JSON.stringify(incomp.json).slice(0, 140)}`);
 
   // exclui o livro incompatível e tenta aplicar -> 404
   await req(BASE, "DELETE", `/biblioteca/livros/${bookIncomp}`, { cookie: cm });
-  const excluido = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookIncomp}/aplicar`, { cookie: cm, body: {} });
+  const excluido = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookIncomp}/aplicar`, { cookie: cm, body: { estadoToken: "x" } });
   t("livro excluído → 404", excluido.status === 404, `status=${excluido.status}`);
 
   // limpeza do livro de teste
@@ -314,7 +324,7 @@ try {
     JSON.stringify(itemDel).slice(0, 200));
   const diffDel = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm });
   t("diff de livro excluído → 404", diffDel.status === 404, `status=${diffDel.status}`);
-  const aplicaDel = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
+  const aplicaDel = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: { estadoToken: "x" } });
   t("aplicar livro excluído → 404", aplicaDel.status === 404, `status=${aplicaDel.status}`);
 
   // ===== 7. Alinhamento prévia × aplicação (revisão PR #55) =====
@@ -333,7 +343,7 @@ try {
   });
   const bookRT = livroRT.json?.livro?.id;
   t("livro RT criado", livroRT.status === 201 && !!bookRT, `status=${livroRT.status}`);
-  const apRT = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, { cookie: cm, body: {} });
+  const apRT = await aplicar(bookRT);
   t("RT aplicado", apRT.status === 200 && apRT.json?.inseridos === 2, JSON.stringify(apRT.json).slice(0, 140));
 
   // modifica SÓ a regra da campanha — livro permanece intacto
@@ -350,11 +360,9 @@ try {
   t("prévia RT não é idempotente (há decisão pendente)", diffRT.json?.semDiferencas === false);
 
   // aplicar sem decisão → 409; com usar_livro → atualiza de fato
-  const c409 = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, { cookie: cm, body: {} });
+  const c409 = await aplicar(bookRT);
   t("RT conflito sem decisão → 409", c409.status === 409, `status=${c409.status}`);
-  const usarRT = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, {
-    cookie: cm, body: { decisoes: { "atributo:rt_forca": "usar_livro" } },
-  });
+  const usarRT = await aplicar(bookRT, { decisoes: { "atributo:rt_forca": "usar_livro" } });
   t("RT usar_livro → 200", usarRT.status === 200 && usarRT.json?.ok === true, JSON.stringify(usarRT.json).slice(0, 140));
   const elUsar = await elCampanha(camp, "atributo", "rt_forca", cm);
   t("RT usar_livro sobrescreveu com valor do livro",
@@ -364,9 +372,7 @@ try {
   await req(BASE, "PATCH", `/campaigns/${camp}/regras/elementos/${elRT}`, {
     cookie: cm, body: { definition: { descricao: "local v2" } },
   });
-  const manterRT = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, {
-    cookie: cm, body: { decisoes: { "atributo:rt_forca": "manter_campanha" } },
-  });
+  const manterRT = await aplicar(bookRT, { decisoes: { "atributo:rt_forca": "manter_campanha" } });
   t("RT manter_campanha → 200", manterRT.status === 200 && manterRT.json?.mantidos >= 1, JSON.stringify(manterRT.json).slice(0, 140));
   const elManter = await elCampanha(camp, "atributo", "rt_forca", cm);
   t("RT manter_campanha preservou versão local", elManter?.definition?.descricao === "local v2", JSON.stringify(elManter?.definition));
@@ -384,15 +390,13 @@ try {
   t("prévia identifica reinserção de regra excluída localmente",
     diffReins.status === 200 && diffReins.json?.conflitos?.some((c) => c.chave === "talento:rt_talento" && c.tipo === "preservar_remocao"),
     JSON.stringify(diffReins.json?.conflitos));
-  const reinsert = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, {
-    cookie: cm, body: { decisoes: { "talento:rt_talento": "usar_livro" } },
-  });
+  const reinsert = await aplicar(bookRT, { decisoes: { "talento:rt_talento": "usar_livro" } });
   t("RT reinserção via usar_livro → 200", reinsert.status === 200 && reinsert.json?.ok === true, JSON.stringify(reinsert.json).slice(0, 140));
   const elReins = await elCampanha(camp, "talento", "rt_talento", cm);
   t("RT regra reinserida na campanha", !!elReins, JSON.stringify(elReins).slice(0, 120));
 
   // 7c) aplicação realmente idêntica continua idempotente
-  const idemRT = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookRT}/aplicar`, { cookie: cm, body: {} });
+  const idemRT = await aplicar(bookRT);
   t("RT aplicação idêntica → semAlteracao", idemRT.status === 200 && idemRT.json?.semAlteracao === true, JSON.stringify(idemRT.json).slice(0, 140));
 
   // 7d) kind incompatível: prévia identifica, aplicação rejeita 422 sem parcial
@@ -416,7 +420,7 @@ try {
       && (diffInc.json?.tiposIncompativeis ?? []).includes("regra_combate")
       && diffInc.json?.totais?.novos === 1 && diffInc.json?.semDiferencas === false,
     JSON.stringify(diffInc.json?.totais) + " " + JSON.stringify(diffInc.json?.tiposIncompativeis));
-  const apInc = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookInc2}/aplicar`, { cookie: cm, body: {} });
+  const apInc = await aplicar(bookInc2);
   t("aplicação com kind incompatível → 422", apInc.status === 422, `status=${apInc.status} ${JSON.stringify(apInc.json).slice(0, 140)}`);
   const elDepoisInc = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
   t("422 não persistiu nada (nem o item válido)", elAntesInc === elDepoisInc && !elDepoisInc.includes("ok_attr"), elDepoisInc.slice(0, 160));

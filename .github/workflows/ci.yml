@@ -90,6 +90,7 @@ jobs:
             homologacao-compras-vendas.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
+            homologacao-acervo-sync.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs \

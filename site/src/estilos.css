@@ -1826,3 +1826,12 @@ textarea:focus-visible,
 }
 .erros-salvamento ul { margin: 6px 0 0; padding-left: 20px; }
 .erros-salvamento .mini { margin-left: 6px; }
+
+/* Prévia de sincronização Acervo → campanha */
+.diff-item { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: var(--fundo-cartao, #161a26); }
+.diff-valor { margin-top: 4px; font-size: 0.85em; }
+.diff-def { display: block; margin-top: 2px; white-space: pre-wrap; word-break: break-word; opacity: 0.85; }
+@media (max-width: 600px) {
+  .diff-item .linha-ferramentas { flex-direction: column; align-items: stretch; }
+  .diff-item .linha-ferramentas select { width: 100%; }
+}

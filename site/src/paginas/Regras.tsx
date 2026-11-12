@@ -6,6 +6,8 @@ import {
   type ElementoRegra,
   type ElementoRegraInput,
   type DiffAcervoCampanha,
+  type DecisaoAcervo,
+  type ValorDiffAcervo,
   type LivroAcervoCampanha,
   type PersonagemResumo,
   type RegrasCampanha,
@@ -69,9 +71,11 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [livrosAcervo, setLivrosAcervo] = useState<LivroAcervoCampanha[]>([]);
-  const [conflitosAcervo, setConflitosAcervo] = useState<{ bookId: string; itens: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] } | null>(null);
-  const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, "manter_campanha" | "usar_livro">>({});
-  const [previaAcervo, setPreviaAcervo] = useState<DiffAcervoCampanha | null>(null);
+  const [previaAcervo, setPreviaAcervo] = useState<{ bookId: string; diff: DiffAcervoCampanha } | null>(null);
+  const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, DecisaoAcervo>>({});
+  const [resultadoAcervo, setResultadoAcervo] = useState<string | null>(null);
+  const [removerVinculo, setRemoverVinculo] = useState<LivroAcervoCampanha | null>(null);
+  const [ocupadoAcervo, setOcupadoAcervo] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -192,45 +196,60 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     if (aba === "acervo") void carregarAcervo();
   }, [aba, carregarAcervo]);
 
-  const aplicarLivro = async (bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) => {
-    setErro(null);
-    try {
-      const r = await api.aplicarLivroAcervo(campaignId, bookId, decisoes);
-      setConflitosAcervo(null);
-      setDecisoesAcervo({});
-      setPreviaAcervo(null);
-      setAviso("Livro aplicado: " + r.inseridos + " novo(s), " + r.atualizados + " atualizado(s), " + r.mantidos + " mantido(s) da campanha.");
-      await Promise.all([carregarAcervo(), carregar()]);
-    } catch (e) {
-      if (e instanceof ApiError && e.detalhes && typeof e.detalhes === "object") {
-        const d = e.detalhes as { conflitos?: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] };
-        if (Array.isArray(d.conflitos)) {
-          setConflitosAcervo({ bookId, itens: d.conflitos });
-          setDecisoesAcervo({});
-          return;
-        }
-      }
-      setErro(e instanceof Error ? e.message : "Erro ao aplicar livro do Acervo");
-    }
-  };
-
+  // Todo apply passa pela prévia: o POST exige a impressão digital do estado
+  // que o mestre viu — nunca existe "reaplicar" direto que contorne o diff.
   const previaLivro = async (bookId: string) => {
     setErro(null);
     setAviso(null);
+    setResultadoAcervo(null);
     try {
-      const r = await api.previaLivroAcervo(campaignId, bookId);
-      setPreviaAcervo(r);
-      // conflitos da prévia alimentam o mesmo fluxo de decisão explícita
-      if (r.conflitos.length) {
-        setConflitosAcervo({ bookId, itens: r.conflitos });
-        setDecisoesAcervo({});
-      } else {
-        setConflitosAcervo(null);
-        setDecisoesAcervo({});
-      }
+      const diff = await api.previaLivroAcervo(campaignId, bookId);
+      setPreviaAcervo({ bookId, diff });
+      setDecisoesAcervo({});
     } catch (e) {
       setPreviaAcervo(null);
       setErro(e instanceof Error ? e.message : "Erro ao pré-visualizar livro do Acervo");
+    }
+  };
+
+  const confirmarSync = async () => {
+    if (!previaAcervo || ocupadoAcervo) return;
+    setOcupadoAcervo(true);
+    setErro(null);
+    try {
+      const r = await api.aplicarLivroAcervo(campaignId, previaAcervo.bookId, decisoesAcervo, previaAcervo.diff.estadoToken);
+      setPreviaAcervo(null);
+      setDecisoesAcervo({});
+      setResultadoAcervo(
+        (r.semAlteracao ? "Sincronização concluída — nenhuma alteração necessária. " : "Sincronização concluída: ")
+        + `${r.inseridos} inserido(s), ${r.atualizados} atualizado(s), ${r.mantidos} mantido(s) da campanha, ${r.preservados ?? 0} remoção(ões) preservada(s).`,
+      );
+      await Promise.all([carregarAcervo(), carregar()]);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409) {
+        setErro("O estado mudou desde a prévia — gere uma nova prévia antes de confirmar.");
+      } else {
+        setErro(e instanceof Error ? e.message : "Erro ao sincronizar livro do Acervo");
+      }
+    } finally {
+      setOcupadoAcervo(false);
+    }
+  };
+
+  const removerVinculoLivro = async () => {
+    if (!removerVinculo || ocupadoAcervo) return;
+    setOcupadoAcervo(true);
+    setErro(null);
+    try {
+      await api.removerVinculoAcervo(campaignId, removerVinculo.id);
+      setRemoverVinculo(null);
+      setPreviaAcervo(null);
+      setAviso(`Vínculo com "${removerVinculo.titulo}" removido. As regras da campanha foram preservadas.`);
+      await carregarAcervo();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao remover vínculo do livro");
+    } finally {
+      setOcupadoAcervo(false);
     }
   };
 
@@ -330,70 +349,34 @@ export default function Regras({ campaignId }: { campaignId: string }) {
               <div className="elemento-acoes">
                 {livro.selecionavel !== false && (
                   <button className="mini" onClick={() => void previaLivro(livro.id)}>
-                    Pré-visualizar
+                    {livro.aplicado ? "Pré-visualizar / sincronizar" : "Pré-visualizar"}
                   </button>
                 )}
-                {livro.selecionavel !== false && (
-                  <button className="mini" onClick={() => void aplicarLivro(livro.id)}>
-                    {livro.aplicado ? "Revisar / reaplicar" : "Aplicar à campanha"}
+                {livro.aplicado && (
+                  <button className="mini perigo" onClick={() => setRemoverVinculo(livro)}>
+                    Remover vínculo
                   </button>
                 )}
               </div>
             </div>
           ))}
+          {resultadoAcervo && <div className="ok-msg">{resultadoAcervo}</div>}
           {previaAcervo && (
-            <section className="cartao">
-              <h4>Prévia de aplicação — sem gravar nada</h4>
-              <p className="dica">
-                {previaAcervo.totais.itensNoLivro} item(ns) no livro (v{previaAcervo.versao}):
-                {" "}{previaAcervo.totais.novos} novo(s), {previaAcervo.totais.identicos} idêntico(s),{" "}
-                {previaAcervo.totais.conflitos} conflito(s), {previaAcervo.totais.invalidos} inválido(s)
-                {(previaAcervo.totais.incompativeis ?? 0) > 0 && `, ${previaAcervo.totais.incompativeis} tipo(s) incompatível(is) — o livro não pode ser aplicado integralmente`}.
-                {" "}{previaAcervo.totais.preservadosNaCampanha} elemento(s) da campanha não existem no livro e serão preservados.
-                {previaAcervo.semDiferencas && " Nenhuma diferença — a aplicação seria idempotente."}
-              </p>
-              <button className="secundario" onClick={() => setPreviaAcervo(null)}>Fechar prévia</button>
-            </section>
+            <PreviaSyncAcervo
+              previa={previaAcervo}
+              decisoes={decisoesAcervo}
+              ocupado={ocupadoAcervo}
+              onDecisao={(chave, valor) => setDecisoesAcervo((atual) => {
+                const novo = { ...atual };
+                if (valor) novo[chave] = valor; else delete novo[chave];
+                return novo;
+              })}
+              onConfirmar={() => void confirmarSync()}
+              onAtualizar={() => void previaLivro(previaAcervo.bookId)}
+              onFechar={() => { if (!ocupadoAcervo) { setPreviaAcervo(null); setDecisoesAcervo({}); } }}
+            />
           )}
           {!livrosAcervo.length && <p className="dica">Nenhum livro ativo no Acervo. Cadastre ou importe livros na Biblioteca global.</p>}
-          {conflitosAcervo && (
-            <section className="cartao">
-              <h4>Conflitos encontrados — escolha o que deve prevalecer</h4>
-              <p className="dica">Nenhuma alteração foi gravada ainda. Para cada chave repetida, escolha manter a regra da campanha ou substituí-la pela versão do livro.</p>
-              {conflitosAcervo.itens.map((item) => (
-                <div className="linha-ferramentas" key={item.chave}>
-                  <div>
-                    <strong>{item.chave}</strong>
-                    <div className="dica">Campanha: {item.nomeNaCampanha} · Livro: {item.nomeNoLivro}</div>
-                  </div>
-                  <select
-                    value={decisoesAcervo[item.chave] ?? ""}
-                    onChange={(e) => {
-                      const v = e.target.value as "" | "manter_campanha" | "usar_livro";
-                      setDecisoesAcervo((atual) => {
-                        const novo = { ...atual };
-                        if (v) novo[item.chave] = v;
-                        else delete novo[item.chave];
-                        return novo;
-                      });
-                    }}
-                  >
-                    <option value="">Escolha...</option>
-                    <option value="manter_campanha">Manter campanha</option>
-                    <option value="usar_livro">Usar livro</option>
-                  </select>
-                </div>
-              ))}
-              <div className="linha">
-                <button
-                  className="primario"
-                  disabled={conflitosAcervo.itens.some((i) => !decisoesAcervo[i.chave])}
-                  onClick={() => void aplicarLivro(conflitosAcervo.bookId, decisoesAcervo)}
-                >Confirmar aplicação</button>
-                <button className="secundario" onClick={() => { setConflitosAcervo(null); setDecisoesAcervo({}); }}>Cancelar</button>
-              </div>
-            </section>
-          )}
         </div>
       )}
 
@@ -455,7 +438,167 @@ export default function Regras({ campaignId }: { campaignId: string }) {
           aoCancelar={() => { if (!ocupado) setConfirmando(null); }}
         />
       )}
+      {removerVinculo && (
+        <ModalConfirmar
+          titulo="Remover vínculo do livro"
+          mensagem={`Remover o vínculo com "${removerVinculo.titulo}" desta campanha? As regras já copiadas para a campanha serão preservadas — apenas o registro de aplicação é excluído.`}
+          rotuloConfirmar="Remover vínculo"
+          perigo
+          ocupado={ocupadoAcervo}
+          aoConfirmar={() => void removerVinculoLivro()}
+          aoCancelar={() => { if (!ocupadoAcervo) setRemoverVinculo(null); }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------- Prévia de sincronização Acervo → campanha ----------
+
+const ROTULO_DECISAO_ACERVO: Record<string, string> = {
+  manter_campanha: "Manter campanha",
+  usar_livro: "Usar livro",
+  preservar_remocao: "Manter removido",
+};
+
+const ROTULO_TIPO_CONFLITO: Record<string, string> = {
+  conteudo: "Conteúdo divergente",
+  colisao: "Colisão de chave",
+  preservar_remocao: "Removido da campanha",
+};
+
+function rotuloConflito(item: { tipoDecisao: string | null; origem: string | null }): string {
+  const base = ROTULO_TIPO_CONFLITO[item.tipoDecisao ?? ""] ?? "Conflito";
+  if (item.origem === "so_campanha") return "Só a campanha mudou";
+  if (item.origem === "ambos") return "Livro e campanha mudaram";
+  if (item.origem === "sem_snapshot") return "Divergência sem aplicação anterior";
+  if (item.origem === "colisao") return "Chave usada por outro livro";
+  return base;
+}
+
+function ValorDiff({ rotulo, valor }: { rotulo: string; valor: ValorDiffAcervo | null }) {
+  if (!valor) return null;
+  return (
+    <div className="diff-valor">
+      <span className="tag">{rotulo}</span>{" "}
+      <strong>{valor.name}</strong>
+      <code className="diff-def">{JSON.stringify(valor.definition)}</code>
+    </div>
+  );
+}
+
+function PreviaSyncAcervo({
+  previa, decisoes, ocupado, onDecisao, onConfirmar, onAtualizar, onFechar,
+}: {
+  previa: { bookId: string; diff: DiffAcervoCampanha };
+  decisoes: Record<string, DecisaoAcervo>;
+  ocupado: boolean;
+  onDecisao: (chave: string, valor: DecisaoAcervo | "") => void;
+  onConfirmar: () => void;
+  onAtualizar: () => void;
+  onFechar: () => void;
+}) {
+  const { diff } = previa;
+  const t = diff.totais;
+  const itens = diff.itens ?? [];
+  const novos = itens.filter((i) => i.tipo === "novo");
+  const atualizar = itens.filter((i) => i.tipo === "atualizar");
+  const pendentes = itens.filter((i) => i.pendente);
+  const removidosLivro = itens.filter((i) => i.tipo === "removido_livro");
+  const convergidos = itens.filter((i) => i.tipo === "convergido" || i.tipo === "resolvido");
+  const decisoesCompletas = diff.conflitos.every((c) => !!decisoes[c.chave]);
+  const bloqueado = ocupado || diff.aplicavelIntegralmente === false || !decisoesCompletas;
+
+  return (
+    <section className="cartao">
+      <h4>Prévia de sincronização — {diff.titulo ?? "livro"} v{diff.versao} (sem gravar nada)</h4>
+      {diff.aplicavelIntegralmente === false && (
+        <div className="erro">
+          {t.incompativeis > 0 && (
+            <>O livro contém tipo(s) incompatível(is) com as regras da campanha ({(diff.tiposIncompativeis ?? []).join(", ")}). </>
+          )}
+          {t.invalidos > 0 && "O livro contém itens com definição inválida. "}
+          A operação inteira não pode ser confirmada enquanto o livro tiver esses problemas.
+        </div>
+      )}
+      <p className="dica">
+        {t.itensNoLivro} item(ns) no livro
+        {diff.versaoAplicada !== null ? ` · versão aplicada v${diff.versaoAplicada}` : " · nunca aplicado"}:
+        {" "}{t.novos} novo(s), {t.atualizar} só no livro, {t.conflitos} conflito(s) pendentes,
+        {" "}{t.removidosDoLivro} removido(s) do livro, {t.removidosDaCampanha} removido(s) da campanha,
+        {" "}{t.identicos + t.convergidos + t.resolvidos} já iguais/resolvidos, {t.invalidos} inválido(s), {t.incompativeis} incompatível(is).
+        {" "}{t.preservadosNaCampanha} elemento(s) da campanha não existem no livro e serão preservados.
+        {diff.semDiferencas && " Nenhuma diferença — a sincronização seria idempotente."}
+      </p>
+
+      {novos.length > 0 && (
+        <div>
+          <h5>Itens novos (serão inseridos)</h5>
+          <ul>{novos.map((i) => <li key={i.chave}><code>{i.chave}</code> — {i.nomeNoLivro}</li>)}</ul>
+        </div>
+      )}
+      {atualizar.length > 0 && (
+        <div>
+          <h5>Atualizações do livro (campanha intacta — serão aplicadas)</h5>
+          {atualizar.map((i) => (
+            <div className="diff-item" key={i.chave}>
+              <code>{i.chave}</code> — {rotuloConflito(i)}
+              <ValorDiff rotulo="Anterior (snapshot)" valor={i.anterior} />
+              <ValorDiff rotulo="Livro (novo)" valor={i.livro} />
+              <ValorDiff rotulo="Campanha (atual)" valor={i.campanha} />
+            </div>
+          ))}
+        </div>
+      )}
+      {pendentes.length > 0 && (
+        <div>
+          <h5>Decisões necessárias ({pendentes.length})</h5>
+          <p className="dica">Compare os três estados e escolha o que prevalece em cada chave.</p>
+          {pendentes.map((i) => (
+            <div className="diff-item" key={i.chave}>
+              <div className="linha-ferramentas">
+                <div>
+                  <code>{i.chave}</code> — {rotuloConflito(i)}
+                  <div className="dica">Livro: {i.nomeNoLivro} · Campanha: {i.nomeNaCampanha}</div>
+                </div>
+                <select
+                  aria-label={`Decisão para ${i.chave}`}
+                  value={decisoes[i.chave] ?? ""}
+                  onChange={(e) => onDecisao(i.chave, e.target.value as DecisaoAcervo | "")}
+                >
+                  <option value="">Escolha...</option>
+                  {(i.decisoesPossiveis ?? []).map((d) => (
+                    <option key={d} value={d}>{ROTULO_DECISAO_ACERVO[d] ?? d}</option>
+                  ))}
+                </select>
+              </div>
+              <ValorDiff rotulo="Anterior (snapshot)" valor={i.anterior} />
+              <ValorDiff rotulo="Livro" valor={i.livro} />
+              <ValorDiff rotulo="Campanha (atual)" valor={i.campanha} />
+            </div>
+          ))}
+        </div>
+      )}
+      {removidosLivro.length > 0 && (
+        <div>
+          <h5>Removidos do livro — preservados na campanha</h5>
+          <ul>{removidosLivro.map((i) => <li key={i.chave}><code>{i.chave}</code> — {i.nomeNaCampanha}</li>)}</ul>
+        </div>
+      )}
+      {convergidos.length > 0 && (
+        <p className="dica">{convergidos.length} item(ns) já convergidos ou com decisão registrada — nenhuma ação necessária.</p>
+      )}
+      <div className="linha">
+        <button className="primario" disabled={bloqueado} onClick={onConfirmar}>
+          {ocupado ? "Sincronizando..." : "Confirmar sincronização"}
+        </button>
+        <button className="secundario" disabled={ocupado} onClick={onAtualizar}>Atualizar prévia</button>
+        <button className="secundario" disabled={ocupado} onClick={onFechar}>Fechar prévia</button>
+      </div>
+      {!decisoesCompletas && pendentes.length > 0 && (
+        <p className="dica">Escolha uma decisão para cada conflito antes de confirmar.</p>
+      )}
+    </section>
   );
 }
 
