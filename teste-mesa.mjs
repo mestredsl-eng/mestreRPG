@@ -202,11 +202,14 @@ t("12b. jogador não controla turnos", trNeg?.ok === false);
 
 // ============ 13. Temporizador ============
 const timerP = esperar(sockJ, "mesa:timer", (t) => t.status === "rodando").catch(() => null);
-const timerStart = await emitirCb(sockA, "mesa:timer", { sessionId: SID, acao: "iniciar", duracaoSegundos: 2 });
+const timerStart = await emitirCb(sockA, "mesa:timer", { sessionId: SID, acao: "iniciar", duracaoSegundos: 60 });
 await timerP;
 t("13a. timer inicia", timerStart?.ok === true);
-// aguarda expirar (~2s + tick) — o encerramento é confirmado pelo estado persistido;
+// expiração: injeta estado quase expirado direto no banco (duração mínima é 60s);
+// o encerramento é confirmado pelo estado persistido —
 // o evento socket é sincronização best-effort (pode se perder no transporte)
+db.prepare("update sessions set timer_state=? where id=?")
+  .run(JSON.stringify({ status: "rodando", endsAt: Date.now() + 1200, remainingMs: 1200, totalMs: 60000 }), SID);
 const timerEndP = esperar(sockJ, "mesa:timer", (t) => t.status === "parado", 8000).catch(() => null);
 await timerEndP;
 t("13b. timer expira no servidor", true);

@@ -40,6 +40,7 @@ jobs:
             homologacao-final-v1.mjs \
             homologacao-mesa.mjs \
             teste-mesa-seguranca.mjs \
+            teste-temporizador.mjs \
             homologacao-equipamentos.mjs \
             teste-equipamentos.mjs \
             teste-financeiro-atomico.mjs \
@@ -94,5 +95,6 @@ jobs:
             homologacao-visual.mjs \
             homologacao-validacao-ficha.mjs \
             homologacao-exclusao-personagem.mjs \
-            homologacao-busca-filtros.mjs
+            homologacao-busca-filtros.mjs \
+            homologacao-temporizador.mjs
           do echo "===== $s ====="; node "$s"; done

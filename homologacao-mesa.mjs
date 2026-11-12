@@ -186,10 +186,10 @@ try {
     const hTimerJ = (d) => { if (d?.sessionId === sid) eventosTimer.push(d); };
     sockM.on("mesa:timer", hTimerM); sockJ1.on("mesa:timer", hTimerJ);
     try {
-      const timer = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 30 });
-      t("mestre inicia ampulheta", timer.ok === true && timer.timer?.status === "rodando", JSON.stringify(timer.timer).slice(0, 140));
+      const timer = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 60 });
+      t("mestre inicia ampulheta", timer.ok === true && timer.timer?.status === "rodando" && timer.timer?.totalMs === 60000, JSON.stringify(timer.timer).slice(0, 140));
       const tickJ = await esperar(sockJ1, "mesa:timer", 8000,
-        (d) => d?.sessionId === sid && d.status === "rodando" && d.remainingMs > 0 && d.remainingMs < 30000).catch(() => null);
+        (d) => d?.sessionId === sid && d.status === "rodando" && d.remainingMs > 0 && d.remainingMs < 60000).catch(() => null);
       t("tick do timer chega ao jogador", !!tickJ && tickJ.remainingMs > 0, JSON.stringify(tickJ).slice(0, 140));
 
       // pausa: status pausado, sem evento de parada durante a pausa
@@ -210,10 +210,15 @@ try {
       const dbEnc = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
       t("encerramento manual persistido", dbEnc && JSON.parse(dbEnc).status === "parado" && JSON.parse(dbEnc).remainingMs === 0, dbEnc);
 
-      // expiração natural: duração curta, evento final EXPLÍCITO exigido
+      // expiração natural: duração mínima é 60s, então o estado quase expirado é
+      // injetado direto no banco — o ticker do servidor deve encerrar e emitir o evento final
       eventosTimer.length = 0;
-      const timer2 = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 3 });
-      t("ampulheta reaberta por 3s", timer2.ok === true && timer2.timer?.status === "rodando", JSON.stringify(timer2.timer).slice(0, 140));
+      const expiraEm = Date.now() + 1500;
+      const dbW = abrirDb(BANCO);
+      dbW.prepare("update sessions set timer_state=? where id=?")
+        .run(JSON.stringify({ status: "rodando", endsAt: expiraEm, remainingMs: 1500, totalMs: 60000 }), sid);
+      dbW.close();
+      t("ampulheta reaberta (expiração injetada no servidor)", true);
       // MRPG_TIMER_FALSO=1 é o controle de resistência: exige status impossível → deve FALHAR
       const statusFinal = process.env.MRPG_TIMER_FALSO === "1" ? "status-inexistente" : "parado";
       const fim = await esperar(sockM, "mesa:timer", 15000,

@@ -166,6 +166,16 @@ export function registrarMesa(io: SocketIOServer) {
   socket_handlers(io, presentes, emitirPresenca);
 }
 
+// temporizador: duração entre 1 minuto e 24 horas (segundos)
+const TIMER_DURACAO_MIN_S = 60;
+const TIMER_DURACAO_MAX_S = 86400;
+function duracaoTimerValida(seg: unknown): number | null {
+  if (typeof seg !== "number" || !Number.isFinite(seg)) return null;
+  const s = Math.round(seg);
+  return s >= TIMER_DURACAO_MIN_S && s <= TIMER_DURACAO_MAX_S ? s : null;
+}
+const ERRO_DURACAO_TIMER = "Duração inválida — use entre 1 e 1440 minutos";
+
 // separado para legibilidade
 function socket_handlers(
   io: SocketIOServer,
@@ -676,7 +686,9 @@ function socket_handlers(
 
       switch (payload.acao) {
         case "iniciar": {
-          const dur = Math.min(Math.max(1, payload.duracaoSegundos ?? 300), 86400) * 1000;
+          const seg = duracaoTimerValida(payload.duracaoSegundos ?? 300);
+          if (seg === null) { cb?.({ ok: false, erro: ERRO_DURACAO_TIMER }); return; }
+          const dur = seg * 1000;
           novo = { status: "rodando", endsAt: agora + dur, remainingMs: dur, totalMs: dur };
           break;
         }
@@ -691,7 +703,15 @@ function socket_handlers(
           break;
         }
         case "reiniciar": {
-          const dur = (atual.totalMs ?? (payload.duracaoSegundos ?? 300) * 1000);
+          let seg: number;
+          if (payload.duracaoSegundos !== undefined) {
+            const v = duracaoTimerValida(payload.duracaoSegundos);
+            if (v === null) { cb?.({ ok: false, erro: ERRO_DURACAO_TIMER }); return; }
+            seg = v;
+          } else {
+            seg = atual.totalMs ? Math.ceil(atual.totalMs / 1000) : 300;
+          }
+          const dur = seg * 1000;
           novo = { status: "rodando", endsAt: agora + dur, remainingMs: dur, totalMs: dur };
           break;
         }
