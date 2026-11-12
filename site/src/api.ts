@@ -144,8 +144,8 @@ export const api = {
     requisicao<{ ok: boolean; version: number }>(`/campaigns/${cid}/sheet-templates/${tid}/publish`, { method: "POST", body: JSON.stringify({ versionId }) }),
 
   // Personagens (Etapa 4)
-  listarPersonagens: (cid: string) =>
-    requisicao<{ personagens: PersonagemResumo[] }>(`/campaigns/${cid}/characters`),
+  listarPersonagens: (cid: string, arquivados = false) =>
+    requisicao<{ personagens: PersonagemResumo[] }>(`/campaigns/${cid}/characters${arquivados ? "?arquivados=1" : ""}`),
   criarPersonagem: (cid: string, dados: { name: string; templateVersionId?: string; data?: Record<string, unknown>; isNpc?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/campaigns/${cid}/characters`, { method: "POST", body: JSON.stringify(dados) }),
   obterPersonagem: (charId: string) =>
@@ -161,6 +161,12 @@ export const api = {
   /** Bônus individual de pontos — somente mestre. */
   adminPontos: (charId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
     requisicao<{ ok: boolean; pontos: { bonus: number; selado: boolean; historico: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] } }>(`/characters/${charId}/pontos`, { method: "POST", body: JSON.stringify(dados) }),
+  excluirPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}`, { method: "DELETE" }),
+  arquivarPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean; statusAnterior?: string; jaArquivado?: boolean }>(`/characters/${charId}/arquivar`, { method: "POST" }),
+  desarquivarPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean; status?: string }>(`/characters/${charId}/desarquivar`, { method: "POST" }),
 
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
@@ -508,6 +514,7 @@ export interface PersonagemResumo {
   membershipId: string;
   ehEu: boolean;
   isNpc?: boolean;
+  arquivadoDe?: string | null;
   updatedAt: string;
 }
 
@@ -904,6 +911,8 @@ export interface PersonagemDetalhe {
     templateId?: string;
     donoNome?: string | null;
     isNpc?: boolean;
+    ehEu?: boolean;
+    arquivadoDe?: string | null;
     createdAt?: string;
     updatedAt?: string;
   };

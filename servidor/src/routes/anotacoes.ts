@@ -114,6 +114,7 @@ anotacoesRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) =>
   if (d.characterId) {
     const [char] = await db.select().from(characters).where(and(eq(characters.id, d.characterId), eq(characters.campaignId, cid))).limit(1);
     if (!char) { res.status(400).json({ erro: "Personagem não encontrado" }); return; }
+    if (char.status === "arquivado") { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de vincular anotações" }); return; }
     if (papel !== "mestre") {
       const [md] = await db.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (md?.userId !== req.usuario!.id) { res.status(403).json({ erro: "Diário pertence a outro jogador" }); return; }
@@ -159,6 +160,7 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
   if (d.characterId && d.characterId !== n.characterId) {
     const [char] = await db.select().from(characters).where(and(eq(characters.id, d.characterId), eq(characters.campaignId, req.params.campaignId))).limit(1);
     if (!char) { res.status(400).json({ erro: "Personagem não encontrado" }); return; }
+    if (char.status === "arquivado") { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de vincular anotações" }); return; }
     if (req.membership!.role !== "mestre") {
       const [md] = await db.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (md?.userId !== req.usuario!.id) { res.status(403).json({ erro: "Diário pertence a outro jogador" }); return; }

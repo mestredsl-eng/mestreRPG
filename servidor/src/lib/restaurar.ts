@@ -32,8 +32,31 @@ function inserir(tx: Tx, tabela: Parameters<typeof tx.insert>[0], rows: readonly
   tx.insert(tabela).values((rows as Record<string, unknown>[]).map((r) => reviverDatas(r, cols)) as never).run();
 }
 
+// `data.__arquivamento` é metadado reservado, autoridade exclusiva do
+// backend (rotas /arquivar e /desarquivar). Pacotes de importação ou
+// snapshots adulterados não podem forjá-lo: personagem arquivado precisa
+// de statusAnterior válido (senão assume rascunho); fora de arquivado a
+// chave é sempre removida.
+const STATUS_RESTAURO_VALORES = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
+function sanitizarArquivamento(row: Record<string, unknown>) {
+  const data = (row.data && typeof row.data === "object" ? { ...(row.data as Record<string, unknown>) } : {}) as Record<string, unknown>;
+  const meta = data.__arquivamento as Record<string, unknown> | undefined;
+  if (row.status === "arquivado") {
+    const anterior = typeof meta?.statusAnterior === "string" && STATUS_RESTAURO_VALORES.has(meta.statusAnterior) ? meta.statusAnterior : "rascunho";
+    data.__arquivamento = {
+      statusAnterior: anterior,
+      arquivadoEm: typeof meta?.arquivadoEm === "string" ? meta.arquivadoEm : null,
+      arquivadoPor: typeof meta?.arquivadoPor === "string" ? meta.arquivadoPor : null,
+    };
+  } else {
+    delete data.__arquivamento;
+  }
+  row.data = data;
+}
+
 /** Insere todas as entidades do estado na ordem de dependência (restauração e importação). */
 export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
+  for (const r of (dados.characters ?? []) as Record<string, unknown>[]) sanitizarArquivamento(r);
   inserir(tx, memberships, dados.memberships);
   inserir(tx, invitations, dados.invitations);
   inserir(tx, sheetTemplates, dados.sheetTemplates);

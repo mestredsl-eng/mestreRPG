@@ -266,6 +266,9 @@ function socket_handlers(
 
       const [char] = await db.select().from(characters).where(and(eq(characters.id, payload.characterId), eq(characters.campaignId, ctx.sessao.campaignId))).limit(1);
       if (!char) { cb?.({ ok: false, erro: "Personagem não encontrado" }); return; }
+      // Personagem arquivado não participa de novos testes — o histórico
+      // de testes já realizados permanece intacto.
+      if (char.status === "arquivado") { cb?.({ ok: false, erro: "Personagem arquivado — restaure-o para criar novos testes" }); return; }
       const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (!membroDono) { cb?.({ ok: false, erro: "Dono não encontrado" }); return; }
 

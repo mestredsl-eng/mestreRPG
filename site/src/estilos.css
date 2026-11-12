@@ -244,6 +244,10 @@ label.checkbox input {
   opacity: 0.55;
 }
 
+tr.arquivado td {
+  opacity: 0.6;
+}
+
 .acoes {
   white-space: nowrap;
 }
@@ -315,6 +319,7 @@ textarea {
 .badge-falha,
 .badge-falha_critica { background: #7f3b3b; color: #fff; }
 .badge-reaberta { background: #6d5a1f; color: #fff; }
+.badge-arquivado { background: #3a3f4a; color: #8b93a1; }
 .badge-npc { background: #5b3a7f; color: #fff; }
 .badge-selo { background: #274a63; color: #cfe3ff; }
 
