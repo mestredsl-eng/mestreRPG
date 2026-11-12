@@ -228,6 +228,98 @@ try {
     const patchOk = await req(BASE, "PATCH", `/characters/${alvo}`, { cookie: M, body: { data: {} } });
     t("edição volta após restaurar", patchOk.status === 200, `status=${patchOk.status}`);
   }
+
+  sec("Autorização revalidada: vínculo/papel alterado recusa a operação");
+  {
+    const membMestre = () => comDb((db) => db.prepare("select id from memberships where campaign_id=? and role='mestre'").get(CID));
+    const membJ1 = () => comDb((db) => db.prepare("select id from memberships where campaign_id=? and user_id=?").get(CID, UID1));
+    const setMemb = (id, col, val) => comDb((db) => db.prepare(`update memberships set ${col}=? where id=?`).run(val, id));
+    const MESTRE_MEMB = membMestre().id;
+    const J1_MEMB = membJ1().id;
+
+    // Mestre rebaixado a jogador entre requisições: arquivar é recusado.
+    const alvoPapel = await novoChar(J1, "Papel Alterado", "aprovada");
+    setMemb(MESTRE_MEMB, "role", "jogador");
+    const arNeg = await req(BASE, "POST", `/characters/${alvoPapel}/arquivar`, { cookie: M });
+    t("mestre rebaixado não arquiva (403)", arNeg.status === 403, `status=${arNeg.status}`);
+    t("personagem intacto após recusa", statusDe(alvoPapel) === "aprovada" && dadosDe(alvoPapel).__arquivamento === undefined);
+    setMemb(MESTRE_MEMB, "role", "mestre");
+
+    // Vínculo do jogador bloqueado: exclusão do próprio rascunho recusada.
+    const alvoVinc = await novoChar(J1, "Vinculo Bloqueado", "rascunho");
+    setMemb(J1_MEMB, "status", "bloqueado");
+    const delNeg = await req(BASE, "DELETE", `/characters/${alvoVinc}`, { cookie: J1 });
+    t("vínculo bloqueado não exclui (403)", delNeg.status === 403, `status=${delNeg.status}`);
+    t("personagem intacto após recusa", existe(alvoVinc) && statusDe(alvoVinc) === "rascunho");
+    setMemb(J1_MEMB, "status", "ativo");
+
+    // Vínculo do mestre removido: desarquivar recusado, metadado preservado.
+    await req(BASE, "POST", `/characters/${alvoPapel}/arquivar`, { cookie: M });
+    setMemb(MESTRE_MEMB, "status", "removido");
+    const desNeg = await req(BASE, "POST", `/characters/${alvoPapel}/desarquivar`, { cookie: M });
+    t("vínculo removido não restaura (403)", desNeg.status === 403, `status=${desNeg.status}`);
+    t("segue arquivado após recusa", statusDe(alvoPapel) === "arquivado");
+    setMemb(MESTRE_MEMB, "status", "ativo");
+    const desOk = await req(BASE, "POST", `/characters/${alvoPapel}/desarquivar`, { cookie: M });
+    t("após restaurar vínculo, mestre restaura", desOk.status === 200 && statusDe(alvoPapel) === "aprovada", `status=${desOk.status}`);
+  }
+
+  sec("Transferências não alteram personagem arquivado (409, sem parcial)");
+  {
+    const A = await novoChar(J1, "Transf Origem", "aprovada");
+    const B = await novoChar(J2, "Transf Destino", "aprovada");
+    const C = await novoChar(J2, "Transf Ativo", "aprovada");
+    const mkConta = async (charId, nome, saldo) => {
+      const r = await req(BASE, "POST", `/characters/${charId}/financeiro/contas`, { cookie: M, body: { type: "especie", name: nome, balanceReais: saldo } });
+      return r.json?.id;
+    };
+    const contaA = await mkConta(A, "Carteira A", 100);
+    const contaB = await mkConta(B, "Carteira B", 50);
+    const contaC = await mkConta(C, "Carteira C", 0);
+    t("contas criadas", !!contaA && !!contaB && !!contaC);
+    const item = await req(BASE, "POST", `/characters/${A}/inventario`, { cookie: M, body: { name: "Espada longa", quantity: 2 } });
+    const itemId = item.json?.id;
+    t("item criado na origem", !!itemId, JSON.stringify(item.json).slice(0, 120));
+    await req(BASE, "POST", `/characters/${B}/arquivar`, { cookie: M });
+
+    const saldoDe = async (charId) => {
+      const f = await req(BASE, "GET", `/characters/${charId}/financeiro`, { cookie: M });
+      return f.json?.contas?.[0]?.balanceCents;
+    };
+    const txCount = (charId) => comDb((db) => db.prepare("select count(*) n from money_transactions where character_id=?").get(charId).n);
+
+    // 1) financeiro ativo → arquivado (mestre)
+    const antesB = await saldoDe(B), txBAntes = txCount(B);
+    const tfM = await req(BASE, "POST", `/characters/${A}/financeiro/transferir`, { cookie: M, body: { origemAccountId: contaA, destinoAccountId: contaB, valor: 10 } });
+    t("mestre: transferência p/ arquivado bloqueada", tfM.status === 409, `status=${tfM.status} ${JSON.stringify(tfM.json).slice(0, 140)}`);
+    t("saldo do arquivado inalterado", (await saldoDe(B)) === antesB);
+    t("nenhuma movimentação criada no arquivado", txCount(B) === txBAntes);
+    t("saldo da origem inalterado", (await saldoDe(A)) === 10000);
+
+    // 2) mesmo bloqueio via jogador (PIX fictício)
+    const tfJ = await req(BASE, "POST", `/characters/${A}/financeiro/transferir`, { cookie: J1, body: { origemAccountId: contaA, destinoAccountId: contaB, valor: 5 } });
+    t("jogador: transferência p/ arquivado bloqueada", tfJ.status === 409, `status=${tfJ.status}`);
+    t("saldo do arquivado segue inalterado", (await saldoDe(B)) === antesB);
+
+    // 3) inventário ativo → arquivado
+    const invAntes = await req(BASE, "GET", `/characters/${A}/inventario`, { cookie: M });
+    const qtdAntes = invAntes.json?.itens?.find((i) => i.id === itemId)?.quantity;
+    const trM = await req(BASE, "POST", `/characters/${A}/inventario/${itemId}/transferir`, { cookie: M, body: { destinoCharacterId: B } });
+    t("mestre: item p/ arquivado bloqueado", trM.status === 409, `status=${trM.status} ${JSON.stringify(trM.json).slice(0, 140)}`);
+    const invDepois = await req(BASE, "GET", `/characters/${A}/inventario`, { cookie: M });
+    t("estoque da origem preservado", invDepois.json?.itens?.find((i) => i.id === itemId)?.quantity === qtdAntes);
+    const invB = await req(BASE, "GET", `/characters/${B}/inventario`, { cookie: M });
+    t("arquivado não recebeu item", !(invB.json?.itens ?? []).some((i) => i.name === "Espada longa"));
+
+    // 4) operação entre dois ativos continua funcionando
+    const tfOk = await req(BASE, "POST", `/characters/${A}/financeiro/transferir`, { cookie: M, body: { origemAccountId: contaA, destinoAccountId: contaC, valor: 10 } });
+    t("transferência entre ativos funciona", tfOk.status === 201, `status=${tfOk.status} ${JSON.stringify(tfOk.json).slice(0, 120)}`);
+    t("saldo destino creditado", (await saldoDe(C)) === 1000);
+    const trOk = await req(BASE, "POST", `/characters/${A}/inventario/${itemId}/transferir`, { cookie: M, body: { destinoCharacterId: C, quantidade: 1 } });
+    t("item entre ativos funciona", trOk.status === 200, `status=${trOk.status}`);
+    const invC = await req(BASE, "GET", `/characters/${C}/inventario`, { cookie: M });
+    t("destino recebeu 1 unidade", invC.json?.itens?.some((i) => i.name === "Espada longa" && i.quantity === 1));
+  }
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);

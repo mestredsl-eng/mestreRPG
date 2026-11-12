@@ -114,9 +114,11 @@ export default function Personagens({ campaignId, campanha }: Props) {
                 {verArquivados ? "Ver ativos" : "Ver arquivados"}
               </button>
             )}
+            {!verArquivados && (
             <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
               {criando ? "Cancelar" : "Novo personagem"}
             </button>
+            )}
           </div>
         </div>
         {erro && <p className="erro">{erro}</p>}
@@ -458,7 +460,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             ))}
           </div>
         )}
-        {souMestre && ficha && (
+        {souMestre && !arquivado && ficha && (
           <PainelPontosMestre ficha={ficha} characterId={personagem.id} aoMudar={aoRecarregar} />
         )}
         {ficha?.validacao && !ficha.validacao.ok && ficha.validacao.erros.length > 0 && (
@@ -487,7 +489,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         )}
         {estruturaVazia && <p className="meta">Esta ficha ainda não possui campos configurados.</p>}
         {ficha?.vida && (
-          <Vida vidaInicial={ficha.vida} characterId={personagem.id} aoErro={setErro} />
+          <Vida vidaInicial={ficha.vida} characterId={personagem.id} aoErro={setErro} somenteLeitura={arquivado} />
         )}
         {estrutura && !estruturaVazia && (
           <FichaForm
@@ -507,7 +509,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         )}
       </section>
 
-      <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} />
+      <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
     </>
   );
 }

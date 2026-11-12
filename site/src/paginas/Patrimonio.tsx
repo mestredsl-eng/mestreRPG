@@ -15,11 +15,13 @@ interface Props {
   characterId: string;
   campaignId: string;
   souMestre: boolean;
+  /** Personagem arquivado: somente consulta — esconde todos os controles de alteração. */
+  somenteLeitura?: boolean;
 }
 
 type Aba = "inventario" | "equipamentos" | "veiculos" | "dinheiro" | "catalogo";
 
-export default function Patrimonio({ characterId, campaignId, souMestre }: Props) {
+export default function Patrimonio({ characterId, campaignId, souMestre, somenteLeitura = false }: Props) {
   const [aba, setAba] = useState<Aba>("inventario");
   const [erro, setErro] = useState<string | null>(null);
   const recarregarRef = useRef<{ fn?: () => Promise<void> }>({}).current;
@@ -56,10 +58,10 @@ export default function Patrimonio({ characterId, campaignId, souMestre }: Props
         ))}
       </div>
       {erro && <p className="erro">{erro}</p>}
-      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "equipamentos" && <Equipamentos characterId={characterId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "veiculos" && <Veiculos characterId={characterId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "equipamentos" && <Equipamentos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "veiculos" && <Veiculos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
       {aba === "catalogo" && <Catalogo campaignId={campaignId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
     </section>
   );
@@ -67,8 +69,8 @@ export default function Patrimonio({ characterId, campaignId, souMestre }: Props
 
 // ================= INVENTÁRIO =================
 
-function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean;
+function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -138,7 +140,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   };
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
-  const podeOperar = souMestre || (fin?.config.jogadorCompraVenda ?? false);
+  const podeOperar = !somenteLeitura && (souMestre || (fin?.config.jogadorCompraVenda ?? false));
 
   return (
     <div>
@@ -155,6 +157,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
         </select>
       </div>
 
+      {!somenteLeitura && (
       <form className="formulario linha" onSubmit={submeterNovo}>
         <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
         <input type="number" min="0.01" step="any" placeholder="Qtd" value={novo.quantity} onChange={(e) => setNovo({ ...novo, quantity: Number(e.target.value) })} style={{ width: 80 }} />
@@ -165,6 +168,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
         <button type="submit">Adicionar</button>
         {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
+      )}
 
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Item</th><th>Qtd</th><th>Categoria</th><th>Peso</th><th>Local</th><th></th></tr></thead>
@@ -178,7 +182,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
                 {qtd(item, item.data) > 0 && <span className="tag">{fmtMoeda(qtd(item, item.data))}</span>}
               </td>
               <td>
-                {editando === item.id ? (
+                {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
                   <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }} aria-label="Quantidade"
                     onBlur={async (e) => {
                       const q = Number(e.target.value);
@@ -193,6 +197,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               <td>{item.weight != null ? `${item.weight} kg` : "—"}</td>
               <td>{item.location ?? "—"}</td>
               <td className="linha">
+                {!somenteLeitura && <>
                 <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
                 {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
@@ -200,6 +205,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
                   await carregar();
                 }} aoErro={aoErro} />
                 <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
+                </>}
               </td>
             </tr>
           ))}
@@ -219,7 +225,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             {item.description && <p className="meta">{item.description}</p>}
             <div className="registro-campo">
               <span className="registro-rotulo">Qtd</span>
-              {editando === item.id ? (
+              {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
                 <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }} aria-label="Quantidade"
                   onBlur={async (e) => {
                     const q = Number(e.target.value);
@@ -233,6 +239,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo"><span className="registro-rotulo">Categoria</span><span>{item.category ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Peso</span><span>{item.weight != null ? `${item.weight} kg` : "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
+            {!somenteLeitura && (
             <div className="registro-acoes">
               <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
               {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
@@ -242,6 +249,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               }} aoErro={aoErro} />
               <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
             </div>
+            )}
           </div>
         ))}
         {visiveis.length === 0 && <p className="meta">Inventário vazio.</p>}
@@ -496,8 +504,8 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
 
 // ================= EQUIPAMENTOS =================
 
-function Equipamentos({ characterId, aoErro, recarregarRef }: {
-  characterId: string; aoErro: (e: unknown) => void;
+function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Equipamento[]>([]);
@@ -522,6 +530,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
           return <span key={s} className="tag">{s}: {ocupado?.name ?? "—"}</span>;
         })}
       </div>
+      {!somenteLeitura && (
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try {
@@ -539,6 +548,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
         <input placeholder="Descrição" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
         <button type="submit">Adicionar</button>
       </form>
+      )}
       <table className="tabela">
         <thead><tr><th>Equipamento</th><th>Posição</th><th>Estado</th><th></th></tr></thead>
         <tbody>
@@ -548,7 +558,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
               <td>{eq.slot ?? "—"}</td>
               <td>{eq.equipped ? "Equipado" : "Guardado"}</td>
               <td>
-                {eq.equipped
+                {!somenteLeitura && (eq.equipped
                   ? <button className="secundario" onClick={async () => { try { await api.desequipar(characterId, eq.id); await carregar(); } catch (e) { aoErro(e); } }}>Desequipar</button>
                   : <button className="secundario" onClick={async () => {
                       try {
@@ -556,7 +566,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
                         await api.atualizarEquipamento(characterId, eq.id, { equipped: true });
                         await carregar();
                       } catch (e) { aoErro(e); }
-                    }}>Equipar</button>}
+                    }}>Equipar</button>)}
               </td>
             </tr>
           ))}
@@ -569,8 +579,8 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
 
 // ================= VEÍCULOS =================
 
-function Veiculos({ characterId, aoErro, recarregarRef }: {
-  characterId: string; aoErro: (e: unknown) => void;
+function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
@@ -587,6 +597,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
 
   return (
     <div>
+      {!somenteLeitura && (
       <form className="formulario" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try { await api.adicionarVeiculo(characterId, novo); setNovo({ name: "", kind: "carro" }); await carregar(); }
@@ -613,6 +624,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
         </div>
         <button type="submit">Adicionar veículo</button>
       </form>
+      )}
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Veículo</th><th>Tipo</th><th>Marca/Modelo</th><th>Ano</th><th>Placa</th><th>Posse</th><th></th></tr></thead>
         <tbody>
@@ -624,7 +636,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
               <td>{v.year ?? "—"}</td>
               <td>{v.plate ?? "—"}</td>
               <td>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</td>
-              <td><button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button></td>
+              <td>{!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}</td>
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
@@ -639,7 +651,7 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
             <div className="registro-campo"><span className="registro-rotulo">Placa</span><span>{v.plate ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Posse</span><span>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</span></div>
             <div className="registro-acoes">
-              <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>
+              {!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}
             </div>
           </div>
         ))}
@@ -669,8 +681,8 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
 
 // ================= DINHEIRO =================
 
-function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean; aoErro: (e: unknown) => void;
+function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [fin, setFin] = useState<Financeiro | null>(null);
@@ -713,9 +725,11 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
         <span className="tag">Moeda: {cfg.moedaPrincipal} {cfg.simbolo}</span>
       </div>
 
+      {!somenteLeitura && <>
       <NovaConta characterId={characterId} cfg={cfg} aoErro={aoErro} aoOk={carregar} />
       <Movimentar characterId={characterId} contas={fin.contas} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
       <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
+      </>}
 
       <h4>Histórico financeiro</h4>
       <table className="tabela tabela-responsiva">

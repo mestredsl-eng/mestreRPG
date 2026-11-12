@@ -20,10 +20,12 @@ function fmtData(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function Vida({ vidaInicial, characterId, aoErro }: {
+export default function Vida({ vidaInicial, characterId, aoErro, somenteLeitura = false }: {
   vidaInicial: Vida;
   characterId: string;
   aoErro?: (msg: string) => void;
+  /** Personagem arquivado: exibe HP/vitalidade e histórico, sem controles de alteração. */
+  somenteLeitura?: boolean;
 }) {
   const [vida, setVida] = useState<Vida>(vidaInicial);
   const [qtd, setQtd] = useState("");
@@ -40,6 +42,10 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
   const hp = vida.hp;
   const vit = vida.vitalidade;
   const pct = hp ? Math.max(0, Math.min(100, (hp.atual / hp.maximo) * 100)) : 0;
+  // Arquivado: nunca oferece controles de alteração, mesmo que o backend
+  // ainda reporte permissão (a rota também rejeitaria com 403).
+  const podeEditarHp = !somenteLeitura && vida.podeEditarHp === true;
+  const podeEditarVitalidade = !somenteLeitura && vida.podeEditarVitalidade === true;
 
   const agir = async (acao: "dano" | "recuperar" | "ajuste") => {
     const quantidade = Number(qtd);
@@ -86,7 +92,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               <div className="hp-preenchimento" style={{ width: `${pct}%` }} />
             </div>
           </div>
-          {vida.podeEditarHp && (
+          {podeEditarHp && (
             <div className="hp-acoes">
               <input type="number" min="0" step="1" placeholder="Quantidade" value={qtd} onChange={(e) => setQtd(e.target.value)} />
               <input type="text" placeholder="Motivo (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
@@ -134,7 +140,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
             {vit.penalidadeDados > 0 && ` · −${vit.penalidadeDados} dado${vit.penalidadeDados > 1 ? "s" : ""} nas rolagens`}
             {vit.bloqueiaAcoes && " · bloqueia ações"}
           </p>
-          <div className="vitalidade-escala" role={vida.podeEditarVitalidade ? "radiogroup" : undefined}>
+          <div className="vitalidade-escala" role={podeEditarVitalidade ? "radiogroup" : undefined}>
             {vit.niveis.map((n) => {
               const atual = n.indice === vit.nivel;
               const conteudo = (
@@ -145,7 +151,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
                   </span>
                 </>
               );
-              return vida.podeEditarVitalidade ? (
+              return podeEditarVitalidade ? (
                 <button
                   key={n.indice}
                   type="button"
@@ -161,7 +167,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               );
             })}
           </div>
-          {vida.podeEditarVitalidade && (
+          {podeEditarVitalidade && (
             <div className="hp-acoes">
               <input type="text" placeholder="Motivo da mudança (opcional)" value={vitMotivo} onChange={(e) => setVitMotivo(e.target.value)} />
             </div>

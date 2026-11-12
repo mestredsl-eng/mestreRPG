@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
@@ -290,8 +290,16 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   // Releitura do item, verificação de vínculos/equipado e mutação na
   // MESMA transação — um equipar concorrente não cria vínculo no meio
   // da transferência, e vice-versa.
-  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | "nao_transferivel" | null = null;
+  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | "nao_transferivel" | "destino_arquivado" | "origem_arquivada" | null = null;
   await db.transaction((tx) => {
+    // Personagem arquivado é somente leitura — a transferência é recusada
+    // se QUALQUER lado estiver arquivado, sem débito/crédito parcial.
+    const [origemTx0] = tx.select({ status: characters.status }).from(characters)
+      .where(eq(characters.id, a.personagem.id)).limit(1).all();
+    const [destinoTx0] = tx.select({ status: characters.status }).from(characters)
+      .where(eq(characters.id, destino.id)).limit(1).all();
+    if (origemTx0?.status === "arquivado") { falha = "origem_arquivada"; return; }
+    if (!destinoTx0 || destinoTx0.status === "arquivado") { falha = "destino_arquivado"; return; }
     const [itemTx] = tx.select().from(inventoryEntries)
       .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
       .limit(1).all();
@@ -320,6 +328,9 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
     }).run();
   });
   if (falha === "sumiu") { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (falha === "origem_arquivada" || falha === "destino_arquivado") {
+    res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de transferir itens" }); return;
+  }
   if (falha === "nao_transferivel") { res.status(403).json({ erro: "Este item não pode ser transferido" }); return; }
   if (falha === "qtd") { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
   if (falha === "equipado") { res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return; }
@@ -970,6 +981,13 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
         .where(eq(financialAccounts.id, destino.id)).limit(1).all();
       if (!origemTx || !destinoTx) throw new Error("conta_sumiu");
       if (origemTx.currency !== destinoTx.currency) throw new Error("moedas_divergentes");
+      // Personagem arquivado é somente leitura — se qualquer lado da
+      // transferência (PIX fictício entre personagens) estiver arquivado,
+      // a operação inteira é recusada: sem débito, crédito ou histórico.
+      const charIds = [...new Set([origemTx.characterId, destinoTx.characterId])];
+      const arquivados = tx.select({ id: characters.id }).from(characters)
+        .where(and(inArray(characters.id, charIds), eq(characters.status, "arquivado"))).all();
+      if (arquivados.length) throw new Error("personagem_arquivado");
 
       const novoOrigem = origemTx.balanceCents - cents;
       const pisoOrigem = cfg.permitirSaldoNegativo ? -Infinity : -(origemTx.type === "cartao_credito" ? (origemTx.creditLimitCents ?? 0) : 0);
@@ -1002,6 +1020,7 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
     if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
     if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     if (msg.includes("moedas_divergentes")) { res.status(400).json({ erro: "Moedas diferentes — conversão entre contas ainda não suportada em transferências" }); return; }
+    if (msg.includes("personagem_arquivado")) { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de transferir valores" }); return; }
     throw e;
   }
   if (saldoInsuficiente) {

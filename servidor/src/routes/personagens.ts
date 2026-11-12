@@ -1064,6 +1064,24 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
 
 // ---------- Exclusão física e arquivamento ----------
 
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Revalida o vínculo do REQUISITANTE dentro da transação: entre a
+ *  checagem HTTP (carregarPersonagemComAcesso) e a escrita o vínculo pode
+ *  ter sido removido, bloqueado ou o papel rebaixado — o papel capturado
+ *  antes da transação nunca é autoridade definitiva. */
+function membroAutorizadoTx(tx: Tx, membershipId: string, usuarioId: string, campaignId: string) {
+  const [m] = tx.select().from(memberships)
+    .where(and(
+      eq(memberships.id, membershipId),
+      eq(memberships.campaignId, campaignId),
+      eq(memberships.userId, usuarioId),
+      eq(memberships.status, "ativo"),
+    ))
+    .limit(1).all();
+  return m ?? null;
+}
+
 /**
  * DELETE /api/characters/:characterId — exclusão física definitiva.
  * Mestre: qualquer status. Jogador: somente o próprio personagem em
@@ -1084,17 +1102,23 @@ personagensRouter.delete("/:characterId", async (req, res) => {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return;
   }
-  const { personagem: p, ehMestre } = acesso;
+  const { personagem: p } = acesso;
 
   type Resultado = "ok" | "ausente" | "sem_permissao" | "historico_testes" | "historico_financeiro" | "conta_referenciada";
   const resultado = db.transaction((tx): Resultado => {
-    // Revalida TUDO com a linha fresca dentro da transação — status e
-    // dono podem ter mudado desde a checagem inicial (TOCTOU).
+    // Revalida TUDO com dados frescos dentro da transação — personagem,
+    // vínculo do requisitante (papel atual) e propriedade (status e dono
+    // podem ter mudado desde a checagem inicial — TOCTOU).
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
     if (!atual || atual.campaignId !== p.campaignId) return "ausente";
-    if (!ehMestre) {
-      const [dono] = tx.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
-      if (dono?.userId !== req.usuario!.id || !STATUS_EXCLUIVEIS_JOGADOR.has(atual.status)) {
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb) return "sem_permissao";
+    const papelAtual = memb.role === "mestre";
+    if (!papelAtual) {
+      const [dono] = tx.select({ userId: memberships.userId, status: memberships.status, campaignId: memberships.campaignId })
+        .from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
+      if (dono?.userId !== req.usuario!.id || dono.status !== "ativo" || dono.campaignId !== p.campaignId
+        || !STATUS_EXCLUIVEIS_JOGADOR.has(atual.status)) {
         return "sem_permissao";
       }
     }
@@ -1154,16 +1178,20 @@ personagensRouter.post("/:characterId/arquivar", async (req, res) => {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return;
   }
-  const { personagem: p, ehMestre } = acesso;
-  if (!ehMestre) {
+  const { personagem: p } = acesso;
+  if (!acesso.ehMestre) {
     res.status(403).json({ erro: "Apenas o mestre pode arquivar personagens" });
     return;
   }
   const agora = new Date();
   let statusAnterior: string | null = null;
-  const resultado = db.transaction((tx): "ok" | "ja_arquivado" | "ausente" => {
+  const resultado = db.transaction((tx): "ok" | "ja_arquivado" | "ausente" | "sem_permissao" => {
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
     if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    // O papel é revalidado com o vínculo atual dentro da transação —
+    // um mestre rebaixado/removido entre a checagem e a escrita é recusado.
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb || memb.role !== "mestre") return "sem_permissao";
     if (atual.status === "arquivado") return "ja_arquivado";
     const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
     dados[CHAVE_ARQUIVAMENTO] = {
@@ -1176,6 +1204,7 @@ personagensRouter.post("/:characterId/arquivar", async (req, res) => {
     return "ok";
   });
   if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para arquivar este personagem" }); return; }
   if (resultado === "ja_arquivado") { res.json({ ok: true, jaArquivado: true }); return; }
   await audit(req, "personagem.arquivado", { characterId: p.id, statusAnterior });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
@@ -1193,16 +1222,18 @@ personagensRouter.post("/:characterId/desarquivar", async (req, res) => {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return;
   }
-  const { personagem: p, ehMestre } = acesso;
-  if (!ehMestre) {
+  const { personagem: p } = acesso;
+  if (!acesso.ehMestre) {
     res.status(403).json({ erro: "Apenas o mestre pode restaurar personagens" });
     return;
   }
   const agora = new Date();
   let restaurado: string | null = null;
-  const resultado = db.transaction((tx): "ok" | "nao_arquivado" | "ausente" => {
+  const resultado = db.transaction((tx): "ok" | "nao_arquivado" | "ausente" | "sem_permissao" => {
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
     if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb || memb.role !== "mestre") return "sem_permissao";
     if (atual.status !== "arquivado") return "nao_arquivado";
     const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
     const meta = metaArquivamento(dados);
@@ -1213,6 +1244,7 @@ personagensRouter.post("/:characterId/desarquivar", async (req, res) => {
     return "ok";
   });
   if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para restaurar este personagem" }); return; }
   if (resultado === "nao_arquivado") { res.status(409).json({ erro: "Personagem não está arquivado" }); return; }
   await audit(req, "personagem.desarquivado", { characterId: p.id, statusRestaurado: restaurado });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
