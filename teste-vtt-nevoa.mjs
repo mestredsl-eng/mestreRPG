@@ -20,6 +20,7 @@ let proc, proc2, ids, sid, C;
 const sockets = [];
 const ultVtt = new Map();   // socket -> último payload mesa:vtt
 const cntVtt = new Map();   // socket -> contador mesa:vtt
+const msgsVtt = new Map();  // socket -> mensagens mesa:mensagem recebidas
 
 function conectar(cookie, base = BASE) {
   const token = decodeURIComponent(cookie.split("=")[1]);
@@ -29,8 +30,9 @@ function conectar(cookie, base = BASE) {
     reconnection: false,
   });
   sockets.push(s);
-  ultVtt.set(s, null); cntVtt.set(s, 0);
+  ultVtt.set(s, null); cntVtt.set(s, 0); msgsVtt.set(s, []);
   s.on("mesa:vtt", (p) => { ultVtt.set(s, p?.vtt ?? null); cntVtt.set(s, (cntVtt.get(s) ?? 0) + 1); });
+  s.on("mesa:mensagem", (p) => msgsVtt.get(s)?.push(p));
   return s;
 }
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
@@ -458,6 +460,61 @@ try {
   t("corrida: removido não permanece na sala (presença)",
     posRem.ack?.ok === true && !(posRem.ack?.presenca ?? []).includes(rj.id),
     JSON.stringify(posRem.ack?.presenca));
+
+  // 6b/6c. isolamento da sala: quem não concluiu a autorização final NÃO
+  // pode receber NENHUM evento da sala — nem mensagem pública, nem VTT.
+  // Um mestre já autorizado emite eventos durante a janela de entrada.
+  const sM2c = conectar(cookieM2, BASE2);
+  await pronto(sM2c);
+  await emitirCb(sM2c, "mesa:entrar", { sessionId: sid2 });
+
+  // 6b. membership removida durante a barreira + mensagem pública na janela
+  const rj3 = novoUsuario(BANCO2, { username: "race_j3", role: "jogador", campId: camp2 });
+  const sRJ = conectar(rj3.cookie, BASE2);
+  await pronto(sRJ);
+  const pAckRJ = emitirCb(sRJ, "mesa:entrar", { sessionId: sid2 });
+  await dormir(120);
+  await setVinculo(rj3.id, "jogador", "removido");
+  // mensagem pública de membro autorizado, emitida ANTES do ingresso do sRJ
+  sM2c.emit("mesa:mensagem", { sessionId: sid2, content: "ping-isolamento", visibilidade: "publica" });
+  const ackRJ = await pAckRJ;
+  await dormir(400);
+  t("isolamento: removido na janela → ACK rejeitado",
+    ackRJ?.ok === false, JSON.stringify(ackRJ));
+  t("isolamento: removido na janela → zero mesa:vtt",
+    (cntVtt.get(sRJ) ?? 0) === 0 && ultVtt.get(sRJ) === null);
+  t("isolamento: removido na janela → zero mesa:mensagem (nem pública)",
+    (msgsVtt.get(sRJ) ?? []).length === 0, JSON.stringify(msgsVtt.get(sRJ)));
+  const posRJ = await entrarComCorrida(j2c.cookie, null);
+  t("isolamento: removido não consta na presença",
+    posRJ.ack?.ok === true && !(posRJ.ack?.presenca ?? []).includes(rj3.id),
+    JSON.stringify(posRJ.ack?.presenca));
+
+  // 6c. mestre rebaixado a jogador durante a janela: mensagem e mutação
+  // VTT na janela não entregam dados de mestre; a entrada conclui filtrada
+  const rm3 = novoUsuario(BANCO2, { username: "race_m3", role: "mestre", campId: camp2 });
+  const sD3 = conectar(rm3.cookie, BASE2);
+  await pronto(sD3);
+  const pAckD3 = emitirCb(sD3, "mesa:entrar", { sessionId: sid2 });
+  await dormir(120);
+  await setVinculo(rm3.id, "jogador"); // rebaixa durante a barreira
+  sM2c.emit("mesa:mensagem", { sessionId: sid2, content: "durante-janela", visibilidade: "publica" });
+  const pVttM = esperarVtt(sM2c);
+  const rVttM = await emitirCb(sM2c, "mesa:vtt:nevoa", { sessionId: sid2, acao: "revelar", traco: { raioX: 0.1, raioY: 0.1, pontos: [{ x: 0.15, y: 0.15 }] } });
+  await pVttM;
+  const ackD3 = await pAckD3;
+  await dormir(300);
+  t("isolamento: rebaixado conclui entrada como jogador",
+    ackD3?.ok === true && ackD3?.papel === "jogador",
+    JSON.stringify({ papel: ackD3?.papel, ok: ackD3?.ok }));
+  t("isolamento: mensagem da janela não entregue ao rebaixado",
+    !(msgsVtt.get(sD3) ?? []).some((m) => m?.content === "durante-janela"),
+    JSON.stringify(msgsVtt.get(sD3)));
+  t("isolamento: mesa:vtt do rebaixado é filtrado (sem tokens alheios)",
+    idsTok(ackD3?.sessao?.vttState).length === 0 && idsTok(ultVtt.get(sD3)).length === 0,
+    JSON.stringify({ ack: idsTok(ackD3?.sessao?.vttState), emit: idsTok(ultVtt.get(sD3)) }));
+  t("isolamento: mutação do mestre na janela persistiu normalmente",
+    rVttM?.ok === true, JSON.stringify(rVttM?.erro));
 
   // 7. sessão encerrada durante a entrada → rejeição (último: encerra sid2)
   const rj2 = novoUsuario(BANCO2, { username: "race_j2", role: "jogador", campId: camp2 });
