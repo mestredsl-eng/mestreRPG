@@ -492,6 +492,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         campaignId={campaignId}
         sessionId={sessao.id}
         souMestre={souMestre}
+        ehEspectador={papel === "espectador"}
         meuUserId={meuUserId}
         membros={membros}
         encerrada={sessaoAtual.status === "encerrada"}
@@ -721,8 +722,8 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 
 // ================= MESA VIRTUAL (mapa + tokens) =================
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, meuUserId, membros, encerrada, inicial }: {
-  campaignId: string; sessionId: string; souMestre: boolean; meuUserId: string;
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
+  campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
   membros: Membro[]; encerrada: boolean; inicial: VttState | null;
 }) {
   const [vtt, setVtt] = useState<VttState>(inicial ?? { mapa: null, tokens: [] });
@@ -764,7 +765,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, meuUserId, membros, en
     souMestre || (!!meuUserId && (tk.userId === meuUserId || !!membros.find((m) => m.userId === meuUserId && tk.userId === m.userId)));
 
   const iniciarArraste = (tk: TokenVtt) => (e: ReactPointerEvent) => {
-    if (encerrada || (!souMestre && !ehDono(tk))) return;
+    if (encerrada || ehEspectador || (!souMestre && !ehDono(tk))) return;
     e.preventDefault();
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* ponteiro sintético/inativo */ }
     dragRef.current = { id: tk.id, movendo: true };
@@ -790,7 +791,26 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, meuUserId, membros, en
       const r = el.getBoundingClientRect();
       const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
       const y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
-      emitir({ acao: souMestre ? "atualizar" : "mover", token: { id: tk.id, x, y } });
+      // rollback: se o servidor rejeitar (permissão, sessão encerrada, queda de
+      // conexão/timeout) a posição otimista volta ao último estado confirmado.
+      // Só reverte se nenhum mesa:vtt mais novo já sobrescreveu o token.
+      const antes = { x: tk.x, y: tk.y };
+      const reverter = () => setVtt((v) => ({
+        ...v,
+        tokens: v.tokens.map((t) => (t.id === tk.id && t.x === x && t.y === y ? { ...t, ...antes } : t)),
+      }));
+      let respondido = false;
+      const timeout = window.setTimeout(() => {
+        if (respondido) return;
+        respondido = true;
+        setErroVtt("Sem resposta do servidor — posição revertida");
+        reverter();
+      }, 5000);
+      emitir({ acao: souMestre ? "atualizar" : "mover", token: { id: tk.id, x, y } }, (resp) => {
+        respondido = true;
+        window.clearTimeout(timeout);
+        if (resp && resp.ok === false) reverter();
+      });
     };
     window.addEventListener("pointermove", mover);
     window.addEventListener("pointerup", soltar);

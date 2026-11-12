@@ -295,6 +295,155 @@ try {
   const vttRe2 = rRe2?.sessao?.vttState;
   t("após restart do servidor o estado persiste", rRe2?.ok === true && vttRe2?.tokens?.some((x) => x.personagemId === pid), JSON.stringify(vttRe2).slice(0, 160));
 
+  // socket novo do jogador2 (os anteriores morreram no restart de persistência)
+  const sJ2b = conectar(c.jogadores.jogador2.cookie);
+  await pronto(sJ2b);
+  await emitirCb(sJ2b, 'mesa:entrar', { sessionId: sid });
+
+  // ---------- P1: espectador é somente leitura (token atribuído a ele) ----------
+  sec("P1 — espectador somente leitura");
+  const rTokEsp = await emitirCb(sMestre2, "mesa:vtt:token", {
+    sessionId: sid, acao: "criar",
+    token: { id: "tok-esp-01", nome: "Esp", cor: "#abcdef", x: 0.5, y: 0.5, userId: esp.id },
+  });
+  t("mestre cria token vinculado ao espectador", rTokEsp?.ok === true);
+  const iniEsp = eventosVtt.get(sEsp) ?? 0;
+  const rEspMoveT = await emitirCb(sEsp, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: "tok-esp-01", x: 0.9, y: 0.9 } });
+  const rEspCriaT = await emitirCb(sEsp, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "x", x: 0.1, y: 0.1 } });
+  const rEspRemT = await emitirCb(sEsp, "mesa:vtt:token", { sessionId: sid, acao: "remover", token: { id: "tok-esp-01" } });
+  const rEspMapaT = await emitirCb(sEsp, "mesa:vtt:mapa", { sessionId: sid, acao: "remover" });
+  const rEspAlheioT = await emitirCb(sEsp, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: tokPj?.id, x: 0.1, y: 0.1 } });
+  t("espectador: mover/criar/remover/mapa/alheio todos rejeitados",
+    [rEspMoveT, rEspCriaT, rEspRemT, rEspMapaT, rEspAlheioT].every((r) => r?.ok === false),
+    JSON.stringify([rEspMoveT, rEspCriaT, rEspRemT, rEspMapaT, rEspAlheioT]).slice(0, 200));
+  await dormir(300);
+  t("rejeições do espectador não emitem mesa:vtt", (eventosVtt.get(sEsp) ?? 0) === iniEsp);
+  const vttAposEsp = (await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tok-esp-01", nome: "Esp" } }))?.vtt;
+  t("estado do espectador intacto após rejeições", vttAposEsp?.tokens?.find?.((x) => x.id === "tok-esp-01")?.x === 0.5);
+
+  // ---------- P3: mapa precisa ser visível a todos ----------
+  sec("P3 — visibilidade do mapa");
+  const upMestreVis = await fetch(`${BASE}/api/campaigns/${ids.camp}/arquivos/upload`, {
+    method: "POST",
+    headers: {
+      cookie: ids.cookieMestre, "Content-Type": "application/octet-stream",
+      "X-File-Name": encodeURIComponent("mapa-mestre.png"), "X-File-Mime": "image/png",
+      "X-Visibility": "mestre", "X-Category": "mapa",
+    },
+    body: PNG_1PX,
+  });
+  const fileMestreVis = (await upMestreVis.json().catch(() => ({})))?.id;
+  const rMapaMestre = await emitirCb(sMestre2, "mesa:vtt:mapa", { sessionId: sid, acao: "definir", mapa: { fileId: fileMestreVis, nome: "secreto" } });
+  t("mapa com visibilidade mestre é rejeitado", rMapaMestre?.ok === false, JSON.stringify(rMapaMestre).slice(0, 140));
+  const upPub = await uploadMapa(ids.cookieMestre, "mapa-pub.png", PNG_1PX);
+  const rMapaPub = await emitirCb(sMestre2, "mesa:vtt:mapa", { sessionId: sid, acao: "definir", mapa: { fileId: upPub.json.id, nome: "Mapa público" } });
+  t("mapa público é aceito", rMapaPub?.ok === true);
+  const dlJ2 = await fetch(`${BASE}/api/campaigns/${ids.camp}/arquivos/${upPub.json.id}`, { headers: { cookie: c.jogadores.jogador2.cookie } });
+  t("jogador consegue baixar o mapa definido", dlJ2.status === 200, `status=${dlJ2.status}`);
+  const patchVis = await req(BASE, "PATCH", `/campaigns/${ids.camp}/arquivos/${upPub.json.id}`, { cookie: ids.cookieMestre, body: { visibility: "mestre" } });
+  t("visibilidade de mapa em uso não pode virar mestre", patchVis.status === 409, `status=${patchVis.status} ${JSON.stringify(patchVis.json).slice(0, 120)}`);
+  const dlJ2b = await fetch(`${BASE}/api/campaigns/${ids.camp}/arquivos/${upPub.json.id}`, { headers: { cookie: c.jogadores.jogador2.cookie } });
+  t("mapa continua baixável após tentativa de troca", dlJ2b.status === 200);
+  await emitirCb(sMestre2, "mesa:vtt:mapa", { sessionId: sid, acao: "remover" });
+
+  // ---------- P4: propriedade inequívoca ----------
+  sec("P4 — vínculos userId × personagemId");
+  const pidJ1 = c.novoPersonagem(esp.membershipId, "PJ Esp");
+  const rConflito = await emitirCb(sMestre2, "mesa:vtt:token", {
+    sessionId: sid, acao: "criar",
+    token: { nome: "Conflito", x: 0.5, y: 0.5, userId: ids.j2, personagemId: pidJ1 },
+  });
+  t("userId=j2 + personagem de espectador é rejeitado", rConflito?.ok === false, JSON.stringify(rConflito).slice(0, 140));
+  const rMesmoDono = await emitirCb(sMestre2, "mesa:vtt:token", {
+    sessionId: sid, acao: "criar",
+    token: { id: "tok-j2-ambos", nome: "J2", cor: "#123123", x: 0.4, y: 0.4, userId: ids.j2, personagemId: pid },
+  });
+  t("userId=j2 + personagem de j2 é aceito", rMesmoDono?.ok === true, JSON.stringify(rMesmoDono).slice(0, 140));
+  const rReAtrib = await emitirCb(sMestre2, "mesa:vtt:token", {
+    sessionId: sid, acao: "atualizar",
+    token: { id: "tok-j2-ambos", userId: ids.j2, personagemId: pidJ1 },
+  });
+  t("reatribuição conflitante é rejeitada", rReAtrib?.ok === false);
+  const rReValida = await emitirCb(sMestre2, "mesa:vtt:token", {
+    sessionId: sid, acao: "atualizar",
+    token: { id: "tok-j2-ambos", userId: null },
+  });
+  const tkRe = rReValida?.vtt?.tokens?.find?.((x) => x.id === "tok-j2-ambos");
+  t("reatribuição válida mantém personagem de j2", rReValida?.ok === true && tkRe?.personagemId === pid && tkRe?.userId === null, JSON.stringify(tkRe).slice(0, 140));
+  const rMvRe = await emitirCb(sJ2b, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: "tok-j2-ambos", x: 0.3, y: 0.3 } });
+  t("j2 move token após reatribuição válida", rMvRe?.ok === true, JSON.stringify(rMvRe).slice(0, 140));
+
+  // ---------- P5 + P7: limites e validação textual ----------
+  sec("P5/P7 — limites e nomes");
+  const rNomeObj = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: { a: 1 }, x: 0.5, y: 0.5 } });
+  const rNomeArr = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: ["x"], x: 0.5, y: 0.5 } });
+  const rNomeVazio = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "   ", x: 0.5, y: 0.5 } });
+  const rNomeLongo = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "x".repeat(61), x: 0.5, y: 0.5 } });
+  t("nomes objeto/array/vazio/longo rejeitados", [rNomeObj, rNomeArr, rNomeVazio, rNomeLongo].every((r) => r?.ok === false));
+  const rNomeAcento = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tok-acao", nome: "  Ação Épica Ñandú  ", x: 0.5, y: 0.5 } });
+  const tkAcao = rNomeAcento?.vtt?.tokens?.find?.((x) => x.id === "tok-acao");
+  t("nome acentuado válido é aceito e trimado", tkAcao?.nome === "Ação Épica Ñandú", JSON.stringify(tkAcao?.nome));
+  const vttAntes = (await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tok-acao", x: 0.5, y: 0.5 } }))?.vtt;
+  const qtdAtual = vttAntes?.tokens?.length ?? 0;
+  let ultimo = null;
+  for (let i = qtdAtual; i < 100; i++) {
+    ultimo = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: `T${i}`, x: 0.5, y: 0.5 } });
+    if (ultimo?.ok !== true) break;
+  }
+  const rEstouro = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "extra", x: 0.5, y: 0.5 } });
+  const totalFinal = rEstouro?.vtt?.tokens?.length ?? (ultimo?.vtt?.tokens?.length ?? 0);
+  t("limite de 100 tokens é enforced", rEstouro?.ok === false && totalFinal <= 100, `total=${totalFinal} resp=${JSON.stringify(rEstouro).slice(0, 120)}`);
+
+  // ---------- concorrência: mutações simultâneas ----------
+  sec("Concorrência — mutações simultâneas");
+  for (const tk of (ultimo?.vtt?.tokens ?? [])) {
+    if (!["tok-acao", "tok-j2-ambos"].includes(tk.id)) {
+      await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "remover", token: { id: tk.id } });
+    }
+  }
+  const criados = [];
+  for (let i = 0; i < 8; i++) {
+    const rr = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: `conc-tk${i}`, nome: `C${i}`, x: 0.1, y: 0.1 } });
+    criados.push(rr?.vtt?.tokens?.find?.((x) => x.id === `conc-tk${i}`));
+  }
+  const upConc = await uploadMapa(ids.cookieMestre, "mapa-conc.png", PNG_1PX);
+  const paralelos = await Promise.all([
+    emitirCb(sJ2b, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: "tok-j2-ambos", x: 0.11, y: 0.11 } }),
+    emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: "tok-j2-ambos", x: 0.22, y: 0.22 } }),
+    ...criados.filter(Boolean).map((tk, i) => emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "mover", token: { id: tk.id, x: 0.3 + i * 0.01, y: 0.4 } })),
+    upConc?.json?.id ? emitirCb(sMestre2, "mesa:vtt:mapa", { sessionId: sid, acao: "definir", mapa: { fileId: upConc.json.id, nome: "conc" } }) : Promise.resolve(null),
+  ]);
+  const aceitos = paralelos.filter((r) => r?.ok === true).length;
+  const vttConc = [...paralelos].reverse().find((r) => r?.vtt)?.vtt;
+  const tokensConc = vttConc?.tokens ?? [];
+  const todosMovidos = criados.filter(Boolean).every((tk) => {
+    const fin = tokensConc.find((x) => x.id === tk.id);
+    return fin && fin.x !== 0.1;
+  });
+  t("mutações paralelas: estado final íntegro", aceitos >= 8 && todosMovidos && Array.isArray(tokensConc), `aceitos=${aceitos} tokens=${tokensConc.length}`);
+  t("mapa concorrente persistido", !!vttConc?.mapa?.fileId);
+
+  // ---------- P2: vtt_state corrompido não derruba a sessão ----------
+  sec("P2 — estado corrompido");
+  const dbCorr = abrirDb(BANCO);
+  dbCorr.prepare("update sessions set vtt_state=? where id=?").run("{json-quebrado", sid);
+  dbCorr.close();
+  const sMestre3 = conectar(ids.cookieMestre);
+  await pronto(sMestre3);
+  const rCorr = await emitirCb(sMestre3, "mesa:entrar", { sessionId: sid });
+  t("entrar com vtt_state corrompido responde ok", rCorr?.ok === true, JSON.stringify(rCorr).slice(0, 160));
+  t("vtt corrompido vira estado vazio controlado", rCorr?.sessao?.vttState?.tokens?.length === 0 || rCorr?.sessao?.vttState == null, JSON.stringify(rCorr?.sessao?.vttState).slice(0, 120));
+  const rChat = await emitirCb(sMestre3, "mesa:mensagem", { sessionId: sid, content: "chat com vtt corrompido" });
+  t("chat funciona com vtt_state corrompido", rChat?.ok !== false, JSON.stringify(rChat).slice(0, 160));
+  const rTurno = await emitirCb(sMestre3, "mesa:turno", { sessionId: sid, acao: "iniciar" });
+  t("turnos funcionam com vtt_state corrompido", rTurno?.ok !== false, JSON.stringify(rTurno).slice(0, 160));
+  const rTimer = await emitirCb(sMestre3, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 60 });
+  t("timer funciona com vtt_state corrompido", rTimer?.ok === true, JSON.stringify(rTimer).slice(0, 160));
+  const rRecupera = await emitirCb(sMestre3, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "pos-corrompido", x: 0.5, y: 0.5 } });
+  t("mutação VTT após corrupção recria estado", rRecupera?.ok === true && rRecupera?.vtt?.tokens?.some?.((x) => x.nome === "pos-corrompido"));
+  const listaSess = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre });
+  t("GET sessões responde com vtt corrompido", listaSess.status === 200, `status=${listaSess.status}`);
+
   // sessão encerrada bloqueia mutações
   await req(BASE, "PATCH", `/campaigns/${ids.camp}/sessoes/${sid}`, { cookie: ids.cookieMestre, body: { status: "encerrada" } });
   const rEnc = await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { nome: "fim", x: 0.1, y: 0.1 } });

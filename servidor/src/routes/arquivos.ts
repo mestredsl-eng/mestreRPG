@@ -1,11 +1,11 @@
 import express, { Router } from "express";
 import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve, extname, sep } from "node:path";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import { config } from "../config.js";
-import { files, folders, memberships, users, notes, noteAttachments } from "../db/schema.js";
+import { files, folders, memberships, users, notes, noteAttachments, sessions } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -363,6 +363,23 @@ arquivosRouter.patch("/:fileId", requirePapel("mestre", "jogador"), async (req, 
   if (d.folderId) {
     const [p] = await db.select().from(folders).where(and(eq(folders.id, d.folderId), eq(folders.campaignId, cid))).limit(1);
     if (!p) { res.status(400).json({ erro: "Pasta não encontrada" }); return; }
+  }
+  // se o arquivo está em uso como mapa de mesa virtual, tirar a visibilidade
+  // pública quebraria a exibição para jogadores/espectadores — bloqueia (P3)
+  const novaVisibilidade = d.visibility ?? f.visibility;
+  if (novaVisibilidade !== "publica") {
+    const rows = await db.select({ v: sql<string | null>`vtt_state` }).from(sessions).where(eq(sessions.campaignId, cid));
+    const emUso = rows.some((r) => {
+      if (!r.v) return false;
+      try {
+        const vtt = JSON.parse(r.v) as { mapa?: { fileId?: string } | null };
+        return vtt?.mapa?.fileId === f.id;
+      } catch { return false; }
+    });
+    if (emUso) {
+      res.status(409).json({ erro: "Arquivo está em uso como mapa de uma sessão — remova o mapa antes de alterar a visibilidade" });
+      return;
+    }
   }
   let recips: string[] | null | undefined;
   if (d.visibility === "selecionada" && d.recipients !== undefined) {
