@@ -218,7 +218,10 @@ try {
       dbW.prepare("update sessions set timer_state=? where id=?")
         .run(JSON.stringify({ status: "rodando", endsAt: expiraEm, remainingMs: 1500, totalMs: 60000 }), sid);
       dbW.close();
-      t("ampulheta reaberta (expiração injetada no servidor)", true);
+      const tsInjetado = comDb(BANCO, (db) => db.prepare("select timer_state from sessions where id=?").get(sid)?.timer_state);
+      const tsInj = tsInjetado ? JSON.parse(tsInjetado) : null;
+      t("ampulheta reaberta (expiração injetada persistida no servidor)",
+        tsInj?.status === "rodando" && tsInj?.endsAt === expiraEm && tsInj?.remainingMs === 1500, tsInjetado);
       // MRPG_TIMER_FALSO=1 é o controle de resistência: exige status impossível → deve FALHAR
       const statusFinal = process.env.MRPG_TIMER_FALSO === "1" ? "status-inexistente" : "parado";
       const fim = await esperar(sockM, "mesa:timer", 15000,
