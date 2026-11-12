@@ -353,6 +353,11 @@ export const moneyTransactions = sqliteTable("money_transactions", {
   balanceBeforeCents: integer("balance_before_cents"),
   balanceAfterCents: integer("balance_after_cents"),
   requestId: text("request_id"), // idempotência — impede duplicação
+  // Vínculo explícito com a operação de patrimônio que gerou a
+  // movimentação (compra/venda/estorno): requestId da operação, id do
+  // item de inventário afetado e metadados necessários ao estorno.
+  inventoryItemId: text("inventory_item_id"),
+  operacao: text("operacao", { mode: "json" }),
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
 }, (t) => [
