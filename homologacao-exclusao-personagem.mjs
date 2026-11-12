@@ -32,6 +32,10 @@ try {
   // personagem com HP para verificar que arquivado é somente leitura
   const CHARHP = c.novoPersonagem(c.jogadores.jogador1.membershipId, "E2E HP Arquivado", {
     __hp: { atual: 80, historico: [{ em: new Date().toISOString(), tipo: "dano", quantidade: -20, motivo: "teste", autorId: c.adminId, autorNome: "Mestre" }] },
+    __pontos: { bonus: 4, historico: [
+      { em: new Date(Date.now() - 86400000).toISOString(), quantidade: 4, motivo: "bônus de boas-vindas", autorId: c.adminId, autorNome: "Mestre" },
+      { em: new Date().toISOString(), quantidade: -1, motivo: "ajuste de teste", autorId: c.adminId, autorNome: "Mestre" },
+    ] },
   });
   await req(BASE, "POST", `/characters/${CHARHP}/arquivar`, { cookie: M });
 
@@ -112,7 +116,13 @@ try {
     t("readonly: HP exibido", await p.locator(".hp-resumo").count() > 0);
     t("readonly: sem ações de HP", (await p.locator(".hp-acoes").count()) === 0);
     t("readonly: histórico de HP preservado", (await p.locator(".hp-historico").count()) > 0);
-    t("readonly: painel de pontos do mestre oculto", (await p.locator(".painel-pontos").count()) === 0);
+    // histórico de pontos continua visível em arquivado; só os controles somem
+    const painelPts = p.locator(".painel-pontos");
+    t("readonly: painel de pontos visível", await painelPts.count() > 0);
+    t("readonly: saldo de pontos preservado", (await painelPts.innerText()).includes("4"));
+    t("readonly: histórico de pontos visível", (await painelPts.innerText()).includes("bônus de boas-vindas"));
+    t("readonly: motivo do histórico visível", (await painelPts.innerText()).includes("ajuste de teste"));
+    t("readonly: sem controle de pontos", (await p.getByRole("combobox", { name: "Ação de pontos" }).count()) === 0);
     t("readonly: Restaurar visível p/ mestre", await p.getByRole("button", { name: "Restaurar" }).count() > 0);
     // patrimônio — aba inventário
     t("readonly: sem Adicionar item", (await p.getByRole("button", { name: "Adicionar", exact: true }).count()) === 0);
@@ -136,7 +146,16 @@ try {
     t("readonly: sem Transferir PIX", (await p.getByRole("button", { name: /Transferir/ }).count()) === 0);
     t("readonly: histórico financeiro visível", await p.getByText("Histórico financeiro").count() > 0);
 
-    // volta à lista de arquivados antes do fluxo de exclusão
+    // restaura o CHARHP: controles de pontos voltam, histórico preservado
+    await p.getByRole("button", { name: "Restaurar", exact: true }).click();
+    await p.waitForTimeout(400);
+    await p.locator(".modal").getByRole("button", { name: "Restaurar", exact: true }).click();
+    await p.waitForTimeout(1400);
+    t("restore: controle de pontos volta", (await p.getByRole("combobox", { name: "Ação de pontos" }).count()) > 0);
+    t("restore: histórico de pontos preservado", (await p.locator(".painel-pontos").innerText()).includes("bônus de boas-vindas"));
+    t("restore: saldo de pontos inalterado", (await p.locator(".painel-pontos").innerText()).includes("4"));
+
+    // volta à lista antes do fluxo de exclusão
     const cabVoltar3 = p.locator("section.cartao").filter({ has: p.locator("h2", { hasText: "E2E HP Arquivado" }) }).first();
     await cabVoltar3.getByRole("button", { name: "Voltar" }).click();
     await p.waitForTimeout(900);

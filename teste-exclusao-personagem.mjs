@@ -186,6 +186,24 @@ try {
     t("consulta do arquivado funciona", det.status === 200 && det.json?.personagem?.status === "arquivado", `status=${det.status}`);
     t("detalhe expõe arquivadoDe", det.json?.personagem?.arquivadoDe === "aprovada");
 
+    // histórico de pontos: arquivamento não pode esconder dados do mestre
+    comDb((db) => {
+      const row = db.prepare("select data from characters where id=?").get(alvo);
+      const d = JSON.parse(row.data);
+      d.__pontos = { bonus: 7, historico: [
+        { em: "2024-01-01T00:00:00.000Z", quantidade: 7, motivo: "bônus inicial", autorId: null, autorNome: "Mestre" },
+        { em: "2024-01-02T00:00:00.000Z", quantidade: -2, motivo: "penalidade teste", autorId: null, autorNome: "Mestre" },
+      ] };
+      db.prepare("update characters set data=? where id=?").run(JSON.stringify(d), alvo);
+    });
+    const detM = await req(BASE, "GET", `/characters/${alvo}`, { cookie: M });
+    const pbM = detM.json?.ficha?.pontosBonus;
+    t("mestre vê saldo de pontos do arquivado", pbM?.bonus === 7, JSON.stringify(pbM));
+    t("mestre vê histórico de pontos do arquivado", Array.isArray(pbM?.historico) && pbM.historico.length === 2 && pbM.historico[0]?.motivo === "bônus inicial", JSON.stringify(pbM?.historico));
+    const detJ = await req(BASE, "GET", `/characters/${alvo}`, { cookie: J1 });
+    const pbJ = detJ.json?.ficha?.pontosBonus;
+    t("dono vê saldo mas não o histórico de pontos", pbJ?.bonus === 7 && pbJ?.historico === undefined, JSON.stringify(pbJ));
+
     // proteção de rotas de alteração
     const patch = await req(BASE, "PATCH", `/characters/${alvo}`, { cookie: M, body: { data: { "f-forca": 9 } } });
     t("PATCH bloqueado em arquivado", patch.status === 403, `status=${patch.status}`);
@@ -227,6 +245,9 @@ try {
     t("restauração duplicada bloqueada", des2.status === 409, `status=${des2.status}`);
     const patchOk = await req(BASE, "PATCH", `/characters/${alvo}`, { cookie: M, body: { data: {} } });
     t("edição volta após restaurar", patchOk.status === 200, `status=${patchOk.status}`);
+    const detPos = await req(BASE, "GET", `/characters/${alvo}`, { cookie: M });
+    const pbPos = detPos.json?.ficha?.pontosBonus;
+    t("histórico de pontos preservado após restaurar", pbPos?.bonus === 7 && Array.isArray(pbPos?.historico) && pbPos.historico.length === 2, JSON.stringify(pbPos));
   }
 
   sec("Autorização revalidada: vínculo/papel alterado recusa a operação");

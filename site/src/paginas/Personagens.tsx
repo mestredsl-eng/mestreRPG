@@ -460,8 +460,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             ))}
           </div>
         )}
-        {souMestre && !arquivado && ficha && (
-          <PainelPontosMestre ficha={ficha} characterId={personagem.id} aoMudar={aoRecarregar} />
+        {souMestre && ficha && (
+          <PainelPontosMestre ficha={ficha} characterId={personagem.id} aoMudar={aoRecarregar} somenteLeitura={arquivado} />
         )}
         {ficha?.validacao && !ficha.validacao.ok && ficha.validacao.erros.length > 0 && (
           <div className="caixa-validacao erro">
@@ -516,10 +516,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
 
 /** Painel do mestre: concede/remove o bônus individual de pontos
  *  (__pontos) com motivo — funciona mesmo com a ficha selada. */
-function PainelPontosMestre({ ficha, characterId, aoMudar }: {
+function PainelPontosMestre({ ficha, characterId, aoMudar, somenteLeitura = false }: {
   ficha: NonNullable<PersonagemDetalhe["ficha"]>;
   characterId: string;
   aoMudar: () => Promise<void>;
+  /** Arquivado: saldo e histórico continuam visíveis; só os controles somem. */
+  somenteLeitura?: boolean;
 }) {
   const pb = ficha.pontosBonus;
   const [acao, setAcao] = useState<"conceder" | "remover">("conceder");
@@ -564,6 +566,7 @@ function PainelPontosMestre({ ficha, characterId, aoMudar }: {
           ))}
         </ul>
       )}
+      {!somenteLeitura && (
       <form className="linha" onSubmit={enviar}>
         <select aria-label="Ação de pontos" value={acao} onChange={(e) => setAcao(e.target.value as "conceder" | "remover")}>
           <option value="conceder">Conceder</option>
@@ -573,6 +576,7 @@ function PainelPontosMestre({ ficha, characterId, aoMudar }: {
         <input type="text" placeholder="Motivo" value={motivo} onChange={(e) => setMotivo(e.target.value)} required style={{ flex: 1 }} />
         <button type="submit" disabled={enviando}>{enviando ? "…" : "Aplicar"}</button>
       </form>
+      )}
       {erro && <p className="erro">{erro}</p>}
       {msg && <p className="online">{msg}</p>}
     </div>
