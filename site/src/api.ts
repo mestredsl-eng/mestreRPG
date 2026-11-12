@@ -178,6 +178,8 @@ export const api = {
       "/campaigns/" + cid + "/regras/acervo/" + bookId + "/aplicar",
       { method: "POST", body: JSON.stringify({ decisoes }) },
     ),
+  previaLivroAcervo: (cid: string, bookId: string) =>
+    requisicao<DiffAcervoCampanha>("/campaigns/" + cid + "/regras/acervo/" + bookId + "/diff"),
   criarElementoRegra: (cid: string, dados: ElementoRegraInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/regras/elementos`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarElementoRegra: (cid: string, elementId: string, dados: Partial<ElementoRegraInput>) =>
@@ -1119,6 +1121,25 @@ export interface LivroAcervoCampanha {
   versaoAplicada: number | null;
   aplicadoEm: string | null;
   atualizacaoDisponivel: boolean;
+  excluido?: boolean;
+  selecionavel?: boolean;
+}
+
+export interface DiffAcervoCampanha {
+  ok: boolean;
+  livroId: string;
+  versao: number;
+  versaoAplicada: number | null;
+  totais: {
+    itensNoLivro: number;
+    novos: number;
+    identicos: number;
+    conflitos: number;
+    invalidos: number;
+    preservadosNaCampanha: number;
+  };
+  conflitos: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[];
+  semDiferencas: boolean;
 }
 
 export interface LivroAcervoResumo {

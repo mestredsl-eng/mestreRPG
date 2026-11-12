@@ -410,7 +410,6 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
 regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
   const campaignId = req.params.campaignId;
   const livros = await db.select().from(ruleBooks)
-    .where(isNull(ruleBooks.excluidoEm))
     .orderBy(asc(ruleBooks.titulo));
   const vinculos = await db.select().from(campaignRuleBooks)
     .where(eq(campaignRuleBooks.campaignId, campaignId));
@@ -418,9 +417,13 @@ regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
   const contagens = await db.select().from(ruleBookItems);
   const totalPorLivro = new Map<string, number>();
   for (const item of contagens) totalPorLivro.set(item.bookId, (totalPorLivro.get(item.bookId) ?? 0) + 1);
+  // livros excluídos do Acervo só aparecem se já tiverem vínculo com a campanha
+  // (o vínculo precisa continuar identificável até o mestre decidir)
+  const visiveis = livros.filter((b) => !b.excluidoEm || porLivro.has(b.id));
   res.json({
-    livros: livros.map((b) => {
+    livros: visiveis.map((b) => {
       const vinculo = porLivro.get(b.id);
+      const excluido = !!b.excluidoEm;
       return {
         id: b.id, titulo: b.titulo, descricao: b.descricao, autor: b.autor,
         sistema: b.sistema, edicao: b.edicao, tipo: b.tipo, versao: b.versao,
@@ -428,10 +431,87 @@ regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
         aplicado: !!vinculo,
         versaoAplicada: vinculo?.appliedVersion ?? null,
         aplicadoEm: vinculo?.appliedAt ?? null,
-        atualizacaoDisponivel: !!vinculo && vinculo.appliedVersion !== b.versao,
+        atualizacaoDisponivel: !!vinculo && !excluido && vinculo.appliedVersion !== b.versao,
+        excluido,
+        selecionavel: !excluido,
       };
     }),
   });
+});
+
+/**
+ * GET /api/campaigns/:campaignId/regras/acervo/:bookId/diff
+ * Prévia somente-leitura do que uma aplicação/sincronização faria:
+ * itens novos, idênticos, conflitos por chave e elementos da campanha
+ * preservados (ausentes no livro). Não grava nada.
+ */
+regrasRouter.get("/acervo/:bookId/diff", requirePapel("mestre"), async (req, res) => {
+  const campaignId = req.params.campaignId;
+  const resultado = db.transaction((tx): { http: number; payload: Record<string, unknown> } => {
+    const [livro] = tx.select().from(ruleBooks)
+      .where(and(eq(ruleBooks.id, req.params.bookId), isNull(ruleBooks.excluidoEm))).all();
+    if (!livro) return { http: 404, payload: { erro: "Livro não encontrado ou excluído do Acervo" } };
+
+    const itens = tx.select().from(ruleBookItems)
+      .where(eq(ruleBookItems.bookId, livro.id))
+      .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key)).all();
+
+    const [rs] = tx.select().from(ruleSets)
+      .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).all();
+    const atuais = rs
+      ? tx.select().from(ruleDefinitions).where(eq(ruleDefinitions.ruleSetId, rs.id)).all()
+      : [];
+    const porChave = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
+    const chavesLivro = new Set(itens.map((i) => `${i.kind}:${i.key}`));
+
+    let novos = 0, identicos = 0;
+    const conflitos: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] = [];
+    const invalidos: string[] = [];
+    for (const item of itens) {
+      const chave = `${item.kind}:${item.key}`;
+      const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
+      if (!parsed.success) { invalidos.push(chave); continue; }
+      const atual = porChave.get(chave);
+      if (!atual) { novos++; continue; }
+      const candidato = {
+        name: item.name, category: item.category ?? null,
+        parentKey: item.parentKey ?? null, definition: parsed.data,
+      };
+      const atualNorm = {
+        name: atual.name, category: atual.category ?? null,
+        parentKey: atual.parentKey ?? null,
+        definition: definicaoElementoSchema.parse(atual.definition ?? {}),
+      };
+      if (JSON.stringify(candidato) === JSON.stringify(atualNorm)) identicos++;
+      else conflitos.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name });
+    }
+    const preservadosNaCampanha = atuais.filter((e) => !chavesLivro.has(`${e.kind}:${e.key}`)).length;
+
+    const [vinculo] = tx.select().from(campaignRuleBooks)
+      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
+
+    return {
+      http: 200,
+      payload: {
+        ok: true,
+        livroId: livro.id,
+        versao: livro.versao,
+        versaoAplicada: vinculo?.appliedVersion ?? null,
+        totais: {
+          itensNoLivro: itens.length,
+          novos,
+          identicos,
+          conflitos: conflitos.length,
+          invalidos: invalidos.length,
+          preservadosNaCampanha,
+        },
+        conflitos,
+        semDiferencas: novos === 0 && conflitos.length === 0 && invalidos.length === 0
+          && (vinculo?.appliedVersion ?? null) === livro.versao,
+      },
+    };
+  });
+  res.status(resultado.http).json(resultado.payload);
 });
 
 const aplicarLivroSchema = z.object({

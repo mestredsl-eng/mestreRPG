@@ -5,6 +5,7 @@ import {
   type ConfigRegras,
   type ElementoRegra,
   type ElementoRegraInput,
+  type DiffAcervoCampanha,
   type LivroAcervoCampanha,
   type PersonagemResumo,
   type RegrasCampanha,
@@ -70,6 +71,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [livrosAcervo, setLivrosAcervo] = useState<LivroAcervoCampanha[]>([]);
   const [conflitosAcervo, setConflitosAcervo] = useState<{ bookId: string; itens: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] } | null>(null);
   const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, "manter_campanha" | "usar_livro">>({});
+  const [previaAcervo, setPreviaAcervo] = useState<DiffAcervoCampanha | null>(null);
 
   const carregar = useCallback(async () => {
     try {
@@ -196,6 +198,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       const r = await api.aplicarLivroAcervo(campaignId, bookId, decisoes);
       setConflitosAcervo(null);
       setDecisoesAcervo({});
+      setPreviaAcervo(null);
       setAviso("Livro aplicado: " + r.inseridos + " novo(s), " + r.atualizados + " atualizado(s), " + r.mantidos + " mantido(s) da campanha.");
       await Promise.all([carregarAcervo(), carregar()]);
     } catch (e) {
@@ -208,6 +211,26 @@ export default function Regras({ campaignId }: { campaignId: string }) {
         }
       }
       setErro(e instanceof Error ? e.message : "Erro ao aplicar livro do Acervo");
+    }
+  };
+
+  const previaLivro = async (bookId: string) => {
+    setErro(null);
+    setAviso(null);
+    try {
+      const r = await api.previaLivroAcervo(campaignId, bookId);
+      setPreviaAcervo(r);
+      // conflitos da prévia alimentam o mesmo fluxo de decisão explícita
+      if (r.conflitos.length) {
+        setConflitosAcervo({ bookId, itens: r.conflitos });
+        setDecisoesAcervo({});
+      } else {
+        setConflitosAcervo(null);
+        setDecisoesAcervo({});
+      }
+    } catch (e) {
+      setPreviaAcervo(null);
+      setErro(e instanceof Error ? e.message : "Erro ao pré-visualizar livro do Acervo");
     }
   };
 
@@ -300,16 +323,37 @@ export default function Regras({ campaignId }: { campaignId: string }) {
                 <span className="tag">{livro.totalItens} itens</span>
                 {livro.aplicado && <span className="tag">Aplicado v{livro.versaoAplicada}</span>}
                 {livro.atualizacaoDisponivel && <span className="tag">Atualização disponível</span>}
+                {livro.excluido && <span className="tag">Excluído do Acervo</span>}
                 {livro.sistema && <span className="dica">{livro.sistema}</span>}
                 {livro.descricao && <span className="dica">{livro.descricao}</span>}
               </div>
               <div className="elemento-acoes">
-                <button className="mini" onClick={() => void aplicarLivro(livro.id)}>
-                  {livro.aplicado ? "Revisar / reaplicar" : "Aplicar à campanha"}
-                </button>
+                {livro.selecionavel !== false && (
+                  <button className="mini" onClick={() => void previaLivro(livro.id)}>
+                    Pré-visualizar
+                  </button>
+                )}
+                {livro.selecionavel !== false && (
+                  <button className="mini" onClick={() => void aplicarLivro(livro.id)}>
+                    {livro.aplicado ? "Revisar / reaplicar" : "Aplicar à campanha"}
+                  </button>
+                )}
               </div>
             </div>
           ))}
+          {previaAcervo && (
+            <section className="cartao">
+              <h4>Prévia de aplicação — sem gravar nada</h4>
+              <p className="dica">
+                {previaAcervo.totais.itensNoLivro} item(ns) no livro (v{previaAcervo.versao}):
+                {" "}{previaAcervo.totais.novos} novo(s), {previaAcervo.totais.identicos} idêntico(s),{" "}
+                {previaAcervo.totais.conflitos} conflito(s), {previaAcervo.totais.invalidos} inválido(s).
+                {" "}{previaAcervo.totais.preservadosNaCampanha} elemento(s) da campanha não existem no livro e serão preservados.
+                {previaAcervo.semDiferencas && " Nenhuma diferença — a aplicação seria idempotente."}
+              </p>
+              <button className="secundario" onClick={() => setPreviaAcervo(null)}>Fechar prévia</button>
+            </section>
+          )}
           {!livrosAcervo.length && <p className="dica">Nenhum livro ativo no Acervo. Cadastre ou importe livros na Biblioteca global.</p>}
           {conflitosAcervo && (
             <section className="cartao">

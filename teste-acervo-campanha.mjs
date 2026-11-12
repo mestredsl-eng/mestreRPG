@@ -87,6 +87,15 @@ try {
   t("jogador NÃO lista acervo da campanha", listaJ.status === 403, `status=${listaJ.status}`);
   const aplicaJ = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cj, body: {} });
   t("jogador NÃO aplica livro", aplicaJ.status === 403, `status=${aplicaJ.status}`);
+  const diffJ = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cj });
+  t("jogador NÃO pré-visualiza diff", diffJ.status === 403, `status=${diffJ.status}`);
+  const diffInexistente = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/livro-inexistente/diff`, { cookie: cm });
+  t("diff de livro inexistente → 404", diffInexistente.status === 404, `status=${diffInexistente.status}`);
+  const diffAntes = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm });
+  t("diff antes de aplicar: 3 itens novos",
+    diffAntes.status === 200 && diffAntes.json?.totais?.itensNoLivro === 3 && diffAntes.json?.totais?.novos === 3
+      && diffAntes.json?.totais?.conflitos === 0 && diffAntes.json?.semDiferencas === false,
+    JSON.stringify(diffAntes.json?.totais));
 
   // ===== 3. aplicação =====
   sec("Aplicação do livro às regras da campanha");
@@ -106,6 +115,13 @@ try {
   const item2 = (lista2.json?.livros ?? []).find((l) => l.id === bookId);
   t("livro marcado como aplicado", item2?.aplicado === true && item2?.versaoAplicada === item2?.versao,
     JSON.stringify(item2).slice(0, 160));
+
+  const diffDepois = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm });
+  t("diff após aplicar: idênticos e sem diferenças",
+    diffDepois.status === 200 && diffDepois.json?.totais?.identicos === 3
+      && diffDepois.json?.totais?.novos === 0 && diffDepois.json?.totais?.conflitos === 0
+      && diffDepois.json?.semDiferencas === true,
+    JSON.stringify(diffDepois.json?.totais));
 
   // idempotência: reaplicar sem mudanças
   const reapply = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
@@ -133,6 +149,25 @@ try {
   const item3 = (lista3.json?.livros ?? []).find((l) => l.id === bookId);
   t("atualização disponível sinalizada", item3?.atualizacaoDisponivel === true && item3?.versaoAplicada < item3?.versao,
     JSON.stringify({ va: item3?.versaoAplicada, v: item3?.versao }));
+
+  // elemento manual da campanha (ausente no livro) → deve constar como preservado
+  await req(BASE, "POST", `/campaigns/${camp}/regras/elementos`, {
+    cookie: cm, body: { kind: "talento", key: "manual_preservado", name: "Talento Manual", definition: {} },
+  });
+
+  // prévia de diferenças: divergência local × item editado no livro
+  const diffConf = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm });
+  t("diff aponta conflito por chave",
+    diffConf.status === 200 && diffConf.json?.totais?.conflitos === 1
+      && diffConf.json?.conflitos?.[0]?.chave === "atributo:forca_bib",
+    JSON.stringify(diffConf.json?.totais));
+  t("diff preserva elementos da campanha ausentes no livro",
+    (diffConf.json?.totais?.preservadosNaCampanha ?? 0) >= 1, JSON.stringify(diffConf.json?.totais));
+  const versaoAntesDiff = diffConf.json?.versaoAplicada;
+  const acervoAposDiff = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const itemAposDiff = (acervoAposDiff.json?.livros ?? []).find((l) => l.id === bookId);
+  t("diff não alterou vínculo/versão aplicada", itemAposDiff?.versaoAplicada === versaoAntesDiff,
+    JSON.stringify({ diff: versaoAntesDiff, agora: itemAposDiff?.versaoAplicada }));
 
   // aplicar sem decisões -> 409 com conflito explícito
   const elAntesConflito = JSON.stringify((await req(BASE, "GET", `/campaigns/${camp}/regras/elementos`, { cookie: cm })).json);
@@ -270,6 +305,17 @@ try {
 
   // limpeza do livro de teste
   await req(BASE, "DELETE", `/biblioteca/livros/${bookId}`, { cookie: cm });
+
+  // livro excluído COM vínculo: continua identificável na listagem, não selecionável
+  const listaPosDelete = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo`, { cookie: cm });
+  const itemDel = (listaPosDelete.json?.livros ?? []).find((l) => l.id === bookId);
+  t("livro excluído com vínculo continua identificável",
+    !!itemDel && itemDel.excluido === true && itemDel.selecionavel === false && itemDel.aplicado === true,
+    JSON.stringify(itemDel).slice(0, 200));
+  const diffDel = await req(BASE, "GET", `/campaigns/${camp}/regras/acervo/${bookId}/diff`, { cookie: cm });
+  t("diff de livro excluído → 404", diffDel.status === 404, `status=${diffDel.status}`);
+  const aplicaDel = await req(BASE, "POST", `/campaigns/${camp}/regras/acervo/${bookId}/aplicar`, { cookie: cm, body: {} });
+  t("aplicar livro excluído → 404", aplicaDel.status === 404, `status=${aplicaDel.status}`);
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);
