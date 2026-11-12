@@ -48,6 +48,7 @@ jobs:
             teste-vida-conversao.mjs \
             teste-venda-estoque.mjs \
             teste-financeiro-compras.mjs \
+            teste-financeiro-integracao.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
             teste-novidades.mjs \
@@ -87,6 +88,7 @@ jobs:
             homologacao-hp-historico.mjs \
             homologacao-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
             homologacao-v1-cobertura.mjs \
