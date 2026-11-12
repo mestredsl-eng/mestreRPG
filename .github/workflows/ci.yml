@@ -96,5 +96,6 @@ jobs:
             homologacao-validacao-ficha.mjs \
             homologacao-exclusao-personagem.mjs \
             homologacao-busca-filtros.mjs \
-            homologacao-mesa-virtual.mjs
+            homologacao-mesa-virtual.mjs \
+            teste-vtt-rollback-p6.mjs
           do echo "===== $s ====="; node "$s"; done

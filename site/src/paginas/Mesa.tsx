@@ -722,6 +722,11 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 
 // ================= MESA VIRTUAL (mapa + tokens) =================
 
+// Posicao confirmada pelo servidor para um token. `rev` incrementa a
+// cada mudança de posição vinda de estado autoritativo (mesa:vtt ou
+// estado inicial) — movimentos otimistas locais nunca a alteram.
+type PosicaoConfirmada = { x: number; y: number; rev: number };
+
 function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
   membros: Membro[]; encerrada: boolean; inicial: VttState | null;
@@ -733,11 +738,29 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [selVtt, setSelVtt] = useState<string | null>(null);
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
+  const confRef = useRef<Map<string, PosicaoConfirmada>>(new Map());
+
+  // Sincroniza a referência autoritativa SOMENTE com estados vindos do
+  // servidor. O setVtt otimista do arraste nunca passa por aqui.
+  const sincronizarAutoritativo = (estado: VttState) => {
+    const mapa = confRef.current;
+    const vistos = new Set<string>();
+    for (const tk of estado.tokens ?? []) {
+      vistos.add(tk.id);
+      const prev = mapa.get(tk.id);
+      if (!prev) mapa.set(tk.id, { x: tk.x, y: tk.y, rev: 1 });
+      else if (prev.x !== tk.x || prev.y !== tk.y) mapa.set(tk.id, { x: tk.x, y: tk.y, rev: prev.rev + 1 });
+    }
+    for (const id of [...mapa.keys()]) if (!vistos.has(id)) mapa.delete(id);
+  };
 
   useEffect(() => {
     const socket = getSocket();
     const aoVtt = (d: { sessionId?: string; vtt?: VttState }) => {
-      if (d?.sessionId === sessionId && d.vtt) setVtt(d.vtt);
+      if (d?.sessionId === sessionId && d.vtt) {
+        sincronizarAutoritativo(d.vtt);
+        setVtt(d.vtt);
+      }
     };
     socket.on("mesa:vtt", aoVtt);
     return () => { socket.off("mesa:vtt", aoVtt); };
@@ -746,7 +769,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
   useEffect(() => {
-    if (inicial) setVtt(inicial);
+    if (inicial) {
+      sincronizarAutoritativo(inicial);
+      setVtt(inicial);
+    }
   }, [inicial]);
 
   const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
@@ -791,14 +817,23 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       const r = el.getBoundingClientRect();
       const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
       const y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
-      // rollback: se o servidor rejeitar (permissão, sessão encerrada, queda de
-      // conexão/timeout) a posição otimista volta ao último estado confirmado.
-      // Só reverte se nenhum mesa:vtt mais novo já sobrescreveu o token.
-      const antes = { x: tk.x, y: tk.y };
-      const reverter = () => setVtt((v) => ({
-        ...v,
-        tokens: v.tokens.map((t) => (t.id === tk.id && t.x === x && t.y === y ? { ...t, ...antes } : t)),
-      }));
+      // posição final do drop também é otimista — garante que o visual
+      // corresponda exatamente às coordenadas emitidas ao servidor
+      setVtt((v) => ({ ...v, tokens: v.tokens.map((t) => (t.id === tk.id ? { ...t, x, y } : t)) }));
+      // Rollback: rejeição/timeout só reverte se (a) a revisão
+      // autoritativa do token não mudou desde o início desta operação
+      // e (b) o token ainda está visualmente na posição otimista deste
+      // drop. Restaura conf0 — última posição confirmada pelo servidor —
+      // nunca o estado capturado do closure de renderização.
+      const conf0 = confRef.current.get(tk.id) ?? { x: tk.x, y: tk.y, rev: 0 };
+      const rev0 = conf0.rev;
+      const reverter = () => setVtt((v) => {
+        const conf = confRef.current.get(tk.id);
+        if (!conf || conf.rev !== rev0) return v;
+        const atual = v.tokens.find((t) => t.id === tk.id);
+        if (!atual || atual.x !== x || atual.y !== y) return v;
+        return { ...v, tokens: v.tokens.map((t) => (t.id === tk.id ? { ...t, x: conf0.x, y: conf0.y } : t)) };
+      });
       let respondido = false;
       const timeout = window.setTimeout(() => {
         if (respondido) return;
