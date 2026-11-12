@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createHash } from "node:crypto";
 import { and, asc, eq, isNull, like, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
@@ -439,89 +440,226 @@ regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
   });
 });
 
-/**
- * GET /api/campaigns/:campaignId/regras/acervo/:bookId/diff
- * Prévia somente-leitura do que uma aplicação/sincronização faria:
- * itens novos, idênticos, conflitos por chave e elementos da campanha
- * preservados (ausentes no livro). Não grava nada.
- */
-regrasRouter.get("/acervo/:bookId/diff", requirePapel("mestre"), async (req, res) => {
-  const campaignId = req.params.campaignId;
-  const resultado = db.transaction((tx): { http: number; payload: Record<string, unknown> } => {
-    const [livro] = tx.select().from(ruleBooks)
-      .where(and(eq(ruleBooks.id, req.params.bookId), isNull(ruleBooks.excluidoEm))).all();
-    if (!livro) return { http: 404, payload: { erro: "Livro não encontrado ou excluído do Acervo" } };
+// ---------- Acervo → campanha: análise, prévia e aplicação ----------
 
-    const itens = tx.select().from(ruleBookItems)
-      .where(eq(ruleBookItems.bookId, livro.id))
-      .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key)).all();
+/** JSON canônico: chaves ordenadas recursivamente (sem falso conflito por ordem de propriedades). */
+function canonJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return "[" + v.map(canonJson).join(",") + "]";
+  const o = v as Record<string, unknown>;
+  return "{" + Object.keys(o).sort().map((k) => JSON.stringify(k) + ":" + canonJson(o[k])).join(",") + "}";
+}
 
-    const [rs] = tx.select().from(ruleSets)
-      .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).all();
-    const atuais = rs
-      ? tx.select().from(ruleDefinitions).where(eq(ruleDefinitions.ruleSetId, rs.id)).all()
-      : [];
-    const porChave = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
-    const chavesLivro = new Set(itens.map((i) => `${i.kind}:${i.key}`));
+/** Normalização semântica única: ignora id, timestamps e ordem de exibição. */
+function normElemento(e: { name?: unknown; category?: unknown; parentKey?: unknown; definition?: unknown }) {
+  const parsed = definicaoElementoSchema.safeParse(e.definition ?? {});
+  return {
+    name: typeof e.name === "string" ? e.name : "",
+    category: (e.category ?? null) as string | null,
+    parentKey: (e.parentKey ?? null) as string | null,
+    definition: parsed.success ? parsed.data : (e.definition ?? {}),
+  };
+}
 
-    let novos = 0, identicos = 0;
-    const conflitos: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] = [];
-    const invalidos: string[] = [];
-    for (const item of itens) {
-      const chave = `${item.kind}:${item.key}`;
-      const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
-      if (!parsed.success) { invalidos.push(chave); continue; }
-      const atual = porChave.get(chave);
-      if (!atual) { novos++; continue; }
-      const candidato = {
-        name: item.name, category: item.category ?? null,
-        parentKey: item.parentKey ?? null, definition: parsed.data,
-      };
-      const atualNorm = {
-        name: atual.name, category: atual.category ?? null,
-        parentKey: atual.parentKey ?? null,
-        definition: definicaoElementoSchema.parse(atual.definition ?? {}),
-      };
-      if (JSON.stringify(candidato) === JSON.stringify(atualNorm)) identicos++;
-      else conflitos.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name });
-    }
-    const preservadosNaCampanha = atuais.filter((e) => !chavesLivro.has(`${e.kind}:${e.key}`)).length;
+type ItemSnapshot = { kind: string; key: string; name: string; category: string | null; parentKey: string | null; definition: unknown; ordem?: number };
+type DecisaoGravada = { tipo: string; origem: string; campanha: string | null; em: number };
 
-    const [vinculo] = tx.select().from(campaignRuleBooks)
-      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
-
+/** Lê snapshot legado (array) ou v2 ({formato:2, itens, decisoes}) sem migração. */
+function lerSnapshotVinculo(snap: unknown): { itens: ItemSnapshot[]; decisoes: Record<string, DecisaoGravada> } {
+  if (Array.isArray(snap)) return { itens: snap as ItemSnapshot[], decisoes: {} };
+  if (snap && typeof snap === "object" && (snap as { formato?: number }).formato === 2) {
+    const o = snap as { itens?: unknown; decisoes?: unknown };
     return {
-      http: 200,
-      payload: {
-        ok: true,
-        livroId: livro.id,
-        versao: livro.versao,
-        versaoAplicada: vinculo?.appliedVersion ?? null,
-        totais: {
-          itensNoLivro: itens.length,
-          novos,
-          identicos,
-          conflitos: conflitos.length,
-          invalidos: invalidos.length,
-          preservadosNaCampanha,
-        },
-        conflitos,
-        semDiferencas: novos === 0 && conflitos.length === 0 && invalidos.length === 0
-          && (vinculo?.appliedVersion ?? null) === livro.versao,
-      },
+      itens: Array.isArray(o.itens) ? (o.itens as ItemSnapshot[]) : [],
+      decisoes: o.decisoes && typeof o.decisoes === "object" ? (o.decisoes as Record<string, DecisaoGravada>) : {},
     };
+  }
+  return { itens: [], decisoes: {} };
+}
+
+function snapshotItensCanon(itens: ItemSnapshot[]): string {
+  return canonJson(itens.map((i) => ({ kind: i.kind, key: i.key, ...normElemento(i), ordem: i.ordem ?? 0 })));
+}
+
+type Dbx = ReturnType<typeof getDb>;
+
+type RegraDef = typeof ruleDefinitions.$inferSelect;
+type Livro = typeof ruleBooks.$inferSelect;
+type ItemLivro = typeof ruleBookItems.$inferSelect;
+type Vinculo = typeof campaignRuleBooks.$inferSelect;
+type RuleSet = typeof ruleSets.$inferSelect;
+
+interface Classificacao {
+  chave: string;
+  tipo: "novo" | "identico" | "conflito" | "resolvido";
+  item: ItemLivro;
+}
+
+interface AnaliseAcervo {
+  http: number;
+  payload: Record<string, unknown>;
+  livro?: Livro;
+  itens?: ItemLivro[];
+  rs?: RuleSet;
+  mapa?: Map<string, RegraDef>;
+  classificacao?: Classificacao[];
+  decisoesGravadas?: Record<string, DecisaoGravada>;
+}
+
+/**
+ * Análise somente-leitura do que aplicar/sincronizar faria. Consultas diretas:
+ * nunca chama carregarRegras (que criaria ruleset), não grava nada, não
+ * incrementa versões, não registra auditoria. Se não houver ruleset ativo,
+ * o estado é simplesmente vazio.
+ */
+function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAcervo {
+  const [livro] = dbx.select().from(ruleBooks)
+    .where(and(eq(ruleBooks.id, bookId), isNull(ruleBooks.excluidoEm))).all();
+  if (!livro) return { http: 404, payload: { erro: "Livro não encontrado ou excluído do Acervo" } };
+
+  const itens = dbx.select().from(ruleBookItems)
+    .where(eq(ruleBookItems.bookId, livro.id))
+    .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key)).all();
+  const [rs] = dbx.select().from(ruleSets)
+    .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).all();
+  const atuais: RegraDef[] = rs
+    ? dbx.select().from(ruleDefinitions).where(eq(ruleDefinitions.ruleSetId, rs.id)).all()
+    : [];
+  const mapa = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
+  const [vinculo] = dbx.select().from(campaignRuleBooks)
+    .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
+  const { itens: antigosSnap, decisoes: decisoesGravadas } = lerSnapshotVinculo(vinculo?.snapshot);
+  const antigosPorChave = new Set(antigosSnap.map((i) => `${i.kind}:${i.key}`));
+
+  // chaves presentes em OUTROS livros vinculados à campanha (colisão entre livros)
+  const outrosVinculos = dbx.select().from(campaignRuleBooks)
+    .where(eq(campaignRuleBooks.campaignId, campaignId)).all()
+    .filter((v: Vinculo) => v.bookId !== livro.id);
+  const chavesOutrosLivros = new Set<string>();
+  for (const v of outrosVinculos) {
+    for (const i of lerSnapshotVinculo(v.snapshot).itens) chavesOutrosLivros.add(`${i.kind}:${i.key}`);
+  }
+
+  const classificacao: Classificacao[] = [];
+  const invalidosLista: string[] = [];
+  const pendentes: { chave: string; nomeNoLivro: string; nomeNaCampanha: string; tipo: string }[] = [];
+  let novos = 0, identicos = 0, conflitos = 0, resolvidos = 0;
+
+  for (const item of itens) {
+    const chave = `${item.kind}:${item.key}`;
+    const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
+    if (!parsed.success) { invalidosLista.push(chave); continue; }
+    const atual = mapa.get(chave);
+    const normLivro = { ...normElemento(item), definition: parsed.data };
+    const normCampanha = atual ? normElemento(atual) : null;
+    const origemCanon = canonJson(normLivro);
+    const campanhaCanon = atual ? canonJson(normCampanha) : null;
+    const antigo = antigosPorChave.has(chave);
+    const outroLivro = chavesOutrosLivros.has(chave);
+    const gravada = decisoesGravadas[chave];
+
+    if (atual && canonJson(normCampanha) === origemCanon) {
+      if (!antigo && outroLivro) {
+        // item novo para ESTE livro mas chave já usada por outro vínculo → conflito mesmo idêntico
+        const d = gravada?.tipo === "manter_campanha" && gravada.origem === origemCanon && gravada.campanha === campanhaCanon ? gravada : undefined;
+        if (d) { resolvidos++; } else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name, tipo: "colisao" }); }
+        classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
+      } else {
+        identicos++;
+        classificacao.push({ chave, tipo: "identico", item });
+      }
+    } else if (atual) {
+      const d = gravada?.tipo === "manter_campanha" && gravada.origem === origemCanon && gravada.campanha === campanhaCanon ? gravada : undefined;
+      if (d) resolvidos++;
+      else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name, tipo: "conteudo" }); }
+      classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
+    } else if (antigo) {
+      // aplicado antes por este livro, removido manualmente da campanha → preservar remoção?
+      const d = gravada?.tipo === "preservar_remocao" && gravada.origem === origemCanon && gravada.campanha === null ? gravada : undefined;
+      if (d) resolvidos++;
+      else { conflitos++; pendentes.push({ chave, nomeNoLivro: item.name, nomeNaCampanha: "(removido da campanha)", tipo: "preservar_remocao" }); }
+      classificacao.push({ chave, tipo: d ? "resolvido" : "conflito", item });
+    } else {
+      novos++;
+      classificacao.push({ chave, tipo: "novo", item });
+    }
+  }
+
+  // impressão digital determinística do estado relevante (book, itens, vínculos,
+  // ruleset e definições) — cobre updatedAt/excluidoEm porque soft delete e
+  // restauração alteram o estado sem necessariamente incrementar `versao`.
+  const fingerprint = canonJson({
+    livro: { id: livro.id, versao: livro.versao, updatedAt: livro.updatedAt, excluidoEm: livro.excluidoEm },
+    itens: itens.map((i) => {
+      const p = definicaoElementoSchema.safeParse(i.definition ?? {});
+      return { kind: i.kind, key: i.key, ...normElemento({ ...i, definition: p.success ? p.data : i.definition }), ordem: i.ordem };
+    }).sort((a, b) => `${a.kind}:${a.key}`.localeCompare(`${b.kind}:${b.key}`)),
+    vinculo: vinculo ? { id: vinculo.id, appliedVersion: vinculo.appliedVersion, snapshot: vinculo.snapshot, updatedAt: vinculo.updatedAt } : null,
+    outrosVinculos: outrosVinculos.map((v) => ({ id: v.id, appliedVersion: v.appliedVersion, snapshot: v.snapshot, updatedAt: v.updatedAt })),
+    ruleset: rs ? { id: rs.id, version: rs.version, updatedAt: rs.updatedAt, config: rs.config } : null,
+    defs: atuais.map((e) => ({ id: e.id, kind: e.kind, key: e.key, ...normElemento(e), updatedAt: e.updatedAt }))
+      .sort((a, b) => `${a.kind}:${a.key}`.localeCompare(`${b.kind}:${b.key}`)),
   });
-  res.status(resultado.http).json(resultado.payload);
+  const token = createHash("sha256").update(fingerprint).digest("hex");
+
+  const chavesLivro = new Set(itens.map((i) => `${i.kind}:${i.key}`));
+  const snapshotNovoItens: ItemSnapshot[] = itens.map((i) => ({
+    kind: i.kind, key: i.key, name: i.name,
+    category: i.category ?? null, parentKey: i.parentKey ?? null,
+    definition: i.definition ?? {}, ordem: i.ordem,
+  }));
+  const semDiferencas = novos === 0 && conflitos === 0 && invalidosLista.length === 0
+    && (vinculo?.appliedVersion ?? null) === livro.versao
+    && snapshotItensCanon(antigosSnap) === snapshotItensCanon(snapshotNovoItens)
+    && canonJson(decisoesGravadas) === "{}";
+
+  return {
+    http: 200,
+    livro, itens, rs, mapa, classificacao, decisoesGravadas,
+    payload: {
+      ok: true,
+      livroId: livro.id,
+      versao: livro.versao,
+      versaoAplicada: vinculo?.appliedVersion ?? null,
+      estadoToken: token,
+      totais: {
+        itensNoLivro: itens.length, novos, identicos,
+        conflitos, resolvidos, invalidos: invalidosLista.length,
+        preservadosNaCampanha: atuais.filter((e) => !chavesLivro.has(`${e.kind}:${e.key}`)).length,
+      },
+      conflitos: pendentes,
+      semDiferencas,
+    },
+  };
+}
+
+/** GET /api/campaigns/:campaignId/regras/acervo/:bookId/diff — prévia 100% sem efeitos colaterais. */
+regrasRouter.get("/acervo/:bookId/diff", requirePapel("mestre"), async (req, res) => {
+  const r = analisarAcervo(db, req.params.campaignId, req.params.bookId);
+  res.status(r.http).json(r.payload);
 });
 
+/** DELETE /api/campaigns/:campaignId/regras/acervo/:bookId/vinculo — remove apenas o registro de vínculo. */
+regrasRouter.delete("/acervo/:bookId/vinculo", requirePapel("mestre"), async (req, res) => {
+  const campaignId = req.params.campaignId;
+  const [vinculo] = await db.select().from(campaignRuleBooks)
+    .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, req.params.bookId))).all();
+  if (!vinculo) { res.status(404).json({ erro: "Vínculo não encontrado" }); return; }
+  await db.delete(campaignRuleBooks).where(eq(campaignRuleBooks.id, vinculo.id));
+  await audit(req, "biblioteca.livro.vinculo_removido", { bookId: req.params.bookId });
+  res.json({ ok: true });
+});
+
+const TIPOS_DECISAO_ACERVO = ["manter_campanha", "usar_livro", "preservar_remocao"] as const;
 const aplicarLivroSchema = z.object({
-  decisoes: z.record(z.string(), z.enum(["manter_campanha", "usar_livro"])).default({}),
+  decisoes: z.record(z.string(), z.enum(TIPOS_DECISAO_ACERVO)).default({}),
+  estadoToken: z.string().max(128).optional(),
 });
 
 /**
  * POST /api/campaigns/:campaignId/regras/acervo/:bookId/aplicar
- * Copia o conteúdo do livro para o ruleset ativo. Conflitos nunca são
- * sobrescritos sem decisão explícita; itens removidos do livro são preservados.
+ * Transacional: relê tudo, confere impressão digital da prévia (se enviada),
+ * recalcula conflitos, valida o conjunto EXATO de decisões, e só então grava.
  */
 regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req, res) => {
   const body = aplicarLivroSchema.safeParse(req.body ?? {});
@@ -531,160 +669,188 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
   }
   const campaignId = req.params.campaignId;
   const decisoes = body.data.decisoes;
+  const estadoTokenEnviado = body.data.estadoToken;
 
-  // Toda a leitura de decisão + escrita acontece DENTRO da mesma transação:
-  // livro, itens, ruleset ativo, elementos atuais, vínculo e checagem de
-  // no-op são relidos na hora — nenhuma decisão usa snapshot pré-transação.
-  // O callback é síncrono (better-sqlite3 serializa a transação), então
-  // aplicações concorrentes não intercalam leitura e escrita.
   const resultado = db.transaction((tx): { http: number; payload: Record<string, unknown> } => {
-    const [livro] = tx.select().from(ruleBooks)
-      .where(and(eq(ruleBooks.id, req.params.bookId), isNull(ruleBooks.excluidoEm))).all();
-    if (!livro) return { http: 404, payload: { erro: "Livro não encontrado ou excluído do Acervo" } };
-
-    const itens = tx.select().from(ruleBookItems)
-      .where(eq(ruleBookItems.bookId, livro.id))
-      .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key)).all();
-    const incompatíveis = itens.filter((item) => !TIPOS_REGRA.includes(item.kind as (typeof TIPOS_REGRA)[number]));
+    const a = analisarAcervo(tx as unknown as Dbx, campaignId, req.params.bookId);
+    if (a.http !== 200) return { http: a.http, payload: a.payload };
+    // validação dura idêntica à anterior: kinds não suportados ou definições
+    // inválidas bloqueiam a aplicação inteira (422), nunca aplicação parcial
+    const itens = a.itens ?? [];
+    const incompatíveis = itens.filter((i) => !TIPOS_REGRA.includes(i.kind as (typeof TIPOS_REGRA)[number]));
     if (incompatíveis.length) {
-      return {
-        http: 422,
-        payload: {
-          erro: "O livro contém tipos que a biblioteca de campanha ainda não suporta",
-          tipos: [...new Set(incompatíveis.map((i) => i.kind))],
-        },
-      };
+      return { http: 422, payload: { erro: "O livro contém tipos que a biblioteca de campanha ainda não suporta", tipos: [...new Set(incompatíveis.map((i) => i.kind))] } };
     }
-    const preparados = itens.map((item) => ({
-      item,
-      parsed: definicaoElementoSchema.safeParse(item.definition ?? {}),
-    }));
-    const invalidos = preparados.filter((p) => !p.parsed.success);
-    if (invalidos.length) {
+    const invalidosDetalhe = itens
+      .map((i) => ({ chave: `${i.kind}:${i.key}`, parsed: definicaoElementoSchema.safeParse(i.definition ?? {}) }))
+      .filter((x) => !x.parsed.success);
+    if (invalidosDetalhe.length) {
       return {
         http: 422,
         payload: {
           erro: "O livro contém definições incompatíveis com as regras da campanha",
-          itens: invalidos.map(({ item, parsed }) => ({
-            chave: `${item.kind}:${item.key}`,
-            detalhes: parsed.success ? [] : parsed.error.issues,
-          })),
+          itens: invalidosDetalhe.map((x) => ({ chave: x.chave, detalhes: x.parsed.success ? [] : x.parsed.error.issues })),
         },
       };
     }
-
-    // ruleset ativo — relido dentro da transação (pode ter sido trocado)
-    let [rs] = tx.select().from(ruleSets)
-      .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).all();
-    if (!rs) {
-      const agoraRs = new Date();
-      const rsId = crypto.randomUUID();
-      tx.insert(ruleSets).values({
-        id: rsId, campaignId, name: "Regras da campanha", version: 1, isActive: true,
-        config: configRegrasSchema.parse({}), createdAt: agoraRs, updatedAt: agoraRs,
-      }).run();
-      [rs] = tx.select().from(ruleSets).where(eq(ruleSets.id, rsId)).all();
+    const tokenAtual = a.payload.estadoToken as string;
+    if (estadoTokenEnviado && estadoTokenEnviado !== tokenAtual) {
+      return { http: 409, payload: { erro: "O estado mudou desde a prévia — gere uma nova prévia", estadoToken: tokenAtual } };
     }
-    const ruleSetId = rs!.id;
-
-    const existentes = tx.select().from(ruleDefinitions)
-      .where(eq(ruleDefinitions.ruleSetId, ruleSetId)).all();
-    const porChave = new Map(existentes.map((e) => [`${e.kind}:${e.key}`, e]));
-    const conflitos = preparados.flatMap(({ item, parsed }) => {
-      if (!parsed.success) return [];
-      const chave = `${item.kind}:${item.key}`;
-      const atual = porChave.get(chave);
-      if (!atual) return [];
-      const candidato = {
-        name: item.name, category: item.category ?? null,
-        parentKey: item.parentKey ?? null, definition: parsed.data,
-      };
-      const atualNormalizado = {
-        name: atual.name, category: atual.category ?? null,
-        parentKey: atual.parentKey ?? null,
-        definition: definicaoElementoSchema.parse(atual.definition ?? {}),
-      };
-      if (JSON.stringify(candidato) === JSON.stringify(atualNormalizado)) return [];
-      return [{
-        chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name,
-        decisao: decisoes[chave] ?? null,
-      }];
-    });
-    const semDecisao = conflitos.filter((c) => !c.decisao);
-    if (semDecisao.length) {
+    const pendentes = (a.classificacao ?? []).filter((c) => c.tipo === "conflito");
+    const chavesPendentes = new Set(pendentes.map((c) => c.chave));
+    // chaves já resolvidas por decisão persistida também aceitam a mesma decisão
+    // (retry idempotente não pode virar "chave extra")
+    const chavesAceitas = new Set([
+      ...chavesPendentes,
+      ...(a.classificacao ?? []).filter((c) => c.tipo === "resolvido").map((c) => c.chave),
+    ]);
+    const extras = Object.keys(decisoes).filter((k) => !chavesAceitas.has(k));
+    const faltantes = [...chavesPendentes].filter((k) => !decisoes[k]);
+    if (extras.length || faltantes.length) {
       return {
         http: 409,
         payload: {
-          erro: "Há elementos com a mesma chave na campanha. Escolha qual versão manter.",
-          detalhes: { conflitos: semDecisao, opcoes: ["manter_campanha", "usar_livro"] },
+          erro: "Decisões de sincronização inválidas",
+          detalhes: {
+            conflitos: pendentes.map((c) => ({
+              chave: c.chave, nomeNoLivro: c.item.name,
+              nomeNaCampanha: a.mapa?.get(c.chave)?.name ?? "(ausente)",
+            })),
+            chavesExtras: extras, chavesFaltantes: faltantes,
+            opcoes: [...TIPOS_DECISAO_ACERVO],
+          },
         },
       };
     }
-
-    const snapshot = itens.map((item) => ({
-      kind: item.kind, key: item.key, name: item.name,
-      category: item.category ?? null, parentKey: item.parentKey ?? null,
-      definition: item.definition ?? {}, ordem: item.ordem,
-    }));
-    const [vinculoExistente] = tx.select().from(campaignRuleBooks)
-      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
-    if (vinculoExistente && vinculoExistente.appliedVersion === livro.versao && JSON.stringify(vinculoExistente.snapshot) === JSON.stringify(snapshot)) {
-      return { http: 200, payload: { ok: true, semAlteracao: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos: 0, atualizados: 0, mantidos: 0 } };
+    // decisão compatível com o tipo de conflito
+    for (const c of pendentes) {
+      const d = decisoes[c.chave];
+      const ausente = !a.mapa?.get(c.chave);
+      if (ausente && d === "manter_campanha") {
+        return { http: 409, payload: { erro: "Decisão incompatível com o conflito", chave: c.chave } };
+      }
+      if (!ausente && d === "preservar_remocao") {
+        return { http: 409, payload: { erro: "Decisão incompatível com o conflito", chave: c.chave } };
+      }
     }
+
+    const livro = a.livro!; const rs = a.rs!; const mapa = a.mapa!;
     const t = new Date();
-    const atuais = tx.select().from(ruleDefinitions)
-      .where(eq(ruleDefinitions.ruleSetId, ruleSetId)).all();
-    const mapa = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
-    let inseridos = 0, atualizados = 0, mantidos = 0;
-    for (const { item, parsed } of preparados) {
+    let inseridos = 0, atualizados = 0, mantidos = 0, preservados = 0;
+    const novasDecisoes: Record<string, DecisaoGravada> = { ...(a.decisoesGravadas ?? {}) };
+
+    // revalida decisões antigas: só sobrevivem se origem e estado da campanha seguem iguais
+    for (const [chave, d] of Object.entries(novasDecisoes)) {
+      const item = itens.find((i) => `${i.kind}:${i.key}` === chave);
+      const def = mapa.get(chave);
+      if (!item) { delete novasDecisoes[chave]; continue; }
+      const p = definicaoElementoSchema.safeParse(item.definition ?? {});
+      if (!p.success) { delete novasDecisoes[chave]; continue; }
+      const origem = canonJson({ ...normElemento({ ...item, definition: p.data }), definition: p.data });
+      const campanha = def ? canonJson(normElemento(def)) : null;
+      const tipoOk = d.tipo === "preservar_remocao" ? campanha === null
+        : d.tipo === "manter_campanha" ? campanha !== null : false;
+      if (d.origem !== origem || d.campanha !== campanha || !tipoOk) delete novasDecisoes[chave];
+    }
+
+    for (const c of a.classificacao ?? []) {
+      const { item } = c;
+      const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
       if (!parsed.success) continue;
-      const chave = `${item.kind}:${item.key}`;
+      const chave = c.chave;
       const atual = mapa.get(chave);
-      const decisao = decisoes[chave];
+      const normLivro = { ...normElemento(item), definition: parsed.data };
+      const origemCanon = canonJson(normLivro);
+      const campanhaCanon = atual ? canonJson(normElemento(atual)) : null;
       const valores = {
         name: item.name, category: item.category ?? null,
         parentKey: item.parentKey ?? null, definition: parsed.data, updatedAt: t,
       };
-      if (!atual) {
+
+      if (c.tipo === "identico" || c.tipo === "resolvido") continue;
+      if (c.tipo === "novo") {
         tx.insert(ruleDefinitions).values({
-          id: crypto.randomUUID(), ruleSetId,
+          id: crypto.randomUUID(), ruleSetId: rs.id,
           kind: item.kind, key: item.key, ...valores, createdAt: t,
         }).run();
         inseridos++;
-      } else if (decisao === "manter_campanha") {
-        mantidos++;
+        continue;
+      }
+      const decisao = decisoes[chave];
+      if (decisao === "manter_campanha" || decisao === "preservar_remocao") {
+        novasDecisoes[chave] = {
+          tipo: decisao === "preservar_remocao" ? "preservar_remocao" : "manter_campanha",
+          origem: origemCanon,
+          campanha: decisao === "preservar_remocao" ? null : campanhaCanon,
+          em: t.getTime(),
+        };
+        if (decisao === "manter_campanha") mantidos++; else preservados++;
+        continue;
+      }
+      // usar_livro
+      if (!atual) {
+        tx.insert(ruleDefinitions).values({
+          id: crypto.randomUUID(), ruleSetId: rs.id,
+          kind: item.kind, key: item.key, ...valores, createdAt: t,
+        }).run();
+        inseridos++;
       } else {
-        const mudou = atual.name !== valores.name
+        const mudou = canonJson(normElemento(atual)) !== origemCanon
+          || atual.name !== valores.name
           || (atual.category ?? null) !== valores.category
-          || (atual.parentKey ?? null) !== valores.parentKey
-          || JSON.stringify(definicaoElementoSchema.parse(atual.definition ?? {})) !== JSON.stringify(valores.definition);
+          || (atual.parentKey ?? null) !== valores.parentKey;
         if (mudou) {
           tx.update(ruleDefinitions).set(valores).where(eq(ruleDefinitions.id, atual.id)).run();
           atualizados++;
         }
       }
     }
-    const [vinculo] = tx.select().from(campaignRuleBooks)
+
+    const snapshot = {
+      formato: 2 as const,
+      itens: itens.map((i) => ({
+        kind: i.kind, key: i.key, name: i.name,
+        category: i.category ?? null, parentKey: i.parentKey ?? null,
+        definition: i.definition ?? {}, ordem: i.ordem,
+      })),
+      decisoes: novasDecisoes,
+    };
+    const [vinculoAtual] = tx.select().from(campaignRuleBooks)
       .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
-    if (vinculo) {
-      tx.update(campaignRuleBooks).set({
-        appliedVersion: livro.versao, snapshot, appliedAt: t, updatedAt: t,
-      }).where(eq(campaignRuleBooks.id, vinculo.id)).run();
-    } else {
-      tx.insert(campaignRuleBooks).values({
-        id: crypto.randomUUID(), campaignId, bookId: livro.id,
-        appliedVersion: livro.versao, snapshot, appliedAt: t, createdAt: t, updatedAt: t,
-      }).run();
+    const snapAntigo = vinculoAtual ? lerSnapshotVinculo(vinculoAtual.snapshot) : null;
+    const semAlteracao = !!vinculoAtual
+      && vinculoAtual.appliedVersion === livro.versao
+      && snapAntigo !== null
+      && snapshotItensCanon(snapAntigo.itens) === snapshotItensCanon(snapshot.itens)
+      && canonJson(snapAntigo.decisoes) === canonJson(novasDecisoes)
+      && inseridos + atualizados + mantidos + preservados === 0;
+    if (!semAlteracao) {
+      if (vinculoAtual) {
+        tx.update(campaignRuleBooks).set({
+          appliedVersion: livro.versao, snapshot, appliedAt: t, updatedAt: t,
+        }).where(eq(campaignRuleBooks.id, vinculoAtual.id)).run();
+      } else {
+        tx.insert(campaignRuleBooks).values({
+          id: crypto.randomUUID(), campaignId, bookId: livro.id,
+          appliedVersion: livro.versao, snapshot, appliedAt: t, createdAt: t, updatedAt: t,
+        }).run();
+      }
     }
     if (inseridos + atualizados > 0) {
       const [rulesetAtual] = tx.select({ version: ruleSets.version }).from(ruleSets)
-        .where(eq(ruleSets.id, ruleSetId)).all();
+        .where(eq(ruleSets.id, rs.id)).all();
       tx.update(ruleSets).set({ version: (rulesetAtual?.version ?? 1) + 1, updatedAt: t })
-        .where(eq(ruleSets.id, ruleSetId)).run();
+        .where(eq(ruleSets.id, rs.id)).run();
     }
     return {
       http: 200,
-      payload: { ok: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos, atualizados, mantidos },
+      payload: {
+        ok: true, livroId: livro.id, versaoAplicada: livro.versao,
+        inseridos, atualizados, mantidos, preservados,
+        semAlteracao: semAlteracao || undefined,
+        estadoToken: tokenAtual,
+      },
     };
   });
 
