@@ -292,13 +292,21 @@ try {
       cookie: cenario.cookieMestre, body: { conteudo: "conteúdo revisado RT" },
     });
     const toasts2 = pageU.locator(".notificacao-info", { hasText: "Nova publicação: Novidade em tempo real" });
-    await pageU.waitForTimeout(800);
-    t("nova revisão gera novo toast", await toasts2.count() >= 1);
+    // O primeiro toast ainda deve estar visível; a edição precisa criar um segundo.
+    await pageU.waitForFunction(() =>
+      [...document.querySelectorAll(".notificacao-info")].filter((el) =>
+        el.textContent?.includes("Nova publicação: Novidade em tempo real")
+      ).length === 2,
+      null,
+      { timeout: 4000 },
+    ).catch(() => {});
+    const toastsAposRevisao = await toasts2.count();
+    t("nova revisão gera segundo toast", toastsAposRevisao === 2, `n=${toastsAposRevisao}`);
 
     // despublicar não gera toast
     await req(BASE, "POST", `/admin/novidades/${pubRT.json.novidade.id}/despublicar`, { cookie: cenario.cookieMestre });
     await pageU.waitForTimeout(800);
-    t("despublicar não gera toast", await toasts2.count() <= 2, `n=${await toasts2.count()}`);
+    t("despublicar não gera toast", await toasts2.count() === toastsAposRevisao && toastsAposRevisao === 2, `n=${await toasts2.count()}`);
     await shot(pageU, "06-tempo-real-desktop");
     t("sem erros de console (RT desktop)", errosU.length === 0, errosU.slice(0, 2).join(" | "));
     await ctxU.close();

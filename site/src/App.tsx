@@ -102,7 +102,9 @@ function Shell() {
       const chave = `${n.id}:${n.revisao}`;
       if (vistos.has(chave)) return;
       vistos.add(chave);
-      notificar(`Nova publicação: ${n.titulo}`, "info");
+      // A deduplicação id:revisão acima é a autoridade deste evento;
+      // não reaplicar a janela global baseada apenas no texto do toast.
+      notificar(`Nova publicação: ${n.titulo}`, "info", { deduplicar: false });
       atualizarNaoLidas();
     };
     const aoConectar = () => atualizarNaoLidas();
