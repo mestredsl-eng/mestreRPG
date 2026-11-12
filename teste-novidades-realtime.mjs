@@ -127,13 +127,19 @@ try {
 
   sec("10. Falhas não emitem");
   const colA8 = coletar(sA, "novidade:publicada");
+  const totalAntes = comDb(BANCO, (db) => db.prepare("select count(*) c from novidades").get().c);
+  const estadoAntes = comDb(BANCO, (db) => db.prepare("select estado from novidades where id=?").get(pubId)?.estado);
   const bad = await req(BASE, "POST", "/admin/novidades", { cookie: M, body: { titulo: "" } }); // 400
   const nf = await req(BASE, "POST", `/admin/novidades/${crypto.randomUUID()}/publicar`, { cookie: M }); // 404
   const negado = await req(BASE, "POST", "/admin/novidades", { cookie: A, body: { titulo: "x", estado: "publicada" } }); // 403
-  await colA8;
-  t("400/404/403 não emitem evento", bad.status === 400 && nf.status === 404 && negado.status === 403);
-  // a janela de coleta já retornou 0 eventos acima — confirma explicitamente:
-  // (colA8 resolveu com a lista; verificamos que estava vazia via nova coleta)
+  const eventosNegados = await colA8;
+  t("400/404/403 não emitem evento", bad.status === 400 && nf.status === 404 && negado.status === 403
+    && eventosNegados.length === 0,
+    JSON.stringify({ status400: bad.status, status404: nf.status, status403: negado.status, eventosRecebidos: eventosNegados }));
+  t("requisições rejeitadas não alteram publicações",
+    comDb(BANCO, (db) => db.prepare("select count(*) c from novidades").get().c) === totalAntes
+    && comDb(BANCO, (db) => db.prepare("select estado from novidades where id=?").get(pubId)?.estado) === estadoAntes);
+  // janela independente confirma que o 404 em publicar também não emite:
   const colA8b = coletar(sA, "novidade:publicada");
   await req(BASE, "POST", `/admin/novidades/${crypto.randomUUID()}/publicar`, { cookie: M });
   t("404 em publicar não emite", (await colA8b).length === 0);
