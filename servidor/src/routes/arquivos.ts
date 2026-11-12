@@ -41,6 +41,21 @@ function extensaoSegura(nome: string): string {
   return ext.slice(0, 10);
 }
 
+/** Valida assinatura real (magic bytes) dos formatos de imagem aceitos. */
+function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
+  const b = buf;
+  switch (ext) {
+    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+    case "jpg":
+    case "jpeg": return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+    case "gif": return b.length > 6 && b.toString("ascii", 0, 3) === "GIF";
+    case "webp": return b.length > 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP";
+    case "bmp": return b.length > 2 && b[0] === 0x42 && b[1] === 0x4d;
+    case "ico": return b.length > 4 && b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0;
+    default: return true;
+  }
+}
+
 function formatoPermitido(ext: string, extras: string[]): boolean {
   const e = ext.toLowerCase();
   if (EXT_BLOQUEADAS.has(e)) return false;
@@ -209,6 +224,12 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
   if (!formatoPermitido(ext, extras)) { res.status(415).json({ erro: `Formato .${ext || "?"} não permitido` }); return; }
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) { res.status(400).json({ erro: "Arquivo vazio" }); return; }
   if (buffer.length > maxMb * 1024 * 1024) { res.status(413).json({ erro: `Arquivo excede o limite de ${maxMb} MB` }); return; }
+
+  // conteúdo real: para extensões de imagem, valida a assinatura (magic bytes)
+  // — impede renomear executável/script como .png para burlar a extensão.
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"].includes(ext) && !assinaturaImagemOk(ext, buffer)) {
+    res.status(415).json({ erro: "Conteúdo do arquivo não corresponde a uma imagem válida" }); return;
+  }
 
   const mimeType = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
   if (MIMES_PERIGOSOS.test(mimeType)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }

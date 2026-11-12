@@ -371,6 +371,8 @@ export const sessions = sqliteTable("sessions", {
   endedAt: integer("ended_at", { mode: "timestamp_ms" }),
   status: text("status").notNull().default("ativa"), // ativa|pausada|encerrada
   timerState: text("timer_state", { mode: "json" }), // temporizador sincronizado pelo servidor (Etapa 7)
+  // Mesa virtual (mapa + tokens) — JSON por sessão, mesmo padrão do timerState
+  vttState: text("vtt_state", { mode: "json" }),
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),

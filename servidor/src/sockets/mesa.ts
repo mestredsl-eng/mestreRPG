@@ -3,7 +3,7 @@ import type { Server as SocketIOServer, Socket } from "socket.io";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
+  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions, files,
 } from "../db/schema.js";
 import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
@@ -183,6 +183,10 @@ function socket_handlers(
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       socket.join(`sessao:${sessionId}`);
+      // estado VTT fresco após o join: cobre a janela em que uma atualização
+      // foi persistida/emitida entre a leitura do ctx e a entrada na sala
+      const [vttFresco] = await db.select({ vttState: sessions.vttState }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      socket.emit("mesa:vtt", { sessionId, vtt: vttDe(vttFresco ?? ctx.sessao) });
       const [t] = await db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1);
       const podeEnviar = ctx.papel !== "espectador" || permissoesDe(ctx.membership).enviarMensagens === true;
       cb?.({
@@ -205,6 +209,186 @@ function socket_handlers(
       socket.leave(`sessao:${sessionId}`);
       void emitirPresenca(sessionId);
       cb?.({ ok: true });
+    });
+
+    // ---------- mesa virtual: mapa + tokens (Etapa 1) ----------
+    // Estado persistido em sessions.vtt_state (JSON) — mesmo padrão do
+    // temporizador. O servidor é autoridade: valida papel, associação do
+    // token e coordenadas antes de gravar; emite `mesa:vtt` com o estado
+    // completo somente após a persistência. Reconexão recebe o estado via
+    // callback de `mesa:entrar` (sessao.vttState).
+
+    interface TokenVtt {
+      id: string; nome: string; cor: string; x: number; y: number;
+      personagemId?: string | null; userId?: string | null; ativo: boolean;
+    }
+    interface VttState { mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null; tokens: TokenVtt[] }
+    const vttVazio = (): VttState => ({ mapa: null, tokens: [] });
+    const vttDe = (s: { vttState: unknown } | null | undefined): VttState => {
+      const v = s?.vttState as Partial<VttState> | null;
+      return { mapa: v?.mapa ?? null, tokens: Array.isArray(v?.tokens) ? v.tokens : [] };
+    };
+    const emitirVtt = async (sessionId: string, vtt: VttState) => {
+      io.to(`sessao:${sessionId}`).emit("mesa:vtt", { sessionId, vtt });
+    };
+    const posicaoValida = (x: unknown, y: unknown): x is number =>
+      typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1
+      && typeof y === "number" && Number.isFinite(y) && y >= 0 && y <= 1;
+    const corValida = (c: unknown): c is string =>
+      typeof c === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(c);
+
+    /** Verifica se o token pertence ao usuário (userId direto ou personagem da membership dele). */
+    async function tokenPertenceAoUsuario(sessionId: string, token: TokenVtt, userId: string): Promise<boolean> {
+      if (token.userId && token.userId === userId) return true;
+      if (!token.personagemId) return false;
+      const [s] = await db.select({ campaignId: sessions.campaignId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      if (!s) return false;
+      const [m] = await db.select({ id: memberships.id }).from(memberships)
+        .where(and(eq(memberships.campaignId, s.campaignId), eq(memberships.userId, userId), eq(memberships.status, "ativo"))).limit(1);
+      if (!m) return false;
+      const [ch] = await db.select({ id: characters.id }).from(characters)
+        .where(and(eq(characters.id, token.personagemId), eq(characters.membershipId, m.id))).limit(1);
+      return !!ch;
+    }
+
+    /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
+    socket.on("mesa:vtt:mapa", async (payload: {
+      sessionId?: string; acao?: string;
+      mapa?: { fileId?: string; nome?: string; largura?: number; altura?: number } | null;
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      const vtt = vttDe(ctx.sessao);
+      if (payload.acao === "remover") {
+        vtt.mapa = null;
+      } else if (payload.acao === "definir") {
+        const m = payload.mapa;
+        if (!m || typeof m.fileId !== "string" || !m.fileId || m.fileId.length > 100) {
+          cb?.({ ok: false, erro: "Mapa inválido" }); return;
+        }
+        // o arquivo precisa existir na biblioteca DESTA campanha, ser imagem
+        // aprovada — impede apontar para arquivo de outra campanha ou tipo arbitrário
+        const [arq] = await db.select({ id: files.id, mimeType: files.mimeType, fileName: files.fileName, status: files.status })
+          .from(files)
+          .where(and(eq(files.id, m.fileId), eq(files.campaignId, ctx.sessao.campaignId))).limit(1);
+        if (!arq || arq.status !== "aprovado") { cb?.({ ok: false, erro: "Imagem de mapa não encontrada" }); return; }
+        const ehImagem = (arq.mimeType ?? "").startsWith("image/")
+          || /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(arq.fileName);
+        if (!ehImagem) { cb?.({ ok: false, erro: "O mapa precisa ser uma imagem" }); return; }
+        vtt.mapa = {
+          fileId: m.fileId,
+          nome: typeof m.nome === "string" ? m.nome.slice(0, 140) : "Mapa",
+          largura: typeof m.largura === "number" && Number.isFinite(m.largura) ? m.largura : undefined,
+          altura: typeof m.altura === "number" && Number.isFinite(m.altura) ? m.altura : undefined,
+        };
+      } else {
+        cb?.({ ok: false, erro: "Ação inválida" }); return;
+      }
+      await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+      agendarAutosave(ctx.sessao.campaignId);
+      await emitirVtt(sessionId, vtt);
+      cb?.({ ok: true, vtt });
+    });
+
+    /** mesa:vtt:token {sessionId, acao, token} — mestre tudo; jogador só move o próprio. */
+    socket.on("mesa:vtt:token", async (payload: {
+      sessionId?: string; acao?: string;
+      token?: Partial<TokenVtt> & { id?: string };
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      const vtt = vttDe(ctx.sessao);
+      const t = payload.token ?? {};
+      const acao = payload.acao;
+      const ehMestre = ctx.papel === "mestre";
+      const idx = typeof t.id === "string" ? vtt.tokens.findIndex((x) => x.id === t.id) : -1;
+      const existente = idx >= 0 ? vtt.tokens[idx] : undefined;
+
+      if (acao === "criar") {
+        if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre cria tokens" }); return; }
+        // idempotência: se o cliente reenviou um criar com id já existente, não duplica
+        if (typeof t.id === "string" && vtt.tokens.some((x) => x.id === t.id)) {
+          cb?.({ ok: true, vtt, idempotente: true }); return;
+        }
+        if (!posicaoValida(t.x, t.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+        const nome = typeof t.nome === "string" && t.nome.trim() ? t.nome.trim().slice(0, 60) : "Token";
+        const cor = corValida(t.cor) ? t.cor : "#888888";
+        let userId: string | null = null;
+        if (typeof t.userId === "string" && t.userId) {
+          const [mem] = await db.select({ id: memberships.id }).from(memberships)
+            .where(and(eq(memberships.campaignId, ctx.sessao.campaignId), eq(memberships.userId, t.userId), eq(memberships.status, "ativo"))).limit(1);
+          if (!mem) { cb?.({ ok: false, erro: "Usuário não é membro ativo" }); return; }
+          userId = t.userId;
+        }
+        let personagemId: string | null = null;
+        if (typeof t.personagemId === "string" && t.personagemId) {
+          const [ch] = await db.select({ id: characters.id }).from(characters)
+            .where(and(eq(characters.id, t.personagemId), eq(characters.campaignId, ctx.sessao.campaignId))).limit(1);
+          if (!ch) { cb?.({ ok: false, erro: "Personagem não encontrado na campanha" }); return; }
+          personagemId = t.personagemId;
+        }
+        const idToken = typeof t.id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(t.id) ? t.id : randomUUID();
+        const novo: TokenVtt = {
+          id: idToken, nome, cor, x: t.x as number, y: t.y as number,
+          userId, personagemId, ativo: t.ativo !== false,
+        };
+        vtt.tokens.push(novo);
+      } else if (acao === "atualizar" || acao === "mover") {
+        if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+        if (!posicaoValida(t.x ?? existente.x, t.y ?? existente.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+        if (ehMestre) {
+          if (t.nome !== undefined) existente.nome = String(t.nome).slice(0, 60) || existente.nome;
+          if (t.cor !== undefined && corValida(t.cor)) existente.cor = t.cor;
+          if (t.ativo !== undefined) existente.ativo = !!t.ativo;
+          if (t.userId !== undefined || t.personagemId !== undefined) {
+            // reatribuição de dono: valida membro/personagem da campanha
+            if (t.userId !== undefined) {
+              if (t.userId === null) existente.userId = null;
+              else {
+                const [mem] = await db.select({ id: memberships.id }).from(memberships)
+                  .where(and(eq(memberships.campaignId, ctx.sessao.campaignId), eq(memberships.userId, t.userId), eq(memberships.status, "ativo"))).limit(1);
+                if (!mem) { cb?.({ ok: false, erro: "Usuário não é membro ativo" }); return; }
+                existente.userId = t.userId;
+              }
+            }
+            if (t.personagemId !== undefined) {
+              if (t.personagemId === null) existente.personagemId = null;
+              else {
+                const [ch] = await db.select({ id: characters.id }).from(characters)
+                  .where(and(eq(characters.id, t.personagemId), eq(characters.campaignId, ctx.sessao.campaignId))).limit(1);
+                if (!ch) { cb?.({ ok: false, erro: "Personagem não encontrado" }); return; }
+                existente.personagemId = t.personagemId;
+              }
+            }
+          }
+        } else {
+          // jogador: somente posição do próprio token — nada mais
+          if (!(await tokenPertenceAoUsuario(sessionId, existente, u.id))) {
+            cb?.({ ok: false, erro: "Token não pertence a você" }); return;
+          }
+        }
+        existente.x = t.x ?? existente.x;
+        existente.y = t.y ?? existente.y;
+      } else if (acao === "remover") {
+        if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre remove tokens" }); return; }
+        if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+        vtt.tokens.splice(idx, 1);
+      } else {
+        cb?.({ ok: false, erro: "Ação inválida" }); return;
+      }
+      await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+      agendarAutosave(ctx.sessao.campaignId);
+      await emitirVtt(sessionId, vtt);
+      cb?.({ ok: true, vtt });
     });
 
     // ---------- chat / declarações ----------
