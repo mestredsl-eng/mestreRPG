@@ -32,6 +32,8 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const [verArquivados, setVerArquivados] = useState(false);
+  const [busca, setBusca] = useState("");
+  const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
@@ -78,6 +80,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
   };
 
   const modelosPublicados = modelos.filter((m) => m.isActive && m.versaoAtual?.publishedAt);
+
+  // Busca e filtro de status — somente sobre a lista já autorizada
+  // (ativos OU arquivados, nunca misturados: o backend já separa).
+  const q = busca.trim().toLowerCase();
+  const visiveis = personagens.filter((p) =>
+    (!filtroStatus || p.status === filtroStatus) &&
+    (!q || p.name.toLowerCase().includes(q) || (p.displayName ?? "").toLowerCase().includes(q) || (p.dono ?? "").toLowerCase().includes(q))
+  );
 
   if (selecionado) {
     return (
@@ -143,12 +153,22 @@ export default function Personagens({ campaignId, campanha }: Props) {
         <section className="cartao"><p>{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</p></section>
       ) : (
         <section className="cartao">
+          <div className="linha filtros-lista">
+            <input type="search" placeholder={verArquivados ? "Buscar arquivado…" : "Buscar personagem…"} aria-label="Buscar personagem" value={busca} onChange={(e) => setBusca(e.target.value)} />
+            <select aria-label="Filtrar por status" value={filtroStatus} onChange={(e) => setFiltroStatus(e.target.value)}>
+              <option value="">Todos os status</option>
+              {Object.entries(STATUS_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          {visiveis.length === 0 ? (
+            <p className="meta">Nenhum personagem corresponde à busca.</p>
+          ) : (
           <table className="tabela">
             <thead>
               <tr><th>Nome</th><th>Dono</th><th>Status</th><th>Atualizado</th></tr>
             </thead>
             <tbody>
-              {personagens.map((p) => (
+              {visiveis.map((p) => (
                 <tr key={p.id} className={`clicavel${p.status === "arquivado" ? " arquivado" : ""}`} onClick={() => void abrir(p.id)}>
                   <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
                   <td>{p.displayName ?? p.dono}</td>
@@ -163,6 +183,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
               ))}
             </tbody>
           </table>
+          )}
         </section>
       )}
     </>

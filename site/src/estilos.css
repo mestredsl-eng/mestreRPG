@@ -248,6 +248,27 @@ tr.arquivado td {
   opacity: 0.6;
 }
 
+/* Linha de busca/filtros das listagens — ocupa a largura disponível
+   e quebra para a linha seguinte em telas estreitas. */
+.filtros-lista {
+  margin: 0.5rem 0 0.75rem;
+}
+.filtros-lista input[type="search"] {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.filtros-lista select,
+.filtros-lista input[type="date"] {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.filtros-lista .filtro-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
 .acoes {
   white-space: nowrap;
 }
