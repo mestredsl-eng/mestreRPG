@@ -467,6 +467,116 @@ try {
     t("saldo final inalterado", saldoDb(contaJ1) === saldoAntes, `${saldoAntes} vs ${saldoDb(contaJ1)}`);
   }
 
+  // ===== 13d. Idempotência cruzada — requestId estornado em qualquer modalidade =====
+  sec("13d. requestId estornado bloqueado em compra paga e venda (mesmo personagem)");
+  {
+    const rid = "op-cruzado-estornado";
+    const ridSetup = "op-setup-cruzada";
+
+    // consome o rid para charJ1: compra sem pagamento → estorno
+    const c1 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Relíquia Cruzada", quantity: 1 }, requestId: rid,
+    });
+    t("setup: compra sem-pagamento → 201", c1.status === 201, `status=${c1.status}`);
+    const e1 = await estornar(charJ1, j1.cookie, rid);
+    t("setup: estorno → 200", e1.status === 200, `status=${e1.status}`);
+
+    // item válido p/ tentativa de venda (requestId novo, sem pagamento)
+    const cSetup = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, quantidade: 5,
+      item: { name: "Espada Cruzada", quantity: 1 }, requestId: ridSetup,
+    });
+    t("setup: item p/ venda criado", cSetup.status === 201, `status=${cSetup.status}`);
+    const itemVenda = itensDb(charJ1).find((i) => i.name === "Espada Cruzada");
+    t("setup: Espada Cruzada qtd 5", itemVenda?.quantity === 5, JSON.stringify(itemVenda));
+
+    const saldoCAntes = saldoDb(contaJ1);
+    const saldoVAntes = saldoDb(contaJ1b);
+    const qtdAntes = itemDb(itemVenda.id)?.quantity;
+    const txJ1Antes = txCount(contaJ1);
+    const txJ1bAntes = txCount(contaJ1b);
+    const txAntes = txJ1Antes + txJ1bAntes;
+    const estornosAntes = comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from operacao_estornos where campaign_id=? and character_id=? and operacao_id=?").get(cenario.campId, charJ1, rid).c);
+
+    // ===== Cenário B — reutilização como compra PAGA =====
+    const rCompraPaga = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1, valor: 10, quantidade: 1,
+      item: { name: "Item Cruzado Pago", quantity: 1 }, requestId: rid,
+    });
+    t("B: compra paga com rid estornado → 409", rCompraPaga.status === 409, `status=${rCompraPaga.status}`);
+    t("B: mensagem de identificador estornado", /estornad/i.test(rCompraPaga.json?.erro ?? ""), JSON.stringify(rCompraPaga.json));
+    t("B: nenhum item criado", !itensDb(charJ1).some((i) => i.name === "Item Cruzado Pago"));
+    t("B: saldo inalterado", saldoDb(contaJ1) === saldoCAntes, `${saldoCAntes} vs ${saldoDb(contaJ1)}`);
+    t("B: nenhuma tx criada", txCount(contaJ1) === txJ1Antes && !operacaoDb(rid));
+
+    // ===== Cenário C — reutilização como VENDA =====
+    const rVenda = await operacao(charJ1, j1.cookie, {
+      tipo: "venda", accountId: contaJ1b, valor: 10, itemId: itemVenda.id, quantidade: 1, requestId: rid,
+    });
+    t("C: venda com rid estornado → 409", rVenda.status === 409, `status=${rVenda.status}`);
+    t("C: mensagem de identificador estornado", /estornad/i.test(rVenda.json?.erro ?? ""), JSON.stringify(rVenda.json));
+    t("C: estoque inalterado", itemDb(itemVenda.id)?.quantity === qtdAntes, `${qtdAntes} vs ${itemDb(itemVenda.id)?.quantity}`);
+    t("C: saldo de recebimento inalterado", saldoDb(contaJ1b) === saldoVAntes, `${saldoVAntes} vs ${saldoDb(contaJ1b)}`);
+    t("C: nenhuma tx criada", txCount(contaJ1) + txCount(contaJ1b) === txAntes);
+    t("C: nenhum estorno adicional", comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from operacao_estornos where campaign_id=? and character_id=? and operacao_id=?").get(cenario.campId, charJ1, rid).c) === estornosAntes);
+
+    // ===== Concorrência — compra paga + venda simultâneas, rid já estornado =====
+    const [cc1, cc2] = await Promise.all([
+      operacao(charJ1, j1.cookie, {
+        tipo: "compra", accountId: contaJ1, valor: 5, quantidade: 1,
+        item: { name: "Corrida Cruzada A", quantity: 1 }, requestId: rid,
+      }),
+      operacao(charJ1, j1.cookie, {
+        tipo: "venda", accountId: contaJ1b, valor: 5, itemId: itemVenda.id, quantidade: 1, requestId: rid,
+      }),
+    ]);
+    t("corrida cruzada: ambos → 409", cc1.status === 409 && cc2.status === 409, `${cc1.status},${cc2.status}`);
+    t("corrida: nenhum item", !itensDb(charJ1).some((i) => i.name === "Corrida Cruzada A"));
+    t("corrida: saldos intactos", saldoDb(contaJ1) === saldoCAntes && saldoDb(contaJ1b) === saldoVAntes);
+    t("corrida: estoque intacto", itemDb(itemVenda.id)?.quantity === qtdAntes);
+    t("corrida: nenhuma tx", txCount(contaJ1) + txCount(contaJ1b) === txAntes);
+    t("corrida: estornos inalterados", comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from operacao_estornos where campaign_id=? and character_id=? and operacao_id=?").get(cenario.campId, charJ1, rid).c) === estornosAntes);
+
+    // ===== Cenário D (reforço) — personagem B: compra paga com rid já estornado por A? =====
+    // rid "op-reuso-pos-estorno" foi estornado por A E por B na seção 13c.
+    // B tenta reusar como compra PAGA → 409 (isolamento por personagem mantido,
+    // mas o bloqueio vale para o próprio B em qualquer modalidade).
+    const contaJ2 = await mkConta(charJ2, j2.cookie, "Conta B", 50);
+    const rBCompra = await operacao(charJ2, j2.cookie, {
+      tipo: "compra", accountId: contaJ2, valor: 5, quantidade: 1,
+      item: { name: "Item B Cruzado", quantity: 1 }, requestId: "op-reuso-pos-estorno",
+    });
+    t("D: B compra paga com rid estornado por B → 409", rBCompra.status === 409, `status=${rBCompra.status}`);
+    t("D: saldo de B inalterado", saldoDb(contaJ2) === 5000, `${saldoDb(contaJ2)}`);
+    // B nunca estornou "op-cruzado-estornado" (só A estornou) → B pode usar
+    const rBLivre = await operacao(charJ2, j2.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item B Livre", quantity: 1 }, requestId: rid,
+    });
+    t("D: B usa rid estornado só por A → 201 (isolamento)", rBLivre.status === 201, `status=${rBLivre.status}`);
+
+    // ===== Cenário E — operações normais não afetadas =====
+    const rNormal1 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", accountId: contaJ1, valor: 7, quantidade: 1,
+      item: { name: "Compra Normal Nova", quantity: 1 }, requestId: "op-normal-pos-estorno-1",
+    });
+    t("E: compra paga rid novo → 201", rNormal1.status === 201, `status=${rNormal1.status}`);
+    const itemNorm = itensDb(charJ1).find((i) => i.name === "Espada Cruzada");
+    const rNormal2 = await operacao(charJ1, j1.cookie, {
+      tipo: "venda", accountId: contaJ1b, valor: 3, itemId: itemNorm.id, quantidade: 1, requestId: "op-normal-pos-estorno-2",
+    });
+    t("E: venda rid novo → 201", rNormal2.status === 201, `status=${rNormal2.status}`);
+    const rNormal3 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Sem Pagamento Novo", quantity: 1 }, requestId: "op-normal-pos-estorno-3",
+    });
+    t("E: compra sem pagamento rid novo → 201", rNormal3.status === 201, `status=${rNormal3.status}`);
+    // estorno da compra paga recém-criada continua funcionando
+    const eNormal = await estornar(charJ1, j1.cookie, "op-normal-pos-estorno-1");
+    t("E: estorno de compra paga → 200", eNormal.status === 200, `status=${eNormal.status}`);
+  }
+
   // ===== 14. Permissões =====
   sec("14. Permissões");
   {

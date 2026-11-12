@@ -1148,20 +1148,21 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         .where(and(eq(moneyTransactions.campaignId, a.personagem.campaignId), eq(moneyTransactions.requestId, requestId))).limit(1).all();
       if (opExistente || txExistente) { operacaoDuplicada = true; return; }
 
+      // O requestId de uma operação estornada fica consumido para o
+      // personagem em QUALQUER modalidade (compra paga, compra sem
+      // pagamento ou venda) — não só em outra compra sem pagamento.
       // Compra sem pagamento não deixa rastro em inventoryEntries nem em
       // money_transactions depois do estorno — o registro persistente em
       // operacao_estornos é a única prova de que o requestId já foi
       // utilizado. Escopo da migration 0021: campanha + personagem +
       // operação, para não bloquear outros personagens da campanha.
-      if (semPagamento) {
-        const [estornoPrevio] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
-          .where(and(
-            eq(operacaoEstornos.campaignId, a.personagem.campaignId),
-            eq(operacaoEstornos.characterId, a.personagem.id),
-            eq(operacaoEstornos.operacaoId, requestId),
-          )).limit(1).all();
-        if (estornoPrevio) { operacaoEstornada = true; return; }
-      }
+      const [estornoPrevio] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+        .where(and(
+          eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+          eq(operacaoEstornos.characterId, a.personagem.id),
+          eq(operacaoEstornos.operacaoId, requestId),
+        )).limit(1).all();
+      if (estornoPrevio) { operacaoEstornada = true; return; }
 
       // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
       // valor atual, nunca sobre leitura anterior (evita lost update).
