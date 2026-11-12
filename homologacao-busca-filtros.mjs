@@ -50,6 +50,10 @@ try {
   await req(BASE, "POST", `/characters/${PC}/equipamentos`, { cookie: M, body: { name: "Escudo E2E", description: "broquel reforçado" } });
   await req(BASE, "POST", `/characters/${PC}/veiculos`, { cookie: M, body: { name: "Moto E2E", kind: "motocicleta", brand: "Honda" } });
   await req(BASE, "POST", `/characters/${PC}/veiculos`, { cookie: M, body: { name: "Caminhão E2E", kind: "caminhao", plate: "AAA-0000" } });
+  // patrimônio do personagem do J2 — usado na homologação mobile
+  await req(BASE, "POST", `/characters/${gama}/equipamentos`, { cookie: J2, body: { name: "Arco E2E", slot: "mão" } });
+  await req(BASE, "POST", `/characters/${gama}/veiculos`, { cookie: J2, body: { name: "Carro E2E J2", kind: "carro" } });
+  await req(BASE, "POST", `/characters/${gama}/veiculos`, { cookie: J2, body: { name: "Skate E2E J2", kind: "outro" } });
 
   async function abrirCampanha(p, nomeCampanha) {
     await p.goto(BASE, { waitUntil: "networkidle" });
@@ -104,12 +108,15 @@ try {
     await p.waitForTimeout(400);
     await p.locator(".modal").getByRole("button", { name: "Restaurar", exact: true }).click();
     await p.waitForTimeout(1200);
-    t("personagens: restaurar funciona após filtro", (await p.locator(".badge", { hasText: "Aprovada" }).count()) > 0 || (await p.locator(".badge", { hasText: "Rascunho" }).count()) > 0);
+    t("personagens: detalhe sai do modo arquivado", (await p.locator(".badge", { hasText: "Arquivado" }).count()) === 0);
     const voltar = p.locator("section.cartao").filter({ has: p.locator("h2", { hasText: "E2E Beta" }) }).first().getByRole("button", { name: "Voltar" });
     await voltar.click();
     await p.waitForTimeout(900);
+    // ainda na visão de arquivados: Beta não pode mais constar lá
+    t("personagens: restaurado some da lista de arquivados", (await p.locator("tr", { hasText: "E2E Beta" }).count()) === 0);
     await p.getByRole("button", { name: "Ver ativos" }).click();
     await p.waitForTimeout(900);
+    t("personagens: restaurado aparece na lista ativa", (await p.locator("tr", { hasText: "E2E Beta" }).count()) === 1);
 
     // ===== Diário =====
     sec("Desktop — Diário");
@@ -214,9 +221,35 @@ try {
     await p.getByLabel("Buscar personagem").fill("Gama");
     await p.waitForTimeout(300);
     t("mobile: busca personagens filtra", (await p.locator("tbody tr").count()) === 1 && (await p.locator("tbody tr").first().innerText()).includes("E2E Gama"));
-    // J2 não vê personagens de J1? (lista mostra todos os da campanha p/ jogador? verificar overflow apenas)
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     t("mobile: sem overflow horizontal (diário+personagens)", !overflow);
+
+    // ===== Patrimônio no mobile (personagem do próprio jogador) =====
+    sec("Mobile — Patrimônio");
+    await p.getByLabel("Buscar personagem").fill("");
+    await p.locator("tr", { hasText: "E2E Gama" }).first().click();
+    await p.waitForTimeout(1500);
+    await p.getByRole("button", { name: "Equipamentos" }).click();
+    await p.waitForTimeout(800);
+    await p.getByLabel("Buscar equipamento").fill("Arco");
+    await p.waitForTimeout(300);
+    t("mobile: busca equipamento encontra", (await p.locator(".tabela tbody tr", { hasText: "Arco E2E" }).count()) === 1 && (await p.locator(".tabela tbody tr").count()) === 1);
+    await p.getByLabel("Buscar equipamento").fill("zzz");
+    await p.waitForTimeout(300);
+    t("mobile: busca equipamento sem resultado", (await p.getByText("Nenhum equipamento corresponde à busca.").count()) > 0);
+    await p.getByLabel("Buscar equipamento").fill("");
+    await p.getByRole("button", { name: "Veículos" }).click();
+    await p.waitForTimeout(700);
+    await p.getByLabel("Buscar veículo").fill("Skate");
+    await p.waitForTimeout(300);
+    t("mobile: busca veículo encontra", (await p.locator(".tabela tbody tr", { hasText: "Skate E2E J2" }).count()) === 1);
+    await p.getByLabel("Buscar veículo").fill("");
+    await p.getByLabel("Filtrar por tipo de veículo").selectOption("carro");
+    await p.waitForTimeout(300);
+    t("mobile: filtro tipo veículo", (await p.locator(".tabela tbody tr", { hasText: "Carro E2E J2" }).count()) === 1 && (await p.locator(".tabela tbody tr", { hasText: "Skate" }).count()) === 0);
+    await p.getByLabel("Filtrar por tipo de veículo").selectOption("");
+    const overflow2 = await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
+    t("mobile: sem overflow horizontal (patrimônio)", !overflow2);
     t("mobile: sem erros de página", erros.length === 0, erros.join(" | ").slice(0, 200));
     await ctx.close();
   }

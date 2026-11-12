@@ -37,6 +37,12 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   }, [campaignId, aba]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+  // Trocar de aba recarrega uma lista diferente — filtros da aba anterior
+  // não se aplicam (categorias/visibilidade podem não existir nela) e
+  // esconderiam anotações sem controle visível para removê-los.
+  useEffect(() => {
+    setBusca(""); setFiltroVis(""); setFiltroCat(""); setFiltroImportantes(false); setFiltroData("");
+  }, [aba]);
   useEffect(() => {
     api.listarPersonagens(campaignId).then((r) => setPersonagens(r.personagens.filter((p) => p.ehEu || souMestre))).catch(() => {});
     api.listarMembros(campaignId).then((r) => setMembros(r.membros.filter((m) => m.status === "ativo" && m.userId !== undefined))).catch(() => {});
