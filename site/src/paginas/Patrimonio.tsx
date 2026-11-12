@@ -3,7 +3,7 @@ import {
   api, ApiError,
   type ItemInventario, type ItemInventarioInput, type Equipamento,
   type Veiculo, type VeiculoInput, type Financeiro, type ContaFinanceira, type ContaInput,
-  type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo,
+  type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo, type TransacaoFinanceira,
 } from "../api";
 import { getSocket } from "../socket";
 import { ModalConfirmar } from "../Modal";
@@ -352,6 +352,7 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
   const [qtd, setQtd] = useState(1);
   const [valorUnit, setValorUnit] = useState<number | "">("");
   const [contaId, setContaId] = useState("");
+  const [pagar, setPagar] = useState(true);
   const [ocupado, setOcupado] = useState(false);
   const reqId = useRef(crypto.randomUUID()).current;
   const casas = fin?.config.casasDecimais ?? 2;
@@ -360,14 +361,17 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
   const contaSel = fin?.contas.find((c) => c.id === contaId);
   const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
-  const valido = !!contaId && Number(qtd) > 0 && Number(valorUnit) > 0 && (templateId !== "" || nome.trim().length > 0);
+  const valido = (templateId !== "" || nome.trim().length > 0) && Number(qtd) > 0 &&
+    (pagar ? !!contaId && Number(valorUnit) > 0 : true);
   const submeter = async (e: FormEvent) => {
     e.preventDefault();
     if (ocupado || !valido) return;
     setOcupado(true);
     try {
       await api.operacaoFinanceira(characterId, {
-        tipo: "compra", accountId: contaId, valor: total, quantidade: Number(qtd),
+        tipo: "compra", accountId: pagar ? contaId : undefined,
+        valor: pagar ? total : (total > 0 ? total : undefined),
+        pagar, quantidade: Number(qtd),
         templateId: templateId || undefined,
         item: templateId ? undefined : { name: nome.trim(), quantity: 1 },
         requestId: reqId,
@@ -394,21 +398,34 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
           <label>Quantidade
             <input type="number" min="0.01" step="any" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} required />
           </label>
-          <label>Valor unitário ({moeda})
-            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required />
+          <label>Valor unitário ({moeda}){pagar ? "" : " (referência, opcional)"}
+            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required={pagar} />
           </label>
-          <label>Conta que paga
-            <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
-              <option value="">Escolher conta…</option>
-              {(fin?.contas ?? []).map((c) => (
-                <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
-              ))}
-            </select>
+          <label className="check">
+            <input type="checkbox" checked={pagar} onChange={(e) => setPagar(e.target.checked)} />
+            {" "}Pagar agora — debitar conta financeira
           </label>
-          {contaSel && <p className="meta">Valor movimentado na moeda da conta: {moeda}.</p>}
-          <p className="meta">Total: {fmtOp(total, casas)} {moeda}</p>
+          {pagar ? (
+            <label>Conta que paga
+              <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
+                <option value="">Escolher conta…</option>
+                {(fin?.contas ?? []).map((c) => (
+                  <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <p className="meta">Compra sem movimentação financeira — nenhum débito será registrado.</p>
+          )}
+          {pagar && contaSel && (
+            <p className="meta">
+              Saldo disponível: {fmtOp(contaSel.balanceCents / 10 ** casas, casas)} {contaSel.currency}.
+              {" "}Será debitado {fmtOp(total, casas)} {moeda}.
+            </p>
+          )}
+          {total > 0 && <p className="meta">Total: {fmtOp(total, casas)} {moeda}{pagar ? "" : " (referência)"}</p>}
           <div className="linha">
-            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar compra"}</button>
+            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : pagar ? "Confirmar compra" : "Confirmar compra sem pagamento"}</button>
             <button type="button" className="secundario" onClick={aoFechar} disabled={ocupado}>Cancelar</button>
           </div>
         </form>
@@ -490,7 +507,12 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
               ))}
             </select>
           </label>
-          {contaSel && <p className="meta">Valor creditado na moeda da conta: {moeda}.</p>}
+          {contaSel && (
+            <p className="meta">
+              Saldo da conta: {fmtOp(contaSel.balanceCents / 10 ** casas, casas)} {contaSel.currency}.
+              {" "}Será creditado {fmtOp(total, casas)} {moeda}.
+            </p>
+          )}
           <p className="meta">Total a receber: {fmtOp(total, casas)} {moeda}</p>
           <div className="linha">
             <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar venda"}</button>
@@ -714,6 +736,8 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
 }) {
   const [fin, setFin] = useState<Financeiro | null>(null);
   const [contasOutros, setContasOutros] = useState<{ conta: ContaFinanceira; personagem: string }[]>([]);
+  const [estornando, setEstornando] = useState<TransacaoFinanceira | null>(null);
+  const [ocupadoEstorno, setOcupadoEstorno] = useState(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -740,6 +764,29 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   const fmt = (unidades: number | null | undefined) =>
     unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
+  // Rótulos amigáveis dos tipos de movimentação.
+  const ROTULO_KIND: Record<string, string> = {
+    entrada: "Entrada", saida: "Saída", ajuste: "Ajuste", compra: "Compra",
+    venda: "Venda", transferencia: "Transferência", estorno: "Estorno", pix: "PIX",
+  };
+  const rotuloKind = (k: string) => ROTULO_KIND[k] ?? k;
+  // Operações de compra/venda estornáveis: têm requestId e ainda não
+  // possuem transação de estorno `${requestId}:estorno` no histórico.
+  const estornadas = new Set(fin.historico.map((t) => t.requestId).filter(Boolean));
+  const podeEstornar = (t: TransacaoFinanceira) =>
+    !somenteLeitura && (souMestre || cfg.jogadorCompraVenda) &&
+    (t.kind === "compra" || t.kind === "venda") && !!t.requestId &&
+    !estornadas.has(`${t.requestId}:estorno`);
+  const confirmarEstorno = async () => {
+    if (!estornando || ocupadoEstorno) return;
+    setOcupadoEstorno(true);
+    try {
+      await api.estornarOperacao(characterId, estornando.requestId!);
+      setEstornando(null);
+      await carregar();
+    } catch (e) { aoErro(e); } finally { setOcupadoEstorno(false); }
+  };
+
   return (
     <div>
       <div className="linha">
@@ -760,27 +807,30 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
 
       <h4>Histórico financeiro</h4>
       <table className="tabela tabela-responsiva">
-        <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Conta</th><th>Contraparte</th><th>Valor</th><th>Saldo após</th></tr></thead>
+        <thead><tr><th>Data</th><th>Tipo</th><th>Descrição</th><th>Conta</th><th>Contraparte</th><th>Valor</th><th>Saldo após</th>{!somenteLeitura && <th></th>}</tr></thead>
         <tbody>
           {fin.historico.map((t) => (
             <tr key={t.id}>
               <td>{new Date(t.createdAt).toLocaleString("pt-BR")}</td>
-              <td>{t.kind}</td>
+              <td>{rotuloKind(t.kind)}</td>
               <td>{t.description ?? "—"}</td>
               <td>{t.account ?? "—"}</td>
               <td>{t.counterparty ?? "—"}</td>
               <td className={t.amountCents !== null && t.amountCents < 0 ? "erro" : "online"}>{t.amountCents !== null ? fmt(t.amountCents) : fmt(t.amount * 100)}</td>
               <td>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</td>
+              {!somenteLeitura && (
+                <td>{podeEstornar(t) && <button type="button" className="secundario" onClick={() => setEstornando(t)}>Estornar</button>}</td>
+              )}
             </tr>
           ))}
-          {fin.historico.length === 0 && <tr><td colSpan={7} className="meta">Sem movimentações.</td></tr>}
+          {fin.historico.length === 0 && <tr><td colSpan={somenteLeitura ? 7 : 8} className="meta">Sem movimentações.</td></tr>}
         </tbody>
       </table>
       <div className="cartoes-registro">
         {fin.historico.map((t) => (
           <div key={t.id} className="registro-cartao">
             <div className="registro-campo"><span className="registro-rotulo">Data</span><span>{new Date(t.createdAt).toLocaleString("pt-BR")}</span></div>
-            <div className="registro-campo"><span className="registro-rotulo">Tipo</span><span>{t.kind}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Tipo</span><span>{rotuloKind(t.kind)}</span></div>
             {t.description && <div className="registro-campo"><span className="registro-rotulo">Descrição</span><span>{t.description}</span></div>}
             <div className="registro-campo"><span className="registro-rotulo">Conta</span><span>{t.account ?? "—"}</span></div>
             {t.counterparty && <div className="registro-campo"><span className="registro-rotulo">Contraparte</span><span>{t.counterparty}</span></div>}
@@ -789,10 +839,26 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
               <span className={t.amountCents !== null && t.amountCents < 0 ? "erro" : "online"}>{t.amountCents !== null ? fmt(t.amountCents) : fmt(t.amount * 100)}</span>
             </div>
             <div className="registro-campo"><span className="registro-rotulo">Saldo após</span><span>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</span></div>
+            {podeEstornar(t) && (
+              <div className="registro-campo">
+                <button type="button" className="secundario" onClick={() => setEstornando(t)}>Estornar operação</button>
+              </div>
+            )}
           </div>
         ))}
         {fin.historico.length === 0 && <p className="meta">Sem movimentações.</p>}
       </div>
+      {estornando && (
+        <ModalConfirmar
+          titulo="Estornar operação"
+          mensagem={`Estornar a ${rotuloKind(estornando.kind).toLowerCase()} de ${estornando.amountCents !== null ? fmt(Math.abs(estornando.amountCents)) : "—"}? O saldo será revertido na mesma conta e o item correspondente será devolvido/removido do inventário. O histórico original será preservado.`}
+          rotuloConfirmar="Estornar"
+          perigo
+          ocupado={ocupadoEstorno}
+          aoConfirmar={() => void confirmarEstorno()}
+          aoCancelar={() => { if (!ocupadoEstorno) setEstornando(null); }}
+        />
+      )}
     </div>
   );
 }
