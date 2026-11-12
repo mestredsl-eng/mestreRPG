@@ -93,5 +93,6 @@ jobs:
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs \
             homologacao-validacao-ficha.mjs \
-            homologacao-exclusao-personagem.mjs
+            homologacao-exclusao-personagem.mjs \
+            homologacao-busca-filtros.mjs
           do echo "===== $s ====="; node "$s"; done

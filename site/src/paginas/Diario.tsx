@@ -21,6 +21,11 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [editando, setEditando] = useState<Anotacao | null>(null);
   const [novo, setNovo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
+  const [filtroVis, setFiltroVis] = useState("");
+  const [filtroCat, setFiltroCat] = useState("");
+  const [filtroImportantes, setFiltroImportantes] = useState(false);
+  const [filtroData, setFiltroData] = useState("");
   const [form, setForm] = useState({ title: "", content: "", category: "livre", characterId: "", important: false, visibility: "privada" as Anotacao["visibility"], recipients: [] as string[] });
 
   const carregar = useCallback(async () => {
@@ -89,6 +94,20 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
 
   const visLabel = (n: Anotacao) => VISIBILIDADES.find((v) => v.v === n.visibility)?.l ?? n.visibility;
 
+  // Busca e filtros — aplicados SOMENTE sobre a lista que o backend já
+  // autorizou retornar (nada de consulta extra nem vazamento de privadas).
+  const q = busca.trim().toLowerCase();
+  const dataMin = filtroData ? new Date(`${filtroData}T00:00:00`).getTime() : null;
+  const visiveis = anotacoes.filter((n) =>
+    (!filtroVis || n.visibility === filtroVis) &&
+    (!filtroCat || (n.category ?? "") === filtroCat) &&
+    (!filtroImportantes || !!n.important) &&
+    (dataMin === null || new Date(n.createdAt).getTime() >= dataMin) &&
+    (!q || n.title.toLowerCase().includes(q) || n.content.toLowerCase().includes(q))
+  );
+  const temFiltro = !!(q || filtroVis || filtroCat || filtroImportantes || filtroData);
+  const categoriasPresentes = [...new Set(anotacoes.map((n) => n.category).filter((c): c is string => !!c))].sort();
+
   return (
     <section className="cartao">
       <div className="abas">
@@ -145,8 +164,26 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
         </button>
       )}
 
+      {anotacoes.length > 0 && (
+        <div className="linha filtros-lista">
+          <input type="search" placeholder="Buscar em título ou conteúdo…" aria-label="Buscar anotação" value={busca} onChange={(e) => setBusca(e.target.value)} />
+          <select aria-label="Filtrar por visibilidade" value={filtroVis} onChange={(e) => setFiltroVis(e.target.value)}>
+            <option value="">Toda visibilidade</option>
+            {VISIBILIDADES.map((v) => <option key={v.v} value={v.v}>{v.l}</option>)}
+          </select>
+          {categoriasPresentes.length > 0 && (
+            <select aria-label="Filtrar por categoria" value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
+              <option value="">Todas as categorias</option>
+              {categoriasPresentes.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+          <label className="filtro-check"><input type="checkbox" checked={filtroImportantes} onChange={(e) => setFiltroImportantes(e.target.checked)} /> Importantes</label>
+          <input type="date" aria-label="Filtrar a partir de" value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />
+        </div>
+      )}
+
       <ul className="lista-anotacoes">
-        {anotacoes.map((n) => (
+        {visiveis.map((n) => (
           <li key={n.id} className={n.important ? "importante" : ""}>
             <div className="linha">
               <strong>{n.title}</strong>
@@ -186,6 +223,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
           </li>
         ))}
         {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
+        {anotacoes.length > 0 && !visiveis.length && <li className="dica">{temFiltro ? "Nenhuma anotação corresponde aos filtros." : "Nenhuma anotação."}</li>}
       </ul>
       {confirmando && (
         <ModalConfirmar

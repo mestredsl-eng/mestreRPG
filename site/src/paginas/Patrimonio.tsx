@@ -510,6 +510,7 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
 }) {
   const [lista, setLista] = useState<Equipamento[]>([]);
   const [slots, setSlots] = useState<string[]>([]);
+  const [busca, setBusca] = useState("");
   const [nome, setNome] = useState("");
   const [slot, setSlot] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -522,8 +523,16 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
   }, [characterId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
+  const q = busca.trim().toLowerCase();
+  const visiveis = lista.filter((eq) =>
+    !q || eq.name.toLowerCase().includes(q) || (eq.description ?? "").toLowerCase().includes(q) || (eq.slot ?? "").toLowerCase().includes(q)
+  );
+
   return (
     <div>
+      <div className="linha filtros-lista">
+        <input type="search" placeholder="Buscar equipamento…" aria-label="Buscar equipamento" value={busca} onChange={(e) => setBusca(e.target.value)} />
+      </div>
       <div className="linha">
         {slots.length > 0 && slots.map((s) => {
           const ocupado = lista.find((e) => e.slot === s && e.equipped);
@@ -552,7 +561,7 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
       <table className="tabela">
         <thead><tr><th>Equipamento</th><th>Posição</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          {lista.map((eq) => (
+          {visiveis.map((eq) => (
             <tr key={eq.id}>
               <td>{eq.name}{eq.description && <div className="meta">{eq.description}</div>}</td>
               <td>{eq.slot ?? "—"}</td>
@@ -571,6 +580,7 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={4} className="meta">Nenhum equipamento.</td></tr>}
+          {lista.length > 0 && visiveis.length === 0 && <tr><td colSpan={4} className="meta">Nenhum equipamento corresponde à busca.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -584,6 +594,8 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
+  const [busca, setBusca] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
   const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
@@ -595,8 +607,21 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
 
   const TIPOS = ["carro", "motocicleta", "caminhao", "barco", "helicoptero", "aviao", "militar", "futurista", "outro"];
 
+  const q = busca.trim().toLowerCase();
+  const visiveis = lista.filter((v) =>
+    (!filtroTipo || v.kind === filtroTipo) &&
+    (!q || v.name.toLowerCase().includes(q) || (v.brand ?? "").toLowerCase().includes(q) || (v.model ?? "").toLowerCase().includes(q) || (v.plate ?? "").toLowerCase().includes(q))
+  );
+
   return (
     <div>
+      <div className="linha filtros-lista">
+        <input type="search" placeholder="Buscar veículo…" aria-label="Buscar veículo" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        <select aria-label="Filtrar por tipo de veículo" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
       {!somenteLeitura && (
       <form className="formulario" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
@@ -628,7 +653,7 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Veículo</th><th>Tipo</th><th>Marca/Modelo</th><th>Ano</th><th>Placa</th><th>Posse</th><th></th></tr></thead>
         <tbody>
-          {lista.map((v) => (
+          {visiveis.map((v) => (
             <tr key={v.id}>
               <td>{v.name}</td>
               <td>{v.kind ?? "—"}</td>
@@ -640,10 +665,11 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
+          {lista.length > 0 && visiveis.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo corresponde à busca.</td></tr>}
         </tbody>
       </table>
       <div className="cartoes-registro">
-        {lista.map((v) => (
+        {visiveis.map((v) => (
           <div key={v.id} className="registro-cartao">
             <div className="registro-campo"><strong>{v.name}</strong><span className="tag">{v.kind ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Marca/Modelo</span><span>{[v.brand, v.model].filter(Boolean).join(" ") || "—"}</span></div>
@@ -656,6 +682,7 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
           </div>
         ))}
         {lista.length === 0 && <p className="meta">Nenhum veículo.</p>}
+        {lista.length > 0 && visiveis.length === 0 && <p className="meta">Nenhum veículo corresponde à busca.</p>}
       </div>
       {confirmandoVeiculo && (
         <ModalConfirmar
