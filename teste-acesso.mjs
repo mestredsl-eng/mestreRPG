@@ -85,14 +85,20 @@ const cookieHttp = loginHttp.headers.get("set-cookie") ?? "";
 t("10. login HTTP local → cookie sem Secure", loginHttp.status === 200 && !/;\s*Secure/i.test(cookieHttp), `${loginHttp.status} ${cookieHttp.slice(0, 80)}`);
 t("11. cookie HttpOnly + SameSite=Lax", /HttpOnly/i.test(cookieHttp) && /SameSite=Lax/i.test(cookieHttp));
 
-// simulando proxy confiável: X-Forwarded-Proto: https (trust proxy=1 ativo)
+// X-Forwarded-Proto só é honrado quando proxyHops > 0 (padrão 0 = acesso
+// direto não confia em headers de proxy). O valor efetivo vem de
+// server_settings (painel admin) com fallback para configuracao/servidor.json.
+const cfgAcesso = await req("GET", "/admin/servidor/config");
+const hops = Number(cfgAcesso.json?.acesso?.proxyHops ?? 0);
 const loginHttps = await fetch(`${API}/auth/login`, {
   method: "POST",
   headers: { "content-type": "application/json", "x-forwarded-proto": "https" },
   body: JSON.stringify({ username: uname, password: "senha-acesso-123" }),
 });
 const cookieHttps = loginHttps.headers.get("set-cookie") ?? "";
-t("12. login via proxy HTTPS → cookie Secure", loginHttps.status === 200 && /;\s*Secure/i.test(cookieHttps), `${loginHttps.status} ${cookieHttps.slice(0, 100)}`);
+t("12. X-Forwarded-Proto: Secure só com proxyHops configurado", loginHttps.status === 200
+  && /;\s*Secure/i.test(cookieHttps) === (hops > 0),
+  `${loginHttps.status} hops=${hops} ${cookieHttps.slice(0, 100)}`);
 
 // ---------- validação de dominioPublico ----------
 for (const [i, dominio] of ["http://evil.com/x", "dominio com espaco.com", "javascript:alert(1)", "-bad-.com"].entries()) {

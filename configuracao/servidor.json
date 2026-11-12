@@ -10,5 +10,10 @@
   "arquivos": {
     "tamanhoMaxMb": 25,
     "formatosExtras": []
+  },
+  "acesso": {
+    "dominioPublico": "",
+    "proxyHops": 0,
+    "https": false
   }
 }

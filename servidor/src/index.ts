@@ -167,7 +167,8 @@ try {
   const proxyHops = Math.min(10, Math.max(0, Number(acessoSalvo.proxyHops ?? config.acesso.proxyHops) || 0));
   if (proxyHops > 0) app.set("trust proxy", proxyHops);
 } catch {
-  if (config.acesso.proxyHops > 0) app.set("trust proxy", config.acesso.proxyHops);
+  const hopsCfg = Math.min(10, Math.max(0, Number(config.acesso.proxyHops) || 0));
+  if (hopsCfg > 0) app.set("trust proxy", hopsCfg);
 }
 
 const httpServer = createServer(app);
