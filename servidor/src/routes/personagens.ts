@@ -1,10 +1,10 @@
 import { Router, type Request } from "express";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, ne, inArray } from "drizzle-orm";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
@@ -254,6 +254,8 @@ async function personagemPublico(
       templateId: carregada.templateId,
       donoNome: dono?.displayName ?? dono?.username ?? null,
       isNpc: p.isNpc,
+      ehEu: ehDono,
+      arquivadoDe: p.status === "arquivado" ? (metaArquivamento(p.data)?.statusAnterior ?? null) : null,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     },
@@ -263,10 +265,33 @@ async function personagemPublico(
 
 // ---------- listagem ----------
 
-/** GET /api/campaigns/:campaignId/characters — mestre vê todos; jogador só os seus */
+/** Status que o jogador pode excluir do próprio personagem. */
+const STATUS_EXCLUIVEIS_JOGADOR = new Set(["rascunho", "devolvida", "reaberta"]);
+/** Metadado interno de arquivamento (status anterior + auditoria). Reservado:
+ *  nunca vem de campos da ficha — validarFicha descarta chaves fora do modelo. */
+const CHAVE_ARQUIVAMENTO = "__arquivamento";
+const STATUS_VALIDOS = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
+
+function metaArquivamento(data: unknown): { statusAnterior?: string; arquivadoEm?: string; arquivadoPor?: string } | null {
+  const meta = (data as Record<string, unknown> | null)?.[CHAVE_ARQUIVAMENTO];
+  return meta && typeof meta === "object" ? (meta as { statusAnterior?: string }) : null;
+}
+
+/** GET /api/campaigns/:campaignId/characters — mestre vê todos; jogador só os seus.
+ *  Arquivados ficam fora da listagem ativa; `?arquivados=1` lista só eles. */
 personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) => {
   const campaignId = req.params.campaignId;
   const ehMestre = req.membership!.role === "mestre";
+  const soArquivados = req.query.arquivados === "1" || req.query.arquivados === "true";
+  // A consulta de arquivados é exclusiva do mestre — jogador recebe 403
+  // em vez de uma listagem vazia, para não sugerir filtro disponível.
+  if (soArquivados && !ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode consultar personagens arquivados" });
+    return;
+  }
+  const filtroStatus = soArquivados
+    ? eq(characters.status, "arquivado")
+    : ne(characters.status, "arquivado");
   let rows;
   if (ehMestre) {
     rows = await db
@@ -274,7 +299,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       .from(characters)
       .innerJoin(memberships, eq(characters.membershipId, memberships.id))
       .innerJoin(users, eq(memberships.userId, users.id))
-      .where(eq(characters.campaignId, campaignId))
+      .where(and(eq(characters.campaignId, campaignId), filtroStatus))
       .orderBy(desc(characters.updatedAt));
   } else {
     rows = await db
@@ -282,7 +307,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       .from(characters)
       .innerJoin(memberships, eq(characters.membershipId, memberships.id))
       .innerJoin(users, eq(memberships.userId, users.id))
-      .where(and(eq(characters.campaignId, campaignId), eq(memberships.userId, req.usuario!.id)))
+      .where(and(eq(characters.campaignId, campaignId), eq(memberships.userId, req.usuario!.id), filtroStatus))
       .orderBy(desc(characters.updatedAt));
   }
   res.json({
@@ -295,6 +320,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       membershipId: r.personagem.membershipId,
       ehEu: r.membership.userId === req.usuario!.id,
       isNpc: r.personagem.isNpc,
+      arquivadoDe: r.personagem.status === "arquivado" ? (metaArquivamento(r.personagem.data)?.statusAnterior ?? null) : null,
       updatedAt: r.personagem.updatedAt,
     })),
   });
@@ -541,6 +567,12 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  // Personagem arquivado é somente leitura por rotas comuns — inclusive
+  // para o mestre. A saída é desarquivar (POST /desarquivar) e então editar.
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = atualizarSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -641,6 +673,10 @@ personagensRouter.patch("/:characterId", async (req, res) => {
       };
     }
   }
+
+  // `__arquivamento` é metadado reservado do backend — o PATCH nunca o
+  // grava, mesmo que um modelo de ficha use um campo com esse id.
+  delete (dadosFinais as Record<string, unknown>).__arquivamento;
 
   // Transições de status
   let novoStatus = body.data.status ?? p.status;
@@ -748,6 +784,10 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = hpSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -871,6 +911,10 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = vitalidadeSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -950,6 +994,10 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
     res.status(403).json({ erro: "Apenas o mestre pode conceder ou remover pontos" });
     return;
   }
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = pontosSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -1012,4 +1060,161 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
   await audit(req, "personagem.pontos", { characterId: p.id, acao: body.data.acao, quantidade: body.data.quantidade, motivo: body.data.motivo });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json(resposta);
+});
+
+// ---------- Exclusão física e arquivamento ----------
+
+/**
+ * DELETE /api/characters/:characterId — exclusão física definitiva.
+ * Mestre: qualquer status. Jogador: somente o próprio personagem em
+ * rascunho/devolvida/reaberta.
+ *
+ * Preservação histórica (política fixa):
+ * - character_fields, inventory_entries, equipment_entries,
+ *   financial_accounts, vehicles → cascata (dados exclusivos do personagem);
+ * - rolls.characterId, notes.characterId → SET NULL automático (histórico);
+ * - tests do personagem ou money_transactions PRÓPRIAS → 409 (arquivar);
+ * - money_transactions.counterpartyCharacterId de terceiros → anulado na
+ *   mesma transação (a movimentação do outro personagem é preservada);
+ * - contas financeiras referenciadas por transações de terceiros → 409.
+ */
+personagensRouter.delete("/:characterId", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+
+  type Resultado = "ok" | "ausente" | "sem_permissao" | "historico_testes" | "historico_financeiro" | "conta_referenciada";
+  const resultado = db.transaction((tx): Resultado => {
+    // Revalida TUDO com a linha fresca dentro da transação — status e
+    // dono podem ter mudado desde a checagem inicial (TOCTOU).
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    if (!ehMestre) {
+      const [dono] = tx.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
+      if (dono?.userId !== req.usuario!.id || !STATUS_EXCLUIVEIS_JOGADOR.has(atual.status)) {
+        return "sem_permissao";
+      }
+    }
+    const temTeste = tx.select({ id: tests.id }).from(tests).where(eq(tests.characterId, p.id)).limit(1).all().length > 0;
+    if (temTeste) return "historico_testes";
+    const temTxPropria = tx.select({ id: moneyTransactions.id }).from(moneyTransactions).where(eq(moneyTransactions.characterId, p.id)).limit(1).all().length > 0;
+    if (temTxPropria) return "historico_financeiro";
+    // Contas do personagem referenciadas por transações de terceiros:
+    // apagá-las violaria a FK de money_transactions.account_id — bloqueia.
+    const contaIds = tx.select({ id: financialAccounts.id }).from(financialAccounts).where(eq(financialAccounts.characterId, p.id)).all().map((r) => r.id);
+    if (contaIds.length) {
+      const refExterna = tx.select({ id: moneyTransactions.id }).from(moneyTransactions)
+        .where(and(eq(moneyTransactions.campaignId, p.campaignId), inArray(moneyTransactions.accountId, contaIds)))
+        .limit(1).all().length > 0;
+      if (refExterna) return "conta_referenciada";
+    }
+    // Contraparte em movimentações de terceiros: preserva a transação,
+    // apenas desfaz o vínculo com o personagem excluído.
+    tx.update(moneyTransactions).set({ counterpartyCharacterId: null })
+      .where(eq(moneyTransactions.counterpartyCharacterId, p.id)).run();
+    // Cascatas do schema removem os dados exclusivos do personagem.
+    tx.delete(characters).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") {
+    res.status(403).json({ erro: "Sem permissão para excluir este personagem" });
+    return;
+  }
+  if (resultado === "historico_testes") {
+    res.status(409).json({ erro: "Personagem possui histórico de testes em sessões — exclusão bloqueada para preservar o histórico. Arquive o personagem.", codigo: "historico_testes" });
+    return;
+  }
+  if (resultado === "historico_financeiro") {
+    res.status(409).json({ erro: "Personagem possui histórico financeiro — exclusão bloqueada para preservar o histórico. Arquive o personagem.", codigo: "historico_financeiro" });
+    return;
+  }
+  if (resultado === "conta_referenciada") {
+    res.status(409).json({ erro: "As contas do personagem são referenciadas por movimentações de terceiros — exclusão bloqueada. Arquive o personagem.", codigo: "conta_referenciada" });
+    return;
+  }
+
+  await audit(req, "personagem.excluido", { characterId: p.id, name: p.name, statusAnterior: p.status });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true });
+});
+
+/**
+ * POST /api/characters/:characterId/arquivar — somente mestre.
+ * Reversível: guarda o status anterior em data.__arquivamento (metadado
+ * interno — o cliente nunca escreve essa chave; validarFicha a descarta).
+ */
+personagensRouter.post("/:characterId/arquivar", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode arquivar personagens" });
+    return;
+  }
+  const agora = new Date();
+  let statusAnterior: string | null = null;
+  const resultado = db.transaction((tx): "ok" | "ja_arquivado" | "ausente" => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    if (atual.status === "arquivado") return "ja_arquivado";
+    const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
+    dados[CHAVE_ARQUIVAMENTO] = {
+      statusAnterior: atual.status,
+      arquivadoEm: agora.toISOString(),
+      arquivadoPor: req.usuario!.id,
+    };
+    statusAnterior = atual.status;
+    tx.update(characters).set({ data: dados, status: "arquivado", updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "ja_arquivado") { res.json({ ok: true, jaArquivado: true }); return; }
+  await audit(req, "personagem.arquivado", { characterId: p.id, statusAnterior });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, statusAnterior });
+});
+
+/**
+ * POST /api/characters/:characterId/desarquivar — somente mestre.
+ * Restaura exatamente o status anterior gravado no arquivamento e remove
+ * o metadado. Personagem não arquivado → 409 (sem restauração duplicada).
+ */
+personagensRouter.post("/:characterId/desarquivar", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode restaurar personagens" });
+    return;
+  }
+  const agora = new Date();
+  let restaurado: string | null = null;
+  const resultado = db.transaction((tx): "ok" | "nao_arquivado" | "ausente" => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    if (atual.status !== "arquivado") return "nao_arquivado";
+    const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
+    const meta = metaArquivamento(dados);
+    const anterior = meta?.statusAnterior && STATUS_VALIDOS.has(meta.statusAnterior) ? meta.statusAnterior : "rascunho";
+    delete dados[CHAVE_ARQUIVAMENTO];
+    restaurado = anterior;
+    tx.update(characters).set({ data: dados, status: anterior, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "nao_arquivado") { res.status(409).json({ erro: "Personagem não está arquivado" }); return; }
+  await audit(req, "personagem.desarquivado", { characterId: p.id, statusRestaurado: restaurado });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, status: restaurado });
 });

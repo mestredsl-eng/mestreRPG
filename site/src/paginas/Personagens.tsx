@@ -4,6 +4,7 @@ import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import { ModalConfirmar } from "../Modal";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -12,7 +13,11 @@ const STATUS_LABEL: Record<string, string> = {
   reaberta: "Reaberta",
   aprovada: "Aprovada",
   bloqueada: "Bloqueada",
+  arquivado: "Arquivado",
 };
+
+/** Status em que o jogador pode excluir o próprio personagem. */
+const STATUS_EXCLUIVEIS = new Set(["rascunho", "devolvida", "reaberta"]);
 
 interface Props {
   campaignId: string;
@@ -26,12 +31,13 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  const [verArquivados, setVerArquivados] = useState(false);
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
     try {
       const [{ personagens }, { modelos }] = await Promise.all([
-        api.listarPersonagens(campaignId),
+        api.listarPersonagens(campaignId, verArquivados),
         api.listarModelos(campaignId),
       ]);
       setPersonagens(personagens);
@@ -47,7 +53,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
     } catch {
       setBiblioteca(null);
     }
-  }, [campaignId]);
+  }, [campaignId, verArquivados]);
 
   useEffect(() => {
     void carregar();
@@ -101,10 +107,17 @@ export default function Personagens({ campaignId, campanha }: Props) {
     <>
       <section className="cartao">
         <div className="linha-entre">
-          <h2>Personagens</h2>
-          <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
-            {criando ? "Cancelar" : "Novo personagem"}
-          </button>
+          <h2>Personagens{verArquivados ? " arquivados" : ""}</h2>
+          <div className="linha">
+            {souMestre && (
+              <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
+                {verArquivados ? "Ver ativos" : "Ver arquivados"}
+              </button>
+            )}
+            <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
+              {criando ? "Cancelar" : "Novo personagem"}
+            </button>
+          </div>
         </div>
         {erro && <p className="erro">{erro}</p>}
         {modelosPublicados.length === 0 && (
@@ -125,7 +138,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
       </section>
 
       {personagens.length === 0 ? (
-        <section className="cartao"><p>Nenhum personagem ainda.</p></section>
+        <section className="cartao"><p>{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</p></section>
       ) : (
         <section className="cartao">
           <table className="tabela">
@@ -134,10 +147,15 @@ export default function Personagens({ campaignId, campanha }: Props) {
             </thead>
             <tbody>
               {personagens.map((p) => (
-                <tr key={p.id} className="clicavel" onClick={() => void abrir(p.id)}>
+                <tr key={p.id} className={`clicavel${p.status === "arquivado" ? " arquivado" : ""}`} onClick={() => void abrir(p.id)}>
                   <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
                   <td>{p.displayName ?? p.dono}</td>
-                  <td><span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span></td>
+                  <td>
+                    <span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span>
+                    {p.status === "arquivado" && p.arquivadoDe && (
+                      <span className="meta"> (era {STATUS_LABEL[p.arquivadoDe] ?? p.arquivadoDe})</span>
+                    )}
+                  </td>
                   <td>{new Date(p.updatedAt).toLocaleString("pt-BR")}</td>
                 </tr>
               ))}
@@ -256,11 +274,45 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [errosValidacao, setErrosValidacao] = useState<ErroValidacao[] | null>(null);
+  const [confirmando, setConfirmando] = useState<"excluir" | "arquivar" | "restaurar" | null>(null);
+  const [operando, setOperando] = useState(false);
 
-  // Ficha aprovada fica trancada para o jogador até o mestre reabrir;
-  // bloqueada idem. O mestre sempre edita.
-  const podeEditar = souMestre || (personagem.status !== "bloqueada" && personagem.status !== "aprovada");
+  const arquivado = personagem.status === "arquivado";
+  // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
+  // mestre reabrir/restaurar; o mestre edita tudo que não está arquivado.
+  const podeEditar = !arquivado && (souMestre || (personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
+  // Exclusão: mestre sempre; jogador só o próprio personagem em status editável.
+  const podeExcluir = souMestre || (personagem.ehEu === true && STATUS_EXCLUIVEIS.has(personagem.status));
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
+
+  const executarOperacao = async () => {
+    if (!confirmando) return;
+    setOperando(true);
+    setErro(null);
+    setMsg(null);
+    try {
+      if (confirmando === "excluir") {
+        await api.excluirPersonagem(personagem.id);
+        await aoVoltar(); // personagem sumiu — volta à lista
+        return;
+      }
+      if (confirmando === "arquivar") {
+        await api.arquivarPersonagem(personagem.id);
+        setConfirmando(null);
+        await aoVoltar();
+        return;
+      }
+      await api.desarquivarPersonagem(personagem.id);
+      setConfirmando(null);
+      await aoRecarregar();
+    } catch (e) {
+      // 409 (histórico) ou 403: mantém o personagem e mostra o motivo.
+      setErro(e instanceof Error ? e.message : "Erro na operação");
+      setConfirmando(null);
+    } finally {
+      setOperando(false);
+    }
+  };
 
   const salvar = async (status?: string) => {
     setSalvando(true);
@@ -333,7 +385,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
               <button className="secundario" onClick={() => { setEditando(false); setValores(inicial as Record<string, unknown>); setNome(personagem.name); setErrosValidacao(null); setErro(null); }}>Cancelar</button>
             </>
           )}
-          {souMestre && !editando && (
+          {souMestre && !editando && !arquivado && (
             <>
               {personagem.status !== "aprovada" && <button onClick={() => void salvar("aprovada")}>Aprovar</button>}
               {personagem.status === "aprovada" && <button className="secundario" onClick={() => void salvar("reaberta")}>Reabrir</button>}
@@ -343,10 +395,52 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
               ) : (
                 <button className="secundario" onClick={() => void salvar("rascunho")}>Desbloquear</button>
               )}
+              <button className="secundario" onClick={() => setConfirmando("arquivar")}>Arquivar</button>
             </>
           )}
+          {souMestre && !editando && arquivado && (
+            <button className="secundario" onClick={() => setConfirmando("restaurar")}>Restaurar</button>
+          )}
+          {!editando && podeExcluir && (
+            <button className="perigo" onClick={() => setConfirmando("excluir")}>Excluir</button>
+          )}
         </div>
+        {arquivado && (
+          <p className="meta">Personagem arquivado{personagem.arquivadoDe ? ` (era ${STATUS_LABEL[personagem.arquivadoDe] ?? personagem.arquivadoDe})` : ""} — ficha, inventário e histórico preservados, somente leitura.</p>
+        )}
       </section>
+
+      {confirmando === "excluir" && (
+        <ModalConfirmar
+          titulo="Excluir personagem"
+          mensagem={<>Esta ação excluirá definitivamente <strong>{personagem.name}</strong> e os dados exclusivos associados (ficha, inventário, equipamentos, veículos e contas). Registros históricos de testes ou movimentações financeiras impedem a exclusão. <strong>Esta ação não poderá ser desfeita.</strong></>}
+          rotuloConfirmar="Excluir definitivamente"
+          perigo
+          ocupado={operando}
+          aoConfirmar={() => void executarOperacao()}
+          aoCancelar={() => setConfirmando(null)}
+        />
+      )}
+      {confirmando === "arquivar" && (
+        <ModalConfirmar
+          titulo="Arquivar personagem"
+          mensagem={<>Arquivar <strong>{personagem.name}</strong> o remove das listagens ativas, preservando integralmente ficha, inventário, veículos, anotações e histórico. O mestre pode restaurá-lo depois.</>}
+          rotuloConfirmar="Arquivar"
+          ocupado={operando}
+          aoConfirmar={() => void executarOperacao()}
+          aoCancelar={() => setConfirmando(null)}
+        />
+      )}
+      {confirmando === "restaurar" && (
+        <ModalConfirmar
+          titulo="Restaurar personagem"
+          mensagem={<>Restaurar <strong>{personagem.name}</strong> devolve-o à listagem ativa com o status anterior ao arquivamento.</>}
+          rotuloConfirmar="Restaurar"
+          ocupado={operando}
+          aoConfirmar={() => void executarOperacao()}
+          aoCancelar={() => setConfirmando(null)}
+        />
+      )}
 
       <section className="cartao ficha-cartao">
         <h3>Ficha</h3>

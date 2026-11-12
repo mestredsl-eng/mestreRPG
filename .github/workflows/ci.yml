@@ -51,7 +51,8 @@ jobs:
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
             teste-novidades.mjs \
-            teste-validacao-personagem.mjs
+            teste-validacao-personagem.mjs \
+            teste-exclusao-personagem.mjs
           do echo "===== $s ====="; node "$s"; done
 
   navegador:
@@ -91,5 +92,6 @@ jobs:
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs \
-            homologacao-validacao-ficha.mjs
+            homologacao-validacao-ficha.mjs \
+            homologacao-exclusao-personagem.mjs
           do echo "===== $s ====="; node "$s"; done

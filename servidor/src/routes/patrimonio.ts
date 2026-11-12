@@ -32,6 +32,12 @@ async function acessoOuErro(req: Request, res: import("express").Response): Prom
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return null;
   }
+  // Personagem arquivado: somente leitura — nenhuma rota de patrimônio
+  // pode alterar inventário, equipamentos, veículos ou finanças.
+  if (acesso.personagem.status === "arquivado" && req.method !== "GET") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return null;
+  }
   return { personagem: acesso.personagem, ehMestre: acesso.ehMestre, ehDono: acesso.ehDono };
 }
 
