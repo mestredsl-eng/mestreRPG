@@ -211,8 +211,10 @@ t("13a. timer inicia", timerStart?.ok === true);
 db.prepare("update sessions set timer_state=? where id=?")
   .run(JSON.stringify({ status: "rodando", endsAt: Date.now() + 1200, remainingMs: 1200, totalMs: 60000 }), SID);
 const timerEndP = esperar(sockJ, "mesa:timer", (t) => t.status === "parado", 8000).catch(() => null);
+// se o evento chegar, deve ser 'parado' com remainingMs=0; se se perder no
+// transporte (best-effort), a confirmação autoritativa é o estado persistido (13c)
 await timerEndP;
-t("13b. timer expira no servidor", true);
+t("13b. evento de expiração válido (se recebido)", timerEndP === null || (timerEndP.status === "parado" && timerEndP.remainingMs === 0), JSON.stringify(timerEndP));
 // estado persistido
 const est = await req("GET", `/campaigns/${CID}/sessoes/${SID}/estado`, { cookie: JOG5.cookie });
 t("13c. timer persistido", est.json?.sessao?.timerState?.status === "parado", JSON.stringify(est.json?.sessao?.timerState));

@@ -134,6 +134,57 @@ try {
     const sRe2 = await segTimer(pM);
     t("reinício após encerramento funciona", sRe2 !== null && sRe2 >= 175 && sRe2 <= 180, `lido=${sRe2}`);
     await st.getByRole("button", { name: "Encerrar", exact: true }).click();
+    await pM.waitForTimeout(600);
+
+    sec("Validação explícita de duração");
+    const msgErro = st.locator(".erro", { hasText: "Duração inválida" });
+    const btnReiniciar = st.getByRole("button", { name: /Reiniciar com duração escolhida/ });
+    for (const invalido of ["", "0", "-1", "1.5", "1441", "2000"]) {
+      await inputDur.fill(invalido);
+      await pM.waitForTimeout(200);
+      t(`duração inválida '${invalido}' → mensagem visível`, await msgErro.count() === 1);
+      t(`'${invalido}' → Iniciar desabilitado`, await st.getByRole("button", { name: /^Iniciar/ }).isDisabled());
+      t(`'${invalido}' → Reiniciar desabilitado`, await btnReiniciar.isDisabled());
+    }
+    // inicia com valor válido e invalida o campo com o timer rodando:
+    // pausar/retomar/encerrar não podem depender da validade da duração
+    await inputDur.fill("2");
+    await st.getByRole("button", { name: "Iniciar (2 min)", exact: true }).click();
+    await pM.waitForSelector(".timer-display.rodando", { timeout: 8000 });
+    await inputDur.fill("0");
+    await pM.waitForTimeout(200);
+    t("mensagem de erro com timer rodando", await msgErro.count() === 1);
+    t("Pausar disponível com campo inválido", await st.getByRole("button", { name: "Pausar" }).isEnabled());
+    await st.getByRole("button", { name: "Pausar" }).click();
+    await pM.waitForTimeout(400);
+    t("Retomar disponível com campo inválido", await st.getByRole("button", { name: "Retomar" }).isEnabled());
+    await st.getByRole("button", { name: "Retomar" }).click();
+    await pM.waitForSelector(".timer-display.rodando", { timeout: 8000 });
+    t("Encerrar disponível com campo inválido", await st.getByRole("button", { name: "Encerrar", exact: true }).isEnabled());
+    await st.getByRole("button", { name: "Encerrar", exact: true }).click();
+    await pM.waitForTimeout(500);
+
+    sec("Durações válidas exatas");
+    await inputDur.fill("1");
+    await pM.waitForTimeout(200);
+    t("erro some com duração válida", await msgErro.count() === 0);
+    const btn1 = st.getByRole("button", { name: "Iniciar (1 min)", exact: true });
+    t("botão exibe a duração enviada (1 min)", await btn1.count() === 1);
+    await btn1.click();
+    await pM.waitForSelector(".timer-display.rodando", { timeout: 8000 });
+    const s1 = await segTimer(pM);
+    t("1 minuto inicia exatamente ~60s", s1 !== null && s1 >= 55 && s1 <= 60, `lido=${s1}`);
+    await pJ.waitForTimeout(800);
+    const s1j = await segTimer(pJ);
+    t("jogador vê o mesmo ~60s", s1j !== null && Math.abs(s1j - s1) <= 2, `mestre=${s1} jogador=${s1j}`);
+
+    await inputDur.fill("1440");
+    await btnReiniciar.click();
+    await pM.waitForTimeout(800);
+    const s1440 = await segTimer(pM);
+    t("1440 reinicia exatamente ~24h (86400s)", s1440 !== null && s1440 >= 86350 && s1440 <= 86400, `lido=${s1440}`);
+    await st.getByRole("button", { name: "Encerrar", exact: true }).click();
+    await pM.waitForTimeout(400);
 
     t("desktop sem overflow horizontal", await semOverflow(pM) && await semOverflow(pJ));
     await ctxM.close(); await ctxJ.close();

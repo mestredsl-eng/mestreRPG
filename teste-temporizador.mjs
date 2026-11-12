@@ -65,7 +65,9 @@ try {
 
   sec("limites de duração (servidor autoritativo)");
   for (const [rotulo, dur] of [
-    ["abaixo do mínimo (59s)", 59], ["acima do máximo (86401s)", 86401],
+    ["abaixo do mínimo (59s)", 59], ["fracionário abaixo (59.5s)", 59.5],
+    ["acima do máximo (86401s)", 86401], ["fracionário acima (86400.4s)", 86400.4],
+    ["fracionário dentro (60.5s)", 60.5],
     ["zero", 0], ["negativo", -30], ["não numérico", "abc"], ["booleano", true],
   ]) {
     const r = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: dur });
@@ -73,6 +75,7 @@ try {
     const rr = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "reiniciar", duracaoSegundos: dur });
     t(`reiniciar ${rotulo} → rejeitado`, rr?.ok === false, JSON.stringify(rr));
   }
+  t("rejeições não criaram estado de timer", timerDb() === null, JSON.stringify(timerDb()));
 
   sec("duração padrão e limites válidos");
   const rPadrao = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar" });
@@ -129,6 +132,15 @@ try {
   sec("reinício após expiração natural");
   const rRe2 = await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "reiniciar", duracaoSegundos: 300 });
   t("reiniciar após expiração → 300s rodando", rRe2?.ok === true && rRe2.timer?.status === "rodando" && rRe2.timer?.totalMs === 300000, JSON.stringify(rRe2?.timer));
+
+  sec("rejeição não altera estado persistido");
+  const antes = timerDb();
+  for (const dur of [59, 59.5, 60.5, 86400.4, 86401]) {
+    await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: dur });
+    await emitirCb(sockM, "mesa:timer", { sessionId: sid, acao: "reiniciar", duracaoSegundos: dur });
+  }
+  t("timerState inalterado após rejeições", JSON.stringify(timerDb()) === JSON.stringify(antes),
+    `antes=${JSON.stringify(antes)} depois=${JSON.stringify(timerDb())}`);
 
   sec("controles exclusivos do mestre");
   for (const acao of ["iniciar", "pausar", "retomar", "reiniciar", "encerrar"]) {

@@ -256,7 +256,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const restantes = timer?.status === "rodando" && timer.endsAt && timer.servidorAgora
     ? Math.max(0, timer.endsAt - timer.servidorAgora)
     : timer?.remainingMs ?? 0;
-  const duracaoTimerSegundos = Math.min(86400, Math.max(60, Math.round((Number(duracaoTimerMinutos) || 5) * 60)));
+  const minutosTimer = duracaoTimerMinutos.trim() === "" ? NaN : Number(duracaoTimerMinutos);
+  const duracaoTimerValida = Number.isInteger(minutosTimer) && minutosTimer >= 1 && minutosTimer <= 1440;
+  const duracaoTimerSegundos = duracaoTimerValida ? minutosTimer * 60 : null;
+  const acaoTimer = timer?.status === "rodando" ? "pausar" : timer?.status === "pausado" ? "retomar" : "iniciar";
 
   const testesPendentes = testes.filter((t) => t.status === "pendente");
   const testesRecentes = testes.filter((t) => t.status !== "pendente").slice(0, 10);
@@ -374,11 +377,16 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                   </label>
                   <span className="meta">De 1 minuto a 24 horas</span>
                 </div>
+                {!duracaoTimerValida && (
+                  <p className="erro">Duração inválida — informe um número inteiro de minutos entre 1 e 1440.</p>
+                )}
                 <div className="linha linha-botoes">
-                  <button className="secundario" onClick={() => socketEmit("mesa:timer", { acao: timer?.status === "rodando" ? "pausar" : timer?.status === "pausado" ? "retomar" : "iniciar", duracaoSegundos: duracaoTimerSegundos })}>
-                    {timer?.status === "rodando" ? "Pausar" : timer?.status === "pausado" ? "Retomar" : "Iniciar (" + (Number(duracaoTimerMinutos) || 5) + " min)"}
+                  <button className="secundario" disabled={acaoTimer === "iniciar" && !duracaoTimerValida}
+                    onClick={() => socketEmit("mesa:timer", { acao: acaoTimer, duracaoSegundos: duracaoTimerSegundos ?? undefined })}>
+                    {acaoTimer === "pausar" ? "Pausar" : acaoTimer === "retomar" ? "Retomar" : duracaoTimerValida ? "Iniciar (" + minutosTimer + " min)" : "Iniciar"}
                   </button>
-                  <button className="secundario" onClick={() => socketEmit("mesa:timer", { acao: "reiniciar", duracaoSegundos: duracaoTimerSegundos })}>Reiniciar com duração escolhida</button>
+                  <button className="secundario" disabled={!duracaoTimerValida}
+                    onClick={() => socketEmit("mesa:timer", { acao: "reiniciar", duracaoSegundos: duracaoTimerSegundos ?? undefined })}>Reiniciar com duração escolhida</button>
                   <button className="secundario" onClick={() => socketEmit("mesa:timer", { acao: "encerrar" })}>Encerrar</button>
                 </div>
               </>

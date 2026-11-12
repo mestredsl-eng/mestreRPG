@@ -170,9 +170,8 @@ export function registrarMesa(io: SocketIOServer) {
 const TIMER_DURACAO_MIN_S = 60;
 const TIMER_DURACAO_MAX_S = 86400;
 function duracaoTimerValida(seg: unknown): number | null {
-  if (typeof seg !== "number" || !Number.isFinite(seg)) return null;
-  const s = Math.round(seg);
-  return s >= TIMER_DURACAO_MIN_S && s <= TIMER_DURACAO_MAX_S ? s : null;
+  if (typeof seg !== "number" || !Number.isFinite(seg) || !Number.isInteger(seg)) return null;
+  return seg >= TIMER_DURACAO_MIN_S && seg <= TIMER_DURACAO_MAX_S ? seg : null;
 }
 const ERRO_DURACAO_TIMER = "Duração inválida — use entre 1 e 1440 minutos";
 
