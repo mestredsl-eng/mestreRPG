@@ -347,7 +347,8 @@ export default function Regras({ campaignId }: { campaignId: string }) {
               <p className="dica">
                 {previaAcervo.totais.itensNoLivro} item(ns) no livro (v{previaAcervo.versao}):
                 {" "}{previaAcervo.totais.novos} novo(s), {previaAcervo.totais.identicos} idêntico(s),{" "}
-                {previaAcervo.totais.conflitos} conflito(s), {previaAcervo.totais.invalidos} inválido(s).
+                {previaAcervo.totais.conflitos} conflito(s), {previaAcervo.totais.invalidos} inválido(s)
+                {(previaAcervo.totais.incompativeis ?? 0) > 0 && `, ${previaAcervo.totais.incompativeis} tipo(s) incompatível(is) — o livro não pode ser aplicado integralmente`}.
                 {" "}{previaAcervo.totais.preservadosNaCampanha} elemento(s) da campanha não existem no livro e serão preservados.
                 {previaAcervo.semDiferencas && " Nenhuma diferença — a aplicação seria idempotente."}
               </p>

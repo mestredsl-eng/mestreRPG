@@ -542,11 +542,17 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
 
   const classificacao: Classificacao[] = [];
   const invalidosLista: string[] = [];
+  // kinds fora de TIPOS_REGRA: a aplicação rejeita o livro inteiro (422) —
+  // a prévia precisa identificar a mesma incompatibilidade e não contar
+  // esses itens como novos/identicos aplicáveis.
+  const incompativeis = itens.filter((i) => !TIPOS_REGRA.includes(i.kind as (typeof TIPOS_REGRA)[number]));
+  const chavesIncompativeis = new Set(incompativeis.map((i) => `${i.kind}:${i.key}`));
   const pendentes: { chave: string; nomeNoLivro: string; nomeNaCampanha: string; tipo: string }[] = [];
   let novos = 0, identicos = 0, conflitos = 0, resolvidos = 0;
 
   for (const item of itens) {
     const chave = `${item.kind}:${item.key}`;
+    if (chavesIncompativeis.has(chave)) continue;
     const parsed = definicaoElementoSchema.safeParse(item.definition ?? {});
     if (!parsed.success) { invalidosLista.push(chave); continue; }
     const atual = mapa.get(chave);
@@ -608,7 +614,8 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
     category: i.category ?? null, parentKey: i.parentKey ?? null,
     definition: i.definition ?? {}, ordem: i.ordem,
   }));
-  const semDiferencas = novos === 0 && conflitos === 0 && invalidosLista.length === 0
+  const semDiferencas = incompativeis.length === 0
+    && novos === 0 && conflitos === 0 && invalidosLista.length === 0
     && (vinculo?.appliedVersion ?? null) === livro.versao
     && snapshotItensCanon(antigosSnap) === snapshotItensCanon(snapshotNovoItens)
     && canonJson(decisoesGravadas) === "{}";
@@ -625,8 +632,11 @@ function analisarAcervo(dbx: Dbx, campaignId: string, bookId: string): AnaliseAc
       totais: {
         itensNoLivro: itens.length, novos, identicos,
         conflitos, resolvidos, invalidos: invalidosLista.length,
+        incompativeis: incompativeis.length,
         preservadosNaCampanha: atuais.filter((e) => !chavesLivro.has(`${e.kind}:${e.key}`)).length,
       },
+      tiposIncompativeis: [...new Set(incompativeis.map((i) => i.kind))],
+      aplicavelIntegralmente: incompativeis.length === 0,
       conflitos: pendentes,
       semDiferencas,
     },

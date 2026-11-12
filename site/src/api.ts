@@ -1136,8 +1136,11 @@ export interface DiffAcervoCampanha {
     identicos: number;
     conflitos: number;
     invalidos: number;
+    incompativeis: number;
     preservadosNaCampanha: number;
   };
+  tiposIncompativeis?: string[];
+  aplicavelIntegralmente?: boolean;
   conflitos: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[];
   semDiferencas: boolean;
 }
