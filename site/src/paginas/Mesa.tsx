@@ -182,17 +182,28 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
 
-    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
-      if (r?.ok) {
-        if (r.papel) setPapel(r.papel);
-        if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
-        if (r.turnos) setTurnos(r.turnos);
-        if (r.presenca) setOnline(r.presenca);
-        if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens)
-      } else {
-        setErro("Não foi possível entrar na mesa");
-      }
-    });
+    // mesa:entrar também na reconexão do socket: sem isso o novo socket
+    // nunca volta à sala sessao:* e a mesa (vtt, chat, timer) fica muda
+    // até recarregar a página. O servidor revalida tudo e devolve o
+    // vttState filtrado — a visão é reconstruída do zero.
+    let entrouNaMesa = false;
+    const entrar = () => {
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
+        if (r?.ok) {
+          entrouNaMesa = true;
+          if (r.papel) setPapel(r.papel);
+          if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
+          if (r.turnos) setTurnos(r.turnos);
+          if (r.presenca) setOnline(r.presenca);
+          if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens/névoa)
+        } else {
+          setErro("Não foi possível entrar na mesa");
+        }
+      });
+    };
+    entrar();
+    const aoReconnect = () => { if (entrouNaMesa) entrar(); };
+    socket.on("connect", aoReconnect);
 
     return () => {
       socket.emit("mesa:sair", { sessionId: sessao.id });
@@ -204,6 +215,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("mesa:timer", aoTimer);
       socket.off("mesa:presenca", aoPresenca);
       socket.off("sessao:atualizada", aoSessao);
+      socket.off("connect", aoReconnect);
       socket.emit("sair-campanha", campaignId);
     };
   }, [campaignId, sessao.id]);
@@ -850,16 +862,34 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [raioNevoa, setRaioNevoa] = useState(0.08);    // raio normalizado 0–1
   const [pendenteNevoa, setPendenteNevoa] = useState(false);
   const [previewNevoa, setPreviewNevoa] = useState<{ pontos: { x: number; y: number }[] } | null>(null);
-  const desenhoRef = useRef<{ pontos: { x: number; y: number }[] } | null>(null);
+  const desenhoRef = useRef<{ pontos: { x: number; y: number }[]; pointerId: number } | null>(null);
+  const fimDesenhoRef = useRef<(() => void) | null>(null); // cancela gesto ativo + listeners
+  const pendenteNevoaRef = useRef(false);                  // trava de operação única
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
+  const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
 
-  // redesenha a camada de névoa quando o estado autoritativo muda
+  // ResizeObserver: o canvas acompanha o tabuleiro (rotação, viewport,
+  // redimensionamento) e o desenho é refeito sem distorcer os traços —
+  // as coordenadas normalizadas 0–1 não mudam.
+  useEffect(() => {
+    const el = tabRef.current;
+    if (!el) return;
+    const medir = () => setTamTab({ w: el.clientWidth, h: el.clientHeight });
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [vtt.mapa?.fileId]);
+
+  // redesenha a camada de névoa quando o estado autoritativo muda.
+  // Ordem: limpeza → névoa autoritativa (só se ativa) → destaque do mestre
+  // → prévia do pincel SEMPRE por último (independe de nevoa.ativa).
   useEffect(() => {
     const cv = nevoaCanvasRef.current;
     const el = tabRef.current;
     if (!cv || !el) return;
-    const w = el.clientWidth, h = el.clientHeight;
+    const w = tamTab.w || el.clientWidth, h = tamTab.h || el.clientHeight;
     if (!w || !h) return;
     const dpr = window.devicePixelRatio || 1;
     cv.width = Math.round(w * dpr);
@@ -868,12 +898,12 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    if (!nevoa.ativa) return;
-    if (souMestre || ehEspectador || true) {
-      // não-mestres: véu opaco com buracos revelados (destination-out)
+    if (nevoa.ativa) {
       if (!souMestre) {
+        // não-mestres: véu visualmente opaco com buracos revelados
+        // (destination-out). Não é confidencialidade dos bytes da imagem.
         ctx.save();
-        ctx.fillStyle = "rgba(8,10,16,0.96)";
+        ctx.fillStyle = "#0a0d14";
         ctx.fillRect(0, 0, w, h);
         ctx.globalCompositeOperation = "destination-out";
         ctx.fillStyle = "#000";
@@ -890,7 +920,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
         ctx.restore();
       }
     }
-    // prévia do traço em desenho (mestre)
+    // prévia do traço em desenho (mestre) — visível mesmo com névoa
+    // ainda desativada: o primeiro traço é o que a ativa no servidor
     if (pincel && previewNevoa && previewNevoa.pontos.length) {
       ctx.save();
       ctx.fillStyle = "rgba(255,209,102,0.35)";
@@ -899,27 +930,48 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       desenharTracoNevoa(ctx, w, h, { raioX: raioNevoa, raioY: raioNevoa, pontos: previewNevoa.pontos });
       ctx.restore();
     }
-  }, [nevoa, previewNevoa, pincel, raioNevoa, souMestre, vtt.mapa?.fileId]);
+  }, [nevoa, previewNevoa, pincel, raioNevoa, souMestre, tamTab, vtt.mapa?.fileId]);
 
-  // limpa estados temporários ao trocar de sessão
+  // limpa estados temporários ao trocar de sessão — cancela desenho
+  // incompleto e TODOS os listeners do gesto antes de zerar o estado
   useEffect(() => {
+    fimDesenhoRef.current?.();
     setPincel(false); setPreviewNevoa(null); desenhoRef.current = null; setPendenteNevoa(false);
   }, [sessionId]);
+  // idem ao desmontar o componente
+  useEffect(() => () => { fimDesenhoRef.current?.(); }, []);
 
+  // retorna null fora do retângulo do tabuleiro — nunca gruda o traço
+  // nas bordas quando o ponteiro sai da área do mapa
   const pontoNormalizado = (ev: { clientX: number; clientY: number }) => {
     const el = tabRef.current;
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return {
-      x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
-      y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
-    };
+    const x = (ev.clientX - r.left) / r.width;
+    const y = (ev.clientY - r.top) / r.height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x, y };
   };
 
   const emitirNevoa = (acao: string, traco?: { raioX: number; raioY: number; pontos: { x: number; y: number }[] }) => {
+    if (pendenteNevoaRef.current) return; // uma operação por vez
+    pendenteNevoaRef.current = true;
     setPendenteNevoa(true);
     setErroVtt(null);
+    let respondido = false;
+    const timeout = window.setTimeout(() => {
+      if (respondido) return;
+      respondido = true;
+      pendenteNevoaRef.current = false;
+      setPendenteNevoa(false);
+      setPreviewNevoa(null);
+      setErroVtt("Sem confirmação do servidor — traço não aplicado");
+    }, 5000);
     getSocket().emit("mesa:vtt:nevoa", { sessionId, acao, traco }, (r: { ok?: boolean; erro?: string }) => {
+      if (respondido) return; // ACK tardio após o timeout: ignorar
+      respondido = true;
+      window.clearTimeout(timeout);
+      pendenteNevoaRef.current = false;
       setPendenteNevoa(false);
       if (r && r.ok === false) {
         setErroVtt(r.erro ?? "Ação de névoa recusada");
@@ -929,51 +981,75 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     });
   };
 
+  // Gesto único de desenho: pointerId fixo, cleanup único que remove
+  // TODOS os listeners registrados. pointerup finaliza e emite uma
+  // única operação; pointercancel/lostpointercapture/blur/aba oculta
+  // descartam o rascunho sem emitir nada. Um segundo ponteiro não
+  // interfere: eventos de outro pointerId são ignorados e um novo
+  // pointerdown é bloqueado enquanto há desenho ativo.
   const iniciarPincel = (e: ReactPointerEvent) => {
-    if (!pincel || !souMestreCena || pendenteNevoa) return;
+    if (!pincel || !souMestreCena || pendenteNevoaRef.current || desenhoRef.current) return;
     const p = pontoNormalizado(e);
     if (!p) return;
     e.preventDefault();
-    try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* ok */ }
-    desenhoRef.current = { pontos: [p] };
+    const pid = e.pointerId;
+    try { (e.currentTarget as HTMLElement).setPointerCapture?.(pid); } catch { /* ok */ }
+    desenhoRef.current = { pontos: [p], pointerId: pid };
     setPreviewNevoa({ pontos: [p] });
+
     const mover = (ev: PointerEvent) => {
       const d = desenhoRef.current;
-      if (!d) return;
+      if (!d || d.pointerId !== ev.pointerId) return;
       const q = pontoNormalizado(ev);
-      if (!q) return;
+      if (!q) return; // fora do tabuleiro: não acrescenta ponto de borda
       const ultimo = d.pontos[d.pontos.length - 1];
       // dedup por distância mínima para não inflar o traço
       if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) < 0.004) return;
       d.pontos.push(q);
       setPreviewNevoa({ pontos: [...d.pontos] });
     };
-    const soltar = (ev: PointerEvent) => {
-      window.removeEventListener("pointermove", mover);
-      window.removeEventListener("pointerup", soltar);
-      window.removeEventListener("pointercancel", soltar);
+    function soltar(ev: PointerEvent) {
       const d = desenhoRef.current;
-      desenhoRef.current = null;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      limpar();
       setPreviewNevoa(null);
-      if (!d || d.pontos.length === 0) return;
-      const q = pontoNormalizado(ev);
+      if (!d.pontos.length) return;
+      const q = pontoNormalizado(ev); // pode ser null se soltou fora
       if (q) {
         const ultimo = d.pontos[d.pontos.length - 1];
         if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) >= 0.004) d.pontos.push(q);
       }
       const pontos = amostrarPontos(d.pontos);
       emitirNevoa("revelar", { raioX: raioNevoa, raioY: raioNevoa, pontos });
-    };
-    const cancelar = () => {
+    }
+    function cancelar() {
+      const d = desenhoRef.current;
+      if (!d) return;
+      limpar();
+      setPreviewNevoa(null);
+    }
+    function aoPerderCaptura(ev: PointerEvent) {
+      const d = desenhoRef.current;
+      if (d && d.pointerId === ev.pointerId) cancelar();
+    }
+    function aoVisibilidade() { if (document.hidden) cancelar(); }
+    function limpar() {
       window.removeEventListener("pointermove", mover);
       window.removeEventListener("pointerup", soltar);
       window.removeEventListener("pointercancel", cancelar);
+      window.removeEventListener("lostpointercapture", aoPerderCaptura);
+      window.removeEventListener("blur", cancelar);
+      document.removeEventListener("visibilitychange", aoVisibilidade);
       desenhoRef.current = null;
-      setPreviewNevoa(null);
-    };
+      if (fimDesenhoRef.current === cancelar) fimDesenhoRef.current = null;
+    }
     window.addEventListener("pointermove", mover);
     window.addEventListener("pointerup", soltar);
     window.addEventListener("pointercancel", cancelar);
+    window.addEventListener("lostpointercapture", aoPerderCaptura);
+    window.addEventListener("blur", cancelar);
+    document.addEventListener("visibilitychange", aoVisibilidade);
+    fimDesenhoRef.current = cancelar;
   };
 
   const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
@@ -1136,7 +1212,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           <button
             className={pincel ? "primario" : "secundario"}
             disabled={pendenteNevoa}
-            onClick={() => { setPincel((p) => !p); setPreviewNevoa(null); desenhoRef.current = null; }}
+            onClick={() => { fimDesenhoRef.current?.(); setPincel((p) => !p); }}
           >{pincel ? "Sair do pincel" : "Pincel de névoa"}</button>
           {pincel && (
             <label className="vtt-nevoa-raio">
