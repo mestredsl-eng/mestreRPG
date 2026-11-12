@@ -727,11 +727,80 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 // estado inicial) — movimentos otimistas locais nunca a alteram.
 type PosicaoConfirmada = { x: number; y: number; rev: number };
 
+// ---------- névoa de guerra (Etapa 2) ----------
+// Geometria idêntica ao backend (servidor/src/lib/vtt.ts): cada traço é uma
+// cápsula elíptica de raios (raioX, raioY) em coordenadas normalizadas 0–1.
+// No canvas (espaço de pixels w×h) o raio elíptico vira (raioX*w, raioY*h).
+const NEVOA_RAIO_MIN = 0.005;
+const NEVOA_RAIO_MAX = 0.5;
+const NEVOA_MAX_PONTOS = 128;
+
+function vttInicialParse(inicial: VttState | string | null | undefined): VttState {
+  if (!inicial) return { mapa: null, tokens: [] };
+  if (typeof inicial === "string") {
+    try { return JSON.parse(inicial) as VttState; } catch { return { mapa: null, tokens: [] }; }
+  }
+  return inicial;
+}
+
+/** Desenha uma cápsula elíptica (traço do backend) em coords normalizadas→pixels. */
+function desenharTracoNevoa(
+  ctx: CanvasRenderingContext2D, w: number, h: number,
+  traco: { raioX: number; raioY: number; pontos: { x: number; y: number }[] },
+) {
+  const ps = traco.pontos;
+  if (!ps.length) return;
+  ctx.save();
+  ctx.scale(w, h); // espaço normalizado 0–1
+  if (ps.length === 1) {
+    ctx.beginPath();
+    ctx.ellipse(ps[0].x, ps[0].y, traco.raioX, traco.raioY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 2; // diâmetro unitário no espaço escalado pelo raio
+  for (let i = 0; i < ps.length - 1; i++) {
+    const a = ps[i], b = ps[i + 1];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.scale(traco.raioX, traco.raioY);
+    ctx.beginPath();
+    ctx.moveTo((a.x - mx) / traco.raioX, (a.y - my) / traco.raioY);
+    ctx.lineTo((b.x - mx) / traco.raioX, (b.y - my) / traco.raioY);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // extremidades: elipses nos pontos iniciais/finais para cantos arredondados
+  for (const p of [ps[0], ps[ps.length - 1]]) {
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, traco.raioX, traco.raioY, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Amostragem para o limite de 128 pontos, preservando início e fim. */
+function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS): { x: number; y: number }[] {
+  if (ps.length <= max) return ps;
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < max; i++) {
+    const idx = Math.round((i * (ps.length - 1)) / (max - 1));
+    out.push(ps[idx]);
+  }
+  out[0] = ps[0];
+  out[max - 1] = ps[ps.length - 1];
+  return out;
+}
+
 function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; encerrada: boolean; inicial: VttState | null;
+  membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
 }) {
-  const [vtt, setVtt] = useState<VttState>(inicial ?? { mapa: null, tokens: [] });
+  const [vtt, setVtt] = useState<VttState>(() => vttInicialParse(inicial));
   const [erroVtt, setErroVtt] = useState<string | null>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
@@ -769,11 +838,143 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
   useEffect(() => {
-    if (inicial) {
-      sincronizarAutoritativo(inicial);
-      setVtt(inicial);
-    }
+    const ini = vttInicialParse(inicial);
+    sincronizarAutoritativo(ini);
+    setVtt(ini);
+    setPincel(false); setPreviewNevoa(null); // sessão/troca de estado: limpa rascunho
   }, [inicial]);
+
+  // ---------- névoa de guerra ----------
+  const nevoaCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [pincel, setPincel] = useState(false);          // modo desenho (só mestre)
+  const [raioNevoa, setRaioNevoa] = useState(0.08);    // raio normalizado 0–1
+  const [pendenteNevoa, setPendenteNevoa] = useState(false);
+  const [previewNevoa, setPreviewNevoa] = useState<{ pontos: { x: number; y: number }[] } | null>(null);
+  const desenhoRef = useRef<{ pontos: { x: number; y: number }[] } | null>(null);
+  const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
+  const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
+
+  // redesenha a camada de névoa quando o estado autoritativo muda
+  useEffect(() => {
+    const cv = nevoaCanvasRef.current;
+    const el = tabRef.current;
+    if (!cv || !el) return;
+    const w = el.clientWidth, h = el.clientHeight;
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (!nevoa.ativa) return;
+    if (souMestre || ehEspectador || true) {
+      // não-mestres: véu opaco com buracos revelados (destination-out)
+      if (!souMestre) {
+        ctx.save();
+        ctx.fillStyle = "rgba(8,10,16,0.96)";
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.fillStyle = "#000";
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.restore();
+      } else {
+        // mestre: destaque sutil das áreas reveladas (mapa segue visível)
+        ctx.save();
+        ctx.fillStyle = "rgba(120,200,255,0.10)";
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.strokeStyle = "rgba(120,200,255,0.35)";
+        ctx.lineWidth = 1;
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.restore();
+      }
+    }
+    // prévia do traço em desenho (mestre)
+    if (pincel && previewNevoa && previewNevoa.pontos.length) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255,209,102,0.35)";
+      ctx.strokeStyle = "rgba(255,209,102,0.8)";
+      ctx.lineWidth = 1.5;
+      desenharTracoNevoa(ctx, w, h, { raioX: raioNevoa, raioY: raioNevoa, pontos: previewNevoa.pontos });
+      ctx.restore();
+    }
+  }, [nevoa, previewNevoa, pincel, raioNevoa, souMestre, vtt.mapa?.fileId]);
+
+  // limpa estados temporários ao trocar de sessão
+  useEffect(() => {
+    setPincel(false); setPreviewNevoa(null); desenhoRef.current = null; setPendenteNevoa(false);
+  }, [sessionId]);
+
+  const pontoNormalizado = (ev: { clientX: number; clientY: number }) => {
+    const el = tabRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
+    };
+  };
+
+  const emitirNevoa = (acao: string, traco?: { raioX: number; raioY: number; pontos: { x: number; y: number }[] }) => {
+    setPendenteNevoa(true);
+    setErroVtt(null);
+    getSocket().emit("mesa:vtt:nevoa", { sessionId, acao, traco }, (r: { ok?: boolean; erro?: string }) => {
+      setPendenteNevoa(false);
+      if (r && r.ok === false) {
+        setErroVtt(r.erro ?? "Ação de névoa recusada");
+        setPreviewNevoa(null); // rejeição: limpa prévia, nada é confirmado localmente
+      }
+      // sucesso: o broadcast mesa:vtt traz o estado autoritativo
+    });
+  };
+
+  const iniciarPincel = (e: ReactPointerEvent) => {
+    if (!pincel || !souMestreCena || pendenteNevoa) return;
+    const p = pontoNormalizado(e);
+    if (!p) return;
+    e.preventDefault();
+    try { (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* ok */ }
+    desenhoRef.current = { pontos: [p] };
+    setPreviewNevoa({ pontos: [p] });
+    const mover = (ev: PointerEvent) => {
+      const d = desenhoRef.current;
+      if (!d) return;
+      const q = pontoNormalizado(ev);
+      if (!q) return;
+      const ultimo = d.pontos[d.pontos.length - 1];
+      // dedup por distância mínima para não inflar o traço
+      if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) < 0.004) return;
+      d.pontos.push(q);
+      setPreviewNevoa({ pontos: [...d.pontos] });
+    };
+    const soltar = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", soltar);
+      const d = desenhoRef.current;
+      desenhoRef.current = null;
+      setPreviewNevoa(null);
+      if (!d || d.pontos.length === 0) return;
+      const q = pontoNormalizado(ev);
+      if (q) {
+        const ultimo = d.pontos[d.pontos.length - 1];
+        if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) >= 0.004) d.pontos.push(q);
+      }
+      const pontos = amostrarPontos(d.pontos);
+      emitirNevoa("revelar", { raioX: raioNevoa, raioY: raioNevoa, pontos });
+    };
+    const cancelar = () => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", cancelar);
+      desenhoRef.current = null;
+      setPreviewNevoa(null);
+    };
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointercancel", cancelar);
+  };
 
   const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
     getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
@@ -885,6 +1086,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           className="vtt-tabuleiro"
           style={{ backgroundImage: `url(${arquivoUrl(campaignId, vtt.mapa.fileId)})` }}
         >
+          <canvas
+            ref={nevoaCanvasRef}
+            className={`vtt-nevoa-canvas ${pincel ? "vtt-nevoa-canvas-pincel" : ""}`}
+            onPointerDown={iniciarPincel}
+          />
           {vtt.tokens.filter((t) => t.ativo).map((tk) => {
             const meu = ehDono(tk);
             return (
@@ -923,6 +1129,35 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           {selVtt && (
             <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
           )}
+        </div>
+      )}
+      {souMestreCena && (
+        <div className="linha vtt-controles vtt-nevoa-controles">
+          <button
+            className={pincel ? "primario" : "secundario"}
+            disabled={pendenteNevoa}
+            onClick={() => { setPincel((p) => !p); setPreviewNevoa(null); desenhoRef.current = null; }}
+          >{pincel ? "Sair do pincel" : "Pincel de névoa"}</button>
+          {pincel && (
+            <label className="vtt-nevoa-raio">
+              Raio
+              <input
+                type="range" min={NEVOA_RAIO_MIN} max={NEVOA_RAIO_MAX} step={0.005}
+                value={raioNevoa}
+                onChange={(e) => setRaioNevoa(Number(e.target.value))}
+              />
+              <span>{Math.round(raioNevoa * 100)}%</span>
+            </label>
+          )}
+          <button className="secundario" disabled={pendenteNevoa || nevoa.revelados.length === 0}
+            onClick={() => emitirNevoa("desfazer")}>Desfazer traço</button>
+          <button className="secundario" disabled={pendenteNevoa}
+            onClick={() => emitirNevoa("ocultarTudo")}>Ocultar tudo</button>
+          <button className="secundario" disabled={pendenteNevoa}
+            onClick={() => emitirNevoa("revelarTudo")}>Revelar tudo</button>
+          <span className="meta">
+            Névoa: {nevoa.ativa ? `ativa (${nevoa.revelados.length} traço${nevoa.revelados.length === 1 ? "" : "s"})` : "desativada"}
+          </span>
         </div>
       )}
     </section>
