@@ -16,14 +16,14 @@ const DIR = dirTeste("mesa-nevoa");
 const BANCO = `${DIR}/teste.db`;
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
-let proc, ids, sid, C;
+let proc, proc2, ids, sid, C;
 const sockets = [];
 const ultVtt = new Map();   // socket -> último payload mesa:vtt
 const cntVtt = new Map();   // socket -> contador mesa:vtt
 
-function conectar(cookie) {
+function conectar(cookie, base = BASE) {
   const token = decodeURIComponent(cookie.split("=")[1]);
-  const s = ioClient(BASE, {
+  const s = ioClient(base, {
     path: "/socket.io", transports: ["websocket", "polling"],
     extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(token)}` },
     reconnection: false,
@@ -48,7 +48,7 @@ async function esperarVtt(socket, timeout = 8000) {
 const idsDe = (vtt) => (vtt?.tokens ?? []).map((x) => x.id).sort();
 const temToken = (vtt, id) => (vtt?.tokens ?? []).some((x) => x.id === id);
 
-function novoUsuario(banco, { username, role = null, permissions = {} }) {
+function novoUsuario(banco, { username, role = null, permissions = {}, campId = null }) {
   const db = abrirDb(banco);
   try {
     const uid = crypto.randomUUID(), agora = Date.now();
@@ -58,7 +58,7 @@ function novoUsuario(banco, { username, role = null, permissions = {} }) {
     if (role) {
       mid = crypto.randomUUID();
       db.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
-        .run(mid, ids.camp, uid, role, "ativo", JSON.stringify(permissions), agora, agora, agora);
+        .run(mid, campId ?? ids.camp, uid, role, "ativo", JSON.stringify(permissions), agora, agora, agora);
     }
     return { id: uid, membershipId: mid, cookie: sessao(banco, uid) };
   } finally { db.close(); }
@@ -348,6 +348,129 @@ try {
   t("token sem dono verificável: ninguém recebe (exceto mestre)", !idsA.includes("tksemDon") && !idsB.includes("tksemDon") && !idsE2.includes("tksemDon"));
   t("mestre recebe todos os tokens injetados", ["tkdiverg1", "tkcoerente", "tkpersB", "tksemDon"].every((x) => idsM2.includes(x)), idsM2.join(","));
 
+  // ---------- I. corrida de autorização em mesa:entrar ----------
+  sec("I. mesa:entrar — revalidação final de autorização");
+  // O servidor tem trava de instância única por banco: a corrida usa um
+  // SEGUNDO banco + processo com barreira determinística de 400ms em
+  // mesa:entrar (MESTRE_VTT_BARRIER_MS). A mutação de membership é
+  // garantida dentro da janela entre a validação inicial e a final.
+  const BANCO2 = `${DIR}/corrida.db`;
+  const PORTA2 = await portaLivre();
+  const BASE2 = `http://localhost:${PORTA2}`;
+  await prepararBanco(BANCO2);
+  proc2 = subirServidor(PORTA2, { banco: BANCO2, arquivos: `${DIR}/arq2`, backups: `${DIR}/bks2`, env: { MESTRE_VTT_BARRIER_MS: "400" } });
+  proc2.stderr.on("data", d => process.stderr.write("[srv2] " + d)); proc2.stdout?.on("data", d => process.stderr.write("[srv2] " + d));
+  await esperarSaudavel(BASE2, proc2);
+
+  const c2 = await criarCenario(BASE2, BANCO2, { jogadores: { j1: "rc_j1", j2: "rc_j2" } });
+  const camp2 = c2.campId;
+  const esp2 = novoUsuario(BANCO2, { username: "rc_esp", role: "espectador", campId: camp2 });
+  const cookieM2 = c2.cookieMestre;
+  const j1c = c2.jogadores.j1, j2c = c2.jogadores.j2;
+  const j1id = j1c.id, j2id = j2c.id;
+
+  // sessão com névoa ativa e SEM traços: nada revelado.
+  // tkrA (dono j1) e tkrB (dono j2) ficam ocultos para terceiros.
+  const sess2 = await req(BASE2, "POST", `/campaigns/${camp2}/sessoes`, { cookie: cookieM2, body: { name: "Mesa Corrida" } });
+  const sid2 = sess2.json?.sessao?.id ?? sess2.json?.id;
+  t("sessão da corrida criada", !!sid2);
+  const dbI = abrirDb(BANCO2);
+  try {
+    dbI.prepare("update sessions set vtt_state=? where id=?").run(JSON.stringify({
+      mapa: null,
+      tokens: [
+        { id: "tkrA", nome: "RA", cor: "#ff0000", x: 0.5, y: 0.5, userId: j1id, ativo: true },
+        { id: "tkrB", nome: "RB", cor: "#00ff00", x: 0.6, y: 0.6, userId: j2id, ativo: true },
+      ],
+      nevoa: { ativa: true, revelados: [] },
+    }), sid2);
+  } finally { dbI.close(); }
+
+  const setVinculo = (userId, role, status = "ativo") => {
+    const db = abrirDb(BANCO2);
+    try { db.prepare("update memberships set role=?, status=? where campaign_id=? and user_id=?").run(role, status, camp2, userId); }
+    finally { db.close(); }
+  };
+  const entrarComCorrida = async (cookie, mutar) => {
+    const s = conectar(cookie, BASE2);
+    await pronto(s);
+    const pAck = emitirCb(s, "mesa:entrar", { sessionId: sid2 });
+    await dormir(120); // dentro da barreira de 400ms
+    if (mutar) await mutar();
+    const ack = await pAck;
+    let vtt = null;
+    if (ack?.ok) { await esperarVtt(s, 5000).catch(() => {}); vtt = ultVtt.get(s); }
+    else await dormir(300);
+    return { s, ack, vtt };
+  };
+  const idsTok = (v) => (v?.tokens ?? []).map((x) => x.id).sort();
+
+  // 1-3. entradas normais (sem mutação): papel e visão corretos
+  const nM = await entrarComCorrida(cookieM2, null);
+  t("corrida: mestre entra com estado completo",
+    nM.ack?.ok === true && nM.ack?.papel === "mestre"
+    && idsTok(nM.ack?.sessao?.vttState).join() === "tkrA,tkrB"
+    && idsTok(nM.vtt).join() === "tkrA,tkrB",
+    JSON.stringify({ papel: nM.ack?.papel, ack: nM.ack?.sessao?.vttState?.tokens?.length, emit: nM.vtt?.tokens?.length }));
+  const nJ = await entrarComCorrida(j1c.cookie, null);
+  t("corrida: jogador recebe só o próprio token oculto",
+    nJ.ack?.ok === true && nJ.ack?.papel === "jogador"
+    && idsTok(nJ.ack?.sessao?.vttState).join() === "tkrA"
+    && idsTok(nJ.vtt).join() === "tkrA",
+    JSON.stringify({ papel: nJ.ack?.papel, ack: nJ.ack?.sessao?.vttState?.tokens, emit: nJ.vtt?.tokens }));
+  const nE = await entrarComCorrida(esp2.cookie, null);
+  t("corrida: espectador não recebe tokens",
+    nE.ack?.ok === true && nE.ack?.papel === "espectador"
+    && idsTok(nE.ack?.sessao?.vttState).length === 0
+    && idsTok(nE.vtt).length === 0,
+    JSON.stringify({ papel: nE.ack?.papel }));
+  t("corrida: ACK coerente com o emit mesa:vtt",
+    JSON.stringify(idsTok(nJ.ack?.sessao?.vttState)) === JSON.stringify(idsTok(nJ.vtt)));
+
+  // 4. mestre → jogador durante a entrada: visão final filtrada como jogador
+  const rm1 = novoUsuario(BANCO2, { username: "race_m1", role: "mestre", campId: camp2 });
+  const dJ = await entrarComCorrida(rm1.cookie, () => setVinculo(rm1.id, "jogador"));
+  t("corrida: mestre→jogador recebe visão de jogador (sem tokens alheios)",
+    dJ.ack?.ok === true && dJ.ack?.papel === "jogador"
+    && idsTok(dJ.ack?.sessao?.vttState).length === 0
+    && idsTok(dJ.vtt).length === 0,
+    JSON.stringify({ papel: dJ.ack?.papel, ack: dJ.ack?.sessao?.vttState?.tokens, emit: dJ.vtt?.tokens }));
+
+  // 5. mestre → espectador durante a entrada
+  const rm2 = novoUsuario(BANCO2, { username: "race_m2", role: "mestre", campId: camp2 });
+  const dE = await entrarComCorrida(rm2.cookie, () => setVinculo(rm2.id, "espectador"));
+  t("corrida: mestre→espectador recebe visão de espectador",
+    dE.ack?.ok === true && dE.ack?.papel === "espectador"
+    && idsTok(dE.ack?.sessao?.vttState).length === 0
+    && idsTok(dE.vtt).length === 0,
+    JSON.stringify({ papel: dE.ack?.papel }));
+
+  // 6. membership removida durante a entrada: rejeição sem VTT e fora da sala
+  const rj = novoUsuario(BANCO2, { username: "race_j", role: "jogador", campId: camp2 });
+  const rem = await entrarComCorrida(rj.cookie, () => setVinculo(rj.id, "jogador", "removido"));
+  t("corrida: membership removida → ACK rejeitado",
+    rem.ack?.ok === false && typeof rem.ack?.erro === "string" && rem.ack.erro.length > 0,
+    JSON.stringify(rem.ack));
+  t("corrida: removido não recebeu mesa:vtt",
+    (cntVtt.get(rem.s) ?? 0) === 0 && ultVtt.get(rem.s) === null);
+  // presença de uma entrada posterior não pode listar o removido
+  const posRem = await entrarComCorrida(j2c.cookie, null);
+  t("corrida: removido não permanece na sala (presença)",
+    posRem.ack?.ok === true && !(posRem.ack?.presenca ?? []).includes(rj.id),
+    JSON.stringify(posRem.ack?.presenca));
+
+  // 7. sessão encerrada durante a entrada → rejeição (último: encerra sid2)
+  const rj2 = novoUsuario(BANCO2, { username: "race_j2", role: "jogador", campId: camp2 });
+  const enc = await entrarComCorrida(rj2.cookie, () => {
+    const dbx = abrirDb(BANCO2);
+    try { dbx.prepare("update sessions set status='encerrada' where id=?").run(sid2); }
+    finally { dbx.close(); }
+  });
+  t("corrida: sessão encerrada durante entrada → ACK rejeitado",
+    enc.ack?.ok === false && /encerrada/i.test(enc.ack?.erro ?? ""), JSON.stringify(enc.ack));
+
+  await encerrarServidor(proc2); proc2 = null;
+
   // sessão encerrada rejeita mutação de névoa
   await req(BASE, "PATCH", `/campaigns/${ids.camp}/sessoes/${sid}`, { cookie: ids.cookieMestre, body: { status: "encerrada" } });
   const rFim = await emitirCb(sM2, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelar", traco: TRACO_A });
@@ -357,6 +480,7 @@ try {
   console.error("FALHA INESPERADA:", e);
 } finally {
   for (const s of sockets) { try { s.close(); } catch {} }
+  try { await encerrarServidor(proc2); } catch {}
   try { await encerrarServidor(proc); } catch {}
   try { limparDir(DIR); } catch {}
 }
