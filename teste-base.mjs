@@ -41,6 +41,7 @@ export function subirServidor(porta, { banco, arquivos, backups, env }) {
   return spawn("node", ["servidor/dist/index.js"], {
     env: {
       ...process.env,
+      NODE_ENV: "test", // barreiras/hooks de teste só existem neste ambiente
       MESTRE_PORTA: String(porta),
       MESTRE_BANCO: banco,
       MESTRE_ARQUIVOS: arquivos,

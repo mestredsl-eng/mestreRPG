@@ -209,50 +209,54 @@ function socket_handlers(
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
-      socket.join(`sessao:${sessionId}`);
-      // Barreira de teste determinística (MESTRE_VTT_BARRIER_MS): abre uma
-      // janela controlada entre a validação inicial e a revalidação final,
-      // permitindo reproduzir troca de papel/membership no meio da entrada.
-      // Inerte em produção (variável ausente → custo zero).
-      const barreiraMs = Number(process.env.MESTRE_VTT_BARRIER_MS ?? 0);
-      if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
-      // Todas as leituras assíncronas acontecem ANTES da validação final:
-      // estado VTT, donos dos tokens (para o filtro por destinatário) e turno.
-      const vttEntrar = await lerVtt(sessionId);
-      const [donos, t] = await Promise.all([
-        donosDosTokens(sessionId, vttEntrar.tokens),
-        db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1).then((r) => r[0]),
-      ]);
-      // Revalidação final: membership, papel e status da sessão podem ter
-      // mudado durante as leituras acima. O emit e o ACK usam SOMENTE este
-      // contexto — nunca o ctx capturado antes das operações assíncronas.
-      const ctxF = await resolverCtx(socket, sessionId);
-      if ("erro" in ctxF || ctxF.sessao.status === "encerrada") {
-        // autorização caiu: sai da sala e não entrega nenhum estado VTT
-        socket.leave(`sessao:${sessionId}`);
-        void emitirPresenca(sessionId);
-        cb?.({ ok: false, erro: "erro" in ctxF ? ctxF.erro : "Sessão encerrada" });
-        return;
+      // Barreira de teste determinística (somente NODE_ENV=test +
+      // MESTRE_VTT_BARRIER_MS): abre uma janela controlada entre a
+      // validação inicial e a autorização final, permitindo reproduzir
+      // troca de papel/membership no meio da entrada. Inerte em produção.
+      if (process.env.NODE_ENV === "test") {
+        const barreiraMs = Number(process.env.MESTRE_VTT_BARRIER_MS ?? 0);
+        if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
       }
-      const papel = ctxF.papel;
-      const uF = usuario()!;
-      const vttEu = papel === "mestre" || !vttEntrar.nevoa.ativa
-        ? vttEntrar
-        : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
-      socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
-      const podeEnviar = papel !== "espectador" || permissoesDe(ctxF.membership).enviarMensagens === true;
-      cb?.({
-        ok: true, papel, podeEnviar,
-        // vttState filtrado e sanitizado: JSON inválido ou névoa não vazam
-        sessao: { ...ctxF.sessao, vttState: vttEu },
-        turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
-        presenca: presentes(sessionId),
-        agora: Date.now(),
-      });
-      await emitirPresenca(sessionId);
-      await registrarChat(io, {
-        campaignId: ctxF.sessao.campaignId, sessionId, authorId: uF.id,
-        kind: "evento", content: `${await nomeUsuario(uF.id)} entrou na mesa`, visibility: "publica",
+      // Seção crítica: o socket SÓ entra na sala depois da autorização
+      // final. Enquanto não ingressa, nenhum evento da sala (mensagens
+      // públicas/sistema emitidas via io.to(room)) pode alcançá-lo.
+      // As leituras ocorrem dentro do lock para refletir mutações VTT
+      // anteriores e serializar a entrada com mapa/token/névoa.
+      await comLockVtt(async () => {
+        const vttEntrar = await lerVtt(sessionId);
+        const [donos, t] = await Promise.all([
+          donosDosTokens(sessionId, vttEntrar.tokens),
+          db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1).then((r) => r[0]),
+        ]);
+        // Revalidação final: membership, papel e status da sessão podem
+        // ter mudado durante a espera do lock e as leituras. O join, o
+        // emit e o ACK usam SOMENTE este contexto.
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF || ctxF.sessao.status === "encerrada") {
+          cb?.({ ok: false, erro: "erro" in ctxF ? ctxF.erro : "Sessão encerrada" });
+          return;
+        }
+        socket.join(`sessao:${sessionId}`);
+        const papel = ctxF.papel;
+        const uF = usuario()!;
+        const vttEu = papel === "mestre" || !vttEntrar.nevoa.ativa
+          ? vttEntrar
+          : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
+        socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
+        const podeEnviar = papel !== "espectador" || permissoesDe(ctxF.membership).enviarMensagens === true;
+        cb?.({
+          ok: true, papel, podeEnviar,
+          // vttState filtrado e sanitizado: JSON inválido ou névoa não vazam
+          sessao: { ...ctxF.sessao, vttState: vttEu },
+          turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
+          presenca: presentes(sessionId),
+          agora: Date.now(),
+        });
+        await emitirPresenca(sessionId);
+        await registrarChat(io, {
+          campaignId: ctxF.sessao.campaignId, sessionId, authorId: uF.id,
+          kind: "evento", content: `${await nomeUsuario(uF.id)} entrou na mesa`, visibility: "publica",
+        });
       });
     });
 
