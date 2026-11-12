@@ -444,6 +444,9 @@ regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
 
 /** JSON canônico: chaves ordenadas recursivamente (sem falso conflito por ordem de propriedades). */
 function canonJson(v: unknown): string {
+  // Date precisa serializar o instante — sem isso todo timestamp vira "{}"
+  // e mudanças que só alteram updatedAt/excluidoEm passariam no fingerprint.
+  if (v instanceof Date) return JSON.stringify(v.toISOString());
   if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
   if (Array.isArray(v)) return "[" + v.map(canonJson).join(",") + "]";
   const o = v as Record<string, unknown>;
@@ -745,7 +748,20 @@ regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req,
       }
     }
 
-    const livro = a.livro!; const rs = a.rs!; const mapa = a.mapa!;
+    const livro = a.livro!; const mapa = a.mapa!;
+    // campanha sem ruleset ativo (nunca abriu Regras): criar sob demanda,
+    // mesmo default de carregarRegras — a prévia representa o estado vazio
+    // sem criar nada; a aplicação materializa o ruleset na transação.
+    let rs = a.rs;
+    if (!rs) {
+      const idRs = crypto.randomUUID();
+      const configRs = configRegrasSchema.parse({});
+      tx.insert(ruleSets).values({
+        id: idRs, campaignId, name: "Regras da campanha", version: 1,
+        isActive: true, config: configRs, createdAt: new Date(), updatedAt: new Date(),
+      }).run();
+      [rs] = tx.select().from(ruleSets).where(eq(ruleSets.id, idRs)).all();
+    }
     const t = new Date();
     let inseridos = 0, atualizados = 0, mantidos = 0, preservados = 0;
     const novasDecisoes: Record<string, DecisaoGravada> = { ...(a.decisoesGravadas ?? {}) };
