@@ -51,6 +51,7 @@ jobs:
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
             teste-novidades.mjs \
+            teste-novidades-realtime.mjs \
             teste-validacao-personagem.mjs \
             teste-exclusao-personagem.mjs
           do echo "===== $s ====="; node "$s"; done

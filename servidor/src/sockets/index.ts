@@ -56,6 +56,9 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
       return;
     }
     socket.data.usuario = usuario;
+    // sala privada do usuário — o cliente nunca escolhe a sala; eventos
+    // direcionados (ex.: novidade:publicada) só chegam a conexões autenticadas
+    socket.join(`usuario:${usuario.id}`);
     next();
   });
 

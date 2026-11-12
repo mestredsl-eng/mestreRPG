@@ -10,7 +10,8 @@ import Convite from "./paginas/Convite";
 import ConviteCadastro from "./paginas/ConviteCadastro";
 import Acervo from "./paginas/Acervo";
 import Novidades from "./paginas/Novidades";
-import { ProvedorNotificacoes } from "./Notificacoes";
+import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
+import { getSocket } from "./socket";
 
 type Aba = "painel" | "campanhas" | "acervo" | "novidades" | "admin" | "conta";
 
@@ -88,6 +89,30 @@ function Shell() {
     if (estado.status === "autenticado") atualizarNaoLidas();
     else setNaoLidas(0);
   }, [estado.status, atualizarNaoLidas]);
+
+  // Tempo real: toast + reconciliação do contador a cada publicação.
+  // O contador é sempre reconsultado no servidor (novidadesNaoLidas) —
+  // nunca incrementado localmente — e deduplicado por id:revisão.
+  const { notificar } = useNotificar();
+  useEffect(() => {
+    if (estado.status !== "autenticado") return;
+    const vistos = new Set<string>();
+    const s = getSocket();
+    const aoPublicar = (n: { id: string; titulo: string; revisao: string }) => {
+      const chave = `${n.id}:${n.revisao}`;
+      if (vistos.has(chave)) return;
+      vistos.add(chave);
+      notificar(`Nova publicação: ${n.titulo}`, "info");
+      atualizarNaoLidas();
+    };
+    const aoConectar = () => atualizarNaoLidas();
+    s.on("novidade:publicada", aoPublicar);
+    s.on("connect", aoConectar);
+    return () => {
+      s.off("novidade:publicada", aoPublicar);
+      s.off("connect", aoConectar);
+    };
+  }, [estado.status, notificar, atualizarNaoLidas]);
 
   if (estado.status === "carregando") {
     return (

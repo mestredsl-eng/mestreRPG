@@ -11,6 +11,11 @@ export function setIo(instancia: SocketIOServer) {
   io = instancia;
 }
 
+/** Emite um evento para a sala privada de um usuário autenticado. */
+export function emitirUsuario(userId: string, evento: string, dados: unknown) {
+  io?.to(`usuario:${userId}`).emit(evento, dados);
+}
+
 /** Emite um evento para todos os membros conectados de uma campanha. */
 export function emitirCampanha(campaignId: string, evento: string, dados: unknown) {
   io?.to(`campanha:${campaignId}`).emit(evento, dados);

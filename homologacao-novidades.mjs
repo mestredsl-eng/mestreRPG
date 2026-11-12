@@ -259,6 +259,73 @@ try {
     await ctx.close();
   }
 
+  // ===== Tempo real — toast + contador sem navegar =====
+  sec("Tempo real — notificação push");
+  {
+    // usuário comum fica na aba Painel (fora de Novidades); admin publica via API
+    const ctxU = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const pageU = await ctxU.newPage();
+    const errosU = [];
+    pageU.on("pageerror", (e) => errosU.push(String(e)));
+    // "Failed to load resource ... 401" é o /auth/me anônimo do bootstrap —
+    // ruído de rede esperado antes do login, não erro da aplicação.
+    const erroUtil = (m) => m.type() === "error" && !/Failed to load resource/.test(m.text());
+    pageU.on("console", (m) => { if (erroUtil(m)) errosU.push(m.text()); });
+    await login(pageU, "usuario_a", "senha-jogador-123");
+    await pageU.waitForTimeout(800);
+    const badgeAntes = await pageU.locator(".contador-nao-lidas").textContent().catch(() => null);
+
+    const pubRT = await req(BASE, "POST", "/admin/novidades", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Novidade em tempo real", conteudo: "corpo secreto não vai no evento", estado: "publicada", categoria: "novidade" },
+    });
+    t("publicação RT criada", pubRT.status === 201);
+    const toast = pageU.locator(".notificacao-info", { hasText: "Nova publicação: Novidade em tempo real" });
+    t("toast aparece fora da aba Novidades", await toast.count() === 1, `n=${await toast.count()}`);
+    await pageU.waitForTimeout(600);
+    const badgeDepois = await pageU.locator(".contador-nao-lidas").textContent();
+    t("contador incrementado sem navegação", badgeAntes && badgeDepois && Number(badgeDepois) === Number(badgeAntes) + 1, `${badgeAntes} -> ${badgeDepois}`);
+    t("usuário continua na aba Painel", await pageU.locator(".topo nav button.ativo").textContent().then((x) => /Painel/i.test(x ?? "")));
+
+    // edição de conteúdo publicada -> nova revisão -> novo toast (dedup por revisão)
+    await req(BASE, "PATCH", `/admin/novidades/${pubRT.json.novidade.id}`, {
+      cookie: cenario.cookieMestre, body: { conteudo: "conteúdo revisado RT" },
+    });
+    const toasts2 = pageU.locator(".notificacao-info", { hasText: "Nova publicação: Novidade em tempo real" });
+    await pageU.waitForTimeout(800);
+    t("nova revisão gera novo toast", await toasts2.count() >= 1);
+
+    // despublicar não gera toast
+    await req(BASE, "POST", `/admin/novidades/${pubRT.json.novidade.id}/despublicar`, { cookie: cenario.cookieMestre });
+    await pageU.waitForTimeout(800);
+    t("despublicar não gera toast", await toasts2.count() <= 2, `n=${await toasts2.count()}`);
+    await shot(pageU, "06-tempo-real-desktop");
+    t("sem erros de console (RT desktop)", errosU.length === 0, errosU.slice(0, 2).join(" | "));
+    await ctxU.close();
+
+    // mobile 390px — mesmo fluxo
+    const ctxM = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const pageM = await ctxM.newPage();
+    const errosM = [];
+    pageM.on("pageerror", (e) => errosM.push(String(e)));
+    pageM.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errosM.push(m.text()); });
+    await login(pageM, "usuario_b", "senha-jogador-123");
+    await pageM.waitForTimeout(800);
+    await req(BASE, "POST", "/admin/novidades", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "RT mobile 390", conteudo: "x", estado: "publicada" },
+    });
+    const toastM = pageM.locator(".notificacao-info", { hasText: "Nova publicação: RT mobile 390" });
+    t("mobile 390px: toast aparece", await toastM.count() === 1, `n=${await toastM.count()}`);
+    await pageM.waitForTimeout(500);
+    t("mobile: badge atualizado", await pageM.locator(".contador-nao-lidas").count() === 1);
+    const ov = await pageM.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    t("mobile RT: sem overflow", ov <= 1, `overflow=${ov}px`);
+    await shot(pageM, "07-tempo-real-mobile");
+    t("sem erros de console (RT mobile)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
+    await ctxM.close();
+  }
+
   await browser.close();
 } finally {
   await encerrarServidor(proc);
