@@ -160,6 +160,27 @@ try {
     await p.getByLabel("Filtrar a partir de").fill("");
     t("diário: limpar filtros restaura lista", (await p.locator(".lista-anotacoes", { hasText: "E2E Nota Pública" }).count()) > 0);
 
+    // troca de abas: filtros não podem vazar entre "Diário" e
+    // "Anotações do mestre" (categorias/visibilidade diferem por aba)
+    await buscaD.fill("omega");
+    await p.getByLabel("Filtrar por visibilidade").selectOption("publica");
+    await p.getByLabel("Filtrar por categoria").selectOption("pista");
+    await p.getByLabel("Importantes").check();
+    await p.getByLabel("Filtrar a partir de").fill("2020-01-01");
+    await p.waitForTimeout(300);
+    const abas = p.locator(".abas").filter({ has: p.getByRole("button", { name: "Anotações do mestre" }) });
+    await abas.getByRole("button", { name: "Anotações do mestre" }).click();
+    await p.waitForTimeout(1000);
+    // volta à aba Diário: todos os campos devem estar limpos
+    await abas.getByRole("button", { name: "Diário", exact: true }).click();
+    await p.waitForTimeout(1000);
+    t("diário: busca limpa após trocar de aba", (await buscaD.inputValue()) === "");
+    t("diário: filtro visibilidade limpo", (await p.getByLabel("Filtrar por visibilidade").inputValue()) === "");
+    t("diário: filtro categoria limpo", (await p.getByLabel("Filtrar por categoria").inputValue()) === "");
+    t("diário: filtro importantes desmarcado", !(await p.getByLabel("Importantes").isChecked()));
+    t("diário: filtro data limpo", (await p.getByLabel("Filtrar a partir de").inputValue()) === "");
+    t("diário: listagem volta sem filtro residual", (await p.locator(".lista-anotacoes", { hasText: "E2E Nota Pública" }).count()) > 0);
+
     // ===== Patrimônio: equipamentos e veículos =====
     sec("Desktop — Patrimônio");
     await p.getByRole("button", { name: /Personagens/ }).click();
