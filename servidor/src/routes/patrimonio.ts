@@ -1129,6 +1129,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   let saldoInsuficiente = false;
   let estoqueInsuficiente = false;
   let operacaoDuplicada = false;
+  let operacaoEstornada = false;
   let itemCriadoId: string | null = null;
   // ID do template EFETIVAMENTE validado na transação — única fonte
   // autorizada para data.templateId e para a auditoria.
@@ -1146,6 +1147,21 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
       const [txExistente] = tx.select({ id: moneyTransactions.id }).from(moneyTransactions)
         .where(and(eq(moneyTransactions.campaignId, a.personagem.campaignId), eq(moneyTransactions.requestId, requestId))).limit(1).all();
       if (opExistente || txExistente) { operacaoDuplicada = true; return; }
+
+      // Compra sem pagamento não deixa rastro em inventoryEntries nem em
+      // money_transactions depois do estorno — o registro persistente em
+      // operacao_estornos é a única prova de que o requestId já foi
+      // utilizado. Escopo da migration 0021: campanha + personagem +
+      // operação, para não bloquear outros personagens da campanha.
+      if (semPagamento) {
+        const [estornoPrevio] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+          .where(and(
+            eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+            eq(operacaoEstornos.characterId, a.personagem.id),
+            eq(operacaoEstornos.operacaoId, requestId),
+          )).limit(1).all();
+        if (estornoPrevio) { operacaoEstornada = true; return; }
+      }
 
       // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
       // valor atual, nunca sobre leitura anterior (evita lost update).
@@ -1291,6 +1307,9 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   }
   if (operacaoDuplicada) {
     res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return;
+  }
+  if (operacaoEstornada) {
+    res.status(409).json({ erro: "Identificador de operação já utilizado e estornado" }); return;
   }
   if (saldoInsuficiente) {
     res.status(400).json({ erro: "Saldo insuficiente" });

@@ -403,6 +403,70 @@ try {
     t("um único registro na corrida por personagem", regsPers === 1, `regs=${regsPers}`);
   }
 
+  // ===== 13c. Recriação após estorno de compra sem pagamento =====
+  sec("13c. requestId de compra sem-pagamento estornada não pode ser reutilizado");
+  {
+    const rid = "op-reuso-pos-estorno";
+    const nomeItem = "Reliquia Reuso";
+    const itensReuso = () => comDb(BANCO, (db) => db.prepare(
+      "select id from inventory_entries where character_id=? and json_extract(data,'$.operacaoId')=?").all(charJ1, rid));
+    const txReuso = () => comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from money_transactions where campaign_id=? and request_id=?").get(cenario.campId, rid).c);
+    const regReuso = (charId) => comDb(BANCO, (db) => db.prepare(
+      "select id from operacao_estornos where campaign_id=? and character_id=? and operacao_id=?").get(cenario.campId, charId, rid));
+    const saldoAntes = saldoDb(contaJ1);
+
+    // 1) compra sem pagamento → 201
+    const c1 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: nomeItem, quantity: 1 }, requestId: rid,
+    });
+    t("compra sem-pagamento inicial → 201", c1.status === 201, `status=${c1.status}`);
+    t("item criado", itensReuso().length === 1, `itens=${itensReuso().length}`);
+
+    // 2) estorno → 200 e registro persistente
+    const e1 = await estornar(charJ1, j1.cookie, rid);
+    t("estorno → 200", e1.status === 200, `status=${e1.status}`);
+    t("item removido pelo estorno", itensReuso().length === 0, `itens=${itensReuso().length}`);
+    t("registro em operacao_estornos", !!regReuso(charJ1), "");
+
+    // 3) recriação com o MESMO requestId no mesmo personagem → 409
+    const saldoPosEstorno = saldoDb(contaJ1);
+    const c2 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: nomeItem, quantity: 1 }, requestId: rid,
+    });
+    t("recriação mesmo personagem → 409", c2.status === 409, `status=${c2.status} ${JSON.stringify(c2.json)}`);
+    t("mensagem indica identificador estornado", /estornad/i.test(c2.json?.erro ?? ""), JSON.stringify(c2.json));
+    t("nenhum item recriado", itensReuso().length === 0, `itens=${itensReuso().length}`);
+    t("nenhuma tx financeira criada", txReuso() === 0, `tx=${txReuso()}`);
+    t("saldo inalterado", saldoDb(contaJ1) === saldoPosEstorno && saldoDb(contaJ1) === saldoAntes, `${saldoAntes} vs ${saldoDb(contaJ1)}`);
+    t("registro de estorno único", comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from operacao_estornos where campaign_id=? and character_id=? and operacao_id=?").get(cenario.campId, charJ1, rid).c) === 1);
+
+    // 4) personagem DIFERENTE na mesma campanha pode usar o mesmo requestId
+    const cB = await operacao(charJ2, j2.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item Reuso B", quantity: 1 }, requestId: rid,
+    });
+    t("mesmo requestId em outro personagem → 201", cB.status === 201, `status=${cB.status}`);
+
+    // 5) depois de estornada pelo próprio personagem, a 2ª tentativa dele → 409
+    const eB = await estornar(charJ2, j2.cookie, rid);
+    t("estorno do personagem B → 200", eB.status === 200, `status=${eB.status}`);
+    t("registro de estorno do personagem B", !!regReuso(charJ2), "");
+    const cB2 = await operacao(charJ2, j2.cookie, {
+      tipo: "compra", pagar: false, item: { name: "Item Reuso B", quantity: 1 }, requestId: rid,
+    });
+    t("recriação personagem B → 409", cB2.status === 409, `status=${cB2.status}`);
+    // e A continua bloqueado — os registros são independentes
+    const cA2 = await operacao(charJ1, j1.cookie, {
+      tipo: "compra", pagar: false, item: { name: nomeItem, quantity: 1 }, requestId: rid,
+    });
+    t("personagem A segue bloqueado → 409", cA2.status === 409, `status=${cA2.status}`);
+    t("dois registros de estorno (A e B)", comDb(BANCO, (db) => db.prepare(
+      "select count(*) c from operacao_estornos where campaign_id=? and operacao_id=?").get(cenario.campId, rid).c) === 2);
+    t("nenhuma tx fictícia para o requestId", txReuso() === 0, `tx=${txReuso()}`);
+    t("saldo final inalterado", saldoDb(contaJ1) === saldoAntes, `${saldoAntes} vs ${saldoDb(contaJ1)}`);
+  }
+
   // ===== 14. Permissões =====
   sec("14. Permissões");
   {
