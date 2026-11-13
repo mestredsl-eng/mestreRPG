@@ -32,7 +32,7 @@ ALTER TABLE `campaigns` ADD `guild_id` text REFERENCES guilds(id);--> statement-
 -- com auditoria). O trigger continua protegendo a identidade raiz:
 -- o admin_principal nunca pode ser rebaixado nem ter o id alterado, e
 -- não se cria um segundo admin quando não há identidade protegida.
-DROP TRIGGER `trg_users_admin_update`;--> statement-breakpoint
+DROP TRIGGER IF EXISTS `trg_users_admin_update`;--> statement-breakpoint
 CREATE TRIGGER `trg_users_admin_update`
 BEFORE UPDATE ON `users`
 WHEN

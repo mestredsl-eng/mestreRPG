@@ -63,10 +63,10 @@ function armarFlag(raiz, filePath) {
   });
 }
 // Simula banco de versão anterior: remove as tabelas das migrations
-// 0017-0022 e as colunas das ALTERs (0019 mesa, 0020 financeiro),
-// além dos registros correspondentes no journal do Drizzle
-// (últimas 6 migrations).
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos"];
+// 0017-0023 e as colunas das ALTERs (0019 mesa, 0020 financeiro,
+// 0023 guildas), além dos registros correspondentes no journal do
+// Drizzle (últimas 7 migrations).
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members"];
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
@@ -78,10 +78,14 @@ function rebaixarSchema(arquivoDb) {
     if (colsMoney.has("operacao")) db.exec("alter table money_transactions drop column operacao");
     const colsSess = new Set(db.pragma("table_info(sessions)").map((c) => c.name));
     if (colsSess.has("vtt_state")) db.exec("alter table sessions drop column vtt_state");
+    const colsCamp = new Set(db.pragma("table_info(campaigns)").map((c) => c.name));
+    if (colsCamp.has("guild_id")) db.exec("alter table campaigns drop column guild_id");
+    const colsAudit = new Set(db.pragma("table_info(audit_logs)").map((c) => c.name));
+    if (colsAudit.has("guild_id")) db.exec("alter table audit_logs drop column guild_id");
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 6)`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 7)`);
     }
   } finally { db.close(); }
 }
