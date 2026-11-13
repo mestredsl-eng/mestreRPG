@@ -320,6 +320,14 @@ try {
       ws.send(m);
     });
   });
+  // transporte polling (fallback de reconexão): emits viajam em POSTs
+  // HTTP, fora do routeWebSocket — conta "mesa:entrar" nesses corpos
+  // para que a métrica de listeners não dependa do transporte ativo
+  await pgJ.route("**/socket.io/**", async (route) => {
+    const corpo = route.request().postData() ?? "";
+    entrarCountJ += corpo.split('"mesa:entrar"').length - 1;
+    await route.continue();
+  });
   // segura a PRIMEIRA resposta de histórico após o arm — prova de
   // resposta HTTP antiga chegando depois da mudança de papel
   await pgJ.route("**/mensagens*", async (route) => {
@@ -961,7 +969,10 @@ try {
   const titulosRestaurado = await pgJ.locator(".vtt-token").evaluateAll((els) => els.map((e) => e.title));
   t("papel restaurado na reconexão: jogador volta a ver o próprio token",
     titulosRestaurado.includes("Ana"), titulosRestaurado.join(","));
-  // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado
+  // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado.
+  // a contagem passa pelo routeWebSocket (assíncrona): espera limitada
+  // pelo 2º entrar antes de aferir — delta>2 continua reprovando na hora
+  for (let i = 0; i < 100 && entrarCountJ - entrarAntesRole < 2; i++) await new Promise((r) => setTimeout(r, 100));
   t("sem listeners duplicados: 1 mesa:entrar por connect",
     entrarCountJ - entrarAntesRole === 2, `delta=${entrarCountJ - entrarAntesRole}`);
 
