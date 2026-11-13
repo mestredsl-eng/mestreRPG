@@ -808,33 +808,39 @@ function socket_handlers(
         // o cliente nunca precisa adivinhar o contrato
         visibility: payload.visibilidade === "privada" ? "privada" : "publica",
       };
+      // Dificuldade (`alvo`) é reservada ao mestre: cada audiência recebe
+      // um objeto PRÓPRIO — o payload do dono/jogador nunca carrega o
+      // campo, nem por spread acidental do objeto administrativo.
+      const dadosTeste = { lados: dadosLados, count };
       if (payload.visibilidade === "privada") {
-        // privada: dono + mestres ATUAIS recebem — revalidados no envio
-        const payloadPriv = { ...publico, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count }, pool, privado: true };
-        await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste", payloadPriv);
+        // privada: dono recebe os dados do próprio teste SEM alvo;
+        // mestres ATUAIS recebem a versão administrativa com alvo
+        const payloadDono = { ...publico, dados: dadosTeste, pool, privado: true };
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste", payloadDono);
         const mestresPriv = await mestresDaCampanha(ctx.sessao.campaignId);
-        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPriv, "mesa:teste", payloadPriv, ["mestre"]);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPriv, "mesa:teste", { ...payloadDono, alvo: payload.minimo ?? null }, ["mestre"]);
       } else {
-        // pública: composição do pool é visível; só o alvo (dificuldade) fica oculto
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, alvo: null, dados: { lados: dadosLados, count }, pool });
+        // pública: sala e dono recebem sem alvo; mestres recebem a
+        // versão administrativa com alvo via canal privado
+        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, dados: dadosTeste, pool });
         io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: false,
+          ...publico, dados: dadosTeste, pool, privado: false,
         });
+        const mestresPub = await mestresDaCampanha(ctx.sessao.campaignId);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPub, "mesa:teste", {
+          ...publico, alvo: payload.minimo ?? null, dados: dadosTeste, pool, privado: false,
+        }, ["mestre"]);
       }
       // mesa:teste:detalhe carrega o ALVO (dificuldade reservada):
-      // NUNCA vai à sala coletiva — somente dono do personagem e
-      // mestres atuais, via canal privado usuario:* com visibilidade
-      // explícita. O dono recebe os dados do PRÓPRIO teste; o mestre
-      // recebe a visão administrativa completa.
-      const detalhePriv = {
-        id, alvo: payload.minimo ?? null,
-        dados: { lados: dadosLados, count }, pool,
-        visibility: "privada",
-      };
-      await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste:detalhe", detalhePriv);
+      // NUNCA vai à sala coletiva e NÃO vai ao dono — o evento não tem
+      // consumidor no frontend para jogadores; somente mestres atuais,
+      // via canal privado usuario:* com visibilidade explícita.
       const mestresDet = await mestresDaCampanha(ctx.sessao.campaignId);
-      await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresDet, "mesa:teste:detalhe", detalhePriv, ["mestre"]);
+      await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresDet, "mesa:teste:detalhe", {
+        id, alvo: payload.minimo ?? null,
+        dados: dadosTeste, pool,
+        visibility: "privada",
+      }, ["mestre"]);
 
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
@@ -929,13 +935,18 @@ function socket_handlers(
         alvo: teste.target, // só mestres recebem via filtro abaixo
         visibility: teste.visibility, createdAt: agora,
       };
+      // `alvo` (dificuldade) só existe no objeto dos mestres — sala,
+      // dono e qualquer outro destinatário recebem o payload SEM o
+      // campo (não null, não placeholder: a propriedade não existe)
+      const { alvo: _alvoReservado, ...payloadRollSemAlvo } = payloadRoll;
       // público: sala recebe sem alvo; PRIVADO: nada vai à sala —
       // resultados só trafegam nos canais privados usuario:* abaixo
       if (teste.visibility !== "privada") {
-        io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null, visibility: "publica" });
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRollSemAlvo, visibility: "publica" });
       }
-      // emissões privadas revalidam membership ativa no instante do envio
-      if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRoll);
+      // emissões privadas revalidam membership ativa no instante do envio;
+      // o dono recebe o resultado integral SEM a dificuldade reservada
+      if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRollSemAlvo);
       const mestres = await mestresDaCampanha(teste.campaignId);
       await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
@@ -1067,7 +1078,7 @@ function socket_handlers(
       // decisão de teste PRIVADO não vai à sala coletiva — outcome e
       // personagem são conteúdo reservado; só os canais privados abaixo
       if (teste.visibility !== "privada") {
-        io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: decisao.nota, visibility: "publica" });
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, nota: decisao.nota, visibility: "publica" });
       }
       // versão integral: só mestres e dono ATUAIS do personagem
       const mestres = await mestresDaCampanha(teste.campaignId);

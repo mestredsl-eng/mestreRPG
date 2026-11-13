@@ -39,7 +39,12 @@ async function turnosDaSessao(sessionId: string) {
   return t ?? null;
 }
 
-/** Visibilidade da mensagem para o usuário requisitante (spec §4/§14). */
+/** Visibilidade da mensagem para o usuário requisitante (spec §4/§14).
+ *  Autorização por visibilidade EXPLÍCITA, fail-closed:
+ *  - publica|sistema → participantes autorizados;
+ *  - mestre|secreta|qualquer valor ausente/desconhecido → somente
+ *    mestres ATUAIS (ser o autor histórico NÃO concede exceção);
+ *  - privada → mestres, autor e destinatários autorizados. */
 export function mensagemVisivel(
   m: typeof chatMessages.$inferSelect,
   usuarioId: string,
@@ -48,9 +53,17 @@ export function mensagemVisivel(
 ): boolean {
   if (m.visibility === "publica" || m.visibility === "sistema") return true;
   if (ehMestre) return true;
+  if (m.visibility !== "privada") return false;
   if (m.authorId === usuarioId) return true;
   const recips = (m.recipients ?? []) as string[];
   return recips.includes(usuarioId) || recips.some((r) => membershipIds.has(r));
+}
+
+/** Remove `target` (dificuldade interna, §13.3) da serialização para
+ *  não-mestres — a propriedade some do JSON, não vira null/placeholder. */
+function testeSemDificuldade<T extends { target?: unknown }>(t: T): Omit<T, "target"> {
+  const { target: _omitido, ...resto } = t;
+  return resto;
 }
 
 // ---------- CRUD de sessões (mestre gerencia) ----------
@@ -170,7 +183,8 @@ sessoesRouter.get("/:sessionId/testes", requirePapel("mestre", "jogador", "espec
       .filter((c) => minhas.some((m) => m.id === c.membershipId)).map((c) => c.id)
   );
   const visiveis = lista.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
-  res.json({ testes: visiveis });
+  // `target` é dificuldade interna: sai da serialização para não-mestres
+  res.json({ testes: ehMestre ? visiveis : visiveis.map(testeSemDificuldade) });
 });
 
 /** GET /api/campaigns/:campaignId/sessoes/:sessionId/historico — histórico consolidado (Etapa 8) */
@@ -197,10 +211,16 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
   const testesVisiveis = todosTestes.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
   const rollsIds = testesVisiveis.map((t) => t.rollId).filter(Boolean) as string[];
   const rollsSessao = await db.select().from(rolls).where(eq(rolls.sessionId, s.id));
-  const rolagensVisiveis = rollsSessao.filter((r) =>
-    r.visibility === "publica" || ehMestre || r.userId === req.usuario!.id ||
-    (r.visibility === "privada" && meusChars.size > 0)
-  );
+  const rolagensVisiveis = rollsSessao.filter((r) => {
+    if (ehMestre) return true;
+    if (r.visibility === "publica") return true;
+    if (r.visibility !== "privada") return false; // secreta/desconhecida: fail-closed
+    // privada DE PERSONAGEM: só o dono atual daquele personagem —
+    // possuir outro personagem na campanha NÃO autoriza
+    if (r.characterId) return meusChars.has(r.characterId);
+    // privada LIVRE: somente o próprio autor da rolagem
+    return r.userId === req.usuario!.id;
+  });
 
   // participantes: autores de mensagens + donos de testes + quem estava online não é persistido;
   // usamos membros ativos da campanha + autores presentes no chat
@@ -232,7 +252,7 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
     duracaoMs: inicio && fim ? fim - inicio : null,
     participantes: autores,
     eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
-    testes: testesVisiveis,
+    testes: ehMestre ? testesVisiveis : testesVisiveis.map(testeSemDificuldade),
     rolagens: rolagensVisiveis,
     alteracoes: alteracoes.map((a) => ({
       id: a.id, action: a.action, createdAt: a.createdAt,

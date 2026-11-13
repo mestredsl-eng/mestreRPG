@@ -1092,6 +1092,246 @@ try {
   t("AB: barreira liberada em modo falha (ingressos voltam)", rEntAB === true, JSON.stringify(rEntAB).slice(0, 80));
   fs.rmSync(pausadoArq, { force: true });
 
+  // ---------- AC. Dificuldade (target) fora do JSON HTTP para não-mestres ----------
+  sec("AC. GET /testes e /historico: target removido para não-mestres");
+  const jA = novoUsuario(BANCO, { username: "pt_priv_a", role: "jogador" });
+  const jB = novoUsuario(BANCO, { username: "pt_priv_b", role: "jogador" });
+  const esp2 = novoUsuario(BANCO, { username: "pt_esp2", role: "espectador" }); // esp original foi revogado na seção J
+  const charA = crypto.randomUUID(), charB = crypto.randomUUID();
+  {
+    const dbAC = abrirDb(BANCO);
+    const agoraAC = Date.now();
+    for (const [cid, mid, nome] of [[charA, jA.membershipId, "Priv-A"], [charB, jB.membershipId, "Priv-B"]]) {
+      dbAC.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run(cid, ids.camp, mid, nome, "{}", "{}", "aprovada", 0, agoraAC, agoraAC);
+    }
+    dbAC.close();
+  }
+  const tPubA = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: "AC-pubA", dadosCount: 1, minimo: 7, visibilidade: "publica", requestId: "ac-pub-a" });
+  const tPrivA = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: "AC-privA", dadosCount: 1, minimo: 9, visibilidade: "privada", requestId: "ac-priv-a" });
+  const tPubB = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charB, rotulo: "AC-pubB", dadosCount: 1, minimo: 5, visibilidade: "publica", requestId: "ac-pub-b" });
+  t("AC: três testes criados (público A, privado A, público B)", tPubA?.ok === true && tPrivA?.ok === true && tPubB?.ok === true,
+    JSON.stringify([tPubA, tPrivA, tPubB]).slice(0, 200));
+  const idPubA = tPubA?.id, idPrivA = tPrivA?.id, idPubB = tPubB?.id;
+
+  const temTarget = (t) => t != null && Object.prototype.hasOwnProperty.call(t, "target");
+  const checarTestes = (json, quem, esperado) => {
+    const lista = json?.testes ?? [];
+    for (const [rotulo, id, deveVer, deveTerTarget] of esperado) {
+      const row = lista.find((x) => x.id === id);
+      if (!deveVer) { t(`AC/${quem}: ${rotulo} ausente`, !row); continue; }
+      t(`AC/${quem}: ${rotulo} presente`, !!row);
+      if (row) t(`AC/${quem}: ${rotulo} target ${deveTerTarget ? "presente" : "AUSENTE do JSON"}`, temTarget(row) === deveTerTarget, `target=${row.target}`);
+    }
+  };
+  const eps = [
+    ["/testes", (c) => req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: c })],
+    ["/historico", (c) => req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie: c })],
+  ];
+  for (const [nomeEp, get] of eps) {
+    const rM = await get(ids.cookieMestre);
+    checarTestes(rM.json, `mestre${nomeEp}`, [
+      ["pubA", idPubA, true, true], ["privA", idPrivA, true, true], ["pubB", idPubB, true, true],
+    ]);
+    const rJA = await get(jA.cookie);
+    checarTestes(rJA.json, `donoA${nomeEp}`, [
+      ["pubA", idPubA, true, false], ["privA", idPrivA, true, false], ["pubB", idPubB, true, false],
+    ]);
+    const rJB = await get(jB.cookie);
+    checarTestes(rJB.json, `donoB${nomeEp}`, [
+      ["pubA", idPubA, true, false], ["privA", idPrivA, false, false], ["pubB", idPubB, true, false],
+    ]);
+    const rE = await get(esp2.cookie);
+    if (rE.status === 200) {
+      checarTestes(rE.json, `espectador${nomeEp}`, [
+        ["pubA", idPubA, true, false], ["privA", idPrivA, false, false], ["pubB", idPubB, true, false],
+      ]);
+    } else {
+      t(`AC/espectador${nomeEp}: sem acesso ao histórico (${rE.status}) — não recebe nada`, true);
+    }
+  }
+
+  // ---------- AD. Transporte Socket.IO real: alvo só para mestres ----------
+  sec("AD. Socket.IO: payloads por audiência — alvo nunca vai a não-mestre");
+  const cap = new Map();
+  const escutar = (s) => {
+    const c = { teste: [], detalhe: [], rolagem: [], decisao: [] };
+    cap.set(s, c);
+    s.on("mesa:teste", (p) => c.teste.push(p));
+    s.on("mesa:teste:detalhe", (p) => c.detalhe.push(p));
+    s.on("mesa:rolagem", (p) => c.rolagem.push(p));
+    s.on("mesa:decisao", (p) => c.decisao.push(p));
+  };
+  escutar(sM);
+  const sA = conectar(jA.cookie), sB = conectar(jB.cookie), sEsp2 = conectar(esp2.cookie);
+  escutar(sA); escutar(sB); escutar(sEsp2);
+  await Promise.all([pronto(sA), pronto(sB), pronto(sEsp2)]);
+  await Promise.all([
+    emitirCb(sA, "mesa:entrar", { sessionId: sid }),
+    emitirCb(sB, "mesa:entrar", { sessionId: sid }),
+    emitirCb(sEsp2, "mesa:entrar", { sessionId: sid }),
+  ]);
+
+  const tAD = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: "AD-priv", dadosCount: 1, minimo: 11, visibilidade: "privada", requestId: "ad-priv-1" });
+  const tADpub = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: "AD-pub", dadosCount: 1, minimo: 13, visibilidade: "publica", requestId: "ad-pub-1" });
+  t("AD: testes privado e público criados", tAD?.ok === true && tADpub?.ok === true, JSON.stringify([tAD, tADpub]).slice(0, 160));
+  await dormir(400);
+  const capDe = (s) => cap.get(s) ?? { teste: [], detalhe: [], rolagem: [], decisao: [] };
+  const testesDe = (s, id) => capDe(s).teste.filter((p) => p.id === id);
+  const temAlvo = (p) => p != null && Object.prototype.hasOwnProperty.call(p, "alvo") && p.alvo != null;
+  // PRIVADO: dono recebe sem alvo; mestre recebe com alvo; demais nada
+  t("AD/mestre: mesa:teste privado COM alvo=11", testesDe(sM, tAD?.id).some((p) => p.alvo === 11));
+  t("AD/donoA: mesa:teste privado recebido", testesDe(sA, tAD?.id).length > 0);
+  t("AD/donoA: NENHUM payload do teste privado tem alvo", testesDe(sA, tAD?.id).every((p) => !temAlvo(p)));
+  t("AD/donoB: não recebeu o teste privado", testesDe(sB, tAD?.id).length === 0);
+  t("AD/espectador: não recebeu o teste privado", testesDe(sEsp2, tAD?.id).length === 0);
+  // PÚBLICO: sala+dono sem alvo; mestre tem versão administrativa com alvo
+  t("AD/mestre: mesa:teste público COM alvo=13", testesDe(sM, tADpub?.id).some((p) => p.alvo === 13));
+  t("AD/donoA: mesa:teste público recebido", testesDe(sA, tADpub?.id).length > 0);
+  t("AD/donoA: público sem alvo em todos os payloads", testesDe(sA, tADpub?.id).every((p) => !temAlvo(p)));
+  t("AD/donoB: público recebido e sem alvo", testesDe(sB, tADpub?.id).length > 0 && testesDe(sB, tADpub?.id).every((p) => !temAlvo(p)));
+  t("AD/espectador: público recebido e sem alvo", testesDe(sEsp2, tADpub?.id).length > 0 && testesDe(sEsp2, tADpub?.id).every((p) => !temAlvo(p)));
+  // detalhe: SÓ mestres — dono/jogador/espectador não recebem o evento
+  t("AD/mestre: mesa:teste:detalhe COM alvo=11", capDe(sM).detalhe.some((p) => p.alvo === 11 || p.alvo === 13));
+  t("AD/donoA: ZERO mesa:teste:detalhe", capDe(sA).detalhe.length === 0);
+  t("AD/donoB: ZERO mesa:teste:detalhe", capDe(sB).detalhe.length === 0);
+  t("AD/espectador: ZERO mesa:teste:detalhe", capDe(sEsp2).detalhe.length === 0);
+
+  // rolagem do teste PRIVADO pelo dono
+  const rAD = await emitirCb(sA, "mesa:teste:rolar", { testId: tAD?.id, requestId: "ad-roll-1" });
+  t("AD: dono rolou o próprio teste privado", rAD?.ok === true, JSON.stringify(rAD).slice(0, 120));
+  await dormir(400);
+  const rollsDe = (s, testId) => capDe(s).rolagem.filter((p) => p.testId === testId);
+  t("AD/mestre: mesa:rolagem privada COM alvo=11", rollsDe(sM, tAD?.id).some((p) => p.alvo === 11));
+  t("AD/donoA: mesa:rolagem privada recebida", rollsDe(sA, tAD?.id).length > 0);
+  t("AD/donoA: rolagem sem alvo/campo equivalente", rollsDe(sA, tAD?.id).every((p) => !("alvo" in p) && !("target" in p)));
+  t("AD/donoB: não recebeu a rolagem privada", rollsDe(sB, tAD?.id).length === 0);
+  t("AD/espectador: não recebeu a rolagem privada", rollsDe(sEsp2, tAD?.id).length === 0);
+  // rolagem do teste PÚBLICO: sala recebe sanitizada, mestre com alvo
+  const rADpub = await emitirCb(sA, "mesa:teste:rolar", { testId: tADpub?.id, requestId: "ad-roll-2" });
+  t("AD: dono rolou o teste público", rADpub?.ok === true, JSON.stringify(rADpub).slice(0, 120));
+  await dormir(400);
+  t("AD/mestre: mesa:rolagem pública COM alvo=13", rollsDe(sM, tADpub?.id).some((p) => p.alvo === 13));
+  t("AD/donoA: rolagem pública sem alvo", rollsDe(sA, tADpub?.id).every((p) => !("alvo" in p) && !("target" in p)));
+  t("AD/donoB: rolagem pública recebida e sem alvo", rollsDe(sB, tADpub?.id).length > 0 && rollsDe(sB, tADpub?.id).every((p) => !("alvo" in p)));
+  t("AD/espectador: rolagem pública recebida e sem alvo", rollsDe(sEsp2, tADpub?.id).length > 0 && rollsDe(sEsp2, tADpub?.id).every((p) => !("alvo" in p)));
+  // decisão do mestre no teste privado: dono recebe, demais não; sem alvo
+  const dAD = await emitirCb(sM, "mesa:teste:decidir", { testId: tAD?.id, outcome: "sucesso", nota: "AD-dec" });
+  t("AD: mestre decidiu o teste privado", dAD?.ok === true, JSON.stringify(dAD).slice(0, 100));
+  await dormir(400);
+  const decDe = (s) => capDe(s).decisao.filter((p) => p.testId === tAD?.id);
+  t("AD/mestre: decisão privada recebida", decDe(sM).length > 0);
+  t("AD/donoA: decisão privada legítima recebida", decDe(sA).length > 0);
+  t("AD/donoB: não recebeu a decisão privada", decDe(sB).length === 0);
+  t("AD/espectador: não recebeu a decisão privada", decDe(sEsp2).length === 0);
+
+  // ---------- AE. Rolagens privadas no histórico HTTP ----------
+  sec("AE. /historico: rolagem privada só para dono do personagem e autor livre");
+  // roll1: teste privado de charA (rolado por jA) — id "ad-roll-1"
+  // roll2: teste privado de charB — cria e rola agora pelo mestre
+  const tPrivB = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charB, rotulo: "AE-privB", dadosCount: 1, minimo: 13, visibilidade: "privada", requestId: "ae-priv-b" });
+  const rPrivB = tPrivB?.ok ? await emitirCb(sM, "mesa:teste:rolar", { testId: tPrivB.id, requestId: "ae-roll-b" }) : { ok: false };
+  // roll3: rolagem LIVRE privada do jogador A (sem personagem)
+  const rLivreA = await emitirCb(sA, "mesa:rolar", { sessionId: sid, dados: [{ sides: 20, count: 1 }], visibilidade: "privada", motivo: "AE-livre-A", requestId: "ae-livre-a" });
+  t("AE: roll privada de B e rolagem livre de A criadas", rPrivB?.ok === true && rLivreA?.ok === true, JSON.stringify([rPrivB, rLivreA]).slice(0, 160));
+  await dormir(300);
+  const idsRolls = { a: "ad-roll-1", b: "ae-roll-b", livre: "ae-livre-a" };
+  const checarRolls = (json, quem, esperado) => {
+    const lista = json?.rolagens ?? [];
+    for (const [rotulo, id, deveVer] of esperado) {
+      const row = lista.find((x) => x.id === id);
+      t(`AE/${quem}: rolagem ${rotulo} ${deveVer ? "presente" : "AUSENTE"}`, deveVer ? !!row : !row, row ? `vis=${row.visibility} char=${row.characterId}` : "");
+    }
+  };
+  const hist = async (cookie) => (await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie })).json;
+  checarRolls(await hist(ids.cookieMestre), "mestre", [["A", idsRolls.a, true], ["B", idsRolls.b, true], ["livreA", idsRolls.livre, true]]);
+  checarRolls(await hist(jA.cookie), "donoA", [["A", idsRolls.a, true], ["B", idsRolls.b, false], ["livreA", idsRolls.livre, true]]);
+  checarRolls(await hist(jB.cookie), "donoB", [["A", idsRolls.a, false], ["B", idsRolls.b, true], ["livreA", idsRolls.livre, false]]);
+  const histE = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie: esp2.cookie });
+  if (histE.status === 200) {
+    checarRolls(histE.json, "espectador", [["A", idsRolls.a, false], ["B", idsRolls.b, false], ["livreA", idsRolls.livre, false]]);
+  } else {
+    t("AE/espectador: histórico negado — não recebe rolagens", true);
+  }
+
+  // ---------- AF. Mensagem secreta após rebaixamento do autor ----------
+  sec("AF. mensagemVisivel: mestre/secreta só para mestres ATUAIS");
+  // mestre NOVO (m2 já foi rebaixado a espectador na seção H)
+  const mAF = novoUsuario(BANCO, { username: "pt_maf", role: "mestre" });
+  const sAF = conectar(mAF.cookie);
+  escutar(sAF);
+  await pronto(sAF);
+  await emitirCb(sAF, "mesa:entrar", { sessionId: sid });
+  // privada endereçada ao mAF ANTES do rebaixamento (contrato de destinatário)
+  await emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "AF-PRIV-MAF", visibilidade: "privada", destinatarioUserId: mAF.id });
+  await emitirCb(sAF, "mesa:mensagem", { sessionId: sid, content: "AF-SEC-MAF", visibilidade: "secreta" });
+  await dormir(300);
+  const msgsDe = async (cookie, ep = "mensagens") => {
+    const r = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/${ep}`, { cookie });
+    const lista = ep === "mensagens" ? (r.json?.mensagens ?? []) : (r.json?.eventos ?? []);
+    return { status: r.status, textos: lista.map((m) => String(m.content ?? "")) };
+  };
+  const antesAF = await msgsDe(mAF.cookie);
+  t("AF: mAF (mestre) vê a secreta e a privada endereçada", antesAF.textos.includes("AF-SEC-MAF") && antesAF.textos.includes("AF-PRIV-MAF"), JSON.stringify(antesAF.textos.slice(-4)));
+  const antesMaf = await msgsDe(ids.cookieMestre);
+  t("AF: mestre atual vê a secreta", antesMaf.textos.includes("AF-SEC-MAF"));
+  // rebaixa mAF pela API real
+  const rRebaixa = await patchMembro(mAF.membershipId, { role: "jogador" });
+  t("AF: PATCH rebaixou mAF para jogador", rRebaixa.status === 200, `status=${rRebaixa.status} ${JSON.stringify(rRebaixa.json).slice(0, 100)}`);
+  await dormir(300);
+  const depoisAF = await msgsDe(mAF.cookie);
+  t("AF: autor rebaixado NÃO vê mais a secreta que ele mesmo escreveu", !depoisAF.textos.includes("AF-SEC-MAF"), JSON.stringify(depoisAF.textos.slice(-4)));
+  t("AF: rebaixado ainda vê a privada na qual é destinatário", depoisAF.textos.includes("AF-PRIV-MAF"));
+  const histAF = await msgsDe(mAF.cookie, "historico");
+  t("AF: histórico consolidado também omite a secreta", !histAF.textos.includes("AF-SEC-MAF"));
+  const depoisM = await msgsDe(ids.cookieMestre);
+  t("AF: mestre atual continua vendo a secreta", depoisM.textos.includes("AF-SEC-MAF"));
+  // visibilidade DESCONHECIDA com autor == requisitante: fail-closed
+  {
+    const dbAF = abrirDb(BANCO);
+    dbAF.prepare("insert into chat_messages (id,campaign_id,session_id,author_id,kind,content,visibility,recipients,created_at) values (?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), ids.camp, sid, jA.id, "texto", "AF-DESCONH", "desconhecida", null, Date.now());
+    dbAF.close();
+  }
+  const msgsJA = await msgsDe(jA.cookie);
+  t("AF: autor não-mestre NÃO vê mensagem de visibilidade desconhecida", !msgsJA.textos.includes("AF-DESCONH"));
+  const msgsM2b = await msgsDe(ids.cookieMestre);
+  t("AF: mestre vê até a visibilidade desconhecida (acesso administrativo)", msgsM2b.textos.includes("AF-DESCONH"));
+
+  // ---------- AG. Importação: revalidação pós-barreira → 403 ----------
+  sec("AG. Importação modo substituir: revogação na janela → 403 sem aplicar");
+  const m17 = novoUsuario(BANCO, { username: "pt_m17", role: "mestre" });
+  const expAG = await req(BASE, "GET", `/campaigns/${ids.camp}/exportar`, { cookie: m17.cookie });
+  t("AG: pacote exportado", expAG.status === 200 && expAG.json?.versao === 1, `status=${expAG.status}`);
+  const dbAG0 = abrirDb(BANCO);
+  const preAG0 = dbAG0.prepare("select count(*) c from snapshots where campaign_id=? and kind='pre_restauracao'").get(ids.camp).c;
+  const nomeAntes = dbAG0.prepare("select name from campaigns where id=?").get(ids.camp)?.name;
+  dbAG0.close();
+  // marca o pacote para provar que nada foi aplicado
+  if (expAG.json?.estado?.campanha) expAG.json.estado.campanha.name = "AG-NAO-APLICAR";
+  fs.writeFileSync(flagPausa, "importar:revalidar");
+  fs.rmSync(pausadoArq, { force: true });
+  const pImp = req(BASE, "POST", "/campaigns/importar", {
+    cookie: m17.cookie,
+    body: { pacote: expAG.json, modo: "substituir", campaignId: ids.camp, confirmacao: "SUBSTITUIR" },
+  });
+  t("AG: importação pausou na revalidação pós-barreira", await esperarPausa());
+  const dbAG1 = abrirDb(BANCO);
+  dbAG1.prepare("update memberships set role='jogador' where campaign_id=? and user_id=?").run(ids.camp, m17.id);
+  dbAG1.close();
+  fs.rmSync(flagPausa, { force: true });
+  const rImp = await pImp;
+  t("AG: autorização revogada na janela → HTTP 403", rImp.status === 403, `status=${rImp.status} ${JSON.stringify(rImp.json).slice(0, 140)}`);
+  const dbAG2 = abrirDb(BANCO);
+  const preAG1 = dbAG2.prepare("select count(*) c from snapshots where campaign_id=? and kind='pre_restauracao'").get(ids.camp).c;
+  const nomeDepois = dbAG2.prepare("select name from campaigns where id=?").get(ids.camp)?.name;
+  dbAG2.close();
+  t("AG: nenhum snapshot prévio criado pela tentativa negada", preAG1 === preAG0, `antes=${preAG0} depois=${preAG1}`);
+  t("AG: dados do pacote NÃO aplicados (nome inalterado)", nomeDepois === nomeAntes, `antes=${nomeAntes} depois=${nomeDepois}`);
+  const rEntAG = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("AG: barreira liberada em modo falha (campanha não fica presa)", rEntAG === true, JSON.stringify(rEntAG).slice(0, 80));
+  fs.rmSync(pausadoArq, { force: true });
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);
