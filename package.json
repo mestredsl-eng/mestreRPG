@@ -16,7 +16,8 @@
     "db:migrate": "npm run db:migrate -w servidor",
     "start": "npm run start -w servidor",
     "test:ajuda-contextual": "node homologacao-ajuda-contextual.mjs",
-    "test:realtime-paginas": "node teste-realtime-paginas.mjs"
+    "test:realtime-paginas": "node teste-realtime-paginas.mjs",
+    "test:sessao-numero": "node teste-sessao-numero.mjs"
   },
   "engines": {
     "node": ">=20.19"

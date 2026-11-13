@@ -127,6 +127,7 @@ jobs:
             teste-novidades.mjs \
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \
+            teste-sessao-numero.mjs \
             teste-validacao-personagem.mjs \
             teste-exclusao-personagem.mjs
           do

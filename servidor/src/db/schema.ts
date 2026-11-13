@@ -402,7 +402,12 @@ export const sessions = sqliteTable("sessions", {
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-}, (t) => [index("sessions_campaign_idx").on(t.campaignId)]);
+}, (t) => [
+  index("sessions_campaign_idx").on(t.campaignId),
+  // Número da sessão é sequencial por campanha e exibido ao usuário —
+  // criações simultâneas não podem gerar duplicatas.
+  uniqueIndex("sessions_campaign_number_idx").on(t.campaignId, t.number),
+]);
 
 // Controle de turnos (spec §14) — estado atual da rodada em JSON
 export const turns = sqliteTable("turns", {
