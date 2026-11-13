@@ -93,8 +93,11 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
         // Compara com a estrutura da versão carregada, não com o estado
         // local — edições não salvas não podem gerar falso "alterado".
         const estruturaMudou = JSON.stringify(versao?.estrutura ?? null) !== JSON.stringify(versaoSel?.estrutura ?? null);
+        const publicadaRemotamente = versaoSel?.rascunho === true && versao?.rascunho === false;
         if (estruturaSuja || campoEmEdicao) {
-          if (estruturaMudou) {
+          if (publicadaRemotamente) {
+            setAviso("Este modelo foi publicado por outro usuário enquanto você editava. Suas alterações locais foram mantidas — crie uma nova versão para salvá-las, pois a versão atual não aceita mais edições.");
+          } else if (estruturaMudou) {
             setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
           }
           return;
