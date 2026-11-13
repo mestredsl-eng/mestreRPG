@@ -18,7 +18,7 @@ const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
-const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0018 (últimas)
+const TABELA_NOVA = "campaign_rule_books"; // recriada pelas migrations 0017-0021 (últimas)
 
 function envRaiz(raiz, extra = {}) {
   return {
@@ -63,19 +63,25 @@ function armarFlag(raiz, filePath) {
   });
 }
 // Simula banco de versão anterior: remove as tabelas das migrations
-// 0017–0018 (campaign_rule_books + novidades) e a coluna vtt_state da
-// 0019, junto com os registros correspondentes no journal do Drizzle.
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"];
+// 0017-0022 e as colunas das ALTERs (0019 mesa, 0020 financeiro),
+// além dos registros correspondentes no journal do Drizzle
+// (últimas 6 migrations).
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos"];
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
     for (const tb of TABELAS_ANTIGAS) db.exec(`drop table if exists ${tb}`);
-    const cols = db.prepare("select name from pragma_table_info('sessions')").all().map((r) => r.name);
-    if (cols.includes("vtt_state")) db.exec("alter table sessions drop column vtt_state");
+    // ALTERs sem tabela própria: desfaz as colunas.
+    // SQLite não aceita IF EXISTS em DROP COLUMN — verifica antes.
+    const colsMoney = new Set(db.pragma("table_info(money_transactions)").map((c) => c.name));
+    if (colsMoney.has("inventory_item_id")) db.exec("alter table money_transactions drop column inventory_item_id");
+    if (colsMoney.has("operacao")) db.exec("alter table money_transactions drop column operacao");
+    const colsSess = new Set(db.pragma("table_info(sessions)").map((c) => c.name));
+    if (colsSess.has("vtt_state")) db.exec("alter table sessions drop column vtt_state");
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 3)`);
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 6)`);
     }
   } finally { db.close(); }
 }

@@ -353,11 +353,37 @@ export const moneyTransactions = sqliteTable("money_transactions", {
   balanceBeforeCents: integer("balance_before_cents"),
   balanceAfterCents: integer("balance_after_cents"),
   requestId: text("request_id"), // idempotência — impede duplicação
+  // Vínculo explícito com a operação de patrimônio que gerou a
+  // movimentação (compra/venda/estorno): requestId da operação, id do
+  // item de inventário afetado e metadados necessários ao estorno.
+  inventoryItemId: text("inventory_item_id"),
+  operacao: text("operacao", { mode: "json" }),
   createdBy: text("created_by").references(() => users.id),
   createdAt: createdAt(),
 }, (t) => [
   index("money_tx_char_idx").on(t.characterId),
   uniqueIndex("money_tx_request_idx").on(t.campaignId, t.requestId),
+]);
+
+// Registro persistente de estornos de operações de patrimônio que NÃO
+// geram transação financeira (ex.: compra com pagar=false). Sem ele, a
+// segunda tentativa de estorno não teria como distinguir "operação já
+// estornada" de "operação inexistente" — o item já foi removido.
+// O escopo de idempotência das operações sem pagamento é por
+// PERSONAGEM (characterId + requestId), então a unicidade aqui também
+// é por personagem: dois personagens podem usar o mesmo requestId e
+// estornar independentemente. UNIQUE(campaign, character, operacao)
+// torna o registro à prova de corrida.
+export const operacaoEstornos = sqliteTable("operacao_estornos", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  operacaoId: text("operacao_id").notNull(), // requestId da operação estornada
+  tipo: text("tipo").notNull(), // compra_sem_pagamento (futuros tipos aqui)
+  createdBy: text("created_by").references(() => users.id),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("operacao_estorno_char_op_idx").on(t.campaignId, t.characterId, t.operacaoId),
 ]);
 
 // Sessões de jogo (spec §20)
