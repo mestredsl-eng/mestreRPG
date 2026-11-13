@@ -73,6 +73,9 @@ function Shell() {
   const [aba, setAba] = useState<Aba>("painel");
   const [campanhaAberta, setCampanhaAberta] = useState<string | null>(null);
   const [naoLidas, setNaoLidas] = useState(0);
+  // Incrementa a cada novidade:publicada — sinal para a aba Novidades
+  // recarregar a lista sem sair da tela.
+  const [novidadesVersao, setNovidadesVersao] = useState(0);
   const usuario = estado.status === "autenticado" ? estado.usuario : null;
   const ehConvite = window.location.pathname.startsWith("/convite");
   const forcarErro = new URLSearchParams(window.location.search).has("__erro");
@@ -106,6 +109,7 @@ function Shell() {
       // não reaplicar a janela global baseada apenas no texto do toast.
       notificar(`Nova publicação: ${n.titulo}`, "info", { deduplicar: false });
       atualizarNaoLidas();
+      setNovidadesVersao((v) => v + 1);
     };
     const aoConectar = () => atualizarNaoLidas();
     s.on("novidade:publicada", aoPublicar);
@@ -167,7 +171,7 @@ function Shell() {
           <Campanha id={campanhaAberta} aoVoltar={() => setCampanhaAberta(null)} />
         )}
         {aba === "acervo" && <Acervo />}
-        {aba === "novidades" && <Novidades aoMudarLeitura={atualizarNaoLidas} />}
+        {aba === "novidades" && <Novidades aoMudarLeitura={atualizarNaoLidas} versao={novidadesVersao} />}
         {aba === "admin" && usuario?.isAdmin && <Admin />}
         {aba === "conta" && <Conta />}
       </main>

@@ -1,7 +1,7 @@
 import type { Server as HttpServer, IncomingMessage } from "node:http";
 import { Server as SocketIOServer } from "socket.io";
 import { and, eq } from "drizzle-orm";
-import { autenticarHandshake, type UsuarioAutenticado } from "../middleware/auth.js";
+import { autenticarHandshake } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
 import { setIo } from "../lib/io.js";
@@ -18,7 +18,9 @@ import { registrarMesa } from "./mesa.js";
  */
 declare module "socket.io" {
   interface SocketData {
-    usuario?: UsuarioAutenticado;
+    usuario?: import("../middleware/auth.js").UsuarioAutenticado;
+    /** Id da sessão HTTP que autenticou o handshake — vínculo de logout. */
+    sessaoId?: string;
   }
 }
 
@@ -50,15 +52,19 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
 
   io.use(async (socket, next) => {
     const headers = socket.handshake.headers;
-    const usuario = await autenticarHandshake(headers.cookie, headers.authorization);
-    if (!usuario) {
+    const auth = await autenticarHandshake(headers.cookie, headers.authorization);
+    if (!auth) {
       next(new Error("Não autenticado"));
       return;
     }
-    socket.data.usuario = usuario;
+    socket.data.usuario = auth.usuario;
+    socket.data.sessaoId = auth.sessaoId;
     // sala privada do usuário — o cliente nunca escolhe a sala; eventos
     // direcionados (ex.: novidade:publicada) só chegam a conexões autenticadas
-    socket.join(`usuario:${usuario.id}`);
+    socket.join(`usuario:${auth.usuario.id}`);
+    // sala privada da SESSÃO — o logout revoga só os sockets que foram
+    // autenticados por aquela sessão, preservando outras sessões da conta
+    socket.join(`sessao:${auth.sessaoId}`);
     next();
   });
 

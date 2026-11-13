@@ -334,6 +334,86 @@ try {
     await ctxM.close();
   }
 
+  // ===== Tempo real — lista aberta atualiza sozinha =====
+  sec("Tempo real — lista de novidades ao vivo");
+  {
+    const ctxL = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const pageL = await ctxL.newPage();
+    const errosL = [];
+    pageL.on("pageerror", (e) => errosL.push(String(e)));
+    pageL.on("console", (m) => { if (m.type() === "error" && !/Failed to load resource/.test(m.text())) errosL.push(m.text()); });
+    await login(pageL, "usuario_a", "senha-jogador-123");
+    await btnNav(pageL, "Novidades").click();
+    await pageL.waitForTimeout(800);
+    const lista = pageL.locator(".lista-novidades .novidade-item");
+    const nAntes = await lista.count();
+
+    // A) nova publicação aparece na lista SEM navegar
+    const pubLista = await req(BASE, "POST", "/admin/novidades", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Publicada com aba aberta", conteudo: "corpo", estado: "publicada", categoria: "melhoria" },
+    });
+    t("A: publicação criada", pubLista.status === 201);
+    const itemNovo = pageL.locator(".novidade-item", { hasText: "Publicada com aba aberta" });
+    await itemNovo.waitFor({ timeout: 6000 }).catch(() => {});
+    t("A: item aparece na lista sem refresh", await itemNovo.count() === 1, `n=${await itemNovo.count()}`);
+    t("A: lista cresceu em 1", (await lista.count()) === nAntes + 1, `${nAntes} -> ${await lista.count()}`);
+    t("A: toast emitido", await pageL.locator(".notificacao-info", { hasText: "Nova publicação: Publicada com aba aberta" }).count() === 1);
+    t("A: permanece na aba Novidades", await pageL.locator(".topo nav button.ativo").textContent().then((x) => /Novidades/i.test(x ?? "")));
+
+    // B) nova revisão: leitura anterior não vale para a nova versão
+    const itemLido = pageL.locator(".novidade-item", { hasText: "Publicada com aba aberta" });
+    await itemLido.click();
+    await pageL.waitForTimeout(600);
+    t("B: modal abriu", await pageL.locator(".conteudo-novidade").count() === 1);
+    await pageL.getByRole("button", { name: "Fechar", exact: true }).click();
+    await pageL.waitForTimeout(300);
+    await req(BASE, "PATCH", `/admin/novidades/${pubLista.json.novidade.id}`, {
+      cookie: cenario.cookieMestre, body: { conteudo: "corpo revisado v2" },
+    });
+    // a revisão gera toast + recarrega a lista; o item volta a não-lido
+    await pageL.waitForFunction(() =>
+      [...document.querySelectorAll(".novidade-item")].some((el) =>
+        el.textContent?.includes("Publicada com aba aberta") && el.classList.contains("nao-lida")),
+      null, { timeout: 6000 }).catch(() => {});
+    t("B: revisão torna item não-lido novamente", await itemLido.evaluate((el) => el.classList.contains("nao-lida")));
+
+    // C) modal aberto durante revisão → conteúdo antigo não fica visível
+    await itemLido.click();
+    await pageL.waitForTimeout(500);
+    t("C: modal reaberto", await pageL.locator(".conteudo-novidade").count() === 1);
+    await req(BASE, "PATCH", `/admin/novidades/${pubLista.json.novidade.id}`, {
+      cookie: cenario.cookieMestre, body: { conteudo: "corpo revisado v3" },
+    });
+    await pageL.waitForFunction(() =>
+      !document.querySelector(".conteudo-novidade") ||
+      document.body.textContent?.includes("atualizada"),
+      null, { timeout: 6000 }).catch(() => {});
+    await pageL.waitForTimeout(400);
+    const modalAindaAbertoComVelho = await pageL.locator(".conteudo-novidade").count();
+    const avisoAtualizada = await pageL.locator(".notificacao-info", { hasText: "atualizada" }).count();
+    t("C: modal antigo fechado ou aviso de atualização", modalAindaAbertoComVelho === 0 || avisoAtualizada >= 1,
+      `modal=${modalAindaAbertoComVelho} avisos=${avisoAtualizada}`);
+    t("C: usuário permanece na aba", await pageL.locator(".topo nav button.ativo").textContent().then((x) => /Novidades/i.test(x ?? "")));
+    t("sem erros de console (lista viva)", errosL.length === 0, errosL.slice(0, 2).join(" | "));
+
+    // F) mobile 390px — mesmo contexto/sessão, viewport reduzido
+    // (reuso evita estourar o rate limit de login por IP)
+    await pageL.setViewportSize({ width: 390, height: 844 });
+    await pageL.waitForTimeout(500);
+    await req(BASE, "POST", "/admin/novidades", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Mobile lista viva", conteudo: "x", estado: "publicada" },
+    });
+    const itemMV = pageL.locator(".novidade-item", { hasText: "Mobile lista viva" });
+    await itemMV.waitFor({ timeout: 6000 }).catch(() => {});
+    t("F: mobile — item aparece na lista aberta", await itemMV.count() === 1, `n=${await itemMV.count()}`);
+    const ovMV = await pageL.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    t("F: mobile — sem overflow", ovMV <= 1, `overflow=${ovMV}px`);
+    t("F: sem erros de console (mobile lista)", errosL.length === 0, errosL.slice(0, 2).join(" | "));
+    await ctxL.close();
+  }
+
   await browser.close();
 } finally {
   await encerrarServidor(proc);
