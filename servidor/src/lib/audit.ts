@@ -11,6 +11,7 @@ export async function audit(req: Request, action: string, detail?: unknown) {
       id: crypto.randomUUID(),
       actorId: req.usuario?.id ?? null,
       campaignId: (req.params.campaignId as string) ?? null,
+      guildId: (req.params.guildId as string) ?? null,
       action,
       detail: detail ?? null,
       createdAt: new Date(),

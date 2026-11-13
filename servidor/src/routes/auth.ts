@@ -8,13 +8,15 @@ import {
   requireAuth,
   definirCookieSessao,
   limparCookieSessao,
-  resolverUsuario,
+  resolverSessao,
   extrairCookie,
   COOKIE_SESSAO,
 } from "../middleware/auth.js";
 import { limitador, limiteUsuario } from "../lib/ratelimit.js";
 import { buscarConvite, statusConvite } from "../lib/convites.js";
 import { desconectarSessao } from "../lib/io.js";
+import { ehAdminPrincipal } from "../lib/adminPrincipal.js";
+import { guildasDoUsuario } from "../lib/guildas.js";
 
 const db = getDb();
 export const authRouter = Router();
@@ -78,6 +80,17 @@ authRouter.post("/setup", async (req, res) => {
   res.status(201).json({ ok: true, id });
 });
 
+/** Escopo completo da conta para o cliente (Issue #65): papéis de
+ *  guilda e marcação do ADMIN principal — sem misturar com papéis de
+ *  campanha, que continuam vindo das memberships. */
+async function escopoUsuario(user: typeof users.$inferSelect) {
+  const [principal, guildas] = await Promise.all([
+    ehAdminPrincipal(user.id),
+    guildasDoUsuario(user.id),
+  ]);
+  return { adminPrincipal: principal, guildas };
+}
+
 /** Cria sessão persistente e define o cookie — compartilhado por login e registro. */
 async function abrirSessao(req: Request, res: Response, user: typeof users.$inferSelect) {
   const token = gerarToken();
@@ -98,6 +111,7 @@ async function abrirSessao(req: Request, res: Response, user: typeof users.$infe
     email: user.email,
     displayName: user.displayName,
     isAdmin: user.isAdmin,
+    ...(await escopoUsuario(user)),
   };
 }
 
@@ -196,12 +210,26 @@ authRouter.post("/logout", requireAuth, async (req, res) => {
 
 /** GET /api/auth/me */
 authRouter.get("/me", async (req, res) => {
-  const usuario = await resolverUsuario(req);
-  if (!usuario) {
+  const sessao = await resolverSessao(req);
+  if (!sessao) {
     res.status(401).json({ erro: "Não autenticado" });
     return;
   }
-  res.json({ usuario });
+  const [user] = await db.select().from(users).where(eq(users.id, sessao.usuario.id)).limit(1);
+  if (!user) {
+    res.status(401).json({ erro: "Não autenticado" });
+    return;
+  }
+  res.json({
+    usuario: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      displayName: user.displayName,
+      isAdmin: user.isAdmin,
+      ...(await escopoUsuario(user)),
+    },
+  });
 });
 
 const corHex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor deve estar no formato #RRGGBB");

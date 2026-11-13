@@ -128,7 +128,8 @@ jobs:
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \
             teste-validacao-personagem.mjs \
-            teste-exclusao-personagem.mjs
+            teste-exclusao-personagem.mjs \
+            teste-guildas-admin.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"

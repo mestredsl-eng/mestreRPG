@@ -3,7 +3,7 @@ import { and, eq, desc } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
-import { campaigns, memberships, invitations, users } from "../db/schema.js";
+import { campaigns, memberships, invitations, users, guilds } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
 import { emitirCampanha, expulsarMembroDaCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
@@ -19,6 +19,9 @@ const criarSchema = z.object({
   name: z.string().min(2).max(120),
   description: z.string().max(4000).optional(),
   system: z.string().max(120).optional(), // texto livre — qualquer sistema de RPG
+  // Issue #65: criar já dentro de uma guilda exige ser GM dela (ou ADMIN);
+  // o criador vira mestre da campanha — guilda NÃO concede papel de mesa.
+  guildId: z.string().optional(),
 });
 
 const atualizarSchema = criarSchema.partial().extend({
@@ -36,6 +39,7 @@ function campanhaPublica(c: typeof campaigns.$inferSelect) {
     coverImage: c.coverImage,
     status: c.status,
     ownerId: c.ownerId,
+    guildId: c.guildId ?? null,
     settings: c.settings,
     summary: c.summary,
     createdAt: c.createdAt,
@@ -64,6 +68,20 @@ campanhasRouter.post("/", async (req, res) => {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
     return;
   }
+  let guildId: string | null = null;
+  if (body.data.guildId) {
+    const { ehGM } = await import("../lib/guildas.js");
+    const [g] = await db.select().from(guilds).where(eq(guilds.id, body.data.guildId)).limit(1);
+    if (!g || g.status !== "ativa") {
+      res.status(404).json({ erro: "Guilda não encontrada ou arquivada" });
+      return;
+    }
+    if (!req.usuario!.isAdmin && !(await ehGM(g.id, req.usuario!.id))) {
+      res.status(403).json({ erro: "Somente um GM da guilda (ou o ADMIN) pode criar campanhas nela" });
+      return;
+    }
+    guildId = g.id;
+  }
   const agora = new Date();
   const campaignId = crypto.randomUUID();
   await db.insert(campaigns).values({
@@ -73,6 +91,7 @@ campanhasRouter.post("/", async (req, res) => {
     system: body.data.system ?? null,
     status: "preparacao",
     ownerId: req.usuario!.id,
+    guildId,
     settings: {},
     createdAt: agora,
     updatedAt: agora,

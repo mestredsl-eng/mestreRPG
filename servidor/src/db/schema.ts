@@ -51,6 +51,39 @@ export const authSessions = sqliteTable("auth_sessions", {
   createdAt: createdAt(),
 }, (t) => [uniqueIndex("auth_sessions_token_idx").on(t.tokenHash), index("auth_sessions_user_idx").on(t.userId)]);
 
+// ---------- Guildas e GUILD MASTER (Issue #65) ----------
+// Escopo intermediário entre conta e campanha: o GM administra membros,
+// convites internos e associação de campanhas DA(S) SUA(S) GUILDA(S).
+// NÃO é papel de campanha nem privilégio global — os três escopos são
+// independentes (ver docs/hierarquia-contas.md). Declarado antes de
+// `campaigns` porque a tabela referencia guilds.id.
+export const guilds = sqliteTable("guilds", {
+  id: id(),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("ativa"), // ativa|arquivada
+  createdBy: text("created_by").notNull().references(() => users.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [uniqueIndex("guilds_name_idx").on(t.name)]);
+
+// Vínculo usuário↔guilda. role: gm|membro — uma guilda pode ter vários
+// GMs ativos; a remoção do último GM ativo é bloqueada pela API até que
+// outro membro seja promovido (proteção no serviço, não no schema).
+export const guildMembers = sqliteTable("guild_members", {
+  id: id(),
+  guildId: text("guild_id").notNull().references(() => guilds.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("membro"), // gm|membro
+  status: text("status").notNull().default("ativo"), // ativo|removido
+  joinedAt: integer("joined_at", { mode: "timestamp_ms" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("guild_members_guild_user_idx").on(t.guildId, t.userId),
+  index("guild_members_user_idx").on(t.userId),
+]);
+
 export const campaigns = sqliteTable("campaigns", {
   id: id(),
   name: text("name").notNull(),
@@ -60,6 +93,9 @@ export const campaigns = sqliteTable("campaigns", {
   summary: text("summary"), // resumo geral escrito pelo mestre (Etapa 8)
   status: text("status").notNull().default("preparacao"), // preparacao|andamento|pausada|concluida|arquivada (spec §19.5)
   ownerId: text("owner_id").notNull().references(() => users.id),
+  // Guilda à qual a campanha está vinculada (Issue #65). null = campanha
+  // pessoal/legada sem guilda — permanece válida e fora do escopo de GM.
+  guildId: text("guild_id").references(() => guilds.id),
   // Regras/configurações da campanha em JSON (custos, limites, pontuação — spec §8)
   settings: text("settings", { mode: "json" }).notNull().default({}),
   createdAt: createdAt(),
@@ -563,6 +599,7 @@ export const auditLogs = sqliteTable("audit_logs", {
   id: id(),
   actorId: text("actor_id").references(() => users.id),
   campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  guildId: text("guild_id").references(() => guilds.id, { onDelete: "set null" }),
   action: text("action").notNull(),
   detail: text("detail", { mode: "json" }),
   createdAt: createdAt(),

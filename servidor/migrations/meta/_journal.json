@@ -162,6 +162,13 @@
       "when": 1794490201285,
       "tag": "0022_far_maggott",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1794610182713,
+      "tag": "0023_guildas_hierarquia",
+      "breakpoints": true
     }
   ]
 }

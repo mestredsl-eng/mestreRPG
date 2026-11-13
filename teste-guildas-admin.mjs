@@ -1,0 +1,209 @@
+// Testes — hierarquia de contas Issue #65: guildas, GUILD MASTER (GM) e
+// multi-ADMIN com ADMIN principal protegido. Cobre IDOR entre guildas,
+// proteção do último GM, vínculo de campanhas, concessão/revogação de
+// ADMIN somente pelo principal, revogação de sessões e trilha de auditoria.
+// Banco temporário + migrations reais (sem fixture local).
+import { spawn } from "node:child_process";
+import { createServer } from "node:net";
+import Database from "better-sqlite3";
+import { join } from "node:path";
+import { hashToken } from "./servidor/dist/lib/password.js";
+import { dirTeste, prepararBanco, limparDir, abrirDb } from "./teste-base.mjs";
+
+const DIR = dirTeste("guildas-admin");
+const BANCO = join(DIR, "mestre-rpg-teste.db");
+await prepararBanco(BANCO);
+
+let pass = 0, fail = 0;
+const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
+const sec = (n) => console.log("\n== " + n + " ==");
+
+function portaLivre() {
+  return new Promise((res, rej) => {
+    const s = createServer();
+    s.once("error", rej);
+    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => res(p)); });
+  });
+}
+async function esperarSaudavel(base, proc) {
+  const limite = Date.now() + 30000;
+  while (Date.now() < limite) {
+    try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
+    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  throw new Error("timeout");
+}
+function subir(porta) {
+  return spawn("node", ["servidor/dist/index.js"], {
+    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+function sessaoDb(userId) {
+  const db = abrirDb(BANCO);
+  const token = "t-" + crypto.randomUUID();
+  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), userId, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
+  db.close();
+  return `mestre_rpg_session=${encodeURIComponent(token)}`;
+}
+async function req(base, metodo, path, { cookie, body } = {}) {
+  const r = await fetch(base + "/api" + path, {
+    method: metodo,
+    headers: { "content-type": "application/json", cookie: cookie ?? "" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  return { status: r.status, json: await r.json().catch(() => null) };
+}
+const idDe = (username) => {
+  const db = abrirDb(BANCO);
+  const u = db.prepare("select id from users where username=?").get(username);
+  db.close();
+  return u?.id;
+};
+const principalId = () => {
+  const db = abrirDb(BANCO);
+  const p = db.prepare("select user_id from admin_principal").get();
+  db.close();
+  return p?.user_id;
+};
+
+const porta = await portaLivre();
+const base = `http://127.0.0.1:${porta}`;
+const proc = subir(porta);
+await esperarSaudavel(base, proc);
+
+try {
+  sec("Setup — ADMIN principal e contas comuns");
+  const setup = await req(base, "POST", "/auth/setup", { body: { username: "root", password: "senha-forte-123" } });
+  t("setup cria admin", setup.status === 201, JSON.stringify(setup.json));
+  const cookieRoot = sessaoDb(idDe("root"));
+  const pid = principalId();
+  t("admin_principal registrado", !!pid && pid === idDe("root"));
+
+  for (const u of ["alice", "bob", "carol"]) {
+    const c = await req(base, "POST", "/admin/users", { cookie: cookieRoot, body: { username: u, password: "senha-forte-123" } });
+    t(`cria ${u}`, c.status === 201, JSON.stringify(c.json));
+  }
+  const cookieAlice = sessaoDb(idDe("alice"));
+  const cookieBob = sessaoDb(idDe("bob"));
+  const cookieCarol = sessaoDb(idDe("carol"));
+
+  sec("Escopo em /auth/me");
+  const meRoot = await req(base, "GET", "/auth/me", { cookie: cookieRoot });
+  t("root: isAdmin + adminPrincipal", meRoot.json?.usuario?.isAdmin === true && meRoot.json?.usuario?.adminPrincipal === true);
+  const meAlice = await req(base, "GET", "/auth/me", { cookie: cookieAlice });
+  t("alice: sem escopos", meAlice.json?.usuario?.isAdmin === false && meAlice.json?.usuario?.adminPrincipal === false && (meAlice.json?.usuario?.guildas ?? []).length === 0);
+
+  sec("Guildas — criação e papéis");
+  const gA = await req(base, "POST", "/guildas", { cookie: cookieAlice, body: { name: "Guilda A", description: "teste" } });
+  t("alice cria Guilda A", gA.status === 201 && gA.json?.guilda?.souGM === true, JSON.stringify(gA.json));
+  const guildA = gA.json.guilda.id;
+  const gB = await req(base, "POST", "/guildas", { cookie: cookieCarol, body: { name: "Guilda B" } });
+  t("carol cria Guilda B", gB.status === 201);
+  const guildB = gB.json.guilda.id;
+  t("nome duplicado recusado", (await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda A" } })).status === 409);
+
+  const addBob = await req(base, "POST", `/guildas/${guildA}/membros`, { cookie: cookieAlice, body: { username: "bob" } });
+  t("GM adiciona bob como membro", addBob.status === 201, JSON.stringify(addBob.json));
+  const bobPromove = await req(base, "PATCH", `/guildas/${guildA}/membros/${idDe("bob")}`, { cookie: cookieBob, body: { role: "gm" } });
+  t("membro comum NÃO gerencia guilda", bobPromove.status === 403, String(bobPromove.status));
+  const bobLeMembros = await req(base, "GET", `/guildas/${guildA}/membros`, { cookie: cookieBob });
+  t("membro lê roster", bobLeMembros.status === 200 && bobLeMembros.json?.membros?.length === 2);
+
+  sec("IDOR — GM da Guilda A não toca a Guilda B");
+  t("GET guilda B negado a alice", (await req(base, "GET", `/guildas/${guildB}`, { cookie: cookieAlice })).status === 403);
+  t("PATCH guilda B negada a alice", (await req(base, "PATCH", `/guildas/${guildB}`, { cookie: cookieAlice, body: { name: "invadida" } })).status === 403);
+  t("membros guilda B negados a alice", (await req(base, "GET", `/guildas/${guildB}/membros`, { cookie: cookieAlice })).status === 403);
+  t("alice não lista guilda B no /me", !(await req(base, "GET", "/auth/me", { cookie: cookieAlice })).json?.usuario?.guildas?.some((g) => g.guildId === guildB));
+  const adminVeTodas = await req(base, "GET", "/guildas?todas=1", { cookie: cookieRoot });
+  t("ADMIN lista todas as guildas", adminVeTodas.status === 200 && adminVeTodas.json?.guildas?.length === 2);
+  t("não-admin não lista todas", (await req(base, "GET", "/guildas?todas=1", { cookie: cookieAlice })).status === 403);
+
+  sec("Último GM protegido");
+  const gSolo = await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda Solo" } });
+  const guildSolo = gSolo.json.guilda.id;
+  const selfRem = await req(base, "DELETE", `/guildas/${guildSolo}/membros/${idDe("bob")}`, { cookie: cookieBob });
+  t("remover único GM recusado", selfRem.status === 409, JSON.stringify(selfRem.json));
+  const selfRebaixa = await req(base, "PATCH", `/guildas/${guildSolo}/membros/${idDe("bob")}`, { cookie: cookieBob, body: { role: "membro" } });
+  t("rebaixar único GM recusado", selfRebaixa.status === 409);
+  await req(base, "POST", `/guildas/${guildSolo}/membros`, { cookie: cookieBob, body: { username: "carol" } });
+  await req(base, "PATCH", `/guildas/${guildSolo}/membros/${idDe("carol")}`, { cookie: cookieBob, body: { role: "gm" } });
+  const selfRem2 = await req(base, "DELETE", `/guildas/${guildSolo}/membros/${idDe("bob")}`, { cookie: cookieBob });
+  t("remoção do GM ok após sucessão", selfRem2.status === 200, JSON.stringify(selfRem2.json));
+
+  sec("Campanhas e guilda — escopos separados");
+  // promove bob a GM da Guilda A (por alice, GM ativa) para isolar a regra
+  // de vínculo: GM SEM papel de mesa não pode vincular campanha alheia
+  await req(base, "PATCH", `/guildas/${guildA}/membros/${idDe("bob")}`, { cookie: cookieAlice, body: { role: "gm" } });
+  const campAlice = await req(base, "POST", "/campaigns", { cookie: cookieAlice, body: { name: "Campanha Alice" } });
+  t("alice cria campanha sem guilda", campAlice.status === 201 && campAlice.json?.campanha?.guildId === null);
+  const campId = campAlice.json.campanha.id;
+  const vincBob = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieBob, body: { acao: "vincular" } });
+  t("GM sem papel de mesa NÃO vincula campanha alheia", vincBob.status === 403, String(vincBob.status));
+  const vincAlice = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieAlice, body: { acao: "vincular" } });
+  t("mestre+GM vincula campanha própria", vincAlice.status === 200 && vincAlice.json?.campanha?.guildId === guildA, JSON.stringify(vincAlice.json));
+  const campFora = await req(base, "POST", "/campaigns", { cookie: cookieCarol, body: { name: "Campanha Carol", guildId: guildA } });
+  t("não-GM não cria campanha na guilda", campFora.status === 403, String(campFora.status));
+  const campCarol = await req(base, "POST", "/campaigns", { cookie: cookieCarol, body: { name: "Campanha Carol" } });
+  const vincAdmin = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campCarol.json.campanha.id}`, { cookie: cookieRoot, body: { acao: "vincular" } });
+  t("ADMIN vincula campanha alheia", vincAdmin.status === 200, JSON.stringify(vincAdmin.json));
+  const desvGM = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieAlice, body: { acao: "desvincular" } });
+  t("GM não desvincula (só ADMIN)", desvGM.status === 403);
+  const desvAdmin = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieRoot, body: { acao: "desvincular" } });
+  t("ADMIN desvincula", desvAdmin.status === 200);
+  t("campanha volta a guildId null", (await req(base, "GET", `/campaigns/${campId}`, { cookie: cookieAlice })).json?.campanha?.guildId === null);
+
+  sec("Multi-ADMIN — somente o principal concede/revoga");
+  const concedeBob = await req(base, "PATCH", `/admin/users/${idDe("bob")}`, { cookie: cookieAlice, body: { isAdmin: true } });
+  t("não-admin não concede ADMIN", concedeBob.status === 403);
+  const concedeAlice = await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { isAdmin: true } });
+  t("principal concede ADMIN a alice", concedeAlice.status === 200 && concedeAlice.json?.usuario?.isAdmin === true, JSON.stringify(concedeAlice.json));
+  const cookieAliceAdmin = sessaoDb(idDe("alice"));
+  const aliceViraAdmin = await req(base, "GET", "/auth/me", { cookie: cookieAliceAdmin });
+  t("alice agora éAdmin, não principal", aliceViraAdmin.json?.usuario?.isAdmin === true && aliceViraAdmin.json?.usuario?.adminPrincipal === false);
+  const aliceConcede = await req(base, "PATCH", `/admin/users/${idDe("carol")}`, { cookie: cookieAliceAdmin, body: { isAdmin: true } });
+  t("ADMIN não-principal NÃO concede ADMIN", aliceConcede.status === 403, String(aliceConcede.status));
+  const aliceAlteraProprio = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieAliceAdmin, body: { isAdmin: false } });
+  t("ADMIN não-principal não rebaixa o principal", aliceAlteraProprio.status === 403);
+  const rootSeAuto = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieRoot, body: { isAdmin: false } });
+  t("principal não altera a própria conta", rootSeAuto.status === 400);
+  const revogaAlice = await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { isAdmin: false } });
+  t("principal revoga ADMIN", revogaAlice.status === 200 && revogaAlice.json?.usuario?.isAdmin === false);
+  const meAposRevoga = await req(base, "GET", "/auth/me", { cookie: cookieAliceAdmin });
+  t("sessões derrubadas na revogação", meAposRevoga.status === 401, String(meAposRevoga.status));
+  const cookieAlicePos = sessaoDb(idDe("alice"));
+  const meAliceNova = await req(base, "GET", "/auth/me", { cookie: cookieAlicePos });
+  t("nova sessão de alice sem isAdmin", meAliceNova.json?.usuario?.isAdmin === false);
+
+  sec("Triggers do banco — proteção em profundidade");
+  const db = abrirDb(BANCO);
+  let triggerOk = false;
+  try { db.prepare("update users set is_admin=0 where id=?").run(pid); } catch { triggerOk = true; }
+  t("trigger impede rebaixar admin_principal", triggerOk);
+  let insertOk = false;
+  try {
+    db.prepare("insert into users (id,username,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), "admin_invasor", "x", 1, "ativo", Date.now(), Date.now());
+  } catch { insertOk = true; }
+  t("trigger impede INSERT direto de admin", insertOk);
+  db.close();
+
+  sec("Auditoria");
+  const db2 = abrirDb(BANCO);
+  const audits = db2.prepare("select action from audit_logs").all().map((r) => r.action);
+  t("audit registra admin.conceder", audits.includes("admin.conceder"));
+  t("audit registra admin.revogar", audits.includes("admin.revogar"));
+  t("audit registra guilda.criar", audits.includes("guilda.criar"));
+  t("audit registra guilda.campanha.vincular", audits.includes("guilda.campanha.vincular"));
+  const auditGuild = db2.prepare("select guild_id from audit_logs where guild_id is not null limit 1").get();
+  t("audit carrega guild_id", !!auditGuild?.guild_id);
+  db2.close();
+} finally {
+  proc.kill();
+  limparDir(DIR);
+}
+
+console.log(`\n${pass} ok, ${fail} falhas`);
+process.exit(fail ? 1 : 0);
