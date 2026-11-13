@@ -7,6 +7,7 @@
 // timeout sem ACK + ACK tardio, toque real mobile (CDP), redimensionamento
 // e reconexão. Evidências em _evidencias/nevoa/.
 import { chromium } from "playwright";
+import { io as ioClient } from "socket.io-client";
 import crypto from "node:crypto";
 import { join } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -1181,6 +1182,71 @@ try {
     && document.querySelectorAll(".chat-form").length > 0, null, { timeout: 40000 }).catch(() => {});
   t("espectador reativado COM permissão: mesa e chat voltam sem reload",
     (await pgE.locator(".mesa-vtt").count()) > 0 && (await pgE.locator(".chat-form").count()) > 0);
+
+  sec("Privacidade — dados privilegiados invalidados sem reconexão");
+  // a seção de snapshot revogou o j1 — recria a membership como jogador
+  // ativo e dispara a notificação via PATCH para o cliente reativar
+  // (mesmo mecanismo de produção, sem reload)
+  const dbPriv = abrirDb(BANCO);
+  dbPriv.prepare("delete from memberships where campaign_id=? and user_id=?").run(campId, c.jogadores.jogador1.id);
+  const midJ1b = crypto.randomUUID();
+  const agoraPriv = Date.now();
+  dbPriv.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(midJ1b, campId, c.jogadores.jogador1.id, "jogador", "ativo", "{}", agoraPriv, agoraPriv, agoraPriv);
+  dbPriv.close();
+  // PATCH para mestre: além de notificar (reativação), já coloca o j1
+  // no papel que recebe conteúdo de visibilidade "mestre"
+  const rReativJ = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1b}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("membership do j1 recriada e promovida a mestre", rReativJ.status === 200, JSON.stringify(rReativJ.json).slice(0, 100));
+  await pgJ.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0
+    && !/revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("j1 reativado como mestre sem reload (mesa visível)", (await pgJ.locator(".mesa-vtt").count()) > 0);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0
+    || /Permissões atualizadas/.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  // socket Node do mestre titular para emitir a mensagem secreta
+  const tokM = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sPriv = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokM)}` },
+  });
+  await new Promise((res, rej) => { sPriv.on("connect", res); sPriv.on("connect_error", rej); });
+  sPriv.emit("entrar-campanha", campId, () => undefined);
+  await new Promise((r) => setTimeout(r, 200));
+  sPriv.emit("mesa:entrar", { sessionId: sidA }, () => undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  sPriv.emit("mesa:mensagem", { sessionId: sidA, content: "SEGREDO-X9", visibilidade: "secreta", clientId: crypto.randomUUID() }, () => undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  await pgJ.waitForFunction(() => document.body.innerText.includes("SEGREDO-X9"), null, { timeout: 10000 }).catch(() => {});
+  t("segredo visível no chat enquanto j1 é mestre", (await pgJ.locator("body").innerText()).includes("SEGREDO-X9"));
+  // rebaixa com o ACK da sync RETIDO: o primeiro render já deve estar
+  // seguro — placeholder no lugar do tabuleiro, sem tokens privilegiados
+  // e sem o conteúdo secreto no DOM
+  armarRetencaoSyncJ = true;
+  const rRebaixaPriv = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1b}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("privacidade: PATCH rebaixamento mestre→jogador", rRebaixaPriv.status === 200);
+  for (let i = 0; i < 100 && ackSyncJRetido === null; i++) await new Promise((r) => setTimeout(r, 100));
+  t("privacidade: ACK da sync retido no transporte", ackSyncJRetido !== null);
+  const corpoBloq = await pgJ.locator("body").innerText();
+  const nTabBloq = await pgJ.locator(".vtt-tabuleiro").count();
+  const nTokBloq = await pgJ.locator(".vtt-token").count();
+  t("primeiro render seguro: tabuleiro e tokens privilegiados AUSENTES",
+    nTabBloq === 0 && nTokBloq === 0, `tab=${nTabBloq} tok=${nTokBloq}`);
+  t("primeiro render seguro: conteúdo secreto removido do DOM", !corpoBloq.includes("SEGREDO-X9"));
+  // libera o ACK da geração atual → visão filtrada volta; o segredo
+  // NÃO pode reaparecer (histórico recarregado é filtrado pelo servidor
+  // e respostas HTTP de geração antiga são descartadas pelo seq)
+  liberarAckSyncJ();
+  ackSyncJRetido = null;
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-tabuleiro").length === 1
+    && document.querySelectorAll(".vtt-token").length > 0, null, { timeout: 20000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 400)); // recarga filtrada de histórico assentou
+  const corpoPos = await pgJ.locator("body").innerText();
+  t("pós-sync: visão filtrada volta e segredo NÃO retorna",
+    (await pgJ.locator(".vtt-tabuleiro").count()) === 1 && !corpoPos.includes("SEGREDO-X9"));
+  t("pós-sync: controles administrativos ausentes", (await pgJ.locator(".vtt-nevoa-controles").count()) === 0);
+  // controle: o mestre titular continua vendo o segredo (estava autorizado)
+  t("controle: mestre titular mantém o segredo", (await pgM.locator("body").innerText()).includes("SEGREDO-X9"));
+  try { sPriv.close(); } catch {}
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });

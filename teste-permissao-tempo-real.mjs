@@ -337,6 +337,108 @@ try {
   const rMsgEspI = await emitirCb(sE, "mesa:mensagem", { sessionId: sid, content: "voltei", clientId: crypto.randomUUID() });
   t("espectador reativado COM permissão: chat aceito", rMsgEspI?.ok === true, JSON.stringify(rMsgEspI));
 
+  // ---------- J. Salas de sessão antigas limpas após substituição ----------
+  sec("J. Snapshot substitui estado — salas antigas saem de TODOS os sockets");
+  const sess2 = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Sala J" } });
+  const sid2 = sess2.json?.sessao?.id ?? sess2.json?.id;
+  t("sessão sid2 criada", !!sid2, JSON.stringify(sess2.json).slice(0, 120));
+  // segunda aba do MESMO usuário esp + ambos entram na sessão sid2
+  const sE2 = conectar(esp.cookie);
+  await pronto(sE2);
+  await emitirCb(sM, "mesa:entrar", { sessionId: sid2 });
+  const rEntE = await emitirCb(sE, "mesa:entrar", { sessionId: sid2 });
+  const rEntE2 = await emitirCb(sE2, "mesa:entrar", { sessionId: sid2 });
+  t("mestre e 2 abas do esp entram em sid2", rEntE?.ok === true && rEntE2?.ok === true, `${JSON.stringify(rEntE)} ${JSON.stringify(rEntE2)}`);
+  // entram também na sala de CAMPANHA — sem isso o assert de
+  // campanha:restaurada não prova nada (socket fora da sala não recebe)
+  for (const s of [sM, sE, sE2]) s.emit("entrar-campanha", ids.camp, () => undefined);
+  await dormir(150);
+  // contadores de eventos de sala/campanha nos sockets do esp —
+  // filtrados pelo conteúdo marcador para ignorar o "entrou na mesa"
+  // emitido de forma assíncrona logo após cada mesa:entrar
+  let restE = 0, restE2 = 0, restM = 0, msgE = 0, msgE2 = 0, msgM = 0, timerE = 0, timerE2 = 0;
+  sE.on("campanha:restaurada", () => restE++);
+  sE2.on("campanha:restaurada", () => restE2++);
+  sM.on("campanha:restaurada", () => restM++);
+  sE.on("mesa:mensagem", (m) => { if (m?.content === "pos-restore") msgE++; });
+  sE2.on("mesa:mensagem", (m) => { if (m?.content === "pos-restore") msgE2++; });
+  sM.on("mesa:mensagem", (m) => { if (m?.content === "pos-restore") msgM++; });
+  sE.on("mesa:timer", () => timerE++);
+  sE2.on("mesa:timer", () => timerE2++);
+  // snapshot do estado atual (inclui sid2 e a membership do esp)…
+  const snapJ = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "sem-esp" } });
+  const snapJId = snapJ.json?.id;
+  t("snapshot p/ J criado", snapJ.status === 201 && !!snapJId);
+  // …editado para NÃO conter o esp — a sessão sid2 PERMANECE no pacote,
+  // então a sala sessao:sid2 continua existindo após a restauração:
+  // se o socket do esp não sair dela, ele recebe os eventos abaixo.
+  const dbJ = abrirDb(BANCO);
+  const linhaJ = dbJ.prepare("select data from snapshots where id=?").get(snapJId);
+  const dadosJ = JSON.parse(linhaJ.data);
+  dadosJ.memberships = (dadosJ.memberships ?? []).filter((m) => m.userId !== esp.id);
+  dbJ.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosJ), snapJId);
+  dbJ.close();
+  const iniEJ = marcarPerm(sE), iniE2J = marcarPerm(sE2);
+  const rRestJ = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapJId}/restaurar`, { cookie: ids.cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore J executado", rRestJ.status === 200, JSON.stringify(rRestJ.json).slice(0, 140));
+  const evEJ = await esperarPerm(sE, iniEJ);
+  const evE2J = await esperarPerm(sE2, iniE2J);
+  t("esp (2 abas) notificado status=removido", evEJ?.at(-1)?.status === "removido" && evE2J?.at(-1)?.status === "removido",
+    JSON.stringify([evEJ?.at(-1), evE2J?.at(-1)]));
+  await dormir(300);
+  // fora da sala campanha:* — não recebe o broadcast da própria restauração
+  t("esp NÃO recebe campanha:restaurada (fora de campanha:*)", restE === 0 && restE2 === 0, `restE=${restE} restE2=${restE2}`);
+  t("mestre recebe campanha:restaurada (controle)", restM >= 1, `restM=${restM}`);
+  // fora de sessao:sid2 (sessão preservada no snapshot = sala ainda válida)
+  const rMsgJ = await emitirCb(sM, "mesa:mensagem", { sessionId: sid2, content: "pos-restore", clientId: crypto.randomUUID() });
+  t("mestre envia msg em sid2", rMsgJ?.ok === true);
+  await emitirCb(sM, "mesa:timer", { sessionId: sid2, acao: "iniciar", duracaoSegundos: 30 });
+  await dormir(300);
+  t("esp NÃO recebe mesa:mensagem de sid2", msgE === 0 && msgE2 === 0, `msgE=${msgE} msgE2=${msgE2}`);
+  t("esp NÃO recebe mesa:timer de sid2", timerE === 0 && timerE2 === 0, `timerE=${timerE} timerE2=${timerE2}`);
+  t("mestre recebe a mensagem (controle)", msgM >= 1, `msgM=${msgM}`);
+  t("sockets do esp seguem conectados (só saíram das salas)", sE.connected === true && sE2.connected === true);
+  const rEntrarJ = await emitirCb(sE, "mesa:entrar", { sessionId: sid2 });
+  t("re-entrada em sid2 rejeitada (membership removida)", rEntrarJ?.ok !== true, JSON.stringify(rEntrarJ));
+
+  // ---------- K. Importação substituir limpa salas antigas ----------
+  sec("K. Import substitui sessões — mesmo mecanismo de limpeza");
+  // recria o esp como membro para o pacote exportado atual não falhar;
+  // depois importa pacote SEM ele → revogação + saída das salas
+  const dbK = abrirDb(BANCO);
+  dbK.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), ids.camp, esp.id, "espectador", "ativo",
+      JSON.stringify({ enviarMensagens: true }), Date.now(), Date.now(), Date.now());
+  dbK.close();
+  const sE3 = conectar(esp.cookie);
+  await pronto(sE3);
+  await emitirCb(sE3, "mesa:entrar", { sessionId: sid2 });
+  sE3.emit("entrar-campanha", ids.camp, () => undefined);
+  await dormir(150);
+  let restE3 = 0, msgE3 = 0;
+  sE3.on("campanha:restaurada", () => restE3++);
+  sE3.on("mesa:mensagem", (m) => { if (m?.content === "pos-import") msgE3++; });
+  // pacote = export atual, editado sem o esp
+  const expK = await req(BASE, "GET", `/campaigns/${ids.camp}/exportar`, { cookie: ids.cookieMestre });
+  t("export p/ K obtido", expK.status === 200, JSON.stringify(expK.json).slice(0, 100));
+  const pacoteK = expK.json;
+  pacoteK.estado.memberships = (pacoteK.estado.memberships ?? []).filter((m) => m.userId !== esp.id);
+  const iniE3 = marcarPerm(sE3);
+  const rImpK = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: ids.cookieMestre,
+    body: { pacote: pacoteK, modo: "substituir", campaignId: ids.camp, confirmacao: "SUBSTITUIR" },
+  });
+  t("import K executado", rImpK.status === 200, JSON.stringify(rImpK.json).slice(0, 140));
+  const evE3K = await esperarPerm(sE3, iniE3);
+  t("esp notificado removido pela importação", evE3K?.at(-1)?.status === "removido", JSON.stringify(evE3K?.at(-1)));
+  await dormir(300);
+  t("esp fora de campanha:* após import (sem campanha:restaurada)", restE3 === 0, `restE3=${restE3}`);
+  let msgM3 = 0;
+  sM.on("mesa:mensagem", (m) => { if (m?.content === "pos-import") msgM3++; });
+  await emitirCb(sM, "mesa:mensagem", { sessionId: sid2, content: "pos-import", clientId: crypto.randomUUID() });
+  await dormir(300);
+  t("esp não recebe eventos de sid2 após import", msgE3 === 0, `msgE3=${msgE3} controleM=${msgM3}`);
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

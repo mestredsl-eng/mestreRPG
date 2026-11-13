@@ -55,29 +55,60 @@ export async function reconciliarMembrosAposRestauracao(
   campaignId: string,
   antes: { userId: string; role: string; status: string; permissions: unknown }[],
   depois: { userId: string; role: string; status: string; permissions: unknown }[],
+  sessoesAntes: string[] = [],
+  sessoesDepois: string[] = [],
 ) {
   const antesPorUser = new Map(antes.map((m) => [m.userId, m]));
   const depoisPorUser = new Map(depois.map((m) => [m.userId, m]));
   const usersAfetados = new Set([...antesPorUser.keys(), ...depoisPorUser.keys()]);
+  // salas de sessão que existiam antes da substituição e não existem
+  // mais: sockets de usuários ainda autorizados não podem ficar
+  // presos nelas (IDs antigos somem do banco — não dá para redescobri-las)
+  const sessoesValidas = new Set(sessoesDepois);
+  const salasAntigas = sessoesAntes
+    .filter((id) => !sessoesValidas.has(id))
+    .map((id) => `sessao:${id}`);
+  const falhas: string[] = [];
+  let revogados = 0;
   for (const userId of usersAfetados) {
-    const d = depoisPorUser.get(userId);
-    if (!d || d.status !== "ativo") {
-      // revogado ou nunca existiu no estado restaurado: usa os dados
-      // anteriores para papel/permissões do payload de revogação
-      const a = antesPorUser.get(userId);
-      await expulsarMembroDaCampanha(campaignId, userId);
+    try {
+      const d = depoisPorUser.get(userId);
+      if (!d || d.status !== "ativo") {
+        // revogado ou nunca existiu no estado restaurado: usa os dados
+        // anteriores para papel/permissões do payload de revogação.
+        // Expulsão cobre a UNIÃO dos IDs de sessão antes∪depois — as
+        // salas antigas já não constam mais no banco.
+        const a = antesPorUser.get(userId);
+        await expulsarMembroDaCampanha(campaignId, userId, [...sessoesAntes, ...sessoesDepois]);
+        notificarPermissaoAtualizada(campaignId, {
+          userId,
+          role: d?.role ?? a?.role ?? "jogador",
+          status: "removido",
+          permissions: d?.permissions ?? a?.permissions ?? {},
+        });
+        revogados += 1;
+        continue;
+      }
+      // ativo: permanece na campanha, mas sai das salas de sessões que
+      // a substituição eliminou — entra nas novas via mesa:entrar
+      if (io && salasAntigas.length) {
+        for (const socket of io.sockets.sockets.values()) {
+          const u = socket.data.usuario as { id?: string } | undefined;
+          if (u?.id !== userId) continue;
+          for (const room of salasAntigas) socket.leave(room);
+        }
+      }
       notificarPermissaoAtualizada(campaignId, {
-        userId,
-        role: d?.role ?? a?.role ?? "jogador",
-        status: "removido",
-        permissions: d?.permissions ?? a?.permissions ?? {},
+        userId, role: d.role, status: d.status, permissions: d.permissions,
       });
-      continue;
+    } catch (e) {
+      // falha parcial de limpeza NÃO pode passar em silêncio: registra
+      // e reporta para o chamador decidir a resposta coerente
+      falhas.push(userId);
+      console.error(`[reconciliar] falha ao reconciliar userId=${userId} campanha=${campaignId}:`, e);
     }
-    notificarPermissaoAtualizada(campaignId, {
-      userId, role: d.role, status: d.status, permissions: d.permissions,
-    });
   }
+  return { notificados: usersAfetados.size - falhas.length, revogados, falhas };
 }
 
 /**
@@ -88,14 +119,17 @@ export async function reconciliarMembrosAposRestauracao(
  * privada `usuario:${userId}` é preservada justamente para que a
  * notificação de revogação ainda chegue ao cliente.
  */
-export async function expulsarMembroDaCampanha(campaignId: string, userId: string) {
+export async function expulsarMembroDaCampanha(campaignId: string, userId: string, sessoesExtras: string[] = []) {
   if (!io) return;
   const db = getDb();
   const sessoes = await db
     .select({ id: sessions.id })
     .from(sessions)
     .where(eq(sessions.campaignId, campaignId));
-  const rooms = [`campanha:${campaignId}`, ...sessoes.map((s) => `sessao:${s.id}`)];
+  // união: sessões que ainda existem no banco + IDs capturados ANTES de
+  // uma restauração (salas antigas que já não constam mais no banco)
+  const ids = new Set([...sessoes.map((s) => s.id), ...sessoesExtras]);
+  const rooms = [`campanha:${campaignId}`, ...[...ids].map((id) => `sessao:${id}`)];
   for (const socket of io.sockets.sockets.values()) {
     const u = socket.data.usuario as { id?: string } | undefined;
     if (u?.id !== userId) continue;

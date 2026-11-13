@@ -109,6 +109,9 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   // não existir no snapshot precisa ser revogado e notificado também —
   // comparar só o estado posterior perderia esses usuários.
   const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+  // IDs das sessões ANTES da restauração: salas antigas que o snapshot
+  // substitui precisam ser limpas dos sockets mesmo após sumirem do banco
+  const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
 
   let resultado;
   try {
@@ -121,9 +124,15 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados: resultado.arquivosRecuperados, arquivosAusentes: resultado.arquivosAusentes.length });
   // Reconciliação pós-commit: compara por userId (IDs podem mudar) —
   // ausentes são revogados, presentes recebem papel/status/permissões
-  // efetivamente persistidos.
+  // efetivamente persistidos. Sessões antes∪depois garantem a limpeza
+  // das salas antigas que já não existem mais no banco.
   const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
-  await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois);
+  const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
+  const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
+  if (rec.falhas.length) {
+    res.status(500).json({ erro: "Restauração aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
+    return;
+  }
   emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id });
   res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
 });

@@ -5,7 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  campaigns, memberships, users, snapshots,
+  campaigns, memberships, users, snapshots, sessions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
@@ -93,6 +93,7 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     // precisa ser revogado e notificado — consultar só o estado final
     // perderia esses usuários.
     const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+    const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
     let resultado;
     try {
       resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
@@ -101,7 +102,12 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       return;
     }
     const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
-    await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois);
+    const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
+    const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
+    if (rec.falhas.length) {
+      res.status(500).json({ erro: "Importação aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
+      return;
+    }
     await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
     emitirCampanha(cid, "campanha:restaurada", {});
     res.json({ ok: true, campaignId: cid, modo, ...resultado });

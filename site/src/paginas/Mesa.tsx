@@ -100,6 +100,35 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   // recente são descartadas (não restauram papel/permissões obsoletos)
   const [permSeq, setPermSeq] = useState(0);
   const permSeqRef = useRef(0);
+  // papel efetivo conhecido pelo cliente — atualizado SINCRONAMENTE no
+  // handler do evento privado (antes de qualquer render) para que a
+  // comparação de privilégio nunca use um valor defasado de efeito
+  const papelRef = useRef(papel);
+  useEffect(() => { papelRef.current = papel; }, [papel]);
+  const nivelPapelFn = (p?: string | null) => (p === "mestre" ? 2 : p === "espectador" ? 0 : 1);
+  // queda de privilégio pendente de sincronização autorizada: o
+  // tabuleiro VTT NÃO pode renderizar a visão anterior enquanto a
+  // resposta válida da geração atual não chegar — estado participa do
+  // render (não depende de useEffect para ativar a proteção)
+  const [visaoBloqueada, setVisaoBloqueada] = useState(false);
+  // recarga filtrada por papel: descarta resposta de geração antiga —
+  // dados privados recebidos enquanto o usuário era mestre não podem
+  // ser repovoados por HTTP emitido antes da mudança de papel
+  const recarregarFiltrado = useCallback(() => {
+    const seq = permSeqRef.current;
+    void Promise.all([
+      api.listarMensagens(campaignId, sessao.id),
+      api.listarTestes(campaignId, sessao.id),
+      api.obterEstadoMesa(campaignId, sessao.id),
+    ]).then(([msgs, tes, est]) => {
+      if (seq !== permSeqRef.current) return;
+      setMensagens(msgs.mensagens);
+      setTestes(tes.testes);
+      setTurnos(est.turnos);
+      setTimer(est.sessao.timerState ?? null);
+      setSessaoAtual(est.sessao);
+    }).catch(() => undefined);
+  }, [campaignId, sessao.id]);
   const revogadoRef = useRef(false);
   const [meuUserId, setMeuUserId] = useState<string>("");
   const [texto, setTexto] = useState("");
@@ -124,6 +153,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
 
   // carga inicial
   useEffect(() => {
+    const seqCarga = permSeqRef.current;
     void (async () => {
       try {
         const [msgs, tes, est, mem, pers, regras] = await Promise.all([
@@ -134,6 +164,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           api.listarPersonagens(campaignId).catch(() => ({ personagens: [] as PersonagemResumo[] })),
           api.obterRegras(campaignId).catch(() => null),
         ]);
+        if (seqCarga !== permSeqRef.current) return; // gerada antes de mudança de papel
         setMensagens(msgs.mensagens);
         setTestes(tes.testes);
         setTurnos(est.turnos);
@@ -154,9 +185,16 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   // permissões individuais só mudam via evento privado ou ACK de entrada
   // (o sync não transporta permissões)
   const aoPapelServidorEstavel = useCallback((p: string | undefined, seq: number) => {
-    if (!p || seq !== permSeqRef.current) return;
+    if (seq !== permSeqRef.current) return;
+    // ACK válido da geração atual: visão autorizada aplicada pelo
+    // filho — libera o bloqueio de queda de privilégio e rebusca o
+    // histórico já filtrado pelo papel confirmado
+    setVisaoBloqueada(false);
+    recarregarFiltrado();
+    if (!p) return;
+    papelRef.current = p;
     setPapel(p);
-  }, []);
+  }, [recarregarFiltrado]);
 
   // socket
   useEffect(() => {
@@ -191,7 +229,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const aoPresenca = (p: { sessionId: string; online: string[] }) => {
       if (p.sessionId === sessao.id) setOnline(p.online);
     };
-    const aoSessao = () => void api.obterEstadoMesa(campaignId, sessao.id).then((e) => { setSessaoAtual(e.sessao); setTurnos(e.turnos); }).catch(() => undefined);
+    const aoSessao = () => {
+      const seq = permSeqRef.current;
+      void api.obterEstadoMesa(campaignId, sessao.id).then((e) => {
+        if (seq !== permSeqRef.current) return; // resposta de geração antiga
+        setSessaoAtual(e.sessao); setTurnos(e.turnos);
+      }).catch(() => undefined);
+    };
     // Notificação privada pós-persistência do servidor: papel/status/
     // permissões ATUAIS da minha membership nesta campanha. Só o canal
     // usuario:* a entrega — nunca é payload de campanha inteira.
@@ -205,7 +249,14 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         // autorizada (nunca restaurar pelo ACK antigo)
         revogadoRef.current = true;
         setEntradaFalhou(true);
+        setVisaoBloqueada(true);
         setPapel("espectador");
+        papelRef.current = "espectador";
+        // revogação invalida TODO o histórico carregado — inclusive o
+        // que foi recebido enquanto o usuário tinha privilégios maiores
+        setMensagens([]);
+        setTestes([]);
+        setRolagens([]);
         setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
         return;
       }
@@ -215,7 +266,25 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         setEntradaFalhou(false);
         entrar();
       }
-      if (d.papel) setPapel(d.papel);
+      if (d.papel) {
+        // compara o privilégio ANTES de aplicar: queda exige proteção
+        // visual imediata (mesmo render) + invalidação do histórico
+        // que pode conter dados do papel anterior (mensagens privadas/
+        // secretas, testes e rolagens já carregados em memória)
+        const nivelAntes = nivelPapelFn(papelRef.current);
+        const nivelDepois = nivelPapelFn(d.papel);
+        if (nivelDepois < nivelAntes) {
+          setVisaoBloqueada(true);
+          setMensagens([]);
+          setTestes([]);
+          setRolagens([]);
+          recarregarFiltrado();
+        } else {
+          setVisaoBloqueada(false);
+        }
+        papelRef.current = d.papel;
+        setPapel(d.papel);
+      }
       // mesma regra do servidor (mesa:mensagem): espectador só envia se
       // tiver enviarMensagens explícito
       setPodeEnviar((d.papel ?? "jogador") !== "espectador" || d.permissoes?.enviarMensagens === true);
@@ -255,7 +324,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         entradaPendente = false;
         if (r?.ok) {
           setEntradaFalhou(false);
-          if (r.papel) setPapel(r.papel);
+          if (r.papel) { papelRef.current = r.papel; setPapel(r.papel); }
           if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
           if (r.turnos) setTurnos(r.turnos);
           if (r.presenca) setOnline(r.presenca);
@@ -294,7 +363,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, sessao.id]);
+  }, [campaignId, sessao.id, recarregarFiltrado]);
 
   // auto-scroll chat
   useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [mensagens.length]);
@@ -602,6 +671,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
         atualizacaoPapel={permSeq}
+        geracaoRef={permSeqRef}
+        visaoBloqueada={visaoBloqueada}
         aoPapelServidor={aoPapelServidorEstavel}
       />
 
@@ -902,10 +973,18 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial, atualizacaoPapel, aoPapelServidor }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
   membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
-  atualizacaoPapel: number; aoPapelServidor: (p: string | undefined, seq: number) => void;
+  atualizacaoPapel: number;
+  // geração autoritativa de permissões: referência do PAI, incrementada
+  // sincronicamente no handler de mesa:permissao:atualizada — o filho
+  // consulta .current no instante da resposta, sem depender de efeito
+  geracaoRef: { current: number };
+  // queda de privilégio sinalizada pelo pai já no processamento do
+  // evento — participa do render, não espera useEffect
+  visaoBloqueada: boolean;
+  aoPapelServidor: (p: string | undefined, seq: number) => void;
 }) {
   const [vtt, setVtt] = useState<VttState>(() => vttInicialParse(inicial));
   const [erroVtt, setErroVtt] = useState<string | null>(null);
@@ -974,11 +1053,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // estado autoritativo do servidor reconciliar a visão local.
   const [nevoaIncerta, setNevoaIncerta] = useState(false);
   const nevoaIncertaRef = useRef(false);
-  // geração de permissões recebida do pai: cada mudança de papel/
-  // status/permissão dispara uma sincronização ordenada que devolve a
-  // visão filtrada AUTORIZADA para o papel novo (nunca snapshot antigo)
-  const permSeqRef = useRef(atualizacaoPapel);
-  useEffect(() => { permSeqRef.current = atualizacaoPapel; }, [atualizacaoPapel]);
+  // geração de permissões: vem do PAI via geracaoRef (atualizada
+  // sincronicamente no handler do evento privado). O prop
+  // atualizacaoPapel apenas dispara o efeito de ressincronização.
   // nível de privilégio da visão ATUALMENTE exibida (2=mestre, 1=jogador,
   // 0=espectador): atualizado somente quando um estado autorizado é
   // aplicado (snapshot de entrada ou ACK válido da sincronização)
@@ -989,6 +1066,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [visaoPapelPendente, setVisaoPapelPendente] = useState(false);
   const visaoPapelPendenteRef = useRef(false);
   const marcarVisaoPapel = (v: boolean) => { visaoPapelPendenteRef.current = v; setVisaoPapelPendente(v); };
+  // espelho da proteção vinda do pai (queda de privilégio) para os
+  // callbacks de reconexão consultarem sem depender de efeito
+  const visaoBloqueadaRef = useRef(visaoBloqueada);
+  visaoBloqueadaRef.current = visaoBloqueada;
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
   const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
@@ -1086,6 +1167,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // nevoaIncerta; broadcasts genéricos e snapshots de entrada não.
   const [syncPendente, setSyncPendente] = useState(false);
   const syncPendenteRef = useRef(false);
+  // identificador sequencial por requisição: timeout/ACK de uma sync
+  // antiga NUNCA controlam trava, erro ou pendência de uma sync mais
+  // recente — cada requisição só pode ser encerrada por ela mesma
+  const syncReqRef = useRef(0);
   const sincronizarNevoa = () => {
     const sock = getSocket();
     if (!sock.connected) {
@@ -1098,9 +1183,12 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     setSyncPendente(true);
     setErroVtt("Sincronização da névoa em andamento — aguardando estado autoritativo…");
     let respondido = false;
-    const seqPerm = permSeqRef.current; // geração de permissões no envio
+    const reqId = ++syncReqRef.current;
+    const seqPerm = geracaoRef.current; // geração de permissões no envio
     const timeout = window.setTimeout(() => {
-      if (respondido) return;
+      // timeout de requisição antiga não controla trava/erro de uma
+      // sincronização mais recente
+      if (respondido || reqId !== syncReqRef.current) return;
       respondido = true;
       syncPendenteRef.current = false;
       setSyncPendente(false);
@@ -1109,10 +1197,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       // pendente, a resposta futura (se chegar) será obsoleta — dispara
       // já a sincronização da geração vigente.
       setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
-      if (seqPerm !== permSeqRef.current) sincronizarNevoa();
+      if (seqPerm !== geracaoRef.current) sincronizarNevoa();
     }, 8000);
     sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
-      if (respondido) return; // resposta tardia: estado incerto já tratado
+      if (respondido || reqId !== syncReqRef.current) return; // tardia ou de requisição superada
       respondido = true;
       window.clearTimeout(timeout);
       syncPendenteRef.current = false;
@@ -1122,7 +1210,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       // não aplica VTT, não sincroniza referência, não muda papel,
       // não libera nevoaIncerta, não limpa erro. O estado pendente já
       // foi liberado acima para a geração vigente poder sincronizar.
-      if (seqPerm !== permSeqRef.current) {
+      if (seqPerm !== geracaoRef.current) {
         sincronizarNevoa(); // dispara sync da geração atual
         return;
       }
@@ -1148,7 +1236,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     const aoConnectSync = () => {
       // reconexão: retoma sincronização pendente — seja por estado
       // incerto de névoa ou por visão aguardando papel autorizado
-      if ((nevoaIncertaRef.current || visaoPapelPendenteRef.current) && !syncPendenteRef.current) sincronizarNevoa();
+      if ((nevoaIncertaRef.current || visaoPapelPendenteRef.current || visaoBloqueadaRef.current) && !syncPendenteRef.current) sincronizarNevoa();
     };
     socket.on("connect", aoConnectSync);
     return () => { socket.off("connect", aoConnectSync); };
@@ -1409,7 +1497,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
         )}
       </div>
       {erroVtt && <p className="erro">{erroVtt}</p>}
-      {visaoPapelPendente ? (
+      {visaoBloqueada || visaoPapelPendente ? (
         <p className="dica">Permissões atualizadas — aguardando a visão autorizada do servidor…</p>
       ) : !vtt.mapa ? (
         <p className="dica">{souMestre ? "Nenhum mapa definido. Envie uma imagem para montar o tabuleiro." : "O mestre ainda não definiu um mapa para esta sessão."}</p>
