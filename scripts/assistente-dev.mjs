@@ -70,8 +70,11 @@ async function inspectPullRequests() {
   }));
 }
 
-function priorityList(prs, markers, readme) {
+function priorityList(prs, branches, markers, readme) {
   const tasks = [];
+  for (const name of branches.unreferenced) {
+    tasks.push({ priority: "P3", title: `Avaliar branch sem PR aberta: ${name}`, detail: "Branch não aparece como origem nem destino de uma PR aberta; confirmar se ainda é necessária.", url: null });
+  }
   for (const pr of prs) {
     if (pr.checks.failed) tasks.push({ priority: "P0", title: `Corrigir CI da PR #${pr.number}`, detail: pr.checks.failedNames.join(", "), url: pr.url });
     if (pr.mergeable === false) tasks.push({ priority: "P1", title: `Resolver conflitos da PR #${pr.number}`, detail: `${pr.head} → ${pr.base}`, url: pr.url });
@@ -85,24 +88,32 @@ function priorityList(prs, markers, readme) {
   return tasks.sort((a, b) => rank[a.priority] - rank[b.priority]).slice(0, 50);
 }
 
-const [prs, markers, readme] = await Promise.all([
+const [prs, markers, readme, remoteBranches] = await Promise.all([
   token ? inspectPullRequests() : Promise.resolve([]),
   scanMarkers(),
   readFile(path.join(root, "README.md"), "utf8").catch(() => ""),
+  token ? github("/branches?per_page=100") : Promise.resolve([]),
 ]);
+const activeRefs = new Set(prs.flatMap((pr) => [pr.head, pr.base]));
+const branches = {
+  total: remoteBranches.length,
+  names: remoteBranches.map((item) => item.name),
+  unreferenced: remoteBranches.map((item) => item.name).filter((name) => name !== "main" && !activeRefs.has(name)),
+};
 const devin = prs.flatMap((pr) => pr.devinCommits.map((commit) => ({ ...commit, pr: pr.number, prUrl: pr.url })));
-const tasks = priorityList(prs, markers, readme);
+const tasks = priorityList(prs, branches, markers, readme);
 const now = new Date().toISOString();
 const report = {
   generatedAt: now, repository: repo, ref: process.env.GITHUB_REF ?? "local",
   sha: process.env.GITHUB_SHA ?? "local", event: process.env.GITHUB_EVENT_NAME ?? "local",
-  pullRequests: prs, devinActivity: devin, sourceScan: markers, priorities: tasks,
+  pullRequests: prs, branches, devinActivity: devin, sourceScan: markers, priorities: tasks,
   note: "Análise automatizada por heurísticas. Não substitui revisão funcional, homologação no navegador nem decisão do mestre.",
 };
 const lines = [
   "# Mestre RPG — relatório do Assistente de Desenvolvimento", "",
   `- Gerado: ${now}`, `- Repositório: ${repo}`, `- Ref: ${report.ref}`, `- Commit: ${report.sha}`, `- Evento: ${report.event}`, "",
   "## Resumo", "", `- PRs abertas: **${prs.length}**`,
+  `- Branches remotas: **${branches.total}** (${branches.unreferenced.length} sem PR aberta associada)`,
   `- Commits atribuídos ao Devin nas PRs abertas: **${devin.length}**`,
   `- Arquivos de código inspecionados: **${markers.filesScanned}**`,
   `- Marcadores TODO/FIXME/XXX: **${markers.total}**`, "",
@@ -110,6 +121,8 @@ const lines = [
   ...(tasks.length ? tasks.map((t) => `- **${t.priority} — ${t.title}**${t.url ? ` ([abrir](${t.url}))` : ""}\n  ${t.detail}`) : ["Nenhuma pendência automática identificada."]),
   "", "## PRs abertas", "",
   ...(prs.length ? prs.map((pr) => `- [#${pr.number} — ${pr.title}](${pr.url})\n  - ${pr.head} → ${pr.base}; atualizada há ${pr.ageDays} dia(s); mergeable: ${pr.mergeable ?? "não informado"}; checks: ${pr.checks.failed} falha(s), ${pr.checks.pending} pendente(s).`) : ["Nenhuma PR aberta encontrada ou consulta indisponível."]),
+  "", "## Branches sem PR aberta associada", "",
+  ...(branches.unreferenced.length ? branches.unreferenced.map((name) => `- ${name}`) : ["Nenhuma."]),
   "", "## Atividade do Devin", "",
   ...(devin.length ? devin.map((c) => `- PR #${c.pr}: ${c.message} (${c.author}, ${c.date ?? "data desconhecida"}) — [commit](${c.url})`) : ["Nenhum commit identificável como Devin nas PRs abertas consultadas."]),
   "", "## Marcadores no código", "",

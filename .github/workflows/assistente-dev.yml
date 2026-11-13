@@ -1,0 +1,55 @@
+name: Assistente de Desenvolvimento
+# Executa builds e gera relatório somente de leitura.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+concurrency:
+  group: assistente-dev-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  auditoria:
+    name: Build e relatório
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+      - name: Preparar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Validar sintaxe do assistente
+        run: node --check scripts/assistente-dev.mjs
+      - name: Instalar dependências
+        run: npm ci
+      - name: Compilar servidor e site
+        run: npm run build
+      - name: Gerar relatório de desenvolvimento
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/assistente-dev.mjs
+      - name: Publicar relatório como artefato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mestre-rpg-assistente-dev-${{ github.run_number }}
+          path: |
+            assistente-dev-relatorio.md
+            assistente-dev-relatorio.json
+          if-no-files-found: warn
+          retention-days: 30
