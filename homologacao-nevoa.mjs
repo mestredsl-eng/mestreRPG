@@ -211,18 +211,22 @@ try {
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
 
-  // Interceptação de emits de névoa — precisa ser registrada ANTES do
-  // socket conectar, ou seja, antes do login. Cobre os dois transportes
-  // possíveis do Socket.IO:
-  //  · WebSocket (routeWebSocket): mensagens ficam retidas em filaNevoa.
-  //  · Polling (page.route em POST /socket.io): a request fica retida
-  //    em rotasNevoa até liberarNevoa() dar continue.
-  //  · pgJ: conta emits de mesa:entrar (listeners duplicados).
+  // Interceptação de emits — registrada ANTES do socket conectar.
+  // Cobre os dois transportes do Socket.IO:
+  //  · WebSocket (routeWebSocket): mensagens ficam retidas em filas.
+  //  · Polling (page.route em POST /socket.io): requests retidas.
+  // O match usa aspas ("mesa:vtt:nevoa") para NÃO casar o evento
+  // "mesa:vtt:nevoa:sincronizar".
   let segurarNevoa = false;
   const filaNevoa = [];
   const rotasNevoa = [];
   let wsSrvM = null;
   let nevoaInterceptados = 0;
+  let nevoaEmitidos = 0; // TODOS os emits de névoa (retidos ou não)
+  // perda controlada de ACKs servidor→cliente (pacotes socket.io tipo 3
+  // = frames "43…"): o servidor PROCESSA a operação, mas o cliente
+  // nunca recebe a confirmação — timeout → estado incerto real
+  let derrubarAckM = 0;
   const liberarNevoa = () => {
     segurarNevoa = false;
     const q = filaNevoa.splice(0);
@@ -236,49 +240,34 @@ try {
     const rs = rotasNevoa.splice(0);
     for (const r of rs) void r.abort().catch(() => {});
   };
+  const ehMsgNevoa = (msg) => typeof msg === "string" && msg.includes('"mesa:vtt:nevoa"');
   await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
     const srv = ws.connectToServer();
     wsSrvM = srv;
     ws.onMessage((msg) => {
-      if (segurarNevoa && typeof msg === "string" && msg.includes("mesa:vtt:nevoa")) {
-        nevoaInterceptados++;
-        filaNevoa.push(msg);
-        return;
-      }
+      if (ehMsgNevoa(msg)) nevoaEmitidos++;
+      if (segurarNevoa && ehMsgNevoa(msg)) { nevoaInterceptados++; filaNevoa.push(msg); return; }
       srv.send(msg);
     });
-    srv.onMessage((m) => ws.send(m));
+    srv.onMessage((m) => {
+      if (derrubarAckM > 0 && typeof m === "string" && m.startsWith("43")) { derrubarAckM--; return; }
+      ws.send(m);
+    });
   });
   await pgM.route("**/socket.io/**", async (route) => {
     const req = route.request();
     const corpo = req.postData() ?? "";
-    if (segurarNevoa && req.method() === "POST" && corpo.includes("mesa:vtt:nevoa")) {
+    if (segurarNevoa && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa"')) {
       nevoaInterceptados++;
       rotasNevoa.push(route);
       return; // segura a request — o emit não chega ao servidor
     }
     await route.continue();
   });
-  // reconciliação HTTP (/estado) também pode ser retida: sem isso a
-  // janela de "estado incerto" dura ~100ms e é impossível observá-la
-  let segurarEstado = false;
-  const rotasEstado = [];
-  const liberarEstado = () => {
-    segurarEstado = false;
-    const rs = rotasEstado.splice(0);
-    for (const r of rs) void r.continue().catch(() => {});
-  };
-  await pgM.route("**/sessoes/*/estado", async (route) => {
-    if (segurarEstado && route.request().method() === "GET") {
-      rotasEstado.push(route);
-      return;
-    }
-    await route.continue();
-  });
   // estado incerto está ativo enquanto o botão "Sincronizar névoa"
-  // existir; ele só some quando um estado autoritativo chega
+  // existir; ele só some quando a sincronização ordenada responde
   const esperarSemIncerto = (page, timeout = 30000) => page.waitForFunction(() => {
-    return ![...document.querySelectorAll("button")].some((b) => /sincronizar névoa/i.test(b.textContent ?? ""));
+    return ![...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? ""));
   }, null, { timeout });
   let entrarCountJ = 0;
   await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
@@ -587,45 +576,86 @@ try {
     nAposRec === nHttpApos && nHttpApos === nHttpAntesOff,
     `ui=${nAposRec} http=${nHttpApos} antes=${nHttpAntesOff} interceptados=${nevoaInterceptados}`);
 
-  sec("ACK perdido com socket CONECTADO — operação não persistida");
-  // segura o emit de névoa no transporte E a reconciliação HTTP (/estado):
-  // o socket segue conectado, mas o ACK nunca chega e a consulta de
-  // estado fica retida — a janela de "resultado desconhecido" fica
-  // aberta tempo suficiente para verificar os bloqueios de forma
-  // determinística. O servidor NUNCA recebe a operação.
+  sec("ACK perdido com socket CONECTADO — op recebida, sync ordenada libera");
+  // G1: o servidor RECEBE e processa a operação, mas os ACKs se perdem
+  // (derrubarAckM=2: o da operação E o da 1ª sincronização automática).
+  // O estado incerto permanece até a sincronização EXPIRAR — janela
+  // determinística de ~3s para verificar bloqueios antes do retry.
   const nAntesHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   await esperarSemIncerto(pgM, 10000); // garante que a seção anterior reconciliou
-  segurarNevoa = true;
-  segurarEstado = true;
+  derrubarAckM = 2;
   await garantirPincel(pgM);
-  const nIntAntesHold = nevoaInterceptados;
+  const nEmAntes = nevoaEmitidos;
   await desenhar(pgM, [[0.15, 0.75], [0.22, 0.75], [0.22, 0.82]]);
-  // timeout (~5s) → estado incerto → reconciliarNevoa retido no /estado:
-  // controles bloqueados e novo desenho não emite nada
-  await pgM.getByRole("button", { name: /sincronizar névoa/i }).waitFor({ timeout: 20000 });
-  const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
-  const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
-  await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
-  await pgM.waitForTimeout(500);
-  t("incerto c/ socket vivo: mutações bloqueadas e 2º desenho não emitido",
-    desfezBloq === false && ocultarBloq === false && nevoaInterceptados === nIntAntesHold + 1,
-    `desfazer=${desfezBloq} ocultar=${ocultarBloq} interceptados=${nevoaInterceptados - nIntAntesHold}`);
-  // libera a reconciliação: HTTP confirma que a operação NÃO foi
-  // persistida → a UI volta ao estado do servidor e libera as ações
-  liberarEstado();
-  await esperarSemIncerto(pgM, 15000);
-  const nAposHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
-  t("conectado sem persistência: HTTP confirma ausência e UI libera",
-    nAposHold === nAntesHold && (await nTracos(pgM)) === nAntesHold,
-    `antes=${nAntesHold} depois=${nAposHold} ui=${await nTracos(pgM)}`);
-  // libera o emit retido: o servidor aplica UMA vez e o broadcast converge
-  liberarNevoa();
+  // o broadcast mesa:vtt prova que o servidor aplicou a operação
   await pgM.waitForFunction((n) => {
     const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
     return txt.includes("desativada") ? n === 0 : Number(txt.match(/ativa \((\d+)/)?.[1]) === n;
-  }, nAntesHold + 1, { timeout: 15000 });
-  t("emit retido aplicado no máximo uma vez após liberação", (await nTracos(pgM)) === nAntesHold + 1);
-  t("interceptação de transporte comprovada (emit realmente retido)", nevoaInterceptados >= 2, `n=${nevoaInterceptados}`);
+  }, nAntesHold + 1, { timeout: 10000 });
+  const nHttpOp = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("op c/ ACK perdido: servidor aplicou exatamente uma vez",
+    nHttpOp === nAntesHold + 1, `antes=${nAntesHold} depois=${nHttpOp}`);
+  // timeout (~5s) → estado incerto → sync automática tem o ACK dropado:
+  // a janela de bloqueio fica aberta até o timeout da sync (8s)
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
+  const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
+  await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
+  await pgM.waitForTimeout(400);
+  t("incerto: mutações bloqueadas e 2º desenho não emitido",
+    desfezBloq === false && ocultarBloq === false && nevoaEmitidos === nEmAntes + 1,
+    `desfazer=${desfezBloq} ocultar=${ocultarBloq} emitidos=${nevoaEmitidos - nEmAntes}`);
+  // G4: broadcast de OUTRA mutação (mestre mobile oculta tudo) atualiza
+  // a visão mas NÃO libera o estado incerto — só a sync ordenada libera
+  await pgM2.getByRole("button", { name: "Ocultar tudo" }).click();
+  await pgM.waitForFunction(
+    () => /ativa \(0 traços\)/.test(document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""),
+    null, { timeout: 10000 });
+  const aindaIncerto = await pgM.getByRole("button", { name: /sincronizar n/i }).count();
+  const desfezAposBroadcast = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
+  t("broadcast alheio atualiza visão mas não libera estado incerto",
+    aindaIncerto > 0 && desfezAposBroadcast === false, `syncBtn=${aindaIncerto} desfazer=${desfezAposBroadcast}`);
+  // retry explícito: novo pedido de sincronização ordenada — o ACK
+  // passa agora e devolve o estado autoritativo pós-todas-as-operações
+  // (0 traços, pois o ocultarTudo do pgM2 já foi aplicado antes)
+  await pgM.getByRole("button", { name: /sincronizar n/i }).click();
+  await esperarSemIncerto(pgM, 20000);
+  const nAposSync = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("sync ordenada liberou com estado autoritativo (pós-operações)",
+    nAposSync === 0 && (await nTracos(pgM)) === 0,
+    `http=${nAposSync} ui=${await nTracos(pgM)}`);
+
+  sec("Operação NÃO recebida — emit retido nunca é entregue; sync retorna estado atual");
+  // G2: o emit é retido no transporte e NUNCA entregue (equivalente ao
+  // volatile.emit descartado numa desconexão). A sync ordenada devolve
+  // o estado atual do servidor — sem a operação — e libera as ações.
+  const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  segurarNevoa = true;
+  derrubarAckM = 1; // perde o ACK da sync automática (a op retida nunca é respondida)
+  await garantirPincel(pgM);
+  await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  const desfezOff2 = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
+  const nEm2 = nevoaEmitidos;
+  await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
+  await pgM.waitForTimeout(400);
+  t("não recebida: incerto bloqueia e nada mais é emitido",
+    desfezOff2 === false && nevoaEmitidos === nEm2,
+    `desfazer=${desfezOff2} emitidos=${nevoaEmitidos - nEm2}`);
+  // retry explícito: a sync ordenada devolve o estado atual — sem a
+  // operação retida — e libera as ações
+  await pgM.getByRole("button", { name: /sincronizar n/i }).click();
+  await esperarSemIncerto(pgM, 20000);
+  const nAposOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("não recebida: sync devolveu estado sem a operação e liberou",
+    nAposOff2 === nAntesOff2 && (await nTracos(pgM)) === nAntesOff2,
+    `antes=${nAntesOff2} depois=${nAposOff2} ui=${await nTracos(pgM)}`);
+  // a operação retida é descartada — NUNCA é entregue depois da sync
+  descartarNevoa();
+  await pgM.waitForTimeout(800);
+  const nFinalOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("operação retida descartada: nenhuma mutação tardia após a sync",
+    nFinalOff2 === nAntesOff2, `depois=${nFinalOff2}`);
 
   sec("Toque real mobile (CDP) — mestre 390×844");
   await garantirPincel(pgM2);
@@ -774,6 +804,27 @@ try {
   const ctxX = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
   const pgX = await ctxX.newPage();
   vigiar(pgX, "j2-offline");
+  // ACK drop controlado + contagem de mesa:entrar (prova de reentrada
+  // mesmo quando o ACK da tentativa anterior nunca chegou)
+  let derrubarAckX = 0, entrarCountX = 0;
+  await pgX.routeWebSocket(/\/socket\.io/, (ws) => {
+    const srv = ws.connectToServer();
+    ws.onMessage((msg) => {
+      if (typeof msg === "string" && msg.includes('"mesa:entrar"')) entrarCountX++;
+      srv.send(msg);
+    });
+    srv.onMessage((m) => {
+      if (derrubarAckX > 0 && typeof m === "string" && m.startsWith("43")) { derrubarAckX--; return; }
+      ws.send(m);
+    });
+  });
+  // a primeira entrada pode ir por polling (antes do upgrade p/ WS):
+  // conta os POSTs de socket.io também
+  await pgX.route("**/socket.io/**", async (route) => {
+    const corpo = route.request().postData() ?? "";
+    if (route.request().method() === "POST" && corpo.includes('"mesa:entrar"')) entrarCountX++;
+    await route.continue();
+  });
   await login(pgX, "nv_j2", "senha-jogador-123");
   await irMesa(pgX);
   // a lista precisa estar carregada ANTES da queda — senão o fetch de
@@ -789,6 +840,24 @@ try {
   await pgX.locator(".vtt-tabuleiro").waitFor({ timeout: 30000 });
   await pgX.locator(".vtt-token").first().waitFor({ timeout: 15000 });
   t("socket desconectado ao abrir: entrada acontece no connect", true);
+  // G5: o servidor PROCESSA mesa:entrar e junta o socket à sala, mas o
+  // ACK se perde. A trava de entrada não pode ficar presa: nas
+  // reconexões seguintes novas entradas precisam ocorrer — provado
+  // FUNCIONALMENTE: pgX só recebe a mensagem se estiver de volta à sala.
+  derrubarAckX = 1;
+  await reiniciarServidor();
+  await reiniciarServidor();
+  // mestre re-entra e manda mensagem; jogador removido? ainda ativo
+  await pgM.waitForTimeout(3000);
+  for (let i = 0; i < 4; i++) {
+    await pgM.locator(".chat-form").getByRole("textbox").fill("ping-ack-perdido");
+    await pgM.locator(".chat-form button").click();
+    const ok = await pgX.getByText("ping-ack-perdido").waitFor({ timeout: 20000 }).then(() => true).catch(() => false);
+    if (ok) break;
+  }
+  const recebeuAck = await pgX.getByText("ping-ack-perdido").count();
+  t("ACK de entrada perdido: reconexão re-entra e sala funciona sem reload",
+    recebeuAck > 0, `mensagens=${recebeuAck} entrarCount=${entrarCountX}`);
   // remove o vínculo de nv_j2 e derruba de novo: na reconexão o
   // mesa:entrar é rejeitado — sem reutilizar estado antigo
   const dbRem = abrirDb(BANCO);
@@ -843,6 +912,48 @@ try {
   // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado
   t("sem listeners duplicados: 1 mesa:entrar por connect",
     entrarCountJ - entrarAntesRole === 2, `delta=${entrarCountJ - entrarAntesRole}`);
+
+  sec("Interface acompanha o papel atual — controles admin por papel");
+  // troca SIMULTÂNEA: mestre→jogador e jogador→mestre numa única
+  // reconexão — a UI deve refletir o papel retornado pelo servidor,
+  // não a prop inicial
+  const dbPapel = abrirDb(BANCO);
+  const idMestre = dbPapel.prepare("select id from users where username='mestre_teste'").get()?.id;
+  dbPapel.prepare("update memberships set role='jogador', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, idMestre);
+  dbPapel.prepare("update memberships set role='mestre', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador1.id);
+  dbPapel.close();
+  await reiniciarServidor();
+  // rebaixado perde TODOS os controles administrativos
+  await pgM.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0
+    && ![...document.querySelectorAll("button")].some((b) => /encerrar/i.test(b.textContent ?? "")),
+    null, { timeout: 45000 }).catch(() => {});
+  const ctrlMestre = await pgM.locator(".vtt-nevoa-controles").count()
+    + await pgM.getByRole("button", { name: "Encerrar" }).count();
+  t("mestre→jogador na reconexão: controles administrativos somem",
+    ctrlMestre === 0, `controles=${ctrlMestre}`);
+  // promovido ganha os controles — inclusive o pincel de névoa
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
+    null, { timeout: 45000 }).catch(() => {});
+  const pincelJ = await pgJ.getByRole("button", { name: /pincel de névoa/i }).count();
+  const encerrarJ = await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("jogador→mestre na reconexão: controles administrativos aparecem",
+    pincelJ > 0 && encerrarJ > 0, `pincel=${pincelJ} encerrar=${encerrarJ}`);
+  // mutação que exigiria mestre continua rejeitada para o rebaixado:
+  // o backend é a autoridade — a UI só reflete
+  const dbPapel2 = abrirDb(BANCO);
+  dbPapel2.prepare("update memberships set role='mestre', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, idMestre);
+  dbPapel2.prepare("update memberships set role='jogador', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador1.id);
+  dbPapel2.close();
+  await reiniciarServidor();
+  await pgM.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
+    null, { timeout: 45000 }).catch(() => {});
+  const pincelM = await pgM.getByRole("button", { name: /pincel de névoa/i }).count();
+  t("papéis restaurados: mestre recupera controles após reconexão",
+    pincelM > 0, `pincel=${pincelM}`);
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });
