@@ -336,6 +336,58 @@ try {
   t("A/m2-rebaixado: secreta atrasada rejeitada", (await nChat(pgM2, "PF2-atraso-secreta-2")) === 0);
   t("A/m2-rebaixado: privada endereçada a ele rejeitada (autor é outro)", (await nChat(pgM2, "PF2-atraso-priv-2")) === 0);
 
+  // ---------- W. Classificação reservada + flag contraditório ----------
+  sec("W. mestre/secreta/desconhecida + privado:true NUNCA vira privada");
+  // para o dono A, TODO pacote reservado+contraditório deve ser rejeitado;
+  // para o mestre, os mesmos tipos seguem visíveis (controle)
+  const reservado = [
+    ["mestre", "PF3-vis-mestre"],
+    ["secreta", "PF3-vis-secreta"],
+    ["desconhecida", "PF3-vis-desconhecida"],
+    [null, "PF3-vis-nula"],
+  ];
+  for (const [vis, marker] of reservado) {
+    // mesa:teste — personagem do próprio A, mas visibilidade reservada
+    await injetar(pgA, "mesa:teste", { id: `forge-${marker}`, sessionId: sid, characterId: charA, characterName: "PersA", rotulo: marker, status: "pendente", alvo: 77, dados: { lados: 20, count: 1 }, visibility: vis, privado: true, createdAt: new Date().toISOString() });
+    // mesa:rolagem — sem testId (livre): antes do fix, privado:true+a
+    // classificar como privada deixava o dono passar como "rolador"
+    await injetar(pgA, "mesa:rolagem", { id: crypto.randomUUID(), sessionId: sid, characterId: charA, userId: ids.ja, rolador: "PF3", grupos: [{ lados: 20, resultados: [3] }], total: 3, motivo: marker, visibility: vis, privado: true, createdAt: new Date().toISOString() });
+    // mesa:decisao — com testId conhecido e sem testId
+    await injetar(pgA, "mesa:decisao", { testId: pubT, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+    await injetar(pgA, "mesa:decisao", { testId: undefined, characterId: charA, outcome: "falha", nota: `${marker}-dec-sem-id`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+  }
+  await dormir(500);
+  for (const [vis, marker] of reservado) {
+    t(`W/A: mesa:teste ${vis ?? "null"}+privado rejeitado`, (await nTeste(pgA, marker)) === 0);
+    t(`W/A: mesa:rolagem ${vis ?? "null"}+privado rejeitada`, (await page_count(pgA, marker)) === 0);
+    t(`W/A: mesa:decisao ${vis ?? "null"}+privado (com e sem testId) rejeitada`, (await page_count(pgA, `${marker}-dec`)) === 0 && (await page_count(pgA, `${marker}-dec-sem-id`)) === 0);
+    // controle: o MESMO pacote é visível para o mestre atual — cada
+    // decisão usa o testId do teste forjado DESTA visibilidade (ids
+    // únicos, senão a última decisão sobrescreveria a nota da anterior)
+    const idTesteM = `forge-m-${marker}`;
+    await injetar(pgM, "mesa:teste", { id: idTesteM, sessionId: sid, characterId: charB, characterName: "PersB", rotulo: `${marker}-m`, status: "pendente", alvo: 77, dados: { lados: 20, count: 1 }, visibility: vis, privado: true, createdAt: new Date().toISOString() });
+    await injetar(pgM, "mesa:rolagem", { id: crypto.randomUUID(), sessionId: sid, userId: ids.mestre, rolador: "PF3M", grupos: [{ lados: 20, resultados: [9] }], total: 9, motivo: `${marker}-m`, visibility: vis, privado: true, createdAt: new Date().toISOString() });
+    // a decisão marca o teste como "decidido" (some da lista de
+    // pendentes) — usa um SEGUNDO teste forjado para não esconder o
+    // card cujo rótulo está sendo verificado
+    await injetar(pgM, "mesa:teste", { id: `forge-d-${marker}`, sessionId: sid, characterId: charB, characterName: "PersB", rotulo: `${marker}-m-dec-t`, status: "pendente", visibility: vis, privado: true, createdAt: new Date().toISOString() });
+    await injetar(pgM, "mesa:decisao", { testId: `forge-d-${marker}`, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-m-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+  }
+  await dormir(500);
+  for (const [vis, marker] of reservado) {
+    t(`W/mestre: mesa:teste ${vis ?? "null"} visível (controle)`, (await nTeste(pgM, `${marker}-m`)) >= 1);
+    t(`W/mestre: mesa:rolagem ${vis ?? "null"} visível (controle)`, (await page_count(pgM, `${marker}-m`)) >= 1);
+    t(`W/mestre: mesa:decisao ${vis ?? "null"} visível (controle)`, (await page_count(pgM, `${marker}-m-dec`)) >= 1);
+  }
+  // controle preservado: publica + privado:true continua PRIVADA
+  // (restrita), não vira pública nem some para o mestre/dono
+  await injetar(pgA, "mesa:teste", { id: "forge-pub-priv-w", sessionId: sid, characterId: charA, characterName: "PersA", rotulo: "PF3-pub-priv", status: "pendente", visibility: "publica", privado: true, createdAt: new Date().toISOString() });
+  await injetar(pgB, "mesa:teste", { id: "forge-pub-priv-w2", sessionId: sid, characterId: charB, characterName: "PersB", rotulo: "PF3-pub-priv-b", status: "pendente", visibility: "publica", privado: true, createdAt: new Date().toISOString() });
+  await dormir(400);
+  t("W/A: publica+privado:true do PRÓPRIO personagem visível (privada)", (await nTeste(pgA, "PF3-pub-priv")) >= 1);
+  t("W/B: publica+privado:true de B visível para o próprio B", (await nTeste(pgB, "PF3-pub-priv-b")) >= 1);
+  t("W/A: publica+privado:true de B NÃO visível para A", (await nTeste(pgA, "PF3-pub-priv-b")) === 0);
+
   // ---------- erros de console ----------
   sec("Erros de console");
   t("nenhum erro de página/console inesperado", errosConsole.length === 0, errosConsole.slice(0, 5).join(" | "));

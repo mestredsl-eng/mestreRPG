@@ -1539,6 +1539,99 @@ try {
   t("AJ/donoB: rolagem secreta pós-import AUSENTE", rolagemPorTeste(sB, idAJ).length === 0);
   t("AJ/espectador: rolagem secreta pós-import AUSENTE", rolagemPorTeste(sEsp2, idAJ).length === 0);
 
+  // ---------- AK. ACK de rolagem: visibilidade reservada bloqueia até o callback ----------
+  sec("AK. mesa:teste:rolar — dono não rola nem recebe ACK de teste reservado");
+  const ordemAK = ["publica", "privada", "mestre", "secreta", "desconhecida", "vazia"];
+  const idsAK = {};
+  {
+    const dbAK = abrirDb(BANCO);
+    const agoraAK = Date.now();
+    const insAK = dbAK.prepare(`insert into tests (id,campaign_id,session_id,character_id,requested_by,skill_ref,modifiers,dice_count,dice_sides,target,status,visibility,request_id,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const mapaAK = { publica: 31, privada: 32, mestre: 33, secreta: 34, desconhecida: 35, vazia: 36 };
+    for (const vis of ordemAK) {
+      const id = crypto.randomUUID();
+      idsAK[vis] = id;
+      insAK.run(id, ids.camp, sid, charA, ids.admin, JSON.stringify({ rotulo: `AK-${vis}` }), "{}", 1, 20, mapaAK[vis], "pendente", vis, `ak-${vis}`, agoraAK, agoraAK);
+    }
+    dbAK.close();
+  }
+  const statusDe = (id) => { const d = abrirDb(BANCO); const r = d.prepare("select status from tests where id=?").get(id); d.close(); return r?.status; };
+  const rollsReq = (req) => { const d = abrirDb(BANCO); const r = d.prepare("select count(*) c from rolls where campaign_id=? and request_id=?").get(ids.camp, req); d.close(); return r.c; };
+  const chatRolCount = () => { const d = abrirDb(BANCO); const r = d.prepare("select count(*) c from chat_messages where session_id=? and kind='rolagem'").get(sid); d.close(); return r.c; };
+  for (const vis of ordemAK) {
+    const idT = idsAK[vis];
+    const reqId = `ak-roll-${vis}`;
+    const chatAntes = chatRolCount();
+    const r = await emitirCb(sA, "mesa:teste:rolar", { testId: idT, requestId: reqId });
+    const reservado = vis !== "publica" && vis !== "privada";
+    if (!reservado) {
+      t(`AK/donoA/${vis}: rolagem permitida`, r?.ok === true, JSON.stringify(r).slice(0, 100));
+      t(`AK/donoA/${vis}: ACK sem alvo/target`, r && !("alvo" in r) && !("target" in r));
+    } else {
+      t(`AK/donoA/${vis}: rolagem RECUSADA`, r?.ok === false, JSON.stringify(r).slice(0, 140));
+      t(`AK/donoA/${vis}: ACK sem resultado/estado/rollId`, r && !("dados" in r) && !("total" in r) && !("count" in r) && !("rollId" in r) && !("vitalidade" in r) && r.jaRolado !== true);
+      t(`AK/donoA/${vis}: teste segue pendente`, statusDe(idT) === "pendente");
+      t(`AK/donoA/${vis}: nenhum roll gravado`, rollsReq(reqId) === 0);
+      t(`AK/donoA/${vis}: nenhuma msg de rolagem gravada`, chatRolCount() === chatAntes);
+      await dormir(150);
+      t(`AK/donoA/${vis}: nenhum evento mesa:rolagem p/ A/B/esp`,
+        rolagemPorTeste(sA, idT).length === 0 && rolagemPorTeste(sB, idT).length === 0 && rolagemPorTeste(sEsp2, idT).length === 0);
+    }
+  }
+  // mestre rola TODAS as classificações (controle administrativo)
+  for (const vis of ordemAK) {
+    const r = await emitirCb(sM, "mesa:teste:rolar", { testId: idsAK[vis], requestId: `ak-m-${vis}` });
+    t(`AK/mestre/${vis}: rolagem permitida`, r?.ok === true, JSON.stringify(r).slice(0, 100));
+  }
+  await dormir(300);
+  // o mestre recebe o alvo pelo EVENTO mesa:rolagem (o ACK nunca o carrega)
+  for (const vis of ordemAK) {
+    t(`AK/mestre/${vis}: evento mesa:rolagem COM alvo`,
+      rolagemPorTeste(sM, idsAK[vis]).some((p) => p.alvo === { publica: 31, privada: 32, mestre: 33, secreta: 34, desconhecida: 35, vazia: 36 }[vis]),
+      JSON.stringify(rolagemPorTeste(sM, idsAK[vis])).slice(0, 120));
+  }
+  // teste reservado JÁ ROLADO: a recusa do dono antecede a idempotência
+  const rRetry = await emitirCb(sA, "mesa:teste:rolar", { testId: idsAK.mestre, requestId: "ak-retry-mestre" });
+  t("AK/donoA: teste reservado já rolado segue recusado (sem jaRolado)", rRetry?.ok === false && rRetry?.jaRolado !== true, JSON.stringify(rRetry).slice(0, 140));
+  // donoB e espectador tentam rolar testes de A (público, privado e reservado)
+  for (const [s, tag, pref] of [[sB, "donoB", "ak-b"], [sEsp2, "espectador", "ak-e"]]) {
+    for (const vis of ["publica", "privada", "mestre"]) {
+      const r = await emitirCb(s, "mesa:teste:rolar", { testId: idsAK[vis], requestId: `${pref}-${vis}` });
+      t(`AK/${tag}/${vis}: rolagem de teste alheio RECUSADA sem resultado`,
+        r?.ok === false && !("dados" in (r ?? {})) && !("total" in (r ?? {})) && r?.jaRolado !== true, JSON.stringify(r).slice(0, 120));
+    }
+  }
+
+  // ---------- AL. mesa:teste:pedir — null explícito rejeitado ----------
+  sec("AL. mesa:teste:pedir — só campo ausente assume pública; null/invalidos rejeitados");
+  const contaGeral = () => { const d = abrirDb(BANCO);
+    const a = d.prepare("select count(*) c from tests where session_id=?").get(sid).c;
+    const b = d.prepare("select count(*) c from chat_messages where session_id=?").get(sid).c;
+    d.close(); return { tests: a, chat: b }; };
+  const antesInv = contaGeral();
+  const evTesteAntes = capDe(sA).teste.length, evDetAntes = capDe(sM).detalhe.length;
+  const invalidosPedir = [null, "", "mestre", "secreta", "desconhecida", 123, { x: 1 }];
+  for (let i = 0; i < invalidosPedir.length; i++) {
+    const r = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: `AL-inv-${i}`, dadosCount: 1, visibilidade: invalidosPedir[i], requestId: `al-inv-${i}` });
+    t(`AL/pedir inválido #${i} (${JSON.stringify(invalidosPedir[i])}): rejeitado`, r?.ok === false, JSON.stringify(r).slice(0, 120));
+  }
+  const depoisInv = contaGeral();
+  t("AL: nenhum teste gravado pelos inválidos", depoisInv.tests === antesInv.tests, `${antesInv.tests}→${depoisInv.tests}`);
+  t("AL: nenhuma msg de chat gravada pelos inválidos", depoisInv.chat === antesInv.chat, `${antesInv.chat}→${depoisInv.chat}`);
+  t("AL: nenhum evento mesa:teste emitido pelos inválidos", capDe(sA).teste.length === evTesteAntes && capDe(sM).detalhe.length === evDetAntes);
+  // campo AUSENTE → aceita como pública (controle do contrato)
+  const rOmit = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, rotulo: "AL-publica-omitida", dadosCount: 1, requestId: "al-omit-1" });
+  t("AL/pedir sem visibilidade: aceito", rOmit?.ok === true && !!rOmit?.id, JSON.stringify(rOmit).slice(0, 120));
+  {
+    const d = abrirDb(BANCO);
+    const row = d.prepare("select visibility from tests where id=?").get(rOmit?.id);
+    d.close();
+    t("AL: teste criado com visibility='publica'", row?.visibility === "publica", `vis=${row?.visibility}`);
+  }
+  await dormir(250);
+  t("AL: evento mesa:teste emitido para o omitido", capDe(sA).teste.length > evTesteAntes);
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

@@ -725,9 +725,10 @@ function socket_handlers(
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre solicita testes" }); return; }
       // validação runtime: o tipo TypeScript não protege contra valores
-      // arbitrários — só ausente (→publica), "publica" e "privada" são
-      // aceitos; qualquer outro valor rejeita SEM gravar/emitir nada
-      const visReq = payload.visibilidade ?? "publica";
+      // arbitrários — somente campo AUSENTE (undefined) assume o padrão
+      // "publica"; null, "", "mestre", "secreta", desconhecidos, números
+      // e objetos são rejeitados SEM gravar/emitir nada
+      const visReq = payload.visibilidade === undefined ? "publica" : payload.visibilidade;
       if (visReq !== "publica" && visReq !== "privada") {
         cb?.({ ok: false, erro: "Visibilidade inválida" });
         return;
@@ -890,6 +891,14 @@ function socket_handlers(
       const [membroDono] = char ? await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1) : [null];
       const ehDono = membroDono?.userId === u.id;
       if (ctx.papel !== "mestre" && !ehDono) { cb?.({ ok: false, erro: "Só o dono do personagem ou o mestre rolam" }); return; }
+      // visibilidade ANTES da idempotência: teste reservado a mestres
+      // (mestre/secreta/desconhecida/vazia) não pode ser rolado pelo
+      // dono — e o ACK não pode devolver resultado, estado ou
+      // confirmação de rolagem a quem não tem autorização
+      if (ctx.papel !== "mestre" && classeVisibilidadeTeste(teste.visibility) === "mestre") {
+        cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" });
+        return;
+      }
       if (teste.status !== "pendente") { cb?.({ ok: true, id: teste.id, status: teste.status, jaRolado: true }); return; }
 
       // Vitalidade: penalidade de dados aplicada no servidor a partir do

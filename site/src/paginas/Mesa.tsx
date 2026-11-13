@@ -300,10 +300,13 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     // "sistema"/ausente/inválido são exclusivos de mestres atuais.
     // `privado` contraditório nunca promove nada a público.
     const classeEventoTeste = (vis: unknown, flagPriv: unknown): "publica" | "privada" | "mestre" => {
-      if (flagPrivado(flagPriv)) return "privada";
-      if (vis === "publica") return "publica";
+      // a classificação RESERVADA prevalece sobre qualquer flag
+      // contraditória: privado:true nunca rebaixa mestre/secreta/
+      // desconhecida para um conteúdo que o dono possa ver
+      if (vis === "mestre" || vis === "secreta") return "mestre";
+      if (vis !== "publica" && vis !== "privada") return "mestre"; // ausente/nula/vazia/inválida
       if (vis === "privada") return "privada";
-      return "mestre";
+      return flagPrivado(flagPriv) ? "privada" : "publica";
     };
     const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
       if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
