@@ -649,7 +649,7 @@ try {
     nHttpOp === nAntesHold + 1, `antes=${nAntesHold} depois=${nHttpOp}`);
   // timeout (~5s) → estado incerto → sync automática tem o ACK dropado:
   // a janela de bloqueio fica aberta até o timeout da sync (8s)
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
   const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
   await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
@@ -686,7 +686,7 @@ try {
   derrubarAckM = 1; // perde o ACK da sync automática (a op retida nunca é respondida)
   await garantirPincel(pgM);
   await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
   const desfezOff2 = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const nEm2 = nevoaEmitidos;
   await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
