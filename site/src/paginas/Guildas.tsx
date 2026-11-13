@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type Guilda, type GuildaCampanha, type GuildaMembro } from "../api";
+import { api, type CampanhaResumo, type Guilda, type GuildaCampanha, type GuildaMembro } from "../api";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
 
@@ -20,7 +20,9 @@ export default function Guildas() {
   const carregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const { guildas } = await api.listarGuildas();
+      // ADMIN lista todas as guildas (inclusive as que não gerencia);
+      // os demais veem as suas, já com status para permitir reativação
+      const { guildas } = await api.listarGuildas(!!usuario?.isAdmin);
       setGuildas(guildas);
       setErro(null);
     } catch (e) {
@@ -28,7 +30,7 @@ export default function Guildas() {
     } finally {
       setCarregando(false);
     }
-  }, []);
+  }, [usuario?.isAdmin]);
 
   useEffect(() => {
     void carregar();
@@ -110,9 +112,13 @@ export default function Guildas() {
 
 function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAdmin: boolean; aoVoltar: () => void }) {
   const { notificar } = useNotificar();
+  const { estado } = useAuth();
+  const meuId = estado.status === "autenticado" ? estado.usuario.id : null;
   const [guilda, setGuilda] = useState<Guilda | null>(null);
   const [membros, setMembros] = useState<GuildaMembro[]>([]);
   const [campanhas, setCampanhas] = useState<GuildaCampanha[]>([]);
+  const [minhas, setMinhas] = useState<CampanhaResumo[]>([]);
+  const [campanhaVincular, setCampanhaVincular] = useState("");
   const [novoMembro, setNovoMembro] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -120,21 +126,24 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   const carregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const [g, m, c] = await Promise.all([
+      const [g, m, c, mc] = await Promise.all([
         api.obterGuilda(guildId),
         api.listarMembrosGuilda(guildId),
         api.listarCampanhasGuilda(guildId),
+        api.listarCampanhas(),
       ]);
       setGuilda(g.guilda);
       setMembros(m.membros);
       setCampanhas(c.campanhas);
+      // candidatas a vínculo: campanhas em que sou mestre ativo (ou dono)
+      setMinhas(mc.campanhas.filter((x) => x.meuStatus === "ativo" && (x.meuPapel === "mestre" || x.ownerId === meuId)));
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar guilda");
     } finally {
       setCarregando(false);
     }
-  }, [guildId]);
+  }, [guildId, meuId]);
 
   useEffect(() => {
     void carregar();
@@ -175,6 +184,30 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
     }
   };
 
+  const vincular = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!campanhaVincular) return;
+    setErro(null);
+    try {
+      await api.vincularCampanhaGuilda(guildId, campanhaVincular, "vincular");
+      setCampanhaVincular("");
+      notificar("Campanha vinculada à guilda.", "sucesso");
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao vincular campanha");
+    }
+  };
+
+  const desvincular = async (c: GuildaCampanha) => {
+    try {
+      await api.vincularCampanhaGuilda(guildId, c.id, "desvincular");
+      notificar("Campanha desvinculada da guilda.", "info");
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao desvincular campanha");
+    }
+  };
+
   const alternarStatus = async () => {
     if (!guilda) return;
     try {
@@ -195,7 +228,7 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
         <div className="linha-entre">
           <h2>{guilda.name}</h2>
           <div>
-            {podeGerir && guilda.status !== "arquivada" && (
+            {podeGerir && (
               <button className="mini" onClick={() => void alternarStatus()}>{guilda.status === "arquivada" ? "Reativar" : "Arquivar"}</button>
             )}
             <button className="mini" onClick={aoVoltar}>Voltar</button>
@@ -255,14 +288,36 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
 
       <section className="cartao">
         <h2>Campanhas vinculadas ({campanhas.length})</h2>
+        {podeGerir && guilda.status === "ativa" && (() => {
+          const candidatas = minhas.filter((c) => !c.guildId || c.guildId === guildId);
+          return candidatas.length > 0 ? (
+            <form className="formulario" onSubmit={vincular}>
+              <div className="linha">
+                <select value={campanhaVincular} onChange={(e) => setCampanhaVincular(e.target.value)} required>
+                  <option value="">Escolha uma campanha que você mestra…</option>
+                  {candidatas.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <button type="submit" disabled={!campanhaVincular}>Vincular</button>
+              </div>
+            </form>
+          ) : null;
+        })()}
         {campanhas.length === 0 ? (
           <p className="dica">Nenhuma campanha vinculada. Campanhas sem guilda podem ser vinculadas por um mestre delas que seja GM (ou pelo ADMIN).</p>
         ) : (
           <table className="tabela tabela-responsiva">
-            <thead><tr><th>Nome</th><th>Status</th></tr></thead>
+            <thead><tr><th>Nome</th><th>Status</th>{souAdmin && <th>Ações</th>}</tr></thead>
             <tbody>
               {campanhas.map((c) => (
-                <tr key={c.id}><td>{c.name}</td><td>{c.status}</td></tr>
+                <tr key={c.id}>
+                  <td>{c.name}</td>
+                  <td>{c.status}</td>
+                  {souAdmin && (
+                    <td className="acoes">
+                      <button className="mini perigo" onClick={() => void desvincular(c)}>Desvincular</button>
+                    </td>
+                  )}
+                </tr>
               ))}
             </tbody>
           </table>

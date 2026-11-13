@@ -137,6 +137,13 @@ adminRouter.patch("/users/:id", async (req, res) => {
     res.status(403).json({ erro: "A conta administradora original não pode ser bloqueada" });
     return;
   }
+  // Trocar a senha do principal por aqui permitiria a um ADMIN
+  // secundário assumir a conta raiz — credencial do principal só muda
+  // pelo próprio fluxo de senha autenticado.
+  if (alvoProtegido && password !== undefined) {
+    res.status(403).json({ erro: "A senha da conta administradora original não pode ser alterada pelo painel" });
+    return;
+  }
   const dados: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
   if (username !== undefined) dados.username = username;
   if (email !== undefined) dados.email = email || null;

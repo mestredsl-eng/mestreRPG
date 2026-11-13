@@ -5,13 +5,18 @@ import { auditLogs } from "../db/schema.js";
 const db = getDb();
 
 /** Registra ação administrativa/importante (spec §24 — registros de alterações). */
-export async function audit(req: Request, action: string, detail?: unknown) {
+export async function audit(
+  req: Request,
+  action: string,
+  detail?: unknown,
+  escopo?: { campaignId?: string | null; guildId?: string | null }
+) {
   try {
     await db.insert(auditLogs).values({
       id: crypto.randomUUID(),
       actorId: req.usuario?.id ?? null,
-      campaignId: (req.params.campaignId as string) ?? null,
-      guildId: (req.params.guildId as string) ?? null,
+      campaignId: escopo?.campaignId !== undefined ? escopo.campaignId : ((req.params.campaignId as string) ?? null),
+      guildId: escopo?.guildId !== undefined ? escopo.guildId : ((req.params.guildId as string) ?? null),
       action,
       detail: detail ?? null,
       createdAt: new Date(),

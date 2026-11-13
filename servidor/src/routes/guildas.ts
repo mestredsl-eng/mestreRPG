@@ -62,9 +62,9 @@ guildasRouter.get("/", async (req, res) => {
       .innerJoin(guilds, eq(guildMembers.guildId, guilds.id))
       .where(and(eq(guildMembers.userId, req.usuario!.id), eq(guildMembers.status, "ativo")))
       .orderBy(guilds.name);
-    resultado = meus
-      .filter((r) => r.guild.status === "ativa")
-      .map((r) => ({ guild: r.guild, papel: r.membership.role }));
+    // inclui arquivadas: o membro precisa enxergá-las para reativar
+    // (o status vai no payload e a UI diferencia visualmente)
+    resultado = meus.map((r) => ({ guild: r.guild, papel: r.membership.role }));
   }
   res.json({
     guildas: resultado.map((r) => guildPublica(r.guild, r.papel, souAdmin)),
@@ -107,7 +107,9 @@ guildasRouter.post("/", async (req, res) => {
     createdAt: agora,
     updatedAt: agora,
   });
-  await audit(req, "guilda.criar", { guildId: id, nome: body.data.name });
+  // a guilda nasce aqui — req.params.guildId ainda não existe; passa o
+  // escopo explicitamente para a coluna guild_id ficar preenchida
+  await audit(req, "guilda.criar", { guildId: id, nome: body.data.name }, { guildId: id });
   const [criada] = await db.select().from(guilds).where(eq(guilds.id, id)).limit(1);
   res.status(201).json({ guilda: guildPublica(criada, "gm", ehAdmin(req)) });
 });
@@ -347,7 +349,9 @@ guildasRouter.put(
     }
     const souAdmin = ehAdmin(req);
     if (body.data.acao === "vincular") {
-      if (c.guildId && c.guildId !== guildId) {
+      // mover entre guildas é exclusivo do ADMIN — para GM/usuário comum,
+      // campanha de outra guilda retorna 409 já na entrada
+      if (c.guildId && c.guildId !== guildId && !souAdmin) {
         res.status(409).json({ erro: "Campanha já pertence a outra guilda — somente o ADMIN move entre guildas" });
         return;
       }

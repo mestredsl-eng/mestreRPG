@@ -149,11 +149,40 @@ try {
   const campCarol = await req(base, "POST", "/campaigns", { cookie: cookieCarol, body: { name: "Campanha Carol" } });
   const vincAdmin = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campCarol.json.campanha.id}`, { cookie: cookieRoot, body: { acao: "vincular" } });
   t("ADMIN vincula campanha alheia", vincAdmin.status === 200, JSON.stringify(vincAdmin.json));
+  // mover entre guildas: exclusivo do ADMIN (revisão Devin — antes o 409
+  // vinha antes da checagem de privilégio e o ADMIN nunca movia)
+  const moveCarol = await req(base, "PUT", `/guildas/${guildB}/campanhas/${campCarol.json.campanha.id}`, { cookie: cookieCarol, body: { acao: "vincular" } });
+  t("GM não move campanha entre guildas", moveCarol.status === 409, String(moveCarol.status));
+  const moveAdmin = await req(base, "PUT", `/guildas/${guildB}/campanhas/${campCarol.json.campanha.id}`, { cookie: cookieRoot, body: { acao: "vincular" } });
+  t("ADMIN move campanha entre guildas", moveAdmin.status === 200 && moveAdmin.json?.campanha?.guildId === guildB, JSON.stringify(moveAdmin.json));
   const desvGM = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieAlice, body: { acao: "desvincular" } });
   t("GM não desvincula (só ADMIN)", desvGM.status === 403);
   const desvAdmin = await req(base, "PUT", `/guildas/${guildA}/campanhas/${campId}`, { cookie: cookieRoot, body: { acao: "desvincular" } });
   t("ADMIN desvincula", desvAdmin.status === 200);
   t("campanha volta a guildId null", (await req(base, "GET", `/campaigns/${campId}`, { cookie: cookieAlice })).json?.campanha?.guildId === null);
+
+  sec("Importação — guildId do pacote exige GM/ADMIN da guilda");
+  // pacote mínimo válido: entidades vazias (ids do pacote colidiriam
+  // com a campanha original — importação entre instalações é o caso real)
+  const pacoteMin = (cid, guildId) => ({
+    versao: 1,
+    campanhaId: cid,
+    estado: {
+      campanha: { name: `Importada ${cid}`, description: null, system: null, coverImage: null, status: "ativa", guildId, settings: {}, summary: null },
+      memberships: [], characters: [],
+    },
+    arquivos: {},
+  });
+  // bob é GM da Guilda A mas NÃO da B: pacote apontando para B perde o vínculo
+  const impBob = await req(base, "POST", "/campaigns/importar", { cookie: cookieBob, body: { pacote: pacoteMin(`imp-${crypto.randomUUID().slice(0, 8)}`, guildB), modo: "nova" } });
+  const cidBob = impBob.json?.campaignId;
+  const campBob = cidBob ? await req(base, "GET", `/campaigns/${cidBob}`, { cookie: cookieBob }) : null;
+  t("import sem GM da guilda → guildId ignorado", (impBob.status === 200 || impBob.status === 201) && (campBob?.json?.campanha?.guildId ?? null) === null, JSON.stringify({ gid: campBob?.json?.campanha?.guildId, resp: campBob?.json }).slice(0, 300));
+  // carol É GM da Guilda B: o vínculo do pacote é honrado
+  const impCarol = await req(base, "POST", "/campaigns/importar", { cookie: cookieCarol, body: { pacote: pacoteMin(`imp-${crypto.randomUUID().slice(0, 8)}`, guildB), modo: "nova" } });
+  const cidCarol = impCarol.json?.campaignId;
+  const campImpCarol = cidCarol ? await req(base, "GET", `/campaigns/${cidCarol}`, { cookie: cookieCarol }) : null;
+  t("GM da guilda importa vínculo honrado", (impCarol.status === 200 || impCarol.status === 201) && campImpCarol?.json?.campanha?.guildId === guildB, JSON.stringify({ st: impCarol.status, erro: impCarol.json?.erro, gid: campImpCarol?.json?.campanha?.guildId }));
 
   sec("Multi-ADMIN — somente o principal concede/revoga");
   const concedeBob = await req(base, "PATCH", `/admin/users/${idDe("bob")}`, { cookie: cookieAlice, body: { isAdmin: true } });
@@ -167,6 +196,9 @@ try {
   t("ADMIN não-principal NÃO concede ADMIN", aliceConcede.status === 403, String(aliceConcede.status));
   const aliceAlteraProprio = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieAliceAdmin, body: { isAdmin: false } });
   t("ADMIN não-principal não rebaixa o principal", aliceAlteraProprio.status === 403);
+  // takeover do principal via troca de senha — bloqueado (revisão Devin)
+  const senhaPrincipal = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieAliceAdmin, body: { password: "senha-sequestrada-123" } });
+  t("ADMIN secundário NÃO troca senha do principal", senhaPrincipal.status === 403, String(senhaPrincipal.status));
   const rootSeAuto = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieRoot, body: { isAdmin: false } });
   t("principal não altera a própria conta", rootSeAuto.status === 400);
   const revogaAlice = await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { isAdmin: false } });
@@ -190,15 +222,28 @@ try {
   t("trigger impede INSERT direto de admin", insertOk);
   db.close();
 
+  sec("Último GM capaz — conta bloqueada não sustenta a guilda");
+  const gBloq = await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda Bloqueio" } });
+  const guildBloq = gBloq.json.guilda.id;
+  await req(base, "POST", `/guildas/${guildBloq}/membros`, { cookie: cookieBob, body: { username: "alice" } });
+  await req(base, "PATCH", `/guildas/${guildBloq}/membros/${idDe("alice")}`, { cookie: cookieBob, body: { role: "gm" } });
+  // bloqueia a conta da alice: ela não consegue mais autenticar
+  await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { status: "bloqueado" } });
+  const bobSome = await req(base, "DELETE", `/guildas/${guildBloq}/membros/${idDe("bob")}`, { cookie: cookieBob });
+  t("GM bloqueado não conta — remoção do último capaz recusada", bobSome.status === 409, JSON.stringify(bobSome.json));
+  await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { status: "ativo" } });
+  const bobSome2 = await req(base, "DELETE", `/guildas/${guildBloq}/membros/${idDe("bob")}`, { cookie: cookieBob });
+  t("com GM capaz, a remoção passa", bobSome2.status === 200, JSON.stringify(bobSome2.json));
+
   sec("Auditoria");
   const db2 = abrirDb(BANCO);
   const audits = db2.prepare("select action from audit_logs").all().map((r) => r.action);
   t("audit registra admin.conceder", audits.includes("admin.conceder"));
   t("audit registra admin.revogar", audits.includes("admin.revogar"));
   t("audit registra guilda.criar", audits.includes("guilda.criar"));
+  const auditGuild = db2.prepare("select guild_id from audit_logs where action='guilda.criar' limit 1").get();
+  t("audit de criação grava guild_id", !!auditGuild?.guild_id, JSON.stringify(auditGuild));
   t("audit registra guilda.campanha.vincular", audits.includes("guilda.campanha.vincular"));
-  const auditGuild = db2.prepare("select guild_id from audit_logs where guild_id is not null limit 1").get();
-  t("audit carrega guild_id", !!auditGuild?.guild_id);
   db2.close();
 } finally {
   proc.kill();

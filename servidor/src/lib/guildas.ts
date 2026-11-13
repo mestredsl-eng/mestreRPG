@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Request, Response, NextFunction } from "express";
 import { getDb } from "../db/index.js";
-import { guildMembers, guilds } from "../db/schema.js";
+import { guildMembers, guilds, users } from "../db/schema.js";
 import { ehAdminPrincipal, idAdminPrincipal } from "./adminPrincipal.js";
 
 const db = getDb();
@@ -71,16 +71,20 @@ export async function guildasDoUsuario(userId: string) {
     }));
 }
 
-/** Contagem de GMs ativos da guilda (proteção do último GM). */
+/** Contagem de GMs ativos da guilda (proteção do último GM).
+ *  Somente contam GMs cuja CONTA também está ativa — um GM bloqueado
+ *  pelo ADMIN não consegue autenticar e não pode sustentar a guilda. */
 export async function contarGMs(guildId: string): Promise<number> {
   const rows = await db
     .select({ id: guildMembers.id })
     .from(guildMembers)
+    .innerJoin(users, eq(guildMembers.userId, users.id))
     .where(
       and(
         eq(guildMembers.guildId, guildId),
         eq(guildMembers.role, "gm"),
-        eq(guildMembers.status, "ativo")
+        eq(guildMembers.status, "ativo"),
+        eq(users.status, "ativo")
       )
     );
   return rows.length;
