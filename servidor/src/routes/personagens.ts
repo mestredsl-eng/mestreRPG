@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel, getMembership } from "../lib/permissoes.js";
+import { requirePapel, requireLeasePersonagem, getMembership } from "../lib/permissoes.js";
 import {
   estruturaFichaSchema,
   validarFicha,
@@ -38,6 +38,10 @@ import { limiteUsuario } from "../lib/ratelimit.js";
 const db = getDb();
 export const personagensRouter = Router({ mergeParams: true });
 personagensRouter.use(requireAuth);
+// O lease de mutações por :characterId é aplicado POR ROTA (não em
+// router.use): o parâmetro da rota só existe depois do match — em
+// router.use req.params.characterId ainda não está ligado. Sob
+// /api/campaigns/:campaignId/characters o mount já traz campaignId.
 
 // ---------- helpers ----------
 
@@ -478,7 +482,7 @@ const previaPontosSchema = z.object({
  * reservas + validarRegras), respeitando a visibilidade do solicitante.
  * Não substitui a validação do PATCH.
  */
-personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
+personagensRouter.post("/:characterId/pontos-previa", requireLeasePersonagem(), limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -560,7 +564,7 @@ const atualizarSchema = z.object({
 });
 
 /** PATCH /api/characters/:characterId — dono edita campos permitidos; mestre tudo */
-personagensRouter.patch("/:characterId", async (req, res) => {
+personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -777,7 +781,7 @@ const hpSchema = z.object({
 
 /** POST /api/characters/:characterId/hp — dano/recuperação/ajuste de HP.
  *  O HP atual nunca fica negativo nem acima do máximo; histórico gravado. */
-personagensRouter.post("/:characterId/hp", async (req, res) => {
+personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -904,7 +908,7 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
 const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });
 
 /** POST /api/characters/:characterId/vitalidade — define o nível de ferimento. */
-personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
+personagensRouter.post("/:characterId/vitalidade", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -983,7 +987,7 @@ const pontosSchema = z.object({
  * mestre: o bônus soma no pool principal do personagem e pode ser
  * distribuído por ele mesmo quando a ficha está selada.
  */
-personagensRouter.post("/:characterId/pontos", async (req, res) => {
+personagensRouter.post("/:characterId/pontos", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -1096,7 +1100,7 @@ function membroAutorizadoTx(tx: Tx, membershipId: string, usuarioId: string, cam
  *   mesma transação (a movimentação do outro personagem é preservada);
  * - contas financeiras referenciadas por transações de terceiros → 409.
  */
-personagensRouter.delete("/:characterId", async (req, res) => {
+personagensRouter.delete("/:characterId", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -1172,7 +1176,7 @@ personagensRouter.delete("/:characterId", async (req, res) => {
  * Reversível: guarda o status anterior em data.__arquivamento (metadado
  * interno — o cliente nunca escreve essa chave; validarFicha a descarta).
  */
-personagensRouter.post("/:characterId/arquivar", async (req, res) => {
+personagensRouter.post("/:characterId/arquivar", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
@@ -1216,7 +1220,7 @@ personagensRouter.post("/:characterId/arquivar", async (req, res) => {
  * Restaura exatamente o status anterior gravado no arquivamento e remove
  * o metadado. Personagem não arquivado → 409 (sem restauração duplicada).
  */
-personagensRouter.post("/:characterId/desarquivar", async (req, res) => {
+personagensRouter.post("/:characterId/desarquivar", requireLeasePersonagem(), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });

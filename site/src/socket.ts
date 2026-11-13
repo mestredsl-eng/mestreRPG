@@ -10,6 +10,13 @@ export function getSocket(): Socket {
       withCredentials: true,
       transports: ["websocket", "polling"],
     });
+    // alça de diagnóstico SOMENTE em localhost (homologações Playwright):
+    // permite injetar pacotes forjados pelo MESMO transporte do app.
+    // A autorização real é sempre do servidor — o cliente não tem
+    // privilégio extra por alcançar esta referência.
+    if (typeof window !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname)) {
+      (window as unknown as { __mesaSocket?: Socket }).__mesaSocket = socket;
+    }
   }
   return socket;
 }

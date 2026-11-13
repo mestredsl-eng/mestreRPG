@@ -1,11 +1,11 @@
 import express, { Router } from "express";
 import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve, extname, sep } from "node:path";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import { config } from "../config.js";
-import { files, folders, memberships, users, notes, noteAttachments } from "../db/schema.js";
+import { files, folders, memberships, users, notes, noteAttachments, sessions } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -39,6 +39,21 @@ const MIMES_PERIGOSOS = /javascript|ecmascript|x-msdownload|x-sh/i;
 function extensaoSegura(nome: string): string {
   const ext = extname(nome).slice(1).toLowerCase().replace(/[^a-z0-9]/g, "");
   return ext.slice(0, 10);
+}
+
+/** Valida assinatura real (magic bytes) dos formatos de imagem aceitos. */
+function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
+  const b = buf;
+  switch (ext) {
+    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+    case "jpg":
+    case "jpeg": return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+    case "gif": return b.length > 6 && b.toString("ascii", 0, 3) === "GIF";
+    case "webp": return b.length > 12 && b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP";
+    case "bmp": return b.length > 2 && b[0] === 0x42 && b[1] === 0x4d;
+    case "ico": return b.length > 4 && b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0;
+    default: return true;
+  }
 }
 
 function formatoPermitido(ext: string, extras: string[]): boolean {
@@ -210,6 +225,12 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) { res.status(400).json({ erro: "Arquivo vazio" }); return; }
   if (buffer.length > maxMb * 1024 * 1024) { res.status(413).json({ erro: `Arquivo excede o limite de ${maxMb} MB` }); return; }
 
+  // conteúdo real: para extensões de imagem, valida a assinatura (magic bytes)
+  // — impede renomear executável/script como .png para burlar a extensão.
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico"].includes(ext) && !assinaturaImagemOk(ext, buffer)) {
+    res.status(415).json({ erro: "Conteúdo do arquivo não corresponde a uma imagem válida" }); return;
+  }
+
   const mimeType = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
   if (MIMES_PERIGOSOS.test(mimeType)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }
 
@@ -342,6 +363,23 @@ arquivosRouter.patch("/:fileId", requirePapel("mestre", "jogador"), async (req, 
   if (d.folderId) {
     const [p] = await db.select().from(folders).where(and(eq(folders.id, d.folderId), eq(folders.campaignId, cid))).limit(1);
     if (!p) { res.status(400).json({ erro: "Pasta não encontrada" }); return; }
+  }
+  // se o arquivo está em uso como mapa de mesa virtual, tirar a visibilidade
+  // pública quebraria a exibição para jogadores/espectadores — bloqueia (P3)
+  const novaVisibilidade = d.visibility ?? f.visibility;
+  if (novaVisibilidade !== "publica") {
+    const rows = await db.select({ v: sql<string | null>`vtt_state` }).from(sessions).where(eq(sessions.campaignId, cid));
+    const emUso = rows.some((r) => {
+      if (!r.v) return false;
+      try {
+        const vtt = JSON.parse(r.v) as { mapa?: { fileId?: string } | null };
+        return vtt?.mapa?.fileId === f.id;
+      } catch { return false; }
+    });
+    if (emUso) {
+      res.status(409).json({ erro: "Arquivo está em uso como mapa de uma sessão — remova o mapa antes de alterar a visibilidade" });
+      return;
+    }
   }
   let recips: string[] | null | undefined;
   if (d.visibility === "selecionada" && d.recipients !== undefined) {
