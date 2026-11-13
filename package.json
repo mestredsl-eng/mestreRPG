@@ -15,7 +15,8 @@
     "db:generate": "npm run db:generate -w servidor",
     "db:migrate": "npm run db:migrate -w servidor",
     "start": "npm run start -w servidor",
-    "test:ajuda-contextual": "node homologacao-ajuda-contextual.mjs"
+    "test:ajuda-contextual": "node homologacao-ajuda-contextual.mjs",
+    "test:rate-limit-socket": "tsx servidor/testes/socket-rate-limit.test.ts"
   },
   "engines": {
     "node": ">=20.19"
