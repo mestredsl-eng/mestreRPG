@@ -240,6 +240,18 @@ try {
   const arqMob = join(DIR, "arquivo-rt-mobile.png");
   writeFileSync(arqMob, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   await pmob.locator('input[type="file"]').setInputFiles(arqMob);
+  // confirma que o upload chegou ao servidor (isola falha de upload × UI)
+  let upOk = false;
+  for (let i = 0; i < 20 && !upOk; i++) {
+    const r = await req(BASE, "GET", `/campaigns/${campId}/arquivos`, { cookie: cookieMestre });
+    upOk = !!r.json?.arquivos?.some((a) => (a.fileName ?? a.displayName) === "arquivo-rt-mobile.png");
+    if (!upOk) await sleep(500);
+  }
+  t("mobile: upload confirmado no servidor", upOk);
+  if (!upOk) {
+    const erroMob = await pmob.locator(".erro").textContent().catch(() => null);
+    console.log("  debug: erro exibido no cliente mobile:", erroMob);
+  }
   t("mobile: upload aparece para o mestre desktop", await aparece(pm, "arquivo-rt-mobile.png"));
 
   // privacidade no mobile também vale
