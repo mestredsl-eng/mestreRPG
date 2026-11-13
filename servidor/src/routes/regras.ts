@@ -382,6 +382,7 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
   const regras = await carregarRegras(req.params.campaignId);
   const porKind = new Map<string, {
     key: string; name: string; category: string | null;
+    descricao?: string;
     niveis?: { descricao?: string; custo?: number }[];
     custoPontos?: number; maximo?: number;
   }[]>();
@@ -392,13 +393,14 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
       key: el.key,
       name: el.name,
       category: el.category,
+      descricao: el.definition.descricao ?? undefined,
       niveis: el.definition.niveis?.length ? el.definition.niveis : undefined,
       custoPontos: el.definition.custoPontos,
       maximo: el.definition.maximo,
     });
     porKind.set(el.kind, lista);
   }
-  const out: Record<string, { key: string; name: string; category: string | null }[]> = {};
+  const out: Record<string, { key: string; name: string; category: string | null; descricao?: string }[]> = {};
   for (const [k, v] of porKind) out[k] = v.sort((a, b) => a.name.localeCompare(b.name));
   res.json({ kinds: TIPOS_REGRA, elementos: out });
 });
