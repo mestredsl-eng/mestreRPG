@@ -1,22 +1,17 @@
 // Testes — cadastro de jogador por convite (fluxo anônimo → registrar → aceitar).
 // Cobre: preview público, registro só com convite ativo, sessão automática,
 // proteção anti-admin, login de jogador existente, limite de usos e
-// concorrência no aceite. Cópia isolada do banco.
+// concorrência no aceite. Banco temporário + migrations (sem fixture local).
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdirSync, rmSync } from "node:fs";
 import Database from "better-sqlite3";
+import { join } from "node:path";
 import { hashToken } from "./servidor/dist/lib/password.js";
+import { dirTeste, prepararBanco, limparDir } from "./teste-base.mjs";
 
-const DIR = "simulacao-limpeza/teste-convite-cadastro";
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-mkdirSync(DIR, { recursive: true });
-for (const suf of ["", "-wal", "-shm"]) rmSync(BANCO + suf, { force: true });
-{
-  const orig = new Database("banco/mestre-rpg.db", { readonly: true });
-  orig.prepare(`VACUUM INTO '${BANCO.replace(/\\/g, "/")}'`).run();
-  orig.close();
-}
+const DIR = dirTeste("convite-cadastro");
+const BANCO = join(DIR, "mestre-rpg-teste.db");
+await prepararBanco(BANCO);
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -69,6 +64,9 @@ const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
 const proc = subir(porta);
 await esperarSaudavel(BASE, proc);
+// admin via endpoint oficial — o teste não depende mais de banco local
+const setup = await req(BASE, "POST", "/auth/setup", { body: { username: "administrador", password: "senha-forte-123" } });
+if (setup.status !== 201) throw new Error("setup admin falhou: " + JSON.stringify(setup.json));
 const M = sessaoDb();
 console.log(`servidor teste em ${BASE}`);
 
@@ -199,6 +197,7 @@ t("admin principal preservado", admins >= 1, `admins=${admins}`);
 
 proc.kill("SIGTERM");
 await new Promise((r) => setTimeout(r, 800));
+limparDir(DIR);
 
 console.log(`\n==== RESULTADO: ${pass} ok, ${fail} falhas ====`);
 process.exit(fail ? 1 : 0);
