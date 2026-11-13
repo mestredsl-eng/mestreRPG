@@ -15,7 +15,7 @@ function formatarData(iso: string | null): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
 }
 
-export default function Novidades({ aoMudarLeitura }: { aoMudarLeitura?: () => void }) {
+export default function Novidades({ aoMudarLeitura, versao }: { aoMudarLeitura?: () => void; versao?: number }) {
   const [itens, setItens] = useState<Novidade[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aberta, setAberta] = useState<Novidade | null>(null);
@@ -32,9 +32,29 @@ export default function Novidades({ aoMudarLeitura }: { aoMudarLeitura?: () => v
     }
   }, []);
 
+  // `versao` muda a cada novidade:publicada recebida pelo shell — a lista
+  // aberta é recarregada da API sem exigir navegação nem refresh.
   useEffect(() => {
     void carregar();
-  }, [carregar]);
+  }, [carregar, versao]);
+
+  // Publicação aberta em modal durante uma nova revisão: nunca exibir o
+  // conteúdo antigo como se fosse o atual — revalida a revisão exibida.
+  useEffect(() => {
+    if (!aberta || versao === undefined) return;
+    let vivo = true;
+    api.obterNovidade(aberta.id)
+      .then(({ novidade }) => {
+        if (vivo && novidade.revisao !== aberta.revisao) {
+          setAberta(null);
+          notificar("Esta publicação foi atualizada. Reabra para ver a versão nova.", "info");
+          void carregar();
+        }
+      })
+      .catch(() => { /* falha de rede: mantém o modal como está */ });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versao]);
 
   const abrir = async (n: Novidade) => {
     setAberta(n);
