@@ -68,7 +68,7 @@ export default function Servidor() {
     if (!config) return;
     try {
       await api.salvarConfigServidor(config);
-      notificar("Configuração salva.", "sucesso");
+      notificar("Configuração salva. Alterações em Acesso externo (domínio/hops) só entram em vigor após reiniciar o servidor.", "sucesso");
     } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
   };
 
@@ -161,6 +161,13 @@ export default function Servidor() {
           </div>
           <label>Pasta de backups<input value={config.backup.pasta} onChange={(e) => setConfig({ ...config, backup: { ...config.backup, pasta: e.target.value } })} /></label>
           <h4>Acesso externo (HTTPS/túnel)</h4>
+          <p className="dica">
+            <strong>Hops de proxy = 0</strong> é o padrão seguro para acesso direto (local/LAN): o servidor
+            não confia em headers <code>X-Forwarded-For</code>/<code>X-Forwarded-Proto</code> enviados por clientes.
+            Só configure hops quando houver um proxy reverso ou túnel confiável à frente (Cloudflare Tunnel,
+            NetBird ingress, Caddy, nginx etc.) — o valor deve corresponder à quantidade real de proxies no caminho.
+            Alterações em domínio público e hops só entram em vigor após <strong>reiniciar o servidor</strong>.
+          </p>
           <label>Domínio público<input placeholder="ex.: rpg.seudominio.com" value={config.acesso.dominioPublico} onChange={(e) => setConfig({ ...config, acesso: { ...config.acesso, dominioPublico: e.target.value } })} /></label>
           <label>Hops de proxy<input type="number" min={0} max={10} value={config.acesso.proxyHops} onChange={(e) => setConfig({ ...config, acesso: { ...config.acesso, proxyHops: Number(e.target.value) } })} /></label>
           <label className="check"><input type="checkbox" checked={config.acesso.https} onChange={(e) => setConfig({ ...config, acesso: { ...config.acesso, https: e.target.checked } })} /> Acesso via HTTPS</label>
