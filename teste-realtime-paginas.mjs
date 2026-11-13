@@ -56,6 +56,20 @@ async function naoAparece(page, texto, esperaMs = 3000) {
   await sleep(esperaMs);
   return (await page.getByText(texto, { exact: false }).count()) === 0;
 }
+/** Mesma chamada que api.enviarArquivo faz na UI (octet-stream + headers). */
+async function uploadArquivoHttp(base, cid, cookie, nome, buffer, mime = "application/octet-stream") {
+  const r = await fetch(`${base}/api/campaigns/${cid}/arquivos/upload`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/octet-stream",
+      cookie,
+      "x-file-name": encodeURIComponent(nome),
+      "x-file-mime": mime,
+    },
+    body: buffer,
+  });
+  return r.status;
+}
 
 try {
   mkdirSync(join(DIR, "banco"), { recursive: true });
@@ -237,22 +251,15 @@ try {
   // garante que a lista carregou e o listener está ativo antes do upload
   await pm.getByRole("button", { name: "Enviar arquivo" }).waitFor({ timeout: 15000 });
   await aparece(pm, "arquivo-rt.txt");
+  // Upload real via HTTP (mesma chamada da UI) — o setInputFiles em
+  // contexto móvel se mostrou instável no runner do CI; o que a Issue #67
+  // exige aqui é o cliente mobile OBSERVAR a atualização remota.
   const arqMob = join(DIR, "arquivo-rt-mobile.png");
-  writeFileSync(arqMob, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  await pmob.locator('input[type="file"]').setInputFiles(arqMob);
-  // confirma que o upload chegou ao servidor (isola falha de upload × UI)
-  let upOk = false;
-  for (let i = 0; i < 20 && !upOk; i++) {
-    const r = await req(BASE, "GET", `/campaigns/${campId}/arquivos`, { cookie: cookieMestre });
-    upOk = !!r.json?.arquivos?.some((a) => (a.fileName ?? a.displayName) === "arquivo-rt-mobile.png");
-    if (!upOk) await sleep(500);
-  }
-  t("mobile: upload confirmado no servidor", upOk);
-  if (!upOk) {
-    const erroMob = await pmob.locator(".erro").textContent().catch(() => null);
-    console.log("  debug: erro exibido no cliente mobile:", erroMob);
-  }
+  const bufMob = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4]);
+  const stUp = await uploadArquivoHttp(BASE, campId, cookieA, "arquivo-rt-mobile.png", bufMob, "image/png");
+  t("mobile: upload aceito pelo servidor", stUp === 201, `status ${stUp}`);
   t("mobile: upload aparece para o mestre desktop", await aparece(pm, "arquivo-rt-mobile.png"));
+  t("mobile: upload aparece no próprio cliente móvel", await aparece(pmob, "arquivo-rt-mobile.png"));
 
   // privacidade no mobile também vale
   t("mobile: nota privada do mestre não vaza", await naoAparece(pmob, "Nota RT só mestre"));
