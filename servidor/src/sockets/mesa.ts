@@ -524,11 +524,19 @@ function socket_handlers(
       const u = usuario();
       const sessionId = payload?.sessionId;
       if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
-      const ctx = await resolverCtx(socket, sessionId);
-      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
-      if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre pode alterar a névoa" }); return; }
-      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      // Ordenação: a operação entra na fila VTT IMEDIATAMENTE, antes de
+      // qualquer await. Como o transporte preserva a ordem por conexão,
+      // uma sincronização posterior (mesa:vtt:nevoa:sincronizar) só
+      // responde depois que esta operação terminar — nunca existe
+      // mutação antiga pendente atrás de uma consulta de sincronização.
       await comLockVtt(async () => {
+        // barreira determinística de teste (NODE_ENV=test apenas):
+        // segura a operação DENTRO da seção crítica para provar que a
+        // sincronização fica enfileirada atrás dela. Inerte em produção.
+        if (process.env.NODE_ENV === "test") {
+          const barreiraMs = Number(process.env.MESTRE_VTT_NEVOA_BARRIER_MS ?? 0);
+          if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
+        }
         // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
         const ctx = await resolverCtx(socket, sessionId);
         if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
@@ -559,6 +567,34 @@ function socket_handlers(
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
         cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:nevoa:sincronizar {sessionId} — leitura autoritativa e
+     * ORDENADA da névoa. Entra em comLockVtt imediatamente ao ser
+     * recebido (antes de qualquer await), na mesma fila das mutações:
+     * como o transporte preserva a ordem por conexão, a resposta só é
+     * produzida depois que toda operação de névoa já entregue ao
+     * servidor tiver terminado — e reflete o estado pós-operações.
+     * Não modifica o VTT nem permissões. Não aceita papel do cliente.
+     */
+    socket.on("mesa:vtt:nevoa:sincronizar", async (payload: { sessionId?: string },
+      cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      await comLockVtt(async () => {
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        // revalidação final após as leituras assíncronas: papel/membership
+        // podem ter mudado durante lerVtt/donosDosTokens
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF) { cb?.({ ok: false, erro: ctxF.erro }); return; }
+        if (ctxF.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id) });
       });
     });
 

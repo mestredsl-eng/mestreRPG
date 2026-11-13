@@ -360,7 +360,7 @@ try {
   const PORTA2 = await portaLivre();
   const BASE2 = `http://localhost:${PORTA2}`;
   await prepararBanco(BANCO2);
-  proc2 = subirServidor(PORTA2, { banco: BANCO2, arquivos: `${DIR}/arq2`, backups: `${DIR}/bks2`, env: { MESTRE_VTT_BARRIER_MS: "400" } });
+  proc2 = subirServidor(PORTA2, { banco: BANCO2, arquivos: `${DIR}/arq2`, backups: `${DIR}/bks2`, env: { MESTRE_VTT_BARRIER_MS: "400", MESTRE_VTT_NEVOA_BARRIER_MS: "600" } });
   proc2.stderr.on("data", d => process.stderr.write("[srv2] " + d)); proc2.stdout?.on("data", d => process.stderr.write("[srv2] " + d));
   await esperarSaudavel(BASE2, proc2);
 
@@ -515,6 +515,26 @@ try {
     JSON.stringify({ ack: idsTok(ackD3?.sessao?.vttState), emit: idsTok(ultVtt.get(sD3)) }));
   t("isolamento: mutação do mestre na janela persistiu normalmente",
     rVttM?.ok === true, JSON.stringify(rVttM?.erro));
+
+  // 6d. ordenação VTT: operação entra na fila imediatamente; a
+  // sincronização posterior só responde depois que ela terminar e
+  // reflete o estado pós-operação (barreira segura o lock 600ms)
+  {
+    const pOp = emitirCb(sM2c, "mesa:vtt:nevoa", { sessionId: sid2, acao: "revelar", traco: { raioX: 0.2, raioY: 0.2, pontos: [{ x: 0.3, y: 0.3 }] } })
+      .then((r) => ({ r, t: Date.now() }));
+    await dormir(150); // operação já está dentro da seção crítica (barreira)
+    const pSync = emitirCb(sM2c, "mesa:vtt:nevoa:sincronizar", { sessionId: sid2 })
+      .then((r) => ({ r, t: Date.now() }));
+    const [op, sync] = await Promise.all([pOp, pSync]);
+    const nOp = op.r?.vtt?.nevoa?.revelados?.length ?? -1;
+    const nSync = sync.r?.vtt?.nevoa?.revelados?.length ?? -1;
+    t("ordem: operação de névoa aplicada", op.r?.ok === true, JSON.stringify(op.r?.erro));
+    t("ordem: sincronização autorizada com papel atual",
+      sync.r?.ok === true && sync.r?.papel === "mestre", JSON.stringify(sync.r));
+    t("ordem: sync respondeu depois da operação e com estado pós-op",
+      sync.t >= op.t && nSync === nOp && nSync >= 1,
+      JSON.stringify({ tOp: op.t, tSync: sync.t, nOp, nSync }));
+  }
 
   // 7. sessão encerrada durante a entrada → rejeição (último: encerra sid2)
   const rj2 = novoUsuario(BANCO2, { username: "race_j2", role: "jogador", campId: camp2 });
