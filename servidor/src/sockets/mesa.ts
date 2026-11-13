@@ -1,9 +1,9 @@
 import { randomInt, randomUUID } from "node:crypto";
 import type { Server as SocketIOServer, Socket } from "socket.io";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql, getTableColumns } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
+  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions, files,
 } from "../db/schema.js";
 import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
@@ -13,6 +13,17 @@ import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 
 const db = getDb();
+
+// Serialização explícita das mutações da mesa virtual: o ciclo
+// ler→validar→alterar→gravar→emitir precisa ser atômico por sessão.
+// Hoje o driver síncrono (better-sqlite3) já serializa os handlers, mas
+// esta fila garante a mesma propriedade se o driver virar assíncrono.
+let filaVtt: Promise<unknown> = Promise.resolve();
+function comLockVtt<T>(fn: () => Promise<T>): Promise<T> {
+  const p = filaVtt.then(fn, fn);
+  filaVtt = p.then(() => undefined, () => undefined);
+  return p;
+}
 
 type Usuario = { id: string; username: string; displayName?: string | null };
 type Papel = "mestre" | "jogador" | "espectador";
@@ -30,7 +41,18 @@ const LADOS_VALIDOS = new Set([4, 6, 8, 10, 20]);
 async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { erro: string }> {
   const usuario = socket.data.usuario as Usuario | undefined;
   if (!usuario) return { erro: "Não autenticado" };
-  const [sessao] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  let sessao: typeof sessions.$inferSelect | undefined;
+  try {
+    [sessao] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  } catch (e) {
+    // vtt_state corrompido (JSON inválido) não pode derrubar a sessão inteira:
+    // recarrega sem a coluna e segue com o estado VTT vazio (o módulo VTT
+    // relê o texto bruto de forma defensiva e registra o problema).
+    console.error(`[vtt] falha ao ler sessão ${sessionId} (vtt_state inválido?):`, e);
+    const { vttState: _omit, ...colsSemVtt } = getTableColumns(sessions);
+    const [row] = await db.select(colsSemVtt).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    if (row) sessao = { ...row, vttState: null } as typeof sessions.$inferSelect;
+  }
   if (!sessao) return { erro: "Sessão não encontrada" };
   const [m] = await db.select().from(memberships)
     .where(and(eq(memberships.campaignId, sessao.campaignId), eq(memberships.userId, usuario.id), eq(memberships.status, "ativo")))
@@ -183,11 +205,15 @@ function socket_handlers(
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       socket.join(`sessao:${sessionId}`);
+      // estado VTT fresco após o join: cobre a janela em que uma atualização
+      // foi persistida/emitida entre a leitura do ctx e a entrada na sala
+      socket.emit("mesa:vtt", { sessionId, vtt: await lerVtt(sessionId) });
       const [t] = await db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1);
       const podeEnviar = ctx.papel !== "espectador" || permissoesDe(ctx.membership).enviarMensagens === true;
       cb?.({
         ok: true, papel: ctx.papel, podeEnviar,
-        sessao: ctx.sessao,
+        // vttState sanitizado: JSON válido com formato inesperado não vai cru ao cliente
+        sessao: { ...ctx.sessao, vttState: vttDeTexto(ctx.sessao.vttState, sessionId) },
         turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
         presenca: presentes(sessionId),
         agora: Date.now(),
@@ -205,6 +231,260 @@ function socket_handlers(
       socket.leave(`sessao:${sessionId}`);
       void emitirPresenca(sessionId);
       cb?.({ ok: true });
+    });
+
+    // ---------- mesa virtual: mapa + tokens (Etapa 1) ----------
+    // Estado persistido em sessions.vtt_state (JSON texto) — mesmo padrão do
+    // temporizador. O servidor é autoridade: valida papel, associação do
+    // token e coordenadas antes de gravar; emite `mesa:vtt` com o estado
+    // completo somente após a persistência. Reconexão recebe o estado via
+    // callback de `mesa:entrar` (sessao.vttState) e pelo emit fresco pós-join.
+    // Mutações passam por comLockVtt (serialização explícita do ciclo
+    // ler→validar→gravar→emitir, independente do driver).
+
+    interface TokenVtt {
+      id: string; nome: string; cor: string; x: number; y: number;
+      personagemId?: string | null; userId?: string | null; ativo: boolean;
+    }
+    interface VttState { mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null; tokens: TokenVtt[] }
+    const VTT_MAX_TOKENS = 100;
+    const VTT_MAX_BYTES = 64 * 1024;
+    const VTT_MAX_NOME = 60;
+    const vttVazio = (): VttState => ({ mapa: null, tokens: [] });
+
+    /** Leitura defensiva do JSON persistido: nunca lança; inválido → vazio + log. */
+    function vttDeTexto(raw: unknown, sessionId: string): VttState {
+      if (raw == null || raw === "") return vttVazio();
+      let v: unknown = raw;
+      if (typeof raw === "string") {
+        try { v = JSON.parse(raw); }
+        catch (e) {
+          console.error(`[vtt] vtt_state inválido na sessão ${sessionId} — usando estado vazio:`, e);
+          return vttVazio();
+        }
+      }
+      const o = v as Partial<VttState> | null;
+      const tokens = (Array.isArray(o?.tokens) ? o.tokens : []).filter((tk): tk is TokenVtt =>
+        !!tk && typeof tk === "object"
+        && typeof (tk as TokenVtt).id === "string"
+        && typeof (tk as TokenVtt).nome === "string"
+        && typeof (tk as TokenVtt).x === "number" && Number.isFinite((tk as TokenVtt).x)
+        && typeof (tk as TokenVtt).y === "number" && Number.isFinite((tk as TokenVtt).y)
+        && (tk as TokenVtt).x >= 0 && (tk as TokenVtt).x <= 1
+        && (tk as TokenVtt).y >= 0 && (tk as TokenVtt).y <= 1
+        && typeof (tk as TokenVtt).cor === "string");
+      const mp = o?.mapa as { fileId?: unknown; nome?: unknown; largura?: unknown; altura?: unknown } | null | undefined;
+      const mapa = mp && typeof mp === "object" && typeof mp.fileId === "string"
+        ? {
+            fileId: mp.fileId,
+            nome: typeof mp.nome === "string" ? mp.nome : "Mapa",
+            largura: typeof mp.largura === "number" && Number.isFinite(mp.largura) ? mp.largura : undefined,
+            altura: typeof mp.altura === "number" && Number.isFinite(mp.altura) ? mp.altura : undefined,
+          }
+        : null;
+      return { mapa, tokens };
+    }
+    /** Lê vtt_state como texto bruto (contorna o parse json do Drizzle). */
+    async function lerVtt(sessionId: string): Promise<VttState> {
+      const [row] = await db.select({ v: sql<string | null>`vtt_state` }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      return vttDeTexto(row?.v, sessionId);
+    }
+    const emitirVtt = async (sessionId: string, vtt: VttState) => {
+      io.to(`sessao:${sessionId}`).emit("mesa:vtt", { sessionId, vtt });
+    };
+    const posicaoValida = (x: unknown, y: unknown): x is number =>
+      typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1
+      && typeof y === "number" && Number.isFinite(y) && y >= 0 && y <= 1;
+    const corValida = (c: unknown): c is string =>
+      typeof c === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(c);
+    /** Nome de token: string obrigatória quando informada; 1–60 chars após trim. */
+    const nomeValido = (n: unknown): n is string =>
+      typeof n === "string" && n.trim().length >= 1 && n.trim().length <= VTT_MAX_NOME;
+
+    /** Dono efetivo do token: userId direto; senão o userId da membership do personagem. */
+    async function donoDoToken(sessionId: string, token: TokenVtt): Promise<string | null> {
+      if (token.userId) return token.userId;
+      if (!token.personagemId) return null;
+      const [s] = await db.select({ campaignId: sessions.campaignId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      if (!s) return null;
+      const [ch] = await db.select({ membershipId: characters.membershipId }).from(characters)
+        .where(and(eq(characters.id, token.personagemId), eq(characters.campaignId, s.campaignId))).limit(1);
+      if (!ch) return null;
+      const [m] = await db.select({ userId: memberships.userId, status: memberships.status }).from(memberships)
+        .where(eq(memberships.id, ch.membershipId)).limit(1);
+      return m && m.status === "ativo" ? m.userId : null;
+    }
+    /** Jogador só move token cujo dono efetivo é ele. */
+    async function tokenPertenceAoUsuario(sessionId: string, token: TokenVtt, userId: string): Promise<boolean> {
+      return (await donoDoToken(sessionId, token)) === userId;
+    }
+    /**
+     * Valida coerência dos vínculos userId/personagemId (P4): no máximo um
+     * dono. Se ambos informados, o personagem precisa pertencer à membership
+     * do mesmo usuário. Retorna { ok, userId, personagemId } ou { erro }.
+     */
+    async function validarVinculo(campaignId: string, userId: unknown, personagemId: unknown):
+      Promise<{ ok: true; userId: string | null; personagemId: string | null } | { ok: false; erro: string }> {
+      let uid: string | null = null;
+      let pid: string | null = null;
+      if (userId !== undefined && userId !== null) {
+        if (typeof userId !== "string" || !userId) return { ok: false, erro: "userId inválido" };
+        const [mem] = await db.select({ id: memberships.id }).from(memberships)
+          .where(and(eq(memberships.campaignId, campaignId), eq(memberships.userId, userId), eq(memberships.status, "ativo"))).limit(1);
+        if (!mem) return { ok: false, erro: "Usuário não é membro ativo" };
+        uid = userId;
+      }
+      if (personagemId !== undefined && personagemId !== null) {
+        if (typeof personagemId !== "string" || !personagemId) return { ok: false, erro: "personagemId inválido" };
+        const [ch] = await db.select({ membershipId: characters.membershipId }).from(characters)
+          .where(and(eq(characters.id, personagemId), eq(characters.campaignId, campaignId))).limit(1);
+        if (!ch) return { ok: false, erro: "Personagem não encontrado na campanha" };
+        pid = personagemId;
+        if (uid) {
+          const [mem] = await db.select({ userId: memberships.userId }).from(memberships)
+            .where(and(eq(memberships.id, ch.membershipId), eq(memberships.status, "ativo"))).limit(1);
+          if (!mem || mem.userId !== uid) return { ok: false, erro: "Personagem pertence a outro jogador" };
+        }
+      }
+      return { ok: true, userId: uid, personagemId: pid };
+    }
+
+    /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
+    socket.on("mesa:vtt:mapa", async (payload: {
+      sessionId?: string; acao?: string;
+      mapa?: { fileId?: string; nome?: string; largura?: number; altura?: number } | null;
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
+      if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+      if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      await comLockVtt(async () => {
+        const vtt = await lerVtt(sessionId);
+        if (payload.acao === "remover") {
+          vtt.mapa = null;
+        } else if (payload.acao === "definir") {
+          const m = payload.mapa;
+          if (!m || typeof m.fileId !== "string" || !m.fileId || m.fileId.length > 100) {
+            cb?.({ ok: false, erro: "Mapa inválido" }); return;
+          }
+          // o arquivo precisa existir na biblioteca DESTA campanha, ser imagem
+          // aprovada e visível a todos os participantes (P3: visibility pública)
+          const [arq] = await db.select({ id: files.id, mimeType: files.mimeType, fileName: files.fileName, status: files.status, visibility: files.visibility })
+            .from(files)
+            .where(and(eq(files.id, m.fileId), eq(files.campaignId, ctx.sessao.campaignId))).limit(1);
+          if (!arq || arq.status !== "aprovado") { cb?.({ ok: false, erro: "Imagem de mapa não encontrada" }); return; }
+          if (arq.visibility !== "publica") { cb?.({ ok: false, erro: "Mapa precisa ter visibilidade pública para todos os participantes" }); return; }
+          const ehImagem = (arq.mimeType ?? "").startsWith("image/")
+            || /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(arq.fileName);
+          if (!ehImagem) { cb?.({ ok: false, erro: "O mapa precisa ser uma imagem" }); return; }
+          vtt.mapa = {
+            fileId: m.fileId,
+            nome: typeof m.nome === "string" ? m.nome.slice(0, 140) : "Mapa",
+            largura: typeof m.largura === "number" && Number.isFinite(m.largura) ? m.largura : undefined,
+            altura: typeof m.altura === "number" && Number.isFinite(m.altura) ? m.altura : undefined,
+          };
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt });
+      });
+    });
+
+    /** mesa:vtt:token {sessionId, acao, token} — mestre tudo; jogador só move o próprio. */
+    socket.on("mesa:vtt:token", async (payload: {
+      sessionId?: string; acao?: string;
+      token?: Partial<TokenVtt> & { id?: string };
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
+      if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      await comLockVtt(async () => {
+        const vtt = await lerVtt(sessionId);
+        const t = payload.token ?? {};
+        const acao = payload.acao;
+        const ehMestre = ctx.papel === "mestre";
+        const idx = typeof t.id === "string" ? vtt.tokens.findIndex((x) => x.id === t.id) : -1;
+        const existente = idx >= 0 ? vtt.tokens[idx] : undefined;
+
+        if (acao === "criar") {
+          if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre cria tokens" }); return; }
+          // idempotência: se o cliente reenviou um criar com id já existente, não duplica
+          if (typeof t.id === "string" && vtt.tokens.some((x) => x.id === t.id)) {
+            cb?.({ ok: true, vtt, idempotente: true }); return;
+          }
+          if (vtt.tokens.length >= VTT_MAX_TOKENS) { cb?.({ ok: false, erro: `Limite de ${VTT_MAX_TOKENS} tokens por sessão atingido` }); return; }
+          if (!posicaoValida(t.x, t.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          // P7: nome precisa ser string válida quando informado
+          if (t.nome !== undefined && !nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
+          const nome = t.nome === undefined ? "Token" : (t.nome as string).trim().slice(0, VTT_MAX_NOME);
+          const cor = corValida(t.cor) ? t.cor : "#888888";
+          // P4: vínculos coerentes — personagem e usuário precisam ser do mesmo dono
+          const vinc = await validarVinculo(ctx.sessao.campaignId, t.userId, t.personagemId);
+          if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
+          const idToken = typeof t.id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(t.id) ? t.id : randomUUID();
+          const novo: TokenVtt = {
+            id: idToken, nome, cor, x: t.x as number, y: t.y as number,
+            userId: vinc.userId, personagemId: vinc.personagemId, ativo: t.ativo !== false,
+          };
+          vtt.tokens.push(novo);
+        } else if (acao === "atualizar" || acao === "mover") {
+          if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+          if (!posicaoValida(t.x ?? existente.x, t.y ?? existente.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          if (ehMestre) {
+            if (t.nome !== undefined) {
+              if (!nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
+              existente.nome = t.nome.trim().slice(0, VTT_MAX_NOME);
+            }
+            if (t.cor !== undefined) {
+              if (!corValida(t.cor)) { cb?.({ ok: false, erro: "Cor inválida" }); return; }
+              existente.cor = t.cor;
+            }
+            if (t.ativo !== undefined) existente.ativo = !!t.ativo;
+            if (t.userId !== undefined || t.personagemId !== undefined) {
+              // P4: reatribuição valida coerência usuário×personagem.
+              // Campos não enviados mantêm o vínculo atual.
+              const novoUser = t.userId !== undefined ? t.userId : existente.userId;
+              const novoPers = t.personagemId !== undefined ? t.personagemId : existente.personagemId;
+              const vinc = await validarVinculo(ctx.sessao.campaignId, novoUser, novoPers);
+              if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
+              existente.userId = vinc.userId;
+              existente.personagemId = vinc.personagemId;
+            }
+          } else {
+            // jogador: somente posição do próprio token — nada mais
+            if (!(await tokenPertenceAoUsuario(sessionId, existente, u.id))) {
+              cb?.({ ok: false, erro: "Token não pertence a você" }); return;
+            }
+          }
+          existente.x = t.x ?? existente.x;
+          existente.y = t.y ?? existente.y;
+        } else if (acao === "remover") {
+          if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre remove tokens" }); return; }
+          if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+          vtt.tokens.splice(idx, 1);
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt });
+      });
     });
 
     // ---------- chat / declarações ----------
@@ -668,7 +948,10 @@ function socket_handlers(
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla o temporizador" }); return; }
 
-      const [s] = await db.select().from(sessions).where(eq(sessions.id, payload.sessionId)).limit(1);
+      // colunas explícitas: select() completo parsearia vtt_state (json) e
+      // uma corrupção ali derrubaria o temporizador junto com a mesa virtual
+      const [s] = await db.select({ id: sessions.id, campaignId: sessions.campaignId, timerState: sessions.timerState })
+        .from(sessions).where(eq(sessions.id, payload.sessionId)).limit(1);
       if (!s) { cb?.({ ok: false, erro: "Sessão não encontrada" }); return; }
       const atual = (s.timerState ?? {}) as { status?: string; remainingMs?: number; totalMs?: number; endsAt?: number };
       const agora = Date.now();
@@ -712,7 +995,8 @@ function socket_handlers(
   // ---------- ticker do temporizador (sincronização servidor→clientes) ----------
   setInterval(async () => {
     try {
-      const rodando = await db.select().from(sessions);
+      // só as colunas do timer: vtt_state corrompido não pode parar o ticker
+      const rodando = await db.select({ id: sessions.id, campaignId: sessions.campaignId, timerState: sessions.timerState }).from(sessions);
       for (const s of rodando) {
         const ts = s.timerState as { status?: string; endsAt?: number; remainingMs?: number; totalMs?: number } | null;
         if (!ts || ts.status !== "rodando") continue;

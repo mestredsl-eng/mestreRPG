@@ -849,8 +849,20 @@ export interface Sessao {
   startedAt: string | null;
   endedAt: string | null;
   timerState: TimerState | null;
+  vttState?: VttState | null;
   createdAt: string;
 }
+
+export interface TokenVtt {
+  id: string; nome: string; cor: string; x: number; y: number;
+  personagemId?: string | null; userId?: string | null; ativo: boolean;
+}
+export interface VttState {
+  mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null;
+  tokens: TokenVtt[];
+}
+export const arquivoUrl = (cid: string, fid: string) =>
+  `${API_BASE}/campaigns/${cid}/arquivos/${fid}`;
 
 export interface TimerState {
   status?: "rodando" | "pausado" | "parado";

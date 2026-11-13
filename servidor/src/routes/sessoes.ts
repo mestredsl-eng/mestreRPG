@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, getTableColumns } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { sessions, turns, chatMessages, tests, memberships, users, characters, rolls, auditLogs } from "../db/schema.js";
@@ -14,8 +14,22 @@ sessoesRouter.use(requireAuth);
 
 // ---------- helpers ----------
 
+// vtt_state é JSON livre: uma corrupção não pode derrubar a listagem/detalhe
+// das sessões (chat, turnos, timer e histórico continuam funcionando).
+const { vttState: _vttOmit, ...COLS_SEM_VTT } = getTableColumns(sessions);
+
+async function sessoesComVttSeguro(where: ReturnType<typeof eq> | ReturnType<typeof and>) {
+  try {
+    return await db.select().from(sessions).where(where);
+  } catch (e) {
+    console.error("[vtt] falha ao ler sessões (vtt_state inválido?) — seguindo sem o estado VTT:", e);
+    const rows = await db.select(COLS_SEM_VTT).from(sessions).where(where);
+    return rows.map((r) => ({ ...r, vttState: null }));
+  }
+}
+
 async function sessaoDaCampanha(sessionId: string, campaignId: string) {
-  const [s] = await db.select().from(sessions).where(and(eq(sessions.id, sessionId), eq(sessions.campaignId, campaignId))).limit(1);
+  const [s] = await sessoesComVttSeguro(and(eq(sessions.id, sessionId), eq(sessions.campaignId, campaignId)));
   return s ?? null;
 }
 
@@ -42,7 +56,8 @@ export function mensagemVisivel(
 
 /** GET /api/campaigns/:campaignId/sessoes */
 sessoesRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
-  const lista = await db.select().from(sessions).where(eq(sessions.campaignId, req.params.campaignId)).orderBy(desc(sessions.number));
+  const lista = await sessoesComVttSeguro(eq(sessions.campaignId, req.params.campaignId));
+  lista.sort((a, b) => b.number - a.number);
   res.json({ sessoes: lista });
 });
 

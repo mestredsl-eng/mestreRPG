@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from "react";
 import {
   api,
   type Sessao, type MensagemMesa, type TesteMesa, type TurnosState,
   type Membro, type PersonagemResumo, type CampanhaResumo,
+  type VttState, type TokenVtt, arquivoUrl,
 } from "../api";
 import { getSocket } from "../socket";
 import PainelDados, { FaceDado } from "../Dados";
@@ -181,12 +182,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
 
-    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[] }) => {
+    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
       if (r?.ok) {
         if (r.papel) setPapel(r.papel);
         if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
         if (r.turnos) setTurnos(r.turnos);
         if (r.presenca) setOnline(r.presenca);
+        if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens)
       } else {
         setErro("Não foi possível entrar na mesa");
       }
@@ -485,6 +487,18 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         </div>
       </div>
 
+      {/* mesa virtual: mapa + tokens */}
+      <TabuleiroVtt
+        campaignId={campaignId}
+        sessionId={sessao.id}
+        souMestre={souMestre}
+        ehEspectador={papel === "espectador"}
+        meuUserId={meuUserId}
+        membros={membros}
+        encerrada={sessaoAtual.status === "encerrada"}
+        inicial={sessao.vttState ?? sessaoAtual.vttState ?? null}
+      />
+
       {/* decisões recentes */}
       {testesRecentes.length > 0 && (
         <section className="cartao">
@@ -701,6 +715,215 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
           )}
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
+      )}
+    </section>
+  );
+}
+
+// ================= MESA VIRTUAL (mapa + tokens) =================
+
+// Posicao confirmada pelo servidor para um token. `rev` incrementa a
+// cada mudança de posição vinda de estado autoritativo (mesa:vtt ou
+// estado inicial) — movimentos otimistas locais nunca a alteram.
+type PosicaoConfirmada = { x: number; y: number; rev: number };
+
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
+  campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
+  membros: Membro[]; encerrada: boolean; inicial: VttState | null;
+}) {
+  const [vtt, setVtt] = useState<VttState>(inicial ?? { mapa: null, tokens: [] });
+  const [erroVtt, setErroVtt] = useState<string | null>(null);
+  const [novoNome, setNovoNome] = useState("");
+  const [novoUserId, setNovoUserId] = useState("");
+  const [selVtt, setSelVtt] = useState<string | null>(null);
+  const tabRef = useRef<HTMLDivElement | null>(null);
+  const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
+  const confRef = useRef<Map<string, PosicaoConfirmada>>(new Map());
+
+  // Sincroniza a referência autoritativa SOMENTE com estados vindos do
+  // servidor. O setVtt otimista do arraste nunca passa por aqui.
+  const sincronizarAutoritativo = (estado: VttState) => {
+    const mapa = confRef.current;
+    const vistos = new Set<string>();
+    for (const tk of estado.tokens ?? []) {
+      vistos.add(tk.id);
+      const prev = mapa.get(tk.id);
+      if (!prev) mapa.set(tk.id, { x: tk.x, y: tk.y, rev: 1 });
+      else if (prev.x !== tk.x || prev.y !== tk.y) mapa.set(tk.id, { x: tk.x, y: tk.y, rev: prev.rev + 1 });
+    }
+    for (const id of [...mapa.keys()]) if (!vistos.has(id)) mapa.delete(id);
+  };
+
+  useEffect(() => {
+    const socket = getSocket();
+    const aoVtt = (d: { sessionId?: string; vtt?: VttState }) => {
+      if (d?.sessionId === sessionId && d.vtt) {
+        sincronizarAutoritativo(d.vtt);
+        setVtt(d.vtt);
+      }
+    };
+    socket.on("mesa:vtt", aoVtt);
+    return () => { socket.off("mesa:vtt", aoVtt); };
+  }, [sessionId]);
+
+  // sincroniza com o estado persistido quando a sessão é recarregada
+  // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
+  useEffect(() => {
+    if (inicial) {
+      sincronizarAutoritativo(inicial);
+      setVtt(inicial);
+    }
+  }, [inicial]);
+
+  const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
+    getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
+      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+      cb?.(r);
+    });
+  };
+  const emitirMapa = (payload: Record<string, unknown>) => {
+    getSocket().emit("mesa:vtt:mapa", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
+      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+    });
+  };
+
+  const ehDono = (tk: TokenVtt) =>
+    souMestre || (!!meuUserId && (tk.userId === meuUserId || !!membros.find((m) => m.userId === meuUserId && tk.userId === m.userId)));
+
+  const iniciarArraste = (tk: TokenVtt) => (e: ReactPointerEvent) => {
+    if (encerrada || ehEspectador || (!souMestre && !ehDono(tk))) return;
+    e.preventDefault();
+    try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* ponteiro sintético/inativo */ }
+    dragRef.current = { id: tk.id, movendo: true };
+    const mover = (ev: PointerEvent) => {
+      const d = dragRef.current;
+      if (!d || d.id !== tk.id) return;
+      const el = tabRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+      const y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+      // otimista local; servidor confirma via mesa:vtt
+      setVtt((v) => ({ ...v, tokens: v.tokens.map((t) => (t.id === tk.id ? { ...t, x, y } : t)) }));
+    };
+    const soltar = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      const d = dragRef.current;
+      dragRef.current = null;
+      if (!d || d.id !== tk.id) return;
+      const el = tabRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+      const y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+      // posição final do drop também é otimista — garante que o visual
+      // corresponda exatamente às coordenadas emitidas ao servidor
+      setVtt((v) => ({ ...v, tokens: v.tokens.map((t) => (t.id === tk.id ? { ...t, x, y } : t)) }));
+      // Rollback: rejeição/timeout só reverte se (a) a revisão
+      // autoritativa do token não mudou desde o início desta operação
+      // e (b) o token ainda está visualmente na posição otimista deste
+      // drop. Restaura conf0 — última posição confirmada pelo servidor —
+      // nunca o estado capturado do closure de renderização.
+      const conf0 = confRef.current.get(tk.id) ?? { x: tk.x, y: tk.y, rev: 0 };
+      const rev0 = conf0.rev;
+      const reverter = () => setVtt((v) => {
+        const conf = confRef.current.get(tk.id);
+        if (!conf || conf.rev !== rev0) return v;
+        const atual = v.tokens.find((t) => t.id === tk.id);
+        if (!atual || atual.x !== x || atual.y !== y) return v;
+        return { ...v, tokens: v.tokens.map((t) => (t.id === tk.id ? { ...t, x: conf0.x, y: conf0.y } : t)) };
+      });
+      let respondido = false;
+      const timeout = window.setTimeout(() => {
+        if (respondido) return;
+        respondido = true;
+        setErroVtt("Sem resposta do servidor — posição revertida");
+        reverter();
+      }, 5000);
+      emitir({ acao: souMestre ? "atualizar" : "mover", token: { id: tk.id, x, y } }, (resp) => {
+        respondido = true;
+        window.clearTimeout(timeout);
+        if (resp && resp.ok === false) reverter();
+      });
+    };
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+  };
+
+  const enviarMapa = async (arquivo: File) => {
+    setErroVtt(null);
+    try {
+      const up = await api.enviarArquivo(campaignId, arquivo, { category: "mapa", visibility: "publica" });
+      emitirMapa({ acao: "definir", mapa: { fileId: up.id, nome: arquivo.name } });
+    } catch (e) {
+      setErroVtt(e instanceof Error ? e.message : "Falha no upload do mapa");
+    }
+  };
+
+  return (
+    <section className="cartao mesa-vtt">
+      <div className="linha-entre">
+        <h3>Tabuleiro</h3>
+        {souMestre && !encerrada && (
+          <div className="linha">
+            <label className="botao-mini secundario">
+              {vtt.mapa ? "Trocar mapa" : "Definir mapa"}
+              <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) void enviarMapa(f); e.target.value = ""; }} />
+            </label>
+            {vtt.mapa && <button className="secundario" onClick={() => emitirMapa({ acao: "remover" })}>Remover mapa</button>}
+          </div>
+        )}
+      </div>
+      {erroVtt && <p className="erro">{erroVtt}</p>}
+      {!vtt.mapa ? (
+        <p className="dica">{souMestre ? "Nenhum mapa definido. Envie uma imagem para montar o tabuleiro." : "O mestre ainda não definiu um mapa para esta sessão."}</p>
+      ) : (
+        <div
+          ref={tabRef}
+          className="vtt-tabuleiro"
+          style={{ backgroundImage: `url(${arquivoUrl(campaignId, vtt.mapa.fileId)})` }}
+        >
+          {vtt.tokens.filter((t) => t.ativo).map((tk) => {
+            const meu = ehDono(tk);
+            return (
+              <button
+                key={tk.id}
+                type="button"
+                className={`vtt-token ${meu ? "vtt-token-meu" : ""} ${tk.userId === meuUserId || (!tk.userId && !tk.personagemId && souMestre) ? "" : ""}`}
+                style={{ left: `${tk.x * 100}%`, top: `${tk.y * 100}%`, background: tk.cor, borderColor: tk.cor }}
+                title={tk.nome}
+                onPointerDown={iniciarArraste(tk)}
+                onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
+              >{tk.nome.slice(0, 2).toUpperCase()}</button>
+            );
+          })}
+        </div>
+      )}
+      {souMestre && !encerrada && vtt.mapa && (
+        <div className="linha vtt-controles">
+          <input placeholder="Nome do token" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
+          <select value={novoUserId} onChange={(e) => setNovoUserId(e.target.value)}>
+            <option value="">Sem dono</option>
+            {membros.filter((m) => m.status !== "removido").map((m) => (
+              <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>
+            ))}
+          </select>
+          <button
+            className="primario"
+            onClick={() => {
+              if (!novoNome.trim()) return;
+              emitir({
+                acao: "criar",
+                token: { nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5, userId: novoUserId || null },
+              }, () => { setNovoNome(""); setNovoUserId(""); });
+            }}
+          >Adicionar token</button>
+          {selVtt && (
+            <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
+          )}
+        </div>
       )}
     </section>
   );

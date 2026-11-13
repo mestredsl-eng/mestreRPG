@@ -2009,3 +2009,44 @@ textarea:focus-visible,
 }
 .erros-salvamento ul { margin: 6px 0 0; padding-left: 20px; }
 .erros-salvamento .mini { margin-left: 6px; }
+
+/* Mesa virtual — mapa e tokens */
+.vtt-tabuleiro {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  max-height: 62vh;
+  background-size: contain;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: #14161c;
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+.vtt-token {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 3px solid #fff;
+  color: #fff;
+  font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+  box-shadow: 0 2px 6px rgba(0,0,0,.5);
+  touch-action: none;
+}
+.vtt-token:active { cursor: grabbing; }
+.vtt-token-meu { border-color: #ffd166; box-shadow: 0 0 0 2px #ffd16688, 0 2px 6px rgba(0,0,0,.5); }
+.vtt-controles { margin-top: 10px; flex-wrap: wrap; gap: 8px; }
+.vtt-controles input { min-width: 140px; }
+@media (max-width: 700px) {
+  .vtt-tabuleiro { aspect-ratio: 4 / 3; max-height: 50vh; }
+  .vtt-token { width: 36px; height: 36px; font-size: 12px; }
+}
