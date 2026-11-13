@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { autenticarHandshake } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
-import { setIo } from "../lib/io.js";
+import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 
@@ -74,7 +74,7 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
     // Entrar na sala de uma campanha (somente membros não-removidos)
     socket.on("entrar-campanha", async (campaignId: string, cb?: (ok: boolean) => void) => {
       const usuario = socket.data.usuario;
-      if (!usuario || typeof campaignId !== "string") {
+      if (!usuario || typeof campaignId !== "string" || barreiraRestauracaoAtiva(campaignId)) {
         cb?.(false);
         return;
       }
@@ -90,8 +90,12 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
         )
         .limit(1);
       const ok = !!m;
-      if (ok) socket.join(`campanha:${campaignId}`);
-      cb?.(ok);
+      // revalidação ATÔMICA imediatamente antes do join: sem await
+      // entre a checagem e o ingresso — uma restauração que começou
+      // durante a consulta de membership não deixa o socket escapar
+      // da evacuação
+      if (ok && !barreiraRestauracaoAtiva(campaignId)) socket.join(`campanha:${campaignId}`);
+      cb?.(ok && !barreiraRestauracaoAtiva(campaignId));
     });
 
     socket.on("sair-campanha", (campaignId: string) => {
