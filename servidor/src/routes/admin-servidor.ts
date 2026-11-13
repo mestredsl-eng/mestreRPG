@@ -120,7 +120,7 @@ servidorRouter.get("/config", async (_req, res) => {
   res.json({
     nomeInstalacao: await getJsonSetting("nomeInstalacao", "Mestre RPG"),
     backup: await getConfigBackup(),
-    acesso: await getJsonSetting("acesso", { dominioPublico: "", proxyHops: 1, https: false }),
+    acesso: await getJsonSetting("acesso", config.acesso),
     arquivos: await getJsonSetting("arquivos", { tamanhoMaxMb: config.arquivos.tamanhoMaxMb }),
     servidorJson: config,
   });
@@ -138,7 +138,7 @@ servidorRouter.put("/config", async (req, res) => {
   if (d.nomeInstalacao !== undefined) await gravar("nomeInstalacao", d.nomeInstalacao);
   if (d.backup) await setConfigBackup(d.backup);
   if (d.acesso) {
-    const atual = await getJsonSetting("acesso", { dominioPublico: "", proxyHops: 1, https: false });
+    const atual = await getJsonSetting("acesso", config.acesso);
     await gravar("acesso", { ...atual, ...d.acesso });
   }
   if (d.arquivos) {
