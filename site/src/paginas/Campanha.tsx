@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
@@ -27,6 +27,8 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const [membros, setMembros] = useState<Membro[]>([]);
   const [convites, setConvites] = useState<Convite[]>([]);
   const [aba, setAba] = useState<Aba>("info");
+  const abaRef = useRef<Aba>("info");
+  abaRef.current = aba;
   const [erro, setErro] = useState<string | null>(null);
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
@@ -65,10 +67,14 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     void carregar();
     // Sincronização em tempo real: entra na room da campanha e recarrega em mudanças.
     // A sala pertence à conexão do socket — após uma reconexão é preciso entrar
-    // de novo, senão os eventos desta campanha deixam de chegar.
+    // de novo, senão os eventos desta campanha deixam de chegar. Na aba Mesa
+    // a MesaView já reingressa nas rooms campanha:*/sessao:* a cada connect —
+    // emitir aqui seria tráfego duplicado.
     const socket = getSocket();
-    const entrar = () => socket.emit("entrar-campanha", id, () => undefined);
-    entrar();
+    const entrar = () => {
+      if (abaRef.current !== "mesa") socket.emit("entrar-campanha", id);
+    };
+    socket.emit("entrar-campanha", id);
     socket.on("connect", entrar);
     const aoMudar = () => void carregar();
     socket.on("membros:atualizados", aoMudar);
