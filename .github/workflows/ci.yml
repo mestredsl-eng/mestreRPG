@@ -225,6 +225,7 @@ jobs:
             homologacao-validacao-ficha.mjs \
             homologacao-exclusao-personagem.mjs \
             homologacao-busca-filtros.mjs \
+            teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-nevoa.mjs \
             homologacao-pacotes-forjados.mjs \
