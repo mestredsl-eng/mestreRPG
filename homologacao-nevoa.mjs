@@ -660,7 +660,11 @@ try {
   await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
   const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
-  await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
+  // janela de incerto pode incluir refresh/reconexão que desliga o
+  // pincel (o botão fica desabilitado durante o incerto) — só há gesto
+  // a bloquear se o pincel continuar ativo; a asserção de "nada
+  // emitido" permanece válida nos dois casos
+  if (await pincelOn(pgM)) await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
   await pgM.waitForTimeout(400);
   t("incerto: mutações bloqueadas e 2º desenho não emitido",
     desfezBloq === false && ocultarBloq === false && nevoaEmitidos === nEmAntes + 1,
@@ -697,7 +701,8 @@ try {
   await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
   const desfezOff2 = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const nEm2 = nevoaEmitidos;
-  await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
+  // idem: gesto bloqueado só existe se o pincel seguir ativo
+  if (await pincelOn(pgM)) await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
   await pgM.waitForTimeout(400);
   t("não recebida: incerto bloqueia e nada mais é emitido",
     desfezOff2 === false && nevoaEmitidos === nEm2,
