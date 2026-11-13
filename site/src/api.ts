@@ -24,9 +24,11 @@ export interface UsuarioAdmin extends Usuario {
 
 export class ApiError extends Error {
   detalhes?: unknown;
-  constructor(mensagem: string, detalhes?: unknown) {
+  status: number;
+  constructor(mensagem: string, detalhes?: unknown, status = 0) {
     super(mensagem);
     this.detalhes = detalhes;
+    this.status = status;
   }
 }
 
@@ -38,8 +40,8 @@ async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise
   });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const c = corpo as { erro?: string; detalhes?: unknown };
-    throw new ApiError(c.erro ?? `HTTP ${res.status}`, c.detalhes);
+    const c = corpo as { erro?: string; mensagem?: string; detalhes?: unknown };
+    throw new ApiError(c.mensagem ?? c.erro ?? `HTTP ${res.status}`, c.detalhes, res.status);
   }
   return corpo as T;
 }
@@ -142,27 +144,40 @@ export const api = {
     requisicao<{ ok: boolean; version: number }>(`/campaigns/${cid}/sheet-templates/${tid}/publish`, { method: "POST", body: JSON.stringify({ versionId }) }),
 
   // Personagens (Etapa 4)
-  listarPersonagens: (cid: string) =>
-    requisicao<{ personagens: PersonagemResumo[] }>(`/campaigns/${cid}/characters`),
+  listarPersonagens: (cid: string, arquivados = false) =>
+    requisicao<{ personagens: PersonagemResumo[] }>(`/campaigns/${cid}/characters${arquivados ? "?arquivados=1" : ""}`),
   criarPersonagem: (cid: string, dados: { name: string; templateVersionId?: string; data?: Record<string, unknown>; isNpc?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/campaigns/${cid}/characters`, { method: "POST", body: JSON.stringify(dados) }),
   obterPersonagem: (charId: string) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`),
   previaPontos: (charId: string, dados: Record<string, unknown>) =>
-    requisicao<{ pontos: ResultadoPontos }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
+    requisicao<{ pontos: ResultadoPontos; validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
   atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
-    requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"] }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
-  alterarVitalidade: (charId: string, nivel: number) =>
-    requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel }) }),
+    requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"]; vitalidade?: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"]; ferimento?: { de: number; para: number } }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),
+  alterarVitalidade: (charId: string, nivel: number, motivo?: string) =>
+    requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel, motivo }) }),
   /** Bônus individual de pontos — somente mestre. */
   adminPontos: (charId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
     requisicao<{ ok: boolean; pontos: { bonus: number; selado: boolean; historico: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] } }>(`/characters/${charId}/pontos`, { method: "POST", body: JSON.stringify(dados) }),
+  excluirPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean }>(`/characters/${charId}`, { method: "DELETE" }),
+  arquivarPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean; statusAnterior?: string; jaArquivado?: boolean }>(`/characters/${charId}/arquivar`, { method: "POST" }),
+  desarquivarPersonagem: (charId: string) =>
+    requisicao<{ ok: boolean; status?: string }>(`/characters/${charId}/desarquivar`, { method: "POST" }),
 
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
     requisicao<RegrasCampanha>(`/campaigns/${cid}/regras`),
+  listarAcervoCampanha: (cid: string) =>
+    requisicao<{ livros: LivroAcervoCampanha[] }>("/campaigns/" + cid + "/regras/acervo"),
+  aplicarLivroAcervo: (cid: string, bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) =>
+    requisicao<{ ok: boolean; livroId: string; versaoAplicada: number; inseridos: number; atualizados: number; mantidos: number }>(
+      "/campaigns/" + cid + "/regras/acervo/" + bookId + "/aplicar",
+      { method: "POST", body: JSON.stringify({ decisoes }) },
+    ),
   criarElementoRegra: (cid: string, dados: ElementoRegraInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/regras/elementos`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarElementoRegra: (cid: string, elementId: string, dados: Partial<ElementoRegraInput>) =>
@@ -194,8 +209,8 @@ export const api = {
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}`, { method: "DELETE" }),
   transferirItem: (charId: string, itemId: string, destinoCharacterId: string, quantidade?: number) =>
     requisicao<{ ok: boolean }>(`/characters/${charId}/inventario/${itemId}/transferir`, { method: "POST", body: JSON.stringify({ destinoCharacterId, quantidade }) }),
-  equiparItem: (charId: string, itemId: string, slot?: string) =>
-    requisicao<{ id: string }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot }) }),
+  equiparItem: (charId: string, itemId: string, slot?: string, requestId?: string) =>
+    requisicao<{ id: string; deduplicado?: boolean }>(`/characters/${charId}/inventario/${itemId}/equipar`, { method: "POST", body: JSON.stringify({ slot, requestId }) }),
   listarEquipamentos: (charId: string) =>
     requisicao<{ equipamentos: Equipamento[]; slots: string[] }>(`/characters/${charId}/equipamentos`),
   adicionarEquipamento: (charId: string, dados: { name: string; kind?: string; slot?: string; equipped?: boolean; description?: string }) =>
@@ -222,7 +237,7 @@ export const api = {
     requisicao<{ id: string; saldo: number }>(`/characters/${charId}/financeiro/movimentar`, { method: "POST", body: JSON.stringify(dados) }),
   transferirFinanceiro: (charId: string, dados: { origemAccountId: string; destinoAccountId: string; valor: number; descricao?: string; requestId?: string }) =>
     requisicao<{ ok: boolean; tipo: string }>(`/characters/${charId}/financeiro/transferir`, { method: "POST", body: JSON.stringify(dados) }),
-  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId: string; valor: number; descricao?: string; itemId?: string; item?: ItemInventarioInput; quantidade?: number; contraparte?: string; requestId?: string }) =>
+  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId: string; valor: number; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string }) =>
     requisicao<{ ok: boolean; saldo: number }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
 
   // Catálogo de itens (Etapa 6)
@@ -288,6 +303,31 @@ export const api = {
       body: JSON.stringify({ pacote, modo, campaignId, confirmacao: modo === "substituir" ? "SUBSTITUIR" : undefined }),
     }),
 
+  // ---- Central de Novidades (Issue #42) ----
+  listarNovidades: () =>
+    requisicao<{ novidades: Novidade[]; naoLidas: number }>("/novidades"),
+  novidadesNaoLidas: () =>
+    requisicao<{ naoLidas: number }>("/novidades/nao-lidas"),
+  obterNovidade: (id: string) =>
+    requisicao<{ novidade: Novidade }>(`/novidades/${id}`),
+  marcarNovidadeLida: (id: string, revisao: string) =>
+    requisicao<{ ok: boolean }>(`/novidades/${id}/lida`, { method: "POST", body: JSON.stringify({ revisao }) }),
+  // Administração de novidades (somente admin)
+  listarNovidadesAdmin: () =>
+    requisicao<{ novidades: NovidadeAdmin[] }>("/admin/novidades"),
+  obterNovidadeAdmin: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`),
+  criarNovidade: (dados: NovidadeInput) =>
+    requisicao<{ novidade: NovidadeAdmin }>("/admin/novidades", { method: "POST", body: JSON.stringify(dados) }),
+  atualizarNovidade: (id: string, dados: Partial<NovidadeInput>) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  publicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/publicar`, { method: "POST" }),
+  despublicarNovidade: (id: string) =>
+    requisicao<{ novidade: NovidadeAdmin }>(`/admin/novidades/${id}/despublicar`, { method: "POST" }),
+  removerNovidade: (id: string) =>
+    requisicao<{ ok: boolean }>(`/admin/novidades/${id}`, { method: "DELETE" }),
+
   // ---- Etapa 9: biblioteca de arquivos ----
   listarArquivos: (cid: string) =>
     requisicao<{ arquivos: ArquivoBiblioteca[]; limites: { tamanhoMaxMb: number }; config: { jogadoresEnviam: boolean; espectadorVe: boolean } }>(`/campaigns/${cid}/arquivos`),
@@ -344,6 +384,50 @@ export const api = {
     requisicao<{ ok: boolean; seguranca?: string; mensagem?: string; proximoPasso?: string }>(`/admin/servidor/backups/${id}/restaurar`, { method: "POST", body: JSON.stringify({ confirmacao: "RESTAURAR", modo }) }),
   desligarServidor: () =>
     requisicao<{ ok: boolean; mensagem?: string }>("/admin/servidor/desligar", { method: "POST", body: "{}" }),
+
+  // ---- Acervo global de livros de regras ----
+
+  listarLivrosAcervo: (q?: string, tipo?: string, incluirExcluidos = false, signal?: AbortSignal) => {
+    const params = new URLSearchParams();
+    if (q) params.set("q", q);
+    if (tipo) params.set("tipo", tipo);
+    if (incluirExcluidos) params.set("incluirExcluidos", "1");
+    const qs = params.toString();
+    return requisicao<{ livros: LivroAcervoResumo[]; total: number }>(`/biblioteca/livros${qs ? `?${qs}` : ""}`, { signal });
+  },
+  obterLivroAcervo: (id: string, signal?: AbortSignal) =>
+    requisicao<{ livro: LivroAcervoResumo; itens: ItemLivroAcervo[] }>(`/biblioteca/livros/${id}`, { signal }),
+  criarLivroAcervo: (dados: LivroAcervoInput) =>
+    requisicao<{ livro: LivroAcervoResumo }>("/biblioteca/livros", { method: "POST", body: JSON.stringify(dados) }),
+  atualizarLivroAcervo: (id: string, dados: Partial<LivroAcervoInput>) =>
+    requisicao<{ livro: LivroAcervoResumo }>(`/biblioteca/livros/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerLivroAcervo: (id: string, definitivo = false) =>
+    requisicao<{ ok: boolean; excluido?: boolean; definitivo?: boolean }>(`/biblioteca/livros/${id}${definitivo ? "?definitivo=1" : ""}`, { method: "DELETE" }),
+  restaurarLivroAcervo: (id: string) =>
+    requisicao<{ livro: LivroAcervoResumo }>(`/biblioteca/livros/${id}/restaurar`, { method: "POST", body: "{}" }),
+  adicionarItemLivro: (bookId: string, dados: ItemLivroInput) =>
+    requisicao<{ ok: boolean; id: string }>(`/biblioteca/livros/${bookId}/itens`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarItemLivro: (bookId: string, itemId: string, dados: Partial<ItemLivroInput>) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/${itemId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerItemLivro: (bookId: string, itemId: string) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/${itemId}`, { method: "DELETE" }),
+  reordenarItensLivro: (bookId: string, itens: { id: string; ordem: number }[]) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/livros/${bookId}/itens/ordem`, { method: "PUT", body: JSON.stringify({ itens }) }),
+  previaImportacaoAcervo: (envelope: EnvelopeAcervo) =>
+    requisicao<PreviaImportacaoAcervo>("/biblioteca/importar/previa", { method: "POST", body: JSON.stringify(envelope) }),
+  confirmarImportacaoAcervo: (envelope: EnvelopeAcervo, decisoes: DecisaoImportacao[]) =>
+    requisicao<{ ok: boolean; resultados: { indice: number; titulo: string; acao: string; bookId: string }[] }>(
+      "/biblioteca/importar/confirmar",
+      { method: "POST", body: JSON.stringify({ envelope, decisoes: { decisoes } }) }
+    ),
+  urlExportarAcervo: () => `${API_BASE}/biblioteca/exportar`,
+  urlExportarLivro: (id: string) => `${API_BASE}/biblioteca/livros/${id}/exportar`,
+  listarBackupsLivro: (bookId: string, signal?: AbortSignal) =>
+    requisicao<{ backups: BackupLivro[] }>(`/biblioteca/livros/${bookId}/backups`, { signal }),
+  obterBackupLivro: (backupId: string) =>
+    requisicao<{ backup: { id: string; bookId: string; motivo: string; createdAt: string; snapshot: unknown } }>(`/biblioteca/backups/${backupId}`),
+  restaurarBackupLivro: (backupId: string) =>
+    requisicao<{ ok: boolean }>(`/biblioteca/backups/${backupId}/restaurar`, { method: "POST", body: "{}" }),
 };
 
 // ---- Tipos da Etapa 4: fichas e personagens ----
@@ -374,6 +458,8 @@ export interface CampoDef {
   visibilidade: string;
   destinatarios?: string[];
   editavelPor: string;
+  /** Editabilidade efetiva para o requisitante (template + overrides + status). */
+  editavel?: boolean;
   usadoEmTestes?: boolean;
   custoPontos?: number;
   custoProgressivo?: number[];
@@ -428,6 +514,7 @@ export interface PersonagemResumo {
   membershipId: string;
   ehEu: boolean;
   isNpc?: boolean;
+  arquivadoDe?: string | null;
   updatedAt: string;
 }
 
@@ -459,7 +546,7 @@ export interface FichaRenderizada {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   vida?: {
     hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+    vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null; origem?: string | null }[] } | null;
     podeEditarHp: boolean;
     podeEditarVitalidade: boolean;
   } | null;
@@ -546,6 +633,10 @@ export interface ConfigRegras {
     niveis: { nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[];
     edicaoPor: string;
   };
+  conversaoFerimento?: {
+    habilitada: boolean;
+    limiares: { ate: number; nivel: number }[];
+  };
   dados?: {
     d10SucessoMinimo: number;
   };
@@ -564,6 +655,7 @@ export interface ElementoVinculavel {
   key: string;
   name: string;
   category: string | null;
+  descricao?: string;
   niveis?: { descricao?: string; custo?: number }[];
   custoPontos?: number;
   maximo?: number;
@@ -580,7 +672,7 @@ export interface ResultadoValidacaoRegras {
 /** Resumo de HP/Vitalidade (vida.ts) — ficha real ou simulação. */
 export interface VidaResumo {
   hp: { maximo: number; atual: number; historico: { em: string; tipo: string; quantidade: number; motivo: string | null; autorNome: string | null }[] } | null;
-  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null } | null;
+  vitalidade: { nivel: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean; niveis: { indice: number; nome: string; penalidadeDados: number; bloqueiaAcoes: boolean }[]; alteradoEm: string | null; alteradoPor: string | null; historico: { em: string; nivelAnterior: number; nivelNovo: number; motivo: string | null; autorNome: string | null; origem?: string | null }[] } | null;
 }
 
 /** Resposta do simulador da prévia do editor (POST /regras/simulacao). */
@@ -820,6 +912,8 @@ export interface PersonagemDetalhe {
     templateId?: string;
     donoNome?: string | null;
     isNpc?: boolean;
+    ehEu?: boolean;
+    arquivadoDe?: string | null;
     createdAt?: string;
     updatedAt?: string;
   };
@@ -1009,3 +1103,155 @@ export interface ConfigServidor {
 }
 export interface LogServidor { ts: string; nivel: string; msg: string; detalhe?: unknown }
 export interface BackupServidor { id: string; kind: string; filePath: string; sizeBytes: number | null; note: string | null; createdAt: string; sucesso?: boolean }
+
+// ---- Acervo global de livros de regras ----
+
+export interface LivroAcervoCampanha {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  autor: string | null;
+  sistema: string | null;
+  edicao: string | null;
+  tipo: string;
+  versao: number;
+  totalItens: number;
+  aplicado: boolean;
+  versaoAplicada: number | null;
+  aplicadoEm: string | null;
+  atualizacaoDisponivel: boolean;
+}
+
+export interface LivroAcervoResumo {
+  id: string;
+  titulo: string;
+  descricao: string | null;
+  autor: string | null;
+  sistema: string | null;
+  edicao: string | null;
+  tipo: "livro" | "suplemento" | string;
+  versao: number;
+  formatoVersao: number;
+  origem: "manual" | "importado" | string;
+  excluidoEm?: string | null;
+  totalItens?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ItemLivroAcervo {
+  id: string;
+  bookId?: string;
+  kind: string;
+  key: string;
+  name: string;
+  category: string | null;
+  parentKey: string | null;
+  definition: Record<string, unknown>;
+  ordem: number;
+}
+
+export interface LivroAcervoInput {
+  titulo: string;
+  descricao?: string | null;
+  autor?: string | null;
+  sistema?: string | null;
+  edicao?: string | null;
+  tipo?: "livro" | "suplemento";
+  itens?: ItemLivroInput[];
+}
+
+export interface ItemLivroInput {
+  kind: string;
+  key: string;
+  name: string;
+  category?: string | null;
+  parentKey?: string | null;
+  definition?: Record<string, unknown>;
+  ordem?: number;
+}
+
+export interface LivroEnvelope {
+  id?: string;
+  titulo: string;
+  descricao?: string | null;
+  autor?: string | null;
+  sistema?: string | null;
+  edicao?: string | null;
+  tipo?: "livro" | "suplemento";
+  versao?: number;
+  formatoVersao?: number;
+  itens: (ItemLivroInput & { id?: string })[];
+}
+
+export interface EnvelopeAcervo {
+  formato: "mestre-rpg-biblioteca";
+  versao: number;
+  livros: LivroEnvelope[];
+  exportadoEm?: string;
+}
+
+export interface PreviaLivro {
+  indice: number;
+  titulo: string;
+  acao: "novo" | "atualizar";
+  bookId: string | null;
+  metadadosAlterados: { campo: string; de: unknown; para: unknown }[];
+  resumo: { itensNovos: number; itensAlterados: number; itensIdenticos: number; itensAusentesPreservados: number };
+  conflitos: { kind: string; key: string; name: string; campos: string[] }[];
+  aviso: string;
+}
+
+export interface PreviaImportacaoAcervo {
+  formato: string;
+  versao: number;
+  totalLivros: number;
+  novos: number;
+  atualizacoes: number;
+  livros: PreviaLivro[];
+}
+
+export interface DecisaoImportacao {
+  indice: number;
+  metadados: "atualizar" | "manter";
+  itens: Record<string, "atualizar" | "manter">;
+}
+
+export interface BackupLivro {
+  id: string;
+  motivo: string;
+  createdAt: string;
+  itens: number;
+}
+
+// ---- Central de Novidades (Issue #42) ----
+export type CategoriaNovidade = "novidade" | "melhoria" | "correcao";
+export type EstadoNovidade = "rascunho" | "publicada";
+
+export interface Novidade {
+  id: string;
+  titulo: string;
+  resumo: string | null;
+  conteudo: string;
+  versao: string | null;
+  categoria: CategoriaNovidade;
+  estado: EstadoNovidade;
+  publicadoEm: string | null;
+  criadoEm: string;
+  /** Token da versão do conteúdo exibido — obrigatório para marcar como lida. */
+  revisao: string;
+  lida?: boolean;
+}
+
+export interface NovidadeAdmin extends Novidade {
+  leituras: number;
+}
+
+export interface NovidadeInput {
+  titulo: string;
+  resumo?: string | null;
+  conteudo?: string;
+  versao?: string | null;
+  categoria?: CategoriaNovidade;
+  estado?: EstadoNovidade;
+}

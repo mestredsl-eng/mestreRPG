@@ -1,8 +1,10 @@
 import { Router, type Request } from "express";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, ne, inArray } from "drizzle-orm";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
@@ -19,7 +21,7 @@ import {
   type Visibilidade,
   type EditavelPor,
 } from "../lib/ficha.js";
-import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
+import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, nivelExigidoPorHp, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { lerPontos, bonusPontos, comSeloPontos, aplicarBonusPontos } from "../lib/pontos.js";
 import {
   carregarRegras,
@@ -73,6 +75,18 @@ function overridesDe(personagem: typeof characters.$inferSelect): Overrides {
   return (personagem.overrides ?? {}) as Overrides;
 }
 
+/** Comparação tolerante para detectar alteração real de um campo:
+ *  null/undefined/"" equivalem a "vazio"; escalares comparam por valor. */
+function mesmoValorCampo(a: unknown, b: unknown): boolean {
+  const norm = (v: unknown) => (v === undefined || v === null || v === "" ? null : v);
+  const na = norm(a), nb = norm(b);
+  if (na === nb) return true;
+  if (typeof na === "object" || typeof nb === "object") {
+    return JSON.stringify(na ?? null) === JSON.stringify(nb ?? null);
+  }
+  return String(na) === String(nb);
+}
+
 /**
  * Monta a ficha para resposta:
  * - ehMestre: tudo + calculados
@@ -108,7 +122,16 @@ function montarFicha(
   for (const secao of estrutura.secoes) {
     const camposVisiveis = visMap.get(secao.id) ?? [];
     if (!camposVisiveis.length && !temFilhoVisivel(secao.id)) continue;
-    estruturaFiltrada.secoes.push({ ...secao, campos: camposVisiveis });
+    estruturaFiltrada.secoes.push({
+      ...secao,
+      // editável efetivo para ESTE requisitante (template + overrides +
+      // status) — o frontend usa para desabilitar campos exclusivos do
+      // mestre em vez de deixar o jogador "achar" que salvou.
+      campos: camposVisiveis.map((c) => ({
+        ...c,
+        editavel: campoEditavelPor(c, overrides[c.id], ehMestre, personagem.status),
+      })),
+    });
     for (const c of camposVisiveis) {
       if (c.tipo === "calculado") continue;
       // Carteira: o valor do campo são só as movimentações (array);
@@ -231,6 +254,8 @@ async function personagemPublico(
       templateId: carregada.templateId,
       donoNome: dono?.displayName ?? dono?.username ?? null,
       isNpc: p.isNpc,
+      ehEu: ehDono,
+      arquivadoDe: p.status === "arquivado" ? (metaArquivamento(p.data)?.statusAnterior ?? null) : null,
       createdAt: p.createdAt,
       updatedAt: p.updatedAt,
     },
@@ -240,10 +265,33 @@ async function personagemPublico(
 
 // ---------- listagem ----------
 
-/** GET /api/campaigns/:campaignId/characters — mestre vê todos; jogador só os seus */
+/** Status que o jogador pode excluir do próprio personagem. */
+const STATUS_EXCLUIVEIS_JOGADOR = new Set(["rascunho", "devolvida", "reaberta"]);
+/** Metadado interno de arquivamento (status anterior + auditoria). Reservado:
+ *  nunca vem de campos da ficha — validarFicha descarta chaves fora do modelo. */
+const CHAVE_ARQUIVAMENTO = "__arquivamento";
+const STATUS_VALIDOS = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
+
+function metaArquivamento(data: unknown): { statusAnterior?: string; arquivadoEm?: string; arquivadoPor?: string } | null {
+  const meta = (data as Record<string, unknown> | null)?.[CHAVE_ARQUIVAMENTO];
+  return meta && typeof meta === "object" ? (meta as { statusAnterior?: string }) : null;
+}
+
+/** GET /api/campaigns/:campaignId/characters — mestre vê todos; jogador só os seus.
+ *  Arquivados ficam fora da listagem ativa; `?arquivados=1` lista só eles. */
 personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) => {
   const campaignId = req.params.campaignId;
   const ehMestre = req.membership!.role === "mestre";
+  const soArquivados = req.query.arquivados === "1" || req.query.arquivados === "true";
+  // A consulta de arquivados é exclusiva do mestre — jogador recebe 403
+  // em vez de uma listagem vazia, para não sugerir filtro disponível.
+  if (soArquivados && !ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode consultar personagens arquivados" });
+    return;
+  }
+  const filtroStatus = soArquivados
+    ? eq(characters.status, "arquivado")
+    : ne(characters.status, "arquivado");
   let rows;
   if (ehMestre) {
     rows = await db
@@ -251,7 +299,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       .from(characters)
       .innerJoin(memberships, eq(characters.membershipId, memberships.id))
       .innerJoin(users, eq(memberships.userId, users.id))
-      .where(eq(characters.campaignId, campaignId))
+      .where(and(eq(characters.campaignId, campaignId), filtroStatus))
       .orderBy(desc(characters.updatedAt));
   } else {
     rows = await db
@@ -259,7 +307,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       .from(characters)
       .innerJoin(memberships, eq(characters.membershipId, memberships.id))
       .innerJoin(users, eq(memberships.userId, users.id))
-      .where(and(eq(characters.campaignId, campaignId), eq(memberships.userId, req.usuario!.id)))
+      .where(and(eq(characters.campaignId, campaignId), eq(memberships.userId, req.usuario!.id), filtroStatus))
       .orderBy(desc(characters.updatedAt));
   }
   res.json({
@@ -272,6 +320,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       membershipId: r.personagem.membershipId,
       ehEu: r.membership.userId === req.usuario!.id,
       isNpc: r.personagem.isNpc,
+      arquivadoDe: r.personagem.status === "arquivado" ? (metaArquivamento(r.personagem.data)?.statusAnterior ?? null) : null,
       updatedAt: r.personagem.updatedAt,
     })),
   });
@@ -423,10 +472,11 @@ const previaPontosSchema = z.object({
 });
 
 /**
- * POST /api/characters/:characterId/pontos-previa — saldo de pontos para um
- * rascunho de dados, sem salvar. Usa exatamente o mesmo pipeline do GET
- * (custos da biblioteca, seleção e transferências de reservas), respeitando
- * a visibilidade do solicitante. Não substitui a validação do PATCH.
+ * POST /api/characters/:characterId/pontos-previa — saldo de pontos e erros
+ * de regras para um rascunho de dados, sem salvar. Usa exatamente o mesmo
+ * pipeline do GET (custos da biblioteca, seleção e transferências de
+ * reservas + validarRegras), respeitando a visibilidade do solicitante.
+ * Não substitui a validação do PATCH.
  */
 personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pontos-previa", janelaMs: 5 * 60_000, max: 240 }), async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
@@ -445,6 +495,42 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     return;
   }
   const regras = await carregarRegras(acesso.personagem.campaignId);
+
+  // Mesma semântica do PATCH: o rascunho só altera campos que o solicitante
+  // pode editar (template + overrides + status); campos ocultos ou
+  // não-editáveis preservam o valor persistido — um jogador não consegue
+  // influenciar a validação enviando valores artificiais para campos
+  // que não deveria ver. Nada é persistido.
+  const p = acesso.personagem;
+  const overrides = overridesDe(p);
+  const dadosPersistidos = (p.data ?? {}) as Record<string, unknown>;
+  const estruturaPrev = carregada.estrutura;
+  const carteirasSaldoPrev = new Set<string>();
+  for (const c of todosCampos(estruturaPrev)) {
+    if (!c.carteira) continue;
+    const saldoOk = acesso.ehMestre || c.carteira.saldoEditavelPor !== "mestre";
+    const campoOk = acesso.ehMestre || campoEditavelPor(c, overrides[c.id], false, p.status);
+    if (saldoOk && campoOk) carteirasSaldoPrev.add(c.id);
+  }
+  let dadosMesclados = dadosPersistidos;
+  const rascunho = body.data.dados ?? {};
+  if (Object.keys(rascunho).length > 0) {
+    const vf = acesso.ehMestre
+      ? validarFicha(estruturaPrev, rascunho, { estrito: false, aplicarPadroes: false, carteirasSaldo: carteirasSaldoPrev })
+      : validarFicha(estruturaPrev, rascunho, {
+          apenasCamposPermitidos: new Set(
+            todosCampos(estruturaPrev)
+              .filter((c) => campoEditavelPor(c, overrides[c.id], false, p.status))
+              .map((c) => c.id)
+          ),
+          aplicarPadroes: false,
+          carteirasSaldo: carteirasSaldoPrev,
+        });
+    // vf.dados só contém campos permitidos e normalizados — chaves ocultas
+    // ou inválidas enviadas pelo cliente são descartadas aqui.
+    dadosMesclados = { ...dadosPersistidos, ...(vf.dados ?? {}) };
+  }
+
   const ficha = montarFicha(
     acesso.personagem,
     carregada.estrutura,
@@ -453,9 +539,11 @@ personagensRouter.post("/:characterId/pontos-previa", limiteUsuario({ nome: "pon
     req.usuario!.id,
     acesso.membershipId,
     regras,
-    body.data.dados
+    dadosMesclados
   );
-  res.json({ pontos: ficha.pontos });
+  // ficha.validacao já reflete o rascunho (dadosOverride) e filtra erros
+  // de campos invisíveis para não-mestre — mesma regra do GET.
+  res.json({ pontos: ficha.pontos, validacao: ficha.validacao });
 });
 
 const atualizarSchema = z.object({
@@ -479,6 +567,12 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  // Personagem arquivado é somente leitura por rotas comuns — inclusive
+  // para o mestre. A saída é desarquivar (POST /desarquivar) e então editar.
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = atualizarSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -487,7 +581,12 @@ personagensRouter.patch("/:characterId", async (req, res) => {
 
   const carregada = p.templateVersionId ? await carregarEstrutura(p.templateVersionId) : null;
   const estrutura = carregada?.estrutura ?? { versao: 1 as const, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } };
-  const overrides = { ...overridesDe(p), ...(body.data.overrides ?? {}) } as Overrides;
+  const overridesPersistidos = overridesDe(p);
+  // Overrides enviados pelo cliente só valem para o mestre (que pode
+  // ajustar permissões do campo). Para o jogador a autorização usa
+  // EXCLUSIVAMENTE os overrides persistidos — caso contrário ele se
+  // concederia editavelPor:"jogador" num único request.
+  const overrides = { ...overridesPersistidos, ...(ehMestre ? (body.data.overrides ?? {}) : {}) } as Overrides;
   const dados = { ...((p.data ?? {}) as Record<string, unknown>), ...(body.data.data ?? {}) };
 
   // Carteiras cujo saldo inicial o requerente pode alterar: mestre sempre;
@@ -507,6 +606,18 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     for (const campo of todosCampos(estrutura)) {
       const ov = overrides[campo.id];
       if (campoEditavelPor(campo, ov, false, p.status)) permitidos.add(campo.id);
+    }
+    // Rejeita tentativa de alterar campo não editável: valor enviado
+    // diferente do persistido -> 400 atômico (nada é gravado, inclusive
+    // os campos legítimos que vieram junto). Valor idêntico ao salvo é
+    // ignorado silenciosamente — a ficha pode reenviar a ficha inteira.
+    const dadosAtuais = (p.data ?? {}) as Record<string, unknown>;
+    for (const campo of todosCampos(estrutura)) {
+      if (permitidos.has(campo.id) || !(campo.id in body.data.data)) continue;
+      if (!mesmoValorCampo(body.data.data[campo.id], dadosAtuais[campo.id])) {
+        res.status(400).json({ erro: `Sem permissão para alterar o campo "${campo.label}"`, detalhes: { campoId: campo.id, codigo: "sem_permissao", mensagem: `O campo "${campo.label}" só pode ser alterado pelo mestre` } });
+        return;
+      }
     }
     const validacao = validarFicha(estrutura, body.data.data, { apenasCamposPermitidos: permitidos, aplicarPadroes: false, carteirasSaldo });
     if (!validacao.ok) {
@@ -563,6 +674,10 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     }
   }
 
+  // `__arquivamento` é metadado reservado do backend — o PATCH nunca o
+  // grava, mesmo que um modelo de ficha use um campo com esse id.
+  delete (dadosFinais as Record<string, unknown>).__arquivamento;
+
   // Transições de status
   let novoStatus = body.data.status ?? p.status;
   // Jogador não tira a ficha de aprovada/bloqueada — só o mestre reabre
@@ -608,16 +723,41 @@ personagensRouter.patch("/:characterId", async (req, res) => {
     dadosFinais = comSeloPontos(dadosFinais, { id: req.usuario!.id, nome: await nomeUsuario(req.usuario!.id) });
   }
 
-  await db
-    .update(characters)
-    .set({
-      name: body.data.name ?? p.name,
-      data: dadosFinais,
-      overrides: ehMestre ? overrides : overridesDe(p), // dono não altera overrides
-      status: novoStatus,
-      updatedAt: new Date(),
-    })
-    .where(eq(characters.id, p.id));
+  // O PATCH foi validado a partir do snapshot carregado no início da
+  // requisição. Antes de gravar, compara esse snapshot dentro de uma
+  // transação síncrona: HP, Vitalidade, pontos ou outro PATCH que tenham
+  // sido salvos enquanto validávamos não podem ser sobrescritos por JSON velho.
+  const conflito = db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) return "ausente" as const;
+    const mesmaData = JSON.stringify(atual.data ?? {}) === JSON.stringify(p.data ?? {});
+    const mesmosOverrides = JSON.stringify(atual.overrides ?? {}) === JSON.stringify(p.overrides ?? {});
+    const mesmoUpdatedAt = atual.updatedAt instanceof Date && p.updatedAt instanceof Date
+      ? atual.updatedAt.getTime() === p.updatedAt.getTime()
+      : String(atual.updatedAt) === String(p.updatedAt);
+    if (!mesmaData || !mesmosOverrides || !mesmoUpdatedAt || atual.name !== p.name || atual.status !== p.status) {
+      return "conflito" as const;
+    }
+    tx.update(characters)
+      .set({
+        name: body.data.name ?? atual.name,
+        data: dadosFinais,
+        overrides: ehMestre ? overrides : (atual.overrides ?? {}),
+        status: novoStatus,
+        updatedAt: new Date(),
+      })
+      .where(eq(characters.id, p.id))
+      .run();
+    return null;
+  });
+  if (conflito === "ausente") {
+    res.status(404).json({ erro: "Personagem não encontrado" });
+    return;
+  }
+  if (conflito === "conflito") {
+    res.status(409).json({ erro: "A ficha foi alterada por outra operação. Atualize os dados e tente novamente." });
+    return;
+  }
 
   await audit(req, "personagem.atualizado", { characterId: p.id, status: novoStatus });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
@@ -644,6 +784,10 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = hpSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -655,13 +799,7 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     res.status(400).json({ erro: "Pontos de vida não estão habilitados nesta campanha" });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
   const estrutura = await estruturaDoPersonagem(p);
-  const maximo = hpMaximo(cfg, estrutura, dados);
-  if (maximo === null) {
-    res.status(400).json({ erro: "Não foi possível calcular o HP máximo (verifique o atributo configurado)" });
-    return;
-  }
   if (!ehMestre && !(ehDono && cfg.edicaoPor !== "mestre")) {
     res.status(403).json({ erro: "Sem permissão para alterar o HP deste personagem" });
     return;
@@ -684,28 +822,86 @@ personagensRouter.post("/:characterId/hp", async (req, res) => {
     delta = acao === "dano" ? -Math.abs(q) : Math.abs(q);
   }
 
-  const estado = lerHp(dados);
+  // Releitura + cálculo + gravação na MESMA transação: duas alterações
+  // simultâneas não perdem entradas do histórico (read-modify-write atômico).
   const agora = new Date();
   const autorNome = await nomeUsuario(req.usuario!.id);
-  const { estado: novo, erro } = aplicarHp(estado, maximo, delta, {
-    em: agora.toISOString(),
-    tipo: acao === "dano" ? "dano" : acao === "recuperar" ? "recuperacao" : "ajuste",
-    motivo: motivo?.trim() || (acao === "dano" ? "Dano" : acao === "recuperar" ? "Recuperação" : "Ajuste"),
-    autorId: req.usuario!.id,
-    autorNome,
+  let resposta: { hp: unknown; deltaHp: number; vitalidade?: unknown; ferimento?: { de: number; para: number } } | null = null;
+  let erroHp: string | null = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { sumiu = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const maxTx = hpMaximo(cfg, estrutura, dadosTx);
+    if (maxTx === null) { erroHp = "maximo"; return; }
+    const estado = lerHp(dadosTx);
+    const { estado: novo, erro } = aplicarHp(estado, maxTx, delta, {
+      em: agora.toISOString(),
+      tipo: acao === "dano" ? "dano" : acao === "recuperar" ? "recuperacao" : "ajuste",
+      motivo: motivo?.trim() || (acao === "dano" ? "Dano" : acao === "recuperar" ? "Recuperação" : "Ajuste"),
+      autorId: req.usuario!.id,
+      autorNome,
+    });
+    if (erro) { erroHp = erro; return; }
+    const deltaEfetivo = novo.atual - (estado?.atual ?? maxTx);
+    let novosDados: Record<string, unknown> = { ...dadosTx, [CHAVE_HP]: novo };
+    // Conversão de ferimentos: somente quando o HP caiu de fato e a
+    // campanha habilitou a regra. O nível nunca desce automaticamente.
+    let vitalidadeNova: unknown;
+    let ferimento: { de: number; para: number } | undefined;
+    if (deltaEfetivo < 0) {
+      const conv = regras.config.conversaoFerimento;
+      const cfgVit = regras.config.vitalidade;
+      const totalNiveis = cfgVit?.niveis?.length ?? 0;
+      if (conv?.habilitada && totalNiveis > 0) {
+        const pctHp = maxTx > 0 ? (novo.atual / maxTx) * 100 : 0;
+        const exigido = nivelExigidoPorHp(conv, pctHp);
+        if (exigido !== null) {
+          const vitAnt = lerVitalidade(dadosTx);
+          const nivelBase = Math.min(vitAnt.nivel, totalNiveis - 1);
+          const nivelNovo = Math.min(exigido, totalNiveis - 1);
+          if (nivelNovo > nivelBase) {
+            const estadoVit = {
+              ...vitAnt,
+              nivel: nivelNovo,
+              alteradoEm: agora.toISOString(),
+              alteradoPor: req.usuario!.id,
+              historico: [
+                ...(vitAnt.historico ?? []),
+                {
+                  em: agora.toISOString(),
+                  nivelAnterior: nivelBase,
+                  nivelNovo,
+                  motivo: `Ferimento por dano de ${Math.abs(deltaEfetivo)} HP`,
+                  autorId: req.usuario!.id,
+                  autorNome,
+                  origem: "conversao-ferimento" as const,
+                },
+              ].slice(-100),
+            };
+            novosDados = { ...novosDados, [CHAVE_VITALIDADE]: estadoVit };
+            vitalidadeNova = resumoVitalidade(cfgVit, novosDados);
+            ferimento = { de: nivelBase, para: nivelNovo };
+          }
+        }
+      }
+    }
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = { hp: resumoHp(cfg, estrutura, novosDados), deltaHp: deltaEfetivo, vitalidade: vitalidadeNova, ferimento };
   });
-  if (erro) {
-    res.status(400).json({ erro });
+  if (sumiu) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (erroHp === "maximo") {
+    res.status(400).json({ erro: "Não foi possível calcular o HP máximo (verifique o atributo configurado)" });
     return;
   }
-  const novosDados = { ...dados, [CHAVE_HP]: novo };
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
-  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: novo.atual - (estado?.atual ?? maximo) });
+  if (erroHp) { res.status(400).json({ erro: erroHp }); return; }
+  await audit(req, "personagem.hp", { characterId: p.id, acao, delta: resposta!.deltaHp, ferimento: resposta!.ferimento ?? null });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, hp: resumoHp(cfg, estrutura, novosDados) });
+  res.json({ ok: true, hp: resposta!.hp, vitalidade: resposta!.vitalidade, ferimento: resposta!.ferimento });
 });
 
-const vitalidadeSchema = z.object({ nivel: z.number().int().min(0) });
+const vitalidadeSchema = z.object({ nivel: z.number().int().min(0), motivo: z.string().max(300).optional() });
 
 /** POST /api/characters/:characterId/vitalidade — define o nível de ferimento. */
 personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
@@ -715,6 +911,10 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
     return;
   }
   const { personagem: p, ehMestre, ehDono } = acesso;
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = vitalidadeSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
@@ -730,14 +930,43 @@ personagensRouter.post("/:characterId/vitalidade", async (req, res) => {
     res.status(403).json({ erro: "Sem permissão para alterar a vitalidade deste personagem" });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
+  // Releitura + cálculo + gravação na MESMA transação: alterações
+  // simultâneas não perdem entradas do histórico.
   const agora = new Date();
-  const estado = { ...lerVitalidade(dados), nivel: body.data.nivel, alteradoEm: agora.toISOString(), alteradoPor: req.usuario!.id };
-  const novosDados = { ...dados, [CHAVE_VITALIDADE]: estado };
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  const autorNome = await nomeUsuario(req.usuario!.id);
+  let resposta: unknown = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual) { sumiu = true; return; }
+    const dadosTx = (atual.data ?? {}) as Record<string, unknown>;
+    const anterior = lerVitalidade(dadosTx);
+    const estado = {
+      ...anterior,
+      nivel: body.data.nivel,
+      alteradoEm: agora.toISOString(),
+      alteradoPor: req.usuario!.id,
+      historico: [
+        ...(anterior.historico ?? []),
+        {
+          em: agora.toISOString(),
+          nivelAnterior: anterior.nivel,
+          nivelNovo: body.data.nivel,
+          motivo: body.data.motivo?.trim() || null,
+          autorId: req.usuario!.id,
+          autorNome,
+          origem: "manual" as const,
+        },
+      ].slice(-100),
+    };
+    const novosDados = { ...dadosTx, [CHAVE_VITALIDADE]: estado };
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = resumoVitalidade(cfg, novosDados);
+  });
+  if (sumiu) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
   await audit(req, "personagem.vitalidade", { characterId: p.id, nivel: body.data.nivel });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, vitalidade: resumoVitalidade(cfg, novosDados) });
+  res.json({ ok: true, vitalidade: resposta });
 });
 
 // ---------- Bônus individual de pontos (somente mestre) ----------
@@ -765,22 +994,259 @@ personagensRouter.post("/:characterId/pontos", async (req, res) => {
     res.status(403).json({ erro: "Apenas o mestre pode conceder ou remover pontos" });
     return;
   }
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return;
+  }
   const body = pontosSchema.safeParse(req.body);
   if (!body.success) {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
     return;
   }
-  const dados = (p.data ?? {}) as Record<string, unknown>;
   const delta = body.data.acao === "conceder" ? body.data.quantidade : -body.data.quantidade;
   const autorNome = await nomeUsuario(req.usuario!.id);
-  const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
-    motivo: body.data.motivo,
-    autorId: req.usuario!.id,
-    autorNome,
-  });
+
+  // Barreira determinística exclusiva de teste (TOCTOU): exige modo de
+  // teste explícito (NODE_ENV=test) E MESTRE_PONTOS_GATE_DIR definido E o
+  // arquivo "armar" no diretório. Em produção qualquer um dos três
+  // ausente faz o endpoint ignorar a configuração por completo.
+  const gateDir = process.env.NODE_ENV === "test" ? process.env.MESTRE_PONTOS_GATE_DIR : undefined;
+  if (gateDir && existsSync(join(gateDir, "armar"))) {
+    try {
+      writeFileSync(join(gateDir, "chegou"), String(Date.now()));
+      const limite = Date.now() + 10_000;
+      while (!existsSync(join(gateDir, "liberar")) && Date.now() < limite) {
+        await new Promise((r) => setTimeout(r, 5));
+      }
+    } catch { /* gate é best-effort; nunca bloqueia a requisição por erro de FS */ }
+  }
+
+  // Transação: relê vínculo, ficha, calcula, grava atomicamente
   const agora = new Date();
-  await db.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id));
+  let resposta: { ok: true; pontos: { bonus: number; selado: boolean; historico: unknown[] } } | null = null;
+  let sumiu = false;
+  let revogado = false;
+  await db.transaction((tx) => {
+    // Revalidação transacional: o vínculo pode ter sido revogado/rebaixado
+    // entre a checagem inicial e esta mutação — não confiar no ehMestre.
+    const [vinculo] = tx.select().from(memberships)
+      .where(and(
+        eq(memberships.campaignId, p.campaignId),
+        eq(memberships.userId, req.usuario!.id),
+        eq(memberships.status, "ativo"),
+      ))
+      .limit(1).all();
+    if (!vinculo || vinculo.role !== "mestre") { revogado = true; return; }
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) { sumiu = true; return; }
+    const dados = (atual.data ?? {}) as Record<string, unknown>;
+    const { dados: novosDados, estado } = aplicarBonusPontos(dados, delta, {
+      motivo: body.data.motivo,
+      autorId: req.usuario!.id,
+      autorNome,
+    });
+    tx.update(characters).set({ data: novosDados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    resposta = { ok: true, pontos: { bonus: estado.bonus, selado: estado.selo !== null, historico: estado.historico } };
+  });
+  if (sumiu) {
+    res.status(404).json({ erro: "Personagem não encontrado" });
+    return;
+  }
+  if (revogado) {
+    res.status(403).json({ erro: "Apenas o mestre pode conceder ou remover pontos" });
+    return;
+  }
+
   await audit(req, "personagem.pontos", { characterId: p.id, acao: body.data.acao, quantidade: body.data.quantidade, motivo: body.data.motivo });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
-  res.json({ ok: true, pontos: { bonus: estado.bonus, selado: estado.selo !== null, historico: estado.historico } });
+  res.json(resposta);
+});
+
+// ---------- Exclusão física e arquivamento ----------
+
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+
+/** Revalida o vínculo do REQUISITANTE dentro da transação: entre a
+ *  checagem HTTP (carregarPersonagemComAcesso) e a escrita o vínculo pode
+ *  ter sido removido, bloqueado ou o papel rebaixado — o papel capturado
+ *  antes da transação nunca é autoridade definitiva. */
+function membroAutorizadoTx(tx: Tx, membershipId: string, usuarioId: string, campaignId: string) {
+  const [m] = tx.select().from(memberships)
+    .where(and(
+      eq(memberships.id, membershipId),
+      eq(memberships.campaignId, campaignId),
+      eq(memberships.userId, usuarioId),
+      eq(memberships.status, "ativo"),
+    ))
+    .limit(1).all();
+  return m ?? null;
+}
+
+/**
+ * DELETE /api/characters/:characterId — exclusão física definitiva.
+ * Mestre: qualquer status. Jogador: somente o próprio personagem em
+ * rascunho/devolvida/reaberta.
+ *
+ * Preservação histórica (política fixa):
+ * - character_fields, inventory_entries, equipment_entries,
+ *   financial_accounts, vehicles → cascata (dados exclusivos do personagem);
+ * - rolls.characterId, notes.characterId → SET NULL automático (histórico);
+ * - tests do personagem ou money_transactions PRÓPRIAS → 409 (arquivar);
+ * - money_transactions.counterpartyCharacterId de terceiros → anulado na
+ *   mesma transação (a movimentação do outro personagem é preservada);
+ * - contas financeiras referenciadas por transações de terceiros → 409.
+ */
+personagensRouter.delete("/:characterId", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p } = acesso;
+
+  type Resultado = "ok" | "ausente" | "sem_permissao" | "historico_testes" | "historico_financeiro" | "conta_referenciada";
+  const resultado = db.transaction((tx): Resultado => {
+    // Revalida TUDO com dados frescos dentro da transação — personagem,
+    // vínculo do requisitante (papel atual) e propriedade (status e dono
+    // podem ter mudado desde a checagem inicial — TOCTOU).
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb) return "sem_permissao";
+    const papelAtual = memb.role === "mestre";
+    if (!papelAtual) {
+      const [dono] = tx.select({ userId: memberships.userId, status: memberships.status, campaignId: memberships.campaignId })
+        .from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
+      if (dono?.userId !== req.usuario!.id || dono.status !== "ativo" || dono.campaignId !== p.campaignId
+        || !STATUS_EXCLUIVEIS_JOGADOR.has(atual.status)) {
+        return "sem_permissao";
+      }
+    }
+    const temTeste = tx.select({ id: tests.id }).from(tests).where(eq(tests.characterId, p.id)).limit(1).all().length > 0;
+    if (temTeste) return "historico_testes";
+    const temTxPropria = tx.select({ id: moneyTransactions.id }).from(moneyTransactions).where(eq(moneyTransactions.characterId, p.id)).limit(1).all().length > 0;
+    if (temTxPropria) return "historico_financeiro";
+    // Contas do personagem referenciadas por transações de terceiros:
+    // apagá-las violaria a FK de money_transactions.account_id — bloqueia.
+    const contaIds = tx.select({ id: financialAccounts.id }).from(financialAccounts).where(eq(financialAccounts.characterId, p.id)).all().map((r) => r.id);
+    if (contaIds.length) {
+      const refExterna = tx.select({ id: moneyTransactions.id }).from(moneyTransactions)
+        .where(and(eq(moneyTransactions.campaignId, p.campaignId), inArray(moneyTransactions.accountId, contaIds)))
+        .limit(1).all().length > 0;
+      if (refExterna) return "conta_referenciada";
+    }
+    // Contraparte em movimentações de terceiros: preserva a transação,
+    // apenas desfaz o vínculo com o personagem excluído.
+    tx.update(moneyTransactions).set({ counterpartyCharacterId: null })
+      .where(eq(moneyTransactions.counterpartyCharacterId, p.id)).run();
+    // Cascatas do schema removem os dados exclusivos do personagem.
+    tx.delete(characters).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") {
+    res.status(403).json({ erro: "Sem permissão para excluir este personagem" });
+    return;
+  }
+  if (resultado === "historico_testes") {
+    res.status(409).json({ erro: "Personagem possui histórico de testes em sessões — exclusão bloqueada para preservar o histórico. Arquive o personagem.", codigo: "historico_testes" });
+    return;
+  }
+  if (resultado === "historico_financeiro") {
+    res.status(409).json({ erro: "Personagem possui histórico financeiro — exclusão bloqueada para preservar o histórico. Arquive o personagem.", codigo: "historico_financeiro" });
+    return;
+  }
+  if (resultado === "conta_referenciada") {
+    res.status(409).json({ erro: "As contas do personagem são referenciadas por movimentações de terceiros — exclusão bloqueada. Arquive o personagem.", codigo: "conta_referenciada" });
+    return;
+  }
+
+  await audit(req, "personagem.excluido", { characterId: p.id, name: p.name, statusAnterior: p.status });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true });
+});
+
+/**
+ * POST /api/characters/:characterId/arquivar — somente mestre.
+ * Reversível: guarda o status anterior em data.__arquivamento (metadado
+ * interno — o cliente nunca escreve essa chave; validarFicha a descarta).
+ */
+personagensRouter.post("/:characterId/arquivar", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p } = acesso;
+  if (!acesso.ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode arquivar personagens" });
+    return;
+  }
+  const agora = new Date();
+  let statusAnterior: string | null = null;
+  const resultado = db.transaction((tx): "ok" | "ja_arquivado" | "ausente" | "sem_permissao" => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    // O papel é revalidado com o vínculo atual dentro da transação —
+    // um mestre rebaixado/removido entre a checagem e a escrita é recusado.
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb || memb.role !== "mestre") return "sem_permissao";
+    if (atual.status === "arquivado") return "ja_arquivado";
+    const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
+    dados[CHAVE_ARQUIVAMENTO] = {
+      statusAnterior: atual.status,
+      arquivadoEm: agora.toISOString(),
+      arquivadoPor: req.usuario!.id,
+    };
+    statusAnterior = atual.status;
+    tx.update(characters).set({ data: dados, status: "arquivado", updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para arquivar este personagem" }); return; }
+  if (resultado === "ja_arquivado") { res.json({ ok: true, jaArquivado: true }); return; }
+  await audit(req, "personagem.arquivado", { characterId: p.id, statusAnterior });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, statusAnterior });
+});
+
+/**
+ * POST /api/characters/:characterId/desarquivar — somente mestre.
+ * Restaura exatamente o status anterior gravado no arquivamento e remove
+ * o metadado. Personagem não arquivado → 409 (sem restauração duplicada).
+ */
+personagensRouter.post("/:characterId/desarquivar", async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p } = acesso;
+  if (!acesso.ehMestre) {
+    res.status(403).json({ erro: "Apenas o mestre pode restaurar personagens" });
+    return;
+  }
+  const agora = new Date();
+  let restaurado: string | null = null;
+  const resultado = db.transaction((tx): "ok" | "nao_arquivado" | "ausente" | "sem_permissao" => {
+    const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
+    if (!atual || atual.campaignId !== p.campaignId) return "ausente";
+    const memb = membroAutorizadoTx(tx, acesso.membership.id, req.usuario!.id, p.campaignId);
+    if (!memb || memb.role !== "mestre") return "sem_permissao";
+    if (atual.status !== "arquivado") return "nao_arquivado";
+    const dados = { ...((atual.data ?? {}) as Record<string, unknown>) };
+    const meta = metaArquivamento(dados);
+    const anterior = meta?.statusAnterior && STATUS_VALIDOS.has(meta.statusAnterior) ? meta.statusAnterior : "rascunho";
+    delete dados[CHAVE_ARQUIVAMENTO];
+    restaurado = anterior;
+    tx.update(characters).set({ data: dados, status: anterior, updatedAt: agora }).where(eq(characters.id, p.id)).run();
+    return "ok";
+  });
+  if (resultado === "ausente") { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (resultado === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para restaurar este personagem" }); return; }
+  if (resultado === "nao_arquivado") { res.status(409).json({ erro: "Personagem não está arquivado" }); return; }
+  await audit(req, "personagem.desarquivado", { characterId: p.id, statusRestaurado: restaurado });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, status: restaurado });
 });

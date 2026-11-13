@@ -110,6 +110,17 @@ Também é possível criar backup manual imediato pelo painel **Administração 
 
 Apenas o **administrador global** pode restaurar. Backups nunca são servidos publicamente.
 
+### Atualizar para uma nova versão
+
+1. Faça um **backup manual** em Administração → Servidor → Backups (ou confirme que o backup automático mais recente está íntegro).
+2. Atualize o código: `git pull` no mesmo diretório, ou baixe a nova versão para outra pasta.
+3. `npm install` (necessário se as dependências mudaram).
+4. `npm run db:migrate` — as migrações são aditivas e **não apagam dados**; o banco existente é preservado.
+5. Suba normalmente com `iniciar-mestre-rpg.bat` — ele recompila backend e frontend, roda as migrações e só então abre a porta.
+6. Se algo der errado, restaure o backup do passo 1 pelo procedimento acima; o banco anterior fica preservado em `backups/pre_restore_*/` para rollback.
+
+Os dados (`banco/`, `arquivos/`, `backups/`, `configuracao/`) ficam fora do código — atualizar o programa nunca exige recriar campanhas.
+
 ### Acesso externo via HTTPS (amigos pelo navegador)
 
 O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3001**. Para acesso externo, use um proxy reverso/túnel HTTPS de sua escolha (Cloudflare Tunnel, NetBird ingress, Caddy, nginx etc.) apontando para `http://localhost:3001` — o HTTPS **termina no proxy**; o backend continua HTTP interno.

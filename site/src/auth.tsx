@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { api, type Usuario } from "./api";
+import { desconectarSocket } from "./socket";
 
 type EstadoAuth =
   | { status: "carregando" }
@@ -23,6 +24,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { usuario } = await api.me();
       setEstado({ status: "autenticado", usuario });
     } catch {
+      // Sessão inválida/expirada: encerra o socket para não deixar uma
+      // conexão autenticada por sessão morta recebendo eventos.
+      desconectarSocket();
       setEstado({ status: "anonimo" });
     }
   };
@@ -32,11 +36,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const entrar = async (username: string, password: string) => {
+    // Garante que nenhuma conexão de sessão anterior seja reutilizada —
+    // o próximo getSocket() criará uma conexão nova com o novo cookie.
+    desconectarSocket();
     const { usuario } = await api.login(username, password);
     setEstado({ status: "autenticado", usuario });
   };
 
   const sair = async () => {
+    // Encerra imediatamente a conexão Socket.IO da sessão atual — a
+    // revogação no servidor também desconecta, mas não dependemos dela.
+    desconectarSocket();
     await api.logout().catch(() => undefined);
     setEstado({ status: "anonimo" });
   };

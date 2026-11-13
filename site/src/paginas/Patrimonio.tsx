@@ -15,11 +15,13 @@ interface Props {
   characterId: string;
   campaignId: string;
   souMestre: boolean;
+  /** Personagem arquivado: somente consulta — esconde todos os controles de alteração. */
+  somenteLeitura?: boolean;
 }
 
 type Aba = "inventario" | "equipamentos" | "veiculos" | "dinheiro" | "catalogo";
 
-export default function Patrimonio({ characterId, campaignId, souMestre }: Props) {
+export default function Patrimonio({ characterId, campaignId, souMestre, somenteLeitura = false }: Props) {
   const [aba, setAba] = useState<Aba>("inventario");
   const [erro, setErro] = useState<string | null>(null);
   const recarregarRef = useRef<{ fn?: () => Promise<void> }>({}).current;
@@ -56,10 +58,10 @@ export default function Patrimonio({ characterId, campaignId, souMestre }: Props
         ))}
       </div>
       {erro && <p className="erro">{erro}</p>}
-      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "equipamentos" && <Equipamentos characterId={characterId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "veiculos" && <Veiculos characterId={characterId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "equipamentos" && <Equipamentos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "veiculos" && <Veiculos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
       {aba === "catalogo" && <Catalogo campaignId={campaignId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
     </section>
   );
@@ -67,8 +69,8 @@ export default function Patrimonio({ characterId, campaignId, souMestre }: Props
 
 // ================= INVENTÁRIO =================
 
-function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean;
+function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -85,6 +87,21 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   const [slots, setSlots] = useState<string[]>([]);
   const [confirmandoItem, setConfirmandoItem] = useState<ItemInventario | null>(null);
   const [ocupadoItem, setOcupadoItem] = useState(false);
+  const [fin, setFin] = useState<Financeiro | null>(null);
+  const [comprando, setComprando] = useState(false);
+  const [vendendo, setVendendo] = useState<ItemInventario | null>(null);
+  // Idempotência de equipar: uma intenção = um requestId, reutilizado em
+  // duplo clique e retries; uma nova ação após sucesso gera outro ID.
+  const equipReqIds = useRef(new Map<string, string>()).current;
+  const equiparUnidade = async (itemId: string) => {
+    if (!equipReqIds.has(itemId)) equipReqIds.set(itemId, crypto.randomUUID());
+    const rid = equipReqIds.get(itemId)!;
+    try {
+      await api.equiparItem(characterId, itemId, slots[0], rid);
+      equipReqIds.delete(itemId);
+      await carregar();
+    } catch (e) { aoErro(e); }
+  };
 
   const carregar = useCallback(async () => {
     try {
@@ -98,8 +115,14 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
     } catch (e) { aoErro(e); }
   }, [characterId, campaignId, aoErro]);
 
+  const carregarFin = useCallback(async () => {
+    try { setFin(await api.obterFinanceiro(characterId)); }
+    catch (e) { aoErro(e); }
+  }, [characterId, aoErro]);
+
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
   useEffect(() => { api.listarEquipamentos(characterId).then((r) => setSlots(r.slots)).catch(() => undefined); }, [characterId]);
+  useEffect(() => { void carregarFin(); }, [carregarFin]);
 
   const categorias = [...new Set([...itens.map((i) => i.category).filter(Boolean) as string[], ...catalogo.map((c) => c.category).filter(Boolean) as string[]])].sort();
   const visiveis = itens.filter((i) =>
@@ -117,6 +140,7 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
   };
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
+  const podeOperar = !somenteLeitura && (souMestre || (fin?.config.jogadorCompraVenda ?? false));
 
   return (
     <div>
@@ -127,12 +151,13 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
       )}
       <div className="linha">
         <input placeholder="Buscar item…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-        <select value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
+        <select aria-label="Filtrar por categoria" value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
           <option value="">Todas as categorias</option>
           {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
 
+      {!somenteLeitura && (
       <form className="formulario linha" onSubmit={submeterNovo}>
         <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
         <input type="number" min="0.01" step="any" placeholder="Qtd" value={novo.quantity} onChange={(e) => setNovo({ ...novo, quantity: Number(e.target.value) })} style={{ width: 80 }} />
@@ -141,7 +166,9 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
         <input placeholder="Peso (kg)" type="number" min="0" step="any" value={novo.weight ?? ""} onChange={(e) => setNovo({ ...novo, weight: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ width: 110 }} />
         <input placeholder="Local" value={novo.location ?? ""} onChange={(e) => setNovo({ ...novo, location: e.target.value })} />
         <button type="submit">Adicionar</button>
+        {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
+      )}
 
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Item</th><th>Qtd</th><th>Categoria</th><th>Peso</th><th>Local</th><th></th></tr></thead>
@@ -155,8 +182,8 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
                 {qtd(item, item.data) > 0 && <span className="tag">{fmtMoeda(qtd(item, item.data))}</span>}
               </td>
               <td>
-                {editando === item.id ? (
-                  <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }}
+                {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
+                  <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }} aria-label="Quantidade"
                     onBlur={async (e) => {
                       const q = Number(e.target.value);
                       try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
@@ -170,14 +197,15 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               <td>{item.weight != null ? `${item.weight} kg` : "—"}</td>
               <td>{item.location ?? "—"}</td>
               <td className="linha">
-                <button className="secundario" title="Equipar" onClick={async () => {
-                  try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-                }}>Equipar</button>
+                {!somenteLeitura && <>
+                <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+                {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
                 <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
                 }} aoErro={aoErro} />
                 <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
+                </>}
               </td>
             </tr>
           ))}
@@ -197,8 +225,8 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             {item.description && <p className="meta">{item.description}</p>}
             <div className="registro-campo">
               <span className="registro-rotulo">Qtd</span>
-              {editando === item.id ? (
-                <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }}
+              {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
+                <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }} aria-label="Quantidade"
                   onBlur={async (e) => {
                     const q = Number(e.target.value);
                     try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
@@ -211,16 +239,17 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
             <div className="registro-campo"><span className="registro-rotulo">Categoria</span><span>{item.category ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Peso</span><span>{item.weight != null ? `${item.weight} kg` : "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
+            {!somenteLeitura && (
             <div className="registro-acoes">
-              <button className="secundario" title="Equipar" onClick={async () => {
-                try { await api.equiparItem(characterId, item.id, slots[0]); await carregar(); } catch (e) { aoErro(e); }
-              }}>Equipar</button>
+              <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+              {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
               <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
               }} aoErro={aoErro} />
               <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
             </div>
+            )}
           </div>
         ))}
         {visiveis.length === 0 && <p className="meta">Inventário vazio.</p>}
@@ -241,6 +270,26 @@ function Inventario({ characterId, campaignId, souMestre, aoErro, recarregarRef 
               .finally(() => setOcupadoItem(false));
           }}
           aoCancelar={() => { if (!ocupadoItem) setConfirmandoItem(null); }}
+        />
+      )}
+      {comprando && (
+        <ModalCompra
+          characterId={characterId}
+          catalogo={catalogo}
+          fin={fin}
+          aoErro={aoErro}
+          aoOk={async () => { setComprando(false); await carregar(); await carregarFin(); }}
+          aoFechar={() => setComprando(false)}
+        />
+      )}
+      {vendendo && (
+        <ModalVenda
+          characterId={characterId}
+          item={vendendo}
+          fin={fin}
+          aoErro={aoErro}
+          aoOk={async () => { setVendendo(null); await carregar(); await carregarFin(); }}
+          aoFechar={() => setVendendo(null)}
         />
       )}
     </div>
@@ -286,14 +335,182 @@ function TransferirButton({ item, personagens, proprioId, souMestre, onTransfer,
   );
 }
 
+// ================= COMPRA / VENDA COM CONTA =================
+
+const fmtOp = (v: number, casas: number) => v.toFixed(casas);
+
+function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
+  characterId: string;
+  catalogo: { id: string; name: string; category: string | null; data: Record<string, unknown> }[];
+  fin: Financeiro | null;
+  aoErro: (e: unknown) => void;
+  aoOk: () => Promise<void>;
+  aoFechar: () => void;
+}) {
+  const [templateId, setTemplateId] = useState("");
+  const [nome, setNome] = useState("");
+  const [qtd, setQtd] = useState(1);
+  const [valorUnit, setValorUnit] = useState<number | "">("");
+  const [contaId, setContaId] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const reqId = useRef(crypto.randomUUID()).current;
+  const casas = fin?.config.casasDecimais ?? 2;
+  // A moeda do valor é a da CONTA selecionada — nunca a principal por
+  // padrão (o backend movimenta o valor nominal na moeda da conta).
+  const contaSel = fin?.contas.find((c) => c.id === contaId);
+  const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
+  const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
+  const valido = !!contaId && Number(qtd) > 0 && Number(valorUnit) > 0 && (templateId !== "" || nome.trim().length > 0);
+  const submeter = async (e: FormEvent) => {
+    e.preventDefault();
+    if (ocupado || !valido) return;
+    setOcupado(true);
+    try {
+      await api.operacaoFinanceira(characterId, {
+        tipo: "compra", accountId: contaId, valor: total, quantidade: Number(qtd),
+        templateId: templateId || undefined,
+        item: templateId ? undefined : { name: nome.trim(), quantity: 1 },
+        requestId: reqId,
+      });
+      await aoOk();
+    } catch (err) { aoErro(err); } finally { setOcupado(false); }
+  };
+  return (
+    <div className="modal-fundo" onClick={() => { if (!ocupado) aoFechar(); }}>
+      <div className="modal cartao" onClick={(e) => e.stopPropagation()}>
+        <h4>Comprar item</h4>
+        <form className="formulario" onSubmit={submeter}>
+          <label>Item do catálogo
+            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+              <option value="">Item avulso…</option>
+              {catalogo.map((c) => <option key={c.id} value={c.id}>{c.name}{c.category ? ` (${c.category})` : ""}</option>)}
+            </select>
+          </label>
+          {templateId === "" && (
+            <label>Nome do item
+              <input value={nome} onChange={(e) => setNome(e.target.value)} required />
+            </label>
+          )}
+          <label>Quantidade
+            <input type="number" min="0.01" step="any" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} required />
+          </label>
+          <label>Valor unitário ({moeda})
+            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required />
+          </label>
+          <label>Conta que paga
+            <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
+              <option value="">Escolher conta…</option>
+              {(fin?.contas ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
+              ))}
+            </select>
+          </label>
+          {contaSel && <p className="meta">Valor movimentado na moeda da conta: {moeda}.</p>}
+          <p className="meta">Total: {fmtOp(total, casas)} {moeda}</p>
+          <div className="linha">
+            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar compra"}</button>
+            <button type="button" className="secundario" onClick={aoFechar} disabled={ocupado}>Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
+  characterId: string;
+  item: ItemInventario;
+  fin: Financeiro | null;
+  aoErro: (e: unknown) => void;
+  aoOk: () => Promise<void>;
+  aoFechar: () => void;
+}) {
+  const [qtd, setQtd] = useState(1);
+  const [valorUnit, setValorUnit] = useState<number | "">("");
+  const [contaId, setContaId] = useState("");
+  const [ocupado, setOcupado] = useState(false);
+  const reqId = useRef(crypto.randomUUID()).current;
+  const casas = fin?.config.casasDecimais ?? 2;
+  const contaSel = fin?.contas.find((c) => c.id === contaId);
+  const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
+
+  useEffect(() => {
+    if (fin && valorUnit === "") {
+      const d = item.data ?? {};
+      const aq = d.aquisicao as { formato?: string; unitCents?: number | null } | undefined;
+      let inicial: number | "" = "";
+      if (aq?.formato === "unitario-v1") {
+        // Formato novo: unitCents só existe quando o unitário é
+        // representável em centavos — caso contrário sem sugestão.
+        const uc = Number(aq.unitCents);
+        if (Number.isFinite(uc) && uc > 0) inicial = +(uc / 10 ** casas).toFixed(casas);
+      } else if (d.origem !== "compra") {
+        // Item manual: valueCents é a referência unitária informada.
+        // Item legado de compra (sem aquisicao): valueCents era o TOTAL —
+        // sem quantidade original não há unitário confiável → vazio.
+        const vc = Number(d.valueCents ?? 0);
+        if (vc > 0) inicial = +(vc / 10 ** casas).toFixed(casas);
+      }
+      if (inicial !== "") setValorUnit(inicial);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fin]);
+
+  const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
+  const valido = !!contaId && Number(qtd) > 0 && Number(qtd) <= item.quantity && Number(valorUnit) > 0;
+  const submeter = async (e: FormEvent) => {
+    e.preventDefault();
+    if (ocupado || !valido) return;
+    setOcupado(true);
+    try {
+      await api.operacaoFinanceira(characterId, {
+        tipo: "venda", accountId: contaId, valor: total,
+        itemId: item.id, quantidade: Number(qtd), requestId: reqId,
+      });
+      await aoOk();
+    } catch (err) { aoErro(err); } finally { setOcupado(false); }
+  };
+  return (
+    <div className="modal-fundo" onClick={() => { if (!ocupado) aoFechar(); }}>
+      <div className="modal cartao" onClick={(e) => e.stopPropagation()}>
+        <h4>Vender "{item.name}"</h4>
+        <p className="meta">Disponível: {item.quantity} un.</p>
+        <form className="formulario" onSubmit={submeter}>
+          <label>Quantidade
+            <input type="number" min="0.01" max={item.quantity} step="any" value={qtd} onChange={(e) => setQtd(Number(e.target.value))} required />
+          </label>
+          <label>Valor unitário ({moeda})
+            <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required />
+          </label>
+          <label>Conta que recebe
+            <select value={contaId} onChange={(e) => setContaId(e.target.value)} required>
+              <option value="">Escolher conta…</option>
+              {(fin?.contas ?? []).map((c) => (
+                <option key={c.id} value={c.id}>{c.name} — saldo {fmtOp(c.balanceCents / 10 ** casas, casas)} {c.currency}</option>
+              ))}
+            </select>
+          </label>
+          {contaSel && <p className="meta">Valor creditado na moeda da conta: {moeda}.</p>}
+          <p className="meta">Total a receber: {fmtOp(total, casas)} {moeda}</p>
+          <div className="linha">
+            <button type="submit" disabled={!valido || ocupado}>{ocupado ? "Processando…" : "Confirmar venda"}</button>
+            <button type="button" className="secundario" onClick={aoFechar} disabled={ocupado}>Cancelar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ================= EQUIPAMENTOS =================
 
-function Equipamentos({ characterId, aoErro, recarregarRef }: {
-  characterId: string; aoErro: (e: unknown) => void;
+function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Equipamento[]>([]);
   const [slots, setSlots] = useState<string[]>([]);
+  const [busca, setBusca] = useState("");
   const [nome, setNome] = useState("");
   const [slot, setSlot] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -306,14 +523,23 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
   }, [characterId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
+  const q = busca.trim().toLowerCase();
+  const visiveis = lista.filter((eq) =>
+    !q || eq.name.toLowerCase().includes(q) || (eq.description ?? "").toLowerCase().includes(q) || (eq.slot ?? "").toLowerCase().includes(q)
+  );
+
   return (
     <div>
+      <div className="linha filtros-lista">
+        <input type="search" placeholder="Buscar equipamento…" aria-label="Buscar equipamento" value={busca} onChange={(e) => setBusca(e.target.value)} />
+      </div>
       <div className="linha">
         {slots.length > 0 && slots.map((s) => {
           const ocupado = lista.find((e) => e.slot === s && e.equipped);
           return <span key={s} className="tag">{s}: {ocupado?.name ?? "—"}</span>;
         })}
       </div>
+      {!somenteLeitura && (
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try {
@@ -323,7 +549,7 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
         } catch (err) { aoErro(err); }
       }}>
         <input placeholder="Nome do equipamento" value={nome} onChange={(e) => setNome(e.target.value)} required />
-        <select value={slot} onChange={(e) => setSlot(e.target.value)}>
+        <select aria-label="Posição do equipamento" value={slot} onChange={(e) => setSlot(e.target.value)}>
           <option value="">Sem posição</option>
           {slots.map((s) => <option key={s} value={s}>{s}</option>)}
           {!slots.includes(slot) && slot && <option value={slot}>{slot}</option>}
@@ -331,16 +557,17 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
         <input placeholder="Descrição" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
         <button type="submit">Adicionar</button>
       </form>
+      )}
       <table className="tabela">
         <thead><tr><th>Equipamento</th><th>Posição</th><th>Estado</th><th></th></tr></thead>
         <tbody>
-          {lista.map((eq) => (
+          {visiveis.map((eq) => (
             <tr key={eq.id}>
               <td>{eq.name}{eq.description && <div className="meta">{eq.description}</div>}</td>
               <td>{eq.slot ?? "—"}</td>
               <td>{eq.equipped ? "Equipado" : "Guardado"}</td>
               <td>
-                {eq.equipped
+                {!somenteLeitura && (eq.equipped
                   ? <button className="secundario" onClick={async () => { try { await api.desequipar(characterId, eq.id); await carregar(); } catch (e) { aoErro(e); } }}>Desequipar</button>
                   : <button className="secundario" onClick={async () => {
                       try {
@@ -348,11 +575,12 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
                         await api.atualizarEquipamento(characterId, eq.id, { equipped: true });
                         await carregar();
                       } catch (e) { aoErro(e); }
-                    }}>Equipar</button>}
+                    }}>Equipar</button>)}
               </td>
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={4} className="meta">Nenhum equipamento.</td></tr>}
+          {lista.length > 0 && visiveis.length === 0 && <tr><td colSpan={4} className="meta">Nenhum equipamento corresponde à busca.</td></tr>}
         </tbody>
       </table>
     </div>
@@ -361,11 +589,13 @@ function Equipamentos({ characterId, aoErro, recarregarRef }: {
 
 // ================= VEÍCULOS =================
 
-function Veiculos({ characterId, aoErro, recarregarRef }: {
-  characterId: string; aoErro: (e: unknown) => void;
+function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
+  const [busca, setBusca] = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("");
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
   const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
@@ -377,8 +607,22 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
 
   const TIPOS = ["carro", "motocicleta", "caminhao", "barco", "helicoptero", "aviao", "militar", "futurista", "outro"];
 
+  const q = busca.trim().toLowerCase();
+  const visiveis = lista.filter((v) =>
+    (!filtroTipo || v.kind === filtroTipo) &&
+    (!q || v.name.toLowerCase().includes(q) || (v.brand ?? "").toLowerCase().includes(q) || (v.model ?? "").toLowerCase().includes(q) || (v.plate ?? "").toLowerCase().includes(q))
+  );
+
   return (
     <div>
+      <div className="linha filtros-lista">
+        <input type="search" placeholder="Buscar veículo…" aria-label="Buscar veículo" value={busca} onChange={(e) => setBusca(e.target.value)} />
+        <select aria-label="Filtrar por tipo de veículo" value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)}>
+          <option value="">Todos os tipos</option>
+          {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      {!somenteLeitura && (
       <form className="formulario" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try { await api.adicionarVeiculo(characterId, novo); setNovo({ name: "", kind: "carro" }); await carregar(); }
@@ -405,10 +649,11 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
         </div>
         <button type="submit">Adicionar veículo</button>
       </form>
+      )}
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Veículo</th><th>Tipo</th><th>Marca/Modelo</th><th>Ano</th><th>Placa</th><th>Posse</th><th></th></tr></thead>
         <tbody>
-          {lista.map((v) => (
+          {visiveis.map((v) => (
             <tr key={v.id}>
               <td>{v.name}</td>
               <td>{v.kind ?? "—"}</td>
@@ -416,14 +661,15 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
               <td>{v.year ?? "—"}</td>
               <td>{v.plate ?? "—"}</td>
               <td>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</td>
-              <td><button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button></td>
+              <td>{!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}</td>
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
+          {lista.length > 0 && visiveis.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo corresponde à busca.</td></tr>}
         </tbody>
       </table>
       <div className="cartoes-registro">
-        {lista.map((v) => (
+        {visiveis.map((v) => (
           <div key={v.id} className="registro-cartao">
             <div className="registro-campo"><strong>{v.name}</strong><span className="tag">{v.kind ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Marca/Modelo</span><span>{[v.brand, v.model].filter(Boolean).join(" ") || "—"}</span></div>
@@ -431,11 +677,12 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
             <div className="registro-campo"><span className="registro-rotulo">Placa</span><span>{v.plate ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Posse</span><span>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</span></div>
             <div className="registro-acoes">
-              <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>
+              {!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}
             </div>
           </div>
         ))}
         {lista.length === 0 && <p className="meta">Nenhum veículo.</p>}
+        {lista.length > 0 && visiveis.length === 0 && <p className="meta">Nenhum veículo corresponde à busca.</p>}
       </div>
       {confirmandoVeiculo && (
         <ModalConfirmar
@@ -461,8 +708,8 @@ function Veiculos({ characterId, aoErro, recarregarRef }: {
 
 // ================= DINHEIRO =================
 
-function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean; aoErro: (e: unknown) => void;
+function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [fin, setFin] = useState<Financeiro | null>(null);
@@ -489,7 +736,9 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
 
   if (!fin) return <p className="meta">Carregando…</p>;
   const cfg = fin.config;
-  const fmt = (cents: number | null | undefined) => fmtMoeda(cents, cfg.casasDecimais);
+  // O backend escala os inteiros financeiros por 10 ** casasDecimais (não sempre por 100).
+  const fmt = (unidades: number | null | undefined) =>
+    unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
   return (
     <div>
@@ -503,9 +752,11 @@ function Dinheiro({ characterId, campaignId, souMestre, aoErro, recarregarRef }:
         <span className="tag">Moeda: {cfg.moedaPrincipal} {cfg.simbolo}</span>
       </div>
 
+      {!somenteLeitura && <>
       <NovaConta characterId={characterId} cfg={cfg} aoErro={aoErro} aoOk={carregar} />
       <Movimentar characterId={characterId} contas={fin.contas} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
       <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
+      </>}
 
       <h4>Histórico financeiro</h4>
       <table className="tabela tabela-responsiva">

@@ -197,7 +197,7 @@ export default function EditorFicha({ inicial, aoMudar, vinculaveis, campaignId 
                       pools[i] = { ...pool, nome: e.target.value };
                       commit({ ...estrutura, pontos: { ...estrutura.pontos, pools } });
                     }} />
-                    <input type="number" placeholder="Pontos" value={pool.pontos} onChange={(e) => {
+                    <input type="number" placeholder="Pontos" aria-label="Pontos do pool" value={pool.pontos} onChange={(e) => {
                       const pools = [...(estrutura.pontos.pools ?? [])];
                       pools[i] = { ...pool, pontos: Number(e.target.value) };
                       commit({ ...estrutura, pontos: { ...estrutura.pontos, pools } });
