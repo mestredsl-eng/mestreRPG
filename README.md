@@ -128,7 +128,7 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 1. Aponte o túnel/proxy para `http://localhost:3001`.
 2. Configure o domínio público no túnel (certificado TLS gerenciado pelo serviço).
 3. Em **Administração → Servidor → Acesso externo** (ou `configuracao/servidor.json` → `acesso`), ajuste:
-   - `proxyHops`: número de proxies confiáveis à frente (ex.: `1`). Ativa `trust proxy` para que cookies `Secure`, IPs reais e rate limit funcionem corretamente — **não** ative se o backend ficar exposto diretamente. A mudança vale na próxima inicialização do servidor.
+   - `proxyHops`: número de proxies confiáveis à frente. O padrão é `0` — acesso direto (local/LAN) **não confia** em `X-Forwarded-For`/`X-Forwarded-Proto` enviados por clientes, o que protege o rate limit de login por IP. Só configure um valor maior quando houver proxy reverso ou túnel confiável, e use a quantidade **real** de proxies no caminho (ex.: `1` para um único túnel/proxy). Ativa `trust proxy` para que cookies `Secure`, IPs reais e rate limit funcionem corretamente. A mudança vale na próxima inicialização do servidor.
    - `dominioPublico`: hostname puro do domínio público (ex.: `rpg.seudominio.com`, sem `https://`). É usado no controle de origens do Socket.IO — somente esse domínio, localhost e IPs privados/LAN são aceitos no handshake. A mudança vale na próxima inicialização.
    - `https`: marca que o acesso externo usa HTTPS (informativo).
 4. Cookies de sessão são `HttpOnly` + `SameSite=Lax` e ganham flag `Secure` quando a conexão chega via HTTPS (detectado por `req.secure` → `X-Forwarded-Proto` respeitando `trust proxy`). Socket.IO funciona sobre WebSocket/polling através do túnel; o handshake valida a origem (Fase 5).

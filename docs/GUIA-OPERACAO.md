@@ -36,11 +36,13 @@ No Windows, `iniciar-mestre-rpg.bat` faz os passos 3–5 automaticamente na prim
   "sitePorta": 5173,
   "caminhos": { "banco": "banco/mestre-rpg.db", "arquivos": "arquivos/campanhas", "backups": "backups" },
   "arquivos": { "tamanhoMaxMb": 25, "formatosExtras": [] },
-  "acesso": { "dominioPublico": "", "proxyHops": 1, "https": false }
+  "acesso": { "dominioPublico": "", "proxyHops": 0, "https": false }
 }
 ```
 
 Se o arquivo não existir ou estiver inválido, o servidor usa os padrões e avisa no console. Todos os campos são opcionais individualmente.
+
+> **`acesso.proxyHops`:** `0` (padrão) é o correto para acesso direto pela rede local — o servidor não confia em headers `X-Forwarded-*` vindos do cliente. Só aumente para a **quantidade real de proxies/túneis confiáveis** à frente do backend (ex.: `1` para um único Cloudflare Tunnel/Caddy/nginx). Um valor menor que a topologia real quebra a detecção de IP/HTTPS; um valor maior expõe o servidor a falsificação de headers. A alteração só entra em vigor **após reiniciar o servidor** (vale tanto para `servidor.json` quanto para o painel admin).
 
 ### Variáveis de ambiente
 
