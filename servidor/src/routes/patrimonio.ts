@@ -9,6 +9,7 @@ import {
   vehicles,
   financialAccounts,
   moneyTransactions,
+  operacaoEstornos,
   itemTemplates,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
@@ -1040,8 +1041,11 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
 
 const operacaoSchema = z.object({
   tipo: z.enum(["compra", "venda"]),
-  accountId: z.string().min(1),
-  valor: z.number().positive(),
+  // Obrigatórios quando há movimentação financeira. Na compra,
+  // pagar=false dispensa conta e valor vira apenas referência opcional.
+  accountId: z.string().min(1).optional(),
+  valor: z.number().positive().optional(),
+  pagar: z.boolean().default(true),
   descricao: z.string().max(500).optional(),
   // compra: dados do item (ou templateId do catálogo); venda: itemId do inventário
   itemId: z.string().optional(),
@@ -1051,6 +1055,21 @@ const operacaoSchema = z.object({
   contraparte: z.string().max(160).optional(),
   requestId: z.string().max(120).optional(),
 });
+
+/** Metadados persistidos na movimentação para rastreio e estorno. */
+interface OperacaoMeta {
+  tipo: "compra" | "venda" | "estorno";
+  quantidade: number;
+  valorCents: number;
+  moeda: string;
+  contaId: string;
+  itemId: string | null;
+  itemNome: string | null;
+  semPagamento?: boolean;
+  estornoDe?: string;
+  operacaoOriginal?: OperacaoMeta | null;
+  item?: ReturnType<typeof snapshotItem>;
+}
 
 /** POST /api/characters/:id/financeiro/operacao — compra/venda atômica (spec §9) */
 patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
@@ -1062,18 +1081,37 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   if (!a.ehMestre && !cfg.jogadorCompraVenda) {
     res.status(403).json({ erro: "Compras/vendas não permitidas para jogadores" }); return;
   }
-  const [conta] = await db.select().from(financialAccounts).where(and(eq(financialAccounts.id, body.data.accountId), eq(financialAccounts.characterId, a.personagem.id))).limit(1);
-  if (!conta) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+  const isCompra = body.data.tipo === "compra";
+  // Venda sempre movimenta (crédito); compra admite pagar=false — sem
+  // débito fictício, sem conta e sem transação financeira.
+  const semPagamento = isCompra && body.data.pagar === false;
+  if (!isCompra && body.data.pagar === false) {
+    res.status(400).json({ erro: "Venda requer conta de recebimento" }); return;
+  }
+  if (!semPagamento && !body.data.accountId) {
+    res.status(400).json({ erro: "Conta financeira obrigatória" }); return;
+  }
+  if (!semPagamento && body.data.valor === undefined) {
+    res.status(400).json({ erro: "Valor obrigatório quando há pagamento" }); return;
+  }
+
+  const [conta] = body.data.accountId
+    ? await db.select().from(financialAccounts).where(and(eq(financialAccounts.id, body.data.accountId), eq(financialAccounts.characterId, a.personagem.id))).limit(1)
+    : [undefined];
+  if (!semPagamento && !conta) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
 
   const casas = cfg.casasDecimais;
-  const cents = paraCentavos(body.data.valor, casas);
-  // valor positivo no schema pode arredondar para zero na unidade interna
-  // (ex.: 0,001 com 2 casas) — rejeita antes de qualquer escrita.
-  if (!Number.isFinite(cents) || cents <= 0) {
+  // semPagamento: valor é referência opcional (preço de tabela) — não
+  // movimenta nada; com pagamento o valor é obrigatório e positivo.
+  const cents = paraCentavos(body.data.valor ?? 0, casas);
+  if (!semPagamento && (!Number.isFinite(cents) || cents <= 0)) {
     res.status(400).json({ erro: "Valor inválido ou abaixo da menor unidade monetária" });
     return;
   }
-  const isCompra = body.data.tipo === "compra";
+  if (semPagamento && body.data.valor !== undefined && (!Number.isFinite(cents) || cents < 0)) {
+    res.status(400).json({ erro: "Valor de referência inválido" });
+    return;
+  }
   const sinal = isCompra ? -1 : 1;
 
   // Pré-leitura apenas para erros amigáveis (404/400). A validação
@@ -1095,20 +1133,56 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   let novoSaldo = 0;
   let saldoInsuficiente = false;
   let estoqueInsuficiente = false;
+  let operacaoDuplicada = false;
+  let operacaoEstornada = false;
+  let itemCriadoId: string | null = null;
   // ID do template EFETIVAMENTE validado na transação — única fonte
   // autorizada para data.templateId e para a auditoria.
   let templateValidado: string | null = null;
   try {
     db.transaction((tx) => {
+      // 0) Idempotência da operação em si: o requestId identifica a
+      //    compra/venda mesmo quando não há movimentação financeira
+      //    (o UNIQUE de money_transactions não cobre esse caso).
+      const [opExistente] = tx.select({ id: inventoryEntries.id }).from(inventoryEntries)
+        .where(and(
+          eq(inventoryEntries.characterId, a.personagem.id),
+          sql`json_extract(${inventoryEntries.data}, '$.operacaoId') = ${requestId}`,
+        )).limit(1).all();
+      const [txExistente] = tx.select({ id: moneyTransactions.id }).from(moneyTransactions)
+        .where(and(eq(moneyTransactions.campaignId, a.personagem.campaignId), eq(moneyTransactions.requestId, requestId))).limit(1).all();
+      if (opExistente || txExistente) { operacaoDuplicada = true; return; }
+
+      // O requestId de uma operação estornada fica consumido para o
+      // personagem em QUALQUER modalidade (compra paga, compra sem
+      // pagamento ou venda) — não só em outra compra sem pagamento.
+      // Compra sem pagamento não deixa rastro em inventoryEntries nem em
+      // money_transactions depois do estorno — o registro persistente em
+      // operacao_estornos é a única prova de que o requestId já foi
+      // utilizado. Escopo da migration 0021: campanha + personagem +
+      // operação, para não bloquear outros personagens da campanha.
+      const [estornoPrevio] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+        .where(and(
+          eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+          eq(operacaoEstornos.characterId, a.personagem.id),
+          eq(operacaoEstornos.operacaoId, requestId),
+        )).limit(1).all();
+      if (estornoPrevio) { operacaoEstornada = true; return; }
+
       // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
       // valor atual, nunca sobre leitura anterior (evita lost update).
-      const [contaTx] = tx.select().from(financialAccounts)
-        .where(and(eq(financialAccounts.id, body.data.accountId), eq(financialAccounts.characterId, a.personagem.id)))
-        .limit(1).all();
-      if (!contaTx) throw new Error("conta_sumiu");
-      const saldoNovo = contaTx.balanceCents + sinal * cents;
-      const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
-      if (saldoNovo < piso) { saldoInsuficiente = true; return; }
+      let contaTx: typeof financialAccounts.$inferSelect | null = null;
+      let saldoNovo = 0;
+      if (!semPagamento) {
+        const [c] = tx.select().from(financialAccounts)
+          .where(and(eq(financialAccounts.id, body.data.accountId!), eq(financialAccounts.characterId, a.personagem.id)))
+          .limit(1).all();
+        if (!c) throw new Error("conta_sumiu");
+        contaTx = c;
+        saldoNovo = contaTx.balanceCents + sinal * cents;
+        const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
+        if (saldoNovo < piso) { saldoInsuficiente = true; return; }
+      }
 
       // 2) Re-lê o item/template dentro da transação: estoque atual e
       //    dados do catálogo são lidos no momento da escrita — um item
@@ -1133,33 +1207,25 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         templateValidado = tpl.id;
       }
 
-      // 3) Movimentação financeira (requestId → idempotência por UNIQUE)
-      tx.insert(moneyTransactions).values({
-        id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-        kind: isCompra ? "compra" : "venda",
-        amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
-        accountId: contaTx.id, amountCents: sinal * cents,
-        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
-        counterparty: body.data.contraparte ?? (itemTx ? itemTx.name : null),
-        description: body.data.descricao ?? (isCompra ? (tplTx ? `Compra: ${tplTx.name}` : "Compra") : `Venda: ${itemTx?.name ?? "item"}`),
-        requestId, createdBy: req.usuario!.id, createdAt: agora,
-      }).run();
-      tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
-
-      // 4) Inventário — o item criado guarda operacaoId (= requestId da
-      //    movimentação financeira) para vincular patrimônio ↔ financeiro.
+      // 3) Movimentação financeira — apenas quando há pagamento/
+      //    recebimento. A transação carrega o vínculo explícito com o
+      //    item e os metadados necessários ao estorno.
+      let novoItemId: string | null = null;
       if (isCompra) {
         const tplData = (tplTx?.data ?? {}) as Record<string, unknown>;
         const itemDados = body.data.item;
         const qtd = body.data.quantidade ?? itemDados?.quantity ?? 1;
+        novoItemId = crypto.randomUUID();
+        itemCriadoId = novoItemId;
         // Referência de preço unitário só existe quando cents/qtd é
         // inteiro na menor unidade — totais ínfimos por unidade
         // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
         const unitExato = cents / qtd;
         const unitCents = Number.isInteger(unitExato) ? unitExato : null;
+        const itemNome = itemDados?.name ?? tplTx?.name ?? "item";
         tx.insert(inventoryEntries).values({
-          id: crypto.randomUUID(), characterId: a.personagem.id,
-          name: itemDados?.name ?? tplTx!.name, quantity: qtd,
+          id: novoItemId, characterId: a.personagem.id,
+          name: itemNome, quantity: qtd,
           description: itemDados?.description ?? tplTx?.description ?? undefined,
           category: itemDados?.category ?? tplTx?.category ?? undefined,
           location: itemDados?.location, condition: itemDados?.condition,
@@ -1177,17 +1243,50 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             if (tplTx) mesclado.templateId = tplTx.id;
             // Campos internos sempre definidos pelo servidor.
             mesclado.valueCents = unitCents ?? undefined;
-            mesclado.totalValueCents = cents;
-            mesclado.aquisicao = { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd };
+            mesclado.totalValueCents = cents > 0 ? cents : undefined;
+            mesclado.aquisicao = {
+              formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd,
+              ...(semPagamento ? { semPagamento: true } : {}),
+            };
             mesclado.origem = "compra";
             mesclado.operacaoId = requestId;
             return mesclado;
           })(),
           createdAt: agora, updatedAt: agora,
         }).run();
-      } else if (itemTx) {
-        // Baixa condicional: só afeta linhas se o estoque atual ainda
-        // comportar a quantidade — changes===0 indica corrida perdida.
+      }
+      if (contaTx) {
+        const meta: OperacaoMeta = {
+          tipo: isCompra ? "compra" : "venda",
+          quantidade: isCompra ? (body.data.quantidade ?? body.data.item?.quantity ?? 1) : qtdVenda,
+          valorCents: cents, moeda: contaTx.currency, contaId: contaTx.id,
+          itemId: isCompra ? novoItemId : itemTx!.id,
+          itemNome: isCompra
+            ? (body.data.item?.name ?? (tplTx ? (tplTx as { name?: string }).name : null) ?? null)
+            : itemTx!.name,
+          ...(semPagamento ? { semPagamento: true } : {}),
+          ...(!isCompra && itemTx ? { item: snapshotItem(itemTx) } : {}),
+        };
+        tx.insert(moneyTransactions).values({
+          id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+          kind: isCompra ? "compra" : "venda",
+          amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
+          accountId: contaTx.id, amountCents: sinal * cents,
+          balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
+          counterparty: body.data.contraparte ?? (itemTx ? itemTx.name : null),
+          description: body.data.descricao ?? (isCompra
+            ? `Compra: ${meta.itemNome ?? "item"}`
+            : `Venda: ${itemTx?.name ?? "item"}`),
+          requestId, inventoryItemId: meta.itemId, operacao: meta,
+          createdBy: req.usuario!.id, createdAt: agora,
+        }).run();
+        tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
+      }
+
+      // 4) Baixa de estoque da venda — condicional: só afeta linhas se o
+      //    estoque atual ainda comportar a quantidade (corrida perdida
+      //    → changes===0 → rollback de tudo).
+      if (!isCompra && itemTx) {
         if (qtdVenda >= itemTx.quantity) {
           const del = tx.delete(inventoryEntries)
             .where(and(eq(inventoryEntries.id, itemTx.id), eq(inventoryEntries.quantity, itemTx.quantity)))
@@ -1212,6 +1311,12 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
   }
+  if (operacaoDuplicada) {
+    res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return;
+  }
+  if (operacaoEstornada) {
+    res.status(409).json({ erro: "Identificador de operação já utilizado e estornado" }); return;
+  }
   if (saldoInsuficiente) {
     res.status(400).json({ erro: "Saldo insuficiente" });
     return;
@@ -1220,7 +1325,227 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     res.status(400).json({ erro: "Quantidade indisponível no estoque" });
     return;
   }
-  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId, itemId: body.data.itemId ?? null, templateId: templateValidado });
+  await audit(req, "financeiro.operacao", {
+    characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId,
+    itemId: body.data.itemId ?? itemCriadoId, templateId: templateValidado,
+    semMovimentacao: semPagamento || undefined,
+  });
   emitir(a.personagem);
-  res.status(201).json({ ok: true, saldo: deCentavos(novoSaldo, casas) });
+  res.status(201).json({
+    ok: true,
+    saldo: semPagamento ? null : deCentavos(novoSaldo, casas),
+    semMovimentacao: semPagamento || undefined,
+  });
+});
+
+/**
+ * POST /api/characters/:id/financeiro/operacoes/:opId/estornar
+ * Estorno atômico de uma compra/venda: reverte o saldo na mesma conta,
+ * devolve/remove o item do inventário e registra transação "estorno"
+ * com requestId `${opId}:estorno` (idempotente pelo UNIQUE da campanha).
+ * Nunca apaga o histórico: a movimentação original permanece.
+ */
+patrimonioRouter.post("/financeiro/operacoes/:opId/estornar", async (req, res) => {
+  const a = await acessoOuErro(req, res); if (!a) return;
+  const config = await configPatrimonio(a.personagem.campaignId);
+  const cfg = config.financeiro;
+  if (!a.ehMestre && !cfg.jogadorCompraVenda) {
+    res.status(403).json({ erro: "Operações financeiras não permitidas para jogadores" }); return;
+  }
+  const opId = req.params.opId;
+  const casas = cfg.casasDecimais;
+
+  // Localiza a operação original: requestId = operacaoId. O escopo do
+  // personagem é garantido pela rota; a campanha pelo requestId único.
+  const [txOriginal] = await db.select().from(moneyTransactions)
+    .where(and(
+      eq(moneyTransactions.campaignId, a.personagem.campaignId),
+      eq(moneyTransactions.requestId, opId),
+      eq(moneyTransactions.characterId, a.personagem.id),
+    )).limit(1);
+  const tipoOriginal = txOriginal && (txOriginal.kind === "compra" || txOriginal.kind === "venda") ? txOriginal.kind : null;
+  if (txOriginal && !tipoOriginal) {
+    res.status(400).json({ erro: "Apenas compras e vendas podem ser estornadas" }); return;
+  }
+
+  // Compra sem pagamento não gera transação: localiza pelo item.
+  // Antes de procurar o item, verifica o registro persistente de
+  // estornos — depois de estornada, o item não existe mais e sem esse
+  // registro a segunda tentativa cairia em 404 em vez de 409.
+  const [estornoRegistrado] = await db.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+    .where(and(
+      eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+      eq(operacaoEstornos.characterId, a.personagem.id),
+      eq(operacaoEstornos.operacaoId, opId),
+    )).limit(1);
+  const [itemSemPag] = txOriginal || estornoRegistrado ? [undefined] : await db.select().from(inventoryEntries)
+    .where(and(
+      eq(inventoryEntries.characterId, a.personagem.id),
+      sql`json_extract(${inventoryEntries.data}, '$.operacaoId') = ${opId}`,
+    )).limit(1);
+  if (!txOriginal && estornoRegistrado) {
+    res.status(409).json({ erro: "Operação já estornada" }); return;
+  }
+  if (!txOriginal && !itemSemPag) {
+    res.status(404).json({ erro: "Operação não encontrada" }); return;
+  }
+  if (itemSemPag) {
+    const dSemPag = (itemSemPag.data ?? {}) as { aquisicao?: { semPagamento?: boolean } };
+    if (dSemPag.aquisicao?.semPagamento !== true) {
+      res.status(404).json({ erro: "Operação não encontrada" }); return;
+    }
+  }
+
+  let saldoInsuficiente = false;
+  let jaEstornada = false;
+  let itemMovimentado = false;
+  let semMetadados = false;
+  let itemSumiu = false;
+  let novoSaldo = 0;
+  const agora = new Date();
+  const requestIdEstorno = `${opId}:estorno`;
+
+  try {
+    db.transaction((tx) => {
+      // Idempotência: estorno já registrado para esta operação?
+      const [estornoExistente] = tx.select({ id: moneyTransactions.id }).from(moneyTransactions)
+        .where(and(eq(moneyTransactions.campaignId, a.personagem.campaignId), eq(moneyTransactions.requestId, requestIdEstorno))).limit(1).all();
+      if (estornoExistente) { jaEstornada = true; return; }
+
+      if (!txOriginal) {
+        // ---- Estorno de compra sem pagamento: remove o item intacto e
+        //      registra persistentemente o estorno NA MESMA transação —
+        //      sem tx financeira fictícia e sem saldo artificial. O
+        //      UNIQUE(campaign_id, operacao_id) resolve corridas: a
+        //      segunda tentativa simultânea falha no insert e faz
+        //      rollback completo (item preservado).
+        const [estornoTx] = tx.select({ id: operacaoEstornos.id }).from(operacaoEstornos)
+          .where(and(
+            eq(operacaoEstornos.campaignId, a.personagem.campaignId),
+            eq(operacaoEstornos.characterId, a.personagem.id),
+            eq(operacaoEstornos.operacaoId, opId),
+          ))
+          .limit(1).all();
+        if (estornoTx) { jaEstornada = true; return; }
+        const [itemTx] = tx.select().from(inventoryEntries)
+          .where(and(eq(inventoryEntries.id, itemSemPag!.id), eq(inventoryEntries.characterId, a.personagem.id)))
+          .limit(1).all();
+        if (!itemTx) { itemSumiu = true; return; }
+        const d = (itemTx.data ?? {}) as { aquisicao?: { qtdOriginal?: number } };
+        const qtdOriginal = d.aquisicao?.qtdOriginal ?? itemTx.quantity;
+        if (itemTx.quantity !== qtdOriginal) { itemMovimentado = true; return; }
+        const del = tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+        if (del.changes !== 1) { itemSumiu = true; return; }
+        tx.insert(operacaoEstornos).values({
+          id: crypto.randomUUID(), campaignId: a.personagem.campaignId,
+          characterId: a.personagem.id, operacaoId: opId,
+          tipo: "compra_sem_pagamento", createdBy: req.usuario!.id, createdAt: agora,
+        }).run();
+        return;
+      }
+
+      const meta = (txOriginal.operacao ?? null) as OperacaoMeta | null;
+      const amountCents = txOriginal.amountCents ?? 0;
+      const contaId = meta?.contaId ?? txOriginal.accountId;
+      if (!contaId) throw new Error("sem_conta");
+
+      // Re-lê a conta dentro da transação e valida o piso — o estorno
+      // de uma venda pode exigir saldo que já foi gasto.
+      const [contaTx] = tx.select().from(financialAccounts)
+        .where(and(eq(financialAccounts.id, contaId), eq(financialAccounts.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!contaTx) throw new Error("conta_sumiu");
+      const saldoNovoTx = contaTx.balanceCents - amountCents; // inverte o sinal do original
+      const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
+      if (saldoNovoTx < piso) { saldoInsuficiente = true; return; }
+
+      if (tipoOriginal === "compra") {
+        // ---- Estorno de compra: remove as unidades adquiridas ----
+        const itemId = meta?.itemId ?? txOriginal.inventoryItemId;
+        let itemTx: typeof inventoryEntries.$inferSelect | undefined;
+        if (itemId) {
+          [itemTx] = tx.select().from(inventoryEntries)
+            .where(and(eq(inventoryEntries.id, itemId), eq(inventoryEntries.characterId, a.personagem.id)))
+            .limit(1).all();
+        }
+        if (!itemTx) {
+          [itemTx] = tx.select().from(inventoryEntries)
+            .where(and(
+              eq(inventoryEntries.characterId, a.personagem.id),
+              sql`json_extract(${inventoryEntries.data}, '$.operacaoId') = ${opId}`,
+            )).limit(1).all();
+        }
+        if (!itemTx) { itemSumiu = true; return; }
+        const d = (itemTx.data ?? {}) as { aquisicao?: { qtdOriginal?: number } };
+        const qtd = meta?.quantidade ?? d.aquisicao?.qtdOriginal;
+        if (qtd === undefined) { semMetadados = true; return; }
+        if (itemTx.quantity < qtd) { itemMovimentado = true; return; }
+        if (itemTx.quantity === qtd) {
+          tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+        } else {
+          tx.update(inventoryEntries).set({ quantity: itemTx.quantity - qtd, updatedAt: agora }).where(eq(inventoryEntries.id, itemTx.id)).run();
+        }
+      } else {
+        // ---- Estorno de venda: devolve as unidades vendidas ----
+        const qtd = meta?.quantidade;
+        if (qtd === undefined || !meta?.item) { semMetadados = true; return; }
+        const itemId = meta.itemId ?? txOriginal.inventoryItemId;
+        let devolvido = false;
+        if (itemId) {
+          const upd = tx.update(inventoryEntries)
+            .set({ quantity: sql`${inventoryEntries.quantity} + ${qtd}`, updatedAt: agora })
+            .where(and(eq(inventoryEntries.id, itemId), eq(inventoryEntries.characterId, a.personagem.id)))
+            .run();
+          devolvido = upd.changes === 1;
+        }
+        if (!devolvido) {
+          // pilha original não existe mais — recria a partir do snapshot
+          const snap = meta.item;
+          tx.insert(inventoryEntries).values({
+            id: crypto.randomUUID(), characterId: a.personagem.id,
+            name: snap.name, quantity: qtd,
+            description: snap.description ?? null, category: snap.category ?? null,
+            location: snap.location ?? null, condition: snap.condition ?? null,
+            weight: snap.weight ?? null,
+            data: { ...(snap.data ?? {}), estornoDe: opId },
+            createdAt: agora, updatedAt: agora,
+          }).run();
+        }
+      }
+
+      // Movimentação de estorno: sinal oposto ao original, mesma conta.
+      tx.insert(moneyTransactions).values({
+        id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+        kind: "estorno",
+        amount: deCentavos(-amountCents, casas), currency: contaTx.currency, account: contaTx.type,
+        accountId: contaTx.id, amountCents: -amountCents,
+        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovoTx,
+        counterparty: "Estorno",
+        description: `Estorno ${tipoOriginal}: ${meta?.itemNome ?? txOriginal.description ?? ""}`.trim(),
+        requestId: requestIdEstorno, inventoryItemId: meta?.itemId ?? txOriginal.inventoryItemId ?? null,
+        operacao: { estornoDe: opId, tipo: "estorno", operacaoOriginal: meta },
+        createdBy: req.usuario!.id, createdAt: agora,
+      }).run();
+      tx.update(financialAccounts).set({ balanceCents: saldoNovoTx, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
+      novoSaldo = saldoNovoTx;
+    });
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { jaEstornada = true; }
+    else if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+    else if (msg.includes("sem_conta")) { res.status(400).json({ erro: "Operação sem conta vinculada" }); return; }
+    else throw e;
+  }
+  if (jaEstornada) { res.status(409).json({ erro: "Operação já estornada" }); return; }
+  if (saldoInsuficiente) { res.status(400).json({ erro: "Saldo insuficiente para estornar (valor já utilizado)" }); return; }
+  if (itemMovimentado) { res.status(409).json({ erro: "Item já foi movimentado/vendido — estorno indisponível, ajuste manual necessário" }); return; }
+  if (semMetadados) { res.status(409).json({ erro: "Operação antiga sem metadados de estorno — ajuste manual necessário" }); return; }
+  if (itemSumiu) { res.status(409).json({ erro: "Item não está mais no inventário — estorno indisponível" }); return; }
+
+  await audit(req, "financeiro.operacao.estornada", {
+    characterId: a.personagem.id, opId, tipo: tipoOriginal ?? "compra_sem_pagamento",
+    semMovimentacao: !txOriginal || undefined,
+  });
+  emitir(a.personagem);
+  res.json({ ok: true, saldo: txOriginal ? deCentavos(novoSaldo, casas) : null, semMovimentacao: !txOriginal || undefined });
 });

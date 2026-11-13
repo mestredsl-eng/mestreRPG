@@ -241,8 +241,10 @@ export const api = {
     requisicao<{ id: string; saldo: number }>(`/characters/${charId}/financeiro/movimentar`, { method: "POST", body: JSON.stringify(dados) }),
   transferirFinanceiro: (charId: string, dados: { origemAccountId: string; destinoAccountId: string; valor: number; descricao?: string; requestId?: string }) =>
     requisicao<{ ok: boolean; tipo: string }>(`/characters/${charId}/financeiro/transferir`, { method: "POST", body: JSON.stringify(dados) }),
-  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId: string; valor: number; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string }) =>
-    requisicao<{ ok: boolean; saldo: number }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
+  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId?: string; valor?: number; pagar?: boolean; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string }) =>
+    requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
+  estornarOperacao: (charId: string, opId: string) =>
+    requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacoes/${encodeURIComponent(opId)}/estornar`, { method: "POST" }),
 
   // Catálogo de itens (Etapa 6)
   listarCatalogo: (cid: string) =>
@@ -805,6 +807,21 @@ export interface TransacaoFinanceira {
   description: string | null;
   balanceBeforeCents: number | null;
   balanceAfterCents: number | null;
+  inventoryItemId: string | null;
+  operacao: {
+    tipo?: string;
+    quantidade?: number;
+    valorCents?: number;
+    moeda?: string;
+    contaId?: string;
+    itemId?: string | null;
+    itemNome?: string | null;
+    semPagamento?: boolean;
+    estornoDe?: string;
+    operacaoOriginal?: unknown;
+    item?: { id?: string; name?: string; quantity?: number; category?: string | null; description?: string | null; location?: string | null; condition?: string | null; weight?: number | null; data?: Record<string, unknown> | null };
+  } | null;
+  requestId: string | null;
   createdBy: string | null;
   createdAt: string;
 }
