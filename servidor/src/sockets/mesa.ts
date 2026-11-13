@@ -9,7 +9,7 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
-import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS } from "../lib/io.js";
+import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import {
@@ -73,11 +73,9 @@ async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { e
   // aqui, cobre leituras, validações, mutações e emissões até o finally
   // do wrapper — a drenagem da restauração espera por ele. Se a
   // barreira já existe, a aquisição falha e a operação é recusada.
-  const store = opCampanhaALS.getStore();
-  if (store && !store.liberar) {
-    const liberar = adquirirOperacaoCampanha(sessao.campaignId);
-    if (!liberar) return { erro: "Campanha em restauração" };
-    store.liberar = liberar;
+  // Reutiliza o lease já registrado por ESTA operação (ex.: registrarChat).
+  if (opCampanhaALS.getStore() && !leaseOperacaoALS(sessao.campaignId)) {
+    return { erro: "Campanha em restauração" };
   }
   return { sessao, membership: m, papel: m.role as Papel };
 }
@@ -90,14 +88,12 @@ async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { e
  */
 function on(socket: Socket, evento: string, handler: (...args: never[]) => unknown) {
   socket.on(evento, (...args: unknown[]) => {
-    void opCampanhaALS.run({}, async () => {
+    void opCampanhaALS.run({ ops: new Map() }, async () => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (handler as (...a: any[]) => unknown)(...(args as any[]));
       } finally {
-        const store = opCampanhaALS.getStore();
-        store?.liberar?.();
-        if (store) store.liberar = null;
+        liberarLeasesALS(); // uma liberação por campanha, garantida
       }
     });
   });
@@ -155,15 +151,22 @@ async function registrarChat(
   }
 ) {
   const id = opts.clientId && /^[0-9a-f-]{36}$/i.test(opts.clientId) ? opts.clientId : randomUUID();
-  // lease de operação normal: a restauração drena este contador antes
-  // de capturar/substituir o estado — mutação + emissão ficam cobertas
-  const liberar = adquirirOperacaoCampanha(opts.campaignId);
-  if (!liberar) return null; // campanha em restauração: nada é gravado
+  // lease de operação: reutiliza o lease JÁ registrado nesta operação
+  // (ALS) — registrarChat dentro de um handler não adquire um segundo
+  // lease nem pode falhar por barreira após a primeira gravação do
+  // handler. Fora de contexto ALS, adquire/libera o próprio lease.
+  const store = opCampanhaALS.getStore();
+  const reutiliza = !!store?.ops.has(opts.campaignId);
+  const liberar = reutiliza ? null : adquirirOperacaoCampanha(opts.campaignId);
+  if (!reutiliza && !liberar) return null; // campanha em restauração: nada é gravado
   try {
     // gancho determinístico: pausa após a autorização, antes da mutação
     await pausaTesteEmit(JSON.stringify(opts));
     // barreira pode ter começado durante a pausa: aborta antes de gravar
-    if (barreiraRestauracaoAtiva(opts.campaignId)) return null;
+    // SOMENTE quando este é um lease independente — dentro de uma
+    // operação com lease do handler, a operação autorizada deve
+    // completar o ciclo (o restore espera por ela na drenagem)
+    if (!reutiliza && barreiraRestauracaoAtiva(opts.campaignId)) return null;
     try {
       await db.insert(chatMessages).values({
         id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
@@ -184,7 +187,7 @@ async function registrarChat(
     agendarAutosave(opts.campaignId);
     return msg;
   } finally {
-    liberar();
+    liberar?.(); // no-op quando o lease é do contexto ALS (wrapper libera)
   }
 }
 
@@ -452,7 +455,6 @@ function socket_handlers(
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
         await pausaTesteEmit(JSON.stringify(payload));
-        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -547,7 +549,6 @@ function socket_handlers(
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
         await pausaTesteEmit(JSON.stringify(payload));
-        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -609,7 +610,6 @@ function socket_handlers(
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
         await pausaTesteEmit(JSON.stringify(payload));
-        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -758,7 +758,6 @@ function socket_handlers(
       // pausa determinística (teste) + revalidação da barreira após a
       // autorização e antes da mutação — operação em voo é cancelada
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       const id = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -822,10 +821,15 @@ function socket_handlers(
     on(socket, "mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
-      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
-      if (!teste || !teste.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
-      const ctx = await resolverCtx(socket, teste.sessionId);
+      // leitura inicial APENAS para localizar a sessão/lease: o registro
+      // completo é RELIDO sob o lease — um teste lido antes de uma
+      // restauração nunca é usado como fonte de dados para a escrita
+      const [ref] = await db.select({ sessionId: tests.sessionId }).from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!ref?.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
+      const ctx = await resolverCtx(socket, ref.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!teste || !teste.sessionId || teste.sessionId !== ref.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const [membroDono] = char ? await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1) : [null];
       const ehDono = membroDono?.userId === u.id;
@@ -867,7 +871,6 @@ function socket_handlers(
       }
 
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(teste.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -899,13 +902,16 @@ function socket_handlers(
         visibility: teste.visibility, createdAt: agora,
       };
       // público: sem alvo; privado: dono+mestre com alvo; mestre sempre com alvo
-      if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null });
       // emissões privadas revalidam membership ativa no instante do envio
       if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRoll);
       const mestres = await mestresDaCampanha(teste.campaignId);
       await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: rolls e tests já
+      // foram escritos — o lease do handler DEVE cobrir até o fim,
+      // inclusive o registrarChat (que reutiliza o mesmo lease ALS)
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "rolagem",
@@ -964,7 +970,6 @@ function socket_handlers(
       const agora = new Date();
       const vis = payload.visibilidade === "privada" ? "privada" : "publica";
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       try {
         await db.insert(rolls).values({
           id: rollId, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
@@ -989,6 +994,9 @@ function socket_handlers(
         const mestres = await mestresDaCampanha(ctx.sessao.campaignId);
         await emitirPrivadoCampanha(ctx.sessao.campaignId, mestres, "mesa:rolagem", rollPayload, ["mestre"]);
       }
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: rolls já foi
+      // escrito — o lease do handler cobre até o registrarChat final
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "rolagem",
@@ -1003,15 +1011,18 @@ function socket_handlers(
     on(socket, "mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId || !payload.outcome) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
-      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
-      if (!teste || !teste.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
-      const ctx = await resolverCtx(socket, teste.sessionId);
+      // mesma regra de teste:rolar — leitura inicial só localiza a
+      // sessão; o registro é relido sob o lease antes de qualquer uso
+      const [ref] = await db.select({ sessionId: tests.sessionId }).from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!ref?.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
+      const ctx = await resolverCtx(socket, ref.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!teste || !teste.sessionId || teste.sessionId !== ref.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre decide" }); return; }
       const outcomes = ["sucesso", "parcial", "falha", "falha_critica", "personalizado"];
       if (!outcomes.includes(payload.outcome)) { cb?.({ ok: false, erro: "Resultado inválido" }); return; }
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(teste.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(tests).set({ status: "decidido", outcome: payload.outcome, outcomeNote: payload.nota?.slice(0, 2000) ?? null, updatedAt: new Date() }).where(eq(tests.id, teste.id));
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const decisao = {
@@ -1019,7 +1030,6 @@ function socket_handlers(
         characterName: char?.name, outcome: payload.outcome, nota: payload.nota ?? null,
         decididoPor: await nomeUsuario(u.id), visibility: teste.visibility,
       };
-      if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: teste.visibility === "privada" ? null : decisao.nota });
       // versão integral: só mestres e dono ATUAIS do personagem
       const mestres = await mestresDaCampanha(teste.campaignId);
@@ -1049,7 +1059,6 @@ function socket_handlers(
 
       let t = await turnoAtual(payload.sessionId);
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       if (!t) {
         const id = randomUUID();
         await db.insert(turns).values({ id, sessionId: payload.sessionId, state: { ordem: [], atual: -1, ativo: false }, updatedBy: u.id, updatedAt: new Date() });
@@ -1094,7 +1103,6 @@ function socket_handlers(
       }
 
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(turns).set({ state: state as never, updatedBy: u.id, updatedAt: new Date() }).where(eq(turns.id, t.id));
       io.to(`sessao:${payload.sessionId}`).emit("mesa:turnos", { sessionId: payload.sessionId, turnos: state });
       const atualId = state.ativo && state.atual !== undefined && state.atual >= 0 ? state.ordem[state.atual] : null;
@@ -1156,7 +1164,6 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
       await pausaTesteEmit(JSON.stringify(payload));
-      if (barreiraRestauracaoAtiva(s.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(sessions).set({ timerState: novo as never, updatedAt: new Date() }).where(eq(sessions.id, s.id));
       agendarAutosave(s.campaignId);
       const estadoTimer = { sessionId: s.id, ...novo, servidorAgora: agora };

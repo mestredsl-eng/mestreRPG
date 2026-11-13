@@ -82,22 +82,17 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       res.status(400).json({ erro: "O pacote não pertence a esta campanha" }); return;
     }
 
-    // segurança: snapshot do estado atual antes de sobrescrever
-    const preSnapId = crypto.randomUUID();
-    await db.insert(snapshots).values({
-      id: preSnapId, campaignId: cid, kind: "pre_restauracao",
-      description: `Automático — antes de importar pacote sobre a campanha`,
-      data: (await exportarCampanha(cid)) as never, createdBy: req.usuario!.id, createdAt: new Date(),
-    });
-    // membros atuais ANTES de substituir: quem não constar no pacote
-    // precisa ser revogado e notificado — consultar só o estado final
-    // perderia esses usuários.
-    // mesma barreira exclusiva do snapshot: bloqueia entradas/
-    // operações e evacua sockets ANTES de capturar o estado e restaurar;
-    // uma segunda substituição na mesma campanha recebe 409
+    // mesma barreira exclusiva do snapshot: drena leases, evacua
+    // sockets e bloqueia entradas/operações ANTES de capturar o
+    // estado; uma segunda substituição recebe 409 e NUNCA cria
+    // snapshot prévio próprio
     const restoreId = await iniciarBarreiraRestauracao(cid);
     if (restoreId === "timeout") {
       res.status(503).json({ erro: "Substituição abortada: operações em andamento não terminaram a tempo — tente novamente" });
+      return;
+    }
+    if (restoreId === "falha") {
+      res.status(503).json({ erro: "Substituição abortada: falha ao preparar a barreira — tente novamente" });
       return;
     }
     if (!restoreId) {
@@ -110,6 +105,17 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
         await new Promise((r) => setTimeout(r, delayBarreira));
       }
+      // snapshot do estado atual DEPOIS da drenagem: captura
+      // consistente, sem leases em voo (spec §5)
+      const preSnapId = crypto.randomUUID();
+      await db.insert(snapshots).values({
+        id: preSnapId, campaignId: cid, kind: "pre_restauracao",
+        description: `Automático — antes de importar pacote sobre a campanha`,
+        data: (await exportarCampanha(cid)) as never, createdBy: req.usuario!.id, createdAt: new Date(),
+      });
+      // membros atuais ANTES de substituir: quem não constar no pacote
+      // precisa ser revogado e notificado — consultar só o estado final
+      // perderia esses usuários.
       const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
       const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
       let resultado;
@@ -129,7 +135,11 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
         res.status(500).json({ erro: "Importação aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
         return;
       }
-      await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+      const liberou = await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+      if (!liberou) {
+        res.status(500).json({ erro: "Importação aplicada, mas a reconstrução das salas falhou — a campanha permanece bloqueada e a recuperação será retomada" });
+        return;
+      }
       await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
       emitirCampanha(cid, "campanha:restaurada", { campaignId: cid });
       res.json({ ok: true, campaignId: cid, modo, ...resultado });

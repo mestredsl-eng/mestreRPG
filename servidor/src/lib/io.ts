@@ -1,5 +1,6 @@
 import type { Server as SocketIOServer } from "socket.io";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { and, eq, inArray } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
@@ -124,15 +125,55 @@ const DRENAGEM_MS = 15000;
 
 /**
  * Contexto de operação por chamada assíncrona (AsyncLocalStorage):
- * handlers Socket.IO rodam dentro de `opCampanhaALS.run({})`; o
- * resolverCtx adquire o lease da campanha UMA vez por operação e o
- * wrapper do handler libera no finally — cobrindo leitura, validação,
- * mutação e emissões do ciclo inteiro.
+ * handlers Socket.IO rodam dentro de `opCampanhaALS.run({})`; cada
+ * lease é registrado por campaignId — resolverCtx e registrarChat
+ * REUTILIZAM o lease da mesma campanha dentro da operação e o wrapper
+ * libera todos no finally (uma aquisição, uma liberação por campanha).
  */
-export const opCampanhaALS = new AsyncLocalStorage<{ liberar?: (() => void) | null }>();
+export const opCampanhaALS = new AsyncLocalStorage<{ ops: Map<string, () => void> }>();
+
+/**
+ * Retorna o lease da campanha dentro do contexto ALS atual —
+ * reutilizando um já adquirido por ESTA operação ou adquirindo um
+ * novo (registrado para liberação única no finally do wrapper).
+ * Retorna null quando há barreira de restauração.
+ */
+export function leaseOperacaoALS(campaignId: string): (() => void) | null {
+  const store = opCampanhaALS.getStore();
+  if (store?.ops.has(campaignId)) return () => {}; // já coberto pela operação
+  const liberar = adquirirOperacaoCampanha(campaignId);
+  if (!liberar) return null;
+  if (store) store.ops.set(campaignId, liberar);
+  return liberar;
+}
+
+/** Libera todos os leases registrados no contexto ALS atual. */
+export function liberarLeasesALS(): void {
+  const store = opCampanhaALS.getStore();
+  if (!store) return;
+  for (const liberar of store.ops.values()) liberar();
+  store.ops.clear();
+}
 
 export function barreiraRestauracaoAtiva(campaignId: string): boolean {
   return barreiras.has(campaignId);
+}
+
+/**
+ * Gancho determinístico de falha — SOMENTE NODE_ENV=test. O arquivo-
+ * sinal MESTRE_FALHA_FLAG contém o NOME do ponto a falhar (ex.:
+ * "init-sessoes", "rejoins-members"); ao falhar o arquivo é consumido
+ * (one-shot), permitindo nova tentativa sem nova injeção. Inerte em
+ * produção e sem efeito quando a env não existe.
+ */
+function pontoFalha(nome: string): void {
+  if (process.env.NODE_ENV !== "test") return;
+  const flag = process.env.MESTRE_FALHA_FLAG;
+  if (!flag || !existsSync(flag)) return;
+  const ponto = readFileSync(flag, "utf8").trim();
+  if (ponto !== nome) return;
+  unlinkSync(flag); // one-shot: a próxima execução passa
+  throw new Error(`falha injetada: ${nome}`);
 }
 
 /**
@@ -165,7 +206,7 @@ export function adquirirOperacaoCampanha(campaignId: string): (() => void) | nul
  * estado, sem commit e sem evacuar salas — a barreira própria é
  * liberada em modo falha e a campanha volta a aceitar operações.
  */
-export async function iniciarBarreiraRestauracao(campaignId: string): Promise<string | "timeout" | null> {
+export async function iniciarBarreiraRestauracao(campaignId: string): Promise<string | "timeout" | "falha" | null> {
   const existente = barreiras.get(campaignId);
   if (existente) {
     if (!existente.pendente) return null; // restauração realmente ativa → 409
@@ -177,39 +218,57 @@ export async function iniciarBarreiraRestauracao(campaignId: string): Promise<st
   const restoreId = crypto.randomUUID();
   const b: Barreira = { restoreId, evacuados: new Map() };
   barreiras.set(campaignId, b); // atômico: novas operações já falham aqui
-  if (!io) return restoreId;
-  // drena operações normais em voo: cada lease cobre o ciclo inteiro
-  // (leitura→validação→mutação→emissão). O restore SÓ avança com o
-  // contador efetivamente zerado — nunca com operações pendentes.
-  const limite = Date.now() + DRENAGEM_MS;
-  while ((opsEmAndamento.get(campaignId) ?? 0) > 0) {
-    if (Date.now() >= limite) {
-      // timeout de drenagem: aborta ANTES de capturar/evacuar —
-      // libera a própria barreira (nada foi evacuado ainda) e o
-      // chamador responde 503; as operações em voo terminam
-      // normalmente porque nenhum commit ocorreu
-      console.error(`[barreira] timeout de drenagem campanha=${campaignId} restore=${restoreId} leases=${opsEmAndamento.get(campaignId)}`);
-      await liberarBarreiraRestauracao(campaignId, restoreId, "falha").catch(() => false);
-      return "timeout";
+  try {
+    // drena operações normais em voo: cada lease cobre o ciclo inteiro
+    // (leitura→validação→mutação→emissão). O restore SÓ avança com o
+    // contador efetivamente zerado — nunca com operações pendentes.
+    // A drenagem ocorre MESMO sem Socket.IO: leases HTTP também contam.
+    const limite = Date.now() + DRENAGEM_MS;
+    while ((opsEmAndamento.get(campaignId) ?? 0) > 0) {
+      if (Date.now() >= limite) {
+        // timeout de drenagem: aborta ANTES de capturar/evacuar —
+        // libera a própria barreira (nada foi evacuado ainda) e o
+        // chamador responde 503; as operações em voo terminam
+        // normalmente porque nenhum commit ocorreu
+        console.error(`[barreira] timeout de drenagem campanha=${campaignId} restore=${restoreId} leases=${opsEmAndamento.get(campaignId)}`);
+        await liberarBarreiraRestauracao(campaignId, restoreId, "falha").catch(() => false);
+        return "timeout";
+      }
+      await new Promise((r) => setTimeout(r, 25));
     }
-    await new Promise((r) => setTimeout(r, 25));
-  }
-  const db = getDb();
-  const ss = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
-  const salas = [`campanha:${campaignId}`, ...ss.map((s) => `sessao:${s.id}`)];
-  for (const room of salas) {
-    const roomObj = io.sockets.adapter.rooms.get(room);
-    if (!roomObj) continue;
-    for (const sid of [...roomObj]) {
-      const sock = io.sockets.sockets.get(sid);
-      if (!sock) continue;
-      sock.leave(room);
-      const lista = b.evacuados.get(sid) ?? [];
-      lista.push(room);
-      b.evacuados.set(sid, lista);
+    pontoFalha("init-sessoes"); // gancho de teste: falha na consulta de sessões
+    const db = getDb();
+    const ss = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
+    pontoFalha("init-salas"); // gancho de teste: falha na enumeração de salas
+    const salas = [`campanha:${campaignId}`, ...ss.map((s) => `sessao:${s.id}`)];
+    if (io) {
+      let primeiro = true;
+      for (const room of salas) {
+        const roomObj = io.sockets.adapter.rooms.get(room);
+        if (!roomObj) continue;
+        for (const sid of [...roomObj]) {
+          const sock = io.sockets.sockets.get(sid);
+          if (!sock) continue;
+          sock.leave(room);
+          // cada saída é registrada IMEDIATAMENTE: uma falha no meio
+          // da evacuação preserva a lista exata do que já saiu
+          const lista = b.evacuados.get(sid) ?? [];
+          lista.push(room);
+          b.evacuados.set(sid, lista);
+          if (primeiro) { primeiro = false; pontoFalha("init-evacuar"); }
+        }
+      }
     }
+    return restoreId;
+  } catch (e) {
+    // falha na inicialização: tenta recuperar em modo "falha" (nada
+    // foi commitado; as salas evacuadas voltam se ainda válidas).
+    // Se a recuperação falhar, a barreira PERMANECE pendente —
+    // fail-closed e retomável pelo mesmo restoreId.
+    console.error(`[barreira] inicialização falhou campanha=${campaignId} restore=${restoreId}:`, e);
+    await liberarBarreiraRestauracao(campaignId, restoreId, "falha").catch(() => false);
+    return "falha";
   }
-  return restoreId;
 }
 
 /**
@@ -222,11 +281,13 @@ export async function iniciarBarreiraRestauracao(campaignId: string): Promise<st
  */
 async function calcularRejoins(campaignId: string, b: Barreira, modo: "sucesso" | "falha"): Promise<Map<string, string[]>> {
   const db = getDb();
+  pontoFalha("rejoins-members"); // gancho de teste
   const ativos = await db
     .select({ userId: memberships.userId })
     .from(memberships)
     .where(and(eq(memberships.campaignId, campaignId), eq(memberships.status, "ativo")));
   const set = new Set(ativos.map((a) => a.userId));
+  pontoFalha("rejoins-sessoes"); // gancho de teste
   const ss = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
   const salasValidas = new Set(ss.map((s) => `sessao:${s.id}`));
   const salaCampanha = `campanha:${campaignId}`;
@@ -265,7 +326,10 @@ export async function liberarBarreiraRestauracao(campaignId: string, restoreId: 
       for (const [sid, rooms] of rejoins) {
         const s = io.sockets.sockets.get(sid);
         if (!s) continue;
-        for (const r of rooms) s.join(r); // joins são síncronos
+        for (const r of rooms) {
+          pontoFalha("rejoins-join"); // gancho de teste
+          s.join(r); // joins são síncronos
+        }
       }
     }
     // remoção final: revalida o dono e apaga sem await intermediário

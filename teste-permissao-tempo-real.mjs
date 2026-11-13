@@ -84,7 +84,7 @@ const patchMembro = (mid, body) =>
 
 try {
   await prepararBanco(BANCO);
-  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks`, env: { MESTRE_RESTORE_DELAY_MS: "1200", MESTRE_PAUSA_FLAG: `${DIR}/pausa.flag`, MESTRE_PAUSA_MATCH: "PISR" } });
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks`, env: { MESTRE_RESTORE_DELAY_MS: "1200", MESTRE_PAUSA_FLAG: `${DIR}/pausa.flag`, MESTRE_PAUSA_MATCH: "PISR", MESTRE_FALHA_FLAG: `${DIR}/falha.flag` } });
   proc.stderr.on("data", (d) => process.stderr.write("[srv] " + d));
   proc.stdout?.on("data", (d) => process.stderr.write("[srv] " + d));
   await esperarSaudavel(BASE, proc);
@@ -666,8 +666,17 @@ try {
   const dbP1 = abrirDb(BANCO);
   const vttP = dbP1.prepare("select vtt_state from sessions where id=?").get(sid);
   dbP1.close();
-  t("P1: token NÃO persistiu (vtt_state sem tkP1)", !(vttP?.vtt_state ?? "").includes("tkP1"));
-  t("P1: operação rejeitada com erro de restauração", /restaura/i.test(JSON.stringify(rVttP)), JSON.stringify(rVttP).slice(0, 120));
+  // id "tkP1" é rejeitado pelo regex do servidor (≥8 chars) → UUID;
+  // o marcador persistido é o NOME "PISR-vtt"
+  t("P1: token NÃO persistiu no estado final (sem PISR-vtt)", !(vttP?.vtt_state ?? "").includes("PISR-vtt"));
+  // operação AUTORIZADA com lease completa o ciclo inteiro — o restore
+  // espera por ela na drenagem e o snapshot prévio a contém
+  t("P1: operação completou ciclo integral (ok:true)", rVttP?.ok === true, JSON.stringify(rVttP).slice(0, 120));
+  const preIdP1 = rRestP1.json?.preSnapshotId;
+  const dbP1b = abrirDb(BANCO);
+  const preP1 = dbP1b.prepare("select data from snapshots where id=?").get(preIdP1);
+  dbP1b.close();
+  t("P1: snapshot prévio contém a escrita drenada (PISR-vtt)", (preP1?.data ?? "").includes("PISR-vtt"), `preId=${preIdP1} len=${(preP1?.data ?? "").length}`);
 
   // P2 — timer pausado antes do update(sessions.timerState)
   const snapP2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m5.cookie, body: { description: "P2" } });
@@ -704,6 +713,200 @@ try {
   t("P3: turno NÃO persistiu slot PISR", !(trP?.state ?? "").includes("PISR-slot"), String(trP?.state).slice(0, 80));
   fs.rmSync(flagPausa, { force: true });
   fs.rmSync(pausadoArq, { force: true });
+
+  // mestres adicionais: cotas de restauração são por usuário (5/10min)
+  const m6 = novoUsuario(BANCO, { username: "pt_m6", role: "mestre" });
+  const m7 = novoUsuario(BANCO, { username: "pt_m7", role: "mestre" });
+  const m8 = novoUsuario(BANCO, { username: "pt_m8", role: "mestre" });
+  const m9 = novoUsuario(BANCO, { username: "pt_m9", role: "mestre" });
+  const falhaFlag = `${DIR}/falha.flag`;
+  const ultimoPreSnap = () => {
+    const d = abrirDb(BANCO);
+    const row = d.prepare("select data from snapshots where campaign_id=? and kind='pre_restauracao' order by created_at desc limit 1").get(ids.camp);
+    d.close();
+    return row?.data ?? "";
+  };
+
+  // ---------- Q. Aceite de convite sob lease + aceite durante barreira ----------
+  sec("Q. Convite: aceite com lease é drenado; aceite na barreira → 409");
+  const uConv = novoUsuario(BANCO, { username: "pt_conv" });
+  const convQ = await req(BASE, "POST", `/campaigns/${ids.camp}/invitations`, { cookie: m6.cookie, body: { role: "jogador", requiresApproval: false } });
+  const codQ = convQ.json?.convite?.code;
+  t("Q: convite criado", !!codQ);
+  fs.writeFileSync(flagPausa, "convite-aceitar");
+  fs.rmSync(pausadoArq, { force: true });
+  const pAceQ = req(BASE, "POST", `/convites/${codQ}/aceitar`, { cookie: uConv.cookie, body: {} });
+  t("Q: aceite pausou DENTRO do lease", await esperarPausa());
+  const snapQ = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m6.cookie, body: { description: "Q" } });
+  const pRestQ = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapQ.json?.id}/restaurar`, { cookie: m6.cookie, body: { confirmacao: "RESTAURAR" } });
+  const cedoQ = await Promise.race([pRestQ.then(() => "done"), dormir(2500).then(() => "pendente")]);
+  t("Q: restore NÃO completou enquanto o aceite segurava o lease", cedoQ === "pendente", cedoQ);
+  fs.rmSync(flagPausa, { force: true });
+  const rAceQ = await pAceQ;
+  const rRestQ = await pRestQ;
+  t("Q: aceite concluiu 201 (ciclo completo sob lease)", rAceQ.status === 201, `status=${rAceQ.status}`);
+  t("Q: restore concluiu 200 após a drenagem real", rRestQ.status === 200, `status=${rRestQ.status}`);
+  // serialização: snapshot capturado antes do aceite → restore remove
+  // a membership criada pelo aceite que já havia commitado
+  const dbQ = abrirDb(BANCO);
+  const memQ = dbQ.prepare("select count(*) c from memberships where campaign_id=? and user_id=?").get(ids.camp, uConv.id).c;
+  dbQ.close();
+  t("Q: restore substituiu estado pós-aceite (membership ausente)", memQ === 0, `rows=${memQ}`);
+
+  // aceite durante a barreira → 409 sem escrita
+  const uConv2 = novoUsuario(BANCO, { username: "pt_conv2" });
+  const convQ2 = await req(BASE, "POST", `/campaigns/${ids.camp}/invitations`, { cookie: m7.cookie, body: { role: "jogador", requiresApproval: false } });
+  const codQ2 = convQ2.json?.convite?.code;
+  const snapQB = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m7.cookie, body: { description: "QB" } });
+  const pRestQB = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapQB.json?.id}/restaurar`, { cookie: m7.cookie, body: { confirmacao: "RESTAURAR" } });
+  await dormir(300); // barreira já ativa (delay de 1200ms em teste)
+  const rAceB = await req(BASE, "POST", `/convites/${codQ2}/aceitar`, { cookie: uConv2.cookie, body: {} });
+  t("Q2: aceite durante barreira → HTTP 409", rAceB.status === 409, `status=${rAceB.status}`);
+  const dbQB = abrirDb(BANCO);
+  const usesQB = dbQB.prepare("select uses from invitations order by rowid desc limit 1").get()?.uses;
+  const memQB = dbQB.prepare("select count(*) c from memberships where campaign_id=? and user_id=?").get(ids.camp, uConv2.id).c;
+  dbQB.close();
+  t("Q2: aceite rejeitado não gravou membership", memQB === 0, `rows=${memQB}`);
+  const rRestQB = await pRestQB;
+  t("Q2: restore concluiu normalmente", rRestQB.status === 200, `status=${rRestQB.status}`);
+
+  // ---------- R. Snapshot prévio capturado DEPOIS da drenagem ----------
+  sec("R. Operação drenada aparece no snapshot pré-restauração");
+  fs.writeFileSync(flagPausa, "PISR");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbR = emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "PISR-CONS", visibilidade: "publica", clientId: crypto.randomUUID() });
+  t("R: mensagem pausou com lease", await esperarPausa());
+  const snapR = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m7.cookie, body: { description: "R" } });
+  const pRestR = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapR.json?.id}/restaurar`, { cookie: m7.cookie, body: { confirmacao: "RESTAURAR" } });
+  await esperarBarreira();
+  await dormir(400); // restore drenando; operação ainda suspensa
+  fs.rmSync(flagPausa, { force: true });
+  await cbR; // operação completa e libera o lease
+  const rRestR = await pRestR;
+  t("R: restore 200 após drenagem", rRestR.status === 200, `status=${rRestR.status}`);
+  t("R: snapshot prévio contém a operação drenada", ultimoPreSnap().includes("PISR-CONS"));
+
+  // ---------- S. Falhas injetadas na inicialização e na recuperação ----------
+  sec("S. Falha injetada — sem barreira órfã, recuperação retomável");
+  const cenInit = [
+    ["init-sessoes", m9.cookie], ["init-salas", m8.cookie], ["init-evacuar", m6.cookie],
+  ];
+  for (const [ponto, cookieS] of cenInit) {
+    const snapS = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cookieS, body: { description: `S-${ponto}` } });
+    fs.writeFileSync(falhaFlag, ponto);
+    const rS = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapS.json?.id}/restaurar`, { cookie: cookieS, body: { confirmacao: "RESTAURAR" } });
+    t(`S/${ponto}: inicialização falhou → HTTP 503`, rS.status === 503, `status=${rS.status}`);
+    // recuperação em modo falha concluiu: barreira removida, nova
+    // restauração funciona — sem barreira órfã
+    const snapS2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cookieS, body: { description: `S2-${ponto}` } });
+    const rS2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapS2.json?.id}/restaurar`, { cookie: cookieS, body: { confirmacao: "RESTAURAR" } });
+    t(`S/${ponto}: restauração posterior funciona (sem órfã)`, rS2.status === 200, `status=${rS2.status}`);
+  }
+  const cenRec = [
+    ["rejoins-members", m7.cookie], ["rejoins-sessoes", m8.cookie], ["rejoins-join", m9.cookie],
+  ];
+  for (const [ponto, cookieS] of cenRec) {
+    // os DOIS snapshots são criados ANTES da falha: durante a barreira
+    // pendente toda mutação HTTP (incl. criar snapshot) recebe 409
+    const snapS = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cookieS, body: { description: `SR-${ponto}` } });
+    const snapS2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cookieS, body: { description: `SR2-${ponto}` } });
+    fs.writeFileSync(falhaFlag, ponto);
+    const rS = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapS.json?.id}/restaurar`, { cookie: cookieS, body: { confirmacao: "RESTAURAR" } });
+    // commit já aplicado; reconstrução falhou → 500 honesto, barreira pendente
+    t(`S/${ponto}: falha na reconstrução → HTTP 500 (não finge sucesso)`, rS.status === 500, `status=${rS.status}`);
+    const rEntP = await emitirCb(sM, "entrar-campanha", ids.camp);
+    t(`S/${ponto}: campanha segue bloqueada (barreira pendente)`, rEntP !== true, JSON.stringify(rEntP).slice(0, 80));
+    // nova tentativa retoma a recuperação do MESMO restoreId e segue
+    const rS2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapS2.json?.id}/restaurar`, { cookie: cookieS, body: { confirmacao: "RESTAURAR" } });
+    t(`S/${ponto}: recuperação retomada conclui 200`, rS2.status === 200, `status=${rS2.status}`);
+    const rEntD = await emitirCb(sM, "entrar-campanha", ids.camp);
+    t(`S/${ponto}: barreira removida após recuperação`, rEntD === true, JSON.stringify(rEntD).slice(0, 80));
+  }
+  fs.rmSync(falhaFlag, { force: true });
+
+  // ---------- U. HTTP desconectado durante mutação — lease permanece ----------
+  sec("U. Desconexão HTTP não libera o lease antes do fim real do handler");
+  const uConvU = novoUsuario(BANCO, { username: "pt_convu" });
+  const convU = await req(BASE, "POST", `/campaigns/${ids.camp}/invitations`, { cookie: m8.cookie, body: { role: "jogador", requiresApproval: false } });
+  const codU = convU.json?.convite?.code;
+  fs.writeFileSync(flagPausa, "convite-aceitar");
+  fs.rmSync(pausadoArq, { force: true });
+  const ctrlU = new AbortController();
+  const pAceU = fetch(`${BASE}/api/convites/${codU}/aceitar`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: uConvU.cookie },
+    body: "{}",
+    signal: ctrlU.signal,
+  }).then((r) => r.status).catch(() => "abort");
+  t("U: aceite pausou dentro do lease", await esperarPausa());
+  ctrlU.abort(); // cliente HTTP desconecta — handler segue suspenso
+  await dormir(300);
+  const snapU = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m7.cookie, body: { description: "U" } });
+  const pRestU = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapU.json?.id}/restaurar`, { cookie: m7.cookie, body: { confirmacao: "RESTAURAR" } });
+  const cedoU = await Promise.race([pRestU.then(() => "done"), dormir(2500).then(() => "pendente")]);
+  t("U: restore aguarda o lease mesmo com socket HTTP morto", cedoU === "pendente", cedoU);
+  fs.rmSync(flagPausa, { force: true });
+  await pAceU;
+  const rRestU = await pRestU;
+  t("U: restore concluiu só após o término real do handler", rRestU.status === 200, `status=${rRestU.status}`);
+
+  // ---------- W. Lease único: ciclo completo após a primeira gravação ----------
+  sec("W. registrarChat reutiliza o lease — rolagem completa após write");
+  fs.writeFileSync(flagPausa, "pos-write");
+  fs.rmSync(pausadoArq, { force: true });
+  // payload SEM "PISR": a 1ª pausa (antes do insert) usa o payload cru —
+  // conter PISR dispararia ali; só o marcador "pos-write" (fase sintética)
+  // deve casar, garantindo a pausa APÓS a primeira gravação
+  const cbW = emitirCb(sM, "mesa:rolar", { sessionId: sid, dados: [{ sides: 20, count: 1 }], visibilidade: "publica", requestId: "rw-pos-1" });
+  t("W: rolagem pausou APÓS o primeiro write", await esperarPausa());
+  const dbW1 = abrirDb(BANCO);
+  const rollW = dbW1.prepare("select id from rolls where request_id=?").get("rw-pos-1");
+  dbW1.close();
+  t("W: rolls já persistiu antes da pausa", !!rollW);
+  const snapW = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m8.cookie, body: { description: "W" } });
+  const pRestW = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapW.json?.id}/restaurar`, { cookie: m8.cookie, body: { confirmacao: "RESTAURAR" } });
+  await esperarBarreira();
+  await dormir(300); // restore drenando o lease do handler
+  fs.rmSync(flagPausa, { force: true });
+  const rW = await cbW;
+  const rRestW = await pRestW;
+  t("W: rolagem retornou ok (ciclo íntegro, sem sucesso parcial)", rW?.ok === true, JSON.stringify(rW).slice(0, 120));
+  t("W: restore 200 após liberação real do lease", rRestW.status === 200, `status=${rRestW.status}`);
+  const preW = ultimoPreSnap();
+  t("W: snapshot prévio contém a rolagem drenada", preW.includes("rw-pos-1"));
+  fs.rmSync(flagPausa, { force: true });
+  fs.rmSync(pausadoArq, { force: true });
+  fs.rmSync(falhaFlag, { force: true });
+
+  // ---------- X. Lease em mutações por :characterId (ficha/patrimônio) ----------
+  sec("X. Mutações de personagem/patrimônio drenam com a barreira");
+  const charIdx = crypto.randomUUID();
+  {
+    const dbX = abrirDb(BANCO);
+    const agoraX = Date.now();
+    // membership ATIVA atual (restores anteriores substituíram as antigas)
+    const midAtiva = dbX.prepare("select id from memberships where campaign_id=? and status='ativo' limit 1").get(ids.camp)?.id;
+    dbX.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(charIdx, ids.camp, midAtiva, "PISR-Ficha", "{}", "{}", "aprovada", 0, agoraX, agoraX);
+    dbX.close();
+  }
+  const patchFicha = () => req(BASE, "PATCH", `/characters/${charIdx}`, { cookie: ids.cookieMestre, body: { name: "PISR-Ficha-2" } });
+  const patchInventario = () => req(BASE, "PATCH", `/characters/${charIdx}/inventario/item-inexistente`, { cookie: ids.cookieMestre, body: { name: "x" } });
+  const okX = await patchFicha();
+  t("X: PATCH ficha fora da barreira não é bloqueado por lease", okX.status !== 409, `status=${okX.status}`);
+  const okXI = await patchInventario();
+  t("X: PATCH patrimônio fora da barreira não é bloqueado por lease", okXI.status !== 409, `status=${okXI.status}`);
+  const m10 = novoUsuario(BANCO, { username: "pt_m10", role: "mestre" });
+  const snapX = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m10.cookie, body: { description: "X" } });
+  const pRestX = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapX.json?.id}/restaurar`, { cookie: m10.cookie, body: { confirmacao: "RESTAURAR" } });
+  await dormir(300); // janela da barreira (MESTRE_RESTORE_DELAY_MS=1200)
+  const rFichaBar = await patchFicha();
+  const rInvBar = await patchInventario();
+  // a mensagem do lease é distinta de outros 409 (ex.: concorrência otimista)
+  t("X: PATCH ficha durante a barreira → 409 de restauração (lease do personagem)", rFichaBar.status === 409 && /restaura/i.test(rFichaBar.json?.erro ?? ""), `status=${rFichaBar.status} erro=${rFichaBar.json?.erro}`);
+  t("X: PATCH patrimônio durante a barreira → 409 de restauração", rInvBar.status === 409 && /restaura/i.test(rInvBar.json?.erro ?? ""), `status=${rInvBar.status} erro=${rInvBar.json?.erro}`);
+  const rRestX = await pRestX;
+  t("X: restore concluiu 200 após a janela", rRestX.status === 200, `status=${rRestX.status}`);
 
 } catch (e) {
   fail++;

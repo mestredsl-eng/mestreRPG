@@ -6,7 +6,7 @@ import {
   snapshots, users, auditLogs, sessions, characters, chatMessages, memberships, campaigns,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel } from "../lib/permissoes.js";
+import { requirePapel, requirePapelAuth } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, reconciliarMembrosAposRestauracao } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
@@ -88,7 +88,9 @@ snapshotsRouter.post("/", requirePapel("mestre"), limiteCriarSnapshot, async (re
 const restaurarSchema = z.object({ confirmacao: z.literal("RESTAURAR") });
 
 /** POST /api/campaigns/:campaignId/snapshots/:snapshotId/restaurar — somente mestre, auditado */
-snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRestaurarSnapshot, async (req, res) => {
+// requirePapelAuth: esta rota coordena a própria barreira de
+// restauração — um lease normal aqui deadlockaria a drenagem
+snapshotsRouter.post("/:snapshotId/restaurar", requirePapelAuth("mestre"), limiteRestaurarSnapshot, async (req, res) => {
   const body = restaurarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: 'Confirmação obrigatória: { "confirmacao": "RESTAURAR" }' }); return; }
   const [snap] = await db.select().from(snapshots).where(and(eq(snapshots.id, req.params.snapshotId), eq(snapshots.campaignId, req.params.campaignId))).limit(1);
@@ -96,26 +98,18 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   const dados = snap.data as EstadoCampanha;
   const cid = req.params.campaignId;
 
-  // Estado atual é preservado num snapshot automático ANTES de restaurar (spec §5)
-  const preSnapId = crypto.randomUUID();
-  const estadoAtual = await exportarCampanha(cid);
-  await db.insert(snapshots).values({
-    id: preSnapId, campaignId: cid, kind: "pre_restauracao",
-    description: `Automático — antes de restaurar snapshot ${snap.id}`,
-    data: estadoAtual as never, createdBy: req.usuario!.id, createdAt: new Date(),
-  });
-
-  // BARREIRA antes de qualquer captura/restauração: sockets são
-  // evacuados das salas e handlers Socket.IO rejeitam novas operações
-  // — elimina a janela entre commit e expulsão e drena operações
-  // assíncronas que ainda não emitiram.
-  // BARREIRA exclusiva antes de qualquer captura/restauração: uma
-  // segunda restauração na mesma campanha recebe 409 e NUNCA assume
-  // a barreira da primeira. O restoreId proprietário autoriza a
-  // liberação; qualquer falha pós-aquisição cai no catch e libera.
+  // BARREIRA exclusiva ANTES de qualquer captura: drena leases,
+  // evacua salas e só então o estado é exportado — o snapshot prévio
+  // representa o estado consistente pós-drenagem, nunca uma captura
+  // concorrente com operações em voo. Uma segunda restauração recebe
+  // 409 e NUNCA cria snapshot prévio próprio.
   const restoreId = await iniciarBarreiraRestauracao(cid);
   if (restoreId === "timeout") {
     res.status(503).json({ erro: "Restauração abortada: operações em andamento não terminaram a tempo — tente novamente" });
+    return;
+  }
+  if (restoreId === "falha") {
+    res.status(503).json({ erro: "Restauração abortada: falha ao preparar a barreira — tente novamente" });
     return;
   }
   if (!restoreId) {
@@ -129,6 +123,15 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
     if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
       await new Promise((r) => setTimeout(r, delayBarreira));
     }
+    // Estado atual é preservado num snapshot automático DEPOIS da
+    // drenagem (spec §5) — captura consistente, sem leases em voo
+    const preSnapId = crypto.randomUUID();
+    const estadoAtual = await exportarCampanha(cid);
+    await db.insert(snapshots).values({
+      id: preSnapId, campaignId: cid, kind: "pre_restauracao",
+      description: `Automático — antes de restaurar snapshot ${snap.id}`,
+      data: estadoAtual as never, createdBy: req.usuario!.id, createdAt: new Date(),
+    });
     // GUARDAR memberships atuais ANTES de restaurar
     const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
     const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
@@ -153,7 +156,14 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
       res.status(500).json({ erro: "Restauração aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
       return;
     }
-    await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+    const liberou = await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+    if (!liberou) {
+      // commit aplicado mas a reconstrução de salas falhou: a barreira
+      // PERMANECE (pendente, retomável pelo mesmo restoreId) — a
+      // resposta nunca finge conclusão nem emite restaurada
+      res.status(500).json({ erro: "Restauração aplicada, mas a reconstrução das salas falhou — a campanha permanece bloqueada e a recuperação será retomada" });
+      return;
+    }
     emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id, campaignId: cid });
     res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
   } catch (e) {
