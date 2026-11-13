@@ -222,11 +222,7 @@ authRouter.get("/me", async (req, res) => {
   }
   res.json({
     usuario: {
-      id: user.id,
-      username: user.username,
-      email: user.email,
-      displayName: user.displayName,
-      isAdmin: user.isAdmin,
+      ...sessao.usuario,
       ...(await escopoUsuario(user)),
     },
   });
