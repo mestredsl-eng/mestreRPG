@@ -60,9 +60,14 @@ jobs:
             echo "::error::PR #$PR_NUMBER não está aberta ou já foi mesclada (state=$state merged=$merged)"
             exit 1
           fi
-          merge_sha=$(git ls-remote origin "refs/pull/$PR_NUMBER/merge" | cut -f1)
-          if [ -z "$merge_sha" ]; then
-            echo "::error::PR #$PR_NUMBER não possui merge ref disponível"
+          repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          merge_sha="$(
+            GIT_TERMINAL_PROMPT=0 \
+            git ls-remote "$repo_url" "refs/pull/${PR_NUMBER}/merge" |
+            awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Merge ref da PR #$PR_NUMBER ausente ou inválida"
             exit 1
           fi
           echo "ref=refs/pull/$PR_NUMBER/merge" >> "$GITHUB_OUTPUT"
@@ -156,9 +161,14 @@ jobs:
             echo "::error::PR #$PR_NUMBER não está aberta ou já foi mesclada (state=$state merged=$merged)"
             exit 1
           fi
-          merge_sha=$(git ls-remote origin "refs/pull/$PR_NUMBER/merge" | cut -f1)
-          if [ -z "$merge_sha" ]; then
-            echo "::error::PR #$PR_NUMBER não possui merge ref disponível"
+          repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          merge_sha="$(
+            GIT_TERMINAL_PROMPT=0 \
+            git ls-remote "$repo_url" "refs/pull/${PR_NUMBER}/merge" |
+            awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Merge ref da PR #$PR_NUMBER ausente ou inválida"
             exit 1
           fi
           echo "ref=refs/pull/$PR_NUMBER/merge" >> "$GITHUB_OUTPUT"
