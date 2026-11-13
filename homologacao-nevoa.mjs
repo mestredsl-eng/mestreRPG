@@ -695,7 +695,12 @@ try {
   // o estado atual do servidor — sem a operação — e libera as ações.
   const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   segurarNevoa = true;
-  derrubarAckM = 1; // perde o ACK da sync automática (a op retida nunca é respondida)
+  // derruba TODOS os ACKs durante a janela de incerteza: um único
+  // contador (=1) podia ser consumido por um ACK estranho (reconexão,
+  // entrar-campanha tardio) e liberar a sync automática — o estado
+  // incerto se resolveria sozinho e o botão nunca ficaria visível.
+  // A contagem é zerada antes do retry manual, que precisa do ACK.
+  derrubarAckM = 50;
   await garantirPincel(pgM);
   await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
   await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
@@ -709,6 +714,7 @@ try {
     `desfazer=${desfezOff2} emitidos=${nevoaEmitidos - nEm2}`);
   // retry explícito: a sync ordenada devolve o estado atual — sem a
   // operação retida — e libera as ações
+  derrubarAckM = 0; // libera ACKs: o retry manual precisa da resposta
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
   await esperarSemIncerto(pgM, 20000);
   const nAposOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
