@@ -50,6 +50,7 @@ export default function Mesa({ campaignId, campanha }: Props) {
   // (resposta de geração antiga é descartada pelo seq) e, se o ID não
   // existir mais, desmonta a MesaView — nenhum mapa/token/mensagem da
   // sessão antiga permanece na tela.
+  const [restKey, setRestKey] = useState(0);
   useEffect(() => {
     const socket = getSocket();
     const aoRestaurada = (d: { campaignId?: string }) => {
@@ -58,8 +59,11 @@ export default function Mesa({ campaignId, campanha }: Props) {
         if (!lista) return;
         setAtiva((atual) => {
           if (!atual) return atual;
-          const fresca = lista.find((s) => s.id === atual.id);
-          return fresca ?? null; // ID substituído → volta à lista
+          const mantida = lista.find((s) => s.id === atual.id) ?? null;
+          // ID preservado: MesaView permanece, mas restKey força a
+          // recarga completa do estado autoritativo pós-restore
+          if (mantida) setRestKey((k) => k + 1);
+          return mantida; // ID substituído → volta à lista
         });
       });
     };
@@ -68,7 +72,7 @@ export default function Mesa({ campaignId, campanha }: Props) {
   }, [campaignId, carregar]);
 
   if (ativa) {
-    return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} aoSair={() => { setAtiva(null); void carregar(); }} />;
+    return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
   }
 
   return (
@@ -104,8 +108,8 @@ export default function Mesa({ campaignId, campanha }: Props) {
 
 // ================= VIEW DA MESA =================
 
-function MesaView({ campaignId, sessao, souMestre, aoSair }: {
-  campaignId: string; sessao: Sessao; souMestre: boolean; aoSair: () => void;
+function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
+  campaignId: string; sessao: Sessao; souMestre: boolean; restKey?: number; aoSair: () => void;
 }) {
   const [mensagens, setMensagens] = useState<MensagemMesa[]>([]);
   const [testes, setTestes] = useState<TesteMesa[]>([]);
@@ -157,6 +161,16 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   }, [campaignId, sessao.id]);
   const revogadoRef = useRef(false);
   const [meuUserId, setMeuUserId] = useState<string>("");
+  // meuUserId também em ref: callbacks de socket não podem usar um
+  // closure com o valor antigo após troca de conta/papel
+  const meuUserIdRef = useRef("");
+  useEffect(() => { meuUserIdRef.current = meuUserId; }, [meuUserId]);
+  // restauração com ID preservado: a MesaView continua montada, mas
+  // TODO o estado em memória é substituído pelo autoritativo —
+  // rolagens são efêmeras (sem endpoint HTTP) e são descartadas
+  useEffect(() => {
+    if (restKey > 0) { setRolagens([]); recarregarFiltrado(); }
+  }, [restKey, recarregarFiltrado]);
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
   const [privado, setPrivado] = useState(false);
@@ -235,12 +249,16 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const papelAtual = () => papelRef.current;
     const souMestreAtual = () => papelAtual() === "mestre";
     const autorizaMensagem = (m: { visibility?: string; authorId?: string | null; recipients?: unknown }) => {
-      const vis = m.visibility ?? "publica";
+      // fail-closed: visibilidade ausente/desconhecida NUNCA vira
+      // pública — só o mestre (já autorizado a tudo) a visualiza até
+      // obter a versão filtrada autoritativa do servidor
+      const vis = m.visibility;
+      if (vis !== "publica" && vis !== "sistema" && vis !== "mestre" && vis !== "privada") return souMestreAtual();
       if (vis === "mestre") return souMestreAtual();
       if (vis === "privada") {
         if (souMestreAtual()) return true;
         const rec = Array.isArray(m.recipients) ? m.recipients : [];
-        return m.authorId === meuUserId || rec.includes(meuUserId);
+        return m.authorId === meuUserIdRef.current || rec.includes(meuUserIdRef.current);
       }
       return true; // publica/sistema
     };
@@ -249,8 +267,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
     const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
-      // teste privado: só mestre atual ou dono do personagem (ehEu)
-      const privado = t.visibility === "privada" || t.privado === true;
+      // teste privado: só mestre atual ou dono do personagem (ehEu);
+      // visibilidade inválida é fail-closed para não-mestre
+      const visT = (t as { visibility?: string }).visibility;
+      if (visT && !["publica", "privada", "mestre", "secreta"].includes(visT) && !souMestreAtual()) return;
+      const privado = t.visibility === "privada" || t.privado === true || visT === "mestre" || visT === "secreta";
       if (privado && !souMestreAtual() && !souDonoTeste(t as TesteMesa)) return;
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
@@ -259,8 +280,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     };
     const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
       // rolagem privada: só mestre atual, o próprio rolador ou evento
-      // sem marcação de privacidade (público)
-      if (r.visibility === "privada" && !souMestreAtual() && r.userId !== meuUserId) return;
+      // sem marcação de privacidade (público); visibilidade inválida
+      // é fail-closed para não-mestre
+      if (r.visibility && !["publica", "privada", "mestre", "secreta"].includes(r.visibility) && !souMestreAtual()) return;
+      if ((r.visibility === "privada" || r.visibility === "mestre" || r.visibility === "secreta") && !souMestreAtual() && r.userId !== meuUserIdRef.current) return;
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
@@ -273,8 +296,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       // decisão privada: a sala recebe a versão sanitizada (nota nula);
       // a versão integral só vai a usuario:* de mestres/destinatários.
       // Após rebaixamento, a integral atrasada é descartada — a
-      // sanitizada continua válida para o outcome.
-      if (d.visibility === "privada" && d.nota != null && !souMestreAtual()) return;
+      // sanitizada continua válida para o outcome. Visibilidade
+      // inválida é fail-closed para não-mestre.
+      if (d.visibility && !["publica", "privada", "mestre", "secreta"].includes(d.visibility) && !souMestreAtual()) return;
+      if ((d.visibility === "privada" || d.visibility === "mestre" || d.visibility === "secreta") && d.nota != null && !souMestreAtual()) return;
       setTestes((prev) => prev.map((t) => t.id === d.testId ? { ...t, status: "decidido", outcome: d.outcome, outcomeNote: d.nota ?? null } : t));
     };
     const aoTurnos = (t: { turnos: TurnosState }) => setTurnos(t.turnos);
@@ -388,6 +413,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           if (r.turnos) setTurnos(r.turnos);
           if (r.presenca) setOnline(r.presenca);
           if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens/névoa)
+          // reconexão pode ter perdido campanha:restaurada: a entrada
+          // autorizada devolve o estado atual — recarrega mensagens/
+          // testes/timer/sessão do servidor (geração atual apenas)
+          recarregarFiltrado();
         } else {
           // sessão substituída por restauração/importação: o ID não
           // existe mais — desmonta a view e volta à lista real em vez
@@ -426,7 +455,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, sessao.id, recarregarFiltrado]);
+  }, [campaignId, sessao.id, recarregarFiltrado, restKey]);
 
   // auto-scroll chat
   useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [mensagens.length]);

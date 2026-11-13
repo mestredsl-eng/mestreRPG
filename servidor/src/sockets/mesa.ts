@@ -9,7 +9,7 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
-import { barreiraRestauracaoAtiva } from "../lib/io.js";
+import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import {
@@ -100,34 +100,17 @@ async function emitirMensagem(io: SocketIOServer, msg: typeof chatMessages.$infe
     io.to(room).emit("mesa:mensagem", payload);
     return;
   }
+  // emissões privadas passam pela função central: destinatários são
+  // revalidados como membros ATIVOS no instante do envio
   if (msg.visibility === "mestre" || msg.visibility === "secreta") {
     const mestres = await mestresDaCampanha(msg.campaignId);
-    for (const uid of mestres) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
+    await emitirPrivadoCampanha(msg.campaignId, mestres, "mesa:mensagem", payload, ["mestre"]);
     return;
   }
   // privada: autor + destinatários — somente membros ainda ativos recebem
   const destinos = new Set<string>((msg.recipients ?? []) as string[]);
   if (msg.authorId) destinos.add(msg.authorId);
-  const ids = [...destinos];
-  const ativos = ids.length
-    ? new Set(
-        (
-          await db
-            .select({ userId: memberships.userId })
-            .from(memberships)
-            .where(
-              and(
-                eq(memberships.campaignId, msg.campaignId),
-                eq(memberships.status, "ativo"),
-                inArray(memberships.userId, ids)
-              )
-            )
-        ).map((r) => r.userId)
-      )
-    : new Set<string>();
-  for (const uid of ids) {
-    if (ativos.has(uid)) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
-  }
+  await emitirPrivadoCampanha(msg.campaignId, [...destinos], "mesa:mensagem", payload);
 }
 
 // ---------- dados ----------
@@ -141,25 +124,37 @@ async function registrarChat(
   }
 ) {
   const id = opts.clientId && /^[0-9a-f-]{36}$/i.test(opts.clientId) ? opts.clientId : randomUUID();
+  // lease de operação normal: a restauração drena este contador antes
+  // de capturar/substituir o estado — mutação + emissão ficam cobertas
+  const liberar = adquirirOperacaoCampanha(opts.campaignId);
+  if (!liberar) return null; // campanha em restauração: nada é gravado
   try {
-    await db.insert(chatMessages).values({
-      id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
-      authorId: opts.authorId ?? null, kind: opts.kind ?? "texto",
-      content: opts.content, visibility: opts.visibility ?? "publica",
-      recipients: opts.recipients ?? null, createdAt: new Date(),
-    });
-  } catch (e) {
-    if (String(e).includes("UNIQUE")) {
-      const [existente] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
-      if (existente) { await emitirMensagem(io, existente); return existente; }
+    // gancho determinístico: pausa após a autorização, antes da mutação
+    await pausaTesteEmit(JSON.stringify(opts));
+    // barreira pode ter começado durante a pausa: aborta antes de gravar
+    if (barreiraRestauracaoAtiva(opts.campaignId)) return null;
+    try {
+      await db.insert(chatMessages).values({
+        id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
+        authorId: opts.authorId ?? null, kind: opts.kind ?? "texto",
+        content: opts.content, visibility: opts.visibility ?? "publica",
+        recipients: opts.recipients ?? null, createdAt: new Date(),
+      });
+    } catch (e) {
+      if (String(e).includes("UNIQUE")) {
+        const [existente] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+        if (existente) { await emitirMensagem(io, existente); return existente; }
+      }
+      throw e;
     }
-    throw e;
+    const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+    await emitirMensagem(io, msg);
+    // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
+    agendarAutosave(opts.campaignId);
+    return msg;
+  } finally {
+    liberar();
   }
-  const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
-  await emitirMensagem(io, msg);
-  // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
-  agendarAutosave(opts.campaignId);
-  return msg;
 }
 
 async function turnoAtual(sessionId: string) {
@@ -243,6 +238,12 @@ function socket_handlers(
         const ctxF = await resolverCtx(socket, sessionId);
         if ("erro" in ctxF || ctxF.sessao.status === "encerrada") {
           cb?.({ ok: false, erro: "erro" in ctxF ? ctxF.erro : "Sessão encerrada" });
+          return;
+        }
+        // revalidação atômica: sem await entre a checagem e o join —
+        // ingresso não atravessa uma barreira que começou na espera
+        if (barreiraRestauracaoAtiva(ctxF.sessao.campaignId)) {
+          cb?.({ ok: false, erro: "Campanha em restauração" });
           return;
         }
         socket.join(`sessao:${sessionId}`);
@@ -717,6 +718,10 @@ function socket_handlers(
       const negativos = Math.max(0, Math.round(payload.malus ?? 0));
       let count = Math.min(Math.max(0, positivos - negativos), 30);
 
+      // pausa determinística (teste) + revalidação da barreira após a
+      // autorização e antes da mutação — operação em voo é cancelada
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       const id = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -751,17 +756,12 @@ function socket_handlers(
         skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
         status: "pendente", createdAt: agora,
       };
-      if (payload.visibilidade === "privada" && !barreiraRestauracaoAtiva(ctx.sessao.campaignId)) {
-        // privada: só dono do personagem + mestres recebem (com alvo/dados/pool)
-        io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: true,
-        });
+      if (payload.visibilidade === "privada") {
+        // privada: dono + mestres ATUAIS recebem — revalidados no envio
+        const payloadPriv = { ...publico, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count }, pool, privado: true };
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste", payloadPriv);
         const mestresPriv = await mestresDaCampanha(ctx.sessao.campaignId);
-        for (const mid of mestresPriv) io.to(`usuario:${mid}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: true,
-        });
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPriv, "mesa:teste", payloadPriv, ["mestre"]);
       } else {
         // pública: composição do pool é visível; só o alvo (dificuldade) fica oculto
         io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, alvo: null, dados: { lados: dadosLados, count }, pool });
@@ -829,6 +829,8 @@ function socket_handlers(
         d10 = { minimo, lancados: resultados.length, sucessos, falhas: resultados.length - sucessos };
       }
 
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(teste.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -862,9 +864,10 @@ function socket_handlers(
       // público: sem alvo; privado: dono+mestre com alvo; mestre sempre com alvo
       if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null });
-      if (membroDono) io.to(`usuario:${membroDono.userId}`).emit("mesa:rolagem", payloadRoll);
+      // emissões privadas revalidam membership ativa no instante do envio
+      if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRoll);
       const mestres = await mestresDaCampanha(teste.campaignId);
-      for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:rolagem", payloadRoll);
+      await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
@@ -923,6 +926,8 @@ function socket_handlers(
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       const vis = payload.visibilidade === "privada" ? "privada" : "publica";
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       try {
         await db.insert(rolls).values({
           id: rollId, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
@@ -943,9 +948,9 @@ function socket_handlers(
       };
       if (vis === "publica") io.to(`sessao:${ctx.sessao.id}`).emit("mesa:rolagem", rollPayload);
       else if (!barreiraRestauracaoAtiva(ctx.sessao.campaignId)) {
-        io.to(`usuario:${u.id}`).emit("mesa:rolagem", rollPayload);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, [u.id], "mesa:rolagem", rollPayload);
         const mestres = await mestresDaCampanha(ctx.sessao.campaignId);
-        for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:rolagem", rollPayload);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestres, "mesa:rolagem", rollPayload, ["mestre"]);
       }
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
@@ -968,6 +973,8 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre decide" }); return; }
       const outcomes = ["sucesso", "parcial", "falha", "falha_critica", "personalizado"];
       if (!outcomes.includes(payload.outcome)) { cb?.({ ok: false, erro: "Resultado inválido" }); return; }
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(teste.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(tests).set({ status: "decidido", outcome: payload.outcome, outcomeNote: payload.nota?.slice(0, 2000) ?? null, updatedAt: new Date() }).where(eq(tests.id, teste.id));
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const decisao = {
@@ -977,11 +984,12 @@ function socket_handlers(
       };
       if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: teste.visibility === "privada" ? null : decisao.nota });
+      // versão integral: só mestres e dono ATUAIS do personagem
       const mestres = await mestresDaCampanha(teste.campaignId);
-      for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:decisao", decisao);
+      await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:decisao", decisao, ["mestre"]);
       if (char) {
         const [md] = await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
-        if (md) io.to(`usuario:${md.userId}`).emit("mesa:decisao", decisao);
+        if (md) await emitirPrivadoCampanha(teste.campaignId, [md.userId], "mesa:decisao", decisao);
       }
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,

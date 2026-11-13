@@ -81,8 +81,12 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
         )
         .limit(1);
       const ok = !!m;
-      if (ok) socket.join(`campanha:${campaignId}`);
-      cb?.(ok);
+      // revalidação ATÔMICA imediatamente antes do join: sem await
+      // entre a checagem e o ingresso — uma restauração que começou
+      // durante a consulta de membership não deixa o socket escapar
+      // da evacuação
+      if (ok && !barreiraRestauracaoAtiva(campaignId)) socket.join(`campanha:${campaignId}`);
+      cb?.(ok && !barreiraRestauracaoAtiva(campaignId));
     });
 
     socket.on("sair-campanha", (campaignId: string) => {

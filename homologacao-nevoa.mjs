@@ -1277,7 +1277,7 @@ try {
   // pgJ (jogador) e pgM (mestre) estão dentro da MesaView da sidA
   const snapSub = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "sid-trocado" } });
   const snapSubId = snapSub.json?.id;
-  const novoSid = crypto.randomUUID();
+  let novoSid = crypto.randomUUID();
   const dbSub = abrirDb(BANCO);
   const linSub = dbSub.prepare("select data from snapshots where id=?").get(snapSubId);
   // troca o ID da sessão em TODO o pacote (id da sessão + sessionId das
@@ -1316,6 +1316,69 @@ try {
   await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
   await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
   t("jogador re-entrou na sessão", (await pgJ.locator(".mesa-vtt").count()) === 1);
+
+  sec("Pós-restauração: ID preservado recarrega TODO o estado; evento perdido é recuperado na reconexão");
+  // A) ID preservado + marcador injetado no snapshot: prova que a
+  // MesaView NÃO mantém dados do estado antigo — mensagens vêm do
+  // servidor pós-restore (restKey força recarga completa)
+  const snapPA = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "preservado-marcador" } });
+  const idPA = snapPA.json?.id;
+  const dbPA = abrirDb(BANCO);
+  const dadosPA = JSON.parse(dbPA.prepare("select data from snapshots where id=?").get(idPA).data);
+  dadosPA.chatMessages = [...(dadosPA.chatMessages ?? []), {
+    id: crypto.randomUUID(), campaignId: campId, sessionId: novoSid,
+    authorId: c.adminId, kind: "texto", content: "MARCA-A-REST-1",
+    visibility: "publica", recipients: null, createdAt: new Date().toISOString(),
+  }];
+  dbPA.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosPA), idPA);
+  dbPA.close();
+  const rPA = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${idPA}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore A (ID preservado + marcador)", rPA.status === 200, JSON.stringify(rPA.json).slice(0, 120));
+  await pgM.waitForFunction(() => document.body.innerText.includes("MARCA-A-REST-1"), null, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => document.body.innerText.includes("MARCA-A-REST-1"), null, { timeout: 30000 }).catch(() => {});
+  t("mestre: marcador do snapshot aparece sem reload (recarga completa)", (await pgM.locator("body").innerText()).includes("MARCA-A-REST-1"));
+  t("jogador: marcador do snapshot aparece sem reload", (await pgJ.locator("body").innerText()).includes("MARCA-A-REST-1"));
+  t("ID preservado: mesa continua aberta nos dois clientes",
+    (await pgM.locator(".mesa-vtt").count()) === 1 && (await pgJ.locator(".mesa-vtt").count()) === 1);
+
+  // B) cliente DESCONECTADO durante campanha:restaurada com ID
+  // substituído: ao reconectar, mesa:entrar é rejeitado ("não
+  // encontrada") e a UI volta à lista — sem reload de página
+  await pgJ.context().setOffline(true);
+  await new Promise((r) => setTimeout(r, 800)); // socket cai de verdade
+  const sidC = crypto.randomUUID();
+  const snapPB = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "offline-troca-id" } });
+  const idPB = snapPB.json?.id;
+  const dbPB = abrirDb(BANCO);
+  const dadosPB = JSON.parse(JSON.stringify(JSON.parse(dbPB.prepare("select data from snapshots where id=?").get(idPB).data)).split(novoSid).join(sidC));
+  dbPB.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosPB), idPB);
+  dbPB.close();
+  const rPB = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${idPB}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore B (offline, ID substituído)", rPB.status === 200, JSON.stringify(rPB.json).slice(0, 120));
+  await pgJ.context().setOffline(false);
+  // reconexão: socket.io reconecta → entrar() → mesa:entrar falha →
+  // aoSair → lista de sessões (sem reload, sem sessão fantasma)
+  await pgJ.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 45000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 1500));
+  t("jogador offline: voltou à lista após reconectar (sem reload)",
+    (await pgJ.locator(".mesa-vtt").count()) === 0 && (await pgJ.locator(".tabela tbody tr").count()) > 0);
+  t("jogador offline: lista exibe a sessão substituída", (await pgJ.locator("body").innerText()).includes("Mesa Névoa Alfa"));
+  // mestre (online) também voltou à lista via campanha:restaurada
+  await pgM.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  t("mestre online: ID substituído desmontou a MesaView", (await pgM.locator(".mesa-vtt").count()) === 0);
+  // reentrada manual do jogador na sessão de ID novo (sidC)
+  await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("jogador re-entrou manualmente na sessão nova", (await pgJ.locator(".mesa-vtt").count()) === 1);
+  // mestre também precisa reentrar — o restore B desmontou a MesaView dele
+  await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("mestre re-entrou manualmente na sessão nova", (await pgM.locator(".mesa-vtt").count()) === 1);
+  novoSid = sidC; // sessão corrente passa a ser sidC nas seções seguintes
 
   sec("Eventos privados atrasados — produzidos antes, entregues depois do rebaixamento");
   const dbC = abrirDb(BANCO);

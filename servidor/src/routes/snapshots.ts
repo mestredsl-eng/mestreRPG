@@ -109,48 +109,58 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   // evacuados das salas e handlers Socket.IO rejeitam novas operações
   // — elimina a janela entre commit e expulsão e drena operações
   // assíncronas que ainda não emitiram.
-  await iniciarBarreiraRestauracao(cid);
-  // janela de teste determinística (NODE_ENV=test): segura a barreira
-  // para o teste emitir operações durante a "restauração"
-  const delayBarreira = Number(process.env.MESTRE_RESTORE_DELAY_MS ?? 0);
-  if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
-    await new Promise((r) => setTimeout(r, delayBarreira));
+  // BARREIRA exclusiva antes de qualquer captura/restauração: uma
+  // segunda restauração na mesma campanha recebe 409 e NUNCA assume
+  // a barreira da primeira. O restoreId proprietário autoriza a
+  // liberação; qualquer falha pós-aquisição cai no catch e libera.
+  const restoreId = await iniciarBarreiraRestauracao(cid);
+  if (!restoreId) {
+    res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
+    return;
   }
-  // GUARDAR memberships atuais ANTES de restaurar: quem existir agora e
-  // não existir no snapshot precisa ser revogado e notificado também —
-  // comparar só o estado posterior perderia esses usuários.
-  const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
-  // IDs das sessões ANTES da restauração: salas antigas que o snapshot
-  // substitui precisam ser limpas dos sockets mesmo após sumirem do banco
-  const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
-
-  let resultado;
+  let commitado = false;
   try {
-    resultado = await restaurarEstado(cid, dados);
-  } catch (e) {
-    // restauração revertida: readiciona sockets às salas anteriores
-    await liberarBarreiraRestauracao(cid, "falha");
-    res.status(500).json({ erro: "Falha ao restaurar", detalhe: String(e) });
-    return;
-  }
+    // janela de teste determinística (NODE_ENV=test)
+    const delayBarreira = Number(process.env.MESTRE_RESTORE_DELAY_MS ?? 0);
+    if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
+      await new Promise((r) => setTimeout(r, delayBarreira));
+    }
+    // GUARDAR memberships atuais ANTES de restaurar
+    const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+    const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
 
-  await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados: resultado.arquivosRecuperados, arquivosAusentes: resultado.arquivosAusentes.length });
-  // Reconciliação pós-commit: compara por userId (IDs podem mudar) —
-  // ausentes são revogados, presentes recebem papel/status/permissões
-  // efetivamente persistidos. Sessões antes∪depois garantem a limpeza
-  // das salas antigas que já não existem mais no banco.
-  const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
-  const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
-  const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
-  if (rec.falhas.length) {
-    // commit já aplicado: libera a barreira no modo sucesso (somente
-    // membros ativos voltam a campanha:*) mas reporta a falha real —
-    // não finge reversão nem entrega eventos sem autorização
-    await liberarBarreiraRestauracao(cid, "sucesso");
-    res.status(500).json({ erro: "Restauração aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
-    return;
+    let resultado;
+    try {
+      resultado = await restaurarEstado(cid, dados);
+      commitado = true;
+    } catch (e) {
+      await liberarBarreiraRestauracao(cid, restoreId, "falha");
+      res.status(500).json({ erro: "Falha ao restaurar", detalhe: String(e) });
+      return;
+    }
+
+    await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados: resultado.arquivosRecuperados, arquivosAusentes: resultado.arquivosAusentes.length });
+    const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+    const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
+    const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
+    if (rec.falhas.length) {
+      // commit já aplicado: libera no modo sucesso mas reporta a falha
+      await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+      res.status(500).json({ erro: "Restauração aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
+      return;
+    }
+    await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+    emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id, campaignId: cid });
+    res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
+  } catch (e) {
+    // falha fora do try interno (captura, auditoria, reconciliação,
+    // reconstrução de salas): nunca deixar a barreira órfã — se o
+    // commit não ocorreu, restaura as salas evacuadas; se ocorreu,
+    // libera em modo sucesso (somente autorizados voltam)
+    console.error(`[restore] falha não tratada campanha=${cid}:`, e);
+    await liberarBarreiraRestauracao(cid, restoreId, commitado ? "sucesso" : "falha").catch(() => false);
+    if (!res.headersSent) {
+      res.status(500).json({ erro: commitado ? "Restauração aplicada, mas a finalização falhou" : "Falha ao restaurar", detalhe: String(e) });
+    }
   }
-  await liberarBarreiraRestauracao(cid, "sucesso");
-  emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id, campaignId: cid });
-  res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
 });

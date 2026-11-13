@@ -5,6 +5,7 @@
 // Banco 100% descartável.
 import { io as ioClient } from "socket.io-client";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, abrirDb, sessao, req, encerrarServidor, limparDir,
@@ -83,7 +84,7 @@ const patchMembro = (mid, body) =>
 
 try {
   await prepararBanco(BANCO);
-  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks`, env: { MESTRE_RESTORE_DELAY_MS: "1200" } });
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks`, env: { MESTRE_RESTORE_DELAY_MS: "1200", MESTRE_PAUSA_FLAG: `${DIR}/pausa.flag`, MESTRE_PAUSA_MATCH: "PISR" } });
   proc.stderr.on("data", (d) => process.stderr.write("[srv] " + d));
   proc.stdout?.on("data", (d) => process.stderr.write("[srv] " + d));
   await esperarSaudavel(BASE, proc);
@@ -501,6 +502,113 @@ try {
   t("pós-barreira: revogado continua sem eventos", jMsg === jMsg0, `msg=${jMsg - jMsg0}`);
   const rEntrarPosL = await emitirCb(sJ, "mesa:entrar", { sessionId: sid });
   t("pós-barreira: re-entrada do revogado recusada", rEntrarPosL?.ok !== true);
+
+  // ---------- M. Exclusividade: duas restaurações simultâneas ----------
+  sec("M. Exclusividade de restauração — segunda recebe 409");
+  // m3: mestre criado AGORA para não ser revogado por snapshots antigos
+  // (m2 virou espectador na seção H; o titular já consumiu sua cota de
+  // restaurações do rate limit — cota é por usuário)
+  const m3 = novoUsuario(BANCO, { username: "pt_m3", role: "mestre" });
+  const snapM1 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "M1" } });
+  const idM1 = snapM1.json?.id;
+  const snapM2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "M2" } });
+  const idM2 = snapM2.json?.id;
+  t("dois snapshots p/ M", snapM1.status === 201 && snapM2.status === 201 && !!idM1 && !!idM2);
+  // dispara a PRIMEIRA sem aguardar — a barreira fica 1.2s (env de teste)
+  const pM1 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${idM1}/restaurar`, { cookie: m3.cookie, body: { confirmacao: "RESTAURAR" } });
+  await dormir(300); // primeira já adquiriu a exclusividade
+  const rM2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${idM2}/restaurar`, { cookie: m3.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("segunda restauração simultânea → HTTP 409", rM2.status === 409, `status=${rM2.status} ${JSON.stringify(rM2.json).slice(0, 140)}`);
+  // a barreira da PRIMEIRA continua ativa e bloqueando ingressos
+  const rCampM = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("barreira da 1ª restauração segue bloqueando entrar-campanha", rCampM !== true, `ok=${JSON.stringify(rCampM)}`);
+  const rM1 = await pM1;
+  t("primeira restauração conclui 200", rM1.status === 200, JSON.stringify(rM1.json).slice(0, 140));
+  // controle: mecanismo liberado — uma nova restauração funciona
+  const snapM3 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "M3" } });
+  const rM3 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapM3.json?.id}/restaurar`, { cookie: m3.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("controle: restauração posterior funciona (sem barreira órfã)", rM3.status === 200, `status=${rM3.status}`);
+  const rCampPosM = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("pós-M: entrar-campanha volta a funcionar", rCampPosM === true, `ok=${JSON.stringify(rCampPosM)}`);
+
+  // ---------- N. Operação em voo pausada após autorização ----------
+  sec("N. Operação em voo: pausa determinística → restore → cancelamento");
+  const flagPausa = `${DIR}/pausa.flag`;
+  const pausadoArq = `${flagPausa}.pausado`;
+  const esperarPausa = async () => {
+    const fim = Date.now() + 8000;
+    while (Date.now() < fim) { if (fs.existsSync(pausadoArq)) return true; await dormir(40); }
+    return false;
+  };
+  const esperarBarreira = async () => {
+    // sM é membro ativo garantido: fora da barreira entrar-campanha
+    // retorna true; durante a restauração retorna false
+    const fim = Date.now() + 8000;
+    while (Date.now() < fim) {
+      const ok = await emitirCb(sM, "entrar-campanha", ids.camp);
+      if (ok !== true) return true;
+      await dormir(50);
+    }
+    return false;
+  };
+  let pMsgEv = 0, pRollEv = 0;
+  for (const s of [sM, sM2, sJ2]) {
+    s.on("mesa:mensagem", (m) => { if (String(m?.content ?? "").includes("PISR")) pMsgEv++; });
+    s.on("mesa:rolagem", (r) => { if (String(r?.motivo ?? "").includes("PISR")) pRollEv++; });
+  }
+
+  // N1 — mensagem secreta: passa pela autorização, pausa ANTES da
+  // mutação (dentro do lease de operação); restore drena o lease
+  fs.writeFileSync(flagPausa, "1");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbMsgN = emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "PISR-msg-secreta", visibilidade: "secreta", clientId: crypto.randomUUID() });
+  t("N1: handler pausou após autorização, antes da mutação", await esperarPausa());
+  // snapshot que remove j2 — revogação durante a janela
+  const snapN = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "sem-j2-N" } });
+  const idN = snapN.json?.id;
+  const dbN0 = abrirDb(BANCO);
+  const linhaN = dbN0.prepare("select data from snapshots where id=?").get(idN);
+  const dadosN = JSON.parse(linhaN.data);
+  dadosN.memberships = (dadosN.memberships ?? []).filter((m) => m.userId !== ids.j2);
+  dbN0.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosN), idN);
+  dbN0.close();
+  const pRestN = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${idN}/restaurar`, { cookie: m3.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("N1: restauração adquiriu a barreira (ingressos bloqueados)", await esperarBarreira());
+  fs.rmSync(flagPausa, { force: true }); // retoma a operação pausada
+  await cbMsgN;
+  const rRestN = await pRestN;
+  t("N1: restore concluído 200", rRestN.status === 200, JSON.stringify(rRestN.json).slice(0, 140));
+  const dbN1 = abrirDb(BANCO);
+  const temMsgPISR = dbN1.prepare("select count(*) c from chat_messages where content like '%PISR%'").get().c;
+  dbN1.close();
+  t("N1: mensagem em voo NÃO persistiu após o restore", temMsgPISR === 0, `rows=${temMsgPISR}`);
+  await dormir(300);
+  t("N1: nenhum evento PISR entregue aos sockets", pMsgEv === 0, `msg=${pMsgEv}`);
+  const permN = (perms.get(sJ2) ?? []).at(-1);
+  t("N1: j2 revogado pelo restore (notificação privada)", permN?.status === "removido", JSON.stringify(permN));
+
+  // N2 — rolagem privada: pausa antes do insert(rolls); SEM lease —
+  // a barreira o cancela pela revalidação imediatamente antes da mutação
+  fs.writeFileSync(flagPausa, "1");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbRollN = emitirCb(sM, "mesa:rolar", { sessionId: sid, dados: [{ sides: 20, count: 1 }], motivo: "PISR-roll", visibilidade: "privada" });
+  t("N2: rolagem pausou após autorização", await esperarPausa());
+  const snapN2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "N2" } });
+  const pRestN2 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapN2.json?.id}/restaurar`, { cookie: m3.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("N2: restauração adquiriu a barreira", await esperarBarreira());
+  fs.rmSync(flagPausa, { force: true });
+  await cbRollN;
+  const rRestN2 = await pRestN2;
+  t("N2: restore concluído 200", rRestN2.status === 200, JSON.stringify(rRestN2.json).slice(0, 140));
+  const dbN2 = abrirDb(BANCO);
+  const temRollPISR = dbN2.prepare("select count(*) c from rolls where reason like '%PISR%'").get().c;
+  dbN2.close();
+  t("N2: rolagem em voo NÃO persistiu após o restore", temRollPISR === 0, `rows=${temRollPISR}`);
+  await dormir(300);
+  t("N2: nenhum evento de rolagem PISR entregue", pRollEv === 0, `roll=${pRollEv}`);
+  // limpa o gancho para não afetar execuções seguintes
+  fs.rmSync(flagPausa, { force: true });
+  fs.rmSync(pausadoArq, { force: true });
 
 } catch (e) {
   fail++;
