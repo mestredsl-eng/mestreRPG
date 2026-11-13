@@ -64,9 +64,13 @@ export default function Personagens({ campaignId, campanha }: Props) {
     const aoMudar = () => void carregar();
     socket.on("personagens:atualizados", aoMudar);
     socket.on("fichas:atualizadas", aoMudar);
+    // Issue #67: elementos de regra alterados invalidam a biblioteca de
+    // vinculáveis usada pelos campos da ficha.
+    socket.on("regras:atualizadas", aoMudar);
     return () => {
       socket.off("personagens:atualizados", aoMudar);
       socket.off("fichas:atualizadas", aoMudar);
+      socket.off("regras:atualizadas", aoMudar);
       socket.emit("sair-campanha", campaignId);
     };
   }, [carregar, campaignId]);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca } from "../api";
 import { ModalConfirmar } from "../Modal";
+import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const CATEGORIAS = ["mapas", "npcs", "locais", "documentos", "imagens", "pistas", "regras", "referencias", "jogadores", "outros"];
 const VIS_OPCOES = [
@@ -40,15 +41,21 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
   const [confirmando, setConfirmando] = useState<{ tipo: "pasta"; p: PastaBiblioteca } | { tipo: "arquivo"; a: ArquivoBiblioteca } | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
+  // Geração da carga: respostas antigas não sobrescrevem o estado atual.
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const [a, p] = await Promise.all([api.listarArquivos(campaignId), api.listarPastas(campaignId)]);
+      if (g !== geracao.current) return;
       setArquivos(a.arquivos); setPastas(p.pastas);
       setJogadoresEnviam(a.config.jogadoresEnviam);
       setErro(null);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+    } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId]);
   useEffect(() => { void carregar(); }, [carregar]);
+  // Issue #67: upload/moderação/edição/exclusão de outro membro atualiza a lista.
+  useSincronizacaoCampanha(["arquivos:atualizados"], () => void carregar());
 
   const caminhoPasta = useCallback((p: PastaBiblioteca): string => {
     const partes = [p.name];

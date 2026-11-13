@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
+import { EVENTO_RECONEXAO, useSincronizacaoCampanha } from "../useSincronizacao";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
 
@@ -25,21 +26,42 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
   const [confirmando, setConfirmando] = useState<Snapshot | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
+  // Geração da carga: respostas antigas não sobrescrevem o estado atual.
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const { sessoes: s } = await api.listarSessoes(campaignId);
+      if (g !== geracao.current) return;
       setSessoes(s);
       if (souMestre) {
         const { snapshots: sn } = await api.listarSnapshots(campaignId);
-        setSnapshots(sn);
         const [est, rests] = await Promise.all([api.estadoCampanha(campaignId), api.listarRestauracoes(campaignId)]);
+        if (g !== geracao.current) return;
+        setSnapshots(sn);
         setEstado(est); setRestauracoes(rests.restauracoes);
       }
       setErro(null);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+    } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId, souMestre]);
 
   useEffect(() => { void carregar(); setResumoEdit(campanha.summary ?? ""); }, [carregar, campanha.summary]);
+
+  // Issue #67: sessão criada/encerrada, novo snapshot e restauração da
+  // campanha invalidam as listas. Histórico já aberto de uma sessão é
+  // descartado para forçar nova leitura (visibilidade reaplicada no GET).
+  useSincronizacaoCampanha(["sessao:atualizada", "snapshots:atualizados", "campanha:restaurada"], (evento, payload) => {
+    if (evento === "campanha:restaurada") {
+      setHistoricos({});
+      aoAtualizar();
+    } else if (evento === "sessao:atualizada") {
+      const sid = (payload as { sessionId?: string } | undefined)?.sessionId;
+      if (sid) setHistoricos((p) => { const n = { ...p }; delete n[sid]; return n; });
+    } else if (evento !== EVENTO_RECONEXAO) {
+      setHistoricos({});
+    }
+    void carregar();
+  });
 
   const abrirHistorico = async (sid: string) => {
     if (historicos[sid]) return;

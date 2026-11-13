@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type EstruturaFicha, type ModeloResumo, type VersaoModelo } from "../api";
 import EditorFicha from "../EditorFicha";
 import { ModalConfirmar } from "../Modal";
+import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const estruturaVazia = (): EstruturaFicha => ({
   versao: 1,
@@ -22,26 +23,48 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   const [criando, setCriando] = useState(false);
   const [confirmandoPublicar, setConfirmandoPublicar] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  // estruturaSuja: há edições locais não salvas — uma atualização remota não
+  // pode sobrescrevê-las; avisamos em vez de recarregar o editor aberto.
+  const [estruturaSuja, setEstruturaSuja] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
 
+  // Geração da carga: respostas antigas não sobrescrevem o estado atual.
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const { modelos } = await api.listarModelos(campaignId);
+      if (g !== geracao.current) return;
       setModelos(modelos);
       setErro(null);
       try {
         const { kinds, elementos } = await api.obterVinculaveis(campaignId);
+        if (g !== geracao.current) return;
         setVinculaveis({ kinds, elementos });
       } catch {
-        setVinculaveis(null);
+        if (g === geracao.current) setVinculaveis(null);
       }
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar modelos");
+      if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar modelos");
     }
   }, [campaignId]);
 
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  // Issue #67: criar/editar/publicar/duplicar/arquivar modelo em outro
+  // cliente atualiza a lista; o editor aberto só recarrega se não houver
+  // alterações locais pendentes.
+  useSincronizacaoCampanha(["fichas:atualizadas"], () => {
+    void carregar();
+    if (!selecionado) return;
+    if (estruturaSuja) {
+      setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
+    } else {
+      void abrirModelo(selecionado);
+    }
+  });
 
   const abrirModelo = async (id: string) => {
     setSelecionado(id);
@@ -56,9 +79,16 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       const versao = rascunho ?? d.versoes.find((v) => v.id === d.modelo.currentVersionId) ?? d.versoes[0];
       setVersaoSel(versao ?? null);
       setEstrutura(versao?.estrutura ? { ...versao.estrutura } : estruturaVazia());
+      setEstruturaSuja(false);
+      setAviso(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao abrir modelo");
     }
+  };
+
+  const editarEstrutura = (e: EstruturaFicha) => {
+    setEstrutura(e);
+    setEstruturaSuja(true);
   };
 
   const salvar = async () => {
@@ -140,6 +170,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           <button onClick={() => setCriando((v) => !v)}>{criando ? "Cancelar" : "Novo modelo"}</button>
         </div>
         {erro && <p className="erro">{erro}</p>}
+        {aviso && <p className="sucesso">{aviso}</p>}
         {criando && (
           <div className="linha">
             <input placeholder="Nome do modelo (ex.: Ficha Caçadores & Caçados)" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
@@ -176,6 +207,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
                 const v = detalhe.versoes.find((x) => x.id === e.target.value);
                 setVersaoSel(v ?? null);
                 setEstrutura(v?.estrutura ? { ...v.estrutura } : estruturaVazia());
+                setEstruturaSuja(false);
               }}>
                 {detalhe.versoes.map((v) => (
                   <option key={v.id} value={v.id}>v{v.version}{v.publishedAt ? " (publicada)" : " (rascunho)"}</option>
@@ -192,9 +224,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           </div>
           {versaoSel.publishedAt && <p className="meta">Versão publicada — para alterar, crie uma nova versão.</p>}
           {!versaoSel.rascunho && versaoSel.estrutura && (
-            <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />
+            <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />
           )}
-          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={setEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />}
+          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />}
         </section>
       )}
       {confirmandoPublicar && (

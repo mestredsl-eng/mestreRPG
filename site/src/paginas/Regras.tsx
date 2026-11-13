@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   api,
   ApiError,
@@ -12,6 +12,7 @@ import {
   type TipoRegra,
 } from "../api";
 import { ModalConfirmar } from "../Modal";
+import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const ROTULO_KIND: Record<TipoRegra, string> = {
   atributo: "Atributo",
@@ -71,19 +72,39 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [conflitosAcervo, setConflitosAcervo] = useState<{ bookId: string; itens: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] } | null>(null);
   const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, "manter_campanha" | "usar_livro">>({});
 
+  // Geração da carga: respostas antigas não sobrescrevem o estado atual.
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const r = await api.obterRegras(campaignId);
+      if (g !== geracao.current) return;
       setRegras(r);
       setErro(null);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar regras");
+      if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar regras");
     }
   }, [campaignId]);
 
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  const carregarAcervo = useCallback(async () => {
+    try {
+      const r = await api.listarAcervoCampanha(campaignId);
+      setLivrosAcervo(r.livros);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao carregar Acervo da campanha");
+    }
+  }, [campaignId]);
+
+  // Issue #67: alterações de regras/config ou aplicação de livro do Acervo
+  // por outro membro invalidam biblioteca, pontuação e vínculos do Acervo.
+  useSincronizacaoCampanha(["regras:atualizadas"], () => {
+    void carregar();
+    void carregarAcervo();
+  });
 
   const elementosFiltrados = useMemo(() => {
     if (!regras) return [];
@@ -176,15 +197,6 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       setErro(mensagemApi(e, "Erro ao salvar configuração"));
     }
   };
-
-  const carregarAcervo = useCallback(async () => {
-    try {
-      const r = await api.listarAcervoCampanha(campaignId);
-      setLivrosAcervo(r.livros);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar Acervo da campanha");
-    }
-  }, [campaignId]);
 
   useEffect(() => {
     if (aba === "acervo") void carregarAcervo();
