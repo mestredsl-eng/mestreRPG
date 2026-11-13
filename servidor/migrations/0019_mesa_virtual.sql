@@ -1,0 +1,1 @@
+ALTER TABLE `sessions` ADD `vtt_state` text;

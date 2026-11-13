@@ -111,6 +111,7 @@ jobs:
             homologacao-final-v1.mjs \
             homologacao-mesa.mjs \
             teste-mesa-seguranca.mjs \
+            teste-mesa-virtual.mjs \
             teste-convite-cadastro.mjs \
             homologacao-equipamentos.mjs \
             teste-equipamentos.mjs \

@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { campaigns, memberships } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, notificarPermissaoAtualizada, adquirirOperacaoCampanha, pausaTesteEmit } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { buscarConvite, statusConvite } from "../lib/convites.js";
 
@@ -84,78 +84,116 @@ convitesRouter.get("/:codigo", limiteConsultaConvite, async (req, res) => {
  * Incremento de usos é atômico para não estourar maxUses em concorrência.
  */
 convitesRouter.post("/:codigo/aceitar", limiteAceiteConvite, async (req, res) => {
-  const inv = await buscarConvite(req.params.codigo);
-  if (!inv) {
+  // consulta inicial apenas para localizar a campanha do convite
+  const inv0 = await buscarConvite(req.params.codigo);
+  if (!inv0) {
     res.status(404).json({ erro: "Convite não encontrado" });
     return;
   }
-  if (statusConvite(inv) !== "ativo") {
-    res.status(410).json({ erro: `Convite ${statusConvite(inv)}` });
+  // lease da campanha: a aceitação altera invitations.uses e
+  // memberships — tabelas do estado exportado/restaurado. Durante a
+  // barreira de restauração a aquisição falha → 409 sem escrita.
+  const liberar = adquirirOperacaoCampanha(inv0.campaignId);
+  if (!liberar) {
+    res.status(409).json({ erro: "Campanha em restauração — tente novamente em instantes" });
     return;
   }
+  try {
+    // RELEITURA obrigatória sob o lease: o estado do convite pode ter
+    // mudado (ou a campanha ter sido restaurada) desde a 1ª consulta
+    const inv = await buscarConvite(req.params.codigo);
+    if (!inv) {
+      res.status(404).json({ erro: "Convite não encontrado" });
+      return;
+    }
+    if (statusConvite(inv) !== "ativo") {
+      res.status(410).json({ erro: `Convite ${statusConvite(inv)}` });
+      return;
+    }
 
-  const agora = new Date();
-  // UPDATE condicional: só incrementa se ainda houver uso disponível.
-  const resultado = await db.run(sql`
-    UPDATE invitations
-    SET uses = uses + 1, updated_at = ${agora.getTime()}
-    WHERE id = ${inv.id}
-      AND revoked_at IS NULL
-      AND (expires_at IS NULL OR expires_at > ${agora.getTime()})
-      AND (max_uses IS NULL OR uses < max_uses)
-  `);
-  if (resultado.changes === 0) {
-    res.status(410).json({ erro: "Convite não está mais disponível" });
-    return;
-  }
+    // gancho determinístico (NODE_ENV=test): pausa DENTRO do lease,
+    // após a revalidação e antes do primeiro write
+    await pausaTesteEmit(`convite-aceitar:${req.params.codigo}`);
+    const agora = new Date();
+    // UPDATE condicional: só incrementa se ainda houver uso disponível.
+    const resultado = await db.run(sql`
+      UPDATE invitations
+      SET uses = uses + 1, updated_at = ${agora.getTime()}
+      WHERE id = ${inv.id}
+        AND revoked_at IS NULL
+        AND (expires_at IS NULL OR expires_at > ${agora.getTime()})
+        AND (max_uses IS NULL OR uses < max_uses)
+    `);
+    if (resultado.changes === 0) {
+      res.status(410).json({ erro: "Convite não está mais disponível" });
+      return;
+    }
 
-  const papel = (inv.role === "espectador" ? "espectador" : "jogador") as "jogador" | "espectador";
-  const statusMembro = inv.requiresApproval ? "pendente" : "ativo";
+    const papel = (inv.role === "espectador" ? "espectador" : "jogador") as "jogador" | "espectador";
+    const statusMembro = inv.requiresApproval ? "pendente" : "ativo";
 
-  const [existente] = await db
-    .select()
-    .from(memberships)
-    .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
-    .limit(1);
+    const [existente] = await db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
+      .limit(1);
 
-  if (existente && existente.status !== "removido") {
-    // Já participa — estorna o uso do convite
-    await db.run(sql`UPDATE invitations SET uses = MAX(uses - 1, 0) WHERE id = ${inv.id}`);
-    res.status(409).json({ erro: "Você já participa desta campanha", status: existente.status });
-    return;
-  }
+    if (existente && existente.status !== "removido") {
+      // Já participa — estorna o uso do convite
+      await db.run(sql`UPDATE invitations SET uses = MAX(uses - 1, 0) WHERE id = ${inv.id}`);
+      res.status(409).json({ erro: "Você já participa desta campanha", status: existente.status });
+      return;
+    }
 
-  if (existente) {
-    // Reentrada após remoção: reativa a mesma membership
-    await db
-      .update(memberships)
-      .set({
+    if (existente) {
+      // Reentrada após remoção: reativa a mesma membership
+      await db
+        .update(memberships)
+        .set({
+          role: papel,
+          status: statusMembro,
+          joinedAt: statusMembro === "ativo" ? agora : existente.joinedAt,
+          updatedAt: agora,
+        })
+        .where(eq(memberships.id, existente.id));
+    } else {
+      await db.insert(memberships).values({
+        id: crypto.randomUUID(),
+        campaignId: inv.campaignId,
+        userId: req.usuario!.id,
         role: papel,
         status: statusMembro,
-        joinedAt: statusMembro === "ativo" ? agora : existente.joinedAt,
+        joinedAt: statusMembro === "ativo" ? agora : null,
+        createdAt: agora,
         updatedAt: agora,
-      })
-      .where(eq(memberships.id, existente.id));
-  } else {
-    await db.insert(memberships).values({
-      id: crypto.randomUUID(),
-      campaignId: inv.campaignId,
-      userId: req.usuario!.id,
-      role: papel,
-      status: statusMembro,
-      joinedAt: statusMembro === "ativo" ? agora : null,
-      createdAt: agora,
-      updatedAt: agora,
-    });
-  }
+      });
+    }
 
-  emitirCampanha(inv.campaignId, "membros:atualizados", { convite: true });
-  res.status(201).json({
-    ok: true,
-    status: statusMembro,
-    mensagem:
-      statusMembro === "pendente"
-        ? "Entrada solicitada! Aguardando aprovação do mestre."
-        : "Você entrou na campanha!",
-  });
+    // Relê a membership PERSISTIDA: a reativação preserva permissões
+    // antigas no banco — a notificação deve refletir o estado real, não
+    // valores presumidos. Sem registro = inconsistência → não notifica.
+    const [persistida] = await db
+      .select()
+      .from(memberships)
+      .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
+      .limit(1);
+    if (!persistida) {
+      res.status(500).json({ erro: "Falha de consistência ao registrar participação" });
+      return;
+    }
+    notificarPermissaoAtualizada(inv.campaignId, {
+      userId: persistida.userId, role: persistida.role, status: persistida.status, permissions: persistida.permissions,
+    });
+    emitirCampanha(inv.campaignId, "membros:atualizados", { convite: true });
+    res.status(201).json({
+      ok: true,
+      status: statusMembro,
+      mensagem:
+        statusMembro === "pendente"
+          ? "Entrada solicitada! Aguardando aprovação do mestre."
+          : "Você entrou na campanha!",
+    });
+  } finally {
+    liberar();
+  }
 });

@@ -1,18 +1,35 @@
 import { randomInt, randomUUID } from "node:crypto";
 import type { Server as SocketIOServer, Socket } from "socket.io";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql, getTableColumns } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions,
+  sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions, files,
 } from "../db/schema.js";
 import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
+import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
+import {
+  lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
+  vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
+  type TokenVtt, type VttState,
+} from "../lib/vtt.js";
 
 const db = getDb();
+
+// Serialização explícita das mutações da mesa virtual: o ciclo
+// ler→validar→alterar→gravar→emitir precisa ser atômico por sessão.
+// Hoje o driver síncrono (better-sqlite3) já serializa os handlers, mas
+// esta fila garante a mesma propriedade se o driver virar assíncrono.
+let filaVtt: Promise<unknown> = Promise.resolve();
+function comLockVtt<T>(fn: () => Promise<T>): Promise<T> {
+  const p = filaVtt.then(fn, fn);
+  filaVtt = p.then(() => undefined, () => undefined);
+  return p;
+}
 
 type Usuario = { id: string; username: string; displayName?: string | null };
 type Papel = "mestre" | "jogador" | "espectador";
@@ -30,19 +47,76 @@ const LADOS_VALIDOS = new Set([4, 6, 8, 10, 20]);
 async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { erro: string }> {
   const usuario = socket.data.usuario as Usuario | undefined;
   if (!usuario) return { erro: "Não autenticado" };
-  const [sessao] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  let sessao: typeof sessions.$inferSelect | undefined;
+  try {
+    [sessao] = await db.select().from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+  } catch (e) {
+    // vtt_state corrompido (JSON inválido) não pode derrubar a sessão inteira:
+    // recarrega sem a coluna e segue com o estado VTT vazio (o módulo VTT
+    // relê o texto bruto de forma defensiva e registra o problema).
+    console.error(`[vtt] falha ao ler sessão ${sessionId} (vtt_state inválido?):`, e);
+    const { vttState: _omit, ...colsSemVtt } = getTableColumns(sessions);
+    const [row] = await db.select(colsSemVtt).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+    if (row) sessao = { ...row, vttState: null } as typeof sessions.$inferSelect;
+  }
   if (!sessao) return { erro: "Sessão não encontrada" };
+  // barreira de restauração: enquanto a campanha está sendo substituída
+  // nenhuma operação de mesa/entrada é autorizada — vale também para
+  // operações que já passaram por uma checagem anterior, pois esta
+  // revalidação acontece imediatamente antes da mutagem/emissão
+  if (barreiraRestauracaoAtiva(sessao.campaignId)) return { erro: "Campanha em restauração" };
   const [m] = await db.select().from(memberships)
     .where(and(eq(memberships.campaignId, sessao.campaignId), eq(memberships.userId, usuario.id), eq(memberships.status, "ativo")))
     .limit(1);
   if (!m) return { erro: "Sem permissão nesta campanha" };
+  // lease da operação inteira via AsyncLocalStorage: uma vez adquirido
+  // aqui, cobre leituras, validações, mutações e emissões até o finally
+  // do wrapper — a drenagem da restauração espera por ele. Se a
+  // barreira já existe, a aquisição falha e a operação é recusada.
+  // Reutiliza o lease já registrado por ESTA operação (ex.: registrarChat).
+  if (opCampanhaALS.getStore() && !leaseOperacaoALS(sessao.campaignId)) {
+    return { erro: "Campanha em restauração" };
+  }
   return { sessao, membership: m, papel: m.role as Papel };
+}
+
+/**
+ * Registra handler Socket.IO dentro de um contexto de operação de
+ * campanha (AsyncLocalStorage): o resolverCtx adquire o lease uma vez
+ * e o finally libera — cobrindo o ciclo completo mesmo com vários
+ * awaits e chamadas internas (registrarChat etc.).
+ */
+function on(socket: Socket, evento: string, handler: (...args: never[]) => unknown) {
+  socket.on(evento, (...args: unknown[]) => {
+    void opCampanhaALS.run({ ops: new Map() }, async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (handler as (...a: any[]) => unknown)(...(args as any[]));
+      } finally {
+        liberarLeasesALS(); // uma liberação por campanha, garantida
+      }
+    });
+  });
 }
 
 async function mestresDaCampanha(campaignId: string): Promise<string[]> {
   const rows = await db.select({ userId: memberships.userId }).from(memberships)
     .where(and(eq(memberships.campaignId, campaignId), eq(memberships.role, "mestre"), eq(memberships.status, "ativo")));
   return rows.map((r) => r.userId);
+}
+
+/** Classificação fail-closed da visibilidade de um TESTE:
+ *  somente "publica" vai à sala; somente "privada" chega ao dono do
+ *  personagem; "mestre"/"secreta"/desconhecida/inválida são exclusivas
+ *  dos mestres atuais — nunca tratadas como públicas. */
+function classeVisibilidadeTeste(v: unknown): "publica" | "privada" | "mestre" {
+  return v === "publica" ? "publica" : v === "privada" ? "privada" : "mestre";
+}
+
+/** Visibilidade equivalente para o registro de chat derivado de um
+ *  teste: mestre/secreta/desconhecida viram "mestre" — nunca "publica". */
+function visibilidadeChatDoTeste(v: unknown): "publica" | "privada" | "mestre" {
+  return classeVisibilidadeTeste(v);
 }
 
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
@@ -53,6 +127,9 @@ async function nomeUsuario(id: string | null | undefined): Promise<string> {
 
 /** Emite mensagem de chat respeitando visibilidade (spec §4/§14). */
 async function emitirMensagem(io: SocketIOServer, msg: typeof chatMessages.$inferSelect) {
+  // barreira de restauração: nada é entregue durante a substituição —
+  // inclusive via usuario:* (salas privadas não são evacuadas)
+  if (barreiraRestauracaoAtiva(msg.campaignId)) return;
   const autorNome = await nomeUsuario(msg.authorId);
   const payload = { ...msg, autorNome };
   if (!msg.sessionId) {
@@ -64,34 +141,17 @@ async function emitirMensagem(io: SocketIOServer, msg: typeof chatMessages.$infe
     io.to(room).emit("mesa:mensagem", payload);
     return;
   }
+  // emissões privadas passam pela função central: destinatários são
+  // revalidados como membros ATIVOS no instante do envio
   if (msg.visibility === "mestre" || msg.visibility === "secreta") {
     const mestres = await mestresDaCampanha(msg.campaignId);
-    for (const uid of mestres) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
+    await emitirPrivadoCampanha(msg.campaignId, mestres, "mesa:mensagem", payload, ["mestre"]);
     return;
   }
   // privada: autor + destinatários — somente membros ainda ativos recebem
   const destinos = new Set<string>((msg.recipients ?? []) as string[]);
   if (msg.authorId) destinos.add(msg.authorId);
-  const ids = [...destinos];
-  const ativos = ids.length
-    ? new Set(
-        (
-          await db
-            .select({ userId: memberships.userId })
-            .from(memberships)
-            .where(
-              and(
-                eq(memberships.campaignId, msg.campaignId),
-                eq(memberships.status, "ativo"),
-                inArray(memberships.userId, ids)
-              )
-            )
-        ).map((r) => r.userId)
-      )
-    : new Set<string>();
-  for (const uid of ids) {
-    if (ativos.has(uid)) io.to(`usuario:${uid}`).emit("mesa:mensagem", payload);
-  }
+  await emitirPrivadoCampanha(msg.campaignId, [...destinos], "mesa:mensagem", payload);
 }
 
 // ---------- dados ----------
@@ -105,25 +165,47 @@ async function registrarChat(
   }
 ) {
   const id = opts.clientId && /^[0-9a-f-]{36}$/i.test(opts.clientId) ? opts.clientId : randomUUID();
+  // lease de operação: reutiliza o lease JÁ registrado nesta operação
+  // (ALS) — registrarChat dentro de um handler não adquire um segundo
+  // lease nem pode falhar por barreira após a primeira gravação do
+  // handler. Fora de contexto ALS, adquire/libera o próprio lease.
+  const store = opCampanhaALS.getStore();
+  const reutiliza = !!store?.ops.has(opts.campaignId);
+  const liberar = reutiliza ? null : adquirirOperacaoCampanha(opts.campaignId);
+  if (!reutiliza && !liberar) return null; // campanha em restauração: nada é gravado
   try {
-    await db.insert(chatMessages).values({
-      id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
-      authorId: opts.authorId ?? null, kind: opts.kind ?? "texto",
-      content: opts.content, visibility: opts.visibility ?? "publica",
-      recipients: opts.recipients ?? null, createdAt: new Date(),
-    });
-  } catch (e) {
-    if (String(e).includes("UNIQUE")) {
-      const [existente] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
-      if (existente) { await emitirMensagem(io, existente); return existente; }
+    // gancho determinístico: pausa após a autorização, antes da mutação
+    await pausaTesteEmit(JSON.stringify(opts));
+    // barreira pode ter começado durante a pausa: aborta antes de gravar
+    // SOMENTE quando este é um lease independente — dentro de uma
+    // operação com lease do handler, a operação autorizada deve
+    // completar o ciclo (o restore espera por ela na drenagem)
+    if (!reutiliza && barreiraRestauracaoAtiva(opts.campaignId)) return null;
+    try {
+      await db.insert(chatMessages).values({
+        id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
+        authorId: opts.authorId ?? null, kind: opts.kind ?? "texto",
+        content: opts.content, visibility: opts.visibility ?? "publica",
+        recipients: opts.recipients ?? null, createdAt: new Date(),
+      });
+    } catch (e) {
+      if (String(e).includes("UNIQUE")) {
+        const [existente] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+        if (existente) { await emitirMensagem(io, existente); return existente; }
+      }
+      throw e;
     }
-    throw e;
+    const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+    // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: chat_messages já foi
+    // inserido — o lease (próprio ou ALS do handler) cobre até a emissão
+    await pausaTesteEmit(JSON.stringify({ ...opts, fase: "pos-write" }));
+    await emitirMensagem(io, msg);
+    // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
+    agendarAutosave(opts.campaignId);
+    return msg;
+  } finally {
+    liberar?.(); // no-op quando o lease é do contexto ALS (wrapper libera)
   }
-  const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
-  await emitirMensagem(io, msg);
-  // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
-  agendarAutosave(opts.campaignId);
-  return msg;
 }
 
 async function turnoAtual(sessionId: string) {
@@ -176,30 +258,70 @@ function socket_handlers(
     const usuario = () => socket.data.usuario as Usuario | undefined;
 
     /** mesa:entrar {sessionId} — válido para mestre/jogador/espectador ativo */
-    socket.on("mesa:entrar", async (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:entrar", async (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
       const sessionId = payload?.sessionId;
       if (!sessionId || !usuario()) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
-      socket.join(`sessao:${sessionId}`);
-      const [t] = await db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1);
-      const podeEnviar = ctx.papel !== "espectador" || permissoesDe(ctx.membership).enviarMensagens === true;
-      cb?.({
-        ok: true, papel: ctx.papel, podeEnviar,
-        sessao: ctx.sessao,
-        turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
-        presenca: presentes(sessionId),
-        agora: Date.now(),
-      });
-      await emitirPresenca(sessionId);
-      await registrarChat(io, {
-        campaignId: ctx.sessao.campaignId, sessionId, authorId: usuario()!.id,
-        kind: "evento", content: `${await nomeUsuario(usuario()!.id)} entrou na mesa`, visibility: "publica",
+      // Barreira de teste determinística (somente NODE_ENV=test +
+      // MESTRE_VTT_BARRIER_MS): abre uma janela controlada entre a
+      // validação inicial e a autorização final, permitindo reproduzir
+      // troca de papel/membership no meio da entrada. Inerte em produção.
+      if (process.env.NODE_ENV === "test") {
+        const barreiraMs = Number(process.env.MESTRE_VTT_BARRIER_MS ?? 0);
+        if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
+      }
+      // Seção crítica: o socket SÓ entra na sala depois da autorização
+      // final. Enquanto não ingressa, nenhum evento da sala (mensagens
+      // públicas/sistema emitidas via io.to(room)) pode alcançá-lo.
+      // As leituras ocorrem dentro do lock para refletir mutações VTT
+      // anteriores e serializar a entrada com mapa/token/névoa.
+      await comLockVtt(async () => {
+        const vttEntrar = await lerVtt(sessionId);
+        const [donos, t] = await Promise.all([
+          donosDosTokens(sessionId, vttEntrar.tokens),
+          db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1).then((r) => r[0]),
+        ]);
+        // Revalidação final: membership, papel e status da sessão podem
+        // ter mudado durante a espera do lock e as leituras. O join, o
+        // emit e o ACK usam SOMENTE este contexto.
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF || ctxF.sessao.status === "encerrada") {
+          cb?.({ ok: false, erro: "erro" in ctxF ? ctxF.erro : "Sessão encerrada" });
+          return;
+        }
+        // revalidação atômica: sem await entre a checagem e o join —
+        // ingresso não atravessa uma barreira que começou na espera
+        if (barreiraRestauracaoAtiva(ctxF.sessao.campaignId)) {
+          cb?.({ ok: false, erro: "Campanha em restauração" });
+          return;
+        }
+        socket.join(`sessao:${sessionId}`);
+        const papel = ctxF.papel;
+        const uF = usuario()!;
+        const vttEu = papel === "mestre" || !vttEntrar.nevoa.ativa
+          ? vttEntrar
+          : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
+        socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
+        const podeEnviar = papel !== "espectador" || permissoesDe(ctxF.membership).enviarMensagens === true;
+        cb?.({
+          ok: true, papel, podeEnviar,
+          // vttState filtrado e sanitizado: JSON inválido ou névoa não vazam
+          sessao: { ...ctxF.sessao, vttState: vttEu },
+          turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
+          presenca: presentes(sessionId),
+          agora: Date.now(),
+        });
+        await emitirPresenca(sessionId);
+        await registrarChat(io, {
+          campaignId: ctxF.sessao.campaignId, sessionId, authorId: uF.id,
+          kind: "evento", content: `${await nomeUsuario(uF.id)} entrou na mesa`, visibility: "publica",
+        });
       });
     });
 
-    socket.on("mesa:sair", (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:sair", (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
       const sessionId = payload?.sessionId;
       if (!sessionId) { cb?.({ ok: false }); return; }
       socket.leave(`sessao:${sessionId}`);
@@ -207,8 +329,347 @@ function socket_handlers(
       cb?.({ ok: true });
     });
 
+    // ---------- mesa virtual: mapa + tokens (Etapa 1) ----------
+    // Estado persistido em sessions.vtt_state (JSON texto) — mesmo padrão do
+    // temporizador. O servidor é autoridade: valida papel, associação do
+    // token e coordenadas antes de gravar; emite `mesa:vtt` com o estado
+    // completo somente após a persistência. Reconexão recebe o estado via
+    // callback de `mesa:entrar` (sessao.vttState) e pelo emit fresco pós-join.
+    // Mutações passam por comLockVtt (serialização explícita do ciclo
+    // ler→validar→gravar→emitir, independente do driver).
+
+    /**
+     * Emissão filtrada por destinatário (Etapa 2 — névoa): cada socket da sala
+     * recebe somente a visão autorizada. Papel e membership são revalidados
+     * no banco a cada emissão — socket.data nunca é fonte de autorização.
+     * Sockets sem usuário autenticado ou sem acesso atual não recebem nada.
+     */
+    const emitirVtt = async (sessionId: string, vtt: VttState) => {
+      const room = `sessao:${sessionId}`;
+      // sockets reais (não RemoteSocket): emissão direcionada funciona com
+      // qualquer adaptador e preserva socket.data do socket local
+      const sockets = [...io.sockets.sockets.values()].filter((s) => s.rooms.has(room));
+      if (!sockets.length) return;
+      const donos = await donosDosTokens(sessionId, vtt.tokens);
+      await Promise.all(sockets.map(async (s) => {
+        const u = s.data.usuario as Usuario | undefined;
+        if (!u) return;
+        const ctx = await resolverCtx(s, sessionId);
+        if ("erro" in ctx || ctx.sessao.status === "encerrada") return;
+        s.emit("mesa:vtt", { sessionId, vtt: vttParaDestinatario(vtt, ctx.papel, u.id, donos) });
+      }));
+    };
+    /** Visão VTT do próprio requisitante (ACKs e mesa:entrar). */
+    const vttParaUsuario = async (sessionId: string, vtt: VttState, papel: string, userId: string): Promise<VttState> => {
+      if (papel === "mestre" || !vtt.nevoa.ativa) return vtt;
+      const donos = await donosDosTokens(sessionId, vtt.tokens);
+      return vttParaDestinatario(vtt, papel as "jogador" | "espectador", userId, donos);
+    };
+
+    const posicaoValida = (x: unknown, y: unknown): x is number =>
+      typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1
+      && typeof y === "number" && Number.isFinite(y) && y >= 0 && y <= 1;
+    const corValida = (c: unknown): c is string =>
+      typeof c === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(c);
+    /** Nome de token: string obrigatória quando informada; 1–60 chars após trim. */
+    const nomeValido = (n: unknown): n is string =>
+      typeof n === "string" && n.trim().length >= 1 && n.trim().length <= VTT_MAX_NOME;
+
+    /** Dono efetivo do token: userId direto; senão o userId da membership do personagem. */
+    async function donoDoToken(sessionId: string, token: TokenVtt): Promise<string | null> {
+      if (token.userId) return token.userId;
+      if (!token.personagemId) return null;
+      const [s] = await db.select({ campaignId: sessions.campaignId }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
+      if (!s) return null;
+      const [ch] = await db.select({ membershipId: characters.membershipId }).from(characters)
+        .where(and(eq(characters.id, token.personagemId), eq(characters.campaignId, s.campaignId))).limit(1);
+      if (!ch) return null;
+      const [m] = await db.select({ userId: memberships.userId, status: memberships.status }).from(memberships)
+        .where(eq(memberships.id, ch.membershipId)).limit(1);
+      return m && m.status === "ativo" ? m.userId : null;
+    }
+    /** Jogador só move token cujo dono efetivo é ele. */
+    async function tokenPertenceAoUsuario(sessionId: string, token: TokenVtt, userId: string): Promise<boolean> {
+      return (await donoDoToken(sessionId, token)) === userId;
+    }
+    /**
+     * Valida coerência dos vínculos userId/personagemId (P4): no máximo um
+     * dono. Se ambos informados, o personagem precisa pertencer à membership
+     * do mesmo usuário. Retorna { ok, userId, personagemId } ou { erro }.
+     */
+    async function validarVinculo(campaignId: string, userId: unknown, personagemId: unknown):
+      Promise<{ ok: true; userId: string | null; personagemId: string | null } | { ok: false; erro: string }> {
+      let uid: string | null = null;
+      let pid: string | null = null;
+      if (userId !== undefined && userId !== null) {
+        if (typeof userId !== "string" || !userId) return { ok: false, erro: "userId inválido" };
+        const [mem] = await db.select({ id: memberships.id }).from(memberships)
+          .where(and(eq(memberships.campaignId, campaignId), eq(memberships.userId, userId), eq(memberships.status, "ativo"))).limit(1);
+        if (!mem) return { ok: false, erro: "Usuário não é membro ativo" };
+        uid = userId;
+      }
+      if (personagemId !== undefined && personagemId !== null) {
+        if (typeof personagemId !== "string" || !personagemId) return { ok: false, erro: "personagemId inválido" };
+        const [ch] = await db.select({ membershipId: characters.membershipId }).from(characters)
+          .where(and(eq(characters.id, personagemId), eq(characters.campaignId, campaignId))).limit(1);
+        if (!ch) return { ok: false, erro: "Personagem não encontrado na campanha" };
+        pid = personagemId;
+        if (uid) {
+          const [mem] = await db.select({ userId: memberships.userId }).from(memberships)
+            .where(and(eq(memberships.id, ch.membershipId), eq(memberships.status, "ativo"))).limit(1);
+          if (!mem || mem.userId !== uid) return { ok: false, erro: "Personagem pertence a outro jogador" };
+        }
+      }
+      return { ok: true, userId: uid, personagemId: pid };
+    }
+
+    /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
+    on(socket, "mesa:vtt:mapa", async (payload: {
+      sessionId?: string; acao?: string;
+      mapa?: { fileId?: string; nome?: string; largura?: number; altura?: number } | null;
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
+      if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+      if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        if (payload.acao === "remover") {
+          vtt.mapa = null;
+        } else if (payload.acao === "definir") {
+          const m = payload.mapa;
+          if (!m || typeof m.fileId !== "string" || !m.fileId || m.fileId.length > 100) {
+            cb?.({ ok: false, erro: "Mapa inválido" }); return;
+          }
+          // o arquivo precisa existir na biblioteca DESTA campanha, ser imagem
+          // aprovada e visível a todos os participantes (P3: visibility pública)
+          const [arq] = await db.select({ id: files.id, mimeType: files.mimeType, fileName: files.fileName, status: files.status, visibility: files.visibility })
+            .from(files)
+            .where(and(eq(files.id, m.fileId), eq(files.campaignId, ctx.sessao.campaignId))).limit(1);
+          if (!arq || arq.status !== "aprovado") { cb?.({ ok: false, erro: "Imagem de mapa não encontrada" }); return; }
+          if (arq.visibility !== "publica") { cb?.({ ok: false, erro: "Mapa precisa ter visibilidade pública para todos os participantes" }); return; }
+          const ehImagem = (arq.mimeType ?? "").startsWith("image/")
+            || /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(arq.fileName);
+          if (!ehImagem) { cb?.({ ok: false, erro: "O mapa precisa ser uma imagem" }); return; }
+          vtt.mapa = {
+            fileId: m.fileId,
+            nome: typeof m.nome === "string" ? m.nome.slice(0, 140) : "Mapa",
+            largura: typeof m.largura === "number" && Number.isFinite(m.largura) ? m.largura : undefined,
+            altura: typeof m.altura === "number" && Number.isFinite(m.altura) ? m.altura : undefined,
+          };
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u!.id) });
+      });
+    });
+
+    /** mesa:vtt:token {sessionId, acao, token} — mestre tudo; jogador só move o próprio. */
+    on(socket, "mesa:vtt:token", async (payload: {
+      sessionId?: string; acao?: string;
+      token?: Partial<TokenVtt> & { id?: string };
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      const ctx = await resolverCtx(socket, sessionId);
+      if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
+      if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+      if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+      await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        const t = payload.token ?? {};
+        const acao = payload.acao;
+        const ehMestre = ctx.papel === "mestre";
+        const idx = typeof t.id === "string" ? vtt.tokens.findIndex((x) => x.id === t.id) : -1;
+        const existente = idx >= 0 ? vtt.tokens[idx] : undefined;
+
+        if (acao === "criar") {
+          if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre cria tokens" }); return; }
+          // idempotência: se o cliente reenviou um criar com id já existente, não duplica
+          if (typeof t.id === "string" && vtt.tokens.some((x) => x.id === t.id)) {
+            cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id), idempotente: true }); return;
+          }
+          if (vtt.tokens.length >= VTT_MAX_TOKENS) { cb?.({ ok: false, erro: `Limite de ${VTT_MAX_TOKENS} tokens por sessão atingido` }); return; }
+          if (!posicaoValida(t.x, t.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          // P7: nome precisa ser string válida quando informado
+          if (t.nome !== undefined && !nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
+          const nome = t.nome === undefined ? "Token" : (t.nome as string).trim().slice(0, VTT_MAX_NOME);
+          const cor = corValida(t.cor) ? t.cor : "#888888";
+          // P4: vínculos coerentes — personagem e usuário precisam ser do mesmo dono
+          const vinc = await validarVinculo(ctx.sessao.campaignId, t.userId, t.personagemId);
+          if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
+          const idToken = typeof t.id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(t.id) ? t.id : randomUUID();
+          const novo: TokenVtt = {
+            id: idToken, nome, cor, x: t.x as number, y: t.y as number,
+            userId: vinc.userId, personagemId: vinc.personagemId, ativo: t.ativo !== false,
+          };
+          vtt.tokens.push(novo);
+        } else if (acao === "atualizar" || acao === "mover") {
+          if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+          if (!posicaoValida(t.x ?? existente.x, t.y ?? existente.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          if (ehMestre) {
+            if (t.nome !== undefined) {
+              if (!nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
+              existente.nome = t.nome.trim().slice(0, VTT_MAX_NOME);
+            }
+            if (t.cor !== undefined) {
+              if (!corValida(t.cor)) { cb?.({ ok: false, erro: "Cor inválida" }); return; }
+              existente.cor = t.cor;
+            }
+            if (t.ativo !== undefined) existente.ativo = !!t.ativo;
+            if (t.userId !== undefined || t.personagemId !== undefined) {
+              // P4: reatribuição valida coerência usuário×personagem.
+              // Campos não enviados mantêm o vínculo atual.
+              const novoUser = t.userId !== undefined ? t.userId : existente.userId;
+              const novoPers = t.personagemId !== undefined ? t.personagemId : existente.personagemId;
+              const vinc = await validarVinculo(ctx.sessao.campaignId, novoUser, novoPers);
+              if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
+              existente.userId = vinc.userId;
+              existente.personagemId = vinc.personagemId;
+            }
+          } else {
+            // jogador: somente posição do próprio token — nada mais
+            if (!(await tokenPertenceAoUsuario(sessionId, existente, u.id))) {
+              cb?.({ ok: false, erro: "Token não pertence a você" }); return;
+            }
+          }
+          existente.x = t.x ?? existente.x;
+          existente.y = t.y ?? existente.y;
+        } else if (acao === "remover") {
+          if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre remove tokens" }); return; }
+          if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
+          vtt.tokens.splice(idx, 1);
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:nevoa {sessionId, acao, traco?} — somente mestre (Etapa 2).
+     * acoes: "revelar" (traco {raioX,raioY,pontos[]} → id gerado no servidor),
+     * "desfazer" (remove o último traço), "ocultarTudo" (ativa névoa sem
+     * regiões), "revelarTudo" (desativa névoa; traços são preservados para
+     * eventual reativação futura — a névoa desativada não os utiliza).
+     */
+    on(socket, "mesa:vtt:nevoa", async (payload: {
+      sessionId?: string; acao?: string;
+      traco?: { raioX?: number; raioY?: number; pontos?: { x: number; y: number }[] };
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      // Ordenação: a operação entra na fila VTT IMEDIATAMENTE, antes de
+      // qualquer await. Como o transporte preserva a ordem por conexão,
+      // uma sincronização posterior (mesa:vtt:nevoa:sincronizar) só
+      // responde depois que esta operação terminar — nunca existe
+      // mutação antiga pendente atrás de uma consulta de sincronização.
+      await comLockVtt(async () => {
+        // barreira determinística de teste (NODE_ENV=test apenas):
+        // segura a operação DENTRO da seção crítica para provar que a
+        // sincronização fica enfileirada atrás dela. Inerte em produção.
+        if (process.env.NODE_ENV === "test") {
+          const barreiraMs = Number(process.env.MESTRE_VTT_NEVOA_BARRIER_MS ?? 0);
+          if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
+        }
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre pode alterar a névoa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        if (!vtt.nevoa || typeof vtt.nevoa !== "object") vtt.nevoa = nevoaPadrao();
+        const acao = payload.acao;
+        if (acao === "revelar") {
+          if (!vtt.nevoa.ativa) vtt.nevoa.ativa = true;
+          const val = tracoRevelarValido(payload.traco);
+          if (!val.ok) { cb?.({ ok: false, erro: val.erro }); return; }
+          const totalAtual = vtt.nevoa.revelados.reduce((s, t) => s + t.pontos.length, 0);
+          if (vtt.nevoa.revelados.length >= NEVOA_MAX_TRAÇOS) { cb?.({ ok: false, erro: `Limite de ${NEVOA_MAX_TRAÇOS} traços de névoa atingido` }); return; }
+          if (totalAtual + val.traco.pontos.length > 1000) { cb?.({ ok: false, erro: "Limite de pontos de névoa atingido" }); return; }
+          vtt.nevoa.revelados.push({ id: randomUUID(), ...val.traco });
+        } else if (acao === "desfazer") {
+          vtt.nevoa.revelados.pop();
+        } else if (acao === "ocultarTudo") {
+          vtt.nevoa = { ativa: true, revelados: [] };
+        } else if (acao === "revelarTudo") {
+          vtt.nevoa.ativa = false; // traços preservados; inertes enquanto desativada
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:nevoa:sincronizar {sessionId} — leitura autoritativa e
+     * ORDENADA da névoa. Entra em comLockVtt imediatamente ao ser
+     * recebido (antes de qualquer await), na mesma fila das mutações:
+     * como o transporte preserva a ordem por conexão, a resposta só é
+     * produzida depois que toda operação de névoa já entregue ao
+     * servidor tiver terminado — e reflete o estado pós-operações.
+     * Não modifica o VTT nem permissões. Não aceita papel do cliente.
+     */
+    on(socket, "mesa:vtt:nevoa:sincronizar", async (payload: { sessionId?: string },
+      cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      await comLockVtt(async () => {
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        // revalidação final após as leituras assíncronas: papel/membership
+        // podem ter mudado durante lerVtt/donosDosTokens
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF) { cb?.({ ok: false, erro: ctxF.erro }); return; }
+        if (ctxF.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id) });
+      });
+    });
+
     // ---------- chat / declarações ----------
-    socket.on("mesa:mensagem", async (payload: {
+    on(socket, "mesa:mensagem", async (payload: {
       sessionId?: string; content?: string; clientId?: string;
       visibilidade?: "publica" | "privada" | "secreta"; destinatarioUserId?: string; tipo?: "texto" | "acao";
     }, cb?: (r: unknown) => void) => {
@@ -252,7 +713,7 @@ function socket_handlers(
     });
 
     // ---------- solicitações de teste (mestre) ----------
-    socket.on("mesa:teste:pedir", async (payload: {
+    on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
       campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
       dadosLados?: number; dadosCount?: number; minimo?: number;
@@ -263,6 +724,15 @@ function socket_handlers(
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre solicita testes" }); return; }
+      // validação runtime: o tipo TypeScript não protege contra valores
+      // arbitrários — somente campo AUSENTE (undefined) assume o padrão
+      // "publica"; null, "", "mestre", "secreta", desconhecidos, números
+      // e objetos são rejeitados SEM gravar/emitir nada
+      const visReq = payload.visibilidade === undefined ? "publica" : payload.visibilidade;
+      if (visReq !== "publica" && visReq !== "privada") {
+        cb?.({ ok: false, erro: "Visibilidade inválida" });
+        return;
+      }
 
       const [char] = await db.select().from(characters).where(and(eq(characters.id, payload.characterId), eq(characters.campaignId, ctx.sessao.campaignId))).limit(1);
       if (!char) { cb?.({ ok: false, erro: "Personagem não encontrado" }); return; }
@@ -317,6 +787,9 @@ function socket_handlers(
       const negativos = Math.max(0, Math.round(payload.malus ?? 0));
       let count = Math.min(Math.max(0, positivos - negativos), 30);
 
+      // pausa determinística (teste) + revalidação da barreira após a
+      // autorização e antes da mutação — operação em voo é cancelada
+      await pausaTesteEmit(JSON.stringify(payload));
       const id = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -328,7 +801,7 @@ function socket_handlers(
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
           status: "pendente",
-          visibility: payload.visibilidade === "privada" ? "privada" : "publica",
+          visibility: visReq,
           requestId: payload.requestId ?? null,
           createdAt: agora, updatedAt: agora,
         });
@@ -341,6 +814,10 @@ function socket_handlers(
         throw e;
       }
 
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: tests já foi
+      // inserido — o lease do handler cobre até as emissões finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+
       // notifica: sala recebe versão pública; dono recebe completa (com alvo se privada)
       const nomeChar = char.name;
       const nomeAutor = await nomeUsuario(u.id);
@@ -350,49 +827,78 @@ function socket_handlers(
         requestedByName: nomeAutor, rotulo: payload.rotulo ?? null,
         skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
         status: "pendente", createdAt: agora,
+        // visibilidade explícita e coerente em TODOS os payloads —
+        // o cliente nunca precisa adivinhar o contrato
+        visibility: visReq,
       };
-      if (payload.visibilidade === "privada") {
-        // privada: só dono do personagem + mestres recebem (com alvo/dados/pool)
-        io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: true,
-        });
+      // Dificuldade (`alvo`) é reservada ao mestre: cada audiência recebe
+      // um objeto PRÓPRIO — o payload do dono/jogador nunca carrega o
+      // campo, nem por spread acidental do objeto administrativo.
+      const dadosTeste = { lados: dadosLados, count };
+      if (visReq === "privada") {
+        // privada: dono recebe os dados do próprio teste SEM alvo;
+        // mestres ATUAIS recebem a versão administrativa com alvo
+        const payloadDono = { ...publico, dados: dadosTeste, pool, privado: true };
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste", payloadDono);
         const mestresPriv = await mestresDaCampanha(ctx.sessao.campaignId);
-        for (const mid of mestresPriv) io.to(`usuario:${mid}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: true,
-        });
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPriv, "mesa:teste", { ...payloadDono, alvo: payload.minimo ?? null }, ["mestre"]);
       } else {
-        // pública: composição do pool é visível; só o alvo (dificuldade) fica oculto
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, alvo: null, dados: { lados: dadosLados, count }, pool });
+        // pública: sala e dono recebem sem alvo; mestres recebem a
+        // versão administrativa com alvo via canal privado
+        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste", { ...publico, dados: dadosTeste, pool });
         io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
-          ...publico, alvo: payload.minimo ?? null,
-          dados: { lados: dadosLados, count }, pool, privado: false,
+          ...publico, dados: dadosTeste, pool, privado: false,
         });
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste:detalhe", { id, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count }, pool });
+        const mestresPub = await mestresDaCampanha(ctx.sessao.campaignId);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresPub, "mesa:teste", {
+          ...publico, alvo: payload.minimo ?? null, dados: dadosTeste, pool, privado: false,
+        }, ["mestre"]);
       }
+      // mesa:teste:detalhe carrega o ALVO (dificuldade reservada):
+      // NUNCA vai à sala coletiva e NÃO vai ao dono — o evento não tem
+      // consumidor no frontend para jogadores; somente mestres atuais,
+      // via canal privado usuario:* com visibilidade explícita.
+      const mestresDet = await mestresDaCampanha(ctx.sessao.campaignId);
+      await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresDet, "mesa:teste:detalhe", {
+        id, alvo: payload.minimo ?? null,
+        dados: dadosTeste, pool,
+        visibility: "privada",
+      }, ["mestre"]);
 
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${payload.rotulo ? ` (${payload.rotulo})` : ""}`,
-        visibility: payload.visibilidade === "privada" ? "privada" : "publica",
-        recipients: payload.visibilidade === "privada" ? [membroDono.userId] : undefined,
+        visibility: visReq,
+        recipients: visReq === "privada" ? [membroDono.userId] : undefined,
       });
       cb?.({ ok: true, id });
     });
 
     // ---------- rolar teste pendente (dono do personagem ou mestre) ----------
-    socket.on("mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
-      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
-      if (!teste || !teste.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
-      const ctx = await resolverCtx(socket, teste.sessionId);
+      // leitura inicial APENAS para localizar a sessão/lease: o registro
+      // completo é RELIDO sob o lease — um teste lido antes de uma
+      // restauração nunca é usado como fonte de dados para a escrita
+      const [ref] = await db.select({ sessionId: tests.sessionId }).from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!ref?.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
+      const ctx = await resolverCtx(socket, ref.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!teste || !teste.sessionId || teste.sessionId !== ref.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const [membroDono] = char ? await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1) : [null];
       const ehDono = membroDono?.userId === u.id;
       if (ctx.papel !== "mestre" && !ehDono) { cb?.({ ok: false, erro: "Só o dono do personagem ou o mestre rolam" }); return; }
+      // visibilidade ANTES da idempotência: teste reservado a mestres
+      // (mestre/secreta/desconhecida/vazia) não pode ser rolado pelo
+      // dono — e o ACK não pode devolver resultado, estado ou
+      // confirmação de rolagem a quem não tem autorização
+      if (ctx.papel !== "mestre" && classeVisibilidadeTeste(teste.visibility) === "mestre") {
+        cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" });
+        return;
+      }
       if (teste.status !== "pendente") { cb?.({ ok: true, id: teste.id, status: teste.status, jaRolado: true }); return; }
 
       // Vitalidade: penalidade de dados aplicada no servidor a partir do
@@ -429,6 +935,7 @@ function socket_handlers(
         d10 = { minimo, lancados: resultados.length, sucessos, falhas: resultados.length - sucessos };
       }
 
+      await pausaTesteEmit(JSON.stringify(payload));
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       try {
@@ -459,24 +966,42 @@ function socket_handlers(
         alvo: teste.target, // só mestres recebem via filtro abaixo
         visibility: teste.visibility, createdAt: agora,
       };
-      // público: sem alvo; privado: dono+mestre com alvo; mestre sempre com alvo
-      io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null });
-      if (membroDono) io.to(`usuario:${membroDono.userId}`).emit("mesa:rolagem", payloadRoll);
+      // `alvo` (dificuldade) só existe no objeto dos mestres — sala,
+      // dono e qualquer outro destinatário recebem o payload SEM o
+      // campo (não null, não placeholder: a propriedade não existe)
+      const { alvo: _alvoReservado, ...payloadRollSemAlvo } = payloadRoll;
+      // fail-closed: SOMENTE "publica" vai à sala coletiva — "privada"
+      // vai só a dono+mestres; "mestre"/"secreta"/desconhecida vão
+      // exclusivamente aos mestres atuais (nunca à sala, nunca ao dono)
+      const classeRoll = classeVisibilidadeTeste(teste.visibility);
+      if (classeRoll === "publica") {
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRollSemAlvo, visibility: "publica" });
+      }
+      // emissões privadas revalidam membership ativa no instante do envio;
+      // o dono recebe o resultado SEM a dificuldade — somente quando o
+      // teste é explicitamente "privada" (ou "publica", sanitizada)
+      if (membroDono && classeRoll !== "mestre") {
+        await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRollSemAlvo);
+      }
       const mestres = await mestresDaCampanha(teste.campaignId);
-      for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:rolagem", payloadRoll);
+      await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: rolls e tests já
+      // foram escritos — o lease do handler DEVE cobrir até o fim,
+      // inclusive o registrarChat (que reutiliza o mesmo lease ALS)
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "rolagem",
         content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
-        visibility: teste.visibility === "privada" ? "privada" : "publica",
-        recipients: teste.visibility === "privada" && membroDono ? [membroDono.userId] : undefined,
+        visibility: visibilidadeChatDoTeste(teste.visibility),
+        recipients: classeRoll === "privada" && membroDono ? [membroDono.userId] : undefined,
       });
       cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade, d10 });
     });
 
     // ---------- rolagem livre ----------
-    socket.on("mesa:rolar", async (payload: {
+    on(socket, "mesa:rolar", async (payload: {
       sessionId?: string; dados?: { sides: number; count: number }[];
       motivo?: string; visibilidade?: "publica" | "privada"; requestId?: string;
       d10?: { positivos?: number; negativos?: number; minimo?: number };
@@ -522,6 +1047,7 @@ function socket_handlers(
       const rollId = payload.requestId ?? randomUUID();
       const agora = new Date();
       const vis = payload.visibilidade === "privada" ? "privada" : "publica";
+      await pausaTesteEmit(JSON.stringify(payload));
       try {
         await db.insert(rolls).values({
           id: rollId, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
@@ -541,11 +1067,14 @@ function socket_handlers(
         total, motivo: payload.motivo ?? (modoDano ? "Dano" : null), visibility: vis, createdAt: agora, d10, modo: modoDano,
       };
       if (vis === "publica") io.to(`sessao:${ctx.sessao.id}`).emit("mesa:rolagem", rollPayload);
-      else {
-        io.to(`usuario:${u.id}`).emit("mesa:rolagem", rollPayload);
+      else if (!barreiraRestauracaoAtiva(ctx.sessao.campaignId)) {
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, [u.id], "mesa:rolagem", rollPayload);
         const mestres = await mestresDaCampanha(ctx.sessao.campaignId);
-        for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:rolagem", rollPayload);
+        await emitirPrivadoCampanha(ctx.sessao.campaignId, mestres, "mesa:rolagem", rollPayload, ["mestre"]);
       }
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: rolls já foi
+      // escrito — o lease do handler cobre até o registrarChat final
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "rolagem",
@@ -557,40 +1086,62 @@ function socket_handlers(
     });
 
     // ---------- decisão do mestre ----------
-    socket.on("mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId || !payload.outcome) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
-      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
-      if (!teste || !teste.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
-      const ctx = await resolverCtx(socket, teste.sessionId);
+      // mesma regra de teste:rolar — leitura inicial só localiza a
+      // sessão; o registro é relido sob o lease antes de qualquer uso
+      const [ref] = await db.select({ sessionId: tests.sessionId }).from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!ref?.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
+      const ctx = await resolverCtx(socket, ref.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+      const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
+      if (!teste || !teste.sessionId || teste.sessionId !== ref.sessionId) { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre decide" }); return; }
       const outcomes = ["sucesso", "parcial", "falha", "falha_critica", "personalizado"];
       if (!outcomes.includes(payload.outcome)) { cb?.({ ok: false, erro: "Resultado inválido" }); return; }
+      await pausaTesteEmit(JSON.stringify(payload));
       await db.update(tests).set({ status: "decidido", outcome: payload.outcome, outcomeNote: payload.nota?.slice(0, 2000) ?? null, updatedAt: new Date() }).where(eq(tests.id, teste.id));
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: tests já foi
+      // atualizado — o lease cobre emissões e registrarChat finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const decisao = {
         testId: teste.id, sessionId: teste.sessionId, characterId: teste.characterId,
         characterName: char?.name, outcome: payload.outcome, nota: payload.nota ?? null,
         decididoPor: await nomeUsuario(u.id), visibility: teste.visibility,
       };
-      io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: teste.visibility === "privada" ? null : decisao.nota });
+      // fail-closed: só "publica" vai à sala; "privada" só a
+      // mestre+dono; "mestre"/"secreta"/desconhecida só a mestres
+      const classeDec = classeVisibilidadeTeste(teste.visibility);
+      if (classeDec === "publica") {
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, nota: decisao.nota, visibility: "publica" });
+      }
+      // versão integral: só mestres e dono ATUAL do personagem — e o
+      // dono somente quando o teste é explicitamente "privada"
       const mestres = await mestresDaCampanha(teste.campaignId);
-      for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:decisao", decisao);
+      await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:decisao", decisao, ["mestre"]);
+      let donoUserId: string | null = null;
       if (char) {
         const [md] = await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
-        if (md) io.to(`usuario:${md.userId}`).emit("mesa:decisao", decisao);
+        donoUserId = md?.userId ?? null;
+        if (donoUserId && classeDec !== "mestre") {
+          await emitirPrivadoCampanha(teste.campaignId, [donoUserId], "mesa:decisao", decisao);
+        }
       }
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "decisao", content: `Decisão: ${payload.outcome}${payload.nota ? ` — ${payload.nota}` : ""}`,
-        visibility: teste.visibility === "privada" ? "privada" : "publica",
+        // a nota narrativa segue a mesma classificação do teste —
+        // decisão reservada NUNCA vira mensagem pública
+        visibility: visibilidadeChatDoTeste(teste.visibility),
+        recipients: classeDec === "privada" && donoUserId ? [donoUserId] : undefined,
       });
       cb?.({ ok: true });
     });
 
     // ---------- turnos (mestre) ----------
-    socket.on("mesa:turno", async (payload: {
+    on(socket, "mesa:turno", async (payload: {
       sessionId?: string; acao?: string;
       ordem?: string[]; primeiro?: number; pular?: number;
     }, cb?: (r: unknown) => void) => {
@@ -601,6 +1152,7 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla turnos" }); return; }
 
       let t = await turnoAtual(payload.sessionId);
+      await pausaTesteEmit(JSON.stringify(payload));
       if (!t) {
         const id = randomUUID();
         await db.insert(turns).values({ id, sessionId: payload.sessionId, state: { ordem: [], atual: -1, ativo: false }, updatedBy: u.id, updatedAt: new Date() });
@@ -644,7 +1196,11 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
 
+      await pausaTesteEmit(JSON.stringify(payload));
       await db.update(turns).set({ state: state as never, updatedBy: u.id, updatedAt: new Date() }).where(eq(turns.id, t.id));
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: turns persistido —
+      // o lease cobre emissão e registrarChat finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       io.to(`sessao:${payload.sessionId}`).emit("mesa:turnos", { sessionId: payload.sessionId, turnos: state });
       const atualId = state.ativo && state.atual !== undefined && state.atual >= 0 ? state.ordem[state.atual] : null;
       const rotulo = atualId ? await rotuloMembro(atualId) : null;
@@ -661,14 +1217,17 @@ function socket_handlers(
     });
 
     // ---------- temporizador (mestre) ----------
-    socket.on("mesa:timer", async (payload: { sessionId?: string; acao?: string; duracaoSegundos?: number }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:timer", async (payload: { sessionId?: string; acao?: string; duracaoSegundos?: number }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.acao) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla o temporizador" }); return; }
 
-      const [s] = await db.select().from(sessions).where(eq(sessions.id, payload.sessionId)).limit(1);
+      // colunas explícitas: select() completo parsearia vtt_state (json) e
+      // uma corrupção ali derrubaria o temporizador junto com a mesa virtual
+      const [s] = await db.select({ id: sessions.id, campaignId: sessions.campaignId, timerState: sessions.timerState })
+        .from(sessions).where(eq(sessions.id, payload.sessionId)).limit(1);
       if (!s) { cb?.({ ok: false, erro: "Sessão não encontrada" }); return; }
       const atual = (s.timerState ?? {}) as { status?: string; remainingMs?: number; totalMs?: number; endsAt?: number };
       const agora = Date.now();
@@ -701,8 +1260,11 @@ function socket_handlers(
         default:
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
+      await pausaTesteEmit(JSON.stringify(payload));
       await db.update(sessions).set({ timerState: novo as never, updatedAt: new Date() }).where(eq(sessions.id, s.id));
       agendarAutosave(s.campaignId);
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: timerState persistido
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       const estadoTimer = { sessionId: s.id, ...novo, servidorAgora: agora };
       io.to(`sessao:${s.id}`).emit("mesa:timer", estadoTimer);
       cb?.({ ok: true, timer: estadoTimer });
@@ -712,10 +1274,18 @@ function socket_handlers(
   // ---------- ticker do temporizador (sincronização servidor→clientes) ----------
   setInterval(async () => {
     try {
-      const rodando = await db.select().from(sessions);
+      // só as colunas do timer: vtt_state corrompido não pode parar o ticker
+      const rodando = await db.select({ id: sessions.id, campaignId: sessions.campaignId, timerState: sessions.timerState }).from(sessions);
       for (const s of rodando) {
         const ts = s.timerState as { status?: string; endsAt?: number; remainingMs?: number; totalMs?: number } | null;
         if (!ts || ts.status !== "rodando") continue;
+        // barreira/lease: o ticker NÃO pode persistir estado calculado
+        // sobre dados pré-restore — pula a sessão durante restauração
+        // e segura um lease durante a escrita+emissão de cada parada
+        if (barreiraRestauracaoAtiva(s.campaignId)) continue;
+        const relTick = adquirirOperacaoCampanha(s.campaignId);
+        if (!relTick) continue; // corrida: barreira subiu entre a checagem e a aquisição
+        try {
         // recuperação pós-restart: se endsAt faltar, reconstrói a partir de remainingMs persistido
         const endsAt = ts.endsAt ?? (ts.remainingMs ? Date.now() + ts.remainingMs : 0);
         if (!endsAt) {
@@ -735,6 +1305,9 @@ function socket_handlers(
           io.to(`sessao:${s.id}`).emit("mesa:timer", {
             sessionId: s.id, status: "rodando", remainingMs: rest, totalMs: ts.totalMs, endsAt: ts.endsAt, servidorAgora: Date.now(),
           });
+        }
+        } finally {
+          relTick();
         }
       }
     } catch { /* ticker não pode derrubar o servidor */ }

@@ -205,7 +205,7 @@ try {
   delete process.env.NODE_ENV; // servidor filho nasce sem modo de teste
   const PORTA2 = await portaLivre();
   const BASE2 = `http://localhost:${PORTA2}`;
-  const proc2 = subirServidor(PORTA2, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  const proc2 = subirServidor(PORTA2, { banco: BANCO, arquivos: ARQ, backups: BKS, env: { NODE_ENV: "development" } });
   process.env.NODE_ENV = "test"; // restaura para o restante do teste
   await esperarSaudavel(BASE2, proc2);
   const t0 = Date.now();
