@@ -6,6 +6,7 @@ import { users, authSessions } from "../db/schema.js";
 import { hashSenha, gerarToken, hashToken } from "../lib/password.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { ehAdminPrincipal, idAdminPrincipal } from "../lib/adminPrincipal.js";
+import { desconectarUsuario } from "../lib/io.js";
 
 const db = getDb();
 export const adminRouter = Router();
@@ -127,8 +128,10 @@ adminRouter.patch("/users/:id", async (req, res) => {
   await db.update(users).set(dados).where(eq(users.id, id));
 
   // Bloqueio ou troca de senha → derruba sessões ativas do usuário
+  // (HTTP e sockets — sessões revogadas não podem continuar conectadas)
   if (status === "bloqueado" || password !== undefined) {
     await db.delete(authSessions).where(eq(authSessions.userId, id));
+    desconectarUsuario(id);
   }
   const [atualizado] = await db.select().from(users).where(eq(users.id, id)).limit(1);
   res.json({ usuario: usuarioPublico(atualizado, await idAdminPrincipal()) });
@@ -152,6 +155,7 @@ adminRouter.delete("/users/:id", async (req, res) => {
   }
   try {
     await db.delete(users).where(eq(users.id, id)); // cascade remove auth_sessions/memberships
+    desconectarUsuario(id);
   } catch (e) {
     // O usuário é referenciado por histórico que deve ser preservado
     // (mensagens de chat, campanhas, arquivos, anotações etc.) — FKs sem cascade.
