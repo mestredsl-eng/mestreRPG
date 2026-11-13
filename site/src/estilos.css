@@ -1690,6 +1690,42 @@ code {
   padding-left: 1.1rem;
 }
 
+
+/* Navegação rápida para fichas extensas */
+.ficha-navegacao {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  padding: 0.65rem 0.75rem;
+  margin: 0 0 1rem;
+  background: #191c21;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+}
+
+.ficha-navegacao-titulo {
+  color: #9aa0a6;
+  font-size: 0.82rem;
+  margin-right: 0.2rem;
+}
+
+.ficha-secao[id] {
+  scroll-margin-top: 1rem;
+}
+
+@media (max-width: 600px) {
+  .ficha-navegacao {
+    gap: 0.35rem;
+    padding: 0.55rem;
+  }
+
+  .ficha-navegacao button {
+    max-width: 100%;
+    white-space: normal;
+    text-align: left;
+  }
+}
 /* ---- Foco visível consistente (acessibilidade) ----
    Regras :focus acima removem o outline; :focus-visible (foco de
    teclado) restaura um indicador claro sem afetar clique de mouse. */
@@ -2009,6 +2045,15 @@ textarea:focus-visible,
 }
 .erros-salvamento ul { margin: 6px 0 0; padding-left: 20px; }
 .erros-salvamento .mini { margin-left: 6px; }
+
+/* Prévia de sincronização Acervo → campanha */
+.diff-item { border: 1px solid var(--borda, #2a2f3f); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; background: var(--fundo-cartao, #161a26); }
+.diff-valor { margin-top: 4px; font-size: 0.85em; }
+.diff-def { display: block; margin-top: 2px; white-space: pre-wrap; word-break: break-word; opacity: 0.85; }
+@media (max-width: 600px) {
+  .diff-item .linha-ferramentas { flex-direction: column; align-items: stretch; }
+  .diff-item .linha-ferramentas select { width: 100%; }
+}
 
 /* Mesa virtual — mapa e tokens */
 .vtt-tabuleiro {

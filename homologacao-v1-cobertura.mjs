@@ -150,8 +150,9 @@ try {
   await irCampanha(pgM);
   await aba(pgM, "Regras");
   await pgM.locator(".abas button, div button", { hasText: "Acervo" }).last().click();
-  await pgM.getByRole("button", { name: /Aplicar à campanha|Revisar \/ reaplicar/ }).first().click();
-  await pgM.getByText(/Livro aplicado|Aplicado v/).first().waitFor({ timeout: 15000 });
+  await pgM.getByRole("button", { name: /Pré-visualizar/ }).first().click();
+  await pgM.getByRole("button", { name: "Confirmar sincronização" }).click();
+  await pgM.getByText(/Sincronização concluída|Aplicado v/).first().waitFor({ timeout: 15000 });
   t("livro aplicado à campanha", true);
   await shot(pgM, "07-aplicar-livro");
 
