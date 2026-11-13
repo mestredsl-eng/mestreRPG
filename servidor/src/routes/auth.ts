@@ -14,6 +14,7 @@ import {
 } from "../middleware/auth.js";
 import { limitador, limiteUsuario } from "../lib/ratelimit.js";
 import { buscarConvite, statusConvite } from "../lib/convites.js";
+import { desconectarSessao } from "../lib/io.js";
 
 const db = getDb();
 export const authRouter = Router();
@@ -186,6 +187,9 @@ authRouter.post("/logout", requireAuth, async (req, res) => {
   if (token) {
     await db.delete(authSessions).where(eq(authSessions.tokenHash, hashToken(token)));
   }
+  // Encerra no servidor todos os sockets autenticados por ESTA sessão —
+  // outras sessões independentes da mesma conta continuam ativas.
+  if (req.sessaoId) desconectarSessao(req.sessaoId);
   limparCookieSessao(res);
   res.json({ ok: true });
 });
