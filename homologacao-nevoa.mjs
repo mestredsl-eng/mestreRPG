@@ -703,7 +703,18 @@ try {
   derrubarAckM = 50;
   await garantirPincel(pgM);
   await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
+  try {
+    await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
+  } catch (e) {
+    const diag = await pgM.evaluate(() => ({
+      botoes: [...document.querySelectorAll("button")].map((b) => b.textContent?.trim()).filter(Boolean),
+      meta: document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? null,
+      erro: document.querySelector(".vtt-erro, .erro, [class*=erro]")?.textContent ?? null,
+      pincel: !!document.querySelector(".vtt-nevoa-canvas-pincel"),
+    })).catch(() => null);
+    console.log("DIAG incerto:", JSON.stringify(diag), `emitidos=${nevoaEmitidos} interceptados=${nevoaInterceptados}`);
+    throw e;
+  }
   const desfezOff2 = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const nEm2 = nevoaEmitidos;
   // idem: gesto bloqueado só existe se o pincel seguir ativo
