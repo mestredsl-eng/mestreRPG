@@ -238,6 +238,105 @@ try {
   t("sync paralela consistente (papel ∈ {anterior, novo}, nunca inventado)",
     ["jogador", "espectador", "mestre"].includes(syncParalelaR?.papel) || syncParalelaR?.ok === false);
 
+  // ---------- G. Snapshot: membro ausente é revogado ----------
+  sec("G. Restauração de snapshot revoga usuário ausente");
+  // snapshot do estado ATUAL (ainda sem g1)
+  const snap = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "pré-g1" } });
+  const snapId = snap.json?.id;
+  t("snapshot criado", snap.status === 201 && !!snapId, JSON.stringify(snap.json));
+  // g1 entra DEPOIS do snapshot — não constará nele
+  const g1 = novoUsuario(BANCO, { username: "pt_g1", role: "jogador" });
+  const sG = conectar(g1.cookie);
+  await pronto(sG);
+  const rGEntrar = await emitirCb(sG, "mesa:entrar", { sessionId: sid });
+  t("g1 entra na mesa", rGEntrar?.ok === true);
+  const iniG = marcarPerm(sG);
+  const rRest = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapId}/restaurar`, { cookie: ids.cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("snapshot restaurado", rRest.status === 200, JSON.stringify(rRest.json).slice(0, 120));
+  const evG = await esperarPerm(sG, iniG);
+  t("g1 ausente do snapshot: notificação de revogação (status=removido)",
+    evG?.[0]?.status === "removido" && evG?.[0]?.campaignId === ids.camp, JSON.stringify(evG?.[0]));
+  // prova de expulsão das salas: broadcast VTT seguinte não chega a g1
+  const cntG = cntVtt.get(sG) ?? 0;
+  await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkG", nome: "G", cor: "#999", x: 0.4, y: 0.4, userId: ids.j1 } });
+  await Promise.all([esperarVtt(sM), esperarVtt(sJ)]);
+  await dormir(300);
+  t("g1 revogado NÃO recebeu mesa:vtt da sala", (cntVtt.get(sG) ?? 0) === cntG);
+  const rMsgG = await emitirCb(sG, "mesa:mensagem", { sessionId: sid, content: "?", clientId: crypto.randomUUID() });
+  t("g1 revogado: chat recusado", rMsgG?.ok !== true);
+  const rEntrarG = await emitirCb(sG, "mesa:entrar", { sessionId: sid });
+  t("g1 revogado: re-entrada recusada", rEntrarG?.ok !== true);
+  // usuário mantido continua funcionando
+  const syncJpos = await sincronizar(sJ);
+  t("usuário mantido segue operando após restore", syncJpos?.ok === true);
+
+  // ---------- H. Importação modo substituir ----------
+  sec("H. Importação substituir revoga ausentes e notifica alterados");
+  // H1: pacote sem esp → revogação
+  const exp1 = await req(BASE, "GET", `/campaigns/${ids.camp}/exportar`, { cookie: ids.cookieMestre });
+  const pacote1 = exp1.json;
+  const iniEspH = marcarPerm(sE);
+  pacote1.estado.memberships = (pacote1.estado.memberships ?? []).filter((m) => m.userId !== esp.id);
+  const rImp1 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: ids.cookieMestre,
+    body: { pacote: pacote1, modo: "substituir", campaignId: ids.camp, confirmacao: "SUBSTITUIR" },
+  });
+  t("import substituir (sem espectador) aceito", rImp1.status === 200, JSON.stringify(rImp1.json).slice(0, 140));
+  const evEspH = await esperarPerm(sE, iniEspH);
+  t("espectador removido pelo pacote: revogação privada",
+    evEspH?.[0]?.status === "removido", JSON.stringify(evEspH?.[0]));
+  const cntEspH = cntVtt.get(sE) ?? 0;
+  await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkH", nome: "H", cor: "#777", x: 0.6, y: 0.4, userId: ids.j1 } });
+  await Promise.all([esperarVtt(sM)]);
+  await dormir(300);
+  t("espectador removido: sem eventos de sala após substituição", (cntVtt.get(sE) ?? 0) === cntEspH);
+
+  // H2: pacote muda papel de m2 (jogador→espectador) → notificação real
+  const exp2 = await req(BASE, "GET", `/campaigns/${ids.camp}/exportar`, { cookie: ids.cookieMestre });
+  const pacote2 = exp2.json;
+  const iniM2H = marcarPerm(sM2);
+  for (const m of pacote2.estado.memberships ?? []) {
+    if (m.userId === m2.id) { m.role = "espectador"; m.permissions = { enviarMensagens: true }; }
+  }
+  const rImp2 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: ids.cookieMestre,
+    body: { pacote: pacote2, modo: "substituir", campaignId: ids.camp, confirmacao: "SUBSTITUIR" },
+  });
+  t("import substituir (papel alterado) aceito", rImp2.status === 200, JSON.stringify(rImp2.json).slice(0, 140));
+  const evM2H = await esperarPerm(sM2, iniM2H);
+  const evM2h = evM2H?.at(-1);
+  t("m2: evento reflete papel/permissões PERSISTIDOS do pacote",
+    evM2h?.papel === "espectador" && evM2h?.permissoes?.enviarMensagens === true,
+    JSON.stringify(evM2h));
+  const syncM2H = await sincronizar(sM2);
+  t("m2 sync confirma papel=espectador pós-import", syncM2H?.papel === "espectador");
+  const rMsgM2H = await emitirCb(sM2, "mesa:mensagem", { sessionId: sid, content: "oi", clientId: crypto.randomUUID() });
+  t("m2 espectador COM enviarMensagens=true: chat aceito", rMsgM2H?.ok === true, JSON.stringify(rMsgM2H));
+
+  // ---------- I. Convite reativa permissões preservadas ----------
+  sec("I. Aceite de convite informa permissões persistidas");
+  // esp foi removido no H1 — recria membership removida com permissão
+  // true (o aceite de convite deve preservá-la, não zerar)
+  const dbEspI = abrirDb(BANCO);
+  dbEspI.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), ids.camp, esp.id, "espectador", "removido",
+      JSON.stringify({ enviarMensagens: true }), Date.now(), Date.now(), Date.now());
+  dbEspI.close();
+  const conv = await req(BASE, "POST", `/campaigns/${ids.camp}/invitations`, { cookie: ids.cookieMestre, body: { role: "espectador", requiresApproval: false } });
+  const codigo = conv.json?.convite?.code;
+  t("convite criado", conv.status === 201 && !!codigo);
+  const iniEspI = marcarPerm(sE);
+  const ace = await req(BASE, "POST", `/convites/${codigo}/aceitar`, { cookie: esp.cookie, body: {} });
+  t("convite aceito (reativação)", ace.status === 201 || ace.status === 200, JSON.stringify(ace.json).slice(0, 120));
+  const evEspI = await esperarPerm(sE, iniEspI);
+  t("evento traz permissões REALMENTE persistidas (enviarMensagens=true)",
+    evEspI?.at(-1)?.permissoes?.enviarMensagens === true && evEspI?.at(-1)?.status === "ativo",
+    JSON.stringify(evEspI?.at(-1)));
+  // socket re-entra para receber a sala de novo e enviar chat
+  await emitirCb(sE, "mesa:entrar", { sessionId: sid });
+  const rMsgEspI = await emitirCb(sE, "mesa:mensagem", { sessionId: sid, content: "voltei", clientId: crypto.randomUUID() });
+  t("espectador reativado COM permissão: chat aceito", rMsgEspI?.ok === true, JSON.stringify(rMsgEspI));
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

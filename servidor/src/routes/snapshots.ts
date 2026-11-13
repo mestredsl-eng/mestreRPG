@@ -8,7 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, expulsarMembroDaCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
+import { emitirCampanha, reconciliarMembrosAposRestauracao } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
 import { restaurarEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -105,6 +105,11 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
     data: estadoAtual as never, createdBy: req.usuario!.id, createdAt: new Date(),
   });
 
+  // GUARDAR memberships atuais ANTES de restaurar: quem existir agora e
+  // não existir no snapshot precisa ser revogado e notificado também —
+  // comparar só o estado posterior perderia esses usuários.
+  const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+
   let resultado;
   try {
     resultado = await restaurarEstado(cid, dados);
@@ -114,13 +119,11 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   }
 
   await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados: resultado.arquivosRecuperados, arquivosAusentes: resultado.arquivosAusentes.length });
-  // A restauração substitui TODAS as memberships da campanha — notifica cada
-  // usuário afetado com seu papel/status/permissões atuais (pós-commit).
-  const membrosApos = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
-  for (const m of membrosApos) {
-    notificarPermissaoAtualizada(cid, { userId: m.userId, role: m.role, status: m.status, permissions: m.permissions });
-    if (m.status !== "ativo") await expulsarMembroDaCampanha(cid, m.userId);
-  }
+  // Reconciliação pós-commit: compara por userId (IDs podem mudar) —
+  // ausentes são revogados, presentes recebem papel/status/permissões
+  // efetivamente persistidos.
+  const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+  await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois);
   emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id });
   res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
 });

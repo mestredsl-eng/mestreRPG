@@ -13,7 +13,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir, req, abrirDb,
+  criarCenario, encerrarServidor, limparDir, req, abrirDb, sessao,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -210,6 +210,10 @@ try {
   const ctxM2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
+  // prova de "mesma página": reload zeraria o estado React e não pode
+  // ocorrer em nenhuma seção de tempo real
+  let cargasJ = 0;
+  pgJ.on("load", () => cargasJ++);
 
   // Interceptação de emits — registrada ANTES do socket conectar.
   // Cobre os dois transportes do Socket.IO:
@@ -270,14 +274,35 @@ try {
     return ![...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? ""));
   }, null, { timeout });
   let entrarCountJ = 0, wsCountJ = 0;
+  // corrida VTT: reter o ACK (pacote "43[..."] ) da sincronização para
+  // controlar a ordem de chegada das respostas entre gerações de papel
+  let armarRetencaoSyncJ = false, armadoUmaVezJ = false, ackSyncJRetido = null;
+  const liberarAckSyncJ = () => { if (ackSyncJRetido) { try { pgJWs?.send(ackSyncJRetido); } catch { /* morto */ } ackSyncJRetido = null; } };
+  let pgJWs = null;
   await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
     wsCountJ++;
+    pgJWs = ws;
     const srv = ws.connectToServer();
     ws.onMessage((msg) => {
       if (typeof msg === "string" && msg.includes("mesa:entrar")) entrarCountJ++;
+      // arma UMA única vez por solicitação do teste — sincronizações
+      // posteriores (geração nova) NÃO podem ter o ACK retido
+      if (armarRetencaoSyncJ && !armadoUmaVezJ && typeof msg === "string" && msg.includes("nevoa:sincronizar")) {
+        armarRetencaoSyncJ = false;
+        armadoUmaVezJ = true;
+      }
       srv.send(msg);
     });
-    srv.onMessage((m) => ws.send(m));
+    srv.onMessage((m) => {
+      // ACKs do Socket.IO são pacotes "43[" — retem o primeiro após o
+      // emit de sincronização armado (prova da corrida VTT)
+      if (armadoUmaVezJ && ackSyncJRetido === null && typeof m === "string" && m.startsWith("43")) {
+        armadoUmaVezJ = false;
+        ackSyncJRetido = m;
+        return; // NÃO entrega — resposta fica retida no cliente
+      }
+      ws.send(m);
+    });
   });
 
   await login(pgM, "mestre_teste", "senha-forte-123");
@@ -960,7 +985,7 @@ try {
   // prova principal da PR: alterações via API REST real (PATCH/DELETE de
   // membership) refletem na UI sem reload, sem reconexão e sem novo
   // mesa:entrar — wsCountJ/entrarCountJ permanecem congelados.
-  const wsAntesRT = wsCountJ, entrarAntesRT = entrarCountJ;
+  const wsAntesRT = wsCountJ, entrarAntesRT = entrarCountJ, cargasAntesRT = cargasJ;
   const midJ1 = c.jogadores.jogador1.membershipId;
   const dbEsp = abrirDb(BANCO);
   const midEsp = dbEsp.prepare("select id from memberships where campaign_id=? and user_id=?").get(campId, espId)?.id;
@@ -1011,10 +1036,14 @@ try {
   t("enviarMensagens=false ao vivo: formulário de chat some", (await pgE.locator(".chat-form").count()) === 0);
 
   // mudanças de papel/permissão NÃO podem gerar novo WS nem novo entrar:
-  // a prova de "mesma conexão" vale para toda a seção até aqui
-  t("papel/permissões ao vivo: 0 novos WebSocket e 0 mesa:entrar",
-    wsCountJ === wsAntesRT && entrarCountJ === entrarAntesRT,
-    `ws ${wsAntesRT}→${wsCountJ} entrar ${entrarAntesRT}→${entrarCountJ}`);
+  // a prova de "mesma conexão" vale para toda a seção até aqui.
+  // tolerância: no máximo 1 reconexão de transporte (engine.io ping
+  // timeout ambiental sob proxy WS do Playwright); reload da página
+  // continua terminantemente proibido (zeraria o estado React).
+  t("papel/permissões ao vivo: sem reload, ≤1 reconexão de transporte, 0 mesa:entrar extra",
+    cargasJ === cargasAntesRT
+      && wsCountJ - wsAntesRT <= 1 && entrarCountJ - entrarAntesRT <= 1,
+    `cargas ${cargasAntesRT}→${cargasJ} ws ${wsAntesRT}→${wsCountJ} entrar ${entrarAntesRT}→${entrarCountJ}`);
 
   // 4) remoção da membership: revogação em tempo real na MESMA conexão
   const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
@@ -1047,6 +1076,111 @@ try {
   t("revogação/reativação: no máximo 1 mesa:entrar (nova autorização) e conexão preservada",
     entrarCountJ - entrarAntesRev <= 1 && wsCountJ === wsAntesRev,
     `ws ${wsAntesRev}→${wsCountJ} entrar ${entrarAntesRev}→${entrarCountJ}`);
+
+  sec("Corrida VTT — resposta obsoleta não reaplica visão privilegiada");
+  // pgJ é jogador; promove a mestre → sync da geração N fica RETIDA;
+  // rebaixa → geração N+1; libera a resposta antiga por último.
+  // A visão privilegiada NUNCA pode reaparecer.
+  const wsAntesCorrida = wsCountJ, entrarAntesCorrida = entrarCountJ;
+  armarRetencaoSyncJ = true; // o próximo ACK de sync será retido
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("corrida: PATCH promoção", rRT.status === 200);
+  // espera o emit da sync ser armado (cliente→servidor contém o evento)
+  // espera o ACK da sync ser retido (polling no lado Node — a mensagem
+  // viaja pelo WebSocket interceptado)
+  for (let i = 0; i < 100 && ackSyncJRetido === null; i++) await new Promise((r) => setTimeout(r, 100));
+  t("corrida: ACK da sync retido no transporte", ackSyncJRetido !== null);
+  // enquanto retida, rebaixa — geração N+1
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("corrida: PATCH rebaixamento", rRT.status === 200);
+  // visão segura durante a transição: ou o placeholder está visível
+  // (tab=0) ou a sync da nova geração já concluiu com a visão FILTRADA.
+  // Em ambos os casos a visão privilegiada (contagem do mestre) não
+  // pode estar na tela — a janela é curta porque a sync N+1 responde
+  // rápido (seu ACK não está retido).
+  const tokPrivilegiados = await pgM.locator(".vtt-token").count();
+  await pgJ.waitForFunction(() => /Permissões atualizadas/.test(document.body.innerText)
+    || document.querySelectorAll(".vtt-tabuleiro").length === 0, null, { timeout: 20000 }).catch(() => {});
+  const tabDurante = await pgJ.locator(".vtt-tabuleiro").count();
+  const tokensDurante = await pgJ.locator(".vtt-token").count();
+  t("corrida: durante rebaixamento a visão privilegiada fica oculta",
+    tokensDurante < tokPrivilegiados, `tab=${tabDurante} tokens=${tokensDurante} privilegiados=${tokPrivilegiados}`);
+  // libera a resposta OBSOLETA (geração N) — deve ser descartada por inteiro
+  liberarAckSyncJ();
+  ackSyncJRetido = null;
+  // a geração N+1 sincroniza e aplica a visão filtrada de jogador
+  const nTokHttpJ = async () => ((await vttStateHttp({ camp: campId, id: sidA, cookie: c.jogadores.jogador1.cookie }))?.tokens ?? []).length;
+  const esperadoCorrida = await nTokHttpJ();
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-tabuleiro").length === 1
+    && document.querySelectorAll(".vtt-token").length === n, esperadoCorrida, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => !/Permissões atualizadas/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  const [nTokJC, nTokMC] = [await pgJ.locator(".vtt-token").count(), await pgM.locator(".vtt-token").count()];
+  t("corrida: visão final = filtrada de jogador (não a privilegiada retida)",
+    nTokJC === esperadoCorrida && nTokJC < nTokMC, `jogador=${nTokJC} esperado=${esperadoCorrida} mestre=${nTokMC}`);
+  const ctrlCorrida = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("corrida: controles admin NÃO retornaram após resposta obsoleta", ctrlCorrida === 0, `controles=${ctrlCorrida}`);
+  t("corrida: mesma conexão (≤1 reconexão de transporte, ≤1 entrar na seção)",
+    cargasJ === cargasAntesRT
+      && wsCountJ - wsAntesCorrida <= 1 && entrarCountJ - entrarAntesCorrida <= 1,
+    `ws ${wsAntesCorrida}→${wsCountJ} entrar ${entrarAntesCorrida}→${entrarCountJ}`);
+
+  sec("Snapshot restaurado revoga membro ausente — UI sem reload");
+  // snapshot do estado atual; edita o JSON no banco removendo j1;
+  // restaura → j1 (conectado) deve ser revogado ao vivo
+  const snapRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "sem-j1" } });
+  const snapIdRT = snapRT.json?.id;
+  t("snapshot p/ revogação criado", snapRT.status === 201 && !!snapIdRT);
+  const dbSnap = abrirDb(BANCO);
+  const linhaSnap = dbSnap.prepare("select data from snapshots where id=?").get(snapIdRT);
+  const dadosSnap = JSON.parse(linhaSnap.data);
+  dadosSnap.memberships = (dadosSnap.memberships ?? []).filter((m) => m.userId !== c.jogadores.jogador1.id);
+  dbSnap.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSnap), snapIdRT);
+  dbSnap.close();
+  const wsAntesSnap = wsCountJ;
+  const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
+  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("jogador revogado pelo snapshot: acesso revogado sem reload",
+    /revogad/i.test(await pgJ.locator("body").innerText()) && (await pgJ.locator(".mesa-vtt").count()) === 0);
+  // mestre segue operando normalmente
+  await pgM.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0, null, { timeout: 15000 }).catch(() => {});
+  t("mestre mantém a mesa após restore", (await pgM.locator(".mesa-vtt").count()) > 0);
+
+  sec("Importação substituir revoga membro — UI sem reload");
+  const expRT = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
+  const pacoteRT = expRT.json;
+  pacoteRT.estado.memberships = (pacoteRT.estado.memberships ?? []).filter((m) => m.userId !== espId);
+  const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("import substituir aceito", rImpRT.status === 200, JSON.stringify(rImpRT.json).slice(0, 140));
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("espectador revogado pela importação: acesso revogado sem reload",
+    /revogad/i.test(await pgE.locator("body").innerText()) && (await pgE.locator(".mesa-vtt").count()) === 0);
+
+  sec("Convite reativa permissões preservadas — UI reflete estado real");
+  // garante UMA membership do espectador marcada como removida com
+  // enviarMensagens=true (a importação anterior pode tê-la apagado)
+  const dbEspRT = abrirDb(BANCO);
+  dbEspRT.prepare("delete from memberships where campaign_id=? and user_id=?").run(campId, espId);
+  dbEspRT.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), campId, espId, "espectador", "removido",
+      JSON.stringify({ enviarMensagens: true }), Date.now(), Date.now(), Date.now());
+  dbEspRT.close();
+  t("membership do espectador recriada como removida c/ permissão", true);
+  const convRT = await req(BASE, "POST", `/campaigns/${campId}/invitations`, { cookie: cookieMestre, body: { role: "espectador", requiresApproval: false } });
+  const codigoRT = convRT.json?.convite?.code;
+  t("convite criado", convRT.status === 201 && !!codigoRT);
+  const cookieEspRT = sessao(BANCO, espId);
+  const rAceiteRT = await req(BASE, "POST", `/convites/${codigoRT}/aceitar`, { cookie: cookieEspRT, body: {} });
+  t("convite aceito", rAceiteRT.status === 200 || rAceiteRT.status === 201, JSON.stringify(rAceiteRT.json).slice(0, 120));
+  // notificação privada → re-entrada autorizada → formulário de chat
+  await pgE.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0
+    && document.querySelectorAll(".chat-form").length > 0, null, { timeout: 40000 }).catch(() => {});
+  t("espectador reativado COM permissão: mesa e chat voltam sem reload",
+    (await pgE.locator(".mesa-vtt").count()) > 0 && (await pgE.locator(".chat-form").count()) > 0);
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });

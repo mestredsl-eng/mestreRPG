@@ -37,6 +37,50 @@ export function notificarPermissaoAtualizada(
 }
 
 /**
+ * Reconcilia memberships após uma operação que SUBSTITUI o estado da
+ * campanha (restauração de snapshot, importação modo substituir).
+ * Compara por userId — a restauração pode gerar membershipIds novos.
+ *
+ * - usuário presente antes e ausente depois → revogado: expulsa das
+ *   salas campanha/sessão e notifica status "removido" com o último
+ *   papel/permissões conhecidos.
+ * - presente depois com status ≠ ativo → expulsa + notifica valores
+ *   persistidos atuais.
+ * - presente depois ativo → notifica valores persistidos atuais.
+ *
+ * Deve ser chamada SOMENTE após a transação de restauração concluir.
+ * A room privada usuario:* é preservada em todos os casos.
+ */
+export async function reconciliarMembrosAposRestauracao(
+  campaignId: string,
+  antes: { userId: string; role: string; status: string; permissions: unknown }[],
+  depois: { userId: string; role: string; status: string; permissions: unknown }[],
+) {
+  const antesPorUser = new Map(antes.map((m) => [m.userId, m]));
+  const depoisPorUser = new Map(depois.map((m) => [m.userId, m]));
+  const usersAfetados = new Set([...antesPorUser.keys(), ...depoisPorUser.keys()]);
+  for (const userId of usersAfetados) {
+    const d = depoisPorUser.get(userId);
+    if (!d || d.status !== "ativo") {
+      // revogado ou nunca existiu no estado restaurado: usa os dados
+      // anteriores para papel/permissões do payload de revogação
+      const a = antesPorUser.get(userId);
+      await expulsarMembroDaCampanha(campaignId, userId);
+      notificarPermissaoAtualizada(campaignId, {
+        userId,
+        role: d?.role ?? a?.role ?? "jogador",
+        status: "removido",
+        permissions: d?.permissions ?? a?.permissions ?? {},
+      });
+      continue;
+    }
+    notificarPermissaoAtualizada(campaignId, {
+      userId, role: d.role, status: d.status, permissions: d.permissions,
+    });
+  }
+}
+
+/**
  * Remove o usuário de todas as rooms de uma campanha (campanha + sessões de
  * mesa), sem desconectar o socket — assim outras campanhas do mesmo usuário
  * no mesmo socket não são afetadas. Após a expulsão, `entrar-campanha` e

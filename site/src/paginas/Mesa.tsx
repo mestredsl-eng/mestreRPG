@@ -951,9 +951,12 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     sincronizarAutoritativo(ini);
     setVtt(ini);
     setPincel(false); setPreviewNevoa(null); // sessão/troca de estado: limpa rascunho
+    nivelAutorizadoRef.current = nivelAtual; // snapshot de entrada é autorizado
+    marcarVisaoPapel(false);
     // snapshot de entrada também NÃO libera o estado incerto — só a
     // sincronização ordenada (mesa:vtt:nevoa:sincronizar) confirma
     // que toda operação já entregue terminou
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inicial]);
 
   // ---------- névoa de guerra ----------
@@ -976,6 +979,16 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // visão filtrada AUTORIZADA para o papel novo (nunca snapshot antigo)
   const permSeqRef = useRef(atualizacaoPapel);
   useEffect(() => { permSeqRef.current = atualizacaoPapel; }, [atualizacaoPapel]);
+  // nível de privilégio da visão ATUALMENTE exibida (2=mestre, 1=jogador,
+  // 0=espectador): atualizado somente quando um estado autorizado é
+  // aplicado (snapshot de entrada ou ACK válido da sincronização)
+  const nivelAtual = souMestre ? 2 : ehEspectador ? 0 : 1;
+  const nivelAutorizadoRef = useRef(nivelAtual);
+  // visão segura durante rebaixamento: esconde mapa/tokens até a sync
+  // válida trazer a visão filtrada — nunca exibe privilégio antigo
+  const [visaoPapelPendente, setVisaoPapelPendente] = useState(false);
+  const visaoPapelPendenteRef = useRef(false);
+  const marcarVisaoPapel = (v: boolean) => { visaoPapelPendenteRef.current = v; setVisaoPapelPendente(v); };
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
   const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
@@ -1085,24 +1098,39 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     setSyncPendente(true);
     setErroVtt("Sincronização da névoa em andamento — aguardando estado autoritativo…");
     let respondido = false;
+    const seqPerm = permSeqRef.current; // geração de permissões no envio
     const timeout = window.setTimeout(() => {
       if (respondido) return;
       respondido = true;
       syncPendenteRef.current = false;
       setSyncPendente(false);
-      // nunca libera por decurso de tempo: estado incerto permanece
+      // nunca libera por decurso de tempo: estado incerto permanece.
+      // Se a geração de permissões avançou enquanto esta sync estava
+      // pendente, a resposta futura (se chegar) será obsoleta — dispara
+      // já a sincronização da geração vigente.
       setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
+      if (seqPerm !== permSeqRef.current) sincronizarNevoa();
     }, 8000);
-    const seqPerm = permSeqRef.current; // geração no momento do envio
     sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
       if (respondido) return; // resposta tardia: estado incerto já tratado
       respondido = true;
       window.clearTimeout(timeout);
       syncPendenteRef.current = false;
       setSyncPendente(false);
+      // VALIDADE ANTES DE QUALQUER EFEITO: se uma permissão mais nova
+      // chegou depois deste envio, a resposta inteira é obsoleta —
+      // não aplica VTT, não sincroniza referência, não muda papel,
+      // não libera nevoaIncerta, não limpa erro. O estado pendente já
+      // foi liberado acima para a geração vigente poder sincronizar.
+      if (seqPerm !== permSeqRef.current) {
+        sincronizarNevoa(); // dispara sync da geração atual
+        return;
+      }
       if (r?.ok && r.vtt) {
         sincronizarAutoritativo(r.vtt);
         setVtt(r.vtt);
+        nivelAutorizadoRef.current = nivelAtual; // visão agora autorizada p/ papel atual
+        marcarVisaoPapel(false);
         // papel autoritativo do servidor — o pai descarta se uma
         // permissão mais nova chegou depois deste envio
         aoPapelServidor(r.papel, seqPerm);
@@ -1118,7 +1146,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   useEffect(() => {
     const socket = getSocket();
     const aoConnectSync = () => {
-      if (nevoaIncertaRef.current && !syncPendenteRef.current) sincronizarNevoa();
+      // reconexão: retoma sincronização pendente — seja por estado
+      // incerto de névoa ou por visão aguardando papel autorizado
+      if ((nevoaIncertaRef.current || visaoPapelPendenteRef.current) && !syncPendenteRef.current) sincronizarNevoa();
     };
     socket.on("connect", aoConnectSync);
     return () => { socket.off("connect", aoConnectSync); };
@@ -1133,6 +1163,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const primeiroPerm = useRef(true);
   useEffect(() => {
     if (primeiroPerm.current) { primeiroPerm.current = false; return; }
+    // rebaixamento de privilégio: a visão exibida pode conter dados do
+    // papel anterior — esconde mapa/tokens até a sync autorizada chegar.
+    // promoção/subida mantém a visão anterior (já menos privilegiada).
+    if (nivelAtual < nivelAutorizadoRef.current) marcarVisaoPapel(true);
     if (!encerrada) sincronizarNevoa();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [atualizacaoPapel]);
@@ -1375,7 +1409,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
         )}
       </div>
       {erroVtt && <p className="erro">{erroVtt}</p>}
-      {!vtt.mapa ? (
+      {visaoPapelPendente ? (
+        <p className="dica">Permissões atualizadas — aguardando a visão autorizada do servidor…</p>
+      ) : !vtt.mapa ? (
         <p className="dica">{souMestre ? "Nenhum mapa definido. Envie uma imagem para montar o tabuleiro." : "O mestre ainda não definiu um mapa para esta sessão."}</p>
       ) : (
         <div

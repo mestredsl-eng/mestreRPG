@@ -10,7 +10,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
+import { emitirCampanha, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -89,6 +89,10 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       description: `Automático — antes de importar pacote sobre a campanha`,
       data: (await exportarCampanha(cid)) as never, createdBy: req.usuario!.id, createdAt: new Date(),
     });
+    // membros atuais ANTES de substituir: quem não constar no pacote
+    // precisa ser revogado e notificado — consultar só o estado final
+    // perderia esses usuários.
+    const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
     let resultado;
     try {
       resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
@@ -96,6 +100,8 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       res.status(500).json({ erro: "Falha ao importar/substituir", detalhe: String(e) });
       return;
     }
+    const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+    await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois);
     await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
     emitirCampanha(cid, "campanha:restaurada", {});
     res.json({ ok: true, campaignId: cid, modo, ...resultado });

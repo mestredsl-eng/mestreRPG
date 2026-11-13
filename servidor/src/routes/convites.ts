@@ -149,10 +149,20 @@ convitesRouter.post("/:codigo/aceitar", limiteAceiteConvite, async (req, res) =>
     });
   }
 
-  // A própria membership acabou de ser persistida — avisa os sockets do
-  // usuário (ex.: aba já aberta na campanha) sem depender de reload.
+  // Relê a membership PERSISTIDA: a reativação preserva permissões
+  // antigas no banco — a notificação deve refletir o estado real, não
+  // valores presumidos. Sem registro = inconsistência → não notifica.
+  const [persistida] = await db
+    .select()
+    .from(memberships)
+    .where(and(eq(memberships.campaignId, inv.campaignId), eq(memberships.userId, req.usuario!.id)))
+    .limit(1);
+  if (!persistida) {
+    res.status(500).json({ erro: "Falha de consistência ao registrar participação" });
+    return;
+  }
   notificarPermissaoAtualizada(inv.campaignId, {
-    userId: req.usuario!.id, role: papel, status: statusMembro, permissions: {},
+    userId: persistida.userId, role: persistida.role, status: persistida.status, permissions: persistida.permissions,
   });
   emitirCampanha(inv.campaignId, "membros:atualizados", { convite: true });
   res.status(201).json({
