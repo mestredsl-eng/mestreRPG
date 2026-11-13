@@ -29,7 +29,7 @@ const MAX_VISIVEIS = 4;
 const JANELA_DEDUP_MS = 3000;
 
 interface CtxNotificacoes {
-  notificar: (texto: string, tipo?: TipoNotificacao) => void;
+  notificar: (texto: string, tipo?: TipoNotificacao, opcoes?: { deduplicar?: boolean }) => void;
 }
 
 const Contexto = createContext<CtxNotificacoes>({ notificar: () => {} });
@@ -59,15 +59,19 @@ export function ProvedorNotificacoes({ children }: { children: ReactNode }) {
     timers.current.set(id, t);
   }, [remover]);
 
-  const notificar = useCallback((texto: string, tipo: TipoNotificacao = "info") => {
-    const chave = `${tipo}|${texto}`;
-    const agora = Date.now();
-    const ultimo = vistos.current.get(chave);
-    if (ultimo !== undefined && agora - ultimo < JANELA_DEDUP_MS) return;
-    vistos.current.set(chave, agora);
-    // limpeza oportunista do mapa de dedup
-    if (vistos.current.size > 100) {
-      for (const [k, ts] of vistos.current) if (agora - ts > 60_000) vistos.current.delete(k);
+  const notificar = useCallback((texto: string, tipo: TipoNotificacao = "info", opcoes?: { deduplicar?: boolean }) => {
+    // Eventos com identidade própria (ex.: id+revisão) podem desativar a
+    // deduplicação textual global sem afetar o comportamento dos demais toasts.
+    if (opcoes?.deduplicar !== false) {
+      const chave = `${tipo}|${texto}`;
+      const agora = Date.now();
+      const ultimo = vistos.current.get(chave);
+      if (ultimo !== undefined && agora - ultimo < JANELA_DEDUP_MS) return;
+      vistos.current.set(chave, agora);
+      // limpeza oportunista do mapa de dedup
+      if (vistos.current.size > 100) {
+        for (const [k, ts] of vistos.current) if (agora - ts > 60_000) vistos.current.delete(k);
+      }
     }
 
     const id = proximoId++;

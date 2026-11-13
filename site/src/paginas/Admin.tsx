@@ -3,6 +3,7 @@ import { api, type UsuarioAdmin } from "../api";
 import { Modal, ModalConfirmar } from "../Modal";
 import { useNotificar } from "../Notificacoes";
 import Servidor from "./Servidor";
+import AdminNovidades from "./AdminNovidades";
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
@@ -92,6 +93,7 @@ export default function Admin() {
   };
 
   return (
+    <>
     <section className="cartao">
       <div className="linha-entre">
         <h2>Usuários</h2>
@@ -215,6 +217,8 @@ export default function Admin() {
       )}
       <Servidor />
     </section>
+    <AdminNovidades />
+    </>
   );
 }
 

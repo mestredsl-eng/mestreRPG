@@ -196,7 +196,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
         <div className="biblioteca-lista">
           <div className="linha">
             <input placeholder="Pesquisar…" value={busca} onChange={(e) => setBusca(e.target.value)} />
-            <select value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
+            <select aria-label="Filtrar por categoria" value={filtroCat} onChange={(e) => setFiltroCat(e.target.value)}>
               <option value="">Todas categorias</option>
               {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>

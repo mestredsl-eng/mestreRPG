@@ -1,0 +1,537 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento III — Equipamentos Profissionais e Tecnologia Atual",
+      "descricao": "Catálogo realista de equipamentos existentes no mundo contemporâneo, usados em comunicação, computação, registro, segurança patrimonial, inspeção, manutenção, medição, energia e proteção individual. Não inclui dispositivos fictícios. Custos, peso, disponibilidade e efeitos em jogo são definidos por campanha; o uso de equipamentos sujeitos a autorização deve respeitar a legislação aplicável.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — equipamentos contemporâneos",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "radio_ht",
+          "name": "Rádio comunicador portátil",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Transceptor portátil para comunicação entre integrantes de uma equipe. Alcance depende de relevo, potência, antena e condições locais; operação sujeita às regras de radiofrequência.",
+            "subcategoria": "Comunicação",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "fone_comunicacao",
+          "name": "Fone com microfone para rádio",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório para transmitir e receber áudio com as mãos livres, compatível com o modelo de rádio utilizado.",
+            "subcategoria": "Comunicação",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "telefone_satellite",
+          "name": "Telefone via satélite",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Telefone que utiliza rede de satélites para comunicação em regiões sem cobertura celular. Depende de plano ativo e visada adequada do céu.",
+            "subcategoria": "Comunicação",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "telefone_rugged",
+          "name": "Celular reforçado",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Telefone com proteção adicional contra poeira, água e impactos, conforme a classificação do fabricante.",
+            "subcategoria": "Comunicação",
+            "ordem": 3
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "notebook_campo",
+          "name": "Notebook resistente",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Computador portátil reforçado para uso em ambientes de trabalho e deslocamentos. Autonomia e resistência variam por modelo.",
+            "subcategoria": "Computação",
+            "ordem": 4
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "tablet_rugged",
+          "name": "Tablet reforçado",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Tablet com estrutura e proteção voltadas ao uso profissional em campo, útil para mapas, formulários e consulta de documentos.",
+            "subcategoria": "Computação",
+            "ordem": 5
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "ssd_externo",
+          "name": "Unidade SSD externa",
+          "category": "Armazenamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Unidade portátil de armazenamento para cópias de arquivos e registros. Pode utilizar criptografia e controle de acesso.",
+            "subcategoria": "Armazenamento",
+            "ordem": 6
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "gravador_digital",
+          "name": "Gravador digital de voz",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo dedicado à gravação de áudio em entrevistas ou reuniões autorizadas. A utilização deve respeitar consentimento e legislação aplicável.",
+            "subcategoria": "Registro",
+            "ordem": 7
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "camera_corporal",
+          "name": "Câmera corporal",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera fixada ao uniforme para documentar atividades profissionais. Regras de gravação, guarda e acesso às imagens devem ser definidas previamente.",
+            "subcategoria": "Registro",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "camera_painel",
+          "name": "Câmera veicular",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera instalada no veículo para registrar o trajeto e ocorrências. Posicionamento e uso devem respeitar privacidade e legislação.",
+            "subcategoria": "Registro",
+            "ordem": 9
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "sistema_cftv",
+          "name": "Sistema de câmeras CFTV",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de câmeras e gravador para monitoramento de áreas sob responsabilidade do operador, com sinalização e tratamento adequado das imagens.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 10
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "gravador_nvr",
+          "name": "Gravador de vídeo em rede (NVR)",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento que recebe e armazena imagens de câmeras IP compatíveis. Capacidade depende dos discos, resolução e retenção configurada.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 11
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "controle_acesso",
+          "name": "Controlador de acesso eletrônico",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sistema para administrar entrada em áreas autorizadas por credencial, cartão ou identificação compatível.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "fechadura_eletronica",
+          "name": "Fechadura eletrônica",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fechadura com abertura por senha, cartão ou outro método eletrônico. Requer instalação adequada e alternativa de acesso em caso de falha.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 13
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "alarme_intrusao",
+          "name": "Central de alarme patrimonial",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Central que recebe sinais de sensores instalados em um imóvel e aciona alertas conforme configuração.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 14
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "sensor_movimento",
+          "name": "Sensor de movimento",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sensor utilizado em sistemas de iluminação ou alarme para detectar movimento dentro de uma área configurada.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 15
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "detector_fumaca",
+          "name": "Detector de fumaça",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo de alerta precoce para presença de fumaça em ambientes compatíveis. Não substitui sistema completo de prevenção e combate a incêndio.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "detector_gas",
+          "name": "Detector portátil de gases",
+          "category": "Segurança do trabalho",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para indicar a presença de determinados gases. Deve ser calibrado e adequado aos agentes que se pretende monitorar.",
+            "subcategoria": "Segurança do trabalho",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "medidor_ruido",
+          "name": "Decibelímetro",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir níveis de pressão sonora em ambientes de trabalho ou investigação de ruído.",
+            "subcategoria": "Medição",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "multimetro",
+          "name": "Multímetro digital",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir grandezas elétricas, como tensão, corrente e resistência, dentro dos limites especificados pelo fabricante.",
+            "subcategoria": "Manutenção",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "alicate_amperimetro",
+          "name": "Alicate amperímetro",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir corrente elétrica sem abrir o circuito, quando utilizado em condições e instalações compatíveis.",
+            "subcategoria": "Manutenção",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "camera_inspecao",
+          "name": "Câmera de inspeção articulada",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera pequena com cabo flexível para visualizar espaços internos de máquinas, tubulações e estruturas sem desmontagem extensa.",
+            "subcategoria": "Manutenção",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "termovisor",
+          "name": "Termovisor portátil",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera que representa diferenças de temperatura aparente em uma imagem. A leitura depende de emissividade, distância e condições do ambiente.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "detector_metais",
+          "name": "Detector de metais portátil",
+          "category": "Inspeção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para indicar a presença de objetos metálicos em inspeções realizadas com autorização e dentro dos procedimentos aplicáveis.",
+            "subcategoria": "Inspeção",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "medidor_distancia_laser",
+          "name": "Medidor de distância a laser",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir distâncias e dimensões em ambientes internos ou externos, conforme alcance e condições de uso.",
+            "subcategoria": "Medição",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "nivel_laser",
+          "name": "Nível a laser",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta que projeta linhas ou pontos de referência para alinhamento e nivelamento em levantamentos e manutenção.",
+            "subcategoria": "Medição",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "drone_comercial",
+          "name": "Drone civil com câmera",
+          "category": "Aeronaves não tripuladas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave remotamente pilotada para fotografia, mapeamento e inspeção em atividades autorizadas. Operação depende das regras aeronáuticas, de telecomunicações e de privacidade.",
+            "subcategoria": "Aeronaves não tripuladas",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "receptor_gnss",
+          "name": "Receptor GNSS de precisão",
+          "category": "Navegação e levantamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Receptor de posicionamento por satélite utilizado em levantamentos geográficos. A precisão depende do equipamento, método e condições de recepção.",
+            "subcategoria": "Navegação e levantamento",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "estacao_total",
+          "name": "Estação total topográfica",
+          "category": "Levantamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento óptico-eletrônico para medir ângulos e distâncias em levantamentos de engenharia e topografia.",
+            "subcategoria": "Levantamento",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "detector_cabo_tubulacao",
+          "name": "Localizador de cabos e tubulações",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para auxiliar na localização de instalações embutidas antes de perfurações ou intervenções. O resultado deve ser confirmado por métodos adequados.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 29
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "maleta_ferramentas",
+          "name": "Maleta profissional de ferramentas",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto organizado de ferramentas manuais para montagem, ajuste e manutenção de equipamentos.",
+            "subcategoria": "Manutenção",
+            "ordem": 30
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "item",
+          "key": "furadeira_bateria",
+          "name": "Furadeira/parafusadeira a bateria",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta elétrica portátil para perfuração e fixação com acessórios compatíveis e uso conforme as normas de segurança.",
+            "subcategoria": "Manutenção",
+            "ordem": 31
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "item",
+          "key": "gerador_portatil",
+          "name": "Gerador elétrico portátil",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Gerador para fornecer energia em locais sem rede elétrica. Deve operar em área externa ventilada, devido ao risco de monóxido de carbono.",
+            "subcategoria": "Energia",
+            "ordem": 32
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "item",
+          "key": "nobreak",
+          "name": "Nobreak (UPS)",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento com bateria que mantém dispositivos eletrônicos alimentados por período limitado e pode proteger contra variações de energia.",
+            "subcategoria": "Energia",
+            "ordem": 33
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "item",
+          "key": "iluminacao_trabalho",
+          "name": "Refletor LED portátil",
+          "category": "Iluminação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de iluminação de trabalho para inspeções e atividades noturnas, com alimentação por bateria ou rede elétrica.",
+            "subcategoria": "Iluminação",
+            "ordem": 34
+          },
+          "ordem": 34
+        },
+        {
+          "kind": "item",
+          "key": "tripe_profissional",
+          "name": "Tripé profissional",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Suporte ajustável para câmeras, instrumentos ópticos, iluminação ou equipamentos de medição compatíveis.",
+            "subcategoria": "Acessórios",
+            "ordem": 35
+          },
+          "ordem": 35
+        },
+        {
+          "kind": "item",
+          "key": "maleta_rigida",
+          "name": "Maleta rígida de transporte",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo resistente para proteger instrumentos e equipamentos durante armazenamento e transporte.",
+            "subcategoria": "Acessórios",
+            "ordem": 36
+          },
+          "ordem": 36
+        },
+        {
+          "kind": "item",
+          "key": "colete_refletivo",
+          "name": "Colete de alta visibilidade",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vestimenta refletiva para aumentar a visibilidade de trabalhadores em vias, obras e ambientes com circulação de veículos.",
+            "subcategoria": "Proteção individual",
+            "ordem": 37
+          },
+          "ordem": 37
+        },
+        {
+          "kind": "item",
+          "key": "protetor_auditivo",
+          "name": "Protetor auditivo",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção individual para reduzir exposição a ruído, selecionado conforme avaliação do ambiente.",
+            "subcategoria": "Proteção individual",
+            "ordem": 38
+          },
+          "ordem": 38
+        },
+        {
+          "kind": "item",
+          "key": "respirador_semifacial",
+          "name": "Respirador semifacial reutilizável",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Peça facial reutilizável que aceita filtros compatíveis para riscos específicos. Seleção, vedação e manutenção exigem orientação técnica.",
+            "subcategoria": "Proteção individual",
+            "ordem": 39
+          },
+          "ordem": 39
+        }
+      ]
+    }
+  ]
+}

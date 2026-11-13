@@ -31,10 +31,24 @@ export interface NivelVitalidade {
   bloqueiaAcoes: boolean;
 }
 
+export interface EventoVitalidade {
+  em: string;                    // ISO
+  nivelAnterior: number;
+  nivelNovo: number;
+  motivo: string | null;
+  autorId: string | null;
+  autorNome: string | null;
+  // Origem da alteração: "manual" (endpoint /vitalidade) ou
+  // "conversao-ferimento" (subida automática por dano de HP).
+  // Ausente em eventos antigos = tratado como manual.
+  origem?: "manual" | "conversao-ferimento";
+}
+
 export interface EstadoVitalidade {
   nivel: number; // índice em config.vitalidade.niveis
   alteradoEm?: string;
   alteradoPor?: string | null;
+  historico?: EventoVitalidade[];
 }
 
 const num = (v: unknown): number | null =>
@@ -110,7 +124,28 @@ export function aplicarHp(
 export function lerVitalidade(dados: Record<string, unknown>): EstadoVitalidade {
   const bruto = dados[CHAVE_VITALIDADE] as EstadoVitalidade | undefined;
   const nivel = bruto && typeof bruto === "object" ? num(bruto.nivel) : null;
-  return { nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0 };
+  const historico = bruto && typeof bruto === "object" && Array.isArray(bruto.historico) ? bruto.historico : undefined;
+  return {
+    nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0,
+    alteradoEm: bruto?.alteradoEm,
+    alteradoPor: bruto?.alteradoPor ?? null,
+    historico,
+  };
+}
+
+/** Nível de vitalidade exigido pelos limiares de HP restante.
+ *  Retorna o maior `nivel` entre as faixas em que `pctHp <= ate`;
+ *  null quando a conversão está desabilitada ou sem limiares. */
+export function nivelExigidoPorHp(
+  conv: ConfigRegras["conversaoFerimento"],
+  pctHp: number
+): number | null {
+  if (!conv?.habilitada || !conv.limiares?.length) return null;
+  let exigido: number | null = null;
+  for (const l of conv.limiares) {
+    if (pctHp <= l.ate && (exigido === null || l.nivel > exigido)) exigido = l.nivel;
+  }
+  return exigido;
 }
 
 /** Resumo para a ficha e para as rolagens. */
@@ -127,5 +162,6 @@ export function resumoVitalidade(cfg: ConfigRegras["vitalidade"], dados: Record<
     niveis: cfg.niveis.map((n, i) => ({ indice: i, nome: n.nome, penalidadeDados: n.penalidadeDados, bloqueiaAcoes: n.bloqueiaAcoes })),
     alteradoEm: estado.alteradoEm ?? null,
     alteradoPor: estado.alteradoPor ?? null,
+    historico: (estado.historico ?? []).slice(-100),
   };
 }

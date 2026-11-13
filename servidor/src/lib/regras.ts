@@ -193,6 +193,26 @@ export const configRegrasSchema = z.object({
         { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
       ],
     }),
+  // Conversão de ferimentos (opcional): quando o HP restante cruza um
+  // limiar configurado, a Vitalidade sobe automaticamente até o nível
+  // correspondente — somente para cima; recuperar HP nunca reduz a
+  // Vitalidade e a alteração manual continua disponível ao mestre.
+  conversaoFerimento: z
+    .object({
+      habilitada: z.boolean().default(false),
+      // Faixas de HP restante: pct <= `ate` exige nível de vitalidade
+      // `nivel` (índice em vitalidade.niveis). Percentuais únicos.
+      limiares: z
+        .array(
+          z.object({
+            ate: z.number().min(0).max(100),
+            nivel: z.number().int().min(0),
+          })
+        )
+        .max(20)
+        .default([]),
+    })
+    .default({ habilitada: false, limiares: [] }),
   // Lançador de dados (D10): meta mínima que conta como sucesso.
   dados: z
     .object({
@@ -201,6 +221,37 @@ export const configRegrasSchema = z.object({
     .default({ d10SucessoMinimo: 6 }),
 });
 export type ConfigRegras = z.infer<typeof configRegrasSchema>;
+
+/** Valida a conversão de ferimentos contra o restante da config
+ *  (HP habilitado, escala de vitalidade e índices/percentuais válidos).
+ *  Retorna mensagens de erro; lista vazia = configuração coerente. */
+export function errosConversaoFerimento(config: ConfigRegras): string[] {
+  const erros: string[] = [];
+  const conv = config.conversaoFerimento;
+  if (!conv?.habilitada) return erros;
+  if (!config.hp?.habilitado) {
+    erros.push("Conversão de ferimentos exige Pontos de Vida habilitados.");
+  }
+  const totalNiveis = config.vitalidade?.niveis?.length ?? 0;
+  if (totalNiveis === 0) {
+    erros.push("Conversão de ferimentos exige ao menos um nível de Vitalidade.");
+  }
+  const vistos = new Set<number>();
+  for (const [i, l] of (conv.limiares ?? []).entries()) {
+    const rot = `Conversão de ferimentos, limiar ${i + 1}`;
+    if (!Number.isFinite(l.ate) || l.ate < 0 || l.ate > 100) {
+      erros.push(`${rot}: o percentual de HP deve estar entre 0 e 100.`);
+    }
+    if (vistos.has(l.ate)) {
+      erros.push(`${rot}: percentual ${l.ate}% duplicado.`);
+    }
+    vistos.add(l.ate);
+    if (!Number.isInteger(l.nivel) || l.nivel < 0 || l.nivel >= totalNiveis) {
+      erros.push(`${rot}: nível de vitalidade inválido (0 a ${Math.max(totalNiveis - 1, 0)}).`);
+    }
+  }
+  return erros;
+}
 
 // null/vazio em campo opcional é tratado como "ausente" (clientes HTTP
 // serializam campos vazios como null). Strings numéricas são convertidas;

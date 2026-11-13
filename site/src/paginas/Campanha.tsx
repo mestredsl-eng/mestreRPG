@@ -243,6 +243,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                   <td>{m.username}</td>
                   <td>
                     <select
+                      aria-label={`Papel de ${m.username}`}
                       value={m.role}
                       disabled={m.ehEu && m.role === "mestre" && membros.filter((x) => x.role === "mestre" && x.status === "ativo").length <= 1}
                       onChange={(e) => void mudarMembro(m, { role: e.target.value })}
@@ -253,7 +254,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                     </select>
                   </td>
                   <td>
-                    <select value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
+                    <select aria-label={`Status de ${m.username}`} value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
                       <option value="ativo">Ativo</option>
                       <option value="bloqueado">Bloqueado</option>
                       <option value="pendente">Pendente</option>
@@ -305,6 +306,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                 <div className="registro-campo">
                   <span className="registro-rotulo">Papel</span>
                   <select
+                    aria-label={`Papel de ${m.username}`}
                     value={m.role}
                     disabled={m.ehEu && m.role === "mestre" && membros.filter((x) => x.role === "mestre" && x.status === "ativo").length <= 1}
                     onChange={(e) => void mudarMembro(m, { role: e.target.value })}
@@ -316,7 +318,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                 </div>
                 <div className="registro-campo">
                   <span className="registro-rotulo">Status</span>
-                  <select value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
+                  <select aria-label={`Status de ${m.username}`} value={m.status} onChange={(e) => void mudarMembro(m, { status: e.target.value })}>
                     <option value="ativo">Ativo</option>
                     <option value="bloqueado">Bloqueado</option>
                     <option value="pendente">Pendente</option>
@@ -379,7 +381,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
           <form className="formulario" onSubmit={criarConvite}>
             <div className="grade-2">
               <label>Papel inicial
-                <select value={conviteForm.role} onChange={(e) => setConviteForm({ ...conviteForm, role: e.target.value })}>
+                <select aria-label="Papel do convite" value={conviteForm.role} onChange={(e) => setConviteForm({ ...conviteForm, role: e.target.value })}>
                   <option value="jogador">Jogador</option>
                   <option value="espectador">Espectador</option>
                 </select>

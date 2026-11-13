@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import Database from "better-sqlite3";
 import * as schema from "./schema.js";
+import { adquirirTravaInstancia, liberarTravaInstancia } from "./trava-instancia.js";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,13 +30,34 @@ let instancia: Db | null = null;
 let sqliteInstancia: Database.Database | null = null;
 /** Instância única do banco para toda a aplicação. */
 export function getDb(): Db {
-  if (!instancia) instancia = criarBanco(CAMINHOS.banco);
+  if (!instancia) {
+    // Trava de instância ANTES da conexão operacional: se outra instância
+    // já detém o banco, esta aborta aqui — antes de aceitar qualquer
+    // tráfego. O lock é do SO e morre com o processo (sem PID file).
+    adquirirTravaInstancia(CAMINHOS.banco);
+    instancia = criarBanco(CAMINHOS.banco);
+  }
   return instancia;
 }
 
-/** Fecha a conexão SQLite compartilhada (encerramento gracioso). */
-export function fecharBanco() {
-  try { sqliteInstancia?.close(); } catch { }
+/**
+ * Fecha a conexão SQLite compartilhada (encerramento gracioso).
+ * A trava de instância só é liberada DEPOIS de o close() ser confirmado:
+ * se o fechamento falhar, a exceção original é propagada e a trava
+ * permanece presa — o processo deve encerrar (o SO libera tudo na morte),
+ * nunca continuar servindo tráfego nem permitir que outra instância
+ * assuma o banco com a conexão potencialmente aberta.
+ * `fecharSqlite` é injetável apenas para teste do caminho de falha.
+ */
+export function fecharBanco(opcoes?: { fecharSqlite?: () => void }) {
+  const fechar = opcoes?.fecharSqlite ?? (() => { sqliteInstancia?.close(); });
+  if (!sqliteInstancia && !instancia) {
+    // nada aberto — enceramento idempotente: só garante trava livre
+    liberarTravaInstancia();
+    return;
+  }
+  fechar(); // lança em caso de falha → trava NÃO é liberada
   sqliteInstancia = null;
   instancia = null;
+  liberarTravaInstancia();
 }

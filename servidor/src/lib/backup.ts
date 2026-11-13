@@ -125,7 +125,11 @@ export async function verificarBackupAgendado(motivoInicio = false): Promise<voi
 }
 
 export function pastaBackups(c: ConfigBackup): string {
-  return c.pasta.startsWith("/") || /^[A-Za-z]:/.test(c.pasta) ? resolve(c.pasta) : resolve(RAIZ, c.pasta);
+  if (c.pasta.startsWith("/") || /^[A-Za-z]:/.test(c.pasta)) return resolve(c.pasta);
+  // pasta padrão respeita MESTRE_BACKUPS/MESTRE_HOME — sem isso, backups
+  // automáticos de testes caiam na pasta real do repositório.
+  if (c.pasta === BACKUP_PADRAO.pasta) return CAMINHOS.backups;
+  return resolve(RAIZ, c.pasta);
 }
 
 function sha256Arquivo(caminho: string): string {

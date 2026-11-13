@@ -20,15 +20,20 @@ function fmtData(iso: string): string {
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function Vida({ vidaInicial, characterId, aoErro }: {
+export default function Vida({ vidaInicial, characterId, aoErro, somenteLeitura = false }: {
   vidaInicial: Vida;
   characterId: string;
   aoErro?: (msg: string) => void;
+  /** Personagem arquivado: exibe HP/vitalidade e histórico, sem controles de alteração. */
+  somenteLeitura?: boolean;
 }) {
   const [vida, setVida] = useState<Vida>(vidaInicial);
   const [qtd, setQtd] = useState("");
   const [motivo, setMotivo] = useState("");
   const [ocupado, setOcupado] = useState(false);
+  const [historicoExpandido, setHistoricoExpandido] = useState(false);
+  const [vitMotivo, setVitMotivo] = useState("");
+  const [vitHistExpandido, setVitHistExpandido] = useState(false);
 
   useEffect(() => setVida(vidaInicial), [vidaInicial]);
 
@@ -37,6 +42,10 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
   const hp = vida.hp;
   const vit = vida.vitalidade;
   const pct = hp ? Math.max(0, Math.min(100, (hp.atual / hp.maximo) * 100)) : 0;
+  // Arquivado: nunca oferece controles de alteração, mesmo que o backend
+  // ainda reporte permissão (a rota também rejeitaria com 403).
+  const podeEditarHp = !somenteLeitura && vida.podeEditarHp === true;
+  const podeEditarVitalidade = !somenteLeitura && vida.podeEditarVitalidade === true;
 
   const agir = async (acao: "dano" | "recuperar" | "ajuste") => {
     const quantidade = Number(qtd);
@@ -47,7 +56,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
     setOcupado(true);
     try {
       const r = await api.alterarHp(characterId, { acao, quantidade, motivo: motivo || undefined });
-      setVida((v) => (v ? { ...v, hp: r.hp } : v));
+      setVida((v) => (v ? { ...v, hp: r.hp, ...(r.vitalidade ? { vitalidade: r.vitalidade } : {}) } : v));
       setQtd(""); setMotivo("");
     } catch (e) {
       aoErro?.(e instanceof Error ? e.message : "Erro ao alterar HP");
@@ -60,8 +69,9 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
     if (nivel === vit?.nivel || ocupado) return;
     setOcupado(true);
     try {
-      const r = await api.alterarVitalidade(characterId, nivel);
+      const r = await api.alterarVitalidade(characterId, nivel, vitMotivo || undefined);
       setVida((v) => (v ? { ...v, vitalidade: r.vitalidade } : v));
+      setVitMotivo("");
     } catch (e) {
       aoErro?.(e instanceof Error ? e.message : "Erro ao alterar vitalidade");
     } finally {
@@ -82,7 +92,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               <div className="hp-preenchimento" style={{ width: `${pct}%` }} />
             </div>
           </div>
-          {vida.podeEditarHp && (
+          {podeEditarHp && (
             <div className="hp-acoes">
               <input type="number" min="0" step="1" placeholder="Quantidade" value={qtd} onChange={(e) => setQtd(e.target.value)} />
               <input type="text" placeholder="Motivo (opcional)" value={motivo} onChange={(e) => setMotivo(e.target.value)} />
@@ -94,7 +104,22 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
             </div>
           )}
           <div className="hp-historico">
-            {[...hp.historico].reverse().slice(0, 8).map((ev, i) => (
+            {hp.historico.length > 0 && (
+              <div className="linha" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <strong>Histórico ({hp.historico.length})</strong>
+                {hp.historico.length > 8 && (
+                  <button
+                    type="button"
+                    className="secundario mini"
+                    aria-expanded={historicoExpandido}
+                    onClick={() => setHistoricoExpandido((v) => !v)}
+                  >
+                    {historicoExpandido ? "Mostrar recentes" : "Ver histórico completo"}
+                  </button>
+                )}
+              </div>
+            )}
+            {(historicoExpandido ? [...hp.historico].reverse() : [...hp.historico].reverse().slice(0, 8)).map((ev, i) => (
               <div key={i} className="hp-evento">
                 <span className={`hp-qtd ${ev.quantidade < 0 ? "negativo" : ev.quantidade > 0 ? "positivo" : ""}`}>
                   {ev.quantidade > 0 ? "+" : ""}{ev.quantidade}
@@ -115,7 +140,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
             {vit.penalidadeDados > 0 && ` · −${vit.penalidadeDados} dado${vit.penalidadeDados > 1 ? "s" : ""} nas rolagens`}
             {vit.bloqueiaAcoes && " · bloqueia ações"}
           </p>
-          <div className="vitalidade-escala" role={vida.podeEditarVitalidade ? "radiogroup" : undefined}>
+          <div className="vitalidade-escala" role={podeEditarVitalidade ? "radiogroup" : undefined}>
             {vit.niveis.map((n) => {
               const atual = n.indice === vit.nivel;
               const conteudo = (
@@ -126,7 +151,7 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
                   </span>
                 </>
               );
-              return vida.podeEditarVitalidade ? (
+              return podeEditarVitalidade ? (
                 <button
                   key={n.indice}
                   type="button"
@@ -142,6 +167,36 @@ export default function Vida({ vidaInicial, characterId, aoErro }: {
               );
             })}
           </div>
+          {podeEditarVitalidade && (
+            <div className="hp-acoes">
+              <input type="text" placeholder="Motivo da mudança (opcional)" value={vitMotivo} onChange={(e) => setVitMotivo(e.target.value)} />
+            </div>
+          )}
+          {vit.historico.length > 0 && (
+            <div className="hp-historico">
+              <div className="linha" style={{ justifyContent: "space-between", alignItems: "center" }}>
+                <strong>Histórico ({vit.historico.length})</strong>
+                {vit.historico.length > 8 && (
+                  <button
+                    type="button"
+                    className="secundario mini"
+                    aria-expanded={vitHistExpandido}
+                    onClick={() => setVitHistExpandido((v) => !v)}
+                  >
+                    {vitHistExpandido ? "Mostrar recentes" : "Ver histórico completo"}
+                  </button>
+                )}
+              </div>
+              {(vitHistExpandido ? vit.historico : vit.historico.slice(-8)).slice().reverse().map((ev, i) => (
+                <div key={i} className="hp-evento">
+                  <span className="hp-tipo">{vit.niveis.find((n) => n.indice === ev.nivelAnterior)?.nome ?? ev.nivelAnterior} → {vit.niveis.find((n) => n.indice === ev.nivelNovo)?.nome ?? ev.nivelNovo}</span>
+                  {ev.origem === "conversao-ferimento" && <span className="vit-origem">por ferimento</span>}
+                  <span className="hp-motivo">{ev.motivo ?? ""}{ev.autorNome ? ` · ${ev.autorNome}` : ""}</span>
+                  <span className="hp-data">{fmtData(ev.em)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>
