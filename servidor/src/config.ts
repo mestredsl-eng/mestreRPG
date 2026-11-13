@@ -21,7 +21,7 @@ const padrao: ConfigServidor = {
   sitePorta: 5173,
   caminhos: { banco: "banco/mestre-rpg.db", arquivos: "arquivos/campanhas", backups: "backups" },
   arquivos: { tamanhoMaxMb: 25, formatosExtras: [] },
-  acesso: { dominioPublico: "", proxyHops: 1, https: false },
+  acesso: { dominioPublico: "", proxyHops: 0, https: false },
 };
 
 function carregar(): ConfigServidor {
