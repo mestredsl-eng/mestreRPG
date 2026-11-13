@@ -5,6 +5,7 @@ import {
   type ConfigRegras,
   type ElementoRegra,
   type ElementoRegraInput,
+  type LivroAcervoCampanha,
   type PersonagemResumo,
   type RegrasCampanha,
   type ResultadoValidacaoRegras,
@@ -32,7 +33,7 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
 
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
 
-type Aba = "biblioteca" | "pontuacao" | "validacao";
+type Aba = "biblioteca" | "pontuacao" | "validacao" | "acervo";
 
 /** Extrai campo/mensagem dos issues de validação retornados pela API. */
 function mensagemApi(e: unknown, padrao: string): string {
@@ -66,6 +67,9 @@ export default function Regras({ campaignId }: { campaignId: string }) {
   const [personagemSel, setPersonagemSel] = useState("");
   const [confirmando, setConfirmando] = useState<ElementoRegra | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  const [livrosAcervo, setLivrosAcervo] = useState<LivroAcervoCampanha[]>([]);
+  const [conflitosAcervo, setConflitosAcervo] = useState<{ bookId: string; itens: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] } | null>(null);
+  const [decisoesAcervo, setDecisoesAcervo] = useState<Record<string, "manter_campanha" | "usar_livro">>({});
 
   const carregar = useCallback(async () => {
     try {
@@ -173,6 +177,40 @@ export default function Regras({ campaignId }: { campaignId: string }) {
     }
   };
 
+  const carregarAcervo = useCallback(async () => {
+    try {
+      const r = await api.listarAcervoCampanha(campaignId);
+      setLivrosAcervo(r.livros);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao carregar Acervo da campanha");
+    }
+  }, [campaignId]);
+
+  useEffect(() => {
+    if (aba === "acervo") void carregarAcervo();
+  }, [aba, carregarAcervo]);
+
+  const aplicarLivro = async (bookId: string, decisoes: Record<string, "manter_campanha" | "usar_livro"> = {}) => {
+    setErro(null);
+    try {
+      const r = await api.aplicarLivroAcervo(campaignId, bookId, decisoes);
+      setConflitosAcervo(null);
+      setDecisoesAcervo({});
+      setAviso("Livro aplicado: " + r.inseridos + " novo(s), " + r.atualizados + " atualizado(s), " + r.mantidos + " mantido(s) da campanha.");
+      await Promise.all([carregarAcervo(), carregar()]);
+    } catch (e) {
+      if (e instanceof ApiError && e.detalhes && typeof e.detalhes === "object") {
+        const d = e.detalhes as { conflitos?: { chave: string; nomeNoLivro: string; nomeNaCampanha: string }[] };
+        if (Array.isArray(d.conflitos)) {
+          setConflitosAcervo({ bookId, itens: d.conflitos });
+          setDecisoesAcervo({});
+          return;
+        }
+      }
+      setErro(e instanceof Error ? e.message : "Erro ao aplicar livro do Acervo");
+    }
+  };
+
   const carregarPersonagens = async () => {
     try {
       const { personagens } = await api.listarPersonagens(campaignId);
@@ -197,6 +235,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
         <button className={aba === "biblioteca" ? "ativo" : "secundario"} onClick={() => setAba("biblioteca")}>Biblioteca</button>
         <button className={aba === "pontuacao" ? "ativo" : "secundario"} onClick={() => setAba("pontuacao")}>Pontuação</button>
         <button className={aba === "validacao" ? "ativo" : "secundario"} onClick={() => { setAba("validacao"); void carregarPersonagens(); }}>Validação de fichas</button>
+        <button className={aba === "acervo" ? "ativo" : "secundario"} onClick={() => setAba("acervo")}>Acervo</button>
       </div>
 
       {erro && <div className="erro">{erro}</div>}
@@ -205,8 +244,8 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       {aba === "biblioteca" && (
         <div>
           <div className="linha-ferramentas">
-            <input placeholder="Buscar por nome, chave ou categoria..." value={busca} onChange={(e) => setBusca(e.target.value)} />
-            <select value={filtroKind} onChange={(e) => setFiltroKind(e.target.value)}>
+            <input aria-label="Buscar por nome, chave ou categoria" placeholder="Buscar por nome, chave ou categoria..." value={busca} onChange={(e) => setBusca(e.target.value)} />
+            <select aria-label="Filtrar por tipo de elemento" value={filtroKind} onChange={(e) => setFiltroKind(e.target.value)}>
               <option value="">Todos os tipos</option>
               {KINDS.map((k) => <option key={k} value={k}>{ROTULO_KIND[k]}</option>)}
             </select>
@@ -243,6 +282,73 @@ export default function Regras({ campaignId }: { campaignId: string }) {
             </div>
           ))}
           {!elementosFiltrados.length && <p className="dica">Nenhum elemento encontrado. Use "Carregar biblioteca inicial" ou crie um novo.</p>}
+        </div>
+      )}
+
+      {aba === "acervo" && (
+        <div>
+          <p className="dica">Aplique livros e suplementos do Acervo global nesta campanha. O conteúdo vira uma cópia independente: mudanças futuras no Acervo não alteram a campanha sozinhas.</p>
+          <div className="linha-ferramentas">
+            <button className="secundario" onClick={() => void carregarAcervo()}>Atualizar lista</button>
+          </div>
+          {livrosAcervo.map((livro) => (
+            <div className="elemento" key={livro.id}>
+              <div className="elemento-info">
+                <strong>{livro.titulo}</strong>
+                <span className="tag">{livro.tipo === "suplemento" ? "Suplemento" : "Livro"}</span>
+                <span className="tag">v{livro.versao}</span>
+                <span className="tag">{livro.totalItens} itens</span>
+                {livro.aplicado && <span className="tag">Aplicado v{livro.versaoAplicada}</span>}
+                {livro.atualizacaoDisponivel && <span className="tag">Atualização disponível</span>}
+                {livro.sistema && <span className="dica">{livro.sistema}</span>}
+                {livro.descricao && <span className="dica">{livro.descricao}</span>}
+              </div>
+              <div className="elemento-acoes">
+                <button className="mini" onClick={() => void aplicarLivro(livro.id)}>
+                  {livro.aplicado ? "Revisar / reaplicar" : "Aplicar à campanha"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {!livrosAcervo.length && <p className="dica">Nenhum livro ativo no Acervo. Cadastre ou importe livros na Biblioteca global.</p>}
+          {conflitosAcervo && (
+            <section className="cartao">
+              <h4>Conflitos encontrados — escolha o que deve prevalecer</h4>
+              <p className="dica">Nenhuma alteração foi gravada ainda. Para cada chave repetida, escolha manter a regra da campanha ou substituí-la pela versão do livro.</p>
+              {conflitosAcervo.itens.map((item) => (
+                <div className="linha-ferramentas" key={item.chave}>
+                  <div>
+                    <strong>{item.chave}</strong>
+                    <div className="dica">Campanha: {item.nomeNaCampanha} · Livro: {item.nomeNoLivro}</div>
+                  </div>
+                  <select
+                    value={decisoesAcervo[item.chave] ?? ""}
+                    onChange={(e) => {
+                      const v = e.target.value as "" | "manter_campanha" | "usar_livro";
+                      setDecisoesAcervo((atual) => {
+                        const novo = { ...atual };
+                        if (v) novo[item.chave] = v;
+                        else delete novo[item.chave];
+                        return novo;
+                      });
+                    }}
+                  >
+                    <option value="">Escolha...</option>
+                    <option value="manter_campanha">Manter campanha</option>
+                    <option value="usar_livro">Usar livro</option>
+                  </select>
+                </div>
+              ))}
+              <div className="linha">
+                <button
+                  className="primario"
+                  disabled={conflitosAcervo.itens.some((i) => !decisoesAcervo[i.chave])}
+                  onClick={() => void aplicarLivro(conflitosAcervo.bookId, decisoesAcervo)}
+                >Confirmar aplicação</button>
+                <button className="secundario" onClick={() => { setConflitosAcervo(null); setDecisoesAcervo({}); }}>Cancelar</button>
+              </div>
+            </section>
+          )}
         </div>
       )}
 
@@ -389,6 +495,19 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
     if (form.dados && (!Number.isInteger(form.dados.d10SucessoMinimo) || form.dados.d10SucessoMinimo < 2 || form.dados.d10SucessoMinimo > 10)) {
       setErroLocal("Dados (D10): o sucesso mínimo deve ser um número inteiro entre 2 e 10."); return;
     }
+    const conv = form.conversaoFerimento;
+    if (conv?.habilitada) {
+      if (!form.hp?.habilitado) { setErroLocal("Conversão de ferimentos exige Pontos de Vida habilitados."); return; }
+      const totalVit = form.vitalidade?.niveis?.length ?? 0;
+      if (totalVit === 0) { setErroLocal("Conversão de ferimentos exige ao menos um nível de Vitalidade."); return; }
+      const vistos = new Set<number>();
+      for (const [i, l] of (conv.limiares ?? []).entries()) {
+        if (!Number.isFinite(l.ate) || l.ate < 0 || l.ate > 100) { setErroLocal(`Conversão de ferimentos: limiar ${i + 1} com percentual inválido (0 a 100).`); return; }
+        if (vistos.has(l.ate)) { setErroLocal(`Conversão de ferimentos: percentual ${l.ate}% duplicado.`); return; }
+        vistos.add(l.ate);
+        if (!Number.isInteger(l.nivel) || l.nivel < 0 || l.nivel >= totalVit) { setErroLocal(`Conversão de ferimentos: limiar ${i + 1} com nível de vitalidade inválido.`); return; }
+      }
+    }
     // Interpreta custos "semantico: 1,2,3"
     const custos: Record<string, number[]> = {};
     for (const linha of custosTxt.split("\n")) {
@@ -427,7 +546,7 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
             pools[i] = { ...pool, nome: e.target.value };
             setPontos({ pools });
           }} />
-          <input type="number" placeholder="Pontos" value={pool.pontos} onChange={(e) => {
+          <input type="number" placeholder="Pontos" aria-label="Pontos do pool" value={pool.pontos} onChange={(e) => {
             const pools = [...form.pontos.pools];
             pools[i] = { ...pool, pontos: Number(e.target.value) };
             setPontos({ pools });
@@ -596,6 +715,69 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
         </label>
       </div>
 
+      <h4>Conversão de ferimentos</h4>
+      <p className="dica">Ao atingir os limiares configurados de HP, a Vitalidade pode aumentar automaticamente. Recuperar HP não reduz a Vitalidade.</p>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={!!form.conversaoFerimento?.habilitada}
+          onChange={(e) => setForm((f) => ({
+            ...f,
+            conversaoFerimento: { habilitada: e.target.checked, limiares: f.conversaoFerimento?.limiares ?? [] },
+          }))}
+        />
+        Ativar conversão automática de ferimentos
+      </label>
+      {form.conversaoFerimento?.habilitada && (
+        <>
+          {(form.conversaoFerimento.limiares ?? []).map((l, i) => (
+            <div className="linha-ferramentas" key={i}>
+              <label className="checkbox-inline">HP restante ≤
+                <input
+                  type="number" min="0" max="100"
+                  value={l.ate}
+                  onChange={(e) => {
+                    const limiares = [...form.conversaoFerimento!.limiares];
+                    limiares[i] = { ...l, ate: Number(e.target.value) };
+                    setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+                  }}
+                />%
+              </label>
+              <label className="checkbox-inline">→ nível
+                <select
+                  value={l.nivel}
+                  onChange={(e) => {
+                    const limiares = [...form.conversaoFerimento!.limiares];
+                    limiares[i] = { ...l, nivel: Number(e.target.value) };
+                    setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+                  }}
+                >
+                  {(form.vitalidade?.niveis ?? []).map((n, j) => (
+                    <option key={j} value={j}>{n.nome || `Nível ${j + 1}`}</option>
+                  ))}
+                </select>
+              </label>
+              <button type="button" className="mini perigo" onClick={() => {
+                const limiares = form.conversaoFerimento!.limiares.filter((_, j) => j !== i);
+                setForm((f) => ({ ...f, conversaoFerimento: { ...f.conversaoFerimento!, limiares } }));
+              }}>✕</button>
+            </div>
+          ))}
+          <div className="linha-ferramentas">
+            <button type="button" className="secundario" onClick={() => setForm((f) => ({
+              ...f,
+              conversaoFerimento: {
+                habilitada: true,
+                // Índice inicial sempre válido para a escala atual:
+                // escala de 1 nível só aceita índice 0.
+                limiares: [...(f.conversaoFerimento?.limiares ?? []), { ate: 50, nivel: Math.min(1, (f.vitalidade?.niveis?.length ?? 1) - 1) }],
+              },
+            }))}>+ Limite</button>
+          </div>
+          <p className="dica">Ex.: "HP restante ≤ 50% → nível Machucado". Quando o HP cair até o percentual, a Vitalidade sobe para ao menos esse nível. Funciona somente com HP e Vitalidade habilitados.</p>
+        </>
+      )}
+
       <h4>Dados (D10)</h4>
       <div className="grade-form">
         <label>Sucesso mínimo no D10
@@ -636,7 +818,7 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
                 }}>
                   {unicos.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
-                <input type="number" placeholder="Limite (opcional)" value={t.limite ?? ""} onChange={(e) => {
+                <input type="number" placeholder="Limite (opcional)" aria-label="Limite da transferência" value={t.limite ?? ""} onChange={(e) => {
                   const transferencias = [...form.transferencias];
                   transferencias[i] = { ...t, limite: e.target.value === "" ? undefined : Number(e.target.value) };
                   setForm((f) => ({ ...f, transferencias }));
@@ -821,7 +1003,7 @@ function ModalElemento({
                   niveis[i] = { ...n, descricao: e.target.value };
                   setForm({ ...form, niveis });
                 }} />
-                <input type="number" step="any" placeholder="Custo (+gasta / −concede)" value={n.custo} onChange={(e) => {
+                <input type="number" step="any" placeholder="Custo (+gasta / −concede)" aria-label="Custo do nível" value={n.custo} onChange={(e) => {
                   const niveis = [...form.niveis];
                   niveis[i] = { ...n, custo: e.target.value };
                   setForm({ ...form, niveis });

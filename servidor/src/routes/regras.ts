@@ -1,13 +1,14 @@
 import { Router } from "express";
-import { and, eq, like, or } from "drizzle-orm";
+import { and, asc, eq, isNull, like, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions } from "../db/schema.js";
+import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions, ruleBooks, ruleBookItems, campaignRuleBooks } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
   carregarRegras,
   configRegrasSchema,
+  errosConversaoFerimento,
   definicaoElementoSchema,
   validarRegras,
   pontosParaFicha,
@@ -237,6 +238,11 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   }
   const configAtual = { ...(regras.config as Record<string, unknown>) };
   const novo = configRegrasSchema.parse(mesclarParcial(configAtual, body.data as Record<string, unknown>, req.body));
+  const errosConv = errosConversaoFerimento(novo);
+  if (errosConv.length) {
+    res.status(400).json({ erro: errosConv.join(" ") });
+    return;
+  }
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));
   await audit(req, "regras.config.atualizada", {});
   emitirCampanha(req.params.campaignId, "regras:atualizadas", {});
@@ -376,6 +382,7 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
   const regras = await carregarRegras(req.params.campaignId);
   const porKind = new Map<string, {
     key: string; name: string; category: string | null;
+    descricao?: string;
     niveis?: { descricao?: string; custo?: number }[];
     custoPontos?: number; maximo?: number;
   }[]>();
@@ -386,13 +393,234 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
       key: el.key,
       name: el.name,
       category: el.category,
+      descricao: el.definition.descricao ?? undefined,
       niveis: el.definition.niveis?.length ? el.definition.niveis : undefined,
       custoPontos: el.definition.custoPontos,
       maximo: el.definition.maximo,
     });
     porKind.set(el.kind, lista);
   }
-  const out: Record<string, { key: string; name: string; category: string | null }[]> = {};
+  const out: Record<string, { key: string; name: string; category: string | null; descricao?: string }[]> = {};
   for (const [k, v] of porKind) out[k] = v.sort((a, b) => a.name.localeCompare(b.name));
   res.json({ kinds: TIPOS_REGRA, elementos: out });
+});
+
+
+// ---------- Acervo global aplicado à campanha (snapshot explícito) ----------
+
+/** GET /api/campaigns/:campaignId/regras/acervo — livros disponíveis e versão aplicada. */
+regrasRouter.get("/acervo", requirePapel("mestre"), async (req, res) => {
+  const campaignId = req.params.campaignId;
+  const livros = await db.select().from(ruleBooks)
+    .where(isNull(ruleBooks.excluidoEm))
+    .orderBy(asc(ruleBooks.titulo));
+  const vinculos = await db.select().from(campaignRuleBooks)
+    .where(eq(campaignRuleBooks.campaignId, campaignId));
+  const porLivro = new Map(vinculos.map((v) => [v.bookId, v]));
+  const contagens = await db.select().from(ruleBookItems);
+  const totalPorLivro = new Map<string, number>();
+  for (const item of contagens) totalPorLivro.set(item.bookId, (totalPorLivro.get(item.bookId) ?? 0) + 1);
+  res.json({
+    livros: livros.map((b) => {
+      const vinculo = porLivro.get(b.id);
+      return {
+        id: b.id, titulo: b.titulo, descricao: b.descricao, autor: b.autor,
+        sistema: b.sistema, edicao: b.edicao, tipo: b.tipo, versao: b.versao,
+        totalItens: totalPorLivro.get(b.id) ?? 0,
+        aplicado: !!vinculo,
+        versaoAplicada: vinculo?.appliedVersion ?? null,
+        aplicadoEm: vinculo?.appliedAt ?? null,
+        atualizacaoDisponivel: !!vinculo && vinculo.appliedVersion !== b.versao,
+      };
+    }),
+  });
+});
+
+const aplicarLivroSchema = z.object({
+  decisoes: z.record(z.string(), z.enum(["manter_campanha", "usar_livro"])).default({}),
+});
+
+/**
+ * POST /api/campaigns/:campaignId/regras/acervo/:bookId/aplicar
+ * Copia o conteúdo do livro para o ruleset ativo. Conflitos nunca são
+ * sobrescritos sem decisão explícita; itens removidos do livro são preservados.
+ */
+regrasRouter.post("/acervo/:bookId/aplicar", requirePapel("mestre"), async (req, res) => {
+  const body = aplicarLivroSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    res.status(400).json({ erro: "Decisões inválidas", detalhes: body.error.issues });
+    return;
+  }
+  const campaignId = req.params.campaignId;
+  const decisoes = body.data.decisoes;
+
+  // Toda a leitura de decisão + escrita acontece DENTRO da mesma transação:
+  // livro, itens, ruleset ativo, elementos atuais, vínculo e checagem de
+  // no-op são relidos na hora — nenhuma decisão usa snapshot pré-transação.
+  // O callback é síncrono (better-sqlite3 serializa a transação), então
+  // aplicações concorrentes não intercalam leitura e escrita.
+  const resultado = db.transaction((tx): { http: number; payload: Record<string, unknown> } => {
+    const [livro] = tx.select().from(ruleBooks)
+      .where(and(eq(ruleBooks.id, req.params.bookId), isNull(ruleBooks.excluidoEm))).all();
+    if (!livro) return { http: 404, payload: { erro: "Livro não encontrado ou excluído do Acervo" } };
+
+    const itens = tx.select().from(ruleBookItems)
+      .where(eq(ruleBookItems.bookId, livro.id))
+      .orderBy(asc(ruleBookItems.ordem), asc(ruleBookItems.kind), asc(ruleBookItems.key)).all();
+    const incompatíveis = itens.filter((item) => !TIPOS_REGRA.includes(item.kind as (typeof TIPOS_REGRA)[number]));
+    if (incompatíveis.length) {
+      return {
+        http: 422,
+        payload: {
+          erro: "O livro contém tipos que a biblioteca de campanha ainda não suporta",
+          tipos: [...new Set(incompatíveis.map((i) => i.kind))],
+        },
+      };
+    }
+    const preparados = itens.map((item) => ({
+      item,
+      parsed: definicaoElementoSchema.safeParse(item.definition ?? {}),
+    }));
+    const invalidos = preparados.filter((p) => !p.parsed.success);
+    if (invalidos.length) {
+      return {
+        http: 422,
+        payload: {
+          erro: "O livro contém definições incompatíveis com as regras da campanha",
+          itens: invalidos.map(({ item, parsed }) => ({
+            chave: `${item.kind}:${item.key}`,
+            detalhes: parsed.success ? [] : parsed.error.issues,
+          })),
+        },
+      };
+    }
+
+    // ruleset ativo — relido dentro da transação (pode ter sido trocado)
+    let [rs] = tx.select().from(ruleSets)
+      .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).all();
+    if (!rs) {
+      const agoraRs = new Date();
+      const rsId = crypto.randomUUID();
+      tx.insert(ruleSets).values({
+        id: rsId, campaignId, name: "Regras da campanha", version: 1, isActive: true,
+        config: configRegrasSchema.parse({}), createdAt: agoraRs, updatedAt: agoraRs,
+      }).run();
+      [rs] = tx.select().from(ruleSets).where(eq(ruleSets.id, rsId)).all();
+    }
+    const ruleSetId = rs!.id;
+
+    const existentes = tx.select().from(ruleDefinitions)
+      .where(eq(ruleDefinitions.ruleSetId, ruleSetId)).all();
+    const porChave = new Map(existentes.map((e) => [`${e.kind}:${e.key}`, e]));
+    const conflitos = preparados.flatMap(({ item, parsed }) => {
+      if (!parsed.success) return [];
+      const chave = `${item.kind}:${item.key}`;
+      const atual = porChave.get(chave);
+      if (!atual) return [];
+      const candidato = {
+        name: item.name, category: item.category ?? null,
+        parentKey: item.parentKey ?? null, definition: parsed.data,
+      };
+      const atualNormalizado = {
+        name: atual.name, category: atual.category ?? null,
+        parentKey: atual.parentKey ?? null,
+        definition: definicaoElementoSchema.parse(atual.definition ?? {}),
+      };
+      if (JSON.stringify(candidato) === JSON.stringify(atualNormalizado)) return [];
+      return [{
+        chave, nomeNoLivro: item.name, nomeNaCampanha: atual.name,
+        decisao: decisoes[chave] ?? null,
+      }];
+    });
+    const semDecisao = conflitos.filter((c) => !c.decisao);
+    if (semDecisao.length) {
+      return {
+        http: 409,
+        payload: {
+          erro: "Há elementos com a mesma chave na campanha. Escolha qual versão manter.",
+          detalhes: { conflitos: semDecisao, opcoes: ["manter_campanha", "usar_livro"] },
+        },
+      };
+    }
+
+    const snapshot = itens.map((item) => ({
+      kind: item.kind, key: item.key, name: item.name,
+      category: item.category ?? null, parentKey: item.parentKey ?? null,
+      definition: item.definition ?? {}, ordem: item.ordem,
+    }));
+    const [vinculoExistente] = tx.select().from(campaignRuleBooks)
+      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
+    if (vinculoExistente && vinculoExistente.appliedVersion === livro.versao && JSON.stringify(vinculoExistente.snapshot) === JSON.stringify(snapshot)) {
+      return { http: 200, payload: { ok: true, semAlteracao: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos: 0, atualizados: 0, mantidos: 0 } };
+    }
+    const t = new Date();
+    const atuais = tx.select().from(ruleDefinitions)
+      .where(eq(ruleDefinitions.ruleSetId, ruleSetId)).all();
+    const mapa = new Map(atuais.map((e) => [`${e.kind}:${e.key}`, e]));
+    let inseridos = 0, atualizados = 0, mantidos = 0;
+    for (const { item, parsed } of preparados) {
+      if (!parsed.success) continue;
+      const chave = `${item.kind}:${item.key}`;
+      const atual = mapa.get(chave);
+      const decisao = decisoes[chave];
+      const valores = {
+        name: item.name, category: item.category ?? null,
+        parentKey: item.parentKey ?? null, definition: parsed.data, updatedAt: t,
+      };
+      if (!atual) {
+        tx.insert(ruleDefinitions).values({
+          id: crypto.randomUUID(), ruleSetId,
+          kind: item.kind, key: item.key, ...valores, createdAt: t,
+        }).run();
+        inseridos++;
+      } else if (decisao === "manter_campanha") {
+        mantidos++;
+      } else {
+        const mudou = atual.name !== valores.name
+          || (atual.category ?? null) !== valores.category
+          || (atual.parentKey ?? null) !== valores.parentKey
+          || JSON.stringify(definicaoElementoSchema.parse(atual.definition ?? {})) !== JSON.stringify(valores.definition);
+        if (mudou) {
+          tx.update(ruleDefinitions).set(valores).where(eq(ruleDefinitions.id, atual.id)).run();
+          atualizados++;
+        }
+      }
+    }
+    const [vinculo] = tx.select().from(campaignRuleBooks)
+      .where(and(eq(campaignRuleBooks.campaignId, campaignId), eq(campaignRuleBooks.bookId, livro.id))).all();
+    if (vinculo) {
+      tx.update(campaignRuleBooks).set({
+        appliedVersion: livro.versao, snapshot, appliedAt: t, updatedAt: t,
+      }).where(eq(campaignRuleBooks.id, vinculo.id)).run();
+    } else {
+      tx.insert(campaignRuleBooks).values({
+        id: crypto.randomUUID(), campaignId, bookId: livro.id,
+        appliedVersion: livro.versao, snapshot, appliedAt: t, createdAt: t, updatedAt: t,
+      }).run();
+    }
+    if (inseridos + atualizados > 0) {
+      const [rulesetAtual] = tx.select({ version: ruleSets.version }).from(ruleSets)
+        .where(eq(ruleSets.id, ruleSetId)).all();
+      tx.update(ruleSets).set({ version: (rulesetAtual?.version ?? 1) + 1, updatedAt: t })
+        .where(eq(ruleSets.id, ruleSetId)).run();
+    }
+    return {
+      http: 200,
+      payload: { ok: true, livroId: livro.id, versaoAplicada: livro.versao, inseridos, atualizados, mantidos },
+    };
+  });
+
+  if (resultado.http !== 200) {
+    res.status(resultado.http).json(resultado.payload);
+    return;
+  }
+  await audit(req, "biblioteca.livro.aplicado_campanha", {
+    bookId: req.params.bookId, versao: resultado.payload.versaoAplicada,
+    inseridos: resultado.payload.inseridos, atualizados: resultado.payload.atualizados,
+    mantidos: resultado.payload.mantidos,
+  });
+  if (!resultado.payload.semAlteracao) {
+    emitirCampanha(campaignId, "regras:atualizadas", { origem: "acervo", bookId: req.params.bookId });
+  }
+  res.json(resultado.payload);
 });
