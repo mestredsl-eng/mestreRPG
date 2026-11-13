@@ -30,6 +30,8 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   // confirmadas com «Salvar campo») — também conta como trabalho local.
   const [campoEmEdicao, setCampoEmEdicao] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  // Impede que uma resposta antiga sobrescreva o modelo selecionado mais recentemente.
+  const aberturaAtual = useRef(0);
 
   // Geração da carga: respostas antigas não sobrescrevem o estado atual.
   const geracao = useRef(0);
@@ -54,6 +56,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
 
   useEffect(() => {
     void carregar();
+    return () => { aberturaAtual.current += 1; };
   }, [carregar]);
 
   // Issue #67: criar/editar/publicar/duplicar/arquivar modelo em outro
@@ -73,12 +76,14 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   });
 
   const abrirModelo = async (id: string) => {
+    const requisicao = ++aberturaAtual.current;
     setSelecionado(id);
     setDetalhe(null);
     setVersaoSel(null);
     setEstrutura(null);
     try {
       const d = await api.obterModelo(campaignId, id);
+      if (requisicao !== aberturaAtual.current) return;
       setDetalhe(d);
       // Versão atual = rascunho mais recente, senão a publicada atual
       const rascunho = d.versoes.find((v) => v.rascunho);
@@ -88,6 +93,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       setEstruturaSuja(false);
       setAviso(null);
     } catch (e) {
+      if (requisicao !== aberturaAtual.current) return;
       setErro(e instanceof Error ? e.message : "Erro ao abrir modelo");
     }
   };
