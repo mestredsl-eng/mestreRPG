@@ -89,6 +89,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const [membros, setMembros] = useState<Membro[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [papel, setPapel] = useState<string>(souMestre ? "mestre" : "jogador");
+  // papel ATUAL vem do ACK de mesa:entrar — a prop inicial só serve
+  // para o primeiro render; após cada entrada/reentrada o servidor é
+  // a fonte de verdade para todos os controles administrativos.
+  const ehMestreAtual = papel === "mestre";
+  const [entradaFalhou, setEntradaFalhou] = useState(false);
   const [podeEnviar, setPodeEnviar] = useState(true);
   const [meuUserId, setMeuUserId] = useState<string>("");
   const [texto, setTexto] = useState("");
@@ -182,19 +187,56 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
 
-    socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
-      if (r?.ok) {
-        if (r.papel) setPapel(r.papel);
-        if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
-        if (r.turnos) setTurnos(r.turnos);
-        if (r.presenca) setOnline(r.presenca);
-        if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens)
-      } else {
-        setErro("Não foi possível entrar na mesa");
-      }
-    });
+    // mesa:entrar também na reconexão do socket: sem isso o novo socket
+    // nunca volta à sala sessao:* e a mesa (vtt, chat, timer) fica muda
+    // até recarregar a página. O servidor revalida tudo e devolve o
+    // vttState filtrado — a visão é reconstruída do zero. A intenção de
+    // permanecer na sessão NÃO depende de ACK anterior: se o socket
+    // cair depois de o servidor processar a entrada mas antes do ACK,
+    // a reconexão precisa solicitar nova entrada mesmo assim. O listener
+    // é registrado antes da primeira solicitação; socket já conectado
+    // entra uma única vez, desconectado aguarda o connect.
+    let ativo = true;
+    let entradaPendente = false;
+    let tentativaEntrada = 0;
+    const entrar = () => {
+      // nunca envia entrada com socket desconectado (o emit seria
+      // enfileirado); uma única entrada ativa por conexão
+      if (!ativo || entradaPendente || !socket.connected) return;
+      const tentativa = ++tentativaEntrada;
+      entradaPendente = true;
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
+        // ACK de tentativa antiga (conexão anterior) não libera a
+        // trava nem atualiza estado de uma tentativa mais recente
+        if (!ativo || tentativa !== tentativaEntrada) return;
+        entradaPendente = false;
+        if (r?.ok) {
+          setEntradaFalhou(false);
+          if (r.papel) setPapel(r.papel);
+          if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
+          if (r.turnos) setTurnos(r.turnos);
+          if (r.presenca) setOnline(r.presenca);
+          if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens/névoa)
+        } else {
+          // rejeição de autorização: invalida a visão — o servidor
+          // não juntou o socket à sala, então nenhum evento novo
+          // chegará; controles e painel saem de cena até nova entrada
+          setEntradaFalhou(true);
+          setPapel("espectador");
+          setErro("Não foi possível entrar na mesa — acesso não autorizado");
+        }
+      });
+    };
+    const aoConnect = () => entrar();
+    // disconnect invalida a tentativa em curso: o próximo connect
+    // dispara nova entrada mesmo que o ACK anterior nunca tenha chegado
+    const aoDisconnect = () => { entradaPendente = false; };
+    socket.on("connect", aoConnect);
+    socket.on("disconnect", aoDisconnect);
+    if (socket.connected) entrar();
 
     return () => {
+      ativo = false;
       socket.emit("mesa:sair", { sessionId: sessao.id });
       socket.off("mesa:mensagem", aoMensagem);
       socket.off("mesa:teste", aoTeste);
@@ -204,6 +246,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("mesa:timer", aoTimer);
       socket.off("mesa:presenca", aoPresenca);
       socket.off("sessao:atualizada", aoSessao);
+      socket.off("connect", aoConnect);
+      socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
     };
   }, [campaignId, sessao.id]);
@@ -267,6 +311,22 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   };
   const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeMembro(turnos.ordem[turnos.atual]) : null;
 
+  // entrada rejeitada: não apresenta a visão antiga como atual —
+  // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
+  if (entradaFalhou) {
+    return (
+      <div className="mesa-view">
+        <section className="cartao">
+          <div className="linha-entre">
+            <h2>Mesa — {sessaoAtual.name}</h2>
+            <button className="secundario" onClick={aoSair}>Sair da mesa</button>
+          </div>
+          {erro && <p className="erro">{erro}</p>}
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="mesa-view">
     <>
@@ -281,7 +341,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             </p>
           </div>
           <div className="linha">
-            {souMestre && sessaoAtual.status !== "encerrada" && (
+            {ehMestreAtual && sessaoAtual.status !== "encerrada" && (
               <>
                 <button className="secundario" onClick={() => void pausarSessao()}>{sessaoAtual.status === "pausada" ? "Retomar" : "Pausar"}</button>
                 <button className="perigo" onClick={() => setConfirmandoEncerrar(true)}>Encerrar</button>
@@ -303,7 +363,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                 <span className="chat-autor">{m.autorNome ?? m.autor?.displayName ?? m.autor?.username ?? "Sistema"}</span>
                 <span className="chat-hora">{new Date(m.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
                 {m.visibility === "privada" && <span className="tag">privada</span>}
-                {m.visibility === "mestre" && souMestre && <span className="tag">secreta</span>}
+                {m.visibility === "mestre" && ehMestreAtual && <span className="tag">secreta</span>}
                 <div className="chat-conteudo">{m.content}</div>
               </div>
             ))}
@@ -313,7 +373,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             <form className="chat-form" onSubmit={enviar}>
               <div className="linha">
                 <label className="check"><input type="checkbox" checked={comoAcao} onChange={(e) => setComoAcao(e.target.checked)} /> Ação</label>
-                {souMestre && <>
+                {ehMestreAtual && <>
                   <label className="check"><input type="checkbox" checked={privado} onChange={(e) => { setPrivado(e.target.checked); if (e.target.checked) setSecreto(false); }} /> Privada</label>
                   <label className="check"><input type="checkbox" checked={secreto} onChange={(e) => { setSecreto(e.target.checked); if (e.target.checked) setPrivado(false); }} /> Secreta</label>
                 </>}
@@ -341,7 +401,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
             {turnos.ativo ? (
               <p><strong>{turnoAtualNome ?? "—"}</strong> é a vez</p>
             ) : <p className="meta">Sem sequência ativa.</p>}
-            {souMestre && (
+            {ehMestreAtual && (
               <div className="linha linha-botoes">
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "iniciar", ordem: membros.map((m) => m.membershipId) })}>Iniciar</button>
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "avancar" })}>Avançar</button>
@@ -364,7 +424,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               {timer?.status === "rodando" || timer?.status === "pausado" ? fmtTempo(restantes) : "—"}
               {timer?.status === "pausado" && <span className="meta"> (pausado)</span>}
             </p>
-            {souMestre && sessaoAtual.status !== "encerrada" && (
+            {ehMestreAtual && sessaoAtual.status !== "encerrada" && (
               <div className="linha linha-botoes">
                 <button className="secundario" onClick={() => socketEmit("mesa:timer", { acao: timer?.status === "rodando" ? "pausar" : timer?.status === "pausado" ? "retomar" : "iniciar", duracaoSegundos: 300 })}>
                   {timer?.status === "rodando" ? "Pausar" : timer?.status === "pausado" ? "Retomar" : "Iniciar (5min)"}
@@ -381,7 +441,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
               <h3>Testes pendentes</h3>
               {testesPendentes.map((t) => {
                 const ehDono = souDonoTeste(t);
-                const podeAgir = souMestre || ehDono;
+                const podeAgir = ehMestreAtual || ehDono;
                 return (
                   <div key={t.id} className="teste-card">
                     <p><strong>{personagens.find((p) => p.id === t.characterId)?.name ?? "?"}</strong> — {String((t.skillRef as { rotulo?: string } | null)?.rotulo ?? t.rotulo ?? "teste")}{(t.pool?.dadosLados ?? t.diceSides) === 10 && <span className="tag">D10</span>}</p>
@@ -395,15 +455,15 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                         </p>
                       ) : null;
                     })()}
-                    {souMestre && <p className="meta">{t.diceCount}d{t.diceSides}{t.target != null ? ` · alvo ${t.target}` : ""}</p>}
+                    {ehMestreAtual && <p className="meta">{t.diceCount}d{t.diceSides}{t.target != null ? ` · alvo ${t.target}` : ""}</p>}
                     {podeAgir && t.status === "pendente" && (
                       <div className="linha linha-botoes">
-                        {(souMestre || ehDono) && (
+                        {(ehMestreAtual || ehDono) && (
                           <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number }) => {
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.diceSides], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
                           })}>Rolar</button>
                         )}
-                        {souMestre && (
+                        {ehMestreAtual && (
                           <select id={`out-${t.id}`} defaultValue="">
                             <option value="" disabled>Decidir…</option>
                             <option value="sucesso">Sucesso</option>
@@ -412,7 +472,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
                             <option value="falha_critica">Falha crítica</option>
                           </select>
                         )}
-                        {souMestre && (
+                        {ehMestreAtual && (
                           <>
                             <input id={`nota-${t.id}`} placeholder="Nota narrativa (opcional)" style={{ minWidth: 160 }} />
                             <button className="secundario" onClick={() => {
@@ -432,18 +492,18 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           )}
 
           {/* solicitar teste (mestre) */}
-          {souMestre && papel !== "espectador" && (
+          {ehMestreAtual && (
             <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
           )}
 
           {/* desafio D10 (mestre) */}
-          {souMestre && papel !== "espectador" && (
+          {ehMestreAtual && (
             <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
           )}
 
           {/* lançador unificado: testes D10 | rolagem livre e dano */}
           {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <PainelDados sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} souMestre={souMestre} />
+            <PainelDados sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
           )}
 
           {/* resultados de dados */}
@@ -491,12 +551,12 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       <TabuleiroVtt
         campaignId={campaignId}
         sessionId={sessao.id}
-        souMestre={souMestre}
+        souMestre={ehMestreAtual}
         ehEspectador={papel === "espectador"}
         meuUserId={meuUserId}
         membros={membros}
         encerrada={sessaoAtual.status === "encerrada"}
-        inicial={sessao.vttState ?? sessaoAtual.vttState ?? null}
+        inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
       />
 
       {/* decisões recentes */}
@@ -727,11 +787,80 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 // estado inicial) — movimentos otimistas locais nunca a alteram.
 type PosicaoConfirmada = { x: number; y: number; rev: number };
 
+// ---------- névoa de guerra (Etapa 2) ----------
+// Geometria idêntica ao backend (servidor/src/lib/vtt.ts): cada traço é uma
+// cápsula elíptica de raios (raioX, raioY) em coordenadas normalizadas 0–1.
+// No canvas (espaço de pixels w×h) o raio elíptico vira (raioX*w, raioY*h).
+const NEVOA_RAIO_MIN = 0.005;
+const NEVOA_RAIO_MAX = 0.5;
+const NEVOA_MAX_PONTOS = 128;
+
+function vttInicialParse(inicial: VttState | string | null | undefined): VttState {
+  if (!inicial) return { mapa: null, tokens: [] };
+  if (typeof inicial === "string") {
+    try { return JSON.parse(inicial) as VttState; } catch { return { mapa: null, tokens: [] }; }
+  }
+  return inicial;
+}
+
+/** Desenha uma cápsula elíptica (traço do backend) em coords normalizadas→pixels. */
+function desenharTracoNevoa(
+  ctx: CanvasRenderingContext2D, w: number, h: number,
+  traco: { raioX: number; raioY: number; pontos: { x: number; y: number }[] },
+) {
+  const ps = traco.pontos;
+  if (!ps.length) return;
+  ctx.save();
+  ctx.scale(w, h); // espaço normalizado 0–1
+  if (ps.length === 1) {
+    ctx.beginPath();
+    ctx.ellipse(ps[0].x, ps[0].y, traco.raioX, traco.raioY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 2; // diâmetro unitário no espaço escalado pelo raio
+  for (let i = 0; i < ps.length - 1; i++) {
+    const a = ps[i], b = ps[i + 1];
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    ctx.save();
+    ctx.translate(mx, my);
+    ctx.scale(traco.raioX, traco.raioY);
+    ctx.beginPath();
+    ctx.moveTo((a.x - mx) / traco.raioX, (a.y - my) / traco.raioY);
+    ctx.lineTo((b.x - mx) / traco.raioX, (b.y - my) / traco.raioY);
+    ctx.stroke();
+    ctx.restore();
+  }
+  // extremidades: elipses nos pontos iniciais/finais para cantos arredondados
+  for (const p of [ps[0], ps[ps.length - 1]]) {
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, traco.raioX, traco.raioY, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Amostragem para o limite de 128 pontos, preservando início e fim. */
+function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS): { x: number; y: number }[] {
+  if (ps.length <= max) return ps;
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < max; i++) {
+    const idx = Math.round((i * (ps.length - 1)) / (max - 1));
+    out.push(ps[idx]);
+  }
+  out[0] = ps[0];
+  out[max - 1] = ps[ps.length - 1];
+  return out;
+}
+
 function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; encerrada: boolean; inicial: VttState | null;
+  membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
 }) {
-  const [vtt, setVtt] = useState<VttState>(inicial ?? { mapa: null, tokens: [] });
+  const [vtt, setVtt] = useState<VttState>(() => vttInicialParse(inicial));
   const [erroVtt, setErroVtt] = useState<string | null>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
@@ -758,6 +887,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     const socket = getSocket();
     const aoVtt = (d: { sessionId?: string; vtt?: VttState }) => {
       if (d?.sessionId === sessionId && d.vtt) {
+        // broadcast genérico ATUALIZA a visão, mas NÃO libera o estado
+        // incerto: pode ser mutação de outra operação, não a pendente
         sincronizarAutoritativo(d.vtt);
         setVtt(d.vtt);
       }
@@ -768,12 +899,308 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
 
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
+  const inicialConteudoRef = useRef<string | null>(null);
   useEffect(() => {
-    if (inicial) {
-      sincronizarAutoritativo(inicial);
-      setVtt(inicial);
-    }
+    const ini = vttInicialParse(inicial);
+    // recargas que devolvem o MESMO vttState (nova referência de objeto,
+    // conteúdo idêntico) não podem derrubar o rascunho do pincel —
+    // só uma mudança real de estado reinicia a visão
+    const chave = JSON.stringify(ini);
+    if (inicialConteudoRef.current === chave) return;
+    inicialConteudoRef.current = chave;
+    sincronizarAutoritativo(ini);
+    setVtt(ini);
+    setPincel(false); setPreviewNevoa(null); // sessão/troca de estado: limpa rascunho
+    // snapshot de entrada também NÃO libera o estado incerto — só a
+    // sincronização ordenada (mesa:vtt:nevoa:sincronizar) confirma
+    // que toda operação já entregue terminou
   }, [inicial]);
+
+  // ---------- névoa de guerra ----------
+  const nevoaCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [pincel, setPincel] = useState(false);          // modo desenho (só mestre)
+  const [raioNevoa, setRaioNevoa] = useState(0.08);    // raio normalizado 0–1
+  const [pendenteNevoa, setPendenteNevoa] = useState(false);
+  const [previewNevoa, setPreviewNevoa] = useState<{ pontos: { x: number; y: number }[] } | null>(null);
+  const desenhoRef = useRef<{ pontos: { x: number; y: number }[]; pointerId: number } | null>(null);
+  const fimDesenhoRef = useRef<(() => void) | null>(null); // cancela gesto ativo + listeners
+  const pendenteNevoaRef = useRef(false);                  // trava de operação única
+  // estado incerto: a operação foi enviada mas o ACK não chegou no
+  // timeout — o Socket.IO pode tê-la enfileirado e o servidor ainda
+  // pode processá-la. NÃO é rejeição: mutações ficam bloqueadas até o
+  // estado autoritativo do servidor reconciliar a visão local.
+  const [nevoaIncerta, setNevoaIncerta] = useState(false);
+  const nevoaIncertaRef = useRef(false);
+  const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
+  const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
+  const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
+
+  // ResizeObserver: o canvas acompanha o tabuleiro (rotação, viewport,
+  // redimensionamento) e o desenho é refeito sem distorcer os traços —
+  // as coordenadas normalizadas 0–1 não mudam.
+  useEffect(() => {
+    const el = tabRef.current;
+    if (!el) return;
+    const medir = () => setTamTab({ w: el.clientWidth, h: el.clientHeight });
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [vtt.mapa?.fileId]);
+
+  // redesenha a camada de névoa quando o estado autoritativo muda.
+  // Ordem: limpeza → névoa autoritativa (só se ativa) → destaque do mestre
+  // → prévia do pincel SEMPRE por último (independe de nevoa.ativa).
+  useEffect(() => {
+    const cv = nevoaCanvasRef.current;
+    const el = tabRef.current;
+    if (!cv || !el) return;
+    const w = tamTab.w || el.clientWidth, h = tamTab.h || el.clientHeight;
+    if (!w || !h) return;
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = Math.round(w * dpr);
+    cv.height = Math.round(h * dpr);
+    const ctx = cv.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (nevoa.ativa) {
+      if (!souMestre) {
+        // não-mestres: véu visualmente opaco com buracos revelados
+        // (destination-out). Não é confidencialidade dos bytes da imagem.
+        ctx.save();
+        ctx.fillStyle = "#0a0d14";
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.fillStyle = "#000";
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.restore();
+      } else {
+        // mestre: destaque sutil das áreas reveladas (mapa segue visível)
+        ctx.save();
+        ctx.fillStyle = "rgba(120,200,255,0.10)";
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.strokeStyle = "rgba(120,200,255,0.35)";
+        ctx.lineWidth = 1;
+        for (const tr of nevoa.revelados) desenharTracoNevoa(ctx, w, h, tr);
+        ctx.restore();
+      }
+    }
+    // prévia do traço em desenho (mestre) — visível mesmo com névoa
+    // ainda desativada: o primeiro traço é o que a ativa no servidor
+    if (pincel && previewNevoa && previewNevoa.pontos.length) {
+      ctx.save();
+      ctx.fillStyle = "rgba(255,209,102,0.35)";
+      ctx.strokeStyle = "rgba(255,209,102,0.8)";
+      ctx.lineWidth = 1.5;
+      desenharTracoNevoa(ctx, w, h, { raioX: raioNevoa, raioY: raioNevoa, pontos: previewNevoa.pontos });
+      ctx.restore();
+    }
+  }, [nevoa, previewNevoa, pincel, raioNevoa, souMestre, tamTab, vtt.mapa?.fileId]);
+
+  // limpa estados temporários ao trocar de sessão — cancela desenho
+  // incompleto e TODOS os listeners do gesto antes de zerar o estado
+  useEffect(() => {
+    fimDesenhoRef.current?.();
+    setPincel(false); setPreviewNevoa(null); desenhoRef.current = null; setPendenteNevoa(false);
+    nevoaIncertaRef.current = false; setNevoaIncerta(false); // estado incerto é por sessão
+  }, [sessionId]);
+  // idem ao desmontar o componente
+  useEffect(() => () => { fimDesenhoRef.current?.(); }, []);
+
+  // retorna null fora do retângulo do tabuleiro — nunca gruda o traço
+  // nas bordas quando o ponteiro sai da área do mapa
+  const pontoNormalizado = (ev: { clientX: number; clientY: number }) => {
+    const el = tabRef.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const x = (ev.clientX - r.left) / r.width;
+    const y = (ev.clientY - r.top) / r.height;
+    if (x < 0 || x > 1 || y < 0 || y > 1) return null;
+    return { x, y };
+  };
+
+  // Sincronização ORDENADA (barreira): mesa:vtt:nevoa:sincronizar entra
+  // na mesma fila VTT do servidor que as mutações — como o transporte
+  // preserva a ordem por conexão, a resposta só é produzida depois que
+  // toda operação de névoa já entregue tiver terminado, e devolve o
+  // estado filtrado autoritativo pós-operações. SOMENTE este ACK limpa
+  // nevoaIncerta; broadcasts genéricos e snapshots de entrada não.
+  const [syncPendente, setSyncPendente] = useState(false);
+  const syncPendenteRef = useRef(false);
+  const sincronizarNevoa = () => {
+    const sock = getSocket();
+    if (!sock.connected) {
+      // não enfileira pedido antigo: a reconexão dispara nova tentativa
+      setErroVtt("Sem conexão — sincronização não enviada; será tentada ao reconectar");
+      return;
+    }
+    if (syncPendenteRef.current) return;
+    syncPendenteRef.current = true;
+    setSyncPendente(true);
+    setErroVtt("Sincronização da névoa em andamento — aguardando estado autoritativo…");
+    let respondido = false;
+    const timeout = window.setTimeout(() => {
+      if (respondido) return;
+      respondido = true;
+      syncPendenteRef.current = false;
+      setSyncPendente(false);
+      // nunca libera por decurso de tempo: estado incerto permanece
+      setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
+    }, 8000);
+    sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
+      if (respondido) return; // resposta tardia: estado incerto já tratado
+      respondido = true;
+      window.clearTimeout(timeout);
+      syncPendenteRef.current = false;
+      setSyncPendente(false);
+      if (r?.ok && r.vtt) {
+        sincronizarAutoritativo(r.vtt);
+        setVtt(r.vtt);
+        nevoaIncertaRef.current = false;
+        setNevoaIncerta(false);
+        setErroVtt(null);
+      } else {
+        setErroVtt(r?.erro ?? "Sincronização falhou — ações continuam bloqueadas; tente novamente");
+      }
+    });
+  };
+  // estado incerto + reconexão: tenta a sincronização ordenada no connect
+  useEffect(() => {
+    const socket = getSocket();
+    const aoConnectSync = () => {
+      if (nevoaIncertaRef.current && !syncPendenteRef.current) sincronizarNevoa();
+    };
+    socket.on("connect", aoConnectSync);
+    return () => { socket.off("connect", aoConnectSync); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const emitirNevoa = (acao: string, traco?: { raioX: number; raioY: number; pontos: { x: number; y: number }[] }) => {
+    if (nevoaIncertaRef.current) {
+      setErroVtt("Resultado de uma ação anterior é desconhecido — sincronize antes de nova ação");
+      return;
+    }
+    const sock = getSocket();
+    if (!sock.connected) {
+      // Socket.IO enfileiraria o emit para depois — não enviar: o
+      // usuário precisa saber que a ação NÃO foi disparada
+      setErroVtt("Sem conexão com o servidor — ação de névoa não enviada");
+      return;
+    }
+    if (pendenteNevoaRef.current) return; // uma operação por vez
+    pendenteNevoaRef.current = true;
+    setPendenteNevoa(true);
+    setErroVtt(null);
+    let respondido = false;
+    const timeout = window.setTimeout(() => {
+      if (respondido) return;
+      respondido = true;
+      pendenteNevoaRef.current = false;
+      setPendenteNevoa(false);
+      setPreviewNevoa(null);
+      // ACK expirado ≠ rejeição: o emit pode ter sido entregue e o
+      // servidor ainda pode aplicá-lo — ou pode nunca ter chegado.
+      // Bloqueia novas mutações até a SINCRONIZAÇÃO ORDENADA confirmar
+      // o estado; nunca reenvia a operação.
+      nevoaIncertaRef.current = true;
+      setNevoaIncerta(true);
+      setErroVtt("Sem confirmação do servidor — resultado desconhecido; sincronizando…");
+      sincronizarNevoa();
+    }, 5000);
+    // volatile: se a conexão cair durante o envio, a mutação NÃO fica
+    // na fila de saída para execução tardia — ou foi entregue (e a
+    // sincronização ordenada resolve) ou nunca existirá no servidor
+    sock.volatile.emit("mesa:vtt:nevoa", { sessionId, acao, traco }, (r: { ok?: boolean; erro?: string }) => {
+      if (respondido) return; // ACK tardio após o timeout: ignorar
+      respondido = true;
+      window.clearTimeout(timeout);
+      pendenteNevoaRef.current = false;
+      setPendenteNevoa(false);
+      if (r && r.ok === false) {
+        setErroVtt(r.erro ?? "Ação de névoa recusada");
+        setPreviewNevoa(null); // rejeição: limpa prévia, nada é confirmado localmente
+      }
+      // sucesso: o broadcast mesa:vtt traz o estado autoritativo
+    });
+  };
+
+  // Gesto único de desenho: pointerId fixo, cleanup único que remove
+  // TODOS os listeners registrados. pointerup finaliza e emite uma
+  // única operação; pointercancel/lostpointercapture/blur/aba oculta
+  // descartam o rascunho sem emitir nada. Um segundo ponteiro não
+  // interfere: eventos de outro pointerId são ignorados e um novo
+  // pointerdown é bloqueado enquanto há desenho ativo.
+  const iniciarPincel = (e: ReactPointerEvent) => {
+    if (!pincel || !souMestreCena || pendenteNevoaRef.current || nevoaIncertaRef.current || desenhoRef.current) return;
+    const p = pontoNormalizado(e);
+    if (!p) return;
+    e.preventDefault();
+    const pid = e.pointerId;
+    try { (e.currentTarget as HTMLElement).setPointerCapture?.(pid); } catch { /* ok */ }
+    desenhoRef.current = { pontos: [p], pointerId: pid };
+    setPreviewNevoa({ pontos: [p] });
+
+    const mover = (ev: PointerEvent) => {
+      const d = desenhoRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      const q = pontoNormalizado(ev);
+      if (!q) return; // fora do tabuleiro: não acrescenta ponto de borda
+      const ultimo = d.pontos[d.pontos.length - 1];
+      // dedup por distância mínima para não inflar o traço
+      if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) < 0.004) return;
+      d.pontos.push(q);
+      setPreviewNevoa({ pontos: [...d.pontos] });
+    };
+    function soltar(ev: PointerEvent) {
+      const d = desenhoRef.current;
+      if (!d || d.pointerId !== ev.pointerId) return;
+      limpar();
+      setPreviewNevoa(null);
+      if (!d.pontos.length) return;
+      const q = pontoNormalizado(ev); // pode ser null se soltou fora
+      if (q) {
+        const ultimo = d.pontos[d.pontos.length - 1];
+        if (Math.hypot(q.x - ultimo.x, q.y - ultimo.y) >= 0.004) d.pontos.push(q);
+      }
+      const pontos = amostrarPontos(d.pontos);
+      emitirNevoa("revelar", { raioX: raioNevoa, raioY: raioNevoa, pontos });
+    }
+    // cancelar(ev) com evento: só o ponteiro ativo cancela — um
+    // pointercancel de ponteiro secundário é ignorado, como já ocorre
+    // em pointermove/pointerup/lostpointercapture. Sem evento (blur,
+    // aba oculta, troca de sessão, desmontar) cancela incondicionalmente.
+    function cancelar(ev?: PointerEvent) {
+      const d = desenhoRef.current;
+      if (!d) return;
+      if (ev && d.pointerId !== ev.pointerId) return;
+      limpar();
+      setPreviewNevoa(null);
+    }
+    function aoPerderCaptura(ev: PointerEvent) {
+      const d = desenhoRef.current;
+      if (d && d.pointerId === ev.pointerId) cancelar(ev);
+    }
+    function aoVisibilidade() { if (document.hidden) cancelar(); }
+    function aoBlur() { cancelar(); }
+    function limpar() {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", cancelar);
+      window.removeEventListener("lostpointercapture", aoPerderCaptura);
+      window.removeEventListener("blur", aoBlur);
+      document.removeEventListener("visibilitychange", aoVisibilidade);
+      desenhoRef.current = null;
+      if (fimDesenhoRef.current === cancelar) fimDesenhoRef.current = null;
+    }
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointercancel", cancelar);
+    window.addEventListener("lostpointercapture", aoPerderCaptura);
+    window.addEventListener("blur", aoBlur);
+    document.addEventListener("visibilitychange", aoVisibilidade);
+    fimDesenhoRef.current = cancelar;
+  };
 
   const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
     getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
@@ -885,6 +1312,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           className="vtt-tabuleiro"
           style={{ backgroundImage: `url(${arquivoUrl(campaignId, vtt.mapa.fileId)})` }}
         >
+          <canvas
+            ref={nevoaCanvasRef}
+            className={`vtt-nevoa-canvas ${pincel ? "vtt-nevoa-canvas-pincel" : ""}`}
+            onPointerDown={iniciarPincel}
+          />
           {vtt.tokens.filter((t) => t.ativo).map((tk) => {
             const meu = ehDono(tk);
             return (
@@ -923,6 +1355,40 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           {selVtt && (
             <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
           )}
+        </div>
+      )}
+      {souMestreCena && (
+        <div className="linha vtt-controles vtt-nevoa-controles">
+          <button
+            className={pincel ? "primario" : "secundario"}
+            disabled={pendenteNevoa || nevoaIncerta}
+            onClick={() => { fimDesenhoRef.current?.(); setPincel((p) => !p); }}
+          >{pincel ? "Sair do pincel" : "Pincel de névoa"}</button>
+          {pincel && (
+            <label className="vtt-nevoa-raio">
+              Raio
+              <input
+                type="range" min={NEVOA_RAIO_MIN} max={NEVOA_RAIO_MAX} step={0.005}
+                value={raioNevoa}
+                onChange={(e) => setRaioNevoa(Number(e.target.value))}
+              />
+              <span>{Math.round(raioNevoa * 100)}%</span>
+            </label>
+          )}
+          <button className="secundario" disabled={pendenteNevoa || nevoaIncerta || nevoa.revelados.length === 0}
+            onClick={() => emitirNevoa("desfazer")}>Desfazer traço</button>
+          <button className="secundario" disabled={pendenteNevoa || nevoaIncerta}
+            onClick={() => emitirNevoa("ocultarTudo")}>Ocultar tudo</button>
+          <button className="secundario" disabled={pendenteNevoa || nevoaIncerta}
+            onClick={() => emitirNevoa("revelarTudo")}>Revelar tudo</button>
+          {nevoaIncerta && (
+            <button className="primario" disabled={syncPendente} onClick={sincronizarNevoa}>
+              {syncPendente ? "Sincronizando…" : "Sincronizar névoa"}
+            </button>
+          )}
+          <span className="meta">
+            Névoa: {nevoa.ativa ? `ativa (${nevoa.revelados.length} traço${nevoa.revelados.length === 1 ? "" : "s"})` : "desativada"}
+          </span>
         </div>
       )}
     </section>

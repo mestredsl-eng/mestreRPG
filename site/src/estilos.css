@@ -2027,6 +2027,7 @@ textarea:focus-visible,
 }
 .vtt-token {
   position: absolute;
+  z-index: 2; /* acima do canvas de névoa (z-index 1); canvas de pincel sobe a 3 */
   transform: translate(-50%, -50%);
   width: 42px;
   height: 42px;
@@ -2046,6 +2047,17 @@ textarea:focus-visible,
 .vtt-token-meu { border-color: #ffd166; box-shadow: 0 0 0 2px #ffd16688, 0 2px 6px rgba(0,0,0,.5); }
 .vtt-controles { margin-top: 10px; flex-wrap: wrap; gap: 8px; }
 .vtt-controles input { min-width: 140px; }
+/* névoa de guerra: canvas cobre o tabuleiro; z-index abaixo dos tokens,
+   exceto no modo pincel (mestre) quando fica acima para receber o desenho */
+.vtt-nevoa-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 1; pointer-events: none; border-radius: 8px;
+}
+.vtt-nevoa-canvas-pincel { z-index: 3; pointer-events: auto; cursor: crosshair; touch-action: none; }
+.vtt-nevoa-controles { align-items: center; }
+.vtt-nevoa-raio { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.vtt-nevoa-raio input[type="range"] { width: 110px; }
+.vtt-nevoa-controles .meta { margin-left: auto; }
 @media (max-width: 700px) {
   .vtt-tabuleiro { aspect-ratio: 4 / 3; max-height: 50vh; }
   .vtt-token { width: 36px; height: 36px; font-size: 12px; }
