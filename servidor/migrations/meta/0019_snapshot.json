@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "9ee467c8-6e79-4c1f-8405-a620fdf15303",
+  "id": "d0701084-f2dc-4545-892b-b6efa5b276d0",
   "prevId": "fdaf3e7f-68df-45c0-9935-478f9ba94274",
   "tables": {
     "admin_principal": {
@@ -1977,20 +1977,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "inventory_item_id": {
-          "name": "inventory_item_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "operacao": {
-          "name": "operacao",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "created_by": {
           "name": "created_by",
           "type": "text",
@@ -3313,6 +3299,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "vtt_state": {
+          "name": "vtt_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },

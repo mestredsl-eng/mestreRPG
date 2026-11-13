@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "4beabfae-b2d2-4692-a458-3fb96fb6d0e4",
-  "prevId": "f6865a9d-b948-4cf0-a07c-918c1f129171",
+  "id": "f6865a9d-b948-4cf0-a07c-918c1f129171",
+  "prevId": "9ee467c8-6e79-4c1f-8405-a620fdf15303",
   "tables": {
     "admin_principal": {
       "name": "admin_principal",
@@ -2604,11 +2604,10 @@
         }
       },
       "indexes": {
-        "operacao_estorno_char_op_idx": {
-          "name": "operacao_estorno_char_op_idx",
+        "operacao_estorno_op_idx": {
+          "name": "operacao_estorno_op_idx",
           "columns": [
             "campaign_id",
-            "character_id",
             "operacao_id"
           ],
           "isUnique": true

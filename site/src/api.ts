@@ -866,8 +866,24 @@ export interface Sessao {
   startedAt: string | null;
   endedAt: string | null;
   timerState: TimerState | null;
+  vttState?: VttState | null;
   createdAt: string;
 }
+
+export interface TokenVtt {
+  id: string; nome: string; cor: string; x: number; y: number;
+  personagemId?: string | null; userId?: string | null; ativo: boolean;
+}
+export interface PontoNevoa { x: number; y: number }
+export interface TracoNevoa { id: string; raioX: number; raioY: number; pontos: PontoNevoa[] }
+export interface NevoaVtt { ativa: boolean; revelados: TracoNevoa[] }
+export interface VttState {
+  mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null;
+  tokens: TokenVtt[];
+  nevoa?: NevoaVtt;
+}
+export const arquivoUrl = (cid: string, fid: string) =>
+  `${API_BASE}/campaigns/${cid}/arquivos/${fid}`;
 
 export interface TimerState {
   status?: "rodando" | "pausado" | "parado";
