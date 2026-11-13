@@ -150,6 +150,8 @@ try {
   writeFileSync(arqTeste, "conteúdo de teste realtime\n");
   await aba(pa, "Arquivos");
   await aba(pm, "Arquivos");
+  // espera a lista montar (listener de socket já ativo) antes do upload
+  await pm.getByRole("button", { name: "Enviar arquivo" }).waitFor({ timeout: 15000 });
   await pa.locator('input[type="file"]').setInputFiles(arqTeste);
   t("arquivos: upload do jogador aparece para o mestre", await aparece(pm, "arquivo-rt.txt"));
 
@@ -232,6 +234,9 @@ try {
 
   await aba(pmob, "Arquivos");
   await aba(pm, "Arquivos"); // mestre desktop precisa estar com a aba montada
+  // garante que a lista carregou e o listener está ativo antes do upload
+  await pm.getByRole("button", { name: "Enviar arquivo" }).waitFor({ timeout: 15000 });
+  await aparece(pm, "arquivo-rt.txt");
   const arqMob = join(DIR, "arquivo-rt-mobile.png");
   writeFileSync(arqMob, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   await pmob.locator('input[type="file"]').setInputFiles(arqMob);
