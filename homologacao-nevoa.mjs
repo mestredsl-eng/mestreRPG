@@ -41,6 +41,10 @@ function vigiar(page, tag) {
     if (m.type() !== "error") return;
     const txt = m.text();
     if (/401|Failed to load resource/.test(txt)) return;
+    // quedas proposital do servidor (testes de reconexão/timeout) geram
+    // ERR_CONNECTION_REFUSED e falhas de polling esperadas — não são
+    // erros de aplicação
+    if (/ERR_CONNECTION_REFUSED|socket\.io.*(failed|refused)|NetworkError|Failed to fetch/i.test(txt)) return;
     errosConsole.push(`${tag}:console:${txt.slice(0, 160)}`);
   });
 }
@@ -101,24 +105,31 @@ async function desenhar(page, pontos) {
 }
 // sequência crua de pointer events no canvas/janela — permite pointerId
 // controlado e eventos de cancelamento que o mouse real não produz.
-// ops: ["down",fx,fy] | ["move",fx,fy] | ["up",fx,fy] | ["cancel"] | ["lost",pid] | ["blur"]
+// ops: ["down",fx,fy] ["move",fx,fy] ["up",fx,fy] — sempre no pid base;
+//      ["downp",pid,fx,fy] ["movep",pid,fx,fy] ["upp",pid,fx,fy]
+//      ["cancel"] ["cancelp",pid] ["lost"] ["lostp",pid] ["blur"]
 async function seqPointer(page, pid, ops) {
   await page.evaluate(([pid, ops]) => {
     const cv = document.querySelector(".vtt-nevoa-canvas-pincel") || document.querySelector(".vtt-nevoa-canvas");
     const r = cv.getBoundingClientRect();
-    const disparar = (type, xy, alvo) => {
+    const disparar = (type, xy, alvo, p) => {
       const init = Array.isArray(xy) && typeof xy[0] === "number"
         ? { clientX: r.left + r.width * xy[0], clientY: r.top + r.height * xy[1] }
         : {};
-      const e = new PointerEvent(type, { ...init, pointerId: pid, pointerType: "touch", bubbles: true, cancelable: true, isPrimary: true });
+      const e = new PointerEvent(type, { ...init, pointerId: p, pointerType: "touch", bubbles: true, cancelable: true, isPrimary: p === pid });
       (alvo ?? window).dispatchEvent(e);
     };
     for (const op of ops) {
-      if (op[0] === "down") disparar("pointerdown", op.slice(1), cv);
-      else if (op[0] === "move") disparar("pointermove", op.slice(1), window);
-      else if (op[0] === "up") disparar("pointerup", op.slice(1), window);
-      else if (op[0] === "cancel") disparar("pointercancel", null, window);
-      else if (op[0] === "lost") disparar("lostpointercapture", null, window);
+      if (op[0] === "down") disparar("pointerdown", op.slice(1), cv, pid);
+      else if (op[0] === "move") disparar("pointermove", op.slice(1), window, pid);
+      else if (op[0] === "up") disparar("pointerup", op.slice(1), window, pid);
+      else if (op[0] === "downp") disparar("pointerdown", op.slice(2), cv, op[1]);
+      else if (op[0] === "movep") disparar("pointermove", op.slice(2), window, op[1]);
+      else if (op[0] === "upp") disparar("pointerup", op.slice(2), window, op[1]);
+      else if (op[0] === "cancel") disparar("pointercancel", null, window, pid);
+      else if (op[0] === "cancelp") disparar("pointercancel", null, window, op[1]);
+      else if (op[0] === "lost") disparar("lostpointercapture", null, window, pid);
+      else if (op[0] === "lostp") disparar("lostpointercapture", null, window, op[1]);
       else if (op[0] === "blur") window.dispatchEvent(new Event("blur"));
     }
   }, [pid, ops]);
@@ -157,6 +168,16 @@ async function vttStateHttp(sidSessao) {
   return typeof s === "string" ? JSON.parse(s) : s;
 }
 
+// queda REAL do servidor: mata o processo (todos os sockets morrem de
+// verdade — setOffline não derruba WebSocket) e sobe de novo no mesmo
+// banco/porta. Os clientes precisam reconectar e re-entrar sozinhos.
+async function reiniciarServidor() {
+  await encerrarServidor(proc);
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", () => {});
+  await esperarSaudavel(BASE, proc);
+}
+
 try {
   await prepararBanco(BANCO);
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
@@ -189,6 +210,85 @@ try {
   const ctxM2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
+
+  // Interceptação de emits de névoa — precisa ser registrada ANTES do
+  // socket conectar, ou seja, antes do login. Cobre os dois transportes
+  // possíveis do Socket.IO:
+  //  · WebSocket (routeWebSocket): mensagens ficam retidas em filaNevoa.
+  //  · Polling (page.route em POST /socket.io): a request fica retida
+  //    em rotasNevoa até liberarNevoa() dar continue.
+  //  · pgJ: conta emits de mesa:entrar (listeners duplicados).
+  let segurarNevoa = false;
+  const filaNevoa = [];
+  const rotasNevoa = [];
+  let wsSrvM = null;
+  let nevoaInterceptados = 0;
+  const liberarNevoa = () => {
+    segurarNevoa = false;
+    const q = filaNevoa.splice(0);
+    for (const m of q) { try { wsSrvM?.send(m); } catch { /* conexão morta */ } }
+    const rs = rotasNevoa.splice(0);
+    for (const r of rs) void r.continue().catch(() => {});
+  };
+  const descartarNevoa = () => {
+    segurarNevoa = false;
+    filaNevoa.length = 0;
+    const rs = rotasNevoa.splice(0);
+    for (const r of rs) void r.abort().catch(() => {});
+  };
+  await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
+    const srv = ws.connectToServer();
+    wsSrvM = srv;
+    ws.onMessage((msg) => {
+      if (segurarNevoa && typeof msg === "string" && msg.includes("mesa:vtt:nevoa")) {
+        nevoaInterceptados++;
+        filaNevoa.push(msg);
+        return;
+      }
+      srv.send(msg);
+    });
+    srv.onMessage((m) => ws.send(m));
+  });
+  await pgM.route("**/socket.io/**", async (route) => {
+    const req = route.request();
+    const corpo = req.postData() ?? "";
+    if (segurarNevoa && req.method() === "POST" && corpo.includes("mesa:vtt:nevoa")) {
+      nevoaInterceptados++;
+      rotasNevoa.push(route);
+      return; // segura a request — o emit não chega ao servidor
+    }
+    await route.continue();
+  });
+  // reconciliação HTTP (/estado) também pode ser retida: sem isso a
+  // janela de "estado incerto" dura ~100ms e é impossível observá-la
+  let segurarEstado = false;
+  const rotasEstado = [];
+  const liberarEstado = () => {
+    segurarEstado = false;
+    const rs = rotasEstado.splice(0);
+    for (const r of rs) void r.continue().catch(() => {});
+  };
+  await pgM.route("**/sessoes/*/estado", async (route) => {
+    if (segurarEstado && route.request().method() === "GET") {
+      rotasEstado.push(route);
+      return;
+    }
+    await route.continue();
+  });
+  // estado incerto está ativo enquanto o botão "Sincronizar névoa"
+  // existir; ele só some quando um estado autoritativo chega
+  const esperarSemIncerto = (page, timeout = 30000) => page.waitForFunction(() => {
+    return ![...document.querySelectorAll("button")].some((b) => /sincronizar névoa/i.test(b.textContent ?? ""));
+  }, null, { timeout });
+  let entrarCountJ = 0;
+  await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
+    const srv = ws.connectToServer();
+    ws.onMessage((msg) => {
+      if (typeof msg === "string" && msg.includes("mesa:entrar")) entrarCountJ++;
+      srv.send(msg);
+    });
+    srv.onMessage((m) => ws.send(m));
+  });
 
   await login(pgM, "mestre_teste", "senha-forte-123");
   await login(pgJ, "nv_j1", "senha-jogador-123");
@@ -231,8 +331,15 @@ try {
   await pgM.mouse.down();
   await pgM.mouse.move(tbB.x + tbB.width * 0.82, tbB.y + tbB.height * 0.82, { steps: 6 });
   await pgM.mouse.up();
-  const vttPos = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
-  const beto = (vttPos?.tokens ?? []).find((x) => x.nome === "Beto");
+  // o drag é assíncrono (socket → persistência): aguarda a posição
+  // autoritativa convergir em vez de ler o HTTP numa corrida
+  let beto = null;
+  for (let i = 0; i < 40; i++) {
+    const vttPos = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
+    beto = (vttPos?.tokens ?? []).find((x) => x.nome === "Beto");
+    if (beto && Math.abs(beto.x - 0.82) < 0.06 && Math.abs(beto.y - 0.82) < 0.06) break;
+    await pgM.waitForTimeout(150);
+  }
   t("drag moveu Beto para ~0.82 (rollback P6 intacto)", beto && Math.abs(beto.x - 0.82) < 0.06 && Math.abs(beto.y - 0.82) < 0.06,
     JSON.stringify(beto && { x: beto.x, y: beto.y }));
 
@@ -336,6 +443,32 @@ try {
   // desfaz para voltar ao baseline antes dos próximos testes
   await pgM.getByRole("button", { name: "Desfazer traço" }).click();
   await pgM.waitForTimeout(500);
+  // segundo ponteiro CANCELADO não interrompe o desenho do primeiro:
+  // pid 100 desenha; pid 101 dá down (ignorado) e pointercancel — o gesto
+  // do 100 continua e finaliza emitindo exatamente 1 traço persistido.
+  const vttAntesP2 = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
+  const nTracosAntesP2 = (vttAntesP2?.nevoa?.revelados ?? []).length;
+  await seqPointer(pgM, 100, [
+    ["down", 0.55, 0.55], ["move", 0.6, 0.6],
+    ["downp", 101, 0.8, 0.8], ["cancelp", 101], ["upp", 101, 0.8, 0.8],
+    ["movep", 101, 0.85, 0.85], // move de ponteiro estranho: ignorado
+    ["move", 0.62, 0.62], ["up", 0.62, 0.62],
+  ]);
+  await pgM.waitForFunction((n) => {
+    const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
+    return txt.includes("desativada") ? n === 0 : Number(txt.match(/ativa \((\d+)/)?.[1]) === n;
+  }, n0 + 1, { timeout: 8000 });
+  const vttDepoisP2 = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
+  const tracosDepoisP2 = vttDepoisP2?.nevoa?.revelados ?? [];
+  const ultimoP2 = tracosDepoisP2[tracosDepoisP2.length - 1];
+  t("pointercancel de 2º ponteiro não cancela o 1º: exatamente 1 traço persistido",
+    tracosDepoisP2.length === nTracosAntesP2 + 1
+    && Math.abs(ultimoP2?.pontos?.[0]?.x - 0.55) < 0.05
+    && Math.abs(ultimoP2?.pontos?.[0]?.y - 0.55) < 0.05,
+    `n=${tracosDepoisP2.length} ini=${JSON.stringify(ultimoP2?.pontos?.[0])}`);
+  // volta ao baseline
+  await pgM.getByRole("button", { name: "Desfazer traço" }).click();
+  await pgM.waitForTimeout(500);
   // desligar o pincel no meio do desenho cancela o rascunho
   await seqPointer(pgM, 60, [["down", 0.6, 0.6], ["move", 0.65, 0.65]]);
   await pgM.getByRole("button", { name: /sair do pincel/i }).click();
@@ -353,13 +486,13 @@ try {
 
   sec("Coordenadas fora do tabuleiro e limite de pontos");
   await garantirPincel(pgM);
-  // desenho real saindo da área: começa dentro, sai para fora, solta fora
-  const bx = await pgM.locator(".vtt-nevoa-canvas-pincel").boundingBox();
-  await pgM.mouse.move(bx.x + bx.width * 0.55, bx.y + bx.height * 0.55);
-  await pgM.mouse.down();
-  await pgM.mouse.move(bx.x + bx.width * 0.6, bx.y + bx.height * 0.6, { steps: 3 });
-  await pgM.mouse.move(bx.x - 300, bx.y - 300, { steps: 3 }); // fora do tabuleiro
-  await pgM.mouse.up();
+  // desenho saindo da área: pontos com fx<0/fx>1 ficam fora do retângulo —
+  // devem ser IGNORADOS (não grampeados na borda) e o pointerup externo
+  // finaliza com o último ponto válido interno (~0.60,0.60)
+  await seqPointer(pgM, 90, [
+    ["down", 0.55, 0.55], ["move", 0.6, 0.6],
+    ["move", -0.5, 0.5], ["move", 1.5, 0.4], ["up", -0.5, 0.5],
+  ]);
   await pgM.waitForTimeout(600);
   const vttFora = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
   const tracosFora = vttFora?.nevoa?.revelados ?? [];
@@ -367,6 +500,15 @@ try {
   const coordsOk = ultimo && ultimo.pontos.every((p) => p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1);
   t("movimento fora do tabuleiro não grava coordenadas fora de [0,1]", coordsOk === true,
     JSON.stringify(ultimo?.pontos?.slice(-2)));
+  // o frontend deve IGNORAR pontos externos — não grampear na borda:
+  // o último ponto persistido é o último ponto válido interno (~0.60,0.60)
+  // e nenhum ponto artificial de borda foi criado
+  const ptsFora = ultimo?.pontos ?? [];
+  const fimValido = ptsFora[ptsFora.length - 1];
+  const semBorda = ptsFora.every((p) => p.x > 0.02 && p.x < 0.98 && p.y > 0.02 && p.y < 0.98);
+  t("ponto final = último válido interno (~0.60,0.60), sem ponto artificial de borda",
+    !!fimValido && Math.hypot(fimValido.x - 0.6, fimValido.y - 0.6) < 0.03 && semBorda === true,
+    `fim=${JSON.stringify(fimValido)} n=${ptsFora.length}`);
   // >128 pontos: grade 10×16 com passo > dedup(0.004) → amostragem preserva início/fim
   const moves128 = Array.from({ length: 160 }, (_, i) => ["move", 0.6 + (i % 10) * 0.015, 0.6 + (Math.floor(i / 10) % 16) * 0.012]);
   await seqPointer(pgM, 70, [["down", 0.6, 0.6], ...moves128, ["up", 0.76, 0.6]]);
@@ -399,27 +541,91 @@ try {
   t("ACK rejeitado: erro exibido e prévia limpa", /encerrada/i.test(erroTxt) && !ehAmarelo(pxAposRejeicao),
     `erro="${erroTxt}" px=${pxAposRejeicao}`);
 
-  sec("Timeout sem ACK + ACK tardio (offline)");
+  sec("Timeout ambíguo — estado incerto (servidor cai)");
   // volta à sessão A
   await pgM.getByRole("button", { name: "Sair da mesa" }).click();
   await abrirSessao(pgM, "Mesa Névoa Alfa");
   await pgM.locator(".vtt-tabuleiro").waitFor({ timeout: 10000 });
   await garantirPincel(pgM);
   const nAntesOff = await nTracos(pgM);
-  await ctxM.setOffline(true);
+  const nHttpAntesOff = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  // o emit é retido na camada de transporte (o cliente acha que enviou)
+  // e o SERVIDOR CAI de verdade: o ACK é impossível → timeout → o
+  // resultado fica incerto — não é rejeição
+  segurarNevoa = true;
   await desenhar(pgM, [[0.62, 0.62], [0.7, 0.62], [0.7, 0.7]]);
-  // sem ACK: após ~5s os controles são liberados com erro de timeout
-  await pgM.getByText(/Sem confirmação do servidor/i).waitFor({ timeout: 12000 });
-  const desfezHabilitado = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
-  t("sem ACK: timeout libera controles e informa", desfezHabilitado === true);
-  // volta online: o emit em buffer é entregue e o ACK tardio é ignorado —
-  // o estado converge pelo broadcast, sem duplicar traço
-  await ctxM.setOffline(false);
+  await encerrarServidor(proc);
+  // ACK expirou ≠ rejeição: mensagem de resultado DESCONHECIDO e mutações
+  // bloqueadas (o botão Sincronizar é a prova persistente do estado
+  // incerto — a mensagem de erro pode ser substituída pela falha de
+  // sincronização enquanto o servidor está fora)
+  await pgM.getByRole("button", { name: /sincronizar névoa/i }).waitFor({ timeout: 20000 });
+  const desfezIncerto = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
+  const erroIncerto = await pgM.locator(".erro").last().textContent().catch(() => "");
+  t("timeout: mensagem de resultado incerto + controles bloqueados",
+    desfezIncerto === false && /desconhecido|sincroniza/i.test(erroIncerto ?? ""),
+    `desfazer=${desfezIncerto} erro="${erroIncerto}"`);
+  // tentar iniciar outro desenho NÃO envia nada (gesto bloqueado)
+  await desenhar(pgM, [[0.2, 0.2], [0.28, 0.28]]);
+  await pgM.waitForTimeout(600);
+  // sobe o servidor de novo: o socket reconecta → connect → mesa:entrar →
+  // estado VTT filtrado autoritativo → libera as mutações. O emit retido
+  // morreu com a conexão antiga: o traço NÃO foi aplicado — nunca
+  // reenviado, nunca duplicado.
+  descartarNevoa();
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", () => {});
+  await esperarSaudavel(BASE, proc);
+  // a reconciliação só termina quando o estado autoritativo chega:
+  // "Sincronizar névoa" some e o vtt exibido passa a ser o do servidor.
+  // (esperar por "Desfazer habilitado" aqui seria um falso positivo —
+  // o estado VELHO da UI já o satisfaz antes da reconexão)
+  await esperarSemIncerto(pgM, 90000);
+  const nAposRec = await nTracos(pgM);
+  const nHttpApos = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("reconciliação pós-timeout: mutações liberadas, estado = servidor, sem traço duplicado",
+    nAposRec === nHttpApos && nHttpApos === nHttpAntesOff,
+    `ui=${nAposRec} http=${nHttpApos} antes=${nHttpAntesOff} interceptados=${nevoaInterceptados}`);
+
+  sec("ACK perdido com socket CONECTADO — operação não persistida");
+  // segura o emit de névoa no transporte E a reconciliação HTTP (/estado):
+  // o socket segue conectado, mas o ACK nunca chega e a consulta de
+  // estado fica retida — a janela de "resultado desconhecido" fica
+  // aberta tempo suficiente para verificar os bloqueios de forma
+  // determinística. O servidor NUNCA recebe a operação.
+  const nAntesHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  await esperarSemIncerto(pgM, 10000); // garante que a seção anterior reconciliou
+  segurarNevoa = true;
+  segurarEstado = true;
+  await garantirPincel(pgM);
+  const nIntAntesHold = nevoaInterceptados;
+  await desenhar(pgM, [[0.15, 0.75], [0.22, 0.75], [0.22, 0.82]]);
+  // timeout (~5s) → estado incerto → reconciliarNevoa retido no /estado:
+  // controles bloqueados e novo desenho não emite nada
+  await pgM.getByRole("button", { name: /sincronizar névoa/i }).waitFor({ timeout: 20000 });
+  const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
+  const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
+  await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
+  await pgM.waitForTimeout(500);
+  t("incerto c/ socket vivo: mutações bloqueadas e 2º desenho não emitido",
+    desfezBloq === false && ocultarBloq === false && nevoaInterceptados === nIntAntesHold + 1,
+    `desfazer=${desfezBloq} ocultar=${ocultarBloq} interceptados=${nevoaInterceptados - nIntAntesHold}`);
+  // libera a reconciliação: HTTP confirma que a operação NÃO foi
+  // persistida → a UI volta ao estado do servidor e libera as ações
+  liberarEstado();
+  await esperarSemIncerto(pgM, 15000);
+  const nAposHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  t("conectado sem persistência: HTTP confirma ausência e UI libera",
+    nAposHold === nAntesHold && (await nTracos(pgM)) === nAntesHold,
+    `antes=${nAntesHold} depois=${nAposHold} ui=${await nTracos(pgM)}`);
+  // libera o emit retido: o servidor aplica UMA vez e o broadcast converge
+  liberarNevoa();
   await pgM.waitForFunction((n) => {
     const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
     return txt.includes("desativada") ? n === 0 : Number(txt.match(/ativa \((\d+)/)?.[1]) === n;
-  }, nAntesOff + 1, { timeout: 20000 });
-  t("ACK tardio ignorado: estado converge sem duplicar", (await nTracos(pgM)) === nAntesOff + 1);
+  }, nAntesHold + 1, { timeout: 15000 });
+  t("emit retido aplicado no máximo uma vez após liberação", (await nTracos(pgM)) === nAntesHold + 1);
+  t("interceptação de transporte comprovada (emit realmente retido)", nevoaInterceptados >= 2, `n=${nevoaInterceptados}`);
 
   sec("Toque real mobile (CDP) — mestre 390×844");
   await garantirPincel(pgM2);
@@ -455,14 +661,46 @@ try {
   t("resize desktop: canvas interno acompanha o tabuleiro",
     dimDepois.w !== dimAntes.w && Math.abs(dimDepois.w - Math.round(dimDepois.cw * dimDepois.dpr)) <= 1,
     JSON.stringify({ antes: dimAntes, depois: dimDepois }));
-  // região revelada não se desloca: ponto revelado continua transparente p/ jogador
-  const pxAposResize = await esperarPixel(pgJ, 0.25, 0.25, (p) => true, 500);
-  t("canvas do jogador re-renderizado após resize", Array.isArray(pxAposResize));
+  // redimensionar o JOGADOR também (seu próprio ResizeObserver re-renderiza)
+  await pgJ.setViewportSize({ width: 1600, height: 900 });
+  await pgJ.waitForTimeout(400);
+  // pontos reais do estado persistido: dentro de um traço revelado deve
+  // continuar transparente; fora de qualquer traço deve continuar opaco.
+  // Verificação por PIXEL do canvas, não por existência do elemento.
+  const vttResize = await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre });
+  const trRev = (vttResize?.nevoa?.revelados ?? [])[0];
+  const candEsc = [[0.97, 0.03], [0.03, 0.97], [0.97, 0.5], [0.5, 0.03], [0.5, 0.5]];
+  const ptEsc = candEsc.find(([x, y]) => !visivelMapa(vttResize, x, y)) ?? null;
+  const dimJ = await pgJ.locator(".vtt-nevoa-canvas").evaluate((cv) => ({ w: cv.width, cw: cv.clientWidth, dpr: window.devicePixelRatio }));
+  const okDimJ = Math.abs(dimJ.w - Math.round(dimJ.cw * dimJ.dpr)) <= 1;
+  let okPxJ = trRev ? true : false, detJ = "";
+  if (trRev) {
+    const [rx, ry] = [trRev.pontos[0].x, trRev.pontos[0].y];
+    const pRev = await esperarPixel(pgJ, rx, ry, ehTransparente, 5000);
+    detJ += `rev=${JSON.stringify(pRev)} `;
+    okPxJ = okPxJ && ehTransparente(pRev);
+    if (ptEsc) {
+      const pEsc = await esperarPixel(pgJ, ptEsc[0], ptEsc[1], ehEscuroOpaco, 5000);
+      detJ += `esc=${JSON.stringify(pEsc)}`;
+      okPxJ = okPxJ && ehEscuroOpaco(pEsc);
+    }
+  }
+  t("resize: jogador — revelado transparente / oculto opaco / canvas=CSS×DPR",
+    okDimJ && okPxJ, JSON.stringify({ dimJ, detJ, ptEsc }));
+  await pgJ.setViewportSize({ width: 1920, height: 1080 });
   await pgM.setViewportSize({ width: 1920, height: 1080 });
   await pgE.setViewportSize({ width: 844, height: 390 }); // "paisagem" mobile
   await pgE.waitForTimeout(400);
   const dimE = await pgE.locator(".vtt-nevoa-canvas").evaluate((cv) => ({ w: cv.width, cw: cv.clientWidth, ch: cv.clientHeight }));
   t("rotação mobile: canvas acompanha novo aspecto", dimE.w > 0 && Math.abs(dimE.w - Math.round(dimE.cw * 2)) <= 1, JSON.stringify(dimE));
+  // espectador redimensionado: mesma prova por pixel
+  if (trRev && ptEsc) {
+    const [rx, ry] = [trRev.pontos[0].x, trRev.pontos[0].y];
+    const pRevE = await esperarPixel(pgE, rx, ry, ehTransparente, 5000);
+    const pEscE = await esperarPixel(pgE, ptEsc[0], ptEsc[1], ehEscuroOpaco, 5000);
+    t("resize: espectador — revelado transparente / oculto opaco",
+      ehTransparente(pRevE) && ehEscuroOpaco(pEscE), `rev=${pRevE} esc=${pEscE}`);
+  }
   await pgE.setViewportSize({ width: 390, height: 844 });
 
   sec("Reconexão / reload");
@@ -494,6 +732,117 @@ try {
   t("após reload: espectador vê somente tokens em área revelada",
     JSON.stringify(titulosE4) === JSON.stringify(esperadoE),
     `dom=${titulosE4} esperado=${esperadoE}`);
+
+  sec("Reconexão sem reload — sala volta a funcionar");
+  // estado determinístico: névoa desativada (tudo visível) antes da queda
+  await pgM.getByRole("button", { name: "Revelar tudo" }).click();
+  await pgM.waitForFunction(
+    () => /desativada/.test(document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""),
+    null, { timeout: 8000 });
+  // queda real: todos os sockets morrem; os clientes reconectam e
+  // re-entrar sozinhos, sem reload — provado por eventos reais depois
+  await reiniciarServidor();
+  // espera o mestre re-entrar (controles liberados) e manda ocultar tudo:
+  // o pixel do jogador só fica opaco se ELE também re-entrar na sala
+  await pgM.waitForFunction(() => {
+    const b = [...document.querySelectorAll("button")].find((x) => /ocultar tudo/i.test(x.textContent ?? ""));
+    return b ? !b.disabled : false;
+  }, null, { timeout: 60000 });
+  // o socket pode ainda estar na janela de reconexão: tenta até o meta
+  // confirmar a mutação autoritativa
+  for (let i = 0; i < 4; i++) {
+    await pgM.getByRole("button", { name: "Ocultar tudo" }).click();
+    const ok = await pgM.waitForFunction(
+      () => /ativa \(0 traços\)/.test(document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""),
+      null, { timeout: 8000 }).then(() => true).catch(() => false);
+    if (ok) break;
+  }
+  const pxJOpaque = await esperarPixel(pgJ, 0.5, 0.5, ehEscuroOpaco, 60000);
+  // chat volta a fluir na sala re-entrada
+  await pgJ.locator(".chat-form").getByRole("textbox").fill("ping-reconexao");
+  await pgJ.locator(".chat-form button").click();
+  await pgM.getByText("ping-reconexao").waitFor({ timeout: 10000 }).catch(() => null);
+  const chatOk = await pgM.getByText("ping-reconexao").count();
+  t("reconexão sem reload: névoa autoritativa e chat voltam",
+    ehEscuroOpaco(pxJOpaque) && chatOk > 0, `px=${pxJOpaque} chat=${chatOk}`);
+  // mestre revela tudo → o mesmo ponto fica transparente no jogador
+  await pgM.getByRole("button", { name: "Revelar tudo" }).click();
+  const pxJTransp = await esperarPixel(pgJ, 0.5, 0.5, ehTransparente, 15000);
+  t("reconexão sem reload: propagação de névoa segue funcionando", ehTransparente(pxJTransp), JSON.stringify(pxJTransp));
+
+  sec("Página aberta com servidor fora + rejeição por membership");
+  const ctxX = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const pgX = await ctxX.newPage();
+  vigiar(pgX, "j2-offline");
+  await login(pgX, "nv_j2", "senha-jogador-123");
+  await irMesa(pgX);
+  // a lista precisa estar carregada ANTES da queda — senão o fetch de
+  // sessões morre com o servidor e não há linha para clicar
+  await pgX.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().waitFor({ timeout: 15000 });
+  // derruba o servidor ANTES de abrir a sessão: pgX monta a tela com o
+  // socket morto — a entrada só pode ocorrer quando o connect acontecer
+  await encerrarServidor(proc);
+  await abrirSessao(pgX, "Mesa Névoa Alfa");
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc.stderr.on("data", () => {});
+  await esperarSaudavel(BASE, proc);
+  await pgX.locator(".vtt-tabuleiro").waitFor({ timeout: 30000 });
+  await pgX.locator(".vtt-token").first().waitFor({ timeout: 15000 });
+  t("socket desconectado ao abrir: entrada acontece no connect", true);
+  // remove o vínculo de nv_j2 e derruba de novo: na reconexão o
+  // mesa:entrar é rejeitado — sem reutilizar estado antigo
+  const dbRem = abrirDb(BANCO);
+  dbRem.prepare("update memberships set status='removido', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador2.id);
+  dbRem.close();
+  await reiniciarServidor();
+  await pgX.getByText(/não foi possível entrar/i).waitFor({ timeout: 30000 });
+  // isolada da sala: mensagem posterior do mestre não chega ao removido
+  await pgM.waitForTimeout(3000); // mestre re-entra também
+  await pgM.locator(".chat-form").getByRole("textbox").fill("ping-removido");
+  await pgM.locator(".chat-form button").click();
+  await pgX.waitForTimeout(3000);
+  const vazouRemovido = await pgX.getByText("ping-removido").count();
+  t("membership removida na reconexão: rejeição + sala isolada",
+    vazouRemovido === 0, `vazou=${vazouRemovido}`);
+  const dbRem2 = abrirDb(BANCO);
+  dbRem2.prepare("update memberships set status='ativo', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador2.id);
+  dbRem2.close();
+  await ctxX.close();
+
+  sec("Reconexão após troca de papel (jogador → espectador)");
+  // névoa volta a cobrir tudo: jogador vê só o próprio token, espectador nenhum
+  for (let i = 0; i < 4; i++) {
+    await pgM.getByRole("button", { name: "Ocultar tudo" }).click();
+    const ok = await pgM.waitForFunction(
+      () => /ativa \(0 traços\)/.test(document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""),
+      null, { timeout: 8000 }).then(() => true).catch(() => false);
+    if (ok) break;
+  }
+  const dbRole = abrirDb(BANCO);
+  dbRole.prepare("update memberships set role='espectador', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador1.id);
+  dbRole.close();
+  const entrarAntesRole = entrarCountJ;
+  await reiniciarServidor();
+  // rebaixado: nenhum token visível (o próprio "Ana" some)
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-token").length === 0, null, { timeout: 30000 }).catch(() => {});
+  const titulosRebaixado = await pgJ.locator(".vtt-token").evaluateAll((els) => els.map((e) => e.title));
+  t("rebaixado p/ espectador na reconexão: visão filtrada aplicada", titulosRebaixado.length === 0, titulosRebaixado.join(","));
+  // restaura o papel e reconecta: a visão de jogador volta
+  const dbRole2 = abrirDb(BANCO);
+  dbRole2.prepare("update memberships set role='jogador', updated_at=? where campaign_id=? and user_id=?")
+    .run(Date.now(), campId, c.jogadores.jogador1.id);
+  dbRole2.close();
+  await reiniciarServidor();
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-token").length === 1, null, { timeout: 30000 }).catch(() => {});
+  const titulosRestaurado = await pgJ.locator(".vtt-token").evaluateAll((els) => els.map((e) => e.title));
+  t("papel restaurado na reconexão: jogador volta a ver o próprio token",
+    titulosRestaurado.includes("Ana"), titulosRestaurado.join(","));
+  // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado
+  t("sem listeners duplicados: 1 mesa:entrar por connect",
+    entrarCountJ - entrarAntesRole === 2, `delta=${entrarCountJ - entrarAntesRole}`);
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });
