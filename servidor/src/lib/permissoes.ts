@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { memberships, characters } from "../db/schema.js";
+import type { Router, RequestHandler } from "express";
 import { adquirirOperacaoCampanha } from "./io.js";
 
 export type PapelCampanha = "mestre" | "jogador" | "espectador";
@@ -83,29 +84,93 @@ function requirePapelInterno(papeis: PapelCampanha[], comLease: boolean) {
         res.status(409).json({ erro: "Campanha em restauração — tente novamente em instantes" });
         return;
       }
-      soltarAoFinalizar(res, liberar);
+      registrarLeaseHandler(res, liberar);
     }
     next();
   };
 }
 
-/** Libera o lease quando a resposta é efetivamente escrita (res.end).
- *  `close` propositalmente NÃO libera: o handler pode continuar
- *  gravando após a queda do socket; se ele nunca responder, o lease
- *  permanece (fail-closed). */
-function soltarAoFinalizar(res: Response, liberar: () => void) {
-  let solto = false;
-  const soltar = () => {
-    if (solto) return;
-    solto = true;
-    liberar();
-  };
+// ---------- ciclo de vida do lease HTTP ----------
+// O lease NÃO é liberado por eventos de socket (finish/close): o que
+// conta é o término real da Promise do handler de negócio. O contrato:
+//  - requirePapel/requireLeasePersonagem registram {liberar, iniciado}
+//    em res.locals[CHAVE_LEASE];
+//  - res.end só libera quando o handler final NUNCA iniciou (resposta
+//    curta por middleware anterior, ex.: rate limit 429);
+//  - uma vez iniciado, o ÚLTIMO handler da rota é envolvido por
+//    vincularLeaseAoHandler(): o lease é liberado no settle da Promise
+//    retornada — resposta enviada antes do fim do trabalho assíncrono
+//    NÃO libera, e desconexão tampouco;
+//  - handler síncrono/retorno antecipado libera ao retornar;
+//  - uma única aquisição e uma única liberação (flag liberado).
+
+const CHAVE_LEASE = "__leaseCampanhaHandler";
+
+type LeaseReg = { liberar: () => void; iniciado: boolean; liberado: boolean };
+
+function soltarLeaseReg(l: LeaseReg) {
+  if (l.liberado) return;
+  l.liberado = true;
+  l.liberar();
+}
+
+function registrarLeaseHandler(res: Response, liberar: () => void) {
+  const reg: LeaseReg = { liberar, iniciado: false, liberado: false };
+  res.locals[CHAVE_LEASE] = reg;
+  // fallback para rotas cujo handler final nunca inicia (middleware
+  // posterior responde e encerra, ex.: rate limit): só libera se o
+  // handler NÃO iniciou — res.end no meio do handler não libera
+  // porque `iniciado` já é true.
   const endOriginal = res.end.bind(res);
   res.end = ((...args: unknown[]) => {
+    if (!reg.iniciado) soltarLeaseReg(reg);
     const r = (endOriginal as (...a: unknown[]) => unknown)(...args);
-    soltar();
     return r;
   }) as typeof res.end;
+}
+
+/**
+ * Envolve o ÚLTIMO handler de cada rota do router: quando a rota
+ * possui lease registrado (requirePapel/requireLeasePersonagem em
+ * método mutante), a liberação acontece no settle real da Promise do
+ * handler — nunca antes, mesmo que res.end já tenha disparado.
+ * Rotas sem lease passam direto (no-op). Aplicar UMA vez por router,
+ * depois de todas as rotas definidas.
+ */
+export function vincularLeaseAoHandler(router: Router) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const layer of (router as any).stack ?? []) {
+    const route = layer?.route;
+    const stack = route?.stack;
+    if (!Array.isArray(stack) || stack.length === 0) continue;
+    const ultimo = stack[stack.length - 1];
+    const orig = ultimo.handle as RequestHandler;
+    ultimo.handle = function (this: unknown, req: Request, res: Response, next: NextFunction) {
+      const reg = res.locals?.[CHAVE_LEASE] as LeaseReg | undefined;
+      if (!reg) return orig.apply(this, arguments as never);
+      reg.iniciado = true;
+      let r: unknown;
+      try {
+        // eslint-disable-next-line prefer-rest-params
+        r = orig.apply(this, arguments as never);
+      } catch (e) {
+        soltarLeaseReg(reg);
+        throw e;
+      }
+      if (r && typeof (r as Promise<unknown>).then === "function") {
+        // settle real da Promise do handler — finally semântico:
+        // sucesso, rejeição ou término após res.end todos liberam aqui
+        void (r as Promise<unknown>).then(
+          () => soltarLeaseReg(reg),
+          () => soltarLeaseReg(reg),
+        );
+        return r;
+      }
+      // handler síncrono: retornou = terminou
+      soltarLeaseReg(reg);
+      return r;
+    } as RequestHandler;
+  }
 }
 
 /**
@@ -136,7 +201,7 @@ export function requireLeasePersonagem() {
       res.status(409).json({ erro: "Campanha em restauração — tente novamente em instantes" });
       return;
     }
-    soltarAoFinalizar(res, liberar);
+    registrarLeaseHandler(res, liberar);
     next();
   };
 }

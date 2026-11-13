@@ -10,7 +10,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao } from "../lib/io.js";
+import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -97,6 +97,17 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     }
     if (!restoreId) {
       res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
+      return;
+    }
+    // REVALIDAÇÃO pós-barreira: o papel de mestre foi verificado antes
+    // da drenagem — a membership pode ter mudado nesse intervalo.
+    // Sem mestre ativo, libera em modo falha (nada commitado) e 403.
+    await pausaTesteEmit("importar:revalidar");
+    const [mAgora] = await db.select().from(memberships)
+      .where(and(eq(memberships.campaignId, cid), eq(memberships.userId, req.usuario!.id), eq(memberships.role, "mestre"), eq(memberships.status, "ativo"))).limit(1);
+    if (!mAgora) {
+      await liberarBarreiraRestauracao(cid, restoreId, "falha").catch(() => false);
+      res.status(403).json({ erro: "Autorização revogada antes da substituição" });
       return;
     }
     let commitado = false;

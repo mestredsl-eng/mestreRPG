@@ -165,6 +165,13 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   // closure com o valor antigo após troca de conta/papel
   const meuUserIdRef = useRef("");
   useEffect(() => { meuUserIdRef.current = meuUserId; }, [meuUserId]);
+  // espelhos em ref do estado carregado pela API confiável — os handlers
+  // de socket são registrados uma vez e não podem capturar `personagens`/
+  // `testes` obsoletos do closure; ehEu vem do servidor (listarPersonagens)
+  const personagensRef = useRef<PersonagemResumo[]>([]);
+  const testesRef = useRef<TesteMesa[]>([]);
+  useEffect(() => { personagensRef.current = personagens; }, [personagens]);
+  useEffect(() => { testesRef.current = testes; }, [testes]);
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
   const [privado, setPrivado] = useState(false);
@@ -278,11 +285,21 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         const rec = Array.isArray(m.recipients) ? m.recipients : [];
         return m.authorId === meuUserIdRef.current || rec.includes(meuUserIdRef.current);
       }
-      // publica/sistema só passam com marcador explícito E sem flag privada
-      if (vis === "publica" || vis === "sistema") return !flagPrivado(m.privado);
+      // publica/sistema sem flag privada → público; COM flag contraditória
+      // o conteúdo é tratado como privado → só o mestre atual o vê
+      if (vis === "publica" || vis === "sistema") return flagPrivado(m.privado) ? souMestreAtual() : true;
       // ausência/tipo inválido/rótulo desconhecido: fail-closed
       return souMestreAtual();
     };
+    // propriedade atual do personagem segundo o estado carregado pela
+    // API (ehEu é computado no servidor) — usada para autorizar conteúdo
+    // privado do DONO do personagem, nunca por campos do próprio pacote
+    const souDonoPersonagemRef = (characterId?: string | null) =>
+      !!characterId && personagensRef.current.some((p) => p.id === characterId && p.ehEu);
+    // teste conhecido pelo estado local: amarra o evento ao registro
+    // já validado (characterId do pacote precisa bater com o do teste)
+    const testeConhecidoRef = (testId?: string | null) =>
+      !!testId ? testesRef.current.find((x) => x.id === testId) ?? null : null;
     const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
       if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
@@ -294,20 +311,33 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       const visT = (t as { visibility?: string }).visibility;
       if (!visaoValida(visT) && !souMestreAtual()) return;
       const privado = flagPrivado((t as { privado?: unknown }).privado) || visT === "privada" || visT === "mestre" || visT === "secreta";
-      if (privado && !souMestreAtual() && !souDonoTeste(t as TesteMesa)) return;
+      if (privado && !souMestreAtual() && !souDonoPersonagemRef(t.characterId)) return;
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
-      // rolagem privada: só mestre atual, o próprio rolador; rolagem
-      // pública exige visibilidade "publica" EXPLÍCITA — ausente ou
-      // inválida é fail-closed para não-mestre. `privado` contraditório
-      // prevalece sobre qualquer visibility (inclusive "publica").
+    const aoRolagem = (r: { id: string; testId?: string; characterId?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+      // rolagem privada: só mestre atual, o próprio rolador ou o DONO
+      // ATUAL do personagem do teste — userId identifica quem rolou,
+      // não o destinatário. O characterId do pacote precisa bater com
+      // o do teste conhecido (estado carregado pela API). `privado`
+      // contraditório prevalece sobre qualquer visibility.
       if (!visaoValida(r.visibility) && !souMestreAtual()) return;
       const privada = flagPrivado(r.privado) || r.visibility === "privada" || r.visibility === "mestre" || r.visibility === "secreta";
-      if (privada && !souMestreAtual() && r.userId !== meuUserIdRef.current) return;
+      if (privada && !souMestreAtual()) {
+        const tst = testeConhecidoRef(r.testId);
+        // rolagem de teste que o cliente não conhece (estado da API/
+        // eventos legítimos) é forjada ou fora de contexto — rejeita;
+        // nunca cai no characterId livre do pacote
+        if (r.testId && !tst) return;
+        if (tst && r.characterId && tst.characterId !== r.characterId) return; // pacote inconsistente
+        const donoOk = souDonoPersonagemRef(tst?.characterId ?? r.characterId);
+        // rolagem DE TESTE: só mestre ou dono do personagem — userId
+        // adulterado não autoriza. Rolagem LIVRE privada: o próprio
+        // rolador também é destinatário legítimo (contrato do servidor)
+        if (!donoOk && (r.testId || r.userId !== meuUserIdRef.current)) return;
+      }
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
@@ -316,7 +346,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais, d10: r.d10 ?? null,
       }]);
     };
-    const aoDecisao = (d: { testId: string; outcome: string; nota?: string | null; characterName?: string; visibility?: string; privado?: unknown }) => {
+    const aoDecisao = (d: { testId: string; characterId?: string | null; outcome: string; nota?: string | null; characterName?: string; visibility?: string; privado?: unknown }) => {
       // decisão privada: a sala recebe a versão sanitizada (nota nula);
       // a versão integral só vai a usuario:* de mestres/destinatários.
       // Após rebaixamento, a integral atrasada é descartada — a
@@ -325,9 +355,18 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       // privada nunca entra como conteúdo público por falta de marcador.
       if (!visaoValida(d.visibility) && !souMestreAtual()) return;
       const decisaoPrivada = flagPrivado(d.privado) || d.visibility === "privada" || d.visibility === "mestre" || d.visibility === "secreta";
-      // pacote marcado como privado nunca vira público para não-mestre,
-      // mesmo com nota sanitizada (null) — a decisão em si é privada
-      if (decisaoPrivada && !souMestreAtual()) return;
+      // decisão privada: mestre atual OU dono ATUAL do personagem do
+      // teste (ehEu do estado da API) — o characterId do pacote precisa
+      // bater com o do teste conhecido; pacote inconsistente é
+      // descartado. Não-mestre sem vínculo recebe nada.
+      if (decisaoPrivada && !souMestreAtual()) {
+        const tst = testeConhecidoRef(d.testId);
+        // decisão privada de teste desconhecido → forjada/fora de
+        // contexto — rejeita (nunca usa characterId livre do pacote)
+        if (d.testId && !tst) return;
+        if (tst && d.characterId && tst.characterId !== d.characterId) return;
+        if (!souDonoPersonagemRef(tst?.characterId ?? d.characterId)) return;
+      }
       setTestes((prev) => prev.map((t) => t.id === d.testId ? { ...t, status: "decidido", outcome: d.outcome, outcomeNote: d.nota ?? null } : t));
     };
     const aoTurnos = (t: { turnos: TurnosState }) => setTurnos(t.turnos);

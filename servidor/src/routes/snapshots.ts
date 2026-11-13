@@ -6,9 +6,9 @@ import {
   snapshots, users, auditLogs, sessions, characters, chatMessages, memberships, campaigns,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel, requirePapelAuth } from "../lib/permissoes.js";
+import { requirePapel, requirePapelAuth, getMembership } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, reconciliarMembrosAposRestauracao } from "../lib/io.js";
+import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
 import { restaurarEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -114,6 +114,19 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapelAuth("mestre"), limit
   }
   if (!restoreId) {
     res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
+    return;
+  }
+  // REVALIDAÇÃO pós-barreira: a autorização inicial (requirePapelAuth)
+  // aconteceu ANTES da drenagem — a membership pode ter sido revogada
+  // ou o papel alterado nesse intervalo. Reconsulta o estado atual;
+  // sem mestre ativo, libera a barreira em modo falha (nada commitado)
+  // e responde 403 — nenhum snapshot prévio é criado.
+  // janela de teste determinística entre a barreira e a revalidação
+  await pausaTesteEmit("restaurar:revalidar");
+  const mAgora = await getMembership(cid, req.usuario!.id);
+  if (!mAgora || mAgora.status !== "ativo" || mAgora.role !== "mestre") {
+    await liberarBarreiraRestauracao(cid, restoreId, "falha").catch(() => false);
+    res.status(403).json({ erro: "Autorização revogada antes da restauração" });
     return;
   }
   let commitado = false;

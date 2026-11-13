@@ -908,6 +908,190 @@ try {
   const rRestX = await pRestX;
   t("X: restore concluiu 200 após a janela", rRestX.status === 200, `status=${rRestX.status}`);
 
+  // ---------- Y. Lease HTTP até o settle real da Promise ----------
+  sec("Y. Lease HTTP: resposta antecipada e erro assíncrono (rotas de diagnóstico NODE_ENV=test)");
+  const m11 = novoUsuario(BANCO, { username: "pt_m11", role: "mestre" });
+  const m12 = novoUsuario(BANCO, { username: "pt_m12", role: "mestre" });
+  const urlTardio = `${BASE}/api/__teste/campaigns/${ids.camp}/lease-tardio`;
+  const postDiag = (path, cookie) => fetch(`${BASE}/api/__teste/campaigns/${ids.camp}/${path}`, {
+    method: "POST", headers: { "content-type": "application/json", cookie }, body: "{}",
+  });
+
+  // Y1 — Caso B: res.end ANTES do fim do handler; lease permanece
+  fs.writeFileSync(flagPausa, "lease:tardio");
+  fs.rmSync(pausadoArq, { force: true });
+  const pTardio = postDiag("lease-tardio", m11.cookie);
+  t("Y1: handler pausou DEPOIS de enviar a resposta (trabalho assíncrono pendente)", await esperarPausa());
+  const stTardio = await pTardio;
+  t("Y1: resposta 200 já entregue ao cliente", stTardio.status === 200, `status=${stTardio.status}`);
+  const snapY1 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m11.cookie, body: { description: "Y1" } });
+  const pRestY1 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapY1.json?.id}/restaurar`, { cookie: m11.cookie, body: { confirmacao: "RESTAURAR" } });
+  await esperarBarreira();
+  await dormir(1500); // maior que o delay pós-barreira (1200ms): sem lease a restauração já teria commitado
+  const cedoY1 = await Promise.race([pRestY1.then(() => "done"), dormir(400).then(() => "pendente")]);
+  t("Y1: restore NÃO avançou — lease vivo após res.end", cedoY1 === "pendente", cedoY1);
+  fs.rmSync(flagPausa, { force: true });
+  const rRestY1 = await pRestY1;
+  t("Y1: restore concluiu 200 só após o settle real do handler", rRestY1.status === 200, `status=${rRestY1.status}`);
+  const dbY1 = abrirDb(BANCO);
+  const preY1 = dbY1.prepare("select data from snapshots where campaign_id=? and kind='pre_restauracao' order by created_at desc limit 1").get(ids.camp)?.data ?? "";
+  dbY1.close();
+  t("Y1: snapshot prévio contém a escrita pós-resposta (drenagem esperou o handler)", preY1.includes("PISR-lease-tardio"));
+
+  // Y2 — Caso C: rejeição assíncrona → erro encaminhado, lease liberado 1x
+  fs.writeFileSync(flagPausa, "lease:erro");
+  fs.rmSync(pausadoArq, { force: true });
+  const pErro = postDiag("lease-erro", m11.cookie);
+  t("Y2: handler de erro pausou segurando o lease", await esperarPausa());
+  fs.rmSync(flagPausa, { force: true }); // libera: o handler rejeita em seguida
+  const rErro = await pErro;
+  t("Y2: rejeição assíncrona virou HTTP 500 via errorHandler", rErro.status === 500, `status=${rErro.status}`);
+  const snapY2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m12.cookie, body: { description: "Y2" } });
+  const rRestY2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapY2.json?.id}/restaurar`, { cookie: m12.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("Y2: restore prosseguiu — lease liberado uma única vez no settle", rRestY2.status === 200, `status=${rRestY2.status}`);
+
+  // ---------- Z. Ciclo completo após a PRIMEIRA gravação (todos os handlers) ----------
+  sec("Z. Pausa pós-write: restore drena e a operação completa o ciclo íntegro");
+  const m13 = novoUsuario(BANCO, { username: "pt_m13", role: "mestre" });
+  const m14 = novoUsuario(BANCO, { username: "pt_m14", role: "mestre" });
+  const cicloPW = async (rotulo, cookieMestre, emitir, checar) => {
+    fs.writeFileSync(flagPausa, "pos-write");
+    fs.rmSync(pausadoArq, { force: true });
+    const cb = emitir();
+    const pausou = await esperarPausa();
+    t(`${rotulo}: pausou APÓS a primeira gravação`, pausou);
+    const snap = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: cookieMestre, body: { description: rotulo } });
+    const pRest = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snap.json?.id}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+    await esperarBarreira();
+    await dormir(300); // restore drenando o lease do handler pausado
+    fs.rmSync(flagPausa, { force: true });
+    const r = await cb;
+    const rRest = await pRest;
+    t(`${rotulo}: handler retornou ok (ciclo íntegro)`, r?.ok === true, JSON.stringify(r).slice(0, 120));
+    t(`${rotulo}: restore 200 após liberação real`, rRest.status === 200, `status=${rRest.status}`);
+    const pre = ultimoPreSnap();
+    t(`${rotulo}: snapshot prévio contém a escrita drenada`, checar(pre), `len=${pre.length}`);
+    return r;
+  };
+
+  await cicloPW("Z1/chat", m12.cookie,
+    () => emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "PW-chat-1", visibilidade: "publica", clientId: crypto.randomUUID() }),
+    (pre) => pre.includes("PW-chat-1"));
+  // membro ativo real para o token (j1/j2 foram revogados por restores anteriores)
+  const dbAtivo = abrirDb(BANCO);
+  const uidAtivo = dbAtivo.prepare("select user_id from memberships where campaign_id=? and status='ativo' limit 1").get(ids.camp)?.user_id;
+  dbAtivo.close();
+  await cicloPW("Z2/vtt-token", m12.cookie,
+    () => emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkPW12345", nome: "PW-vtt", cor: "#123", x: 0.5, y: 0.5, userId: uidAtivo } }),
+    (pre) => pre.includes("PW-vtt"));
+  await cicloPW("Z3/vtt-nevoa", m12.cookie,
+    () => emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelar", traco: { raioX: 0.1, raioY: 0.1, pontos: [{ x: 0.11, y: 0.11 }, { x: 0.22, y: 0.22 }] } }),
+    (pre) => pre.includes('"revelados":[{"id"'));
+  await cicloPW("Z4/turno", m13.cookie,
+    () => emitirCb(sM, "mesa:turno", { sessionId: sid, acao: "iniciar" }),
+    (pre) => pre.includes('"ativo":true'));
+  await cicloPW("Z5/timer", m13.cookie,
+    () => emitirCb(sM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 555 }),
+    (pre) => pre.includes("555000"));
+  // personagem para os testes de pedir/rolar/decidir — jogador NOVO
+  // (j1/j2 já foram revogados por restores anteriores)
+  const jPW = novoUsuario(BANCO, { username: "pt_pw_j", role: "jogador" });
+  const charPW = crypto.randomUUID();
+  {
+    const dbZ = abrirDb(BANCO);
+    const agoraZ = Date.now();
+    dbZ.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(charPW, ids.camp, jPW.membershipId, "PW-Personagem", "{}", "{}", "aprovada", 0, agoraZ, agoraZ);
+    dbZ.close();
+  }
+  const rPedir = await cicloPW("Z6/teste-pedir", m13.cookie,
+    () => emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charPW, rotulo: "PW-teste", dadosCount: 1, visibilidade: "publica", requestId: "pw-pedir-1" }),
+    (pre) => pre.includes("pw-pedir-1"));
+  const idTestePW = rPedir?.id;
+  t("Z6: pedido retornou id de teste", !!idTestePW, JSON.stringify(rPedir).slice(0, 120));
+  if (idTestePW) {
+    await cicloPW("Z7/teste-rolar", m14.cookie,
+      () => emitirCb(sM, "mesa:teste:rolar", { testId: idTestePW, requestId: "pw-roll-1" }),
+      (pre) => pre.includes("pw-roll-1"));
+    await cicloPW("Z8/teste-decidir", m14.cookie,
+      () => emitirCb(sM, "mesa:teste:decidir", { testId: idTestePW, outcome: "sucesso", nota: "PW-dec" }),
+      (pre) => pre.includes("PW-dec"));
+  }
+  fs.rmSync(flagPausa, { force: true });
+  fs.rmSync(pausadoArq, { force: true });
+
+  // ---------- AA. Duas retomadas concorrentes da MESMA barreira pendente ----------
+  sec("AA. Retomadas concorrentes: uma única recuperação, fail-closed");
+  let falhasLog = 0;
+  proc.stderr.on("data", (d) => { if (String(d).includes("liberação falhou")) falhasLog++; });
+  const m15 = novoUsuario(BANCO, { username: "pt_m15", role: "mestre" });
+  const snapsAA = [];
+  for (let i = 0; i < 4; i++) {
+    const s = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m15.cookie, body: { description: `AA${i}` } });
+    snapsAA.push(s.json?.id);
+  }
+  t("AA: 4 snapshots pré-criados", snapsAA.every(Boolean));
+  // 1) restauração com falha injetada na reconstrução → barreira pendente
+  fs.writeFileSync(falhaFlag, "rejoins-join");
+  const rAA1 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapsAA[0]}/restaurar`, { cookie: m15.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("AA: 1ª restauração → 500 (reconstrução falhou, barreira pendente)", rAA1.status === 500, `status=${rAA1.status}`);
+  const rEntAA = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("AA: campanha segue bloqueada (barreira pendente fail-closed)", rEntAA !== true);
+  // 2) DUAS retomadas simultâneas (snapshots distintos = restoreIds de rota distintos;
+  //    a barreira interna é a mesma — o mecanismo deve compartilhar a recuperação)
+  fs.writeFileSync(flagPausa, "barreira:recovery");
+  fs.rmSync(pausadoArq, { force: true });
+  const baseFalhas = falhasLog;
+  const pAA2 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapsAA[1]}/restaurar`, { cookie: m15.cookie, body: { confirmacao: "RESTAURAR" } });
+  const pAA3 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapsAA[2]}/restaurar`, { cookie: m15.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("AA: recuperação pausou na barreira compartilhada", await esperarPausa());
+  const ambasPend = await Promise.race([Promise.all([pAA2, pAA3]).then(() => "done"), dormir(500).then(() => "pendente")]);
+  t("AA: as duas retomadas aguardam a MESMA recuperação (nenhuma assumiu em paralelo)", ambasPend === "pendente", ambasPend);
+  // 3) rearma a falha: a recuperação única falha → ambas recebem conflito
+  fs.writeFileSync(falhaFlag, "rejoins-join");
+  fs.rmSync(flagPausa, { force: true });
+  const [rAA2, rAA3] = await Promise.all([pAA2, pAA3]);
+  t("AA: retomadas concorrentes → 409 determinístico (conflito)", rAA2.status === 409 && rAA3.status === 409, `status=${rAA2.status}/${rAA3.status}`);
+  await dormir(200);
+  t("AA: UMA única execução de recuperação falhou (log único)", falhasLog - baseFalhas === 1, `delta=${falhasLog - baseFalhas}`);
+  const rEntAA2 = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("AA: barreira permanece fail-closed após falha compartilhada", rEntAA2 !== true);
+  // 4) nova tentativa (restoreId da barreira preservado) conclui a recuperação
+  const rAA4 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapsAA[3]}/restaurar`, { cookie: m15.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("AA: retomada posterior conclui 200 e remove a barreira", rAA4.status === 200, `status=${rAA4.status}`);
+  const rEntAA3 = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("AA: ingressos liberados após recuperação única", rEntAA3 === true);
+  fs.rmSync(pausadoArq, { force: true });
+
+  // ---------- AB. Revalidação de autorização DEPOIS da barreira ----------
+  sec("AB. Revalidação pós-barreira: revogação → 403 sem snapshot prévio");
+  const m16 = novoUsuario(BANCO, { username: "pt_m16", role: "mestre" });
+  const snapAB = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m16.cookie, body: { description: "AB" } });
+  t("AB: snapshot de destino criado", snapAB.status === 201 && !!snapAB.json?.id, `status=${snapAB.status}`);
+  const dbAB0 = abrirDb(BANCO);
+  const preAB0 = dbAB0.prepare("select count(*) c from snapshots where campaign_id=? and kind='pre_restauracao'").get(ids.camp).c;
+  dbAB0.close();
+  fs.writeFileSync(flagPausa, "restaurar:revalidar");
+  fs.rmSync(pausadoArq, { force: true });
+  const pRestAB = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapAB.json?.id}/restaurar`, { cookie: m16.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("AB: barreira adquirida e pausa antes da revalidação", await esperarPausa());
+  // revoga o papel NO BANCO durante a janela (a rota já passou na auth inicial)
+  const dbAB1 = abrirDb(BANCO);
+  dbAB1.prepare("update memberships set role='jogador' where campaign_id=? and user_id=?").run(ids.camp, m16.id);
+  dbAB1.close();
+  fs.rmSync(flagPausa, { force: true });
+  const rRestAB = await pRestAB;
+  t("AB: autorização revogada pós-barreira → HTTP 403", rRestAB.status === 403, `status=${rRestAB.status} ${JSON.stringify(rRestAB.json).slice(0, 120)}`);
+  const dbAB2 = abrirDb(BANCO);
+  const preAB1 = dbAB2.prepare("select count(*) c from snapshots where campaign_id=? and kind='pre_restauracao'").get(ids.camp).c;
+  const papelAB = dbAB2.prepare("select role from memberships where campaign_id=? and user_id=?").get(ids.camp, m16.id)?.role;
+  dbAB2.close();
+  t("AB: NENHUM snapshot prévio criado pela tentativa negada", preAB1 === preAB0, `antes=${preAB0} depois=${preAB1}`);
+  t("AB: estado não foi substituído (papel segue revogado)", papelAB === "jogador", `role=${papelAB}`);
+  const rEntAB = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("AB: barreira liberada em modo falha (ingressos voltam)", rEntAB === true, JSON.stringify(rEntAB).slice(0, 80));
+  fs.rmSync(pausadoArq, { force: true });
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

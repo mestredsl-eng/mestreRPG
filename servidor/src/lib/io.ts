@@ -118,7 +118,7 @@ export async function reconciliarMembrosAposRestauracao(
 // identificada por restoreId: somente o proprietário pode liberá-la.
 // Operações normais podem adquirir um "lease" (contador por campanha);
 // a restauração drena os leases em voo antes de capturar o estado.
-type Barreira = { restoreId: string; evacuados: Map<string, string[]>; pendente?: "sucesso" | "falha" };
+type Barreira = { restoreId: string; evacuados: Map<string, string[]>; pendente?: "sucesso" | "falha"; recuperando?: Promise<boolean> };
 const barreiras = new Map<string, Barreira>();
 const opsEmAndamento = new Map<string, number>();
 const DRENAGEM_MS = 15000;
@@ -210,10 +210,17 @@ export async function iniciarBarreiraRestauracao(campaignId: string): Promise<st
   const existente = barreiras.get(campaignId);
   if (existente) {
     if (!existente.pendente) return null; // restauração realmente ativa → 409
-    // liberação pendente do restoreId anterior: tenta concluir a
-    // reconstrução; se falhar de novo, mantém fail-closed (null → 409)
-    const ok = await liberarBarreiraRestauracao(campaignId, existente.restoreId, existente.pendente);
-    if (!ok) return null;
+    // liberação pendente do restoreId anterior: UMA recuperação por vez.
+    // Chamadas concorrentes aguardam a MESMA promise — nunca executam
+    // calcularRejoins/joins em paralelo nem trocam o proprietário.
+    if (!existente.recuperando) {
+      existente.recuperando = liberarBarreiraRestauracao(campaignId, existente.restoreId, existente.pendente)
+        .finally(() => { existente.recuperando = undefined; });
+    }
+    const ok = await existente.recuperando;
+    if (!ok) return null; // recuperação falhou de novo → fail-closed (409)
+    // outra tentativa pode ter assumido a campanha durante a espera
+    if (barreiras.get(campaignId)) return null;
   }
   const restoreId = crypto.randomUUID();
   const b: Barreira = { restoreId, evacuados: new Map() };
@@ -321,6 +328,9 @@ export async function liberarBarreiraRestauracao(campaignId: string, restoreId: 
   const b = barreiras.get(campaignId);
   if (!b || b.restoreId !== restoreId) return false; // não é o dono
   try {
+    // gancho determinístico (teste): pausa no início da recuperação —
+    // permite provar que retomadas concorrentes dividem a MESMA execução
+    await pausaTesteEmit("barreira:recovery");
     const rejoins = await calcularRejoins(campaignId, b, modo);
     if (io) {
       for (const [sid, rooms] of rejoins) {

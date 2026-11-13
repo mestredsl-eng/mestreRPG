@@ -182,6 +182,9 @@ async function registrarChat(
       throw e;
     }
     const [msg] = await db.select().from(chatMessages).where(eq(chatMessages.id, id)).limit(1);
+    // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: chat_messages já foi
+    // inserido — o lease (próprio ou ALS do handler) cobre até a emissão
+    await pausaTesteEmit(JSON.stringify({ ...opts, fase: "pos-write" }));
     await emitirMensagem(io, msg);
     // Etapa 12: toda mutação de mesa que gera mensagem também agenda salvamento
     agendarAutosave(opts.campaignId);
@@ -457,6 +460,8 @@ function socket_handlers(
         await pausaTesteEmit(JSON.stringify(payload));
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
         cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u!.id) });
       });
@@ -551,6 +556,8 @@ function socket_handlers(
         await pausaTesteEmit(JSON.stringify(payload));
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
         cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
       });
@@ -612,6 +619,8 @@ function socket_handlers(
         await pausaTesteEmit(JSON.stringify(payload));
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
+        // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
+        await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
         cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
       });
@@ -782,6 +791,10 @@ function socket_handlers(
         throw e;
       }
 
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: tests já foi
+      // inserido — o lease do handler cobre até as emissões finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+
       // notifica: sala recebe versão pública; dono recebe completa (com alvo se privada)
       const nomeChar = char.name;
       const nomeAutor = await nomeUsuario(u.id);
@@ -791,6 +804,9 @@ function socket_handlers(
         requestedByName: nomeAutor, rotulo: payload.rotulo ?? null,
         skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
         status: "pendente", createdAt: agora,
+        // visibilidade explícita e coerente em TODOS os payloads —
+        // o cliente nunca precisa adivinhar o contrato
+        visibility: payload.visibilidade === "privada" ? "privada" : "publica",
       };
       if (payload.visibilidade === "privada") {
         // privada: dono + mestres ATUAIS recebem — revalidados no envio
@@ -805,8 +821,20 @@ function socket_handlers(
           ...publico, alvo: payload.minimo ?? null,
           dados: { lados: dadosLados, count }, pool, privado: false,
         });
-        io.to(`sessao:${ctx.sessao.id}`).emit("mesa:teste:detalhe", { id, alvo: payload.minimo ?? null, dados: { lados: dadosLados, count }, pool });
       }
+      // mesa:teste:detalhe carrega o ALVO (dificuldade reservada):
+      // NUNCA vai à sala coletiva — somente dono do personagem e
+      // mestres atuais, via canal privado usuario:* com visibilidade
+      // explícita. O dono recebe os dados do PRÓPRIO teste; o mestre
+      // recebe a visão administrativa completa.
+      const detalhePriv = {
+        id, alvo: payload.minimo ?? null,
+        dados: { lados: dadosLados, count }, pool,
+        visibility: "privada",
+      };
+      await emitirPrivadoCampanha(ctx.sessao.campaignId, [membroDono.userId], "mesa:teste:detalhe", detalhePriv);
+      const mestresDet = await mestresDaCampanha(ctx.sessao.campaignId);
+      await emitirPrivadoCampanha(ctx.sessao.campaignId, mestresDet, "mesa:teste:detalhe", detalhePriv, ["mestre"]);
 
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
@@ -901,8 +929,11 @@ function socket_handlers(
         alvo: teste.target, // só mestres recebem via filtro abaixo
         visibility: teste.visibility, createdAt: agora,
       };
-      // público: sem alvo; privado: dono+mestre com alvo; mestre sempre com alvo
-      io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null });
+      // público: sala recebe sem alvo; PRIVADO: nada vai à sala —
+      // resultados só trafegam nos canais privados usuario:* abaixo
+      if (teste.visibility !== "privada") {
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null, visibility: "publica" });
+      }
       // emissões privadas revalidam membership ativa no instante do envio
       if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRoll);
       const mestres = await mestresDaCampanha(teste.campaignId);
@@ -1024,13 +1055,20 @@ function socket_handlers(
       if (!outcomes.includes(payload.outcome)) { cb?.({ ok: false, erro: "Resultado inválido" }); return; }
       await pausaTesteEmit(JSON.stringify(payload));
       await db.update(tests).set({ status: "decidido", outcome: payload.outcome, outcomeNote: payload.nota?.slice(0, 2000) ?? null, updatedAt: new Date() }).where(eq(tests.id, teste.id));
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: tests já foi
+      // atualizado — o lease cobre emissões e registrarChat finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       const [char] = await db.select().from(characters).where(eq(characters.id, teste.characterId)).limit(1);
       const decisao = {
         testId: teste.id, sessionId: teste.sessionId, characterId: teste.characterId,
         characterName: char?.name, outcome: payload.outcome, nota: payload.nota ?? null,
         decididoPor: await nomeUsuario(u.id), visibility: teste.visibility,
       };
-      io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: teste.visibility === "privada" ? null : decisao.nota });
+      // decisão de teste PRIVADO não vai à sala coletiva — outcome e
+      // personagem são conteúdo reservado; só os canais privados abaixo
+      if (teste.visibility !== "privada") {
+        io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: decisao.nota, visibility: "publica" });
+      }
       // versão integral: só mestres e dono ATUAIS do personagem
       const mestres = await mestresDaCampanha(teste.campaignId);
       await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:decisao", decisao, ["mestre"]);
@@ -1104,6 +1142,9 @@ function socket_handlers(
 
       await pausaTesteEmit(JSON.stringify(payload));
       await db.update(turns).set({ state: state as never, updatedBy: u.id, updatedAt: new Date() }).where(eq(turns.id, t.id));
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: turns persistido —
+      // o lease cobre emissão e registrarChat finais
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       io.to(`sessao:${payload.sessionId}`).emit("mesa:turnos", { sessionId: payload.sessionId, turnos: state });
       const atualId = state.ativo && state.atual !== undefined && state.atual >= 0 ? state.ordem[state.atual] : null;
       const rotulo = atualId ? await rotuloMembro(atualId) : null;
@@ -1166,6 +1207,8 @@ function socket_handlers(
       await pausaTesteEmit(JSON.stringify(payload));
       await db.update(sessions).set({ timerState: novo as never, updatedAt: new Date() }).where(eq(sessions.id, s.id));
       agendarAutosave(s.campaignId);
+      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: timerState persistido
+      await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       const estadoTimer = { sessionId: s.id, ...novo, servidorAgora: agora };
       io.to(`sessao:${s.id}`).emit("mesa:timer", estadoTimer);
       cb?.({ ok: true, timer: estadoTimer });
