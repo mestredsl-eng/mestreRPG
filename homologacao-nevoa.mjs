@@ -246,10 +246,34 @@ try {
     for (const r of rs) void r.abort().catch(() => {});
   };
   const ehMsgNevoa = (msg) => typeof msg === "string" && msg.includes('"mesa:vtt:nevoa"');
+  // retenção da SINCRONIZAÇÃO ordenada ("mesa:vtt:nevoa:sincronizar"):
+  // derrubar ACKs não basta — no transporte polling os ACKs não passam
+  // pelo filtro de pacotes "43" do WebSocket e a sync automática
+  // succeeding limparia o estado incerto antes da asserção. Reter o
+  // próprio emit da sync torna a janela de incerteza determinística em
+  // qualquer transporte.
+  const ehMsgSync = (msg) => typeof msg === "string" && msg.includes('"mesa:vtt:nevoa:sincronizar"');
+  let segurarSync = false;
+  const filaSync = [];
+  const rotasSync = [];
+  const liberarSync = () => {
+    segurarSync = false;
+    const q = filaSync.splice(0);
+    for (const m of q) { try { wsSrvM?.send(m); } catch { /* conexão morta */ } }
+    const rs = rotasSync.splice(0);
+    for (const r of rs) void r.continue().catch(() => {});
+  };
+  const descartarSync = () => {
+    segurarSync = false;
+    filaSync.length = 0;
+    const rs = rotasSync.splice(0);
+    for (const r of rs) void r.abort().catch(() => {});
+  };
   await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
     const srv = ws.connectToServer();
     wsSrvM = srv;
     ws.onMessage((msg) => {
+      if (segurarSync && ehMsgSync(msg)) { filaSync.push(msg); return; }
       if (ehMsgNevoa(msg)) nevoaEmitidos++;
       if (segurarNevoa && ehMsgNevoa(msg)) { nevoaInterceptados++; filaNevoa.push(msg); return; }
       srv.send(msg);
@@ -262,6 +286,10 @@ try {
   await pgM.route("**/socket.io/**", async (route) => {
     const req = route.request();
     const corpo = req.postData() ?? "";
+    if (segurarSync && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa:sincronizar"')) {
+      rotasSync.push(route);
+      return; // segura a request — a sync não chega ao servidor
+    }
     if (segurarNevoa && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa"')) {
       nevoaInterceptados++;
       rotasNevoa.push(route);
@@ -695,6 +723,10 @@ try {
   // o estado atual do servidor — sem a operação — e libera as ações.
   const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   segurarNevoa = true;
+  // retém também a sync automática: sem isso, um ACK entregue fora do
+  // filtro de pacotes "43" (ex.: transporte polling) resolveria o estado
+  // incerto sozinho e o botão "Sincronizar névoa" nunca apareceria
+  segurarSync = true;
   // derruba TODOS os ACKs durante a janela de incerteza: um único
   // contador (=1) podia ser consumido por um ACK estranho (reconexão,
   // entrar-campanha tardio) e liberar a sync automática — o estado
@@ -723,8 +755,9 @@ try {
   t("não recebida: incerto bloqueia e nada mais é emitido",
     desfezOff2 === false && nevoaEmitidos === nEm2,
     `desfazer=${desfezOff2} emitidos=${nevoaEmitidos - nEm2}`);
-  // retry explícito: a sync ordenada devolve o estado atual — sem a
-  // operação retida — e libera as ações
+  // retry explícito: descarta a sync automática retida e emite a
+  // sincronização manual — a resposta ordenada libera o estado incerto
+  descartarSync();
   derrubarAckM = 0; // libera ACKs: o retry manual precisa da resposta
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
   await esperarSemIncerto(pgM, 60000);
