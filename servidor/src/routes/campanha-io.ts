@@ -5,12 +5,12 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  campaigns, memberships, users, snapshots,
+  campaigns, memberships, users, snapshots, sessions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -82,24 +82,87 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       res.status(400).json({ erro: "O pacote não pertence a esta campanha" }); return;
     }
 
-    // segurança: snapshot do estado atual antes de sobrescrever
-    const preSnapId = crypto.randomUUID();
-    await db.insert(snapshots).values({
-      id: preSnapId, campaignId: cid, kind: "pre_restauracao",
-      description: `Automático — antes de importar pacote sobre a campanha`,
-      data: (await exportarCampanha(cid)) as never, createdBy: req.usuario!.id, createdAt: new Date(),
-    });
-    let resultado;
-    try {
-      resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
-    } catch (e) {
-      res.status(500).json({ erro: "Falha ao importar/substituir", detalhe: String(e) });
+    // mesma barreira exclusiva do snapshot: drena leases, evacua
+    // sockets e bloqueia entradas/operações ANTES de capturar o
+    // estado; uma segunda substituição recebe 409 e NUNCA cria
+    // snapshot prévio próprio
+    const restoreId = await iniciarBarreiraRestauracao(cid);
+    if (restoreId === "timeout") {
+      res.status(503).json({ erro: "Substituição abortada: operações em andamento não terminaram a tempo — tente novamente" });
       return;
     }
-    await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
-    emitirCampanha(cid, "campanha:restaurada", {});
-    res.json({ ok: true, campaignId: cid, modo, ...resultado });
-    return;
+    if (restoreId === "falha") {
+      res.status(503).json({ erro: "Substituição abortada: falha ao preparar a barreira — tente novamente" });
+      return;
+    }
+    if (!restoreId) {
+      res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
+      return;
+    }
+    // REVALIDAÇÃO pós-barreira: o papel de mestre foi verificado antes
+    // da drenagem — a membership pode ter mudado nesse intervalo.
+    // Sem mestre ativo, libera em modo falha (nada commitado) e 403.
+    await pausaTesteEmit("importar:revalidar");
+    const [mAgora] = await db.select().from(memberships)
+      .where(and(eq(memberships.campaignId, cid), eq(memberships.userId, req.usuario!.id), eq(memberships.role, "mestre"), eq(memberships.status, "ativo"))).limit(1);
+    if (!mAgora) {
+      await liberarBarreiraRestauracao(cid, restoreId, "falha").catch(() => false);
+      res.status(403).json({ erro: "Autorização revogada antes da substituição" });
+      return;
+    }
+    let commitado = false;
+    try {
+      const delayBarreira = Number(process.env.MESTRE_RESTORE_DELAY_MS ?? 0);
+      if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
+        await new Promise((r) => setTimeout(r, delayBarreira));
+      }
+      // snapshot do estado atual DEPOIS da drenagem: captura
+      // consistente, sem leases em voo (spec §5)
+      const preSnapId = crypto.randomUUID();
+      await db.insert(snapshots).values({
+        id: preSnapId, campaignId: cid, kind: "pre_restauracao",
+        description: `Automático — antes de importar pacote sobre a campanha`,
+        data: (await exportarCampanha(cid)) as never, createdBy: req.usuario!.id, createdAt: new Date(),
+      });
+      // membros atuais ANTES de substituir: quem não constar no pacote
+      // precisa ser revogado e notificado — consultar só o estado final
+      // perderia esses usuários.
+      const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+      const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
+      let resultado;
+      try {
+        resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
+        commitado = true;
+      } catch (e) {
+        await liberarBarreiraRestauracao(cid, restoreId, "falha");
+        res.status(500).json({ erro: "Falha ao importar/substituir", detalhe: String(e) });
+        return;
+      }
+      const membrosDepois = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+      const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
+      const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
+      if (rec.falhas.length) {
+        await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+        res.status(500).json({ erro: "Importação aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
+        return;
+      }
+      const liberou = await liberarBarreiraRestauracao(cid, restoreId, "sucesso");
+      if (!liberou) {
+        res.status(500).json({ erro: "Importação aplicada, mas a reconstrução das salas falhou — a campanha permanece bloqueada e a recuperação será retomada" });
+        return;
+      }
+      await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
+      emitirCampanha(cid, "campanha:restaurada", { campaignId: cid });
+      res.json({ ok: true, campaignId: cid, modo, ...resultado });
+      return;
+    } catch (e) {
+      console.error(`[importar] falha não tratada campanha=${cid}:`, e);
+      await liberarBarreiraRestauracao(cid, restoreId, commitado ? "sucesso" : "falha").catch(() => false);
+      if (!res.headersSent) {
+        res.status(500).json({ erro: commitado ? "Importação aplicada, mas a finalização falhou" : "Falha ao importar/substituir", detalhe: String(e) });
+      }
+      return;
+    }
   }
 
   // ---- modo nova: cria campanha a partir do pacote ----
@@ -168,6 +231,12 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     return;
   }
 
+  // A importação pode criar/reactivar memberships de usuários já conectados
+  // (userIds validados acima) — notifica cada um com seu papel/status atuais.
+  const membrosImportados = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+  for (const m of membrosImportados) {
+    notificarPermissaoAtualizada(cid, { userId: m.userId, role: m.role, status: m.status, permissions: m.permissions });
+  }
   await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados: gravados.size });
   res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados: gravados.size });
 });
