@@ -610,6 +610,101 @@ try {
   fs.rmSync(flagPausa, { force: true });
   fs.rmSync(pausadoArq, { force: true });
 
+  // mestres extras: m3 esgotou a cota de restaurações (5/10min) —
+  // rate limit é por usuário; novos mestres têm cota própria
+  const m4 = novoUsuario(BANCO, { username: "pt_m4", role: "mestre" });
+  const m5 = novoUsuario(BANCO, { username: "pt_m5", role: "mestre" });
+
+  // ---------- O. Timeout de drenagem: restore aborta sem commit ----------
+  sec("O. Drenagem >15s → HTTP 503, sem substituição, sem barreira órfã");
+  fs.writeFileSync(flagPausa, "PISR-T");
+  fs.rmSync(pausadoArq, { force: true });
+  // operação com lease pausada DENTRO do handler (após autorização)
+  const cbTO = emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "PISR-timeout", visibilidade: "publica", clientId: crypto.randomUUID() });
+  t("O: operação pausou com lease ativo", await esperarPausa());
+  const snapO = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m4.cookie, body: { description: "O" } });
+  const pRestO = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapO.json?.id}/restaurar`, { cookie: m4.cookie, body: { confirmacao: "RESTAURAR" } });
+  const rRestO = await pRestO; // aguarda ~15s de drenagem
+  t("O: restore → HTTP 503 (timeout de drenagem)", rRestO.status === 503, `status=${rRestO.status} ${JSON.stringify(rRestO.json).slice(0, 140)}`);
+  // a barreira própria foi liberada com segurança: operações voltam
+  const rCampO = await emitirCb(sM, "entrar-campanha", ids.camp);
+  t("O: após timeout, entrar-campanha volta a funcionar", rCampO === true, `ok=${JSON.stringify(rCampO)}`);
+  // nenhuma substituição ocorreu: a operação pausada conclui normal
+  fs.rmSync(flagPausa, { force: true });
+  await cbTO;
+  // cbTO estourou o timeout do emitirCb (8s) antes do resume — aguarda a
+  // persistência real consultando o banco com polling curto
+  let msgO = 0;
+  for (let i = 0; i < 40 && msgO === 0; i++) {
+    await new Promise((r) => setTimeout(r, 100));
+    const dbO = abrirDb(BANCO);
+    msgO = dbO.prepare("select count(*) c from chat_messages where content='PISR-timeout'").get().c;
+    dbO.close();
+  }
+  t("O: operação em voo concluiu (estado não foi substituído)", msgO === 1, `rows=${msgO}`);
+  // controle: nova restauração funciona depois da recuperação
+  const snapO2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m4.cookie, body: { description: "O2" } });
+  const rO2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapO2.json?.id}/restaurar`, { cookie: m4.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("O: restauração posterior funciona (sem barreira órfã)", rO2.status === 200, `status=${rO2.status}`);
+
+  // ---------- P. Mutações com lease: VTT, timer e turno canceladas ----------
+  sec("P. Lease em VTT/token, timer e turno — cancelamento pós-autorização");
+  const snapP = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m5.cookie, body: { description: "P2" } });
+  const idP = snapP.json?.id;
+
+  // P1 — token VTT pausado antes do update(sessions.vttState)
+  fs.writeFileSync(flagPausa, "PISR");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbVttP = emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkP1", nome: "PISR-vtt", cor: "#123", x: 0.5, y: 0.5, userId: m4.id } });
+  t("P1: VTT pausou após autorização", await esperarPausa());
+  const pRestP1 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${idP}/restaurar`, { cookie: m5.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("P1: barreira adquirida", await esperarBarreira());
+  fs.rmSync(flagPausa, { force: true });
+  const rVttP = await cbVttP;
+  const rRestP1 = await pRestP1;
+  t("P1: restore concluído 200", rRestP1.status === 200, `status=${rRestP1.status}`);
+  const dbP1 = abrirDb(BANCO);
+  const vttP = dbP1.prepare("select vtt_state from sessions where id=?").get(sid);
+  dbP1.close();
+  t("P1: token NÃO persistiu (vtt_state sem tkP1)", !(vttP?.vtt_state ?? "").includes("tkP1"));
+  t("P1: operação rejeitada com erro de restauração", /restaura/i.test(JSON.stringify(rVttP)), JSON.stringify(rVttP).slice(0, 120));
+
+  // P2 — timer pausado antes do update(sessions.timerState)
+  const snapP2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: m5.cookie, body: { description: "P2" } });
+  fs.writeFileSync(flagPausa, "PISR");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbTimerP = emitirCb(sM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 777, depuracao: "PISR" });
+  t("P2: timer pausou após autorização", await esperarPausa());
+  const pRestP2 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapP2.json?.id}/restaurar`, { cookie: m5.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("P2: barreira adquirida", await esperarBarreira());
+  fs.rmSync(flagPausa, { force: true });
+  await cbTimerP;
+  const rRestP2 = await pRestP2;
+  t("P2: restore concluído 200", rRestP2.status === 200, `status=${rRestP2.status}`);
+  const dbP2 = abrirDb(BANCO);
+  const tsP = dbP2.prepare("select timer_state from sessions where id=?").get(sid);
+  dbP2.close();
+  t("P2: timer NÃO persistiu 777s", !(tsP?.timer_state ?? "").includes("777"), String(tsP?.timer_state).slice(0, 80));
+
+  // P3 — turno pausado antes do update(turns.state)
+  const snapP3 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "P3" } });
+  fs.writeFileSync(flagPausa, "PISR");
+  fs.rmSync(pausadoArq, { force: true });
+  const cbTurnoP = emitirCb(sM, "mesa:turno", { sessionId: sid, acao: "iniciar", ordem: ["PISR-slot"], depuracao: "PISR" });
+  t("P3: turno pausou após autorização", await esperarPausa());
+  const pRestP3 = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapP3.json?.id}/restaurar`, { cookie: m5.cookie, body: { confirmacao: "RESTAURAR" } });
+  t("P3: barreira adquirida", await esperarBarreira());
+  fs.rmSync(flagPausa, { force: true });
+  await cbTurnoP;
+  const rRestP3 = await pRestP3;
+  t("P3: restore concluído 200", rRestP3.status === 200, `status=${rRestP3.status}`);
+  const dbP3 = abrirDb(BANCO);
+  const trP = dbP3.prepare("select state from turns where session_id=?").get(sid);
+  dbP3.close();
+  t("P3: turno NÃO persistiu slot PISR", !(trP?.state ?? "").includes("PISR-slot"), String(trP?.state).slice(0, 80));
+  fs.rmSync(flagPausa, { force: true });
+  fs.rmSync(pausadoArq, { force: true });
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

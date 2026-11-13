@@ -3,6 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
+import { adquirirOperacaoCampanha } from "./io.js";
 
 export type PapelCampanha = "mestre" | "jogador" | "espectador";
 export type StatusMembro = "pendente" | "ativo" | "bloqueado" | "removido";
@@ -57,6 +58,21 @@ export function requirePapel(...papeis: PapelCampanha[]) {
       return;
     }
     req.membership = m;
+    // Lease de operação para MUTATIONS HTTP: o lease é mantido até a
+    // resposta terminar (finish/close) — cobre leitura, validação,
+    // gravação e emissões do ciclo inteiro. A restauração drena estes
+    // leases antes de capturar o estado. Rotas que gerenciam a própria
+    // barreira (restaurar/importar) são excluídas para não deadlockar.
+    if (req.method !== "GET" && !/restaurar|importar/i.test(req.path)) {
+      const liberar = adquirirOperacaoCampanha(campaignId);
+      if (!liberar) {
+        res.status(409).json({ erro: "Campanha em restauração — tente novamente em instantes" });
+        return;
+      }
+      const soltar = () => liberar();
+      res.on("finish", soltar);
+      res.on("close", soltar);
+    }
     next();
   };
 }

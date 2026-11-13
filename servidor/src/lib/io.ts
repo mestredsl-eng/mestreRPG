@@ -1,4 +1,5 @@
 import type { Server as SocketIOServer } from "socket.io";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { and, eq, inArray } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
@@ -116,10 +117,19 @@ export async function reconciliarMembrosAposRestauracao(
 // identificada por restoreId: somente o proprietário pode liberá-la.
 // Operações normais podem adquirir um "lease" (contador por campanha);
 // a restauração drena os leases em voo antes de capturar o estado.
-type Barreira = { restoreId: string; evacuados: Map<string, string[]> };
+type Barreira = { restoreId: string; evacuados: Map<string, string[]>; pendente?: "sucesso" | "falha" };
 const barreiras = new Map<string, Barreira>();
 const opsEmAndamento = new Map<string, number>();
 const DRENAGEM_MS = 15000;
+
+/**
+ * Contexto de operação por chamada assíncrona (AsyncLocalStorage):
+ * handlers Socket.IO rodam dentro de `opCampanhaALS.run({})`; o
+ * resolverCtx adquire o lease da campanha UMA vez por operação e o
+ * wrapper do handler libera no finally — cobrindo leitura, validação,
+ * mutação e emissões do ciclo inteiro.
+ */
+export const opCampanhaALS = new AsyncLocalStorage<{ liberar?: (() => void) | null }>();
 
 export function barreiraRestauracaoAtiva(campaignId: string): boolean {
   return barreiras.has(campaignId);
@@ -147,19 +157,41 @@ export function adquirirOperacaoCampanha(campaignId: string): (() => void) | nul
  * Inicia a restauração de forma EXCLUSIVA: a barreira é marcada
  * sincronamente (antes de qualquer await) e uma segunda chamada na
  * mesma campanha retorna null — o chamador deve responder 409.
- * Em seguida drena operações em voo (leases) antes de evacuar as
- * salas e devolver o restoreId proprietário.
+ * Se houver uma barreira com liberação PENDENTE (falha anterior na
+ * reconstrução), tenta concluir a recuperação do MESMO restoreId
+ * antes de aceitar a nova operação — nunca acumula barreiras.
+ * Em seguida drena operações em voo (leases) até o contador zerar;
+ * se o prazo estourar, a restauração ABORTA ("timeout") sem capturar
+ * estado, sem commit e sem evacuar salas — a barreira própria é
+ * liberada em modo falha e a campanha volta a aceitar operações.
  */
-export async function iniciarBarreiraRestauracao(campaignId: string): Promise<string | null> {
-  if (barreiras.has(campaignId)) return null;
+export async function iniciarBarreiraRestauracao(campaignId: string): Promise<string | "timeout" | null> {
+  const existente = barreiras.get(campaignId);
+  if (existente) {
+    if (!existente.pendente) return null; // restauração realmente ativa → 409
+    // liberação pendente do restoreId anterior: tenta concluir a
+    // reconstrução; se falhar de novo, mantém fail-closed (null → 409)
+    const ok = await liberarBarreiraRestauracao(campaignId, existente.restoreId, existente.pendente);
+    if (!ok) return null;
+  }
   const restoreId = crypto.randomUUID();
   const b: Barreira = { restoreId, evacuados: new Map() };
   barreiras.set(campaignId, b); // atômico: novas operações já falham aqui
   if (!io) return restoreId;
-  // drena operações normais em voo: elas concluem mutação+emissão
-  // (emissões são descartadas pelo guard da barreira) antes da captura
+  // drena operações normais em voo: cada lease cobre o ciclo inteiro
+  // (leitura→validação→mutação→emissão). O restore SÓ avança com o
+  // contador efetivamente zerado — nunca com operações pendentes.
   const limite = Date.now() + DRENAGEM_MS;
-  while ((opsEmAndamento.get(campaignId) ?? 0) > 0 && Date.now() < limite) {
+  while ((opsEmAndamento.get(campaignId) ?? 0) > 0) {
+    if (Date.now() >= limite) {
+      // timeout de drenagem: aborta ANTES de capturar/evacuar —
+      // libera a própria barreira (nada foi evacuado ainda) e o
+      // chamador responde 503; as operações em voo terminam
+      // normalmente porque nenhum commit ocorreu
+      console.error(`[barreira] timeout de drenagem campanha=${campaignId} restore=${restoreId} leases=${opsEmAndamento.get(campaignId)}`);
+      await liberarBarreiraRestauracao(campaignId, restoreId, "falha").catch(() => false);
+      return "timeout";
+    }
     await new Promise((r) => setTimeout(r, 25));
   }
   const db = getDb();
@@ -181,49 +213,71 @@ export async function iniciarBarreiraRestauracao(campaignId: string): Promise<st
 }
 
 /**
- * Libera a barreira SOMENTE para o proprietário (restoreId exato).
- * Retorna false em qualquer tentativa com identificador divergente —
- * nenhuma liberação genérica pode apagar a barreira de outra operação.
- * - "falha": a transação foi revertida — readiciona cada socket às
- *   salas EXATAS de onde foi evacuado (sessões antigas ainda válidas).
- * - "sucesso": somente salas válidas do banco pós-restore voltam, e
- *   apenas para memberships ATIVAS atuais.
+ * Calcula as salas que cada socket evacuado pode reocupar, conforme o
+ * modo — executado com a barreira AINDA ATIVA.
+ * - "falha" (transação revertida): somente salas antigas que continuam
+ *   existindo no banco E usuário ainda membro ativo.
+ * - "sucesso" (commit aplicado): somente campanha:* e sessao:* que
+ *   existem no estado pós-restore, para membros ativos.
  */
-export async function liberarBarreiraRestauracao(campaignId: string, restoreId: string, modo: "sucesso" | "falha"): Promise<boolean> {
-  const b = barreiras.get(campaignId);
-  if (!b || b.restoreId !== restoreId) return false; // não é o dono
-  barreiras.delete(campaignId);
-  if (!io) return true;
-  if (modo === "falha") {
-    for (const [sid, rooms] of b.evacuados) {
-      const s = io.sockets.sockets.get(sid);
-      if (!s) continue;
-      for (const r of rooms) s.join(r);
-    }
-    return true;
-  }
+async function calcularRejoins(campaignId: string, b: Barreira, modo: "sucesso" | "falha"): Promise<Map<string, string[]>> {
   const db = getDb();
   const ativos = await db
     .select({ userId: memberships.userId })
     .from(memberships)
     .where(and(eq(memberships.campaignId, campaignId), eq(memberships.status, "ativo")));
   const set = new Set(ativos.map((a) => a.userId));
-  // sessões que AINDA existem depois da substituição: só elas voltam a
-  // ser reconstituídas — IDs substituídos nunca são reabertos por
-  // inferência (o cliente entra de novo via mesa:entrar)
-  const ssDepois = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
-  const salasValidas = new Set(ssDepois.map((s) => `sessao:${s.id}`));
+  const ss = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
+  const salasValidas = new Set(ss.map((s) => `sessao:${s.id}`));
   const salaCampanha = `campanha:${campaignId}`;
+  const rejoins = new Map<string, string[]>();
   for (const [sid, rooms] of b.evacuados) {
-    const s = io.sockets.sockets.get(sid);
+    const s = io?.sockets.sockets.get(sid);
     if (!s) continue;
     const u = s.data.usuario as { id?: string } | undefined;
     if (!u?.id || !set.has(u.id)) continue; // revogado/inativo: só usuario:*
+    const liberadas: string[] = [];
     for (const r of rooms) {
-      if (r === salaCampanha || salasValidas.has(r)) s.join(r);
+      if (r === salaCampanha) liberadas.push(r);
+      else if (salasValidas.has(r)) liberadas.push(r); // só IDs que ainda existem
     }
+    if (liberadas.length) rejoins.set(sid, liberadas);
   }
-  return true;
+  return rejoins;
+}
+
+/**
+ * Libera a barreira SOMENTE para o proprietário (restoreId exato).
+ * A barreira permanece ATIVA durante toda a recuperação: consultas de
+ * memberships/sessões, cálculo e reinserção nos sockets acontecem
+ * antes da remoção — que é a ÚLTIMA operação, sem await entre a
+ * revalidação de propriedade e o delete.
+ * Se qualquer etapa falhar, a barreira PERMANECE (b.pendente=modo) —
+ * a campanha segue fail-closed e uma nova tentativa de restauração
+ * retoma a recuperação do mesmo restoreId.
+ */
+export async function liberarBarreiraRestauracao(campaignId: string, restoreId: string, modo: "sucesso" | "falha"): Promise<boolean> {
+  const b = barreiras.get(campaignId);
+  if (!b || b.restoreId !== restoreId) return false; // não é o dono
+  try {
+    const rejoins = await calcularRejoins(campaignId, b, modo);
+    if (io) {
+      for (const [sid, rooms] of rejoins) {
+        const s = io.sockets.sockets.get(sid);
+        if (!s) continue;
+        for (const r of rooms) s.join(r); // joins são síncronos
+      }
+    }
+    // remoção final: revalida o dono e apaga sem await intermediário
+    const atual = barreiras.get(campaignId);
+    if (!atual || atual.restoreId !== restoreId) return false;
+    barreiras.delete(campaignId);
+    return true;
+  } catch (e) {
+    b.pendente = modo; // fail-closed: barreira permanece, recuperação retomável
+    console.error(`[barreira] liberação falhou campanha=${campaignId} restore=${restoreId} modo=${modo}:`, e);
+    return false;
+  }
 }
 
 /**
@@ -268,9 +322,12 @@ export async function pausaTesteEmit(marcador: string): Promise<void> {
   if (process.env.NODE_ENV !== "test") return;
   const flag = process.env.MESTRE_PAUSA_FLAG;
   const match = process.env.MESTRE_PAUSA_MATCH;
-  if (!flag || !match || !marcador.includes(match)) return;
+  if (!flag) return;
   const fs = await import("node:fs");
   if (!fs.existsSync(flag)) return;
+  // o conteúdo do flag também é um marcador válido (ex.: campaignId)
+  const conteudo = fs.readFileSync(flag, "utf8").trim();
+  if (!(match && marcador.includes(match)) && !(conteudo && marcador.includes(conteudo))) return;
   fs.writeFileSync(`${flag}.pausado`, String(Date.now()));
   const limite = Date.now() + 20000;
   while (fs.existsSync(flag) && Date.now() < limite) {

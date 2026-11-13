@@ -9,7 +9,7 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
-import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit } from "../lib/io.js";
+import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import {
@@ -69,7 +69,38 @@ async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { e
     .where(and(eq(memberships.campaignId, sessao.campaignId), eq(memberships.userId, usuario.id), eq(memberships.status, "ativo")))
     .limit(1);
   if (!m) return { erro: "Sem permissão nesta campanha" };
+  // lease da operação inteira via AsyncLocalStorage: uma vez adquirido
+  // aqui, cobre leituras, validações, mutações e emissões até o finally
+  // do wrapper — a drenagem da restauração espera por ele. Se a
+  // barreira já existe, a aquisição falha e a operação é recusada.
+  const store = opCampanhaALS.getStore();
+  if (store && !store.liberar) {
+    const liberar = adquirirOperacaoCampanha(sessao.campaignId);
+    if (!liberar) return { erro: "Campanha em restauração" };
+    store.liberar = liberar;
+  }
   return { sessao, membership: m, papel: m.role as Papel };
+}
+
+/**
+ * Registra handler Socket.IO dentro de um contexto de operação de
+ * campanha (AsyncLocalStorage): o resolverCtx adquire o lease uma vez
+ * e o finally libera — cobrindo o ciclo completo mesmo com vários
+ * awaits e chamadas internas (registrarChat etc.).
+ */
+function on(socket: Socket, evento: string, handler: (...args: never[]) => unknown) {
+  socket.on(evento, (...args: unknown[]) => {
+    void opCampanhaALS.run({}, async () => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (handler as (...a: any[]) => unknown)(...(args as any[]));
+      } finally {
+        const store = opCampanhaALS.getStore();
+        store?.liberar?.();
+        if (store) store.liberar = null;
+      }
+    });
+  });
 }
 
 async function mestresDaCampanha(campaignId: string): Promise<string[]> {
@@ -207,7 +238,7 @@ function socket_handlers(
     const usuario = () => socket.data.usuario as Usuario | undefined;
 
     /** mesa:entrar {sessionId} — válido para mestre/jogador/espectador ativo */
-    socket.on("mesa:entrar", async (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:entrar", async (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
       const sessionId = payload?.sessionId;
       if (!sessionId || !usuario()) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
       const ctx = await resolverCtx(socket, sessionId);
@@ -270,7 +301,7 @@ function socket_handlers(
       });
     });
 
-    socket.on("mesa:sair", (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:sair", (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
       const sessionId = payload?.sessionId;
       if (!sessionId) { cb?.({ ok: false }); return; }
       socket.leave(`sessao:${sessionId}`);
@@ -373,7 +404,7 @@ function socket_handlers(
     }
 
     /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
-    socket.on("mesa:vtt:mapa", async (payload: {
+    on(socket, "mesa:vtt:mapa", async (payload: {
       sessionId?: string; acao?: string;
       mapa?: { fileId?: string; nome?: string; largura?: number; altura?: number } | null;
     }, cb?: (r: unknown) => void) => {
@@ -420,6 +451,8 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -428,7 +461,7 @@ function socket_handlers(
     });
 
     /** mesa:vtt:token {sessionId, acao, token} — mestre tudo; jogador só move o próprio. */
-    socket.on("mesa:vtt:token", async (payload: {
+    on(socket, "mesa:vtt:token", async (payload: {
       sessionId?: string; acao?: string;
       token?: Partial<TokenVtt> & { id?: string };
     }, cb?: (r: unknown) => void) => {
@@ -513,6 +546,8 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -527,7 +562,7 @@ function socket_handlers(
      * regiões), "revelarTudo" (desativa névoa; traços são preservados para
      * eventual reativação futura — a névoa desativada não os utiliza).
      */
-    socket.on("mesa:vtt:nevoa", async (payload: {
+    on(socket, "mesa:vtt:nevoa", async (payload: {
       sessionId?: string; acao?: string;
       traco?: { raioX?: number; raioY?: number; pontos?: { x: number; y: number }[] };
     }, cb?: (r: unknown) => void) => {
@@ -573,6 +608,8 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
         }
         if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await pausaTesteEmit(JSON.stringify(payload));
+        if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
@@ -589,7 +626,7 @@ function socket_handlers(
      * servidor tiver terminado — e reflete o estado pós-operações.
      * Não modifica o VTT nem permissões. Não aceita papel do cliente.
      */
-    socket.on("mesa:vtt:nevoa:sincronizar", async (payload: { sessionId?: string },
+    on(socket, "mesa:vtt:nevoa:sincronizar", async (payload: { sessionId?: string },
       cb?: (r: unknown) => void) => {
       const u = usuario();
       const sessionId = payload?.sessionId;
@@ -609,7 +646,7 @@ function socket_handlers(
     });
 
     // ---------- chat / declarações ----------
-    socket.on("mesa:mensagem", async (payload: {
+    on(socket, "mesa:mensagem", async (payload: {
       sessionId?: string; content?: string; clientId?: string;
       visibilidade?: "publica" | "privada" | "secreta"; destinatarioUserId?: string; tipo?: "texto" | "acao";
     }, cb?: (r: unknown) => void) => {
@@ -653,7 +690,7 @@ function socket_handlers(
     });
 
     // ---------- solicitações de teste (mestre) ----------
-    socket.on("mesa:teste:pedir", async (payload: {
+    on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
       campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
       dadosLados?: number; dadosCount?: number; minimo?: number;
@@ -782,7 +819,7 @@ function socket_handlers(
     });
 
     // ---------- rolar teste pendente (dono do personagem ou mestre) ----------
-    socket.on("mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
       const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
@@ -880,7 +917,7 @@ function socket_handlers(
     });
 
     // ---------- rolagem livre ----------
-    socket.on("mesa:rolar", async (payload: {
+    on(socket, "mesa:rolar", async (payload: {
       sessionId?: string; dados?: { sides: number; count: number }[];
       motivo?: string; visibilidade?: "publica" | "privada"; requestId?: string;
       d10?: { positivos?: number; negativos?: number; minimo?: number };
@@ -963,7 +1000,7 @@ function socket_handlers(
     });
 
     // ---------- decisão do mestre ----------
-    socket.on("mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId || !payload.outcome) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
       const [teste] = await db.select().from(tests).where(eq(tests.id, payload.testId)).limit(1);
@@ -1000,7 +1037,7 @@ function socket_handlers(
     });
 
     // ---------- turnos (mestre) ----------
-    socket.on("mesa:turno", async (payload: {
+    on(socket, "mesa:turno", async (payload: {
       sessionId?: string; acao?: string;
       ordem?: string[]; primeiro?: number; pular?: number;
     }, cb?: (r: unknown) => void) => {
@@ -1011,6 +1048,8 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla turnos" }); return; }
 
       let t = await turnoAtual(payload.sessionId);
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       if (!t) {
         const id = randomUUID();
         await db.insert(turns).values({ id, sessionId: payload.sessionId, state: { ordem: [], atual: -1, ativo: false }, updatedBy: u.id, updatedAt: new Date() });
@@ -1054,6 +1093,8 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
 
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(ctx.sessao.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(turns).set({ state: state as never, updatedBy: u.id, updatedAt: new Date() }).where(eq(turns.id, t.id));
       io.to(`sessao:${payload.sessionId}`).emit("mesa:turnos", { sessionId: payload.sessionId, turnos: state });
       const atualId = state.ativo && state.atual !== undefined && state.atual >= 0 ? state.ordem[state.atual] : null;
@@ -1071,7 +1112,7 @@ function socket_handlers(
     });
 
     // ---------- temporizador (mestre) ----------
-    socket.on("mesa:timer", async (payload: { sessionId?: string; acao?: string; duracaoSegundos?: number }, cb?: (r: unknown) => void) => {
+    on(socket, "mesa:timer", async (payload: { sessionId?: string; acao?: string; duracaoSegundos?: number }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.acao) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
       const ctx = await resolverCtx(socket, payload.sessionId);
@@ -1114,6 +1155,8 @@ function socket_handlers(
         default:
           cb?.({ ok: false, erro: "Ação inválida" }); return;
       }
+      await pausaTesteEmit(JSON.stringify(payload));
+      if (barreiraRestauracaoAtiva(s.campaignId)) { cb?.({ ok: false, erro: "Campanha em restauração" }); return; }
       await db.update(sessions).set({ timerState: novo as never, updatedAt: new Date() }).where(eq(sessions.id, s.id));
       agendarAutosave(s.campaignId);
       const estadoTimer = { sessionId: s.id, ...novo, servidorAgora: agora };
@@ -1130,6 +1173,13 @@ function socket_handlers(
       for (const s of rodando) {
         const ts = s.timerState as { status?: string; endsAt?: number; remainingMs?: number; totalMs?: number } | null;
         if (!ts || ts.status !== "rodando") continue;
+        // barreira/lease: o ticker NÃO pode persistir estado calculado
+        // sobre dados pré-restore — pula a sessão durante restauração
+        // e segura um lease durante a escrita+emissão de cada parada
+        if (barreiraRestauracaoAtiva(s.campaignId)) continue;
+        const relTick = adquirirOperacaoCampanha(s.campaignId);
+        if (!relTick) continue; // corrida: barreira subiu entre a checagem e a aquisição
+        try {
         // recuperação pós-restart: se endsAt faltar, reconstrói a partir de remainingMs persistido
         const endsAt = ts.endsAt ?? (ts.remainingMs ? Date.now() + ts.remainingMs : 0);
         if (!endsAt) {
@@ -1149,6 +1199,9 @@ function socket_handlers(
           io.to(`sessao:${s.id}`).emit("mesa:timer", {
             sessionId: s.id, status: "rodando", remainingMs: rest, totalMs: ts.totalMs, endsAt: ts.endsAt, servidorAgora: Date.now(),
           });
+        }
+        } finally {
+          relTick();
         }
       }
     } catch { /* ticker não pode derrubar o servidor */ }

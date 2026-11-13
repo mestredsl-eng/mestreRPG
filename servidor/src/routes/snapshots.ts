@@ -114,6 +114,10 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   // a barreira da primeira. O restoreId proprietário autoriza a
   // liberação; qualquer falha pós-aquisição cai no catch e libera.
   const restoreId = await iniciarBarreiraRestauracao(cid);
+  if (restoreId === "timeout") {
+    res.status(503).json({ erro: "Restauração abortada: operações em andamento não terminaram a tempo — tente novamente" });
+    return;
+  }
   if (!restoreId) {
     res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
     return;

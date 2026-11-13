@@ -96,6 +96,10 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     // operações e evacua sockets ANTES de capturar o estado e restaurar;
     // uma segunda substituição na mesma campanha recebe 409
     const restoreId = await iniciarBarreiraRestauracao(cid);
+    if (restoreId === "timeout") {
+      res.status(503).json({ erro: "Substituição abortada: operações em andamento não terminaram a tempo — tente novamente" });
+      return;
+    }
     if (!restoreId) {
       res.status(409).json({ erro: "Já existe uma restauração em andamento nesta campanha" });
       return;
