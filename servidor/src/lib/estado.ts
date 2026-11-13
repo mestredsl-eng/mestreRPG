@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, getTableColumns } from "drizzle-orm";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
@@ -65,7 +65,17 @@ export async function exportarCampanha(campaignId: string): Promise<EstadoCampan
     vehicles: await db.select().from(vehicles).where(eq(vehicles.campaignId, campaignId)),
     financialAccounts: await db.select().from(financialAccounts).where(eq(financialAccounts.campaignId, campaignId)),
     moneyTransactions: await db.select().from(moneyTransactions).where(eq(moneyTransactions.campaignId, campaignId)),
-    sessions: await db.select().from(sessions).where(eq(sessions.campaignId, campaignId)),
+    // vtt_state corrompido não pode impedir exportação/snapshot da campanha
+    sessions: await (async () => {
+      try {
+        return await db.select().from(sessions).where(eq(sessions.campaignId, campaignId));
+      } catch (e) {
+        console.error("[vtt] falha ao exportar sessões (vtt_state inválido?) — exportando sem o estado VTT:", e);
+        const { vttState: _omit, ...cols } = getTableColumns(sessions);
+        const rows = await db.select(cols).from(sessions).where(eq(sessions.campaignId, campaignId));
+        return rows.map((r) => ({ ...r, vttState: null }));
+      }
+    })(),
     turns: sessIds.length ? await db.select().from(turns).where(inArray(turns.sessionId, sessIds)) : [],
     chatMessages: await db.select().from(chatMessages).where(eq(chatMessages.campaignId, campaignId)),
     rolls: await db.select().from(rolls).where(eq(rolls.campaignId, campaignId)),

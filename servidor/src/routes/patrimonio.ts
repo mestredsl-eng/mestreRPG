@@ -13,6 +13,7 @@ import {
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
+import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { somenteEnviados } from "../lib/parcial.js";
 import { carregarRegras, configRegrasSchema } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
@@ -21,6 +22,10 @@ import { emitirCampanha } from "../lib/io.js";
 const db = getDb();
 export const patrimonioRouter = Router({ mergeParams: true });
 patrimonioRouter.use(requireAuth);
+// inventário/equipamentos/veículos/finanças são estado exportado da
+// campanha: mutações sob /api/characters/:characterId seguram lease
+// de operação (drenadas pela restauração) até o fim real da resposta
+patrimonioRouter.use(requireLeasePersonagem());
 
 // ---------- helpers ----------
 
