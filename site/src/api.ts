@@ -655,6 +655,7 @@ export interface ElementoVinculavel {
   key: string;
   name: string;
   category: string | null;
+  descricao?: string;
   niveis?: { descricao?: string; custo?: number }[];
   custoPontos?: number;
   maximo?: number;

@@ -3,9 +3,10 @@ import { eq, and, desc, sql } from "drizzle-orm";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
-import { novidades, novidadesLeituras } from "../db/schema.js";
+import { novidades, novidadesLeituras, users } from "../db/schema.js";
 import { requireAuth, requireAdmin } from "../middleware/auth.js";
 import { audit } from "../lib/audit.js";
+import { emitirUsuario } from "../lib/io.js";
 
 const db = getDb();
 
@@ -56,6 +57,27 @@ function revisaoDe(n: typeof novidades.$inferSelect): string {
     .update(JSON.stringify([n.titulo, n.resumo, n.conteudo, n.versao, n.categoria]))
     .digest("hex")
     .slice(0, 16);
+}
+
+/**
+ * Payload do evento tempo real `novidade:publicada` — somente metadados.
+ * O conteúdo completo continua sendo obtido pela API autenticada.
+ */
+function payloadPublicada(n: typeof novidades.$inferSelect) {
+  return {
+    id: n.id,
+    titulo: n.titulo,
+    categoria: n.categoria,
+    versao: n.versao,
+    publicadoEm: n.publicadoEm,
+    revisao: revisaoDe(n),
+  };
+}
+
+/** Emite para todos os usuários ativos conectados — depois do banco confirmar. */
+async function notificarPublicada(n: typeof novidades.$inferSelect) {
+  const todos = await db.select({ id: users.id }).from(users).where(eq(users.status, "ativo"));
+  for (const u of todos) emitirUsuario(u.id, "novidade:publicada", payloadPublicada(n));
 }
 
 function publico(n: typeof novidades.$inferSelect, lida = false) {
@@ -208,6 +230,7 @@ novidadesAdminRouter.post("/", async (req, res) => {
   });
   const [criada] = await db.select().from(novidades).where(eq(novidades.id, id)).limit(1);
   await audit(req, "novidade.criada", { novidadeId: id, titulo: d.titulo });
+  if (publicada) await notificarPublicada(criada);
   res.status(201).json({ novidade: publico(criada) });
 });
 
@@ -249,6 +272,10 @@ novidadesAdminRouter.patch("/:id", async (req, res) => {
   });
   const [atualizada] = await db.select().from(novidades).where(eq(novidades.id, atual.id)).limit(1);
   await audit(req, "novidade.atualizada", { novidadeId: atual.id, campos: Object.keys(d), leiturasInvalidas: invalidar });
+  // transição rascunho→publicada ou alteração de conteúdo já publicada → nova revisão
+  if (atualizada.estado === "publicada" && (atual.estado !== "publicada" || invalidar)) {
+    await notificarPublicada(atualizada);
+  }
   res.json({ novidade: publico(atualizada), leiturasInvalidas: invalidar });
 });
 
@@ -268,6 +295,7 @@ novidadesAdminRouter.post("/:id/publicar", async (req, res) => {
   await db.update(novidades).set({ estado: "publicada", publicadoEm: new Date(), updatedAt: new Date() }).where(eq(novidades.id, atual.id));
   const [pub] = await db.select().from(novidades).where(eq(novidades.id, atual.id)).limit(1);
   await audit(req, "novidade.publicada", { novidadeId: atual.id });
+  await notificarPublicada(pub);
   res.json({ novidade: publico(pub) });
 });
 
