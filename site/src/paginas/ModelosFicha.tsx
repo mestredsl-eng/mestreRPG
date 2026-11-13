@@ -90,7 +90,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           ?? d.versoes.find((v) => v.rascunho)
           ?? d.versoes.find((v) => v.id === d.modelo.currentVersionId)
           ?? d.versoes[0];
-        const estruturaMudou = JSON.stringify(versao?.estrutura ?? null) !== JSON.stringify(estrutura);
+        // Compara com a estrutura da versão carregada, não com o estado
+        // local — edições não salvas não podem gerar falso "alterado".
+        const estruturaMudou = JSON.stringify(versao?.estrutura ?? null) !== JSON.stringify(versaoSel?.estrutura ?? null);
         if (estruturaSuja || campoEmEdicao) {
           if (estruturaMudou) {
             setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
