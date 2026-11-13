@@ -59,12 +59,12 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   // Issue #67: criar/editar/publicar/duplicar/arquivar modelo em outro
   // cliente atualiza a lista; o editor aberto só recarrega se não houver
   // alterações locais pendentes.
-  useSincronizacaoCampanha(["fichas:atualizadas"], (_evento, payload) => {
+  // Não usar o templateId do payload para filtrar: o debounce do hook
+  // conserva só o último evento, e uma alteração do modelo aberto pode ser
+  // descartada por um evento posterior de outro modelo.
+  useSincronizacaoCampanha(["fichas:atualizadas"], () => {
     void carregar();
     if (!selecionado) return;
-    // evento de outro modelo não exige recarregar o editor aberto
-    const tid = (payload as { templateId?: string } | undefined)?.templateId;
-    if (tid && tid !== selecionado) return;
     if (estruturaSuja || campoEmEdicao) {
       setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
     } else {

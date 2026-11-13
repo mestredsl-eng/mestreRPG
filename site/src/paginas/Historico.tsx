@@ -50,18 +50,12 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
   // Issue #67: sessão criada/encerrada, novo snapshot e restauração da
   // campanha invalidam as listas. Histórico já aberto de uma sessão é
   // descartado para forçar nova leitura (visibilidade reaplicada no GET).
-  useSincronizacaoCampanha(["sessao:atualizada", "snapshots:atualizados", "campanha:restaurada"], (evento, payload) => {
-    if (evento === "campanha:restaurada") {
-      setHistoricos({});
-      aoAtualizar();
-    } else if (evento === "sessao:atualizada") {
-      const sid = (payload as { sessionId?: string } | undefined)?.sessionId;
-      if (sid) setHistoricos((p) => { const n = { ...p }; delete n[sid]; return n; });
-    } else {
-      // snapshots:atualizados e reconexão: eventos perdidos durante a queda
-      // não são reenviados — descarta o cache para forçar nova leitura.
-      setHistoricos({});
-    }
+  // O debounce do hook conserva só o último payload — não dá para confiar
+  // no sessionId para invalidação seletiva, então qualquer evento de sessão
+  // descarta todos os históricos abertos (são poucos e recarregam sob demanda).
+  useSincronizacaoCampanha(["sessao:atualizada", "snapshots:atualizados", "campanha:restaurada"], (evento) => {
+    setHistoricos({});
+    if (evento === "campanha:restaurada") aoAtualizar();
     void carregar();
   });
 
