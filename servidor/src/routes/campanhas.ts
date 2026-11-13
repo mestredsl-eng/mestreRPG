@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
@@ -30,7 +30,15 @@ const atualizarSchema = criarSchema.partial().extend({
   summary: z.string().max(20000).nullable().optional(),
 });
 
-function campanhaPublica(c: typeof campaigns.$inferSelect) {
+/** Resolve nomes de guilda em lote para exibição do escopo (Issue #65). */
+async function nomesGuildas(ids: (string | null | undefined)[]) {
+  const unicos = [...new Set(ids.filter((x): x is string => !!x))];
+  if (unicos.length === 0) return new Map<string, string>();
+  const rows = await db.select({ id: guilds.id, name: guilds.name }).from(guilds).where(inArray(guilds.id, unicos));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+function campanhaPublica(c: typeof campaigns.$inferSelect, guildNome: string | null = null) {
   return {
     id: c.id,
     name: c.name,
@@ -40,6 +48,7 @@ function campanhaPublica(c: typeof campaigns.$inferSelect) {
     status: c.status,
     ownerId: c.ownerId,
     guildId: c.guildId ?? null,
+    guildNome,
     settings: c.settings,
     summary: c.summary,
     createdAt: c.createdAt,
@@ -55,9 +64,10 @@ campanhasRouter.get("/", async (req, res) => {
     .innerJoin(campaigns, eq(memberships.campaignId, campaigns.id))
     .where(eq(memberships.userId, req.usuario!.id))
     .orderBy(desc(campaigns.createdAt));
+  const nomes = await nomesGuildas(rows.map((r) => r.campaign.guildId));
   const lista = rows
     .filter((r) => r.membership.status !== "removido")
-    .map((r) => ({ ...campanhaPublica(r.campaign), meuPapel: r.membership.role, meuStatus: r.membership.status, meuPermissions: permissoesDe(r.membership) }));
+    .map((r) => ({ ...campanhaPublica(r.campaign, nomes.get(r.campaign.guildId ?? "") ?? null), meuPapel: r.membership.role, meuStatus: r.membership.status, meuPermissions: permissoesDe(r.membership) }));
   res.json({ campanhas: lista });
 });
 
@@ -107,7 +117,8 @@ campanhasRouter.post("/", async (req, res) => {
     updatedAt: agora,
   });
   const [criada] = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
-  res.status(201).json({ campanha: { ...campanhaPublica(criada), meuPapel: "mestre", meuStatus: "ativo", meuPermissions: {} } });
+  const nomes = await nomesGuildas([criada.guildId]);
+  res.status(201).json({ campanha: { ...campanhaPublica(criada, nomes.get(criada.guildId ?? "") ?? null), meuPapel: "mestre", meuStatus: "ativo", meuPermissions: {} } });
 });
 
 // ---- Rotas com :campaignId ----
@@ -124,7 +135,8 @@ campanhasRouter.get("/:campaignId", async (req, res) => {
     res.status(404).json({ erro: "Campanha não encontrada" });
     return;
   }
-  res.json({ campanha: { ...campanhaPublica(c), meuPapel: m.role, meuStatus: m.status, meuPermissions: permissoesDe(m) } });
+  const nomes = await nomesGuildas([c.guildId]);
+  res.json({ campanha: { ...campanhaPublica(c, nomes.get(c.guildId ?? "") ?? null), meuPapel: m.role, meuStatus: m.status, meuPermissions: permissoesDe(m) } });
 });
 
 /** PATCH /api/campaigns/:campaignId — edição e status (somente mestre) */

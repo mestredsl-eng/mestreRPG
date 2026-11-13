@@ -229,6 +229,7 @@ jobs:
             teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-nevoa.mjs \
+            homologacao-guildas.mjs \
             homologacao-pacotes-forjados.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
