@@ -1,0 +1,472 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento I — Arsenal, Veículos e Equipamentos",
+      "descricao": "Catálogo inicial de armas, proteção, ferramentas, tecnologia, suprimentos e veículos para campanhas modernas de Caçadores Caçados. As descrições são neutras: custos, dano, proteção, peso, disponibilidade e requisitos ficam a critério do mestre e das regras configuradas na campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — catálogo-base",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "faca_tatica",
+          "name": "Faca tática",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lâmina curta de uso utilitário e combate próximo. Fácil de ocultar e transportar; também serve para cortar cordas, tecido e materiais leves.",
+            "subcategoria": "Armas brancas",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "canivete",
+          "name": "Canivete",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta dobrável compacta, comum no cotidiano. Menos intimidadora que uma faca de combate, mas útil em tarefas simples.",
+            "subcategoria": "Armas brancas",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "facao",
+          "name": "Facão",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lâmina longa e pesada usada para abrir passagem em vegetação e como arma improvisada.",
+            "subcategoria": "Armas brancas",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "bastao_retratil",
+          "name": "Bastão retrátil",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bastão metálico expansível, discreto quando fechado e eficiente para defesa em curta distância.",
+            "subcategoria": "Armas brancas",
+            "ordem": 3
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "machado_pequeno",
+          "name": "Machado compacto",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Machado de uma mão, útil como ferramenta de campo e arma contundente/cortante.",
+            "subcategoria": "Armas brancas",
+            "ordem": 4
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "arco_composto",
+          "name": "Arco composto",
+          "category": "Armas à distância",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma silenciosa que exige prática. Depende de flechas adequadas e espaço para disparo.",
+            "subcategoria": "Armas à distância",
+            "ordem": 5
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "pistola_compacta",
+          "name": "Pistola compacta",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de fácil porte e ocultação. Capacidade, calibre e disponibilidade dependem do modelo escolhido pelo mestre.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 6
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "pistola_servico",
+          "name": "Pistola de serviço",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Pistola semiautomática de porte ostensivo ou velado. Modelo comum em forças de segurança.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 7
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "revolver",
+          "name": "Revólver",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de mecanismo simples e robusto. O tambor limita a quantidade de disparos antes da recarga.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "espingarda",
+          "name": "Espingarda",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa de uso especializado, especialmente perigosa em curta distância. Transporte e posse chamam atenção.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 9
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "carabina",
+          "name": "Carabina",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa compacta, com melhor controle que uma pistola em situações apropriadas. Requer estojo e transporte cuidadoso.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 10
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "municao_comum",
+          "name": "Munição comum",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Pacote de munição compatível com uma arma específica. O calibre/modelo deve ser registrado no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 11
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "colete_discreto",
+          "name": "Colete de proteção discreto",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Proteção vestível sob roupas largas. Pode reduzir mobilidade ou chamar atenção em revistas e exames.",
+            "subcategoria": "Proteção",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "colete_tatico",
+          "name": "Colete tático",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Colete externo com painéis de proteção e espaço para acessórios. Visível e difícil de justificar em ambientes civis.",
+            "subcategoria": "Proteção",
+            "ordem": 13
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "capacete_protecao",
+          "name": "Capacete de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capacete resistente para operações, deslocamentos de risco e atividades em locais com possibilidade de impacto.",
+            "subcategoria": "Proteção",
+            "ordem": 14
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "oculos_protecao",
+          "name": "Óculos de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Protege os olhos contra poeira, fragmentos leves, vento e respingos. Modelos específicos podem ter filtros ou visão noturna.",
+            "subcategoria": "Proteção",
+            "ordem": 15
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "kit_primeiros_socorros",
+          "name": "Kit de primeiros socorros",
+          "category": "Medicina e sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Material básico para limpeza, curativos e estabilização inicial. Não substitui atendimento médico.",
+            "subcategoria": "Medicina e sobrevivência",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "kit_medico",
+          "name": "Bolsa médica",
+          "category": "Medicina e sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto mais completo de materiais para atendimento em campo. Exige conhecimento para uso adequado.",
+            "subcategoria": "Medicina e sobrevivência",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "lanterna_tatica",
+          "name": "Lanterna resistente",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lanterna de alto impacto, útil em buscas, exploração e emergências. Pode possuir modos de foco e sinalização.",
+            "subcategoria": "Ferramentas",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "mult_ferramenta",
+          "name": "Multiferramenta",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta dobrável com lâmina, alicate e acessórios simples. Útil em reparos e improvisos.",
+            "subcategoria": "Ferramentas",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "kit_arrombamento",
+          "name": "Kit de ferramentas finas",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas de precisão para fechaduras e mecanismos simples. Seu uso exige perícia e pode deixar evidências.",
+            "subcategoria": "Ferramentas",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "radio_portatil",
+          "name": "Rádio comunicador portátil",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Permite comunicação por canal e alcance compatíveis com o equipamento e o terreno. Não garante sigilo.",
+            "subcategoria": "Tecnologia",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "celular_descartavel",
+          "name": "Celular pré-pago",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aparelho simples para comunicação temporária. Ainda pode deixar rastros por rede, pagamento e comportamento de uso.",
+            "subcategoria": "Tecnologia",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "notebook",
+          "name": "Notebook",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Computador portátil para pesquisa, análise e trabalho. Autonomia depende da bateria e do acesso à rede.",
+            "subcategoria": "Tecnologia",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "drone_civil",
+          "name": "Drone civil",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Drone leve para observação e registro de imagens. Ruído, bateria, clima e restrições locais limitam seu uso.",
+            "subcategoria": "Tecnologia",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_urbana",
+          "name": "Motocicleta urbana",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Moto leve para deslocamentos rápidos em áreas urbanas. Oferece agilidade, mas pouca proteção para os ocupantes.",
+            "subcategoria": "Motocicletas",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_trilha",
+          "name": "Motocicleta trail",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Moto versátil para asfalto ruim e estradas de terra. Boa opção para regiões rurais e acesso a locais afastados.",
+            "subcategoria": "Motocicletas",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "veiculo",
+          "key": "hatch_comum",
+          "name": "Carro compacto",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo discreto e econômico para deslocamentos cotidianos. Espaço limitado para carga e passageiros.",
+            "subcategoria": "Automóveis",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "veiculo",
+          "key": "sedan",
+          "name": "Sedã",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Carro confortável para viagens e uso urbano. Aparência comum facilita circulação sem chamar atenção.",
+            "subcategoria": "Automóveis",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "veiculo",
+          "key": "suv",
+          "name": "SUV",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com maior espaço interno e altura em relação ao solo. Útil em estradas variadas, mas menos discreto que um compacto.",
+            "subcategoria": "Automóveis",
+            "ordem": 29
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "veiculo",
+          "key": "picape",
+          "name": "Picape",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com caçamba para transportar ferramentas, equipamentos e carga. Adequado para trabalho e deslocamentos rurais.",
+            "subcategoria": "Automóveis",
+            "ordem": 30
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "veiculo",
+          "key": "van",
+          "name": "Van de transporte",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo espaçoso para equipe, equipamentos ou carga. Maior porte dificulta estacionamento e circulação em ruas estreitas.",
+            "subcategoria": "Utilitários",
+            "ordem": 31
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "veiculo",
+          "key": "veiculo_utilitario_4x4",
+          "name": "Utilitário 4x4",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo robusto para terrenos difíceis e estradas sem pavimentação. Consumo e manutenção tendem a ser maiores.",
+            "subcategoria": "Utilitários",
+            "ordem": 32
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhonete_blindada",
+          "name": "Veículo reforçado",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com proteção adicional definida pelo mestre. Peso, consumo, manutenção e aparência podem impor limitações.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 33
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "veiculo",
+          "key": "ambulancia",
+          "name": "Ambulância",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo equipado para transporte e atendimento pré-hospitalar. Acesso a áreas restritas depende de autorização e contexto.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 34
+          },
+          "ordem": 34
+        }
+      ]
+    }
+  ]
+}

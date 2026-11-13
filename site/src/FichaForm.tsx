@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { AjudaPopover } from "./Modal";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -27,6 +28,8 @@ interface Props {
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
+  /** IDs de campos com erro de validação do salvamento — destacam visualmente. */
+  camposComErro?: ReadonlySet<string>;
 }
 
 /** Contexto de pontos repassado aos campos que participam da distribuição. */
@@ -37,10 +40,13 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
+  // Erros de regras vindos da prévia do personagem (pontos-previa) — mesmo
+  // pipeline do simulador, exibidos no bloco .simulacao-erros.
+  const [errosPrevia, setErrosPrevia] = useState<{ campoId?: string; codigo: string; mensagem: string }[] | null>(null);
 
   // Prévia de pontos: recalcula no servidor (mesmo pipeline do GET/PATCH) com
   // debounce a cada alteração da ficha. Em modo leitura usa o valor inicial.
@@ -51,6 +57,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
     if (!usarSimulacao && !usarPrevia) {
       setPontos(pontosInicial ?? null);
       setSim(null);
+      setErrosPrevia(null);
       return;
     }
     let vivo = true;
@@ -62,11 +69,16 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
             pontosFicticios: simulacao!.pontosFicticios ?? undefined,
           })
         : api.previaPontos(personagemId!, valores).then((r) => ({
-            ok: true, erros: [], calculos: {}, pontos: r.pontos,
+            ok: true, erros: r.validacao?.erros ?? [], calculos: {}, pontos: r.pontos,
             pontosCfg: undefined as unknown as EstruturaFicha["pontos"],
           }));
       promessa
-        .then((r) => { if (vivo) { setPontos(r.pontos); setSim(usarSimulacao ? (r as SimulacaoResultado) : null); } })
+        .then((r) => {
+          if (!vivo) return;
+          setPontos(r.pontos);
+          if (usarSimulacao) { setSim(r as SimulacaoResultado); setErrosPrevia(null); }
+          else { setSim(null); setErrosPrevia((r as { erros?: { campoId?: string; codigo: string; mensagem: string }[] }).erros ?? []); }
+        })
         .catch(() => { /* prévia é best-effort; a validação real é do PATCH */ });
     }, 300);
     return () => { vivo = false; clearTimeout(timer); };
@@ -165,11 +177,11 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           Poderes exigem ao menos 1 defeito como contrapartida — escolha um defeito para liberar o poder.
         </div>
       )}
-      {sim && sim.erros.filter((e) => e.codigo !== "pontos").length > 0 && (
+      {(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").length > 0 && (
         <div className="ficha-aviso simulacao-erros">
-          <strong>Regras ({sim.erros.filter((e) => e.codigo !== "pontos").length}):</strong>
+          <strong>Regras ({(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").length}):</strong>
           <ul>
-            {sim.erros.filter((e) => e.codigo !== "pontos").map((e, i) => <li key={i}>{e.mensagem}</li>)}
+            {(sim?.erros ?? errosPrevia ?? []).filter((e) => e.codigo !== "pontos").map((e, i) => <li key={i}>{e.mensagem}</li>)}
           </ul>
         </div>
       )}
@@ -205,7 +217,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} />
+                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -213,7 +225,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} />
+                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
                       ))}
                     </div>
                   ))}
@@ -232,7 +244,7 @@ const TIPOS_LARGOS = new Set(["texto_longo", "tabela", "selecao_nivel", "selecao
 /** Tipos de campo que listam elementos da biblioteca/opções — indicam seção densa. */
 const TIPOS_SELECAO = new Set(["selecao_nivel", "selecao_multipla", "lista"]);
 
-function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, destaque }: {
+function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, comErro, destaque }: {
   campo: CampoDef;
   valor: unknown;
   calculado?: number | string;
@@ -244,6 +256,8 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   carteiraResumo?: { saldoInicial: number; entradas: number; saidas: number; saldo: number };
   saldoEnviado?: unknown;
   ehMestre?: boolean;
+  /** Campo apontado por erro de validação — ganha destaque e âncora de navegação. */
+  comErro?: boolean;
   /** Primeiro campo da seção de capa (identificação) — ocupa a linha toda. */
   destaque?: boolean;
 }) {
@@ -256,6 +270,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     `campo-tipo-${campo.tipo}`,
     kind ? `campo-kind-${kind}` : "campo-kind-manual",
     (TIPOS_LARGOS.has(campo.tipo) || destaque) ? "campo-largo" : "",
+    comErro ? "campo-com-erro" : "",
   ].filter(Boolean).join(" ");
   // Opções vindas da biblioteca de regras (campo.regraKind) — spec §8
   const opcoesBiblioteca = campo.regraKind ? (biblioteca?.[campo.regraKind] ?? []) : [];
@@ -265,12 +280,13 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       {campo.label}
       {campo.obrigatorio && <em className="obrigatorio">*</em>}
       {campo.descricao && <small className="meta">{campo.descricao}</small>}
+      {campo.editavel === false && <small className="meta">somente o mestre altera</small>}
     </span>
   );
 
   if (campo.tipo === "calculado") {
     return (
-      <div className={cls}>
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
         {rotulo}
         <output className="calculado">{calculado ?? "—"}</output>
       </div>
@@ -282,9 +298,24 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   // o valor continua salvo como número. Faixas longas (ex.: idade) caem
   // no input numérico porque faixaAtributo retorna null.
   if (campo.tipo === "inteiro" && faixaAtributo(campo) && (campo.semantico === "atributo" || !!ctxPontos)) {
+    // Verifica se o campo tem um elemento vinculado na biblioteca com descrição
+    let descricaoElemento: string | undefined = undefined;
+    if (campo.regra?.key) {
+      const elemento = (biblioteca?.[campo.regra.kind] ?? []).find((o) => o.key === campo.regra!.key);
+      descricaoElemento = elemento?.descricao;
+    }
+    const rotuloComAjuda = (
+      <span className="campo-label">
+        {campo.label}
+        {campo.obrigatorio && <em className="obrigatorio">*</em>}
+        {campo.descricao && <small className="meta">{campo.descricao}</small>}
+        {campo.editavel === false && <small className="meta">somente o mestre altera</small>}
+        <AjudaPopover texto={descricaoElemento ?? ""} rotuloBotao={`Ver descrição de ${campo.label}`} />
+      </span>
+    );
     return (
-      <div className={cls}>
-        {rotulo}
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
+        {rotuloComAjuda}
         <SeletorAtributo campo={campo} valor={valor ?? campo.padrao} somenteLeitura={somenteLeitura} aoMudar={aoMudar} ctx={ctxPontos} />
       </div>
     );
@@ -293,7 +324,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   if (somenteLeitura) {
     if (campo.tipo === "tabela" && campo.carteira) {
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <CarteiraView campo={campo} valor={valor} somenteLeitura resumo={carteiraResumo} saldoEnviado={saldoEnviado} podeSaldo={false} />
         </div>
@@ -303,7 +334,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       const linhas = valor as Record<string, unknown>[];
       const tot = inventarioTotals(campo, linhas);
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <div className="tabela-leitura">
             {linhas.map((linha, i) => {
@@ -330,7 +361,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     if (campo.tipo === "selecao_nivel") {
       const itens = Array.isArray(valor) ? (valor as { key: string; nivel: number }[]) : [];
       return (
-        <div className={cls}>
+        <div id={`ficha-campo-${campo.id}`} className={cls}>
           {rotulo}
           <div className="valor-leitura selecao-nivel-leitura">
             {itens.length === 0 && "—"}
@@ -354,14 +385,14 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
         ? nomeDe(valor)
         : undefined;
     return (
-      <div className={cls}>
+      <div id={`ficha-campo-${campo.id}`} className={cls}>
         {rotulo}
         <div className="valor-leitura">{exibido ?? formatarValor(campo, valor)}</div>
       </div>
     );
   }
 
-  const editavel = (conteudo: ReactNode) => <div className={cls}>{rotulo}{conteudo}</div>;
+  const editavel = (conteudo: ReactNode) => <div id={`ficha-campo-${campo.id}`} className={cls}>{rotulo}{conteudo}</div>;
   const atual = valor ?? campo.padrao;
 
   switch (campo.tipo) {
@@ -369,6 +400,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <input
           type="text"
+          aria-label={campo.label}
           value={String(atual ?? "")}
           maxLength={campo.maxCaracteres}
           onChange={(e) => mudar(e.target.value)}
@@ -378,6 +410,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <textarea
           rows={4}
+          aria-label={campo.label}
           value={String(atual ?? "")}
           maxLength={campo.maxCaracteres}
           onChange={(e) => mudar(e.target.value)}
@@ -389,6 +422,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       return editavel(
         <input
           type="number"
+          aria-label={campo.label}
           step={campo.tipo === "inteiro" ? 1 : "any"}
           min={campo.minimo}
           max={campo.maximo}
@@ -403,7 +437,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     case "data":
       return editavel(
-        <input type="date" value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)} />
+        <input type="date" aria-label={campo.label} value={String(atual ?? "")} onChange={(e) => mudar(e.target.value)} />
       );
     case "checkbox":
       return editavel(
@@ -414,17 +448,18 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     case "selecao_unica": {
       const opcoes = campo.regraKind && opcoesBiblioteca.length
-        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
-        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name, d: o.descricao }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o, d: undefined }));
       return editavel(
-        <select value={String(atual ?? "")} onChange={(e) => {
-          const v = e.target.value;
-          if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
-          else mudar(v);
-        }}>
-          <option value="">—</option>
-          {opcoes.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>
+        <SeletorUnico
+          rotulo={campo.label}
+          opcoes={opcoes}
+          valor={String(atual ?? "")}
+          aoMudar={(v) => {
+            if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
+            else mudar(v);
+          }}
+        />
       );
     }
     case "selecao_nivel": {
@@ -450,7 +485,10 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
             return (
               <div key={el.key} className="nivel-item">
                 <div className="nivel-linha">
-                  <span className="nivel-nome">{el.name}</span>
+                  <span className="nivel-nome">
+                    {el.name}
+                    <AjudaPopover texto={el.descricao ?? ""} rotuloBotao={`Ver descrição de ${el.name}`} />
+                  </span>
                   <SeletorNivel valor={nivel} max={maxN} aoMudar={(n) => alternarNivel(el.key, n)} />
                 </div>
                 {nivel > 0 && desc && <div className="nivel-desc">{desc}</div>}
@@ -470,8 +508,8 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     case "lista": {
       const lista: string[] = Array.isArray(atual) ? (atual as string[]) : [];
       const opcoes = campo.regraKind && opcoesBiblioteca.length
-        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
-        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name, d: o.descricao }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o, d: undefined }));
       const alternar = (op: string) => {
         if (aoAlternarPoder) { aoAlternarPoder(campo, op); return; }
         mudar(lista.includes(op) ? lista.filter((x) => x !== op) : [...lista, op]);
@@ -482,6 +520,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
             <label key={o.v} className="checkbox-inline">
               <input type="checkbox" checked={lista.includes(o.v)} onChange={() => alternar(o.v)} />
               {o.l}
+              <AjudaPopover texto={o.d ?? ""} rotuloBotao={`Ver descrição de ${o.l}`} />
             </label>
           ))}
         </div>
@@ -571,6 +610,158 @@ function custoNivelEl(el: ElementoVinculavel, nivel: number): number {
   let custo = 0;
   for (let i = 0; i < nivel; i++) custo += el.niveis?.[i]?.custo ?? el.custoPontos ?? 0;
   return custo;
+}
+
+/**
+ * Seletor único com ajuda por opção — substitui o <select> nativo para que
+ * cada opção da Biblioteca exiba seu próprio "?" sem precisar ser escolhida.
+ * A opção em si é um botão role="option"; o AjudaPopover é irmão, nunca
+ * filho, para não aninhar interativos dentro do role="option".
+ */
+function SeletorUnico({ rotulo, opcoes, valor, aoMudar }: {
+  rotulo: string;
+  opcoes: { v: string; l: string; d?: string }[];
+  valor: string;
+  aoMudar: (v: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [paraCima, setParaCima] = useState(false);
+  const caixaRef = useRef<HTMLDivElement>(null);
+  const gatilhoRef = useRef<HTMLButtonElement>(null);
+  const listaRef = useRef<HTMLDivElement>(null);
+
+  const rotuloAtual = opcoes.find((o) => o.v === valor)?.l ?? "—";
+  // Mantém a opção vazia ("—") do <select> original: limpa a seleção.
+  const opcoesLista = [{ v: "", l: "—", d: undefined }, ...opcoes];
+
+  useEffect(() => {
+    if (!aberto) return;
+    const aoClicarFora = (e: MouseEvent) => {
+      if (caixaRef.current && !caixaRef.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener("mousedown", aoClicarFora);
+    return () => document.removeEventListener("mousedown", aoClicarFora);
+  }, [aberto]);
+
+  // Vira a lista para cima quando não há espaço suficiente abaixo do gatilho.
+  useLayoutEffect(() => {
+    if (!aberto) {
+      setParaCima(false);
+      return;
+    }
+    const gatilho = gatilhoRef.current;
+    const lista = listaRef.current;
+    if (!gatilho || !lista) return;
+    const calcular = () => {
+      const r = gatilho.getBoundingClientRect();
+      const h = lista.offsetHeight;
+      const espacoBaixo = window.innerHeight - r.bottom;
+      const espacoCima = r.top;
+      setParaCima(h + 8 > espacoBaixo && espacoCima > espacoBaixo);
+    };
+    calcular();
+    window.addEventListener("resize", calcular);
+    window.addEventListener("scroll", calcular, true);
+    return () => {
+      window.removeEventListener("resize", calcular);
+      window.removeEventListener("scroll", calcular, true);
+    };
+  }, [aberto]);
+
+  // Ao abrir, foca a opção selecionada (ou a primeira).
+  useEffect(() => {
+    if (!aberto) return;
+    const lista = listaRef.current;
+    if (!lista) return;
+    const sel = lista.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+    const primeiro = lista.querySelector<HTMLElement>('[role="option"]');
+    (sel ?? primeiro)?.focus();
+  }, [aberto]);
+
+  const escolher = (v: string) => {
+    aoMudar(v);
+    setAberto(false);
+    gatilhoRef.current?.focus();
+  };
+
+  const opcoesDom = () =>
+    Array.from(listaRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+
+  return (
+    <div
+      className="seletor-unico"
+      ref={caixaRef}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setAberto(false);
+      }}
+    >
+      <button
+        type="button"
+        ref={gatilhoRef}
+        className="seletor-unico-gatilho"
+        aria-haspopup="listbox"
+        aria-expanded={aberto}
+        aria-label={rotulo}
+        onClick={() => setAberto((a) => !a)}
+        onKeyDown={(e) => {
+          if (!aberto && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            setAberto(true);
+          }
+        }}
+      >
+        <span className="seletor-unico-valor">{rotuloAtual}</span>
+        <span className="seletor-unico-seta" aria-hidden="true">▾</span>
+      </button>
+      {aberto && (
+        <div
+          className={`seletor-unico-lista${paraCima ? " para-cima" : ""}`}
+          role="listbox"
+          aria-label={rotulo}
+          ref={listaRef}
+          onKeyDown={(e) => {
+            const itens = opcoesDom();
+            const i = itens.indexOf(document.activeElement as HTMLElement);
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (itens.length) itens[(i + (e.key === "ArrowDown" ? 1 : -1) + itens.length) % itens.length].focus();
+            } else if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              (e.key === "Home" ? itens[0] : itens[itens.length - 1])?.focus();
+            } else if (e.key === "Escape") {
+              // ESC originado do botão/popover de ajuda fecha só a ajuda —
+              // o AjudaPopover trata a tecla no window; não derrubar a lista.
+              if ((e.target as HTMLElement).closest(".ajuda-contextual")) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setAberto(false);
+              gatilhoRef.current?.focus();
+            }
+          }}
+        >
+          {opcoesLista.map((o) => {
+            const sel = o.v === valor;
+            return (
+              <div key={o.v || "__vazio"} className={`seletor-unico-opcao${sel ? " selecionada" : ""}`}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={sel}
+                  aria-label={o.l}
+                  className="seletor-unico-item"
+                  onClick={() => escolher(o.v)}
+                >
+                  {sel && <span className="seletor-unico-check" aria-hidden="true">✓ </span>}
+                  {o.l}
+                </button>
+                <AjudaPopover texto={o.d ?? ""} rotuloBotao={`Ver descrição de ${o.l}`} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Bolinhas de nível 1..max (0 = não escolhido) — usado por selecao_nivel. */
@@ -922,6 +1113,7 @@ function CarteiraView({ campo, valor, somenteLeitura, aoMudar, resumo, saldoEnvi
                 step="0.01"
                 min="0"
                 placeholder="Valor"
+                aria-label="Valor da movimentação"
                 value={l.valor === undefined || l.valor === null ? "" : String(l.valor)}
                 onChange={(e) => setLinha(i, "valor", e.target.value === "" ? "" : Number(e.target.value))}
               />

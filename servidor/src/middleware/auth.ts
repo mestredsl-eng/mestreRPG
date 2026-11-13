@@ -56,8 +56,14 @@ export function limparCookieSessao(res: Response) {
   res.setHeader("Set-Cookie", `${COOKIE_SESSAO}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
 }
 
-/** Resolve o usuário a partir do cookie de sessão (ou header Authorization: Bearer). */
-export async function resolverUsuario(req: Request): Promise<UsuarioAutenticado | null> {
+/** Sessão HTTP autenticada: usuário + id da sessão que originou o acesso. */
+export interface SessaoAutenticada {
+  usuario: UsuarioAutenticado;
+  sessaoId: string;
+}
+
+/** Resolve usuário E sessão a partir do cookie (ou Bearer). */
+export async function resolverSessao(req: Request): Promise<SessaoAutenticada | null> {
   let token: string | undefined;
   const auth = req.headers.authorization;
   if (auth?.startsWith("Bearer ")) token = auth.slice(7);
@@ -75,22 +81,31 @@ export async function resolverUsuario(req: Request): Promise<UsuarioAutenticado 
   if (!user || user.status !== "ativo") return null;
 
   return {
-    id: user.id,
-    username: user.username,
-    email: user.email,
-    displayName: user.displayName,
-    isAdmin: user.isAdmin,
-    preferences: (user.preferences ?? {}) as Record<string, unknown>,
+    sessaoId: sessao.id,
+    usuario: {
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      displayName: user.displayName,
+      isAdmin: user.isAdmin,
+      preferences: (user.preferences ?? {}) as Record<string, unknown>,
+    },
   };
 }
 
+/** Resolve o usuário a partir do cookie de sessão (ou header Authorization: Bearer). */
+export async function resolverUsuario(req: Request): Promise<UsuarioAutenticado | null> {
+  return (await resolverSessao(req))?.usuario ?? null;
+}
+
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const usuario = await resolverUsuario(req);
-  if (!usuario) {
+  const sessao = await resolverSessao(req);
+  if (!sessao) {
     res.status(401).json({ erro: "Não autenticado" });
     return;
   }
-  req.usuario = usuario;
+  req.usuario = sessao.usuario;
+  req.sessaoId = sessao.sessaoId;
   next();
 }
 
@@ -104,13 +119,13 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
   });
 }
 
-/** Para o handshake do Socket.IO: devolve o usuário autenticado ou null. */
+/** Para o handshake do Socket.IO: devolve usuário + sessão ou null. */
 export async function autenticarHandshake(
   cookieHeader: string | undefined,
   authorization: string | undefined
-): Promise<UsuarioAutenticado | null> {
+): Promise<SessaoAutenticada | null> {
   const req = {
     headers: { cookie: cookieHeader, authorization },
   } as Request;
-  return resolverUsuario(req);
+  return resolverSessao(req);
 }

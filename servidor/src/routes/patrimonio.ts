@@ -1,5 +1,5 @@
 import { Router, type Request } from "express";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import {
@@ -9,6 +9,7 @@ import {
   vehicles,
   financialAccounts,
   moneyTransactions,
+  itemTemplates,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
@@ -31,6 +32,12 @@ async function acessoOuErro(req: Request, res: import("express").Response): Prom
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return null;
   }
+  // Personagem arquivado: somente leitura — nenhuma rota de patrimônio
+  // pode alterar inventário, equipamentos, veículos ou finanças.
+  if (acesso.personagem.status === "arquivado" && req.method !== "GET") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return null;
+  }
   return { personagem: acesso.personagem, ehMestre: acesso.ehMestre, ehDono: acesso.ehDono };
 }
 
@@ -44,6 +51,90 @@ const deCentavos = (cents: number, casas: number) => cents / 10 ** casas;
 
 function emitir(personagem: typeof characters.$inferSelect) {
   emitirCampanha(personagem.campaignId, "patrimonio:atualizado", { characterId: personagem.id });
+}
+
+// ---------- integridade inventário ↔ equipamentos ----------
+// Regra do projeto: equipar separa EXATAMENTE 1 unidade do estoque.
+// O equipamento carrega um snapshot completo do item para poder devolver
+// a unidade ao inventário mesmo que a pilha original tenha zerado.
+
+type ItemInventario = typeof inventoryEntries.$inferSelect;
+
+function snapshotItem(item: ItemInventario) {
+  return {
+    name: item.name,
+    description: item.description ?? undefined,
+    category: item.category ?? undefined,
+    location: item.location ?? undefined,
+    condition: item.condition ?? undefined,
+    weight: item.weight ?? undefined,
+    data: (item.data ?? {}) as Record<string, unknown>,
+  };
+}
+
+/** Devolve 1 unidade ao inventário dentro da transação: funde na pilha
+ *  original se ela ainda existir, senão recria o item a partir do snapshot. */
+function devolverUnidadeAoInventario(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  characterId: string,
+  snap: ReturnType<typeof snapshotItem>,
+  inventoryEntryId: string | undefined,
+) {
+  if (inventoryEntryId) {
+    const [pilha] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, inventoryEntryId), eq(inventoryEntries.characterId, characterId)))
+      .limit(1).all();
+    if (pilha) {
+      tx.update(inventoryEntries)
+        .set({ quantity: pilha.quantity + 1, updatedAt: new Date() })
+        .where(eq(inventoryEntries.id, pilha.id)).run();
+      return;
+    }
+  }
+  const agora = new Date();
+  tx.insert(inventoryEntries).values({
+    id: crypto.randomUUID(), characterId,
+    name: snap.name, quantity: 1, description: snap.description ?? null,
+    category: snap.category ?? null, location: snap.location ?? null,
+    condition: snap.condition ?? null, weight: snap.weight ?? null,
+    data: { ...(snap.data ?? {}), origemEquipamento: true },
+    createdAt: agora, updatedAt: agora,
+  }).run();
+}
+
+// Campos internos de procedência inventário↔equipamento: escritos
+// EXCLUSIVAMENTE pelo fluxo oficial de equipar. O cliente nunca pode
+// forjá-los (POST) nem alterá-los/apagá-los (PATCH).
+const CAMPOS_PROCEDENCIA = ["origem", "inventoryEntryId", "itemSnapshot", "requestId"] as const;
+function limparProcedencia(data: Record<string, unknown> | undefined) {
+  if (!data) return data;
+  const limpo = { ...data };
+  for (const k of CAMPOS_PROCEDENCIA) delete limpo[k];
+  return limpo;
+}
+
+// O sinalizador legado "equipped" em inventoryEntries.data é estado interno:
+// DELETE/transferência o usam para impedir movimentações de itens equipados.
+// O cliente não pode forjá-lo por POST/PATCH e bloquear o próprio item.
+function limparEstadoInventario(data: Record<string, unknown> | undefined) {
+  if (!data) return data;
+  const limpo = { ...data };
+  delete limpo.equipped;
+  return limpo;
+}
+
+/** Quantos equipamentos do personagem referenciam este item de inventário
+ *  (via data.inventoryEntryId) — usado para bloquear exclusão/transferência. */
+function equipamentosDoItem(
+  tx: Parameters<Parameters<typeof db.transaction>[0]>[0],
+  characterId: string,
+  itemId: string,
+) {
+  return tx.select({ id: equipmentEntries.id }).from(equipmentEntries)
+    .where(and(
+      eq(equipmentEntries.characterId, characterId),
+      sql`json_extract(${equipmentEntries.data}, '$.inventoryEntryId') = ${itemId}`,
+    )).all();
 }
 
 // =====================================================================
@@ -93,7 +184,7 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   const id = crypto.randomUUID();
   const { templateId, valueCents, transferable, data, ...resto } = body.data;
   await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto, data: { ...data, valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
+    id, characterId: a.personagem.id, ...resto, data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
   });
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
@@ -108,26 +199,36 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
   const body = itemPatchSchema.safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
   const config = await configPatrimonio(a.personagem.campaignId);
-  const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
-  if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
   const d = somenteEnviados(body.data, req.body);
-  if (!a.ehMestre) {
-    const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-    if (d.quantity !== undefined && d.quantity <= 0) {
-      if (!config.patrimonio.jogadorRemoveItens) { res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return; }
-    } else if (!config.patrimonio.jogadorAdicionaItens) {
-      res.status(403).json({ erro: "Edição de itens não permitida" }); return;
-    }
-    void dadosItem;
-  }
+  // Releitura + validação de permissão + gravação na MESMA transação:
+  // a redução de quantidade é comparada com o valor atual do banco,
+  // não com um snapshot lido antes (sem corrida entre PATCHes).
+  let item: typeof inventoryEntries.$inferSelect | undefined;
+  let negado: "remover" | "editar" | null = null;
+  let sumiu = false;
   const { data, valueCents, transferable, ...resto } = d;
-  const dataAtual = (item.data ?? {}) as Record<string, unknown>;
-  await db.update(inventoryEntries).set({
-    ...resto,
-    quantity: d.quantity ?? item.quantity,
-    data: { ...dataAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
-    updatedAt: new Date(),
-  }).where(eq(inventoryEntries.id, item.id));
+  await db.transaction((tx) => {
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { sumiu = true; return; }
+    item = itemTx;
+    if (!a.ehMestre) {
+      const reduz = d.quantity !== undefined && d.quantity < itemTx.quantity;
+      if (reduz && !config.patrimonio.jogadorRemoveItens) { negado = "remover"; return; }
+      if (!reduz && !config.patrimonio.jogadorAdicionaItens) { negado = "editar"; return; }
+    }
+    const dataAtual = (itemTx.data ?? {}) as Record<string, unknown>;
+    tx.update(inventoryEntries).set({
+      ...resto,
+      quantity: d.quantity ?? itemTx.quantity,
+      data: { ...dataAtual, ...(limparEstadoInventario(data) ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      updatedAt: new Date(),
+    }).where(eq(inventoryEntries.id, itemTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (negado === "remover") { res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return; }
+  if (negado === "editar") { res.status(403).json({ erro: "Edição de itens não permitida" }); return; }
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -141,7 +242,26 @@ patrimonioRouter.delete("/inventario/:itemId", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorRemoveItens) {
     res.status(403).json({ erro: "Você não pode remover itens nesta campanha" }); return;
   }
-  await db.delete(inventoryEntries).where(eq(inventoryEntries.id, item.id));
+  // Releitura + verificação de vínculos + exclusão na MESMA transação:
+  // um equipar concorrente não consegue criar vínculo enquanto a
+  // exclusão é confirmada (e vice-versa).
+  let bloqueado = false;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { sumiu = true; return; } // removido por operação concorrente
+    const dadosItem = (itemTx.data ?? {}) as { equipped?: boolean };
+    const vinculados = equipamentosDoItem(tx, a.personagem.id, itemTx.id);
+    if (vinculados.length || dadosItem.equipped === true) { bloqueado = true; return; }
+    tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (bloqueado) {
+    res.status(409).json({ erro: "Item possui equipamento vinculado — desequipe ou exclua o equipamento antes" });
+    return;
+  }
   await audit(req, "inventario.item.removido", { characterId: a.personagem.id, itemId: item.id, name: item.name });
   emitir(a.personagem);
   res.json({ ok: true });
@@ -159,34 +279,63 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  const dadosItem = (item.data ?? {}) as { transferable?: boolean };
-  if (dadosItem.transferable === false && !a.ehMestre) {
-    res.status(403).json({ erro: "Este item não pode ser transferido" }); return;
-  }
+  // A política de transferência é revalidada sobre o registro lido
+  // dentro da transação; não confiar no snapshot anterior à transação.
   const [destino] = await db.select().from(characters).where(eq(characters.id, body.data.destinoCharacterId)).limit(1);
   if (!destino || destino.campaignId !== a.personagem.campaignId || destino.id === a.personagem.id) {
     res.status(400).json({ erro: "Destino inválido" }); return;
   }
-  const qtd = body.data.quantidade ?? item.quantity;
-  if (qtd > item.quantity) { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
+  const qtdPedida = body.data.quantidade;
 
+  // Releitura do item, verificação de vínculos/equipado e mutação na
+  // MESMA transação — um equipar concorrente não cria vínculo no meio
+  // da transferência, e vice-versa.
+  let falha: "sumiu" | "qtd" | "equipado" | "vinculado" | "nao_transferivel" | "destino_arquivado" | "origem_arquivada" | null = null;
   await db.transaction((tx) => {
-    if (qtd >= item.quantity) {
-      tx.delete(inventoryEntries).where(eq(inventoryEntries.id, item.id)).run();
+    // Personagem arquivado é somente leitura — a transferência é recusada
+    // se QUALQUER lado estiver arquivado, sem débito/crédito parcial.
+    const [origemTx0] = tx.select({ status: characters.status }).from(characters)
+      .where(eq(characters.id, a.personagem.id)).limit(1).all();
+    const [destinoTx0] = tx.select({ status: characters.status }).from(characters)
+      .where(eq(characters.id, destino.id)).limit(1).all();
+    if (origemTx0?.status === "arquivado") { falha = "origem_arquivada"; return; }
+    if (!destinoTx0 || destinoTx0.status === "arquivado") { falha = "destino_arquivado"; return; }
+    const [itemTx] = tx.select().from(inventoryEntries)
+      .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!itemTx) { falha = "sumiu"; return; }
+    const dadosItemTx = (itemTx.data ?? {}) as { transferable?: boolean };
+    if (dadosItemTx.transferable === false && !a.ehMestre) { falha = "nao_transferivel"; return; }
+    const qtd = qtdPedida ?? itemTx.quantity;
+    if (qtd > itemTx.quantity) { falha = "qtd"; return; }
+    const dadosItemTr = (itemTx.data ?? {}) as { equipped?: boolean };
+    if (dadosItemTr.equipped === true) { falha = "equipado"; return; }
+    if (equipamentosDoItem(tx, a.personagem.id, itemTx.id).length) { falha = "vinculado"; return; }
+
+    if (qtd >= itemTx.quantity) {
+      tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
     } else {
-      tx.update(inventoryEntries).set({ quantity: item.quantity - qtd, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id)).run();
+      tx.update(inventoryEntries).set({ quantity: itemTx.quantity - qtd, updatedAt: new Date() }).where(eq(inventoryEntries.id, itemTx.id)).run();
     }
     const novoId = crypto.randomUUID();
     const agora = new Date();
     tx.insert(inventoryEntries).values({
-      id: novoId, characterId: destino.id, name: item.name, quantity: qtd,
-      description: item.description, category: item.category, location: item.location,
-      condition: item.condition, weight: item.weight,
-      data: { ...((item.data ?? {}) as object), transferidoDe: a.personagem.id },
+      id: novoId, characterId: destino.id, name: itemTx.name, quantity: qtd,
+      description: itemTx.description, category: itemTx.category, location: itemTx.location,
+      condition: itemTx.condition, weight: itemTx.weight,
+      data: { ...((itemTx.data ?? {}) as object), transferidoDe: a.personagem.id },
       createdAt: agora, updatedAt: agora,
     }).run();
   });
-  await audit(req, "inventario.item.transferido", { de: a.personagem.id, para: destino.id, itemId: item.id, quantidade: qtd });
+  if (falha === "sumiu") { res.status(404).json({ erro: "Item não encontrado" }); return; }
+  if (falha === "origem_arquivada" || falha === "destino_arquivado") {
+    res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de transferir itens" }); return;
+  }
+  if (falha === "nao_transferivel") { res.status(403).json({ erro: "Este item não pode ser transferido" }); return; }
+  if (falha === "qtd") { res.status(400).json({ erro: "Quantidade maior que a disponível" }); return; }
+  if (falha === "equipado") { res.status(409).json({ erro: "Item equipado não pode ser transferido — desequipe antes" }); return; }
+  if (falha === "vinculado") { res.status(409).json({ erro: "Item possui equipamento vinculado — não pode ser transferido" }); return; }
+  await audit(req, "inventario.item.transferido", { de: a.personagem.id, para: destino.id, itemId: item.id, quantidade: qtdPedida ?? item.quantity });
   emitir(a.personagem);
   emitir(destino);
   res.json({ ok: true });
@@ -221,54 +370,139 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
   }
-  if (body.data.slot && body.data.equipped) {
-    const ocupado = await db.select().from(equipmentEntries).where(and(
-      eq(equipmentEntries.characterId, a.personagem.id),
-      eq(equipmentEntries.slot, body.data.slot),
-      eq(equipmentEntries.equipped, true),
-    )).limit(1);
-    if (ocupado.length) { res.status(409).json({ erro: `Slot "${body.data.slot}" já ocupado` }); return; }
-  }
-  const agora = new Date();
+  // Ocupação de slot verificada dentro da transação (consistência com
+  // POST /equipar): dois cadastros simultâneos não tomam o mesmo slot.
+  let slotOcupado: string | null = null;
   const id = crypto.randomUUID();
-  await db.insert(equipmentEntries).values({ id, characterId: a.personagem.id, ...body.data, createdAt: agora, updatedAt: agora });
+  const agora = new Date();
+  db.transaction((tx) => {
+    if (body.data.slot && body.data.equipped) {
+      const [ocupado] = tx.select({ name: equipmentEntries.name }).from(equipmentEntries).where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        eq(equipmentEntries.slot, body.data.slot!),
+        eq(equipmentEntries.equipped, true),
+      )).limit(1).all();
+      if (ocupado) { slotOcupado = ocupado.name; return; }
+    }
+    // Campos explícitos: nada de ...body.data — o cliente não pode
+    // injetar procedência falsa via data/origem/inventoryEntryId.
+    tx.insert(equipmentEntries).values({
+      id, characterId: a.personagem.id,
+      name: body.data.name, kind: body.data.kind ?? null,
+      slot: body.data.slot ?? null, equipped: body.data.equipped,
+      description: body.data.description ?? null,
+      data: limparProcedencia(body.data.data) ?? {},
+      createdAt: agora, updatedAt: agora,
+    }).run();
+  });
+  if (slotOcupado !== null) {
+    res.status(409).json({ erro: `Slot "${body.data.slot}" já ocupado por "${slotOcupado}"` }); return;
+  }
   await audit(req, "equipamento.criado", { characterId: a.personagem.id, equipId: id });
   emitir(a.personagem);
   res.status(201).json({ id });
 });
 
-/** POST /api/characters/:id/inventario/:itemId/equipar — equipa item do inventário */
+/** POST /api/characters/:id/inventario/:itemId/equipar — equipa 1 unidade do inventário */
 patrimonioRouter.post("/inventario/:itemId/equipar", async (req, res) => {
   const a = await acessoOuErro(req, res); if (!a) return;
   const slot = typeof req.body?.slot === "string" ? req.body.slot : undefined;
+  const requestId = typeof req.body?.requestId === "string" ? req.body.requestId.slice(0, 120) : undefined;
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Equipar não permitido" }); return;
   }
+  // Fast-path de idempotência: o item pode já ter sido consumido pela
+  // primeira requisição (estoque zerado → linha removida → 404 abaixo).
+  // A checagem autoritativa continua dentro da transação.
+  if (requestId) {
+    const [existente] = await db.select({ id: equipmentEntries.id }).from(equipmentEntries)
+      .where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        sql`json_extract(${equipmentEntries.data}, '$.requestId') = ${requestId}`,
+      )).limit(1);
+    if (existente) { res.status(200).json({ id: existente.id, deduplicado: true }); return; }
+  }
   const [item] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, req.params.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
   if (!item) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-  if (slot) {
-    const ocupado = await db.select().from(equipmentEntries).where(and(
-      eq(equipmentEntries.characterId, a.personagem.id), eq(equipmentEntries.slot, slot), eq(equipmentEntries.equipped, true),
-    )).limit(1);
-    if (ocupado.length) { res.status(409).json({ erro: `Slot "${slot}" já ocupado por "${ocupado[0].name}"` }); return; }
+
+  let novoEquipId: string | null = null;
+  let jaExistia = false;
+  let semEstoque = false;
+  try {
+    db.transaction((tx) => {
+      // Idempotência: mesmo requestId → devolve o equipamento já criado,
+      // sem consumir outra unidade do estoque.
+      if (requestId) {
+        const [existente] = tx.select({ id: equipmentEntries.id }).from(equipmentEntries)
+          .where(and(
+            eq(equipmentEntries.characterId, a.personagem.id),
+            sql`json_extract(${equipmentEntries.data}, '$.requestId') = ${requestId}`,
+          )).limit(1).all();
+        if (existente) { novoEquipId = existente.id; jaExistia = true; return; }
+      }
+
+      // Re-lê o item dentro da transação: quantidade validada sobre o
+      // valor atual (outra requisição pode ter consumido unidades antes).
+      const [itemTx] = tx.select().from(inventoryEntries)
+        .where(and(eq(inventoryEntries.id, item.id), eq(inventoryEntries.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!itemTx || itemTx.quantity < 1) { semEstoque = true; return; }
+
+      if (slot) {
+        const [ocupado] = tx.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries)
+          .where(and(
+            eq(equipmentEntries.characterId, a.personagem.id),
+            eq(equipmentEntries.slot, slot),
+            eq(equipmentEntries.equipped, true),
+          )).limit(1).all();
+        if (ocupado) throw new Error(`slot_ocupado:${ocupado.name}`);
+      }
+
+      // Consome exatamente 1 unidade do estoque.
+      const restante = itemTx.quantity - 1;
+      if (restante <= 0) {
+        tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemTx.id)).run();
+      } else {
+        tx.update(inventoryEntries).set({ quantity: restante, updatedAt: new Date() })
+          .where(eq(inventoryEntries.id, itemTx.id)).run();
+      }
+
+      const snap = snapshotItem(itemTx);
+      const id = crypto.randomUUID();
+      const agora = new Date();
+      tx.insert(equipmentEntries).values({
+        id, characterId: a.personagem.id, name: itemTx.name, slot: slot ?? null,
+        equipped: true, description: itemTx.description,
+        data: {
+          ...((itemTx.data ?? {}) as Record<string, unknown>),
+          origem: "inventario",
+          inventoryEntryId: itemTx.id,
+          itemSnapshot: snap,
+          ...(requestId ? { requestId } : {}),
+        },
+        createdAt: agora, updatedAt: agora,
+      }).run();
+      novoEquipId = id;
+    });
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("slot_ocupado:")) {
+      res.status(409).json({ erro: `Slot "${slot}" já ocupado por "${msg.split("slot_ocupado:")[1]}"` }); return;
+    }
+    throw e;
   }
-  const dadosItem = (item.data ?? {}) as Record<string, unknown>;
-  const agora = new Date();
-  const id = crypto.randomUUID();
-  await db.insert(equipmentEntries).values({
-    id, characterId: a.personagem.id, name: item.name, slot: slot ?? null,
-    equipped: true, description: item.description,
-    data: { ...dadosItem, inventoryEntryId: item.id },
-    createdAt: agora, updatedAt: agora,
-  });
-  await db.update(inventoryEntries).set({ data: { ...dadosItem, equipado: true }, updatedAt: agora }).where(eq(inventoryEntries.id, item.id));
+  if (semEstoque) { res.status(409).json({ erro: "Sem unidades disponíveis para equipar" }); return; }
+  if (jaExistia) { res.status(200).json({ id: novoEquipId, deduplicado: true }); return; }
   await audit(req, "equipamento.vestido", { characterId: a.personagem.id, itemId: item.id, slot });
   emitir(a.personagem);
-  res.status(201).json({ id });
+  res.status(201).json({ id: novoEquipId });
 });
 
-/** POST /api/characters/:id/equipamentos/:equipId/desequipar */
+/** POST /api/characters/:id/equipamentos/:equipId/desequipar —
+ *  Equipamento originado do inventário: devolve a unidade à pilha e remove
+ *  o registro (a unidade volta a ser item comum). Equipamento manual sem
+ *  origem mantém o comportamento anterior (fica "Guardado"). */
 patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
   const a = await acessoOuErro(req, res); if (!a) return;
   const config = await configPatrimonio(a.personagem.campaignId);
@@ -277,16 +511,43 @@ patrimonioRouter.post("/equipamentos/:equipId/desequipar", async (req, res) => {
   }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
-  const invId = (eqp.data as { inventoryEntryId?: string })?.inventoryEntryId;
-  if (invId) {
-    const [item] = await db.select().from(inventoryEntries).where(eq(inventoryEntries.id, invId)).limit(1);
-    if (item) {
-      const d = { ...((item.data ?? {}) as Record<string, unknown>) };
-      delete d.equipped;
-      await db.update(inventoryEntries).set({ data: d, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id));
+
+  const dados = (eqp.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
+
+  // Releitura + reivindicação dentro da transação: duas chamadas
+  // simultâneas não podem devolver a unidade duas vezes — só a que
+  // remover o registro (changes === 1) executa a devolução.
+  let jaProcessado = false;
+  await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { jaProcessado = true; return; }
+    const dTx = (eqpTx.data ?? {}) as typeof dados;
+    const veioDoInventario = dTx.origem === "inventario" && !!dTx.itemSnapshot;
+
+    if (veioDoInventario) {
+      // Reivindica o registro primeiro: se outra requisição já o removeu,
+      // changes === 0 e nenhuma unidade é devolvida.
+      const del = tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqpTx.id)).run();
+      if (del.changes !== 1) { jaProcessado = true; return; }
+      devolverUnidadeAoInventario(tx, a.personagem.id, dTx.itemSnapshot!, dTx.inventoryEntryId);
+    } else {
+      const upd = tx.update(equipmentEntries).set({ equipped: false, updatedAt: new Date() })
+        .where(and(eq(equipmentEntries.id, eqpTx.id), eq(equipmentEntries.equipped, true))).run();
+      if (upd.changes !== 1) { jaProcessado = true; return; }
+      const invId = dTx.inventoryEntryId;
+      if (invId) {
+        const [item] = tx.select().from(inventoryEntries).where(eq(inventoryEntries.id, invId)).limit(1).all();
+        if (item) {
+          const d = { ...((item.data ?? {}) as Record<string, unknown>) };
+          delete d.equipped;
+          tx.update(inventoryEntries).set({ data: d, updatedAt: new Date() }).where(eq(inventoryEntries.id, item.id)).run();
+        }
+      }
     }
-  }
+  });
+  if (jaProcessado) { res.json({ ok: true, jaProcessado: true }); return; }
   await audit(req, "equipamento.desequipado", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
@@ -302,7 +563,49 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.update(equipmentEntries).set({ ...somenteEnviados(body.data, req.body), updatedAt: new Date() }).where(eq(equipmentEntries.id, eqp.id));
+  // Releitura + validação de slot + atualização na MESMA transação:
+  // dois PATCH simultâneos não ocupam o mesmo slot ao mesmo tempo.
+  const d = somenteEnviados(body.data, req.body);
+  let slotOcupado: string | null = null;
+  let sumiu = false;
+  await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { sumiu = true; return; }
+    const slotFinal = d.slot !== undefined ? d.slot : eqpTx.slot;
+    const equipadoFinal = d.equipped !== undefined ? d.equipped : eqpTx.equipped;
+    if (slotFinal && equipadoFinal) {
+      const [ocupado] = tx.select({ id: equipmentEntries.id, name: equipmentEntries.name }).from(equipmentEntries).where(and(
+        eq(equipmentEntries.characterId, a.personagem.id),
+        eq(equipmentEntries.slot, slotFinal),
+        eq(equipmentEntries.equipped, true),
+        sql`${equipmentEntries.id} != ${eqpTx.id}`,
+      )).limit(1).all();
+      if (ocupado) { slotOcupado = ocupado.name; return; }
+    }
+    // Lista explícita de campos editáveis — o cliente não pode alterar
+    // nem apagar a procedência (origem/inventoryEntryId/itemSnapshot/
+    // requestId), que é mesclada preservando os valores do servidor.
+    const { data: dataEnviada, ...resto } = d;
+    const dataFinal = dataEnviada !== undefined
+      ? { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limparProcedencia(dataEnviada) }
+      : eqpTx.data;
+    tx.update(equipmentEntries).set({
+      name: resto.name ?? eqpTx.name,
+      kind: resto.kind !== undefined ? resto.kind : eqpTx.kind,
+      slot: resto.slot !== undefined ? resto.slot : eqpTx.slot,
+      equipped: resto.equipped !== undefined ? resto.equipped : eqpTx.equipped,
+      description: resto.description !== undefined ? resto.description : eqpTx.description,
+      ...(dataEnviada !== undefined ? { data: dataFinal } : {}),
+      updatedAt: new Date(),
+    }).where(eq(equipmentEntries.id, eqpTx.id)).run();
+  });
+  if (sumiu) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
+  if (slotOcupado !== null) {
+    const slotFinal = d.slot !== undefined ? d.slot : eqp.slot;
+    res.status(409).json({ erro: `Slot "${slotFinal}" já ocupado por "${slotOcupado}"` }); return;
+  }
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -315,7 +618,25 @@ patrimonioRouter.delete("/equipamentos/:equipId", async (req, res) => {
   }
   const [eqp] = await db.select().from(equipmentEntries).where(and(eq(equipmentEntries.id, req.params.equipId), eq(equipmentEntries.characterId, a.personagem.id))).limit(1);
   if (!eqp) { res.status(404).json({ erro: "Equipamento não encontrado" }); return; }
-  await db.delete(equipmentEntries).where(eq(equipmentEntries.id, eqp.id));
+  // Equipamento originado do inventário: a unidade volta ao estoque antes
+  // de remover o registro — nada é perdido nem duplicado. A reivindicação
+  // é atômica: só a requisição que remove o registro (changes === 1)
+  // devolve a unidade; chamadas simultâneas não duplicam.
+  let jaRemovido = false;
+  await db.transaction((tx) => {
+    const [eqpTx] = tx.select().from(equipmentEntries)
+      .where(and(eq(equipmentEntries.id, eqp.id), eq(equipmentEntries.characterId, a.personagem.id)))
+      .limit(1).all();
+    if (!eqpTx) { jaRemovido = true; return; }
+    const dTx = (eqpTx.data ?? {}) as { origem?: string; inventoryEntryId?: string; itemSnapshot?: ReturnType<typeof snapshotItem> };
+    const del = tx.delete(equipmentEntries).where(eq(equipmentEntries.id, eqpTx.id)).run();
+    if (del.changes !== 1) { jaRemovido = true; return; }
+    if (dTx.origem === "inventario" && dTx.itemSnapshot) {
+      devolverUnidadeAoInventario(tx, a.personagem.id, dTx.itemSnapshot, dTx.inventoryEntryId);
+    }
+  });
+  if (jaRemovido) { res.json({ ok: true, jaRemovido: true }); return; }
+  await audit(req, "equipamento.removido", { characterId: a.personagem.id, equipId: eqp.id });
   emitir(a.personagem);
   res.json({ ok: true });
 });
@@ -447,22 +768,42 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   const agora = new Date();
   const id = crypto.randomUUID();
   const saldoInicial = paraCentavos(body.data.balanceReais ?? 0, cfg.casasDecimais);
-  await db.insert(financialAccounts).values({
-    id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-    type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
-    agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
-    holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
-    creditLimitCents: body.data.creditLimitReais !== undefined ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais) : null,
-    data: body.data.data, createdAt: agora, updatedAt: agora,
-  });
-  if (saldoInicial !== 0) {
-    await db.insert(moneyTransactions).values({
-      id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
-      kind: "saldo_inicial", amount: saldoInicial / 100, currency: moeda, account: body.data.type,
-      accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
-      description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+  const limiteCreditoCents = body.data.creditLimitReais !== undefined
+    ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais)
+    : 0;
+  // A política vale também para a abertura da conta: saldo negativo não
+  // pode entrar por um atalho que contorne as validações de movimentação.
+  const pisoInicial = cfg.permitirSaldoNegativo
+    ? -Infinity
+    : body.data.type === "cartao_credito" ? -limiteCreditoCents : 0;
+  if (saldoInicial < pisoInicial) {
+    res.status(400).json({
+      erro: body.data.type === "cartao_credito"
+        ? "Saldo inicial ultrapassa o limite de crédito permitido"
+        : "Saldo inicial negativo não permitido nesta campanha",
     });
+    return;
   }
+  // Conta e lançamento de abertura formam uma única operação contábil.
+  // Se qualquer insert falhar, o SQLite desfaz ambos.
+  db.transaction((tx) => {
+    tx.insert(financialAccounts).values({
+      id, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+      type: body.data.type, name: body.data.name, institution: body.data.institution ?? null,
+      agency: body.data.agency ?? null, accountNumber: body.data.accountNumber ?? null,
+      holder: body.data.holder ?? null, currency: moeda, balanceCents: saldoInicial,
+      creditLimitCents: body.data.creditLimitReais !== undefined ? limiteCreditoCents : null,
+      data: body.data.data, createdAt: agora, updatedAt: agora,
+    }).run();
+    if (saldoInicial !== 0) {
+      tx.insert(moneyTransactions).values({
+        id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
+        kind: "saldo_inicial", amount: deCentavos(saldoInicial, cfg.casasDecimais), currency: moeda, account: body.data.type,
+        accountId: id, amountCents: saldoInicial, balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
+        description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+      }).run();
+    }
+  });
   await audit(req, "financeiro.conta.criada", { characterId: a.personagem.id, contaId: id, type: body.data.type });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -476,6 +817,19 @@ patrimonioRouter.patch("/financeiro/contas/:contaId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [conta] = await db.select().from(financialAccounts).where(and(eq(financialAccounts.id, req.params.contaId), eq(financialAccounts.characterId, a.personagem.id))).limit(1);
   if (!conta) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+  if (body.data.currency !== undefined) {
+    const config = await configPatrimonio(a.personagem.campaignId);
+    const moedaPermitida = body.data.currency === config.financeiro.moedaPrincipal
+      || config.financeiro.moedas.some((m) => m.codigo === body.data.currency);
+    if (!moedaPermitida) {
+      res.status(400).json({ erro: `Moeda "${body.data.currency}" não configurada na campanha` });
+      return;
+    }
+    if (body.data.currency !== conta.currency) {
+      res.status(400).json({ erro: "A moeda de uma conta não pode ser alterada após a criação. Crie outra conta na moeda desejada para preservar o saldo e o histórico." });
+      return;
+    }
+  }
   // Jogador só edita metadados da própria conta; limite de crédito só mestre
   const dados = somenteEnviados(body.data, req.body) as Record<string, unknown>;
   if (!a.ehMestre) delete dados.creditLimitReais;
@@ -523,35 +877,46 @@ patrimonioRouter.post("/financeiro/movimentar", async (req, res) => {
   const casas = cfg.casasDecimais;
   const cents = paraCentavos(body.data.valor, casas);
   const sinal = body.data.tipo === "saida" ? -1 : 1;
-  const novoSaldo = conta.balanceCents + sinal * cents;
-
-  // Saldo negativo: bloqueado salvo config ou limite de cartão de crédito
-  const limiteCredito = conta.type === "cartao_credito" ? (conta.creditLimitCents ?? 0) : 0;
-  const piso = cfg.permitirSaldoNegativo ? -Infinity : -limiteCredito;
-  if (novoSaldo < piso) {
-    res.status(400).json({ erro: `Saldo insuficiente (disponível: ${deCentavos(conta.balanceCents + limiteCredito, casas)})` });
-    return;
-  }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const txId = crypto.randomUUID();
   const agora = new Date();
+  let novoSaldo = 0;
+  let saldoInsuficiente = false;
   try {
     db.transaction((tx) => {
+      // Re-lê a conta dentro da transação: saldo, tipo e limite são validados
+      // sobre o valor atual, não sobre uma leitura anterior (evita lost update).
+      const [contaTx] = tx.select().from(financialAccounts)
+        .where(and(eq(financialAccounts.id, conta.id), eq(financialAccounts.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!contaTx) throw new Error("conta_sumiu");
+      const saldoNovo = contaTx.balanceCents + sinal * cents;
+      const limiteCredito = contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0;
+      const piso = cfg.permitirSaldoNegativo ? -Infinity : -limiteCredito;
+      if (saldoNovo < piso) { saldoInsuficiente = true; return; }
       tx.insert(moneyTransactions).values({
         id: txId, characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: body.data.tipo === "ajuste" ? "ajuste_mestre" : body.data.tipo,
-        amount: (sinal * cents) / 100, currency: conta.currency, account: conta.type,
-        accountId: conta.id, amountCents: sinal * cents,
-        balanceBeforeCents: conta.balanceCents, balanceAfterCents: novoSaldo,
+        amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
+        accountId: contaTx.id, amountCents: sinal * cents,
+        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
         description: body.data.descricao ?? null, requestId,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoSaldo, updatedAt: agora }).where(eq(financialAccounts.id, conta.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
+      novoSaldo = saldoNovo;
     });
   } catch (e) {
     if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    if (String(e).includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     throw e;
+  }
+  if (saldoInsuficiente) {
+    const [contaAtual] = await db.select().from(financialAccounts).where(eq(financialAccounts.id, conta.id)).limit(1);
+    const disponivel = contaAtual ? contaAtual.balanceCents + (contaAtual.type === "cartao_credito" ? (contaAtual.creditLimitCents ?? 0) : 0) : 0;
+    res.status(400).json({ erro: `Saldo insuficiente (disponível: ${deCentavos(disponivel, casas)})` });
+    return;
   }
   await audit(req, "financeiro.movimentacao", { characterId: a.personagem.id, contaId: conta.id, tipo: body.data.tipo, cents: sinal * cents });
   emitir(a.personagem);
@@ -601,42 +966,66 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
     res.status(400).json({ erro: "Moedas diferentes — conversão entre contas ainda não suportada em transferências" }); return;
   }
 
-  const novoOrigem = origem.balanceCents - cents;
-  const pisoOrigem = cfg.permitirSaldoNegativo ? -Infinity : -(origem.type === "cartao_credito" ? (origem.creditLimitCents ?? 0) : 0);
-  if (novoOrigem < pisoOrigem) {
-    res.status(400).json({ erro: "Saldo insuficiente na conta de origem" }); return;
-  }
-  const novoDestino = destino.balanceCents + cents;
   const kind = entrePersonagens ? "pix_ficticio" : "transferencia";
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const agora = new Date();
+  let saldoInsuficiente = false;
 
   try {
     db.transaction((tx) => {
+      // Re-lê as duas contas dentro da transação: débitos/créditos são
+      // calculados sobre saldos atuais, nunca sobre leituras anteriores.
+      const [origemTx] = tx.select().from(financialAccounts)
+        .where(eq(financialAccounts.id, origem.id)).limit(1).all();
+      const [destinoTx] = tx.select().from(financialAccounts)
+        .where(eq(financialAccounts.id, destino.id)).limit(1).all();
+      if (!origemTx || !destinoTx) throw new Error("conta_sumiu");
+      if (origemTx.currency !== destinoTx.currency) throw new Error("moedas_divergentes");
+      // Personagem arquivado é somente leitura — se qualquer lado da
+      // transferência (PIX fictício entre personagens) estiver arquivado,
+      // a operação inteira é recusada: sem débito, crédito ou histórico.
+      const charIds = [...new Set([origemTx.characterId, destinoTx.characterId])];
+      const arquivados = tx.select({ id: characters.id }).from(characters)
+        .where(and(inArray(characters.id, charIds), eq(characters.status, "arquivado"))).all();
+      if (arquivados.length) throw new Error("personagem_arquivado");
+
+      const novoOrigem = origemTx.balanceCents - cents;
+      const pisoOrigem = cfg.permitirSaldoNegativo ? -Infinity : -(origemTx.type === "cartao_credito" ? (origemTx.creditLimitCents ?? 0) : 0);
+      if (novoOrigem < pisoOrigem) { saldoInsuficiente = true; return; }
+      const novoDestino = destinoTx.balanceCents + cents;
+
       // Saída na origem
       tx.insert(moneyTransactions).values({
-        id: crypto.randomUUID(), characterId: origem.characterId, campaignId: origem.campaignId,
-        kind, amount: -cents / 100, currency: origem.currency, account: origem.type,
-        accountId: origem.id, amountCents: -cents, balanceBeforeCents: origem.balanceCents, balanceAfterCents: novoOrigem,
-        counterpartyCharacterId: destino.characterId, counterparty: destino.name,
+        id: crypto.randomUUID(), characterId: origemTx.characterId, campaignId: origemTx.campaignId,
+        kind, amount: deCentavos(-cents, casas), currency: origemTx.currency, account: origemTx.type,
+        accountId: origemTx.id, amountCents: -cents, balanceBeforeCents: origemTx.balanceCents, balanceAfterCents: novoOrigem,
+        counterpartyCharacterId: destinoTx.characterId, counterparty: destinoTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:out`,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoOrigem, updatedAt: agora }).where(eq(financialAccounts.id, origem.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: novoOrigem, updatedAt: agora }).where(eq(financialAccounts.id, origemTx.id)).run();
       // Entrada no destino
       tx.insert(moneyTransactions).values({
-        id: crypto.randomUUID(), characterId: destino.characterId, campaignId: destino.campaignId,
-        kind, amount: cents / 100, currency: destino.currency, account: destino.type,
-        accountId: destino.id, amountCents: cents, balanceBeforeCents: destino.balanceCents, balanceAfterCents: novoDestino,
-        counterpartyCharacterId: origem.characterId, counterparty: origem.name,
+        id: crypto.randomUUID(), characterId: destinoTx.characterId, campaignId: destinoTx.campaignId,
+        kind, amount: deCentavos(cents, casas), currency: destinoTx.currency, account: destinoTx.type,
+        accountId: destinoTx.id, amountCents: cents, balanceBeforeCents: destinoTx.balanceCents, balanceAfterCents: novoDestino,
+        counterpartyCharacterId: origemTx.characterId, counterparty: origemTx.name,
         description: body.data.descricao ?? null, requestId: `${requestId}:in`,
         createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoDestino, updatedAt: agora }).where(eq(financialAccounts.id, destino.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: novoDestino, updatedAt: agora }).where(eq(financialAccounts.id, destinoTx.id)).run();
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada (requestId duplicado)" }); return; }
+    if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+    if (msg.includes("moedas_divergentes")) { res.status(400).json({ erro: "Moedas diferentes — conversão entre contas ainda não suportada em transferências" }); return; }
+    if (msg.includes("personagem_arquivado")) { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de transferir valores" }); return; }
     throw e;
+  }
+  if (saldoInsuficiente) {
+    res.status(400).json({ erro: "Saldo insuficiente na conta de origem" });
+    return;
   }
   await audit(req, "financeiro.transferencia", { de: origem.id, para: destino.id, cents });
   emitirCampanha(a.personagem.campaignId, "patrimonio:atualizado", { characterId: destino.characterId });
@@ -649,9 +1038,10 @@ const operacaoSchema = z.object({
   accountId: z.string().min(1),
   valor: z.number().positive(),
   descricao: z.string().max(500).optional(),
-  // compra: dados do item; venda: itemId do inventário
+  // compra: dados do item (ou templateId do catálogo); venda: itemId do inventário
   itemId: z.string().optional(),
   item: itemSchema.optional(),
+  templateId: z.string().optional(),
   quantidade: z.number().positive().optional(),
   contraparte: z.string().max(160).optional(),
   requestId: z.string().max(120).optional(),
@@ -672,66 +1062,160 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
 
   const casas = cfg.casasDecimais;
   const cents = paraCentavos(body.data.valor, casas);
+  // valor positivo no schema pode arredondar para zero na unidade interna
+  // (ex.: 0,001 com 2 casas) — rejeita antes de qualquer escrita.
+  if (!Number.isFinite(cents) || cents <= 0) {
+    res.status(400).json({ erro: "Valor inválido ou abaixo da menor unidade monetária" });
+    return;
+  }
   const isCompra = body.data.tipo === "compra";
   const sinal = isCompra ? -1 : 1;
-  const novoSaldo = conta.balanceCents + sinal * cents;
-  const piso = cfg.permitirSaldoNegativo ? -Infinity : -(conta.type === "cartao_credito" ? (conta.creditLimitCents ?? 0) : 0);
-  if (novoSaldo < piso) {
-    res.status(400).json({ erro: "Saldo insuficiente" }); return;
-  }
 
-  let itemAlvo: typeof inventoryEntries.$inferSelect | null = null;
+  // Pré-leitura apenas para erros amigáveis (404/400). A validação
+  // autoritativa de saldo e estoque acontece DENTRO da transação.
   if (!isCompra) {
     if (!body.data.itemId) { res.status(400).json({ erro: "Venda requer itemId" }); return; }
     const [it] = await db.select().from(inventoryEntries).where(and(eq(inventoryEntries.id, body.data.itemId), eq(inventoryEntries.characterId, a.personagem.id))).limit(1);
     if (!it) { res.status(404).json({ erro: "Item não encontrado" }); return; }
-    itemAlvo = it;
-  } else if (!body.data.item) {
-    res.status(400).json({ erro: "Compra requer dados do item" }); return;
+    if ((body.data.quantidade ?? it.quantity) > it.quantity) {
+      res.status(400).json({ erro: `Quantidade indisponível (estoque: ${it.quantity})` });
+      return;
+    }
+  } else if (!body.data.item && !body.data.templateId) {
+    res.status(400).json({ erro: "Compra requer dados do item ou templateId do catálogo" }); return;
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
   const agora = new Date();
+  let novoSaldo = 0;
+  let saldoInsuficiente = false;
+  let estoqueInsuficiente = false;
+  // ID do template EFETIVAMENTE validado na transação — única fonte
+  // autorizada para data.templateId e para a auditoria.
+  let templateValidado: string | null = null;
   try {
     db.transaction((tx) => {
-      // 1) movimentação financeira
+      // 1) Re-lê a conta dentro da transação: saldo calculado sobre o
+      // valor atual, nunca sobre leitura anterior (evita lost update).
+      const [contaTx] = tx.select().from(financialAccounts)
+        .where(and(eq(financialAccounts.id, body.data.accountId), eq(financialAccounts.characterId, a.personagem.id)))
+        .limit(1).all();
+      if (!contaTx) throw new Error("conta_sumiu");
+      const saldoNovo = contaTx.balanceCents + sinal * cents;
+      const piso = cfg.permitirSaldoNegativo ? -Infinity : -(contaTx.type === "cartao_credito" ? (contaTx.creditLimitCents ?? 0) : 0);
+      if (saldoNovo < piso) { saldoInsuficiente = true; return; }
+
+      // 2) Re-lê o item/template dentro da transação: estoque atual e
+      //    dados do catálogo são lidos no momento da escrita — um item
+      //    do catálogo desativado ou alterado não é confiado do cliente.
+      let itemTx: typeof inventoryEntries.$inferSelect | null = null;
+      let tplTx: typeof itemTemplates.$inferSelect | null = null;
+      let qtdVenda = 0;
+      if (!isCompra) {
+        const [it] = tx.select().from(inventoryEntries)
+          .where(and(eq(inventoryEntries.id, body.data.itemId!), eq(inventoryEntries.characterId, a.personagem.id)))
+          .limit(1).all();
+        if (!it) throw new Error("item_sumiu");
+        qtdVenda = body.data.quantidade ?? it.quantity;
+        if (qtdVenda > it.quantity) { estoqueInsuficiente = true; return; }
+        itemTx = it;
+      } else if (body.data.templateId) {
+        const [tpl] = tx.select().from(itemTemplates)
+          .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
+          .limit(1).all();
+        if (!tpl) throw new Error("template_sumiu");
+        tplTx = tpl;
+        templateValidado = tpl.id;
+      }
+
+      // 3) Movimentação financeira (requestId → idempotência por UNIQUE)
       tx.insert(moneyTransactions).values({
         id: crypto.randomUUID(), characterId: a.personagem.id, campaignId: a.personagem.campaignId,
         kind: isCompra ? "compra" : "venda",
-        amount: (sinal * cents) / 100, currency: conta.currency, account: conta.type,
-        accountId: conta.id, amountCents: sinal * cents,
-        balanceBeforeCents: conta.balanceCents, balanceAfterCents: novoSaldo,
-        counterparty: body.data.contraparte ?? null,
-        description: body.data.descricao ?? (isCompra ? "Compra" : "Venda"),
+        amount: deCentavos(sinal * cents, casas), currency: contaTx.currency, account: contaTx.type,
+        accountId: contaTx.id, amountCents: sinal * cents,
+        balanceBeforeCents: contaTx.balanceCents, balanceAfterCents: saldoNovo,
+        counterparty: body.data.contraparte ?? (itemTx ? itemTx.name : null),
+        description: body.data.descricao ?? (isCompra ? (tplTx ? `Compra: ${tplTx.name}` : "Compra") : `Venda: ${itemTx?.name ?? "item"}`),
         requestId, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
-      tx.update(financialAccounts).set({ balanceCents: novoSaldo, updatedAt: agora }).where(eq(financialAccounts.id, conta.id)).run();
+      tx.update(financialAccounts).set({ balanceCents: saldoNovo, updatedAt: agora }).where(eq(financialAccounts.id, contaTx.id)).run();
 
-      // 2) inventário
-      if (isCompra && body.data.item) {
-        const qtd = body.data.quantidade ?? body.data.item.quantity ?? 1;
+      // 4) Inventário — o item criado guarda operacaoId (= requestId da
+      //    movimentação financeira) para vincular patrimônio ↔ financeiro.
+      if (isCompra) {
+        const tplData = (tplTx?.data ?? {}) as Record<string, unknown>;
+        const itemDados = body.data.item;
+        const qtd = body.data.quantidade ?? itemDados?.quantity ?? 1;
+        // Referência de preço unitário só existe quando cents/qtd é
+        // inteiro na menor unidade — totais ínfimos por unidade
+        // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
+        const unitExato = cents / qtd;
+        const unitCents = Number.isInteger(unitExato) ? unitExato : null;
         tx.insert(inventoryEntries).values({
           id: crypto.randomUUID(), characterId: a.personagem.id,
-          name: body.data.item.name, quantity: qtd, description: body.data.item.description,
-          category: body.data.item.category, location: body.data.item.location,
-          condition: body.data.item.condition, weight: body.data.item.weight,
-          data: { ...body.data.item.data, valueCents: cents, origem: "compra" },
+          name: itemDados?.name ?? tplTx!.name, quantity: qtd,
+          description: itemDados?.description ?? tplTx?.description ?? undefined,
+          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          location: itemDados?.location, condition: itemDados?.condition,
+          weight: itemDados?.weight ?? (tplData.weight as number | undefined),
+          data: (() => {
+            // Mescla rasa e consciente: dados do template são a base e a
+            // personalização do item sobrescreve campo a campo — o schema
+            // aplica default {} em item.data, então nunca usar
+            // `item.data ?? tplData` ({} não é ausência).
+            const mesclado: Record<string, unknown> = { ...tplData, ...(itemDados?.data ?? {}) };
+            // Sanitização explícita: templateId nunca é aceito de
+            // item.data, item.templateId ou tplData — só tplTx.id
+            // (template relido e validado na transação) pode persistir.
+            delete mesclado.templateId;
+            if (tplTx) mesclado.templateId = tplTx.id;
+            // Campos internos sempre definidos pelo servidor.
+            mesclado.valueCents = unitCents ?? undefined;
+            mesclado.totalValueCents = cents;
+            mesclado.aquisicao = { formato: "unitario-v1", unitCents, totalCents: cents, qtdOriginal: qtd };
+            mesclado.origem = "compra";
+            mesclado.operacaoId = requestId;
+            return mesclado;
+          })(),
           createdAt: agora, updatedAt: agora,
         }).run();
-      } else if (itemAlvo) {
-        const qtd = body.data.quantidade ?? itemAlvo.quantity;
-        if (qtd >= itemAlvo.quantity) {
-          tx.delete(inventoryEntries).where(eq(inventoryEntries.id, itemAlvo.id)).run();
+      } else if (itemTx) {
+        // Baixa condicional: só afeta linhas se o estoque atual ainda
+        // comportar a quantidade — changes===0 indica corrida perdida.
+        if (qtdVenda >= itemTx.quantity) {
+          const del = tx.delete(inventoryEntries)
+            .where(and(eq(inventoryEntries.id, itemTx.id), eq(inventoryEntries.quantity, itemTx.quantity)))
+            .run();
+          if (del.changes !== 1) throw new Error("estoque_mudou");
         } else {
-          tx.update(inventoryEntries).set({ quantity: itemAlvo.quantity - qtd, updatedAt: agora }).where(eq(inventoryEntries.id, itemAlvo.id)).run();
+          const upd = tx.update(inventoryEntries)
+            .set({ quantity: sql`${inventoryEntries.quantity} - ${qtdVenda}`, updatedAt: agora })
+            .where(and(eq(inventoryEntries.id, itemTx.id), gte(inventoryEntries.quantity, qtdVenda)))
+            .run();
+          if (upd.changes !== 1) throw new Error("estoque_mudou");
         }
       }
+      novoSaldo = saldoNovo;
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada" }); return; }
+    const msg = String(e);
+    if (msg.includes("UNIQUE")) { res.status(409).json({ erro: "Operação já registrada" }); return; }
+    if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
+    if (msg.includes("item_sumiu")) { res.status(404).json({ erro: "Item não encontrado" }); return; }
+    if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
   }
-  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents });
+  if (saldoInsuficiente) {
+    res.status(400).json({ erro: "Saldo insuficiente" });
+    return;
+  }
+  if (estoqueInsuficiente) {
+    res.status(400).json({ erro: "Quantidade indisponível no estoque" });
+    return;
+  }
+  await audit(req, "financeiro.operacao", { characterId: a.personagem.id, tipo: body.data.tipo, cents: sinal * cents, requestId, itemId: body.data.itemId ?? null, templateId: templateValidado });
   emitir(a.personagem);
   res.status(201).json({ ok: true, saldo: deCentavos(novoSaldo, casas) });
 });

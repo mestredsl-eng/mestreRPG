@@ -1,0 +1,232 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+      - feat/mesa-virtual-mapas-tokens
+      - feat/mesa-virtual-nevoa-backend
+      - feat/mesa-virtual-nevoa-frontend
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - edited
+      - ready_for_review
+  push:
+    branches:
+      - integracao/acervo
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "Número da PR a homologar (checkout do merge ref refs/pull/N/merge)"
+        required: true
+        type: number
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  servidor:
+    name: Servidor — typecheck, build e suítes sem navegador
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolver alvo da execução
+        id: alvo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::pr_number inválido: '$PR_NUMBER'"
+            exit 1
+          fi
+          meta=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER") \
+            || { echo "::error::PR #$PR_NUMBER não encontrada"; exit 1; }
+          state=$(jq -r '.state' <<<"$meta")
+          merged=$(jq -r '.merged' <<<"$meta")
+          if [ "$state" != "open" ] || [ "$merged" != "false" ]; then
+            echo "::error::PR #$PR_NUMBER não está aberta ou já foi mesclada (state=$state merged=$merged)"
+            exit 1
+          fi
+          repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          merge_sha="$(
+            GIT_TERMINAL_PROMPT=0 \
+            git ls-remote "$repo_url" "refs/pull/${PR_NUMBER}/merge" |
+            awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Merge ref da PR #$PR_NUMBER ausente ou inválida"
+            exit 1
+          fi
+          echo "ref=refs/pull/$PR_NUMBER/merge" >> "$GITHUB_OUTPUT"
+          echo "sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "Homologando PR #$PR_NUMBER — merge ref $merge_sha"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.alvo.outputs.ref }}
+      - name: Confirmar revisão testada
+        run: |
+          echo "SHA efetivamente testado: $(git rev-parse HEAD)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            test "$(git rev-parse HEAD)" = "${{ steps.alvo.outputs.sha }}" \
+              || { echo "::error::checkout diverge do merge ref esperado"; exit 1; }
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TypeScript servidor
+        run: npx tsc --noEmit -p servidor/tsconfig.json
+      - name: TypeScript site
+        run: npx tsc --noEmit -p site/tsconfig.json
+      - name: Build workspaces
+        run: npm run build
+      - name: Suítes residuais Acervo + dados 3D (sem navegador)
+        run: |
+          set -e
+          for s in \
+            homologacao-acervo.mjs \
+            teste-acervo-campanha.mjs \
+            teste-acervo-diff.mjs \
+            teste-fisica-dados.mjs \
+            teste-restauracao-boot.mjs \
+            teste-trava-instancia.mjs \
+            teste-atualizacao-instalacao.mjs \
+            teste-docs-operacao.mjs \
+            homologacao-etapa2.mjs \
+            homologacao-final-v1.mjs \
+            homologacao-mesa.mjs \
+            teste-mesa-seguranca.mjs \
+            teste-convite-cadastro.mjs \
+            homologacao-equipamentos.mjs \
+            teste-equipamentos.mjs \
+            teste-financeiro-atomico.mjs \
+            teste-moedas-regressao.mjs \
+            teste-vitalidade-historico.mjs \
+            teste-vida-conversao.mjs \
+            teste-venda-estoque.mjs \
+            teste-financeiro-compras.mjs \
+            teste-regressao-revisao.mjs \
+            teste-pontos-concorrencia.mjs \
+            teste-novidades.mjs \
+            teste-novidades-realtime.mjs \
+            teste-sessoes-socket.mjs \
+            teste-validacao-personagem.mjs \
+            teste-exclusao-personagem.mjs
+          do
+            if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
+            echo "===== $s ====="; node "$s"
+          done
+
+  navegador:
+    name: Navegador — homologações Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Resolver alvo da execução
+        id: alvo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "workflow_dispatch" ]; then
+            echo "ref=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            echo "sha=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::pr_number inválido: '$PR_NUMBER'"
+            exit 1
+          fi
+          meta=$(curl -sf -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/pulls/$PR_NUMBER") \
+            || { echo "::error::PR #$PR_NUMBER não encontrada"; exit 1; }
+          state=$(jq -r '.state' <<<"$meta")
+          merged=$(jq -r '.merged' <<<"$meta")
+          if [ "$state" != "open" ] || [ "$merged" != "false" ]; then
+            echo "::error::PR #$PR_NUMBER não está aberta ou já foi mesclada (state=$state merged=$merged)"
+            exit 1
+          fi
+          repo_url="https://github.com/${GITHUB_REPOSITORY}.git"
+          merge_sha="$(
+            GIT_TERMINAL_PROMPT=0 \
+            git ls-remote "$repo_url" "refs/pull/${PR_NUMBER}/merge" |
+            awk 'NR == 1 { print $1 }'
+          )"
+          if ! [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Merge ref da PR #$PR_NUMBER ausente ou inválida"
+            exit 1
+          fi
+          echo "ref=refs/pull/$PR_NUMBER/merge" >> "$GITHUB_OUTPUT"
+          echo "sha=$merge_sha" >> "$GITHUB_OUTPUT"
+          echo "Homologando PR #$PR_NUMBER — merge ref $merge_sha"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.alvo.outputs.ref }}
+      - name: Confirmar revisão testada
+        run: |
+          echo "SHA efetivamente testado: $(git rev-parse HEAD)"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            test "$(git rev-parse HEAD)" = "${{ steps.alvo.outputs.sha }}" \
+              || { echo "::error::checkout diverge do merge ref esperado"; exit 1; }
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build workspaces
+        run: npm run build
+      # Sem --with-deps: a etapa apt é ponto único de falha (o mirror
+      # azure.archive.ubuntu.com dos runners ficou indisponível por DNS e
+      # derrubou o job antes dos testes). A imagem ubuntu-latest já traz
+      # as libs gráficas necessárias (Chrome/Firefox/Edge pré-instalados);
+      # o step seguinte comprova o launch antes das suítes.
+      - name: Chromium para Playwright
+        run: npx playwright install chromium
+      - name: Verificar inicialização do Chromium
+        run: node -e "import('playwright').then(async ({ chromium }) => { const b = await chromium.launch(); await b.close(); console.log('chromium launch ok'); })"
+      - name: Suítes de navegador
+        run: |
+          set -e
+          for s in \
+            homologacao-dados3d.mjs \
+            teste-acervo-corridas.mjs \
+            teste-acessibilidade.mjs \
+            homologacao-hp-historico.mjs \
+            homologacao-patrimonio.mjs \
+            homologacao-compras-vendas.mjs \
+            homologacao-conversao.mjs \
+            homologacao-novidades.mjs \
+            homologacao-v1-cobertura.mjs \
+            homologacao-primeira-partida.mjs \
+            homologacao-visual.mjs \
+            homologacao-validacao-ficha.mjs \
+            homologacao-exclusao-personagem.mjs \
+            homologacao-busca-filtros.mjs \
+            homologacao-mesa-virtual.mjs \
+            homologacao-nevoa.mjs \
+            homologacao-pacotes-forjados.mjs \
+            teste-vtt-rollback-p6.mjs \
+            teste-vtt-nevoa.mjs \
+            teste-permissao-tempo-real.mjs
+          do
+            if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
+            echo "===== $s ====="; node "$s"
+          done

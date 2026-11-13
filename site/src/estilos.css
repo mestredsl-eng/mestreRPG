@@ -244,6 +244,31 @@ label.checkbox input {
   opacity: 0.55;
 }
 
+tr.arquivado td {
+  opacity: 0.6;
+}
+
+/* Linha de busca/filtros das listagens — ocupa a largura disponível
+   e quebra para a linha seguinte em telas estreitas. */
+.filtros-lista {
+  margin: 0.5rem 0 0.75rem;
+}
+.filtros-lista input[type="search"] {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.filtros-lista select,
+.filtros-lista input[type="date"] {
+  flex: 0 1 auto;
+  max-width: 100%;
+}
+.filtros-lista .filtro-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  white-space: nowrap;
+}
+
 .acoes {
   white-space: nowrap;
 }
@@ -315,6 +340,7 @@ textarea {
 .badge-falha,
 .badge-falha_critica { background: #7f3b3b; color: #fff; }
 .badge-reaberta { background: #6d5a1f; color: #fff; }
+.badge-arquivado { background: #3a3f4a; color: #8b93a1; }
 .badge-npc { background: #5b3a7f; color: #fff; }
 .badge-selo { background: #274a63; color: #cfe3ff; }
 
@@ -1185,6 +1211,15 @@ button.vit-nivel:hover { border-color: #4d7ec4; }
 .vit-penalidade { font-size: 0.72rem; color: #8a8f98; }
 .vit-nivel.atual .vit-penalidade { color: #8ab4ff; }
 
+.vit-origem {
+  font-size: 0.68rem;
+  color: #8ab4ff;
+  border: 1px solid #2c4a7c;
+  border-radius: 999px;
+  padding: 0.05rem 0.45rem;
+  white-space: nowrap;
+}
+
 .vitalidade-rolagem {
   color: #8ab4ff;
 }
@@ -1691,3 +1726,322 @@ code {
     text-align: left;
   }
 }
+/* ---- Foco visível consistente (acessibilidade) ----
+   Regras :focus acima removem o outline; :focus-visible (foco de
+   teclado) restaura um indicador claro sem afetar clique de mouse. */
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid #8ab4ff;
+  outline-offset: 2px;
+}
+
+/* Dados 3D em canvas: dimensões e fallback acessível. */
+.dado-3d-canvas {
+  display: inline-block;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  vertical-align: middle;
+  overflow: visible;
+  filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.42));
+}
+.dado-3d-canvas.d10-face { width: 44px; height: 44px; }
+.dado-3d-canvas.estado-sucesso { filter: drop-shadow(0 3px 4px rgba(46, 143, 91, .45)); }
+
+/* ---- Ajuda contextual (popover) ---- */
+.ajuda-contextual {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  margin-left: 0.3rem;
+}
+
+.ajuda-botao {
+  background: #2c3038;
+  border: 1px solid #4a5160;
+  color: #8ab4ff;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ajuda-botao:hover {
+  background: #3b5bdb;
+  border-color: #3b5bdb;
+  color: #fff;
+}
+
+.ajuda-botao:focus-visible {
+  outline: 2px solid #8ab4ff;
+  outline-offset: 2px;
+}
+
+/* Posição fixed: top/left vêm do JS (AjudaPopover) para nunca ser cortado
+   por overflow de containers nem ultrapassar a viewport. */
+.ajuda-popover {
+  position: fixed;
+  background: #1e2126;
+  border: 1px solid #3b5bdb;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  max-width: min(320px, calc(100vw - 1rem));
+  min-width: min(200px, calc(100vw - 1rem));
+  z-index: 300;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  white-space: normal;
+  word-wrap: break-word;
+}
+
+.ajuda-conteudo {
+  font-size: 0.85rem;
+  line-height: 1.45;
+  color: #e8e6e3;
+}
+
+/* Seletor único customizado: gatilho + lista com ajuda por opção */
+.seletor-unico {
+  position: relative;
+}
+
+.seletor-unico-gatilho {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  background: #14161a;
+  border: 1px solid #2c3038;
+  border-radius: 6px;
+  color: #e8e6e3;
+  cursor: pointer;
+  text-align: left;
+}
+
+.seletor-unico-gatilho:hover {
+  border-color: #3b5bdb;
+}
+
+.seletor-unico-gatilho:focus-visible {
+  outline: none;
+  border-color: #3b5bdb;
+  box-shadow: 0 0 0 2px rgba(59, 91, 219, 0.35);
+}
+
+.seletor-unico-valor {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.seletor-unico-seta {
+  color: #8ab4ff;
+  flex-shrink: 0;
+}
+
+.seletor-unico-lista {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  right: 0;
+  z-index: 90;
+  background: #161a22;
+  border: 1px solid #3b5bdb;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 0.25rem;
+}
+
+.seletor-unico-lista.para-cima {
+  top: auto;
+  bottom: calc(100% + 0.25rem);
+}
+
+.seletor-unico-opcao {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  border-radius: 6px;
+}
+
+.seletor-unico-opcao:hover {
+  background: rgba(59, 91, 219, 0.12);
+}
+
+.seletor-unico-opcao.selecionada {
+  background: rgba(59, 91, 219, 0.2);
+}
+
+.seletor-unico-item {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.45rem 0.5rem;
+  background: none;
+  border: none;
+  color: #e8e6e3;
+  font-size: 0.9rem;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.seletor-unico-item:focus-visible {
+  outline: 2px solid #8ab4ff;
+  outline-offset: -2px;
+}
+
+.seletor-unico-check {
+  color: #8ab4ff;
+  flex-shrink: 0;
+}
+
+/* A ajuda dentro da lista de opções precisa ficar acima da lista */
+.seletor-unico-opcao .ajuda-contextual {
+  position: relative;
+  z-index: 2;
+}
+
+/* Ajuste para o ícone dentro de labels de checkbox */
+.checkbox-inline .ajuda-contextual {
+  margin-left: 0.2rem;
+}
+
+/* Ajuste para o ícone dentro de itens de nível */
+.nivel-nome .ajuda-contextual {
+  margin-left: 0.25rem;
+  align-self: center;
+}
+.dado-3d-canvas.estado-falha { filter: drop-shadow(0 3px 4px rgba(138, 58, 58, .45)); }
+@media (max-width: 600px) {
+  .dado-3d-canvas { width: 28px; height: 28px; }
+  .dado-3d-canvas.d10-face { width: 36px; height: 36px; }
+}
+.dado-3d-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 8px;
+  background: var(--dado-fundo, #2b3350);
+  color: var(--dado-texto, #e8ecf7);
+  border: 1px solid var(--dado-borda, #46538a);
+  font-weight: 800;
+}
+.dado-3d-fallback.d10-face { width: 44px; height: 44px; }
+@media (max-width: 600px) {
+  .dado-3d-fallback { width: 28px; height: 28px; }
+  .dado-3d-fallback.d10-face { width: 36px; height: 36px; }
+}
+.dado-3d-canvas.dado-3d-indisponivel { display: none; }
+
+/* ---- Central de Novidades (Issue #42) ---- */
+.contador-nao-lidas {
+  display: inline-block;
+  min-width: 1.15rem;
+  margin-left: 0.35rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  background: #c0392b;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.lista-novidades {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.novidade-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #16181d;
+  border: 1px solid #2c3038;
+  border-radius: 8px;
+  padding: 0.7rem 0.9rem;
+  color: inherit;
+}
+.novidade-item:hover { border-color: #3b5bdb; }
+.novidade-item.nao-lida { border-left: 3px solid #3b5bdb; }
+
+.novidade-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.3rem;
+}
+
+.badge-cat-novidade { background: #1d4ed8; color: #fff; }
+.badge-cat-melhoria { background: #2e5c3a; color: #fff; }
+.badge-cat-correcao { background: #8a6d1f; color: #fff; }
+.badge-versao { background: #3a3f4a; color: #c9cdd3; }
+
+.ponto-nao-lida {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #3b5bdb;
+  flex: none;
+}
+
+.novidade-data { color: #8b93a7; font-size: 0.8rem; margin-left: auto; }
+.novidade-titulo { display: block; font-size: 1rem; }
+.novidade-resumo { display: block; color: #9aa0a6; font-size: 0.88rem; margin-top: 0.2rem; }
+
+.novidade-detalhe .novidade-topo { margin-bottom: 0.6rem; }
+.novidade-resumo-detalhe { color: #c9cdd3; font-size: 0.95rem; }
+.conteudo-novidade {
+  white-space: pre-wrap;
+  line-height: 1.55;
+  color: #d7dae0;
+}
+
+.vazio { color: #8b93a7; }
+
+@media (max-width: 600px) {
+  .novidade-data { margin-left: 0; width: 100%; }
+}
+
+/* Destaque de campo com erro de validação (salvamento de ficha) */
+.campo-com-erro { outline: 1px solid #a05a5a; outline-offset: 2px; border-radius: 6px; }
+.campo-pulso { animation: pulso-erro 1.6s ease-out; }
+@keyframes pulso-erro {
+  0% { box-shadow: 0 0 0 0 rgba(200, 90, 90, 0.7); }
+  100% { box-shadow: 0 0 0 14px rgba(200, 90, 90, 0); }
+}
+.erros-salvamento ul { margin: 6px 0 0; padding-left: 20px; }
+.erros-salvamento .mini { margin-left: 6px; }

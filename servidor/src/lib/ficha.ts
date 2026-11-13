@@ -202,7 +202,7 @@ export function campoEditavelPor(
   statusPersonagem: string
 ): boolean {
   if (ehMestre) return true; // mestre sempre pode editar (spec §7)
-  if (statusPersonagem === "bloqueada" || statusPersonagem === "aprovada") return false;
+  if (statusPersonagem === "bloqueada" || statusPersonagem === "aprovada" || statusPersonagem === "arquivado") return false;
   const ed = override?.editavelPor ?? campo.editavelPor;
   return ed === "jogador" || ed === "ambos";
 }
