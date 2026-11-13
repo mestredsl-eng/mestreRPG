@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { AjudaPopover } from "./Modal";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -279,9 +280,24 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
   // o valor continua salvo como número. Faixas longas (ex.: idade) caem
   // no input numérico porque faixaAtributo retorna null.
   if (campo.tipo === "inteiro" && faixaAtributo(campo) && (campo.semantico === "atributo" || !!ctxPontos)) {
+    // Verifica se o campo tem um elemento vinculado na biblioteca com descrição
+    let descricaoElemento: string | undefined = undefined;
+    if (campo.regra?.key) {
+      const elemento = (biblioteca?.[campo.regra.kind] ?? []).find((o) => o.key === campo.regra!.key);
+      descricaoElemento = elemento?.descricao;
+    }
+    const rotuloComAjuda = (
+      <span className="campo-label">
+        {campo.label}
+        {campo.obrigatorio && <em className="obrigatorio">*</em>}
+        {campo.descricao && <small className="meta">{campo.descricao}</small>}
+        {campo.editavel === false && <small className="meta">somente o mestre altera</small>}
+        <AjudaPopover texto={descricaoElemento ?? ""} rotuloBotao={`Ver descrição de ${campo.label}`} />
+      </span>
+    );
     return (
       <div id={`ficha-campo-${campo.id}`} className={cls}>
-        {rotulo}
+        {rotuloComAjuda}
         <SeletorAtributo campo={campo} valor={valor ?? campo.padrao} somenteLeitura={somenteLeitura} aoMudar={aoMudar} ctx={ctxPontos} />
       </div>
     );
@@ -414,17 +430,18 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
       );
     case "selecao_unica": {
       const opcoes = campo.regraKind && opcoesBiblioteca.length
-        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
-        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name, d: o.descricao }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o, d: undefined }));
       return editavel(
-        <select aria-label={campo.label} value={String(atual ?? "")} onChange={(e) => {
-          const v = e.target.value;
-          if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
-          else mudar(v);
-        }}>
-          <option value="">—</option>
-          {opcoes.map((o) => <option key={o.v} value={o.v}>{o.l}</option>)}
-        </select>
+        <SeletorUnico
+          rotulo={campo.label}
+          opcoes={opcoes}
+          valor={String(atual ?? "")}
+          aoMudar={(v) => {
+            if (aoAlternarPoder && v) aoAlternarPoder(campo, v);
+            else mudar(v);
+          }}
+        />
       );
     }
     case "selecao_nivel": {
@@ -450,7 +467,10 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
             return (
               <div key={el.key} className="nivel-item">
                 <div className="nivel-linha">
-                  <span className="nivel-nome">{el.name}</span>
+                  <span className="nivel-nome">
+                    {el.name}
+                    <AjudaPopover texto={el.descricao ?? ""} rotuloBotao={`Ver descrição de ${el.name}`} />
+                  </span>
                   <SeletorNivel valor={nivel} max={maxN} aoMudar={(n) => alternarNivel(el.key, n)} />
                 </div>
                 {nivel > 0 && desc && <div className="nivel-desc">{desc}</div>}
@@ -470,8 +490,8 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
     case "lista": {
       const lista: string[] = Array.isArray(atual) ? (atual as string[]) : [];
       const opcoes = campo.regraKind && opcoesBiblioteca.length
-        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name }))
-        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o }));
+        ? opcoesBiblioteca.map((o) => ({ v: o.key, l: o.name, d: o.descricao }))
+        : (campo.opcoes ?? []).map((o) => ({ v: o, l: o, d: undefined }));
       const alternar = (op: string) => {
         if (aoAlternarPoder) { aoAlternarPoder(campo, op); return; }
         mudar(lista.includes(op) ? lista.filter((x) => x !== op) : [...lista, op]);
@@ -482,6 +502,7 @@ function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, bibliote
             <label key={o.v} className="checkbox-inline">
               <input type="checkbox" checked={lista.includes(o.v)} onChange={() => alternar(o.v)} />
               {o.l}
+              <AjudaPopover texto={o.d ?? ""} rotuloBotao={`Ver descrição de ${o.l}`} />
             </label>
           ))}
         </div>
@@ -571,6 +592,158 @@ function custoNivelEl(el: ElementoVinculavel, nivel: number): number {
   let custo = 0;
   for (let i = 0; i < nivel; i++) custo += el.niveis?.[i]?.custo ?? el.custoPontos ?? 0;
   return custo;
+}
+
+/**
+ * Seletor único com ajuda por opção — substitui o <select> nativo para que
+ * cada opção da Biblioteca exiba seu próprio "?" sem precisar ser escolhida.
+ * A opção em si é um botão role="option"; o AjudaPopover é irmão, nunca
+ * filho, para não aninhar interativos dentro do role="option".
+ */
+function SeletorUnico({ rotulo, opcoes, valor, aoMudar }: {
+  rotulo: string;
+  opcoes: { v: string; l: string; d?: string }[];
+  valor: string;
+  aoMudar: (v: string) => void;
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [paraCima, setParaCima] = useState(false);
+  const caixaRef = useRef<HTMLDivElement>(null);
+  const gatilhoRef = useRef<HTMLButtonElement>(null);
+  const listaRef = useRef<HTMLDivElement>(null);
+
+  const rotuloAtual = opcoes.find((o) => o.v === valor)?.l ?? "—";
+  // Mantém a opção vazia ("—") do <select> original: limpa a seleção.
+  const opcoesLista = [{ v: "", l: "—", d: undefined }, ...opcoes];
+
+  useEffect(() => {
+    if (!aberto) return;
+    const aoClicarFora = (e: MouseEvent) => {
+      if (caixaRef.current && !caixaRef.current.contains(e.target as Node)) setAberto(false);
+    };
+    document.addEventListener("mousedown", aoClicarFora);
+    return () => document.removeEventListener("mousedown", aoClicarFora);
+  }, [aberto]);
+
+  // Vira a lista para cima quando não há espaço suficiente abaixo do gatilho.
+  useLayoutEffect(() => {
+    if (!aberto) {
+      setParaCima(false);
+      return;
+    }
+    const gatilho = gatilhoRef.current;
+    const lista = listaRef.current;
+    if (!gatilho || !lista) return;
+    const calcular = () => {
+      const r = gatilho.getBoundingClientRect();
+      const h = lista.offsetHeight;
+      const espacoBaixo = window.innerHeight - r.bottom;
+      const espacoCima = r.top;
+      setParaCima(h + 8 > espacoBaixo && espacoCima > espacoBaixo);
+    };
+    calcular();
+    window.addEventListener("resize", calcular);
+    window.addEventListener("scroll", calcular, true);
+    return () => {
+      window.removeEventListener("resize", calcular);
+      window.removeEventListener("scroll", calcular, true);
+    };
+  }, [aberto]);
+
+  // Ao abrir, foca a opção selecionada (ou a primeira).
+  useEffect(() => {
+    if (!aberto) return;
+    const lista = listaRef.current;
+    if (!lista) return;
+    const sel = lista.querySelector<HTMLElement>('[role="option"][aria-selected="true"]');
+    const primeiro = lista.querySelector<HTMLElement>('[role="option"]');
+    (sel ?? primeiro)?.focus();
+  }, [aberto]);
+
+  const escolher = (v: string) => {
+    aoMudar(v);
+    setAberto(false);
+    gatilhoRef.current?.focus();
+  };
+
+  const opcoesDom = () =>
+    Array.from(listaRef.current?.querySelectorAll<HTMLElement>('[role="option"]') ?? []);
+
+  return (
+    <div
+      className="seletor-unico"
+      ref={caixaRef}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node)) setAberto(false);
+      }}
+    >
+      <button
+        type="button"
+        ref={gatilhoRef}
+        className="seletor-unico-gatilho"
+        aria-haspopup="listbox"
+        aria-expanded={aberto}
+        aria-label={rotulo}
+        onClick={() => setAberto((a) => !a)}
+        onKeyDown={(e) => {
+          if (!aberto && (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ")) {
+            e.preventDefault();
+            setAberto(true);
+          }
+        }}
+      >
+        <span className="seletor-unico-valor">{rotuloAtual}</span>
+        <span className="seletor-unico-seta" aria-hidden="true">▾</span>
+      </button>
+      {aberto && (
+        <div
+          className={`seletor-unico-lista${paraCima ? " para-cima" : ""}`}
+          role="listbox"
+          aria-label={rotulo}
+          ref={listaRef}
+          onKeyDown={(e) => {
+            const itens = opcoesDom();
+            const i = itens.indexOf(document.activeElement as HTMLElement);
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (itens.length) itens[(i + (e.key === "ArrowDown" ? 1 : -1) + itens.length) % itens.length].focus();
+            } else if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              (e.key === "Home" ? itens[0] : itens[itens.length - 1])?.focus();
+            } else if (e.key === "Escape") {
+              // ESC originado do botão/popover de ajuda fecha só a ajuda —
+              // o AjudaPopover trata a tecla no window; não derrubar a lista.
+              if ((e.target as HTMLElement).closest(".ajuda-contextual")) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setAberto(false);
+              gatilhoRef.current?.focus();
+            }
+          }}
+        >
+          {opcoesLista.map((o) => {
+            const sel = o.v === valor;
+            return (
+              <div key={o.v || "__vazio"} className={`seletor-unico-opcao${sel ? " selecionada" : ""}`}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={sel}
+                  aria-label={o.l}
+                  className="seletor-unico-item"
+                  onClick={() => escolher(o.v)}
+                >
+                  {sel && <span className="seletor-unico-check" aria-hidden="true">✓ </span>}
+                  {o.l}
+                </button>
+                <AjudaPopover texto={o.d ?? ""} rotuloBotao={`Ver descrição de ${o.l}`} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Bolinhas de nível 1..max (0 = não escolhido) — usado por selecao_nivel. */
