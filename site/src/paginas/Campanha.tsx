@@ -87,6 +87,16 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     };
   }, [id, carregar]);
 
+  // Se a reconexão aconteceu na aba Mesa sem sessão aberta (MesaView não
+  // montada → ninguém reingressou na room), a entrada acontece ao abrir
+  // qualquer outra aba — as páginas já recarregam no mount de qualquer
+  // forma, então nenhuma atualização se perde.
+  const primeiraAba = useRef(true);
+  useEffect(() => {
+    if (primeiraAba.current) { primeiraAba.current = false; return; }
+    if (aba !== "mesa") getSocket().emit("entrar-campanha", id);
+  }, [aba, id]);
+
   const salvarEdicao = async (e: FormEvent) => {
     e.preventDefault();
     try {

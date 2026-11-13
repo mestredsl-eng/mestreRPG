@@ -10,6 +10,18 @@ const estruturaVazia = (): EstruturaFicha => ({
   pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
 });
 
+// Impressão digital barata do conteúdo — usada como key do EditorFicha:
+// o editor só remonta (perdendo o rascunho local da simulação) quando a
+// estrutura realmente muda, nunca por evento de outro modelo ou refresh
+// cosmético do detalhe.
+const fingerprintEstrutura = (e: EstruturaFicha | null): string => {
+  if (!e) return "";
+  const s = JSON.stringify(e);
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return `${s.length}:${h}`;
+};
+
 export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   const [modelos, setModelos] = useState<ModeloResumo[]>([]);
   const [vinculaveis, setVinculaveis] = useState<{ kinds: string[]; elementos: Record<string, { key: string; name: string; category: string | null }[]> } | null>(null);
@@ -64,15 +76,35 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   // alterações locais pendentes.
   // Não usar o templateId do payload para filtrar: o debounce do hook
   // conserva só o último evento, e uma alteração do modelo aberto pode ser
-  // descartada por um evento posterior de outro modelo.
+  // descartada por um evento posterior de outro modelo. Em vez de reabrir,
+  // busca o detalhe e só atualiza o que mudou — a versão escolhida e a
+  // simulação em andamento são preservadas quando nada relevante mudou.
   useSincronizacaoCampanha(["fichas:atualizadas"], () => {
     void carregar();
     if (!selecionado) return;
-    if (estruturaSuja || campoEmEdicao) {
-      setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
-    } else {
-      void abrirModelo(selecionado);
-    }
+    void (async () => {
+      try {
+        const d = await api.obterModelo(campaignId, selecionado);
+        const mantida = versaoSel ? d.versoes.find((v) => v.id === versaoSel.id) : undefined;
+        const versao = mantida
+          ?? d.versoes.find((v) => v.rascunho)
+          ?? d.versoes.find((v) => v.id === d.modelo.currentVersionId)
+          ?? d.versoes[0];
+        const estruturaMudou = JSON.stringify(versao?.estrutura ?? null) !== JSON.stringify(estrutura);
+        if (estruturaSuja || campoEmEdicao) {
+          if (estruturaMudou) {
+            setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
+          }
+          return;
+        }
+        setDetalhe(d);
+        setVersaoSel(versao ?? null);
+        if (versao?.estrutura) setEstrutura({ ...versao.estrutura });
+        setAviso(null);
+      } catch {
+        // detalhe recarrega na próxima abertura do modelo
+      }
+    })();
   });
 
   const abrirModelo = async (id: string) => {
@@ -236,9 +268,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           </div>
           {versaoSel.publishedAt && <p className="meta">Versão publicada — para alterar, crie uma nova versão.</p>}
           {!versaoSel.rascunho && versaoSel.estrutura && (
-            <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />
+            <EditorFicha key={`${versaoSel.id}:${fingerprintEstrutura(versaoSel.estrutura ?? null)}`} inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />
           )}
-          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />}
+          {versaoSel.rascunho && <EditorFicha key={`${versaoSel.id}:${fingerprintEstrutura(versaoSel.estrutura ?? null)}`} inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />}
         </section>
       )}
       {confirmandoPublicar && (
