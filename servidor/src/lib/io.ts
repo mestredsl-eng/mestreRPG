@@ -19,10 +19,30 @@ export function emitirCampanha(campaignId: string, evento: string, dados: unknow
 }
 
 /**
+ * Notifica APENAS os sockets do usuário afetado (room privada
+ * `usuario:${userId}`) que seu papel/status/permissões mudaram numa
+ * campanha — disparado SOMENTE após a persistência da alteração.
+ * O payload não contém dados de outros membros.
+ */
+export function notificarPermissaoAtualizada(
+  campaignId: string,
+  m: { userId: string; role: string; status: string; permissions: unknown },
+) {
+  io?.to(`usuario:${m.userId}`).emit("mesa:permissao:atualizada", {
+    campaignId,
+    papel: m.role,
+    status: m.status,
+    permissoes: m.permissions ?? {},
+  });
+}
+
+/**
  * Remove o usuário de todas as rooms de uma campanha (campanha + sessões de
  * mesa), sem desconectar o socket — assim outras campanhas do mesmo usuário
  * no mesmo socket não são afetadas. Após a expulsão, `entrar-campanha` e
- * `mesa:entrar` rejeitam a entrada porque exigem membership ativa.
+ * `mesa:entrar` rejeitam a entrada porque exigem membership ativa. A room
+ * privada `usuario:${userId}` é preservada justamente para que a
+ * notificação de revogação ainda chegue ao cliente.
  */
 export async function expulsarMembroDaCampanha(campaignId: string, userId: string) {
   if (!io) return;

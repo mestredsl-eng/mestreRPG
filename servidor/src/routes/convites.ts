@@ -3,7 +3,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { campaigns, memberships } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { buscarConvite, statusConvite } from "../lib/convites.js";
 
@@ -149,6 +149,11 @@ convitesRouter.post("/:codigo/aceitar", limiteAceiteConvite, async (req, res) =>
     });
   }
 
+  // A própria membership acabou de ser persistida — avisa os sockets do
+  // usuário (ex.: aba já aberta na campanha) sem depender de reload.
+  notificarPermissaoAtualizada(inv.campaignId, {
+    userId: req.usuario!.id, role: papel, status: statusMembro, permissions: {},
+  });
   emitirCampanha(inv.campaignId, "membros:atualizados", { convite: true });
   res.status(201).json({
     ok: true,

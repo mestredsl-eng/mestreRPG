@@ -95,6 +95,12 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const ehMestreAtual = papel === "mestre";
   const [entradaFalhou, setEntradaFalhou] = useState(false);
   const [podeEnviar, setPodeEnviar] = useState(true);
+  // geração de permissões: incrementa a cada mesa:permissao:atualizada —
+  // respostas assíncronas de sincronização emitidas antes da mudança mais
+  // recente são descartadas (não restauram papel/permissões obsoletos)
+  const [permSeq, setPermSeq] = useState(0);
+  const permSeqRef = useRef(0);
+  const revogadoRef = useRef(false);
   const [meuUserId, setMeuUserId] = useState<string>("");
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
@@ -143,6 +149,15 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     })();
   }, [campaignId, sessao.id]);
 
+  // papel devolvido pela sincronização ordenada do VTT: autoritativo,
+  // mas só se emitido depois da permissão mais recente recebida —
+  // permissões individuais só mudam via evento privado ou ACK de entrada
+  // (o sync não transporta permissões)
+  const aoPapelServidorEstavel = useCallback((p: string | undefined, seq: number) => {
+    if (!p || seq !== permSeqRef.current) return;
+    setPapel(p);
+  }, []);
+
   // socket
   useEffect(() => {
     const socket = getSocket();
@@ -177,7 +192,34 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       if (p.sessionId === sessao.id) setOnline(p.online);
     };
     const aoSessao = () => void api.obterEstadoMesa(campaignId, sessao.id).then((e) => { setSessaoAtual(e.sessao); setTurnos(e.turnos); }).catch(() => undefined);
-
+    // Notificação privada pós-persistência do servidor: papel/status/
+    // permissões ATUAIS da minha membership nesta campanha. Só o canal
+    // usuario:* a entrega — nunca é payload de campanha inteira.
+    const aoPermissao = (d: { campaignId?: string; papel?: string; status?: string; permissoes?: { enviarMensagens?: boolean } }) => {
+      if (d?.campaignId !== campaignId) return;
+      permSeqRef.current += 1;
+      setPermSeq(permSeqRef.current);
+      if (d.status && d.status !== "ativo") {
+        // revogação: o servidor já removeu este socket das salas da
+        // sessão — invalidar a visão inteira até uma NOVA entrada
+        // autorizada (nunca restaurar pelo ACK antigo)
+        revogadoRef.current = true;
+        setEntradaFalhou(true);
+        setPapel("espectador");
+        setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+        return;
+      }
+      if (revogadoRef.current) {
+        // reativação: só um caminho de autorização novo restaura o acesso
+        revogadoRef.current = false;
+        setEntradaFalhou(false);
+        entrar();
+      }
+      if (d.papel) setPapel(d.papel);
+      // mesma regra do servidor (mesa:mensagem): espectador só envia se
+      // tiver enviarMensagens explícito
+      setPodeEnviar((d.papel ?? "jogador") !== "espectador" || d.permissoes?.enviarMensagens === true);
+    };
     socket.on("mesa:mensagem", aoMensagem);
     socket.on("mesa:teste", aoTeste);
     socket.on("mesa:rolagem", aoRolagem);
@@ -186,6 +228,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:timer", aoTimer);
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
+    socket.on("mesa:permissao:atualizada", aoPermissao);
 
     // mesa:entrar também na reconexão do socket: sem isso o novo socket
     // nunca volta à sala sessao:* e a mesa (vtt, chat, timer) fica muda
@@ -246,6 +289,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("mesa:timer", aoTimer);
       socket.off("mesa:presenca", aoPresenca);
       socket.off("sessao:atualizada", aoSessao);
+      socket.off("mesa:permissao:atualizada", aoPermissao);
       socket.off("connect", aoConnect);
       socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
@@ -557,6 +601,8 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         membros={membros}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
+        atualizacaoPapel={permSeq}
+        aoPapelServidor={aoPapelServidorEstavel}
       />
 
       {/* decisões recentes */}
@@ -856,9 +902,10 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial, atualizacaoPapel, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
   membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
+  atualizacaoPapel: number; aoPapelServidor: (p: string | undefined, seq: number) => void;
 }) {
   const [vtt, setVtt] = useState<VttState>(() => vttInicialParse(inicial));
   const [erroVtt, setErroVtt] = useState<string | null>(null);
@@ -924,6 +971,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // estado autoritativo do servidor reconciliar a visão local.
   const [nevoaIncerta, setNevoaIncerta] = useState(false);
   const nevoaIncertaRef = useRef(false);
+  // geração de permissões recebida do pai: cada mudança de papel/
+  // status/permissão dispara uma sincronização ordenada que devolve a
+  // visão filtrada AUTORIZADA para o papel novo (nunca snapshot antigo)
+  const permSeqRef = useRef(atualizacaoPapel);
+  useEffect(() => { permSeqRef.current = atualizacaoPapel; }, [atualizacaoPapel]);
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
   const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
@@ -1041,6 +1093,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       // nunca libera por decurso de tempo: estado incerto permanece
       setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
     }, 8000);
+    const seqPerm = permSeqRef.current; // geração no momento do envio
     sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
       if (respondido) return; // resposta tardia: estado incerto já tratado
       respondido = true;
@@ -1050,6 +1103,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       if (r?.ok && r.vtt) {
         sincronizarAutoritativo(r.vtt);
         setVtt(r.vtt);
+        // papel autoritativo do servidor — o pai descarta se uma
+        // permissão mais nova chegou depois deste envio
+        aoPapelServidor(r.papel, seqPerm);
         nevoaIncertaRef.current = false;
         setNevoaIncerta(false);
         setErroVtt(null);
@@ -1068,6 +1124,28 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     return () => { socket.off("connect", aoConnectSync); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // mudança de papel/status/permissão recebida pelo canal privado:
+  // rebusca a visão autorizada via sincronização ordenada — cobre
+  // promoção a mestre (visão completa), rebaixamento (visão filtrada) e
+  // transição a espectador. Não libera nevoaIncerta por caminho paralelo:
+  // o ACK do sync continua sendo a única barreira.
+  const primeiroPerm = useRef(true);
+  useEffect(() => {
+    if (primeiroPerm.current) { primeiroPerm.current = false; return; }
+    if (!encerrada) sincronizarNevoa();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atualizacaoPapel]);
+
+  // perda de papel de mestre com gesto de desenho ativo: cancela o
+  // traço imediatamente — controles admin somem e o traço não pode
+  // continuar sendo coletado para um papel sem autorização
+  useEffect(() => {
+    if (!souMestre) {
+      fimDesenhoRef.current?.();
+      setPincel(false); setPreviewNevoa(null); desenhoRef.current = null;
+    }
+  }, [souMestre]);
 
   const emitirNevoa = (acao: string, traco?: { raioX: number; raioY: number; pontos: { x: number; y: number }[] }) => {
     if (nevoaIncertaRef.current) {

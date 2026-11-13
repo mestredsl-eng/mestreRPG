@@ -8,7 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, expulsarMembroDaCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
 import { restaurarEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -114,6 +114,13 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   }
 
   await audit(req, "snapshot.restaurado", { snapshotId: snap.id, descricao: snap.description, preSnapshotId: preSnapId, arquivosRecuperados: resultado.arquivosRecuperados, arquivosAusentes: resultado.arquivosAusentes.length });
+  // A restauração substitui TODAS as memberships da campanha — notifica cada
+  // usuário afetado com seu papel/status/permissões atuais (pós-commit).
+  const membrosApos = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+  for (const m of membrosApos) {
+    notificarPermissaoAtualizada(cid, { userId: m.userId, role: m.role, status: m.status, permissions: m.permissions });
+    if (m.status !== "ativo") await expulsarMembroDaCampanha(cid, m.userId);
+  }
   emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id });
   res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
 });

@@ -99,5 +99,6 @@ jobs:
             homologacao-mesa-virtual.mjs \
             homologacao-nevoa.mjs \
             teste-vtt-rollback-p6.mjs \
-            teste-vtt-nevoa.mjs
+            teste-vtt-nevoa.mjs \
+            teste-permissao-tempo-real.mjs
           do echo "===== $s ====="; node "$s"; done

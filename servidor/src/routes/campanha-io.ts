@@ -10,7 +10,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -168,6 +168,12 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     return;
   }
 
+  // A importação pode criar/reactivar memberships de usuários já conectados
+  // (userIds validados acima) — notifica cada um com seu papel/status atuais.
+  const membrosImportados = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
+  for (const m of membrosImportados) {
+    notificarPermissaoAtualizada(cid, { userId: m.userId, role: m.role, status: m.status, permissions: m.permissions });
+  }
   await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados: gravados.size });
   res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados: gravados.size });
 });

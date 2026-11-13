@@ -269,8 +269,9 @@ try {
   const esperarSemIncerto = (page, timeout = 30000) => page.waitForFunction(() => {
     return ![...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? ""));
   }, null, { timeout });
-  let entrarCountJ = 0;
+  let entrarCountJ = 0, wsCountJ = 0;
   await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
+    wsCountJ++;
     const srv = ws.connectToServer();
     ws.onMessage((msg) => {
       if (typeof msg === "string" && msg.includes("mesa:entrar")) entrarCountJ++;
@@ -954,6 +955,98 @@ try {
   const pincelM = await pgM.getByRole("button", { name: /pincel de névoa/i }).count();
   t("papéis restaurados: mestre recupera controles após reconexão",
     pincelM > 0, `pincel=${pincelM}`);
+
+  sec("Papel e permissões em tempo real — MESMA conexão Socket.IO");
+  // prova principal da PR: alterações via API REST real (PATCH/DELETE de
+  // membership) refletem na UI sem reload, sem reconexão e sem novo
+  // mesa:entrar — wsCountJ/entrarCountJ permanecem congelados.
+  const wsAntesRT = wsCountJ, entrarAntesRT = entrarCountJ;
+  const midJ1 = c.jogadores.jogador1.membershipId;
+  const dbEsp = abrirDb(BANCO);
+  const midEsp = dbEsp.prepare("select id from memberships where campaign_id=? and user_id=?").get(campId, espId)?.id;
+  dbEsp.close();
+  t("membershipId do espectador localizado", !!midEsp);
+
+  // 1) jogador → mestre: controles admin e visão completa aparecem ao vivo
+  let rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("PATCH jogador→mestre aceito", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0
+    && [...document.querySelectorAll("button")].some((b) => /encerrar/i.test(b.textContent ?? "")),
+    null, { timeout: 20000 }).catch(() => {});
+  const ctrlAposPromo = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("promoção ao vivo: controles administrativos aparecem sem reload", ctrlAposPromo > 0, `controles=${ctrlAposPromo}`);
+  // visão completa = mesmos tokens que o mestre vê
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-token").length === n,
+    await pgM.locator(".vtt-token").count(), { timeout: 20000 }).catch(() => {});
+  const [nTokJ, nTokM] = [await pgJ.locator(".vtt-token").count(), await pgM.locator(".vtt-token").count()];
+  t("promoção ao vivo: visão VTT completa (mesma contagem do mestre)", nTokJ === nTokM && nTokM > 0, `jogador=${nTokJ} mestre=${nTokM}`);
+
+  // 2) mestre → jogador: controles somem e visão volta a ser filtrada
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH mestre→jogador aceito", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0
+    && ![...document.querySelectorAll("button")].some((b) => /encerrar/i.test(b.textContent ?? "")),
+    null, { timeout: 20000 }).catch(() => {});
+  const ctrlAposRebaixa = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("rebaixamento ao vivo: controles administrativos somem sem reload", ctrlAposRebaixa === 0, `controles=${ctrlAposRebaixa}`);
+  // visão filtrada = contagem devolvida pela API para o papel atual
+  const vttJ = await vttStateHttp({ camp: campId, id: sidA, cookie: c.jogadores.jogador1.cookie });
+  const nEspJ = (vttJ?.tokens ?? []).length;
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-token").length === n, nEspJ, { timeout: 20000 }).catch(() => {});
+  const nTokJ2 = await pgJ.locator(".vtt-token").count();
+  t("rebaixamento ao vivo: visão VTT filtrada conforme papel atual",
+    nTokJ2 === nEspJ && nTokJ2 < nTokM, `ui=${nTokJ2} esperado=${nEspJ} mestre=${nTokM}`);
+
+  // 3) permissão individual enviarMensagens no espectador conectado (pgE)
+  const tinhaFormAntes = await pgE.locator(".chat-form").count();
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { permissions: { enviarMensagens: true } } });
+  t("PATCH permissões espectador", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".chat-form").length > 0, null, { timeout: 20000 }).catch(() => {});
+  t("enviarMensagens=true ao vivo: formulário de chat aparece", (await pgE.locator(".chat-form").count()) > 0 && tinhaFormAntes === 0);
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { permissions: { enviarMensagens: false } } });
+  t("PATCH enviarMensagens=false", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".chat-form").length === 0, null, { timeout: 20000 }).catch(() => {});
+  t("enviarMensagens=false ao vivo: formulário de chat some", (await pgE.locator(".chat-form").count()) === 0);
+
+  // mudanças de papel/permissão NÃO podem gerar novo WS nem novo entrar:
+  // a prova de "mesma conexão" vale para toda a seção até aqui
+  t("papel/permissões ao vivo: 0 novos WebSocket e 0 mesa:entrar",
+    wsCountJ === wsAntesRT && entrarCountJ === entrarAntesRT,
+    `ws ${wsAntesRT}→${wsCountJ} entrar ${entrarAntesRT}→${entrarCountJ}`);
+
+  // 4) remoção da membership: revogação em tempo real na MESMA conexão
+  const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
+  rRT = await req(BASE, "DELETE", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre });
+  t("DELETE membership do espectador", rRT.status === 200);
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  const corpoE = await pgE.locator("body").innerText();
+  t("revogação ao vivo: mensagem de acesso revogado sem reload",
+    /revogad/i.test(corpoE) && (await pgE.locator(".mesa-vtt").count()) === 0,
+    corpoE.slice(0, 120).replace(/\n/g, " "));
+  // reativação: só um caminho de autorização novo restaura — PATCH status
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { status: "ativo" } });
+  t("PATCH reativação status=ativo", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0, null, { timeout: 30000 }).catch(() => {});
+  t("reativação: mesa retorna via nova entrada autorizada (sem reload)",
+    (await pgE.locator(".mesa-vtt").count()) > 0);
+
+  // 5) mudanças rápidas em sequência: estado final = banco
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "espectador" } });
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0
+    && document.querySelectorAll(".chat-form").length > 0,
+    null, { timeout: 20000 }).catch(() => {});
+  t("mudanças rápidas: UI converge para jogador (sem controles admin, chat visível)",
+    (await pgJ.locator(".vtt-nevoa-controles").count()) === 0 && (await pgJ.locator(".chat-form").count()) > 0);
+
+  // revogação→reativação: o ÚNICO mesa:entrar permitido é o novo caminho
+  // de autorização disparado pela própria notificação de reativação —
+  // na mesma conexão WS, sem reload
+  t("revogação/reativação: no máximo 1 mesa:entrar (nova autorização) e conexão preservada",
+    entrarCountJ - entrarAntesRev <= 1 && wsCountJ === wsAntesRev,
+    `ws ${wsAntesRev}→${wsCountJ} entrar ${entrarAntesRev}→${entrarCountJ}`);
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });
