@@ -1332,6 +1332,213 @@ try {
   t("AG: barreira liberada em modo falha (campanha não fica presa)", rEntAG === true, JSON.stringify(rEntAG).slice(0, 80));
   fs.rmSync(pausadoArq, { force: true });
 
+  // ---------- AH. HTTP: matriz fail-closed de visibilidade de testes ----------
+  sec("AH. /testes e /historico: mestre/secreta/desconhecida só para mestres");
+  // insere diretamente no banco (simula dados legados/importados):
+  // 6 testes do charA com visibilidades distintas e target conhecido
+  const visCasos = [
+    ["publica", 21], ["privada", 22], ["mestre", 23], ["secreta", 24], ["desconhecida", 25], ["", 26],
+  ];
+  const idsAH = {};
+  {
+    const dbAH = abrirDb(BANCO);
+    const agoraAH = Date.now();
+    for (const [vis, alvo] of visCasos) {
+      const id = crypto.randomUUID();
+      idsAH[vis === "" ? "vazia" : vis] = id;
+      dbAH.prepare(`insert into tests (id,campaign_id,session_id,character_id,requested_by,skill_ref,modifiers,dice_count,dice_sides,target,status,roll_id,outcome,outcome_note,visibility,request_id,created_at,updated_at)
+        values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, ids.camp, sid, charA, ids.admin, null, "{}", 1, 20, alvo, "pendente", null, null, null, vis, `ah-${vis}-${alvo}`, agoraAH, agoraAH);
+    }
+    dbAH.close();
+  }
+  const esperadoAH = [
+    ["publica", idsAH.publica, true], ["privada", idsAH.privada, true],
+    ["mestre", idsAH.mestre, false], ["secreta", idsAH.secreta, false],
+    ["desconhecida", idsAH.desconhecida, false], ["vazia", idsAH.vazia, false],
+  ];
+  const esperadoAHB = [
+    ["publica", idsAH.publica, true], ["privada", idsAH.privada, false],
+    ["mestre", idsAH.mestre, false], ["secreta", idsAH.secreta, false],
+    ["desconhecida", idsAH.desconhecida, false], ["vazia", idsAH.vazia, false],
+  ];
+  const esperadoAHE = [["publica", idsAH.publica, true]];
+  for (const [nomeEp, get] of [
+    ["/testes", (c) => req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: c })],
+    ["/historico", (c) => req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie: c })],
+  ]) {
+    const listaM = (await get(ids.cookieMestre)).json?.testes ?? [];
+    for (const [rot, id] of esperadoAH) {
+      const row = listaM.find((x) => x.id === id);
+      t(`AH/mestre${nomeEp}: ${rot} presente COM target`, !!row && temTarget(row), `vis=${rot} target=${row?.target}`);
+    }
+    const listaA = (await get(jA.cookie)).json?.testes ?? [];
+    for (const [rot, id, deve] of esperadoAH) {
+      const row = listaA.find((x) => x.id === id);
+      t(`AH/donoA${nomeEp}: ${rot} ${deve ? "presente sem target" : "AUSENTE"}`, deve ? (!!row && !temTarget(row)) : !row, `vis=${rot}`);
+    }
+    const listaB = (await get(jB.cookie)).json?.testes ?? [];
+    for (const [rot, id, deve] of esperadoAHB) {
+      const row = listaB.find((x) => x.id === id);
+      t(`AH/donoB${nomeEp}: ${rot} ${deve ? "presente sem target" : "AUSENTE"}`, deve ? (!!row && !temTarget(row)) : !row, `vis=${rot}`);
+    }
+    const rE = await get(esp2.cookie);
+    const listaE = rE.json?.testes ?? [];
+    for (const [rot, id, deve] of esperadoAHE) {
+      const row = listaE.find((x) => x.id === id);
+      t(`AH/espectador${nomeEp}: ${rot} ${deve ? "presente sem target" : "AUSENTE"}`, deve ? (!!row && !temTarget(row)) : !row, `vis=${rot} status=${rE.status}`);
+    }
+    // espectador não pode ver NENHUM dos reservados
+    for (const [rot, id] of [["privada", idsAH.privada], ["mestre", idsAH.mestre], ["secreta", idsAH.secreta], ["desconhecida", idsAH.desconhecida], ["vazia", idsAH.vazia]]) {
+      t(`AH/espectador${nomeEp}: ${rot} ausente`, !listaE.find((x) => x.id === id));
+    }
+  }
+
+  // §6 — mesa:teste:pedir rejeita visibilidade inválida SEM gravar/emitir
+  sec("AH2. mesa:teste:pedir: visibilidade inválida → erro, zero efeitos");
+  const dbAntes = abrirDb(BANCO);
+  const nTestes0 = dbAntes.prepare("select count(*) c from tests where campaign_id=?").get(ids.camp).c;
+  const nChat0 = dbAntes.prepare("select count(*) c from chat_messages where campaign_id=?").get(ids.camp).c;
+  dbAntes.close();
+  for (const vis of ["mestre", "secreta", "desconhecida", 123, { x: 1 }]) {
+    const r = await emitirCb(sM, "mesa:teste:pedir", { sessionId: sid, characterId: charA, dadosCount: 1, visibilidade: vis, requestId: `ah2-${String(vis)}` });
+    t(`AH2: pedir visibilidade=${JSON.stringify(vis)} rejeitada`, r?.ok === false, JSON.stringify(r).slice(0, 100));
+  }
+  const dbDepois = abrirDb(BANCO);
+  const nTestes1 = dbDepois.prepare("select count(*) c from tests where campaign_id=?").get(ids.camp).c;
+  const nChat1 = dbDepois.prepare("select count(*) c from chat_messages where campaign_id=?").get(ids.camp).c;
+  dbDepois.close();
+  t("AH2: nenhum teste gravado pelas tentativas inválidas", nTestes1 === nTestes0, `${nTestes0}→${nTestes1}`);
+  t("AH2: nenhuma mensagem de chat criada", nChat1 === nChat0, `${nChat0}→${nChat1}`);
+
+  // ---------- AI. Socket.IO: transporte real por visibilidade reservada ----------
+  sec("AI. Rolagem/decisão/chat: mestre/secreta/desconhecida nunca saem dos mestres");
+  for (const s of [sM, sA, sB, sEsp2]) {
+    s.on("mesa:mensagem", (p) => { const c = capDe(s); (c.msg ??= []).push(p); });
+  }
+  const alvoPorVis = { publica: 21, privada: 22, mestre: 23, secreta: 24, desconhecida: 25, vazia: 26 };
+  const ordemAI = ["publica", "privada", "mestre", "secreta", "desconhecida", "vazia"];
+  const rolagemPorTeste = (s, testId) => capDe(s).rolagem.filter((p) => p.testId === testId);
+  const decisaoPorTeste = (s, testId) => capDe(s).decisao.filter((p) => p.testId === testId);
+  const msgPorTexto = (s, trecho) => (capDe(s).msg ?? []).filter((p) => String(p?.content ?? "").includes(trecho));
+  for (const vis of ordemAI) {
+    const idT = idsAH[vis];
+    const marca = `AI-${vis}-FIM`;
+    // rolagem pelo mestre (dono não rola teste de visibilidade reservada)
+    const rRol = await emitirCb(sM, "mesa:teste:rolar", { testId: idT, requestId: `ai-roll-${vis}` });
+    t(`AI/${vis}: rolagem executada`, rRol?.ok === true, JSON.stringify(rRol).slice(0, 100));
+    await dormir(250);
+    const esperadoRoll = {
+      mestre: ["sim"], donoA: vis === "publica" || vis === "privada" ? "sim" : "nao",
+      donoB: vis === "publica" ? "sim" : "nao", esp: vis === "publica" ? "sim" : "nao",
+    };
+    t(`AI/${vis}/mestre: rolagem COM alvo`, rolagemPorTeste(sM, idT).some((p) => p.alvo === alvoPorVis[vis]));
+    t(`AI/${vis}/donoA: rolagem ${esperadoRoll.donoA === "sim" ? "recebida sem alvo" : "AUSENTE"}`,
+      esperadoRoll.donoA === "sim"
+        ? rolagemPorTeste(sA, idT).length > 0 && rolagemPorTeste(sA, idT).every((p) => !("alvo" in p) && !("target" in p))
+        : rolagemPorTeste(sA, idT).length === 0);
+    t(`AI/${vis}/donoB: rolagem ${esperadoRoll.donoB === "sim" ? "pública sem alvo" : "AUSENTE"}`,
+      esperadoRoll.donoB === "sim"
+        ? rolagemPorTeste(sB, idT).length > 0 && rolagemPorTeste(sB, idT).every((p) => !("alvo" in p))
+        : rolagemPorTeste(sB, idT).length === 0);
+    t(`AI/${vis}/espectador: rolagem ${esperadoRoll.esp === "sim" ? "pública sem alvo" : "AUSENTE"}`,
+      esperadoRoll.esp === "sim"
+        ? rolagemPorTeste(sEsp2, idT).length > 0 && rolagemPorTeste(sEsp2, idT).every((p) => !("alvo" in p))
+        : rolagemPorTeste(sEsp2, idT).length === 0);
+    // decisão com nota marcadora
+    const rDec = await emitirCb(sM, "mesa:teste:decidir", { testId: idT, outcome: "sucesso", nota: `AI-nota-${vis}` });
+    t(`AI/${vis}: decisão executada`, rDec?.ok === true, JSON.stringify(rDec).slice(0, 80));
+    await dormir(250);
+    t(`AI/${vis}/mestre: decisão recebida`, decisaoPorTeste(sM, idT).length > 0);
+    const donoDecOk = vis === "publica" || vis === "privada";
+    t(`AI/${vis}/donoA: decisão ${donoDecOk ? "recebida" : "AUSENTE"}`,
+      donoDecOk ? decisaoPorTeste(sA, idT).length > 0 : decisaoPorTeste(sA, idT).length === 0);
+    t(`AI/${vis}/donoB: decisão ${vis === "publica" ? "pública recebida" : "AUSENTE"}`,
+      vis === "publica" ? decisaoPorTeste(sB, idT).length > 0 : decisaoPorTeste(sB, idT).length === 0);
+    t(`AI/${vis}/espectador: decisão ${vis === "publica" ? "pública recebida" : "AUSENTE"}`,
+      vis === "publica" ? decisaoPorTeste(sEsp2, idT).length > 0 : decisaoPorTeste(sEsp2, idT).length === 0);
+    // chat: visibilidade persistida do registro de decisão
+    const dbAI = abrirDb(BANCO);
+    const rowDec = dbAI.prepare("select visibility,recipients,content from chat_messages where session_id=? and kind='decisao' and content like ? order by created_at desc limit 1")
+      .get(sid, `%AI-nota-${vis}%`);
+    const rowRol = dbAI.prepare("select visibility,recipients,content from chat_messages where session_id=? and kind='rolagem' order by created_at desc limit 1").get(sid);
+    dbAI.close();
+    const visChatEsp = vis === "publica" ? "publica" : vis === "privada" ? "privada" : "mestre";
+    t(`AI/${vis}: chat da decisão persistido como "${visChatEsp}"`, rowDec?.visibility === visChatEsp, `vis=${rowDec?.visibility}`);
+    t(`AI/${vis}: chat da decisão contém a nota marcadora`, String(rowDec?.content ?? "").includes(`AI-nota-${vis}`));
+    if (vis === "privada") {
+      const rec = JSON.parse(rowDec?.recipients ?? "[]");
+      t("AI/privada: chat da decisão tem destinatário = dono", rec.includes(jA.id), JSON.stringify(rec));
+    }
+    t(`AI/${vis}: chat da rolagem persistido como "${visChatEsp}"`, rowRol?.visibility === visChatEsp, `vis=${rowRol?.visibility}`);
+    // entrega da mensagem de chat por papel (evento mesa:mensagem)
+    await dormir(200);
+    const entregaDec = {
+      mestre: msgPorTexto(sM, `AI-nota-${vis}`).length > 0,
+      donoA: msgPorTexto(sA, `AI-nota-${vis}`).length > 0,
+      donoB: msgPorTexto(sB, `AI-nota-${vis}`).length > 0,
+      esp: msgPorTexto(sEsp2, `AI-nota-${vis}`).length > 0,
+    };
+    const espDec = { mestre: true, donoA: vis === "publica" || vis === "privada", donoB: vis === "publica", esp: vis === "publica" };
+    t(`AI/${vis}/chat-mestre: mensagem da decisão entregue`, entregaDec.mestre === espDec.mestre);
+    t(`AI/${vis}/chat-donoA: ${espDec.donoA ? "entregue" : "NÃO entregue"}`, entregaDec.donoA === espDec.donoA);
+    t(`AI/${vis}/chat-donoB: ${espDec.donoB ? "entregue" : "NÃO entregue"}`, entregaDec.donoB === espDec.donoB);
+    t(`AI/${vis}/chat-espectador: ${espDec.esp ? "entregue" : "NÃO entregue"}`, entregaDec.esp === espDec.esp);
+    void marca;
+  }
+
+  // HTTP: a nota narrativa reservada não aparece para não-mestres
+  const histAI = async (cookie) => (await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/historico`, { cookie })).json;
+  const hM = await histAI(ids.cookieMestre), hA = await histAI(jA.cookie), hB = await histAI(jB.cookie), hE = await histAI(esp2.cookie);
+  const textosHist = (h) => JSON.stringify(h?.eventos ?? []);
+  for (const vis of ordemAI) {
+    const nota = `AI-nota-${vis}`;
+    const espVer = { mestre: [true, false, false, false], privada: [true, true, false, false], publica: [true, true, true, true], secreta: [true, false, false, false], desconhecida: [true, false, false, false], vazia: [true, false, false, false] }[vis];
+    t(`AI/hist/${vis}: matriz de visibilidade da nota`,
+      textosHist(hM).includes(nota) === espVer[0] && textosHist(hA).includes(nota) === espVer[1]
+      && textosHist(hB).includes(nota) === espVer[2] && textosHist(hE).includes(nota) === espVer[3],
+      `m=${textosHist(hM).includes(nota)} a=${textosHist(hA).includes(nota)} b=${textosHist(hB).includes(nota)} e=${textosHist(hE).includes(nota)}`);
+  }
+
+  // ---------- AJ. Dados restaurados/importados continuam fail-closed ----------
+  sec("AJ. Importar pacote com visões reservadas: acesso segue restrito");
+  const mAJ = novoUsuario(BANCO, { username: "pt_maj", role: "mestre" });
+  // teste "secreta" PENDENTE entra no pacote: prova que um registro
+  // reservado RESTAURADO continua fail-closed nas emissões
+  const idAJ = crypto.randomUUID();
+  {
+    const dbAJ = abrirDb(BANCO);
+    const agoraAJ = Date.now();
+    dbAJ.prepare(`insert into tests (id,campaign_id,session_id,character_id,requested_by,skill_ref,modifiers,dice_count,dice_sides,target,status,roll_id,outcome,outcome_note,visibility,request_id,created_at,updated_at)
+      values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(idAJ, ids.camp, sid, charA, ids.admin, null, "{}", 1, 20, 27, "pendente", null, null, null, "secreta", "aj-secreta-pendente", agoraAJ, agoraAJ);
+    dbAJ.close();
+  }
+  const expAJ = await req(BASE, "GET", `/campaigns/${ids.camp}/exportar`, { cookie: ids.cookieMestre });
+  t("AJ: pacote exportado com os testes reservados", expAJ.status === 200, `status=${expAJ.status}`);
+  const rImpAJ = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: mAJ.cookie,
+    body: { pacote: expAJ.json, modo: "substituir", campaignId: ids.camp, confirmacao: "SUBSTITUIR" },
+  });
+  t("AJ: importação substituir concluída", rImpAJ.status === 200, `status=${rImpAJ.status} ${JSON.stringify(rImpAJ.json).slice(0, 120)}`);
+  await dormir(400);
+  // após a substituição, os MESMOS testes reservados seguem restritos
+  const listaAposM = (await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: ids.cookieMestre })).json?.testes ?? [];
+  const listaAposA = (await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: jA.cookie })).json?.testes ?? [];
+  for (const [rot, id] of [["publica", idsAH.publica], ["privada", idsAH.privada], ["mestre", idsAH.mestre], ["secreta", idsAH.secreta], ["desconhecida", idsAH.desconhecida], ["vazia", idsAH.vazia]]) {
+    t(`AJ/mestre pós-import: ${rot} presente`, !!listaAposM.find((x) => x.id === id));
+    const deveA = rot === "publica" || rot === "privada";
+    t(`AJ/donoA pós-import: ${rot} ${deveA ? "presente" : "AUSENTE"}`, deveA ? !!listaAposA.find((x) => x.id === id) : !listaAposA.find((x) => x.id === id));
+  }
+  // rolagem do teste "secreta" PENDENTE restaurado: continua só para mestres
+  const rAJroll = await emitirCb(sM, "mesa:teste:rolar", { testId: idAJ, requestId: "aj-roll-secreta" });
+  t("AJ: rolagem de teste secreta restaurado executada", rAJroll?.ok === true, JSON.stringify(rAJroll).slice(0, 100));
+  await dormir(400);
+  t("AJ/mestre: rolagem secreta pós-import recebida com alvo", rolagemPorTeste(sM, idAJ).length > 0);
+  t("AJ/donoA: rolagem secreta pós-import AUSENTE", rolagemPorTeste(sA, idAJ).length === 0);
+  t("AJ/donoB: rolagem secreta pós-import AUSENTE", rolagemPorTeste(sB, idAJ).length === 0);
+  t("AJ/espectador: rolagem secreta pós-import AUSENTE", rolagemPorTeste(sEsp2, idAJ).length === 0);
+
 } catch (e) {
   fail++;
   console.error("ERRO FATAL", e);

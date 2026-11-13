@@ -105,6 +105,20 @@ async function mestresDaCampanha(campaignId: string): Promise<string[]> {
   return rows.map((r) => r.userId);
 }
 
+/** Classificação fail-closed da visibilidade de um TESTE:
+ *  somente "publica" vai à sala; somente "privada" chega ao dono do
+ *  personagem; "mestre"/"secreta"/desconhecida/inválida são exclusivas
+ *  dos mestres atuais — nunca tratadas como públicas. */
+function classeVisibilidadeTeste(v: unknown): "publica" | "privada" | "mestre" {
+  return v === "publica" ? "publica" : v === "privada" ? "privada" : "mestre";
+}
+
+/** Visibilidade equivalente para o registro de chat derivado de um
+ *  teste: mestre/secreta/desconhecida viram "mestre" — nunca "publica". */
+function visibilidadeChatDoTeste(v: unknown): "publica" | "privada" | "mestre" {
+  return classeVisibilidadeTeste(v);
+}
+
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
   if (!id) return "Sistema";
   const [u] = await db.select({ username: users.username, displayName: users.displayName }).from(users).where(eq(users.id, id)).limit(1);
@@ -710,6 +724,14 @@ function socket_handlers(
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre solicita testes" }); return; }
+      // validação runtime: o tipo TypeScript não protege contra valores
+      // arbitrários — só ausente (→publica), "publica" e "privada" são
+      // aceitos; qualquer outro valor rejeita SEM gravar/emitir nada
+      const visReq = payload.visibilidade ?? "publica";
+      if (visReq !== "publica" && visReq !== "privada") {
+        cb?.({ ok: false, erro: "Visibilidade inválida" });
+        return;
+      }
 
       const [char] = await db.select().from(characters).where(and(eq(characters.id, payload.characterId), eq(characters.campaignId, ctx.sessao.campaignId))).limit(1);
       if (!char) { cb?.({ ok: false, erro: "Personagem não encontrado" }); return; }
@@ -778,7 +800,7 @@ function socket_handlers(
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
           status: "pendente",
-          visibility: payload.visibilidade === "privada" ? "privada" : "publica",
+          visibility: visReq,
           requestId: payload.requestId ?? null,
           createdAt: agora, updatedAt: agora,
         });
@@ -806,13 +828,13 @@ function socket_handlers(
         status: "pendente", createdAt: agora,
         // visibilidade explícita e coerente em TODOS os payloads —
         // o cliente nunca precisa adivinhar o contrato
-        visibility: payload.visibilidade === "privada" ? "privada" : "publica",
+        visibility: visReq,
       };
       // Dificuldade (`alvo`) é reservada ao mestre: cada audiência recebe
       // um objeto PRÓPRIO — o payload do dono/jogador nunca carrega o
       // campo, nem por spread acidental do objeto administrativo.
       const dadosTeste = { lados: dadosLados, count };
-      if (payload.visibilidade === "privada") {
+      if (visReq === "privada") {
         // privada: dono recebe os dados do próprio teste SEM alvo;
         // mestres ATUAIS recebem a versão administrativa com alvo
         const payloadDono = { ...publico, dados: dadosTeste, pool, privado: true };
@@ -845,8 +867,8 @@ function socket_handlers(
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${payload.rotulo ? ` (${payload.rotulo})` : ""}`,
-        visibility: payload.visibilidade === "privada" ? "privada" : "publica",
-        recipients: payload.visibilidade === "privada" ? [membroDono.userId] : undefined,
+        visibility: visReq,
+        recipients: visReq === "privada" ? [membroDono.userId] : undefined,
       });
       cb?.({ ok: true, id });
     });
@@ -939,14 +961,19 @@ function socket_handlers(
       // dono e qualquer outro destinatário recebem o payload SEM o
       // campo (não null, não placeholder: a propriedade não existe)
       const { alvo: _alvoReservado, ...payloadRollSemAlvo } = payloadRoll;
-      // público: sala recebe sem alvo; PRIVADO: nada vai à sala —
-      // resultados só trafegam nos canais privados usuario:* abaixo
-      if (teste.visibility !== "privada") {
+      // fail-closed: SOMENTE "publica" vai à sala coletiva — "privada"
+      // vai só a dono+mestres; "mestre"/"secreta"/desconhecida vão
+      // exclusivamente aos mestres atuais (nunca à sala, nunca ao dono)
+      const classeRoll = classeVisibilidadeTeste(teste.visibility);
+      if (classeRoll === "publica") {
         io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRollSemAlvo, visibility: "publica" });
       }
       // emissões privadas revalidam membership ativa no instante do envio;
-      // o dono recebe o resultado integral SEM a dificuldade reservada
-      if (membroDono) await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRollSemAlvo);
+      // o dono recebe o resultado SEM a dificuldade — somente quando o
+      // teste é explicitamente "privada" (ou "publica", sanitizada)
+      if (membroDono && classeRoll !== "mestre") {
+        await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRollSemAlvo);
+      }
       const mestres = await mestresDaCampanha(teste.campaignId);
       await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
@@ -958,8 +985,8 @@ function socket_handlers(
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "rolagem",
         content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
-        visibility: teste.visibility === "privada" ? "privada" : "publica",
-        recipients: teste.visibility === "privada" && membroDono ? [membroDono.userId] : undefined,
+        visibility: visibilidadeChatDoTeste(teste.visibility),
+        recipients: classeRoll === "privada" && membroDono ? [membroDono.userId] : undefined,
       });
       cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade, d10 });
     });
@@ -1075,22 +1102,31 @@ function socket_handlers(
         characterName: char?.name, outcome: payload.outcome, nota: payload.nota ?? null,
         decididoPor: await nomeUsuario(u.id), visibility: teste.visibility,
       };
-      // decisão de teste PRIVADO não vai à sala coletiva — outcome e
-      // personagem são conteúdo reservado; só os canais privados abaixo
-      if (teste.visibility !== "privada") {
+      // fail-closed: só "publica" vai à sala; "privada" só a
+      // mestre+dono; "mestre"/"secreta"/desconhecida só a mestres
+      const classeDec = classeVisibilidadeTeste(teste.visibility);
+      if (classeDec === "publica") {
         io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, nota: decisao.nota, visibility: "publica" });
       }
-      // versão integral: só mestres e dono ATUAIS do personagem
+      // versão integral: só mestres e dono ATUAL do personagem — e o
+      // dono somente quando o teste é explicitamente "privada"
       const mestres = await mestresDaCampanha(teste.campaignId);
       await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:decisao", decisao, ["mestre"]);
+      let donoUserId: string | null = null;
       if (char) {
         const [md] = await db.select().from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
-        if (md) await emitirPrivadoCampanha(teste.campaignId, [md.userId], "mesa:decisao", decisao);
+        donoUserId = md?.userId ?? null;
+        if (donoUserId && classeDec !== "mestre") {
+          await emitirPrivadoCampanha(teste.campaignId, [donoUserId], "mesa:decisao", decisao);
+        }
       }
       await registrarChat(io, {
         campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
         kind: "decisao", content: `Decisão: ${payload.outcome}${payload.nota ? ` — ${payload.nota}` : ""}`,
-        visibility: teste.visibility === "privada" ? "privada" : "publica",
+        // a nota narrativa segue a mesma classificação do teste —
+        // decisão reservada NUNCA vira mensagem pública
+        visibility: visibilidadeChatDoTeste(teste.visibility),
+        recipients: classeDec === "privada" && donoUserId ? [donoUserId] : undefined,
       });
       cb?.({ ok: true });
     });

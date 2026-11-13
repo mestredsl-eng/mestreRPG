@@ -182,7 +182,11 @@ sessoesRouter.get("/:sessionId/testes", requirePapel("mestre", "jogador", "espec
       .where(eq(characters.campaignId, req.params.campaignId)))
       .filter((c) => minhas.some((m) => m.id === c.membershipId)).map((c) => c.id)
   );
-  const visiveis = lista.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
+  // fail-closed: só "publica" é pública e só "privada" chega ao dono —
+  // mestre/secreta/desconhecida são exclusivas de mestres atuais
+  const visiveis = lista.filter((t) =>
+    ehMestre || t.visibility === "publica" || (t.visibility === "privada" && meusChars.has(t.characterId))
+  );
   // `target` é dificuldade interna: sai da serialização para não-mestres
   res.json({ testes: ehMestre ? visiveis : visiveis.map(testeSemDificuldade) });
 });
@@ -208,7 +212,9 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
       .where(eq(characters.campaignId, req.params.campaignId)))
       .filter((c) => minhas.some((m) => m.id === c.membershipId)).map((c) => c.id)
   );
-  const testesVisiveis = todosTestes.filter((t) => ehMestre || t.visibility === "publica" || meusChars.has(t.characterId));
+  const testesVisiveis = todosTestes.filter((t) =>
+    ehMestre || t.visibility === "publica" || (t.visibility === "privada" && meusChars.has(t.characterId))
+  );
   const rollsIds = testesVisiveis.map((t) => t.rollId).filter(Boolean) as string[];
   const rollsSessao = await db.select().from(rolls).where(eq(rolls.sessionId, s.id));
   const rolagensVisiveis = rollsSessao.filter((r) => {
