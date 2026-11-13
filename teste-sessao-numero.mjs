@@ -179,6 +179,25 @@ try {
   } catch { impediu = true; }
   db2.close();
   t("constraint única ativa pós-migration", impediu);
+
+  // Pacote/snapshot antigo com números duplicados: a normalização aplicada
+  // por inserirEstado (restauração e importação) deve renumerar sem perder
+  // sessões — mesma regra da migration 0023.
+  process.env.MESTRE_BANCO = BANCO2;
+  const { normalizarNumerosSessao } = await import("./servidor/dist/lib/restaurar.js");
+  const pacoteAntigo = [
+    { id: "s-a", campaignId: cidL, number: 1, createdAt: "2024-01-01T00:00:00.000Z" },
+    { id: "s-b", campaignId: cidL, number: 1, createdAt: "2024-01-02T00:00:00.000Z" },
+    { id: "s-c", campaignId: cidL, number: 2, createdAt: "2024-01-03T00:00:00.000Z" },
+    { id: "s-d", campaignId: cidL, number: 2, createdAt: "2024-01-04T00:00:00.000Z" },
+  ];
+  const norm = normalizarNumerosSessao(pacoteAntigo);
+  const numsPkg = norm.map((r) => r.number);
+  t("pacote antigo: números ficam únicos", new Set(numsPkg).size === numsPkg.length, JSON.stringify(numsPkg));
+  t("pacote antigo: mais antiga de cada número preservada",
+    norm.find((r) => r.id === "s-a").number === 1 && norm.find((r) => r.id === "s-c").number === 2);
+  t("pacote antigo: excedentes acima do max", numsPkg.includes(3) && numsPkg.includes(4), JSON.stringify(numsPkg));
+  t("pacote antigo: IDs preservados", norm.every((r) => ["s-a", "s-b", "s-c", "s-d"].includes(r.id)));
 } finally {
   limparDir(DIR2);
 }
