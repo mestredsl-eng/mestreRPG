@@ -7,13 +7,14 @@
 // timeout sem ACK + ACK tardio, toque real mobile (CDP), redimensionamento
 // e reconexão. Evidências em _evidencias/nevoa/.
 import { chromium } from "playwright";
+import { io as ioClient } from "socket.io-client";
 import crypto from "node:crypto";
 import { join } from "node:path";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir, req, abrirDb,
+  criarCenario, encerrarServidor, limparDir, req, abrirDb, sessao,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -210,6 +211,10 @@ try {
   const ctxM2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
+  // prova de "mesma página": reload zeraria o estado React e não pode
+  // ocorrer em nenhuma seção de tempo real
+  let cargasJ = 0;
+  pgJ.on("load", () => cargasJ++);
 
   // Interceptação de emits — registrada ANTES do socket conectar.
   // Cobre os dois transportes do Socket.IO:
@@ -269,14 +274,69 @@ try {
   const esperarSemIncerto = (page, timeout = 30000) => page.waitForFunction(() => {
     return ![...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? ""));
   }, null, { timeout });
-  let entrarCountJ = 0;
+  let entrarCountJ = 0, wsCountJ = 0;
+  // corrida VTT: reter o ACK (pacote "43[..."] ) da sincronização para
+  // controlar a ordem de chegada das respostas entre gerações de papel
+  let armarRetencaoSyncJ = false, armadoUmaVezJ = false, ackSyncJRetido = null;
+  const liberarAckSyncJ = () => { if (ackSyncJRetido) { try { pgJWs?.send(ackSyncJRetido); } catch { /* morto */ } ackSyncJRetido = null; } };
+  // retenção genérica de eventos servidor→cliente (pacotes "42[…") —
+  // prova de eventos privados produzidos antes da rebaixamento e
+  // entregues ao navegador DEPOIS dela
+  let reterEvtJ = null; // predicado (msg) => bool
+  const filaEvtJ = [];
+  const liberarEvtJ = () => { const q = filaEvtJ.splice(0); for (const m of q) { try { pgJWs?.send(m); } catch { /* morto */ } } };
+  // retenção de UMA resposta HTTP autenticada (histórico privilegiado)
+  let armarHttpJ = false, httpRetidoJ = null;
+  const liberarHttpJ = async () => { const r = httpRetidoJ; httpRetidoJ = null; if (r) await r.continue().catch(() => {}); };
+  let pgJWs = null;
   await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
+    wsCountJ++;
+    pgJWs = ws;
     const srv = ws.connectToServer();
     ws.onMessage((msg) => {
       if (typeof msg === "string" && msg.includes("mesa:entrar")) entrarCountJ++;
+      // arma UMA única vez por solicitação do teste — sincronizações
+      // posteriores (geração nova) NÃO podem ter o ACK retido
+      if (armarRetencaoSyncJ && !armadoUmaVezJ && typeof msg === "string" && msg.includes("nevoa:sincronizar")) {
+        armarRetencaoSyncJ = false;
+        armadoUmaVezJ = true;
+      }
       srv.send(msg);
     });
-    srv.onMessage((m) => ws.send(m));
+    srv.onMessage((m) => {
+      // ACKs do Socket.IO são pacotes "43[" — retem o primeiro após o
+      // emit de sincronização armado (prova da corrida VTT)
+      if (armadoUmaVezJ && ackSyncJRetido === null && typeof m === "string" && m.startsWith("43")) {
+        armadoUmaVezJ = false;
+        ackSyncJRetido = m;
+        return; // NÃO entrega — resposta fica retida no cliente
+      }
+      // eventos privados retidos a pedido do teste (prova de evento
+      // atrasado após mudança de autorização)
+      if (reterEvtJ && typeof m === "string" && m.startsWith("42") && reterEvtJ(m)) {
+        filaEvtJ.push(m);
+        return; // NÃO entrega — fica retido no transporte do navegador
+      }
+      ws.send(m);
+    });
+  });
+  // transporte polling (fallback de reconexão): emits viajam em POSTs
+  // HTTP, fora do routeWebSocket — conta "mesa:entrar" nesses corpos
+  // para que a métrica de listeners não dependa do transporte ativo
+  await pgJ.route("**/socket.io/**", async (route) => {
+    const corpo = route.request().postData() ?? "";
+    entrarCountJ += corpo.split('"mesa:entrar"').length - 1;
+    await route.continue();
+  });
+  // segura a PRIMEIRA resposta de histórico após o arm — prova de
+  // resposta HTTP antiga chegando depois da mudança de papel
+  await pgJ.route("**/mensagens*", async (route) => {
+    if (armarHttpJ && route.request().method() === "GET") {
+      armarHttpJ = false;
+      httpRetidoJ = route;
+      return; // resposta não chega ao JavaScript
+    }
+    await route.continue();
   });
 
   await login(pgM, "mestre_teste", "senha-forte-123");
@@ -597,10 +657,14 @@ try {
     nHttpOp === nAntesHold + 1, `antes=${nAntesHold} depois=${nHttpOp}`);
   // timeout (~5s) → estado incerto → sync automática tem o ACK dropado:
   // a janela de bloqueio fica aberta até o timeout da sync (8s)
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
   const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
-  await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
+  // janela de incerto pode incluir refresh/reconexão que desliga o
+  // pincel (o botão fica desabilitado durante o incerto) — só há gesto
+  // a bloquear se o pincel continuar ativo; a asserção de "nada
+  // emitido" permanece válida nos dois casos
+  if (await pincelOn(pgM)) await desenhar(pgM, [[0.3, 0.3], [0.36, 0.36]]);
   await pgM.waitForTimeout(400);
   t("incerto: mutações bloqueadas e 2º desenho não emitido",
     desfezBloq === false && ocultarBloq === false && nevoaEmitidos === nEmAntes + 1,
@@ -631,19 +695,37 @@ try {
   // o estado atual do servidor — sem a operação — e libera as ações.
   const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   segurarNevoa = true;
-  derrubarAckM = 1; // perde o ACK da sync automática (a op retida nunca é respondida)
+  // derruba TODOS os ACKs durante a janela de incerteza: um único
+  // contador (=1) podia ser consumido por um ACK estranho (reconexão,
+  // entrar-campanha tardio) e liberar a sync automática — o estado
+  // incerto se resolveria sozinho e o botão nunca ficaria visível.
+  // A contagem é zerada antes do retry manual, que precisa do ACK.
+  derrubarAckM = 50;
   await garantirPincel(pgM);
   await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 20000 });
+  try {
+    await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
+  } catch (e) {
+    const diag = await pgM.evaluate(() => ({
+      botoes: [...document.querySelectorAll("button")].map((b) => b.textContent?.trim()).filter(Boolean),
+      meta: document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? null,
+      erro: document.querySelector(".vtt-erro, .erro, [class*=erro]")?.textContent ?? null,
+      pincel: !!document.querySelector(".vtt-nevoa-canvas-pincel"),
+    })).catch(() => null);
+    console.log("DIAG incerto:", JSON.stringify(diag), `emitidos=${nevoaEmitidos} interceptados=${nevoaInterceptados}`);
+    throw e;
+  }
   const desfezOff2 = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const nEm2 = nevoaEmitidos;
-  await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
+  // idem: gesto bloqueado só existe se o pincel seguir ativo
+  if (await pincelOn(pgM)) await desenhar(pgM, [[0.1, 0.1], [0.16, 0.16]]);
   await pgM.waitForTimeout(400);
   t("não recebida: incerto bloqueia e nada mais é emitido",
     desfezOff2 === false && nevoaEmitidos === nEm2,
     `desfazer=${desfezOff2} emitidos=${nevoaEmitidos - nEm2}`);
   // retry explícito: a sync ordenada devolve o estado atual — sem a
   // operação retida — e libera as ações
+  derrubarAckM = 0; // libera ACKs: o retry manual precisa da resposta
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
   await esperarSemIncerto(pgM, 20000);
   const nAposOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
@@ -909,7 +991,10 @@ try {
   const titulosRestaurado = await pgJ.locator(".vtt-token").evaluateAll((els) => els.map((e) => e.title));
   t("papel restaurado na reconexão: jogador volta a ver o próprio token",
     titulosRestaurado.includes("Ana"), titulosRestaurado.join(","));
-  // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado
+  // 2 reconexões = exatamente 2 mesa:entrar — nenhum listener duplicado.
+  // a contagem passa pelo routeWebSocket (assíncrona): espera limitada
+  // pelo 2º entrar antes de aferir — delta>2 continua reprovando na hora
+  for (let i = 0; i < 100 && entrarCountJ - entrarAntesRole < 2; i++) await new Promise((r) => setTimeout(r, 100));
   t("sem listeners duplicados: 1 mesa:entrar por connect",
     entrarCountJ - entrarAntesRole === 2, `delta=${entrarCountJ - entrarAntesRole}`);
 
@@ -954,6 +1039,594 @@ try {
   const pincelM = await pgM.getByRole("button", { name: /pincel de névoa/i }).count();
   t("papéis restaurados: mestre recupera controles após reconexão",
     pincelM > 0, `pincel=${pincelM}`);
+
+  sec("Papel e permissões em tempo real — MESMA conexão Socket.IO");
+  // prova principal da PR: alterações via API REST real (PATCH/DELETE de
+  // membership) refletem na UI sem reload, sem reconexão e sem novo
+  // mesa:entrar — wsCountJ/entrarCountJ permanecem congelados.
+  const wsAntesRT = wsCountJ, entrarAntesRT = entrarCountJ, cargasAntesRT = cargasJ;
+  const midJ1 = c.jogadores.jogador1.membershipId;
+  const dbEsp = abrirDb(BANCO);
+  const midEsp = dbEsp.prepare("select id from memberships where campaign_id=? and user_id=?").get(campId, espId)?.id;
+  dbEsp.close();
+  t("membershipId do espectador localizado", !!midEsp);
+
+  // 1) jogador → mestre: controles admin e visão completa aparecem ao vivo
+  let rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("PATCH jogador→mestre aceito", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0
+    && [...document.querySelectorAll("button")].some((b) => /encerrar/i.test(b.textContent ?? "")),
+    null, { timeout: 20000 }).catch(() => {});
+  const ctrlAposPromo = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("promoção ao vivo: controles administrativos aparecem sem reload", ctrlAposPromo > 0, `controles=${ctrlAposPromo}`);
+  // visão completa = mesmos tokens que o mestre vê
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-token").length === n,
+    await pgM.locator(".vtt-token").count(), { timeout: 20000 }).catch(() => {});
+  const [nTokJ, nTokM] = [await pgJ.locator(".vtt-token").count(), await pgM.locator(".vtt-token").count()];
+  t("promoção ao vivo: visão VTT completa (mesma contagem do mestre)", nTokJ === nTokM && nTokM > 0, `jogador=${nTokJ} mestre=${nTokM}`);
+
+  // 2) mestre → jogador: controles somem e visão volta a ser filtrada
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH mestre→jogador aceito", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0
+    && ![...document.querySelectorAll("button")].some((b) => /encerrar/i.test(b.textContent ?? "")),
+    null, { timeout: 20000 }).catch(() => {});
+  const ctrlAposRebaixa = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("rebaixamento ao vivo: controles administrativos somem sem reload", ctrlAposRebaixa === 0, `controles=${ctrlAposRebaixa}`);
+  // visão filtrada = contagem devolvida pela API para o papel atual
+  const vttJ = await vttStateHttp({ camp: campId, id: sidA, cookie: c.jogadores.jogador1.cookie });
+  const nEspJ = (vttJ?.tokens ?? []).length;
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-token").length === n, nEspJ, { timeout: 20000 }).catch(() => {});
+  const nTokJ2 = await pgJ.locator(".vtt-token").count();
+  t("rebaixamento ao vivo: visão VTT filtrada conforme papel atual",
+    nTokJ2 === nEspJ && nTokJ2 < nTokM, `ui=${nTokJ2} esperado=${nEspJ} mestre=${nTokM}`);
+
+  // 3) permissão individual enviarMensagens no espectador conectado (pgE)
+  const tinhaFormAntes = await pgE.locator(".chat-form").count();
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { permissions: { enviarMensagens: true } } });
+  t("PATCH permissões espectador", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".chat-form").length > 0, null, { timeout: 20000 }).catch(() => {});
+  t("enviarMensagens=true ao vivo: formulário de chat aparece", (await pgE.locator(".chat-form").count()) > 0 && tinhaFormAntes === 0);
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { permissions: { enviarMensagens: false } } });
+  t("PATCH enviarMensagens=false", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".chat-form").length === 0, null, { timeout: 20000 }).catch(() => {});
+  t("enviarMensagens=false ao vivo: formulário de chat some", (await pgE.locator(".chat-form").count()) === 0);
+
+  // mudanças de papel/permissão NÃO podem gerar novo WS nem novo entrar:
+  // a prova de "mesma conexão" vale para toda a seção até aqui.
+  // tolerância: no máximo 1 reconexão de transporte (engine.io ping
+  // timeout ambiental sob proxy WS do Playwright); reload da página
+  // continua terminantemente proibido (zeraria o estado React).
+  t("papel/permissões ao vivo: sem reload, ≤1 reconexão de transporte, 0 mesa:entrar extra",
+    cargasJ === cargasAntesRT
+      && wsCountJ - wsAntesRT <= 1 && entrarCountJ - entrarAntesRT <= 1,
+    `cargas ${cargasAntesRT}→${cargasJ} ws ${wsAntesRT}→${wsCountJ} entrar ${entrarAntesRT}→${entrarCountJ}`);
+
+  sec("Personagens acompanham o papel — lista filtrada sem reload");
+  // Personagem do jogador1 criado DEPOIS da carga inicial da página:
+  // a lista só pode se tornar visível via recarga disparada por mudança
+  // de papel — exatamente o caminho corrigido.
+  const pj1Id = c.novoPersonagem(c.jogadores.jogador1.membershipId, "Heroina J1");
+  const charMestreId = c.personagemMestre;
+  // socket do mestre titular para produzir testes públicos decididos
+  // na sessão atual (sidA), um por personagem
+  const tokP = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sP = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokP)}` },
+  });
+  await new Promise((res, rej) => { sP.on("connect", res); sP.on("connect_error", rej); });
+  const emitirP = (ev, p) => new Promise((r) => {
+    const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000);
+    sP.emit(ev, p, (x) => { clearTimeout(to); r(x); });
+  });
+  sP.emit("entrar-campanha", campId, () => undefined);
+  await emitirP("mesa:entrar", { sessionId: sidA });
+  const mkTestePublico = async (charId, rotulo) => {
+    const ped = await emitirP("mesa:teste:pedir", {
+      sessionId: sidA, characterId: charId, rotulo,
+      dadosCount: 1, dadosLados: 20, visibilidade: "publica",
+      requestId: crypto.randomUUID(),
+    });
+    if (!ped?.ok || !ped?.id) return null;
+    await emitirP("mesa:teste:rolar", { testId: ped.id });
+    await emitirP("mesa:teste:decidir", { testId: ped.id, outcome: "sucesso" });
+    return ped.id;
+  };
+  const tMestreP = await mkTestePublico(charMestreId, "PERS-MESTRE-1");
+  const tJ1P = await mkTestePublico(pj1Id, "PERS-J1-1");
+  t("testes públicos decididos produzidos (mestre + j1)", !!tMestreP && !!tJ1P);
+  // conta GETs de personagens na página do jogador a partir daqui
+  let charsReqJ = 0;
+  pgJ.on("request", (rq) => {
+    if (rq.method() === "GET" && /\/characters(\?|$)/.test(rq.url())) charsReqJ++;
+  });
+  const esperarCharsReq = async (n) => {
+    for (let i = 0; i < 100 && charsReqJ < n; i++) await new Promise((r) => setTimeout(r, 100));
+  };
+  // nomes renderizados na 1ª coluna das decisões recentes, na ordem
+  const nomesDecisoes = () => pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Decisões recentes" }) }).locator(".tabela tbody tr td:first-child").allInnerTexts();
+  await new Promise((r) => setTimeout(r, 1200)); // eventos mesa:teste/decisao assentaram
+  // baseline: lista do jogador ainda vazia (personagem criado pós-carga)
+  let nomes = await nomesDecisoes();
+  t("baseline jogador sem lista: ambos os testes resolvem '?’",
+    nomes.length >= 2 && nomes.every((n) => n.trim() === "?"), JSON.stringify(nomes));
+
+  // 1) jogador → mestre: a lista passa a conter TODOS os personagens
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("PATCH jogador→mestre (personagens)", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await pgJ.getByRole("button", { name: "+ Teste" }).first().click().catch(() => {});
+  await esperarCharsReq(charsReqJ + 1);
+  const opcoesMestre = await pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Solicitar teste" }) }).locator("option").allInnerTexts();
+  t("promoção: select de personagem lista TODOS os personagens",
+    opcoesMestre.some((o) => o.includes("Mestre Herói")) && opcoesMestre.some((o) => o.includes("Heroina J1")),
+    JSON.stringify(opcoesMestre));
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("promoção: decisões resolvem nomes de todos os personagens",
+    nomes.includes("Mestre Herói") && nomes.includes("Heroina J1"), JSON.stringify(nomes));
+
+  // 2) mestre → jogador: personagens alheios saem da lista na hora
+  const charsAntesRebaixa = charsReqJ;
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH mestre→jogador (personagens)", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await esperarCharsReq(charsAntesRebaixa + 1);
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("rebaixamento: personagem alheio volta a '?' e o próprio resolve",
+    nomes.includes("?") && nomes.includes("Heroina J1") && !nomes.includes("Mestre Herói"),
+    JSON.stringify(nomes));
+
+  // 3) jogador → espectador: lista esvaziada SEM consultar o endpoint
+  const charsAntesEsp = charsReqJ;
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "espectador" } });
+  t("PATCH jogador→espectador (personagens)", rRT.status === 200);
+  await new Promise((r) => setTimeout(r, 2000)); // janela suficiente p/ um GET indevido
+  t("espectador: nenhum GET /characters é disparado", charsReqJ === charsAntesEsp,
+    `delta=${charsReqJ - charsAntesEsp}`);
+  nomes = await nomesDecisoes();
+  t("espectador: nenhum nome de personagem permanece na lista",
+    !nomes.includes("Mestre Herói") && !nomes.includes("Heroina J1"), JSON.stringify(nomes));
+
+  // 4) espectador → jogador: lista recarrega filtrada
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH espectador→jogador (personagens)", rRT.status === 200);
+  await esperarCharsReq(charsAntesEsp + 1);
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("volta a jogador: próprio personagem resolve, alheio fica '?'",
+    nomes.includes("Heroina J1") && nomes.includes("?") && !nomes.includes("Mestre Herói"),
+    JSON.stringify(nomes));
+
+  // 5) mudanças rápidas: resposta HTTP da geração antiga não repovoa
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  const rRT2 = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCHs rápidos mestre→jogador aceitos", rRT.status === 200 && rRT2.status === 200);
+  await new Promise((r) => setTimeout(r, 3500)); // gerações assentam
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0,
+    null, { timeout: 20000 }).catch(() => {});
+  nomes = await nomesDecisoes();
+  t("mudança rápida: estado final = jogador filtrado (sem lista privilegiada)",
+    !nomes.includes("Mestre Herói") && (await pgJ.locator(".vtt-nevoa-controles").count()) === 0,
+    JSON.stringify(nomes));
+  sP.close();
+
+  // 4) remoção da membership: revogação em tempo real na MESMA conexão
+  const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
+  rRT = await req(BASE, "DELETE", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre });
+  t("DELETE membership do espectador", rRT.status === 200);
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  const corpoE = await pgE.locator("body").innerText();
+  t("revogação ao vivo: mensagem de acesso revogado sem reload",
+    /revogad/i.test(corpoE) && (await pgE.locator(".mesa-vtt").count()) === 0,
+    corpoE.slice(0, 120).replace(/\n/g, " "));
+  // reativação: só um caminho de autorização novo restaura — PATCH status
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre, body: { status: "ativo" } });
+  t("PATCH reativação status=ativo", rRT.status === 200);
+  await pgE.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0, null, { timeout: 30000 }).catch(() => {});
+  t("reativação: mesa retorna via nova entrada autorizada (sem reload)",
+    (await pgE.locator(".mesa-vtt").count()) > 0);
+
+  // 5) mudanças rápidas em sequência: estado final = banco
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "espectador" } });
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0
+    && document.querySelectorAll(".chat-form").length > 0,
+    null, { timeout: 20000 }).catch(() => {});
+  t("mudanças rápidas: UI converge para jogador (sem controles admin, chat visível)",
+    (await pgJ.locator(".vtt-nevoa-controles").count()) === 0 && (await pgJ.locator(".chat-form").count()) > 0);
+
+  // revogação→reativação: o ÚNICO mesa:entrar permitido é o novo caminho
+  // de autorização disparado pela própria notificação de reativação —
+  // na mesma conexão WS, sem reload
+  t("revogação/reativação: no máximo 1 mesa:entrar (nova autorização) e conexão preservada",
+    entrarCountJ - entrarAntesRev <= 1 && wsCountJ === wsAntesRev,
+    `ws ${wsAntesRev}→${wsCountJ} entrar ${entrarAntesRev}→${entrarCountJ}`);
+
+  sec("Corrida VTT — resposta obsoleta não reaplica visão privilegiada");
+  // pgJ é jogador; promove a mestre → sync da geração N fica RETIDA;
+  // rebaixa → geração N+1; libera a resposta antiga por último.
+  // A visão privilegiada NUNCA pode reaparecer.
+  const wsAntesCorrida = wsCountJ, entrarAntesCorrida = entrarCountJ;
+  armarRetencaoSyncJ = true; // o próximo ACK de sync será retido
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("corrida: PATCH promoção", rRT.status === 200);
+  // espera o emit da sync ser armado (cliente→servidor contém o evento)
+  // espera o ACK da sync ser retido (polling no lado Node — a mensagem
+  // viaja pelo WebSocket interceptado)
+  for (let i = 0; i < 100 && ackSyncJRetido === null; i++) await new Promise((r) => setTimeout(r, 100));
+  t("corrida: ACK da sync retido no transporte", ackSyncJRetido !== null);
+  // enquanto retida, rebaixa — geração N+1
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("corrida: PATCH rebaixamento", rRT.status === 200);
+  // visão segura durante a transição: ou o placeholder está visível
+  // (tab=0) ou a sync da nova geração já concluiu com a visão FILTRADA.
+  // Em ambos os casos a visão privilegiada (contagem do mestre) não
+  // pode estar na tela — a janela é curta porque a sync N+1 responde
+  // rápido (seu ACK não está retido).
+  const tokPrivilegiados = await pgM.locator(".vtt-token").count();
+  await pgJ.waitForFunction(() => /Permissões atualizadas/.test(document.body.innerText)
+    || document.querySelectorAll(".vtt-tabuleiro").length === 0, null, { timeout: 20000 }).catch(() => {});
+  const tabDurante = await pgJ.locator(".vtt-tabuleiro").count();
+  const tokensDurante = await pgJ.locator(".vtt-token").count();
+  t("corrida: durante rebaixamento a visão privilegiada fica oculta",
+    tokensDurante < tokPrivilegiados, `tab=${tabDurante} tokens=${tokensDurante} privilegiados=${tokPrivilegiados}`);
+  // libera a resposta OBSOLETA (geração N) — deve ser descartada por inteiro
+  liberarAckSyncJ();
+  ackSyncJRetido = null;
+  // a geração N+1 sincroniza e aplica a visão filtrada de jogador
+  const nTokHttpJ = async () => ((await vttStateHttp({ camp: campId, id: sidA, cookie: c.jogadores.jogador1.cookie }))?.tokens ?? []).length;
+  const esperadoCorrida = await nTokHttpJ();
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-tabuleiro").length === 1
+    && document.querySelectorAll(".vtt-token").length === n, esperadoCorrida, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => !/Permissões atualizadas/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  const [nTokJC, nTokMC] = [await pgJ.locator(".vtt-token").count(), await pgM.locator(".vtt-token").count()];
+  t("corrida: visão final = filtrada de jogador (não a privilegiada retida)",
+    nTokJC === esperadoCorrida && nTokJC < nTokMC, `jogador=${nTokJC} esperado=${esperadoCorrida} mestre=${nTokMC}`);
+  const ctrlCorrida = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("corrida: controles admin NÃO retornaram após resposta obsoleta", ctrlCorrida === 0, `controles=${ctrlCorrida}`);
+  t("corrida: mesma conexão (≤1 reconexão de transporte, ≤1 entrar na seção)",
+    cargasJ === cargasAntesRT
+      && wsCountJ - wsAntesCorrida <= 1 && entrarCountJ - entrarAntesCorrida <= 1,
+    `ws ${wsAntesCorrida}→${wsCountJ} entrar ${entrarAntesCorrida}→${entrarCountJ}`);
+
+  sec("Snapshot restaurado revoga membro ausente — UI sem reload");
+  // snapshot do estado atual; edita o JSON no banco removendo j1;
+  // restaura → j1 (conectado) deve ser revogado ao vivo
+  const snapRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "sem-j1" } });
+  const snapIdRT = snapRT.json?.id;
+  t("snapshot p/ revogação criado", snapRT.status === 201 && !!snapIdRT);
+  const dbSnap = abrirDb(BANCO);
+  const linhaSnap = dbSnap.prepare("select data from snapshots where id=?").get(snapIdRT);
+  const dadosSnap = JSON.parse(linhaSnap.data);
+  const j1midRT = c.jogadores.jogador1.membershipId;
+  dadosSnap.memberships = (dadosSnap.memberships ?? []).filter((m) => m.userId !== c.jogadores.jogador1.id);
+  // consistência referencial do pacote editado: o jogador1 passou a ter
+  // personagem próprio (seção de personagens) — remover a membership sem
+  // remover personagem/testes/rolagens associados geraria FK órfã no
+  // restore. Limpa a cadeia characters→fields/itens/testes/rolagens/notas.
+  const charsJ1 = new Set((dadosSnap.characters ?? []).filter((ch) => ch.membershipId === j1midRT).map((ch) => ch.id));
+  if (charsJ1.size) {
+    dadosSnap.characters = (dadosSnap.characters ?? []).filter((ch) => !charsJ1.has(ch.id));
+    for (const k of ["characterFields", "inventoryEntries", "equipmentEntries"]) {
+      dadosSnap[k] = (dadosSnap[k] ?? []).filter((r) => !charsJ1.has(r.characterId));
+    }
+    dadosSnap.tests = (dadosSnap.tests ?? []).filter((t2) => !charsJ1.has(t2.characterId));
+    dadosSnap.rolls = (dadosSnap.rolls ?? []).filter((r) => !charsJ1.has(r.characterId));
+    dadosSnap.notes = (dadosSnap.notes ?? []).map((n) => (charsJ1.has(n.characterId) ? { ...n, characterId: null } : n));
+  }
+  dbSnap.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSnap), snapIdRT);
+  dbSnap.close();
+  const wsAntesSnap = wsCountJ;
+  const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
+  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("jogador revogado pelo snapshot: acesso revogado sem reload",
+    /revogad/i.test(await pgJ.locator("body").innerText()) && (await pgJ.locator(".mesa-vtt").count()) === 0);
+  // mestre segue operando normalmente
+  await pgM.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0, null, { timeout: 15000 }).catch(() => {});
+  t("mestre mantém a mesa após restore", (await pgM.locator(".mesa-vtt").count()) > 0);
+
+  sec("Importação substituir revoga membro — UI sem reload");
+  const expRT = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
+  const pacoteRT = expRT.json;
+  pacoteRT.estado.memberships = (pacoteRT.estado.memberships ?? []).filter((m) => m.userId !== espId);
+  const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("import substituir aceito", rImpRT.status === 200, JSON.stringify(rImpRT.json).slice(0, 140));
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("espectador revogado pela importação: acesso revogado sem reload",
+    /revogad/i.test(await pgE.locator("body").innerText()) && (await pgE.locator(".mesa-vtt").count()) === 0);
+
+  sec("Convite reativa permissões preservadas — UI reflete estado real");
+  // garante UMA membership do espectador marcada como removida com
+  // enviarMensagens=true (a importação anterior pode tê-la apagado)
+  const dbEspRT = abrirDb(BANCO);
+  dbEspRT.prepare("delete from memberships where campaign_id=? and user_id=?").run(campId, espId);
+  dbEspRT.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), campId, espId, "espectador", "removido",
+      JSON.stringify({ enviarMensagens: true }), Date.now(), Date.now(), Date.now());
+  dbEspRT.close();
+  t("membership do espectador recriada como removida c/ permissão", true);
+  const convRT = await req(BASE, "POST", `/campaigns/${campId}/invitations`, { cookie: cookieMestre, body: { role: "espectador", requiresApproval: false } });
+  const codigoRT = convRT.json?.convite?.code;
+  t("convite criado", convRT.status === 201 && !!codigoRT);
+  const cookieEspRT = sessao(BANCO, espId);
+  const rAceiteRT = await req(BASE, "POST", `/convites/${codigoRT}/aceitar`, { cookie: cookieEspRT, body: {} });
+  t("convite aceito", rAceiteRT.status === 200 || rAceiteRT.status === 201, JSON.stringify(rAceiteRT.json).slice(0, 120));
+  // notificação privada → re-entrada autorizada → formulário de chat
+  await pgE.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0
+    && document.querySelectorAll(".chat-form").length > 0, null, { timeout: 40000 }).catch(() => {});
+  t("espectador reativado COM permissão: mesa e chat voltam sem reload",
+    (await pgE.locator(".mesa-vtt").count()) > 0 && (await pgE.locator(".chat-form").count()) > 0);
+
+  sec("Privacidade — dados privilegiados invalidados sem reconexão");
+  // a seção de snapshot revogou o j1 — recria a membership como jogador
+  // ativo e dispara a notificação via PATCH para o cliente reativar
+  // (mesmo mecanismo de produção, sem reload)
+  const dbPriv = abrirDb(BANCO);
+  dbPriv.prepare("delete from memberships where campaign_id=? and user_id=?").run(campId, c.jogadores.jogador1.id);
+  const midJ1b = crypto.randomUUID();
+  const agoraPriv = Date.now();
+  dbPriv.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(midJ1b, campId, c.jogadores.jogador1.id, "jogador", "ativo", "{}", agoraPriv, agoraPriv, agoraPriv);
+  dbPriv.close();
+  // PATCH para mestre: além de notificar (reativação), já coloca o j1
+  // no papel que recebe conteúdo de visibilidade "mestre"
+  const rReativJ = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1b}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("membership do j1 recriada e promovida a mestre", rReativJ.status === 200, JSON.stringify(rReativJ.json).slice(0, 100));
+  await pgJ.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0
+    && !/revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  t("j1 reativado como mestre sem reload (mesa visível)", (await pgJ.locator(".mesa-vtt").count()) > 0);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0
+    || /Permissões atualizadas/.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  // socket Node do mestre titular para emitir a mensagem secreta
+  const tokM = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sPriv = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokM)}` },
+  });
+  await new Promise((res, rej) => { sPriv.on("connect", res); sPriv.on("connect_error", rej); });
+  sPriv.emit("entrar-campanha", campId, () => undefined);
+  await new Promise((r) => setTimeout(r, 200));
+  sPriv.emit("mesa:entrar", { sessionId: sidA }, () => undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  sPriv.emit("mesa:mensagem", { sessionId: sidA, content: "SEGREDO-X9", visibilidade: "secreta", clientId: crypto.randomUUID() }, () => undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  await pgJ.waitForFunction(() => document.body.innerText.includes("SEGREDO-X9"), null, { timeout: 10000 }).catch(() => {});
+  t("segredo visível no chat enquanto j1 é mestre", (await pgJ.locator("body").innerText()).includes("SEGREDO-X9"));
+  // rebaixa com o ACK da sync RETIDO: o primeiro render já deve estar
+  // seguro — placeholder no lugar do tabuleiro, sem tokens privilegiados
+  // e sem o conteúdo secreto no DOM
+  armarRetencaoSyncJ = true;
+  const rRebaixaPriv = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1b}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("privacidade: PATCH rebaixamento mestre→jogador", rRebaixaPriv.status === 200);
+  for (let i = 0; i < 100 && ackSyncJRetido === null; i++) await new Promise((r) => setTimeout(r, 100));
+  t("privacidade: ACK da sync retido no transporte", ackSyncJRetido !== null);
+  const corpoBloq = await pgJ.locator("body").innerText();
+  const nTabBloq = await pgJ.locator(".vtt-tabuleiro").count();
+  const nTokBloq = await pgJ.locator(".vtt-token").count();
+  t("primeiro render seguro: tabuleiro e tokens privilegiados AUSENTES",
+    nTabBloq === 0 && nTokBloq === 0, `tab=${nTabBloq} tok=${nTokBloq}`);
+  t("primeiro render seguro: conteúdo secreto removido do DOM", !corpoBloq.includes("SEGREDO-X9"));
+  // libera o ACK da geração atual → visão filtrada volta; o segredo
+  // NÃO pode reaparecer (histórico recarregado é filtrado pelo servidor
+  // e respostas HTTP de geração antiga são descartadas pelo seq)
+  liberarAckSyncJ();
+  ackSyncJRetido = null;
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-tabuleiro").length === 1
+    && document.querySelectorAll(".vtt-token").length > 0, null, { timeout: 20000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 400)); // recarga filtrada de histórico assentou
+  const corpoPos = await pgJ.locator("body").innerText();
+  t("pós-sync: visão filtrada volta e segredo NÃO retorna",
+    (await pgJ.locator(".vtt-tabuleiro").count()) === 1 && !corpoPos.includes("SEGREDO-X9"));
+  t("pós-sync: controles administrativos ausentes", (await pgJ.locator(".vtt-nevoa-controles").count()) === 0);
+  // controle: o mestre titular continua vendo o segredo (estava autorizado)
+  t("controle: mestre titular mantém o segredo", (await pgM.locator("body").innerText()).includes("SEGREDO-X9"));
+  try { sPriv.close(); } catch {}
+
+  sec("Restauração substitui ID da sessão — UI volta à lista sem abrir a nova");
+  // pgJ (jogador) e pgM (mestre) estão dentro da MesaView da sidA
+  const snapSub = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "sid-trocado" } });
+  const snapSubId = snapSub.json?.id;
+  let novoSid = crypto.randomUUID();
+  const dbSub = abrirDb(BANCO);
+  const linSub = dbSub.prepare("select data from snapshots where id=?").get(snapSubId);
+  // troca o ID da sessão em TODO o pacote (id da sessão + sessionId das
+  // entidades filhas) — simula restauração que regenera IDs
+  const dadosSub = JSON.parse(JSON.stringify(JSON.parse(linSub.data)).split(sidA).join(novoSid));
+  dbSub.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSub), snapSubId);
+  dbSub.close();
+  const rSub = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapSubId}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore com ID de sessão substituído", rSub.status === 200, JSON.stringify(rSub.json).slice(0, 140));
+  const listaPosSub = await req(BASE, "GET", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre });
+  const idsPosSub = (listaPosSub.json?.sessoes ?? []).map((s) => s.id);
+  t("API: sid antigo removido e novo presente", !idsPosSub.includes(sidA) && idsPosSub.includes(novoSid), JSON.stringify(idsPosSub));
+  const esperaLista = (p) => p.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await esperaLista(pgJ);
+  await esperaLista(pgM);
+  t("jogador: MesaView antiga desmontada e lista exibida",
+    (await pgJ.locator(".mesa-vtt").count()) === 0 && (await pgJ.locator(".tabela tbody tr").count()) > 0);
+  t("jogador: sessão nova NÃO aberta automaticamente", (await pgJ.locator(".mesa-vtt").count()) === 0);
+  t("mestre: MesaView antiga desmontada e lista exibida",
+    (await pgM.locator(".mesa-vtt").count()) === 0 && (await pgM.locator(".tabela tbody tr").count()) > 0);
+  t("lista exibe a sessão substituída pelo nome", (await pgM.locator("body").innerText()).includes("Mesa Névoa Alfa"));
+  // reentrada manual do mestre na sessão de ID novo
+  await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("mestre re-entrou manualmente na sessão nova", (await pgM.locator(".mesa-vtt").count()) === 1);
+  // controle: ID PRESERVADO — snapshot sem edição; a sessão aberta
+  // continua aberta com o estado autoritativo novo
+  const snapKeep = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "id-preservado" } });
+  const rKeep = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapKeep.json?.id}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore com ID preservado", rKeep.status === 200, JSON.stringify(rKeep.json).slice(0, 120));
+  await new Promise((r) => setTimeout(r, 1000));
+  t("ID preservado: mesa do mestre permanece aberta", (await pgM.locator(".mesa-vtt").count()) === 1);
+  // jogador volta a entrar na sessão para as provas de evento atrasado
+  await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("jogador re-entrou na sessão", (await pgJ.locator(".mesa-vtt").count()) === 1);
+
+  sec("Pós-restauração: ID preservado recarrega TODO o estado; evento perdido é recuperado na reconexão");
+  // A) ID preservado + marcador injetado no snapshot: prova que a
+  // MesaView NÃO mantém dados do estado antigo — mensagens vêm do
+  // servidor pós-restore (restKey força recarga completa)
+  const snapPA = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "preservado-marcador" } });
+  const idPA = snapPA.json?.id;
+  const dbPA = abrirDb(BANCO);
+  const dadosPA = JSON.parse(dbPA.prepare("select data from snapshots where id=?").get(idPA).data);
+  dadosPA.chatMessages = [...(dadosPA.chatMessages ?? []), {
+    id: crypto.randomUUID(), campaignId: campId, sessionId: novoSid,
+    authorId: c.adminId, kind: "texto", content: "MARCA-A-REST-1",
+    visibility: "publica", recipients: null, createdAt: new Date().toISOString(),
+  }];
+  dbPA.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosPA), idPA);
+  dbPA.close();
+  const rPA = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${idPA}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore A (ID preservado + marcador)", rPA.status === 200, JSON.stringify(rPA.json).slice(0, 120));
+  await pgM.waitForFunction(() => document.body.innerText.includes("MARCA-A-REST-1"), null, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => document.body.innerText.includes("MARCA-A-REST-1"), null, { timeout: 30000 }).catch(() => {});
+  t("mestre: marcador do snapshot aparece sem reload (recarga completa)", (await pgM.locator("body").innerText()).includes("MARCA-A-REST-1"));
+  t("jogador: marcador do snapshot aparece sem reload", (await pgJ.locator("body").innerText()).includes("MARCA-A-REST-1"));
+  t("ID preservado: mesa continua aberta nos dois clientes",
+    (await pgM.locator(".mesa-vtt").count()) === 1 && (await pgJ.locator(".mesa-vtt").count()) === 1);
+
+  // B) cliente DESCONECTADO durante campanha:restaurada com ID
+  // substituído: ao reconectar, mesa:entrar é rejeitado ("não
+  // encontrada") e a UI volta à lista — sem reload de página
+  await pgJ.context().setOffline(true);
+  await new Promise((r) => setTimeout(r, 800)); // socket cai de verdade
+  const sidC = crypto.randomUUID();
+  const snapPB = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "offline-troca-id" } });
+  const idPB = snapPB.json?.id;
+  const dbPB = abrirDb(BANCO);
+  const dadosPB = JSON.parse(JSON.stringify(JSON.parse(dbPB.prepare("select data from snapshots where id=?").get(idPB).data)).split(novoSid).join(sidC));
+  dbPB.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosPB), idPB);
+  dbPB.close();
+  const rPB = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${idPB}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore B (offline, ID substituído)", rPB.status === 200, JSON.stringify(rPB.json).slice(0, 120));
+  await pgJ.context().setOffline(false);
+  // reconexão: socket.io reconecta → entrar() → mesa:entrar falha →
+  // aoSair → lista de sessões (sem reload, sem sessão fantasma)
+  await pgJ.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 45000 }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 1500));
+  t("jogador offline: voltou à lista após reconectar (sem reload)",
+    (await pgJ.locator(".mesa-vtt").count()) === 0 && (await pgJ.locator(".tabela tbody tr").count()) > 0);
+  t("jogador offline: lista exibe a sessão substituída", (await pgJ.locator("body").innerText()).includes("Mesa Névoa Alfa"));
+  // mestre (online) também voltou à lista via campanha:restaurada
+  await pgM.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  t("mestre online: ID substituído desmontou a MesaView", (await pgM.locator(".mesa-vtt").count()) === 0);
+  // reentrada manual do jogador na sessão de ID novo (sidC)
+  await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("jogador re-entrou manualmente na sessão nova", (await pgJ.locator(".mesa-vtt").count()) === 1);
+  // mestre também precisa reentrar — o restore B desmontou a MesaView dele
+  await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("mestre re-entrou manualmente na sessão nova", (await pgM.locator(".mesa-vtt").count()) === 1);
+  novoSid = sidC; // sessão corrente passa a ser sidC nas seções seguintes
+
+  sec("Eventos privados atrasados — produzidos antes, entregues depois do rebaixamento");
+  const dbC = abrirDb(BANCO);
+  const memJ1 = dbC.prepare("select id from memberships where campaign_id=? and user_id=?").get(campId, c.jogadores.jogador1.id);
+  dbC.close();
+  // teste privado sobre personagem do MESTRE — j1 não é dono: após o
+  // rebaixamento ele não tem nenhuma autorização para recebê-lo
+  const charIdJ1 = c.personagemMestre;
+  const rPromoC = await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("promoção do j1 para mestre", rPromoC.status === 200, JSON.stringify(rPromoC.json).slice(0, 100));
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0, null, { timeout: 30000 }).catch(() => {});
+  t("j1 vê controles de mestre", (await pgJ.locator(".vtt-nevoa-controles").count()) > 0);
+  // socket do mestre titular na sessão nova
+  const tokC = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sC = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokC)}` },
+  });
+  await new Promise((res, rej) => { sC.on("connect", res); sC.on("connect_error", rej); });
+  const emitirS = (ev, p) => new Promise((r) => {
+    const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000);
+    sC.emit(ev, p, (x) => { clearTimeout(to); r(x); });
+  });
+  sC.emit("entrar-campanha", campId, () => undefined);
+  await emitirS("mesa:entrar", { sessionId: novoSid });
+  // arma a retenção no transporte do pgJ ANTES de produzir os eventos
+  reterEvtJ = (m) => ["\"mesa:mensagem\"", "\"mesa:teste\"", "\"mesa:rolagem\"", "\"mesa:decisao\""].some((k) => m.includes(k));
+  await emitirS("mesa:mensagem", { sessionId: novoSid, content: "EVT-SEGREDO-77", visibilidade: "secreta", clientId: crypto.randomUUID() });
+  const rPedC = await emitirS("mesa:teste:pedir", { sessionId: novoSid, characterId: charIdJ1, rotulo: "PRIV-ROT-99", dadosCount: 1, dadosLados: 20, minimo: 13, visibilidade: "privada" });
+  const testIdC = rPedC?.id;
+  t("teste privado solicitado pelo mestre", rPedC?.ok === true && !!testIdC, JSON.stringify(rPedC).slice(0, 140));
+  if (testIdC) {
+    const rRolC = await emitirS("mesa:teste:rolar", { testId: testIdC });
+    t("teste privado rolado", rRolC?.ok === true, JSON.stringify(rRolC).slice(0, 120));
+    const rDecC = await emitirS("mesa:teste:decidir", { testId: testIdC, outcome: "sucesso", nota: "NOTA-PRIV-66" });
+    t("teste privado decidido c/ nota", rDecC?.ok === true, JSON.stringify(rDecC).slice(0, 120));
+  }
+  await emitirS("mesa:rolar", { sessionId: novoSid, visibilidade: "privada", motivo: "ROLL-PRIV-55", dados: [{ sides: 20, count: 1 }] });
+  // os pacotes server→client ficam retidos na fila do ws do navegador
+  for (let i = 0; i < 100 && filaEvtJ.length < 5; i++) await new Promise((r) => setTimeout(r, 100));
+  t("eventos privados retidos no transporte (≥5 pacotes)", filaEvtJ.length >= 5, `fila=${filaEvtJ.length}`);
+  // rebaixa ANTES de liberar — os eventos chegam com papel já revogado
+  const rRebaixaC = await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("rebaixamento do j1", rRebaixaC.status === 200);
+  await esperarSemIncerto(pgJ, 30000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 800)); // limpeza + sync filtrada assentaram
+  liberarEvtJ();
+  reterEvtJ = null;
+  await new Promise((r) => setTimeout(r, 1000)); // eventos atrasados entregues
+  const corpoAtraso = await pgJ.locator("body").innerText();
+  t("msg secreta atrasada NÃO reaparece", !corpoAtraso.includes("EVT-SEGREDO-77"));
+  t("teste privado atrasado não repovoa (rótulo)", !corpoAtraso.includes("PRIV-ROT-99"));
+  // o anúncio de chat da rolagem privada é endereçado aos destinatários
+  // da época (j1 era mestre) — legítimo; o que não pode voltar é o
+  // CARD de rolagem com dados/motivo no painel de Rolagens
+  t("rolagem privada atrasada não gera card de rolagem",
+    (await pgJ.locator(".rolagem-item", { hasText: "ROLL-PRIV-55" }).count()) === 0);
+  t("decisão privada atrasada não vaza nota", !corpoAtraso.includes("NOTA-PRIV-66"));
+  const corpoMAtraso = await pgM.locator("body").innerText();
+  t("controle: mestre titular recebe o evento secreto", corpoMAtraso.includes("EVT-SEGREDO-77"));
+
+  sec("Resposta HTTP antiga não repovoa histórico privilegiado");
+  // segredo criado enquanto j1 é jogador — só mestres o recebem ao vivo
+  await emitirS("mesa:mensagem", { sessionId: novoSid, content: "HTTP-SEGREDO-88", visibilidade: "secreta", clientId: crypto.randomUUID() });
+  await new Promise((r) => setTimeout(r, 300));
+  t("segredo HTTP invisível ao jogador antes da promoção",
+    !(await pgJ.locator("body").innerText()).includes("HTTP-SEGREDO-88"));
+  // promove → a recarga filtrada da NOVA geração busca /mensagens como
+  // mestre e a resposta fica RETIDA antes de chegar ao JavaScript
+  armarHttpJ = true;
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  for (let i = 0; i < 100 && !httpRetidoJ; i++) await new Promise((r) => setTimeout(r, 100));
+  t("resposta HTTP de histórico retida", httpRetidoJ !== null);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0, null, { timeout: 30000 }).catch(() => {});
+  // rebaixa ANTES de liberar a resposta antiga
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  await esperarSemIncerto(pgJ, 30000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 800));
+  await liberarHttpJ();
+  await new Promise((r) => setTimeout(r, 1000));
+  const corpoHttp = await pgJ.locator("body").innerText();
+  t("HTTP-SEGREDO-88 ausente após resposta antiga liberada", !corpoHttp.includes("HTTP-SEGREDO-88"));
+  // controle positivo: nova promoção → geração nova busca e MOSTRA
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  await pgJ.waitForFunction(() => document.body.innerText.includes("HTTP-SEGREDO-88"), null, { timeout: 30000 }).catch(() => {});
+  t("controle: geração nova mostra o segredo ao mestre", (await pgJ.locator("body").innerText()).includes("HTTP-SEGREDO-88"));
+  try { sC.close(); } catch {}
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });

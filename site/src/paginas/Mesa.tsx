@@ -30,19 +30,49 @@ export default function Mesa({ campaignId, campanha }: Props) {
   const [ativa, setAtiva] = useState<Sessao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
+  const seqSessoesRef = useRef(0);
 
   const carregar = useCallback(async () => {
+    const seq = ++seqSessoesRef.current;
     try {
       const { sessoes } = await api.listarSessoes(campaignId);
+      if (seq !== seqSessoesRef.current) return; // resposta de geração antiga
       setSessoes(sessoes);
       setErro(null);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
+      return sessoes;
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); return null; }
   }, [campaignId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
+  // campanha:restaurada — snapshot/import substituiu o estado: a sessão
+  // selecionada pode ter sumido ou trocado de ID. Rebusca a lista real
+  // (resposta de geração antiga é descartada pelo seq) e, se o ID não
+  // existir mais, desmonta a MesaView — nenhum mapa/token/mensagem da
+  // sessão antiga permanece na tela.
+  const [restKey, setRestKey] = useState(0);
+  useEffect(() => {
+    const socket = getSocket();
+    const aoRestaurada = (d: { campaignId?: string }) => {
+      if (d?.campaignId !== campaignId) return;
+      void carregar().then((lista) => {
+        if (!lista) return;
+        setAtiva((atual) => {
+          if (!atual) return atual;
+          const mantida = lista.find((s) => s.id === atual.id) ?? null;
+          // ID preservado: MesaView permanece, mas restKey força a
+          // recarga completa do estado autoritativo pós-restore
+          if (mantida) setRestKey((k) => k + 1);
+          return mantida; // ID substituído → volta à lista
+        });
+      });
+    };
+    socket.on("campanha:restaurada", aoRestaurada);
+    return () => { socket.off("campanha:restaurada", aoRestaurada); };
+  }, [campaignId, carregar]);
+
   if (ativa) {
-    return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} aoSair={() => { setAtiva(null); void carregar(); }} />;
+    return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
   }
 
   return (
@@ -78,8 +108,8 @@ export default function Mesa({ campaignId, campanha }: Props) {
 
 // ================= VIEW DA MESA =================
 
-function MesaView({ campaignId, sessao, souMestre, aoSair }: {
-  campaignId: string; sessao: Sessao; souMestre: boolean; aoSair: () => void;
+function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
+  campaignId: string; sessao: Sessao; souMestre: boolean; restKey?: number; aoSair: () => void;
 }) {
   const [mensagens, setMensagens] = useState<MensagemMesa[]>([]);
   const [testes, setTestes] = useState<TesteMesa[]>([]);
@@ -95,7 +125,72 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
   const ehMestreAtual = papel === "mestre";
   const [entradaFalhou, setEntradaFalhou] = useState(false);
   const [podeEnviar, setPodeEnviar] = useState(true);
+  // geração de permissões: incrementa a cada mesa:permissao:atualizada —
+  // respostas assíncronas de sincronização emitidas antes da mudança mais
+  // recente são descartadas (não restauram papel/permissões obsoletos)
+  const [permSeq, setPermSeq] = useState(0);
+  const permSeqRef = useRef(0);
+  // papel efetivo conhecido pelo cliente — atualizado SINCRONAMENTE no
+  // handler do evento privado (antes de qualquer render) para que a
+  // comparação de privilégio nunca use um valor defasado de efeito
+  const papelRef = useRef(papel);
+  useEffect(() => { papelRef.current = papel; }, [papel]);
+  const nivelPapelFn = (p?: string | null) => (p === "mestre" ? 2 : p === "espectador" ? 0 : 1);
+  // queda de privilégio pendente de sincronização autorizada: o
+  // tabuleiro VTT NÃO pode renderizar a visão anterior enquanto a
+  // resposta válida da geração atual não chegar — estado participa do
+  // render (não depende de useEffect para ativar a proteção)
+  const [visaoBloqueada, setVisaoBloqueada] = useState(false);
+  // recarga filtrada por papel: descarta resposta de geração antiga —
+  // dados privados recebidos enquanto o usuário era mestre não podem
+  // ser repovoados por HTTP emitido antes da mudança de papel
+  const recarregarFiltrado = useCallback(() => {
+    const seq = permSeqRef.current;
+    void Promise.all([
+      api.listarMensagens(campaignId, sessao.id),
+      api.listarTestes(campaignId, sessao.id),
+      api.obterEstadoMesa(campaignId, sessao.id),
+    ]).then(([msgs, tes, est]) => {
+      if (seq !== permSeqRef.current) return;
+      setMensagens(msgs.mensagens);
+      setTestes(tes.testes);
+      setTurnos(est.turnos);
+      setTimer(est.sessao.timerState ?? null);
+      setSessaoAtual(est.sessao);
+    }).catch(() => undefined);
+  }, [campaignId, sessao.id]);
+  const revogadoRef = useRef(false);
   const [meuUserId, setMeuUserId] = useState<string>("");
+  // meuUserId também em ref: callbacks de socket não podem usar um
+  // closure com o valor antigo após troca de conta/papel
+  const meuUserIdRef = useRef("");
+  useEffect(() => { meuUserIdRef.current = meuUserId; }, [meuUserId]);
+  // espelhos em ref do estado carregado pela API confiável — os handlers
+  // de socket são registrados uma vez e não podem capturar `personagens`/
+  // `testes` obsoletos do closure; ehEu vem do servidor (listarPersonagens)
+  const personagensRef = useRef<PersonagemResumo[]>([]);
+  const testesRef = useRef<TesteMesa[]>([]);
+  useEffect(() => { personagensRef.current = personagens; }, [personagens]);
+  useEffect(() => { testesRef.current = testes; }, [testes]);
+  // personagens acompanham o papel efetivo: mestre/jogador recebem a
+  // lista autorizada pelo servidor; espectador não consulta o endpoint
+  // (a requisição seria recusada) — a lista é esvaziada. A geração
+  // permSeqRef descarta respostas emitidas antes da mudança de papel
+  // mais recente: um GET iniciado como mestre não pode repovoar a
+  // lista depois de um rebaixamento.
+  const recarregarPersonagens = useCallback(() => {
+    const seq = permSeqRef.current;
+    const limpar = () => { personagensRef.current = []; setPersonagens([]); };
+    if (papelRef.current === "espectador") { limpar(); return; }
+    void api.listarPersonagens(campaignId).then((pers) => {
+      if (seq !== permSeqRef.current) return;
+      personagensRef.current = pers.personagens;
+      setPersonagens(pers.personagens);
+    }).catch(() => {
+      if (seq !== permSeqRef.current) return;
+      limpar(); // erro: não conservar lista privilegiada obsoleta
+    });
+  }, [campaignId]);
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
   const [privado, setPrivado] = useState(false);
@@ -116,8 +211,12 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     return !!p?.ehEu;
   }, [personagens]);
 
-  // carga inicial
-  useEffect(() => {
+  // carga completa (mensagens, testes, turnos, timer, sessão, membros,
+  // personagens, regras): geração própria via permSeqRef — respostas de
+  // gerações antigas são descartadas. Usada na carga inicial, na
+  // reconexão e após campanha:restaurada com ID preservado.
+  const recarregarCompleta = useCallback(() => {
+    const seq = permSeqRef.current;
     void (async () => {
       try {
         const [msgs, tes, est, mem, pers, regras] = await Promise.all([
@@ -128,6 +227,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           api.listarPersonagens(campaignId).catch(() => ({ personagens: [] as PersonagemResumo[] })),
           api.obterRegras(campaignId).catch(() => null),
         ]);
+        if (seq !== permSeqRef.current) return; // gerada antes de mudança de papel
         setMensagens(msgs.mensagens);
         setTestes(tes.testes);
         setTurnos(est.turnos);
@@ -143,21 +243,127 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     })();
   }, [campaignId, sessao.id]);
 
+  // carga inicial
+  useEffect(() => { recarregarCompleta(); }, [recarregarCompleta]);
+
+  // restauração com ID preservado: a MesaView continua montada, mas
+  // TODO o estado em memória é substituído pelo autoritativo — limpa
+  // antes de recarregar para que dados do papel/estado anterior não
+  // permaneçam visíveis; rolagens são efêmeras (sem endpoint HTTP)
+  // e são descartadas
+  useEffect(() => {
+    if (restKey > 0) {
+      setMensagens([]); setTestes([]); setRolagens([]); setTurnos({ ordem: [], atual: -1, ativo: false });
+      recarregarCompleta();
+    }
+  }, [restKey, recarregarCompleta]);
+
+  // papel devolvido pela sincronização ordenada do VTT: autoritativo,
+  // mas só se emitido depois da permissão mais recente recebida —
+  // permissões individuais só mudam via evento privado ou ACK de entrada
+  // (o sync não transporta permissões)
+  const aoPapelServidorEstavel = useCallback((p: string | undefined, seq: number) => {
+    if (seq !== permSeqRef.current) return;
+    // ACK válido da geração atual: visão autorizada aplicada pelo
+    // filho — libera o bloqueio de queda de privilégio e rebusca o
+    // histórico já filtrado pelo papel confirmado
+    setVisaoBloqueada(false);
+    recarregarFiltrado();
+    if (!p) return;
+    const papelAntes = papelRef.current;
+    papelRef.current = p;
+    setPapel(p);
+    if (p !== papelAntes) recarregarPersonagens();
+  }, [recarregarFiltrado, recarregarPersonagens]);
+
   // socket
   useEffect(() => {
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
 
-    const aoMensagem = (m: MensagemMesa & { autorNome?: string }) => {
+    // Filtro de autorização no cliente (defesa em profundidade — o
+    // servidor também filtra na emissão e no histórico): um evento
+    // privado produzido antes de uma mudança de papel pode chegar
+    // atrasado; a regra é a MESMA de mensagemVisivel/visibilidade do
+    // backend, avaliada contra o papel ATUAL (papelRef, síncrono).
+    const papelAtual = () => papelRef.current;
+    const souMestreAtual = () => papelAtual() === "mestre";
+    // `privado` contraditório prevalece: qualquer valor "truthy" que não
+    // seja explicitamente false marca o conteúdo como privado — um
+    // pacote visibility:"publica" + privado:true NUNCA vira público
+    const flagPrivado = (v: unknown) => v != null && v !== false;
+    const autorizaMensagem = (m: { visibility?: string; authorId?: string | null; recipients?: unknown; privado?: unknown }) => {
+      const vis = m.visibility;
+      // rótulos privados explícitos: mestre/secreta só para mestre atual
+      if (vis === "mestre" || vis === "secreta") return souMestreAtual();
+      if (vis === "privada") {
+        if (souMestreAtual()) return true;
+        const rec = Array.isArray(m.recipients) ? m.recipients : [];
+        return m.authorId === meuUserIdRef.current || rec.includes(meuUserIdRef.current);
+      }
+      // publica/sistema sem flag privada → público; COM flag contraditória
+      // o conteúdo é tratado como privado → só o mestre atual o vê
+      if (vis === "publica" || vis === "sistema") return flagPrivado(m.privado) ? souMestreAtual() : true;
+      // ausência/tipo inválido/rótulo desconhecido: fail-closed
+      return souMestreAtual();
+    };
+    // propriedade atual do personagem segundo o estado carregado pela
+    // API (ehEu é computado no servidor) — usada para autorizar conteúdo
+    // privado do DONO do personagem, nunca por campos do próprio pacote
+    const souDonoPersonagemRef = (characterId?: string | null) =>
+      !!characterId && personagensRef.current.some((p) => p.id === characterId && p.ehEu);
+    // teste conhecido pelo estado local: amarra o evento ao registro
+    // já validado (characterId do pacote precisa bater com o do teste)
+    const testeConhecidoRef = (testId?: string | null) =>
+      !!testId ? testesRef.current.find((x) => x.id === testId) ?? null : null;
+    // classificação fail-closed alinhada ao servidor: somente "publica"
+    // é pública e somente "privada" chega ao dono — "mestre"/"secreta"/
+    // "sistema"/ausente/inválido são exclusivos de mestres atuais.
+    // `privado` contraditório nunca promove nada a público.
+    const classeEventoTeste = (vis: unknown, flagPriv: unknown): "publica" | "privada" | "mestre" => {
+      // a classificação RESERVADA prevalece sobre qualquer flag
+      // contraditória: privado:true nunca rebaixa mestre/secreta/
+      // desconhecida para um conteúdo que o dono possa ver
+      if (vis === "mestre" || vis === "secreta") return "mestre";
+      if (vis !== "publica" && vis !== "privada") return "mestre"; // ausente/nula/vazia/inválida
+      if (vis === "privada") return "privada";
+      return flagPrivado(flagPriv) ? "privada" : "publica";
+    };
+    const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
+      if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
-    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean }) => {
+    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
+      // teste: só "publica" é pública e só "privada" chega ao dono;
+      // mestre/secreta/desconhecida são exclusivas de mestres atuais —
+      // `privado:true` contraditório é tratado como privado
+      const classe = classeEventoTeste((t as { visibility?: string }).visibility, (t as { privado?: unknown }).privado);
+      if (classe === "mestre" && !souMestreAtual()) return;
+      if (classe === "privada" && !souMestreAtual() && !souDonoPersonagemRef(t.characterId)) return;
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+    const aoRolagem = (r: { id: string; testId?: string; characterId?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+      // rolagem: mesma classificação fail-closed — mestre/secreta/
+      // desconhecida só para mestre atual; privada segue a regra de
+      // dono/teste conhecido/rolador livre
+      const classeR = classeEventoTeste(r.visibility, r.privado);
+      if (classeR === "mestre" && !souMestreAtual()) return;
+      if (classeR === "privada" && !souMestreAtual()) {
+        const tst = testeConhecidoRef(r.testId);
+        // rolagem de teste que o cliente não conhece (estado da API/
+        // eventos legítimos) é forjada ou fora de contexto — rejeita;
+        // nunca cai no characterId livre do pacote
+        if (r.testId && !tst) return;
+        if (tst && r.characterId && tst.characterId !== r.characterId) return; // pacote inconsistente
+        const donoOk = souDonoPersonagemRef(tst?.characterId ?? r.characterId);
+        // rolagem DE TESTE: só mestre ou dono do personagem — userId
+        // adulterado não autoriza. Rolagem LIVRE privada: o próprio
+        // rolador também é destinatário legítimo (contrato do servidor)
+        if (!donoOk && (r.testId || r.userId !== meuUserIdRef.current)) return;
+      }
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
@@ -166,7 +372,20 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais, d10: r.d10 ?? null,
       }]);
     };
-    const aoDecisao = (d: { testId: string; outcome: string; nota?: string | null; characterName?: string; visibility?: string }) => {
+    const aoDecisao = (d: { testId: string; characterId?: string | null; outcome: string; nota?: string | null; characterName?: string; visibility?: string; privado?: unknown }) => {
+      // decisão: mesma classificação fail-closed — mestre/secreta/
+      // desconhecida só para mestre atual; privada exige teste conhecido
+      // e dono atual do personagem (ehEu do estado da API)
+      const classeD = classeEventoTeste(d.visibility, d.privado);
+      if (classeD === "mestre" && !souMestreAtual()) return;
+      if (classeD === "privada" && !souMestreAtual()) {
+        const tst = testeConhecidoRef(d.testId);
+        // decisão privada de teste desconhecido → forjada/fora de
+        // contexto — rejeita (nunca usa characterId livre do pacote)
+        if (d.testId && !tst) return;
+        if (tst && d.characterId && tst.characterId !== d.characterId) return;
+        if (!souDonoPersonagemRef(tst?.characterId ?? d.characterId)) return;
+      }
       setTestes((prev) => prev.map((t) => t.id === d.testId ? { ...t, status: "decidido", outcome: d.outcome, outcomeNote: d.nota ?? null } : t));
     };
     const aoTurnos = (t: { turnos: TurnosState }) => setTurnos(t.turnos);
@@ -176,8 +395,75 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const aoPresenca = (p: { sessionId: string; online: string[] }) => {
       if (p.sessionId === sessao.id) setOnline(p.online);
     };
-    const aoSessao = () => void api.obterEstadoMesa(campaignId, sessao.id).then((e) => { setSessaoAtual(e.sessao); setTurnos(e.turnos); }).catch(() => undefined);
-
+    const aoSessao = () => {
+      const seq = permSeqRef.current;
+      void api.obterEstadoMesa(campaignId, sessao.id).then((e) => {
+        if (seq !== permSeqRef.current) return; // resposta de geração antiga
+        setSessaoAtual(e.sessao); setTurnos(e.turnos);
+      }).catch(() => undefined);
+    };
+    // Notificação privada pós-persistência do servidor: papel/status/
+    // permissões ATUAIS da minha membership nesta campanha. Só o canal
+    // usuario:* a entrega — nunca é payload de campanha inteira.
+    const aoPermissao = (d: { campaignId?: string; papel?: string; status?: string; permissoes?: { enviarMensagens?: boolean } }) => {
+      if (d?.campaignId !== campaignId) return;
+      permSeqRef.current += 1;
+      setPermSeq(permSeqRef.current);
+      if (d.status && d.status !== "ativo") {
+        // revogação: o servidor já removeu este socket das salas da
+        // sessão — invalidar a visão inteira até uma NOVA entrada
+        // autorizada (nunca restaurar pelo ACK antigo)
+        revogadoRef.current = true;
+        setEntradaFalhou(true);
+        setVisaoBloqueada(true);
+        setPapel("espectador");
+        papelRef.current = "espectador";
+        // revogação invalida TODO o histórico carregado — inclusive o
+        // que foi recebido enquanto o usuário tinha privilégios maiores
+        setMensagens([]);
+        setTestes([]);
+        setRolagens([]);
+        personagensRef.current = [];
+        setPersonagens([]);
+        setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+        return;
+      }
+      if (revogadoRef.current) {
+        // reativação: só um caminho de autorização novo restaura o acesso
+        revogadoRef.current = false;
+        setEntradaFalhou(false);
+        entrar();
+      }
+      if (d.papel) {
+        // compara o privilégio ANTES de aplicar: queda exige proteção
+        // visual imediata (mesmo render) + invalidação do histórico
+        // que pode conter dados do papel anterior (mensagens privadas/
+        // secretas, testes e rolagens já carregados em memória)
+        const papelAntes = papelRef.current;
+        const nivelAntes = nivelPapelFn(papelAntes);
+        const nivelDepois = nivelPapelFn(d.papel);
+        if (nivelDepois < nivelAntes) {
+          setVisaoBloqueada(true);
+          setMensagens([]);
+          setTestes([]);
+          setRolagens([]);
+          // redução de privilégio: a lista de personagens é limpa no
+          // mesmo render — uma resposta HTTP emitida como papel anterior
+          // não pode repovoá-la (guarda de geração em recarregarPersonagens)
+          personagensRef.current = [];
+          setPersonagens([]);
+          recarregarFiltrado();
+        } else {
+          setVisaoBloqueada(false);
+        }
+        papelRef.current = d.papel;
+        setPapel(d.papel);
+        if (d.papel !== papelAntes) recarregarPersonagens();
+      }
+      // mesma regra do servidor (mesa:mensagem): espectador só envia se
+      // tiver enviarMensagens explícito
+      setPodeEnviar((d.papel ?? "jogador") !== "espectador" || d.permissoes?.enviarMensagens === true);
+    };
     socket.on("mesa:mensagem", aoMensagem);
     socket.on("mesa:teste", aoTeste);
     socket.on("mesa:rolagem", aoRolagem);
@@ -186,6 +472,7 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     socket.on("mesa:timer", aoTimer);
     socket.on("mesa:presenca", aoPresenca);
     socket.on("sessao:atualizada", aoSessao);
+    socket.on("mesa:permissao:atualizada", aoPermissao);
 
     // mesa:entrar também na reconexão do socket: sem isso o novo socket
     // nunca volta à sala sessao:* e a mesa (vtt, chat, timer) fica muda
@@ -203,21 +490,34 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       // nunca envia entrada com socket desconectado (o emit seria
       // enfileirado); uma única entrada ativa por conexão
       if (!ativo || entradaPendente || !socket.connected) return;
+      // reconexão = novo socket.id no servidor: as rooms campanha:*/
+      // sessao:* são por conexão e precisam ser refeitas — sem isso a
+      // mesa fica surda a eventos de campanha (restauração, presença)
+      socket.emit("entrar-campanha", campaignId, () => undefined);
       const tentativa = ++tentativaEntrada;
       entradaPendente = true;
-      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string }) => {
         // ACK de tentativa antiga (conexão anterior) não libera a
         // trava nem atualiza estado de uma tentativa mais recente
         if (!ativo || tentativa !== tentativaEntrada) return;
         entradaPendente = false;
         if (r?.ok) {
           setEntradaFalhou(false);
-          if (r.papel) setPapel(r.papel);
+          if (r.papel) { papelRef.current = r.papel; setPapel(r.papel); }
           if (typeof r.podeEnviar === "boolean") setPodeEnviar(r.podeEnviar);
           if (r.turnos) setTurnos(r.turnos);
           if (r.presenca) setOnline(r.presenca);
           if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens/névoa)
+          // reconexão pode ter perdido campanha:restaurada: a entrada
+          // autorizada devolve o estado atual — recarga COMPLETA
+          // (mensagens/testes/membros/personagens/regras/timer/sessão)
+          // descartando gerações HTTP antigas via permSeqRef
+          recarregarCompleta();
         } else {
+          // sessão substituída por restauração/importação: o ID não
+          // existe mais — desmonta a view e volta à lista real em vez
+          // de manter mapa/tokens/mensagens de uma sessão morta
+          if (typeof r?.erro === "string" && /não encontrada/i.test(r.erro)) { aoSair(); return; }
           // rejeição de autorização: invalida a visão — o servidor
           // não juntou o socket à sala, então nenhum evento novo
           // chegará; controles e painel saem de cena até nova entrada
@@ -246,11 +546,12 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       socket.off("mesa:timer", aoTimer);
       socket.off("mesa:presenca", aoPresenca);
       socket.off("sessao:atualizada", aoSessao);
+      socket.off("mesa:permissao:atualizada", aoPermissao);
       socket.off("connect", aoConnect);
       socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, sessao.id]);
+  }, [campaignId, sessao.id, recarregarFiltrado, recarregarCompleta, recarregarPersonagens, restKey]);
 
   // auto-scroll chat
   useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [mensagens.length]);
@@ -557,6 +858,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
         membros={membros}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
+        atualizacaoPapel={permSeq}
+        geracaoRef={permSeqRef}
+        visaoBloqueada={visaoBloqueada}
+        aoPapelServidor={aoPapelServidorEstavel}
       />
 
       {/* decisões recentes */}
@@ -856,9 +1161,18 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
   membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
+  atualizacaoPapel: number;
+  // geração autoritativa de permissões: referência do PAI, incrementada
+  // sincronicamente no handler de mesa:permissao:atualizada — o filho
+  // consulta .current no instante da resposta, sem depender de efeito
+  geracaoRef: { current: number };
+  // queda de privilégio sinalizada pelo pai já no processamento do
+  // evento — participa do render, não espera useEffect
+  visaoBloqueada: boolean;
+  aoPapelServidor: (p: string | undefined, seq: number) => void;
 }) {
   const [vtt, setVtt] = useState<VttState>(() => vttInicialParse(inicial));
   const [erroVtt, setErroVtt] = useState<string | null>(null);
@@ -911,9 +1225,12 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     sincronizarAutoritativo(ini);
     setVtt(ini);
     setPincel(false); setPreviewNevoa(null); // sessão/troca de estado: limpa rascunho
+    nivelAutorizadoRef.current = nivelAtual; // snapshot de entrada é autorizado
+    marcarVisaoPapel(false);
     // snapshot de entrada também NÃO libera o estado incerto — só a
     // sincronização ordenada (mesa:vtt:nevoa:sincronizar) confirma
     // que toda operação já entregue terminou
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inicial]);
 
   // ---------- névoa de guerra ----------
@@ -931,6 +1248,23 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // estado autoritativo do servidor reconciliar a visão local.
   const [nevoaIncerta, setNevoaIncerta] = useState(false);
   const nevoaIncertaRef = useRef(false);
+  // geração de permissões: vem do PAI via geracaoRef (atualizada
+  // sincronicamente no handler do evento privado). O prop
+  // atualizacaoPapel apenas dispara o efeito de ressincronização.
+  // nível de privilégio da visão ATUALMENTE exibida (2=mestre, 1=jogador,
+  // 0=espectador): atualizado somente quando um estado autorizado é
+  // aplicado (snapshot de entrada ou ACK válido da sincronização)
+  const nivelAtual = souMestre ? 2 : ehEspectador ? 0 : 1;
+  const nivelAutorizadoRef = useRef(nivelAtual);
+  // visão segura durante rebaixamento: esconde mapa/tokens até a sync
+  // válida trazer a visão filtrada — nunca exibe privilégio antigo
+  const [visaoPapelPendente, setVisaoPapelPendente] = useState(false);
+  const visaoPapelPendenteRef = useRef(false);
+  const marcarVisaoPapel = (v: boolean) => { visaoPapelPendenteRef.current = v; setVisaoPapelPendente(v); };
+  // espelho da proteção vinda do pai (queda de privilégio) para os
+  // callbacks de reconexão consultarem sem depender de efeito
+  const visaoBloqueadaRef = useRef(visaoBloqueada);
+  visaoBloqueadaRef.current = visaoBloqueada;
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
   const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
@@ -1028,6 +1362,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // nevoaIncerta; broadcasts genéricos e snapshots de entrada não.
   const [syncPendente, setSyncPendente] = useState(false);
   const syncPendenteRef = useRef(false);
+  // identificador sequencial por requisição: timeout/ACK de uma sync
+  // antiga NUNCA controlam trava, erro ou pendência de uma sync mais
+  // recente — cada requisição só pode ser encerrada por ela mesma
+  const syncReqRef = useRef(0);
   const sincronizarNevoa = () => {
     const sock = getSocket();
     if (!sock.connected) {
@@ -1040,23 +1378,45 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     setSyncPendente(true);
     setErroVtt("Sincronização da névoa em andamento — aguardando estado autoritativo…");
     let respondido = false;
+    const reqId = ++syncReqRef.current;
+    const seqPerm = geracaoRef.current; // geração de permissões no envio
     const timeout = window.setTimeout(() => {
-      if (respondido) return;
+      // timeout de requisição antiga não controla trava/erro de uma
+      // sincronização mais recente
+      if (respondido || reqId !== syncReqRef.current) return;
       respondido = true;
       syncPendenteRef.current = false;
       setSyncPendente(false);
-      // nunca libera por decurso de tempo: estado incerto permanece
+      // nunca libera por decurso de tempo: estado incerto permanece.
+      // Se a geração de permissões avançou enquanto esta sync estava
+      // pendente, a resposta futura (se chegar) será obsoleta — dispara
+      // já a sincronização da geração vigente.
       setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
+      if (seqPerm !== geracaoRef.current) sincronizarNevoa();
     }, 8000);
     sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
-      if (respondido) return; // resposta tardia: estado incerto já tratado
+      if (respondido || reqId !== syncReqRef.current) return; // tardia ou de requisição superada
       respondido = true;
       window.clearTimeout(timeout);
       syncPendenteRef.current = false;
       setSyncPendente(false);
+      // VALIDADE ANTES DE QUALQUER EFEITO: se uma permissão mais nova
+      // chegou depois deste envio, a resposta inteira é obsoleta —
+      // não aplica VTT, não sincroniza referência, não muda papel,
+      // não libera nevoaIncerta, não limpa erro. O estado pendente já
+      // foi liberado acima para a geração vigente poder sincronizar.
+      if (seqPerm !== geracaoRef.current) {
+        sincronizarNevoa(); // dispara sync da geração atual
+        return;
+      }
       if (r?.ok && r.vtt) {
         sincronizarAutoritativo(r.vtt);
         setVtt(r.vtt);
+        nivelAutorizadoRef.current = nivelAtual; // visão agora autorizada p/ papel atual
+        marcarVisaoPapel(false);
+        // papel autoritativo do servidor — o pai descarta se uma
+        // permissão mais nova chegou depois deste envio
+        aoPapelServidor(r.papel, seqPerm);
         nevoaIncertaRef.current = false;
         setNevoaIncerta(false);
         setErroVtt(null);
@@ -1069,12 +1429,40 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   useEffect(() => {
     const socket = getSocket();
     const aoConnectSync = () => {
-      if (nevoaIncertaRef.current && !syncPendenteRef.current) sincronizarNevoa();
+      // reconexão: retoma sincronização pendente — seja por estado
+      // incerto de névoa ou por visão aguardando papel autorizado
+      if ((nevoaIncertaRef.current || visaoPapelPendenteRef.current || visaoBloqueadaRef.current) && !syncPendenteRef.current) sincronizarNevoa();
     };
     socket.on("connect", aoConnectSync);
     return () => { socket.off("connect", aoConnectSync); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // mudança de papel/status/permissão recebida pelo canal privado:
+  // rebusca a visão autorizada via sincronização ordenada — cobre
+  // promoção a mestre (visão completa), rebaixamento (visão filtrada) e
+  // transição a espectador. Não libera nevoaIncerta por caminho paralelo:
+  // o ACK do sync continua sendo a única barreira.
+  const primeiroPerm = useRef(true);
+  useEffect(() => {
+    if (primeiroPerm.current) { primeiroPerm.current = false; return; }
+    // rebaixamento de privilégio: a visão exibida pode conter dados do
+    // papel anterior — esconde mapa/tokens até a sync autorizada chegar.
+    // promoção/subida mantém a visão anterior (já menos privilegiada).
+    if (nivelAtual < nivelAutorizadoRef.current) marcarVisaoPapel(true);
+    if (!encerrada) sincronizarNevoa();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atualizacaoPapel]);
+
+  // perda de papel de mestre com gesto de desenho ativo: cancela o
+  // traço imediatamente — controles admin somem e o traço não pode
+  // continuar sendo coletado para um papel sem autorização
+  useEffect(() => {
+    if (!souMestre) {
+      fimDesenhoRef.current?.();
+      setPincel(false); setPreviewNevoa(null); desenhoRef.current = null;
+    }
+  }, [souMestre]);
 
   const emitirNevoa = (acao: string, traco?: { raioX: number; raioY: number; pontos: { x: number; y: number }[] }) => {
     if (nevoaIncertaRef.current) {
@@ -1304,7 +1692,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
         )}
       </div>
       {erroVtt && <p className="erro">{erroVtt}</p>}
-      {!vtt.mapa ? (
+      {visaoBloqueada || visaoPapelPendente ? (
+        <p className="dica">Permissões atualizadas — aguardando a visão autorizada do servidor…</p>
+      ) : !vtt.mapa ? (
         <p className="dica">{souMestre ? "Nenhum mapa definido. Envie uma imagem para montar o tabuleiro." : "O mestre ainda não definiu um mapa para esta sessão."}</p>
       ) : (
         <div
