@@ -63,13 +63,18 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
 
   useEffect(() => {
     void carregar();
-    // Sincronização em tempo real: entra na room da campanha e recarrega em mudanças
+    // Sincronização em tempo real: entra na room da campanha e recarrega em mudanças.
+    // A sala pertence à conexão do socket — após uma reconexão é preciso entrar
+    // de novo, senão os eventos desta campanha deixam de chegar.
     const socket = getSocket();
-    socket.emit("entrar-campanha", id, () => undefined);
+    const entrar = () => socket.emit("entrar-campanha", id, () => undefined);
+    entrar();
+    socket.on("connect", entrar);
     const aoMudar = () => void carregar();
     socket.on("membros:atualizados", aoMudar);
     socket.on("campanha:atualizada", aoMudar);
     return () => {
+      socket.off("connect", entrar);
       socket.off("membros:atualizados", aoMudar);
       socket.off("campanha:atualizada", aoMudar);
       socket.emit("sair-campanha", id);

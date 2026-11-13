@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { CampoDef, ElementoVinculavel, EstruturaFicha, SecaoDef, TipoCampo } from "./api";
 import FichaForm from "./FichaForm";
 
@@ -89,6 +89,9 @@ interface Props {
   vinculaveis?: Vinculaveis;
   /** Campanha da ficha — habilita o simulador interativo da prévia. */
   campaignId?: string;
+  /** Avisa quando o formulário de edição de um campo está aberto (edições
+   *  locais ainda não salvas — o pai não deve recarregar a estrutura). */
+  aoCampoEditando?: (aberto: boolean) => void;
 }
 
 const ROTULO_KIND: Record<string, string> = {
@@ -97,11 +100,17 @@ const ROTULO_KIND: Record<string, string> = {
   poder: "Poder", disciplina: "Disciplina", pericia: "Perícia", caracteristica: "Característica",
 };
 
-export default function EditorFicha({ inicial, aoMudar, vinculaveis, campaignId }: Props) {
+export default function EditorFicha({ inicial, aoMudar, vinculaveis, campaignId, aoCampoEditando }: Props) {
   const [estrutura, setEstrutura] = useState<EstruturaFicha>(inicial);
   const [aba, setAba] = useState<"editar" | "previa">("editar");
   const [secaoEditando, setSecaoEditando] = useState<string | null>(null);
   const [campoEditando, setCampoEditando] = useState<{ secaoId: string; campoId: string } | null>(null);
+
+  useEffect(() => {
+    aoCampoEditando?.(campoEditando !== null);
+  }, [campoEditando, aoCampoEditando]);
+
+  useEffect(() => () => aoCampoEditando?.(false), [aoCampoEditando]);
 
   const commit = (nova: EstruturaFicha) => {
     setEstrutura(nova);

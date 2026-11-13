@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
-import { EVENTO_RECONEXAO, useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
 
@@ -57,7 +57,9 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
     } else if (evento === "sessao:atualizada") {
       const sid = (payload as { sessionId?: string } | undefined)?.sessionId;
       if (sid) setHistoricos((p) => { const n = { ...p }; delete n[sid]; return n; });
-    } else if (evento !== EVENTO_RECONEXAO) {
+    } else {
+      // snapshots:atualizados e reconexão: eventos perdidos durante a queda
+      // não são reenviados — descarta o cache para forçar nova leitura.
       setHistoricos({});
     }
     void carregar();

@@ -26,6 +26,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   // estruturaSuja: há edições locais não salvas — uma atualização remota não
   // pode sobrescrevê-las; avisamos em vez de recarregar o editor aberto.
   const [estruturaSuja, setEstruturaSuja] = useState(false);
+  // formulário de campo aberto dentro do EditorFicha (edições ainda não
+  // confirmadas com «Salvar campo») — também conta como trabalho local.
+  const [campoEmEdicao, setCampoEmEdicao] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
 
   // Geração da carga: respostas antigas não sobrescrevem o estado atual.
@@ -56,10 +59,13 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
   // Issue #67: criar/editar/publicar/duplicar/arquivar modelo em outro
   // cliente atualiza a lista; o editor aberto só recarrega se não houver
   // alterações locais pendentes.
-  useSincronizacaoCampanha(["fichas:atualizadas"], () => {
+  useSincronizacaoCampanha(["fichas:atualizadas"], (_evento, payload) => {
     void carregar();
     if (!selecionado) return;
-    if (estruturaSuja) {
+    // evento de outro modelo não exige recarregar o editor aberto
+    const tid = (payload as { templateId?: string } | undefined)?.templateId;
+    if (tid && tid !== selecionado) return;
+    if (estruturaSuja || campoEmEdicao) {
       setAviso("Este modelo foi alterado por outro usuário. Suas edições locais foram mantidas — salve ou descarte antes de recarregar.");
     } else {
       void abrirModelo(selecionado);
@@ -224,9 +230,9 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
           </div>
           {versaoSel.publishedAt && <p className="meta">Versão publicada — para alterar, crie uma nova versão.</p>}
           {!versaoSel.rascunho && versaoSel.estrutura && (
-            <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />
+            <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />
           )}
-          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} />}
+          {versaoSel.rascunho && <EditorFicha inicial={estrutura} aoMudar={editarEstrutura} vinculaveis={vinculaveis ?? undefined} campaignId={campaignId} aoCampoEditando={setCampoEmEdicao} />}
         </section>
       )}
       {confirmandoPublicar && (
