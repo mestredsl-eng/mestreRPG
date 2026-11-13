@@ -8,7 +8,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, reconciliarMembrosAposRestauracao } from "../lib/io.js";
+import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, reconciliarMembrosAposRestauracao } from "../lib/io.js";
 import { exportarCampanha, type EstadoCampanha } from "../lib/estado.js";
 import { restaurarEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -105,6 +105,17 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
     data: estadoAtual as never, createdBy: req.usuario!.id, createdAt: new Date(),
   });
 
+  // BARREIRA antes de qualquer captura/restauração: sockets são
+  // evacuados das salas e handlers Socket.IO rejeitam novas operações
+  // — elimina a janela entre commit e expulsão e drena operações
+  // assíncronas que ainda não emitiram.
+  await iniciarBarreiraRestauracao(cid);
+  // janela de teste determinística (NODE_ENV=test): segura a barreira
+  // para o teste emitir operações durante a "restauração"
+  const delayBarreira = Number(process.env.MESTRE_RESTORE_DELAY_MS ?? 0);
+  if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
+    await new Promise((r) => setTimeout(r, delayBarreira));
+  }
   // GUARDAR memberships atuais ANTES de restaurar: quem existir agora e
   // não existir no snapshot precisa ser revogado e notificado também —
   // comparar só o estado posterior perderia esses usuários.
@@ -117,6 +128,8 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   try {
     resultado = await restaurarEstado(cid, dados);
   } catch (e) {
+    // restauração revertida: readiciona sockets às salas anteriores
+    await liberarBarreiraRestauracao(cid, "falha");
     res.status(500).json({ erro: "Falha ao restaurar", detalhe: String(e) });
     return;
   }
@@ -130,9 +143,14 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapel("mestre"), limiteRes
   const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
   const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
   if (rec.falhas.length) {
+    // commit já aplicado: libera a barreira no modo sucesso (somente
+    // membros ativos voltam a campanha:*) mas reporta a falha real —
+    // não finge reversão nem entrega eventos sem autorização
+    await liberarBarreiraRestauracao(cid, "sucesso");
     res.status(500).json({ erro: "Restauração aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
     return;
   }
-  emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id });
+  await liberarBarreiraRestauracao(cid, "sucesso");
+  emitirCampanha(cid, "campanha:restaurada", { snapshotId: snap.id, campaignId: cid });
   res.json({ ok: true, preSnapshotId: preSnapId, ...resultado });
 });

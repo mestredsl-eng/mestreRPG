@@ -6,7 +6,7 @@ import { sessions, turns, chatMessages, tests, memberships, users, characters, r
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha } from "../lib/io.js";
+import { emitirCampanha, barreiraRestauracaoAtiva } from "../lib/io.js";
 import { vttStateFiltradoHttp } from "../lib/vtt.js";
 
 const db = getDb();
@@ -75,6 +75,8 @@ sessoesRouter.post("/", requirePapel("mestre"), async (req, res) => {
   const body = criarSchema.safeParse(req.body ?? {});
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const cid = req.params.campaignId;
+  // mutação durante restauração seria sobrescrita pelo commit — rejeita
+  if (barreiraRestauracaoAtiva(cid)) { res.status(409).json({ erro: "Campanha em restauração" }); return; }
   const rows = await db.select({ number: sessions.number }).from(sessions).where(eq(sessions.campaignId, cid));
   const proximo = rows.reduce((m, r) => Math.max(m, r.number), 0) + 1;
   const agora = new Date();
@@ -100,6 +102,7 @@ const patchSchema = z.object({
 sessoesRouter.patch("/:sessionId", requirePapel("mestre"), async (req, res) => {
   const s = await sessaoDaCampanha(req.params.sessionId, req.params.campaignId);
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
+  if (barreiraRestauracaoAtiva(s.campaignId)) { res.status(409).json({ erro: "Campanha em restauração" }); return; }
   const body = patchSchema.safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const agora = new Date();

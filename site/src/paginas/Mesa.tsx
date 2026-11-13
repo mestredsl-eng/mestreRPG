@@ -30,16 +30,42 @@ export default function Mesa({ campaignId, campanha }: Props) {
   const [ativa, setAtiva] = useState<Sessao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
+  const seqSessoesRef = useRef(0);
 
   const carregar = useCallback(async () => {
+    const seq = ++seqSessoesRef.current;
     try {
       const { sessoes } = await api.listarSessoes(campaignId);
+      if (seq !== seqSessoesRef.current) return; // resposta de geração antiga
       setSessoes(sessoes);
       setErro(null);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); }
+      return sessoes;
+    } catch (e) { setErro(e instanceof Error ? e.message : "Erro"); return null; }
   }, [campaignId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+
+  // campanha:restaurada — snapshot/import substituiu o estado: a sessão
+  // selecionada pode ter sumido ou trocado de ID. Rebusca a lista real
+  // (resposta de geração antiga é descartada pelo seq) e, se o ID não
+  // existir mais, desmonta a MesaView — nenhum mapa/token/mensagem da
+  // sessão antiga permanece na tela.
+  useEffect(() => {
+    const socket = getSocket();
+    const aoRestaurada = (d: { campaignId?: string }) => {
+      if (d?.campaignId !== campaignId) return;
+      void carregar().then((lista) => {
+        if (!lista) return;
+        setAtiva((atual) => {
+          if (!atual) return atual;
+          const fresca = lista.find((s) => s.id === atual.id);
+          return fresca ?? null; // ID substituído → volta à lista
+        });
+      });
+    };
+    socket.on("campanha:restaurada", aoRestaurada);
+    return () => { socket.off("campanha:restaurada", aoRestaurada); };
+  }, [campaignId, carregar]);
 
   if (ativa) {
     return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} aoSair={() => { setAtiva(null); void carregar(); }} />;
@@ -201,16 +227,40 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
 
-    const aoMensagem = (m: MensagemMesa & { autorNome?: string }) => {
+    // Filtro de autorização no cliente (defesa em profundidade — o
+    // servidor também filtra na emissão e no histórico): um evento
+    // privado produzido antes de uma mudança de papel pode chegar
+    // atrasado; a regra é a MESMA de mensagemVisivel/visibilidade do
+    // backend, avaliada contra o papel ATUAL (papelRef, síncrono).
+    const papelAtual = () => papelRef.current;
+    const souMestreAtual = () => papelAtual() === "mestre";
+    const autorizaMensagem = (m: { visibility?: string; authorId?: string | null; recipients?: unknown }) => {
+      const vis = m.visibility ?? "publica";
+      if (vis === "mestre") return souMestreAtual();
+      if (vis === "privada") {
+        if (souMestreAtual()) return true;
+        const rec = Array.isArray(m.recipients) ? m.recipients : [];
+        return m.authorId === meuUserId || rec.includes(meuUserId);
+      }
+      return true; // publica/sistema
+    };
+    const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
+      if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
-    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean }) => {
+    const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
+      // teste privado: só mestre atual ou dono do personagem (ehEu)
+      const privado = t.visibility === "privada" || t.privado === true;
+      if (privado && !souMestreAtual() && !souDonoTeste(t as TesteMesa)) return;
       setTestes((prev) => prev.some((x) => x.id === t.id) ? prev : [t as TesteMesa, ...prev]);
       if (t.alvo !== undefined && t.alvo !== null) {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+    const aoRolagem = (r: { id: string; testId?: string; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+      // rolagem privada: só mestre atual, o próprio rolador ou evento
+      // sem marcação de privacidade (público)
+      if (r.visibility === "privada" && !souMestreAtual() && r.userId !== meuUserId) return;
       if (r.testId) setTestes((prev) => prev.map((t) => t.id === r.testId ? { ...t, status: "rolado" } : t));
       const grupos = r.grupos ?? (r.dados ? [{ lados: r.lados ?? 20, resultados: r.dados }] : []);
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
@@ -220,6 +270,11 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       }]);
     };
     const aoDecisao = (d: { testId: string; outcome: string; nota?: string | null; characterName?: string; visibility?: string }) => {
+      // decisão privada: a sala recebe a versão sanitizada (nota nula);
+      // a versão integral só vai a usuario:* de mestres/destinatários.
+      // Após rebaixamento, a integral atrasada é descartada — a
+      // sanitizada continua válida para o outcome.
+      if (d.visibility === "privada" && d.nota != null && !souMestreAtual()) return;
       setTestes((prev) => prev.map((t) => t.id === d.testId ? { ...t, status: "decidido", outcome: d.outcome, outcomeNote: d.nota ?? null } : t));
     };
     const aoTurnos = (t: { turnos: TurnosState }) => setTurnos(t.turnos);
@@ -315,9 +370,13 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
       // nunca envia entrada com socket desconectado (o emit seria
       // enfileirado); uma única entrada ativa por conexão
       if (!ativo || entradaPendente || !socket.connected) return;
+      // reconexão = novo socket.id no servidor: as rooms campanha:*/
+      // sessao:* são por conexão e precisam ser refeitas — sem isso a
+      // mesa fica surda a eventos de campanha (restauração, presença)
+      socket.emit("entrar-campanha", campaignId, () => undefined);
       const tentativa = ++tentativaEntrada;
       entradaPendente = true;
-      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao }) => {
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string }) => {
         // ACK de tentativa antiga (conexão anterior) não libera a
         // trava nem atualiza estado de uma tentativa mais recente
         if (!ativo || tentativa !== tentativaEntrada) return;
@@ -330,6 +389,10 @@ function MesaView({ campaignId, sessao, souMestre, aoSair }: {
           if (r.presenca) setOnline(r.presenca);
           if (r.sessao) setSessaoAtual(r.sessao); // inclui vttState fresco (mapa/tokens/névoa)
         } else {
+          // sessão substituída por restauração/importação: o ID não
+          // existe mais — desmonta a view e volta à lista real em vez
+          // de manter mapa/tokens/mensagens de uma sessão morta
+          if (typeof r?.erro === "string" && /não encontrada/i.test(r.erro)) { aoSair(); return; }
           // rejeição de autorização: invalida a visão — o servidor
           // não juntou o socket à sala, então nenhum evento novo
           // chegará; controles e painel saem de cena até nova entrada

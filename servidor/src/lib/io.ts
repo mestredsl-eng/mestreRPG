@@ -1,8 +1,8 @@
 import type { Server as SocketIOServer } from "socket.io";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
-import { sessions } from "../db/schema.js";
+import { sessions, memberships } from "../db/schema.js";
 
 /** Instância do Socket.IO para emissão de eventos fora do handshake. */
 let io: SocketIOServer | null = null;
@@ -109,6 +109,91 @@ export async function reconciliarMembrosAposRestauracao(
     }
   }
   return { notificados: usersAfetados.size - falhas.length, revogados, falhas };
+}
+
+// ---------- barreira de restauração por campanha ----------
+// Durante a substituição do estado (snapshot/import), os sockets são
+// evacuados das salas campanha:*/sessao:* ANTES do commit e os handlers
+// Socket.IO rejeitam novas operações via resolverCtx/entrar-campanha.
+// Operações que já passaram pela autorização são impedidas de emitir
+// dados sensíveis por guards nos pontos de emissão a usuario:*.
+// A sala privada usuario:* nunca é tocada.
+type Barreira = { evacuados: Map<string, string[]> };
+const barreiras = new Map<string, Barreira>();
+
+export function barreiraRestauracaoAtiva(campaignId: string): boolean {
+  return barreiras.has(campaignId);
+}
+
+/**
+ * Inicia a barreira: marca a campanha e evacua TODOS os sockets das
+ * salas campanha:<id> e sessao:<ids atuais> — registrando as salas de
+ * origem para recuperação em caso de falha. Chamada ANTES de capturar
+ * o estado e de restaurarEstado.
+ */
+export async function iniciarBarreiraRestauracao(campaignId: string): Promise<void> {
+  if (!io) { barreiras.set(campaignId, { evacuados: new Map() }); return; }
+  const b: Barreira = { evacuados: new Map() };
+  barreiras.set(campaignId, b);
+  const db = getDb();
+  const ss = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
+  const salas = [`campanha:${campaignId}`, ...ss.map((s) => `sessao:${s.id}`)];
+  for (const room of salas) {
+    const roomObj = io.sockets.adapter.rooms.get(room);
+    if (!roomObj) continue;
+    for (const sid of [...roomObj]) {
+      const sock = io.sockets.sockets.get(sid);
+      if (!sock) continue;
+      sock.leave(room);
+      const lista = b.evacuados.get(sid) ?? [];
+      lista.push(room);
+      b.evacuados.set(sid, lista);
+    }
+  }
+}
+
+/**
+ * Libera a barreira após o desfecho.
+ * - "falha": a transação foi revertida — readiciona cada socket às
+ *   salas EXATAS de onde foi evacuado (sessões antigas ainda válidas).
+ * - "sucesso": somente campanha:* é reconstituída, e apenas para
+ *   memberships ATIVAS atuais; sessao:* volta exclusivamente via
+ *   mesa:entrar (autorização por sessão no servidor).
+ */
+export async function liberarBarreiraRestauracao(campaignId: string, modo: "sucesso" | "falha"): Promise<void> {
+  const b = barreiras.get(campaignId);
+  if (!b) return;
+  barreiras.delete(campaignId);
+  if (!io) return;
+  if (modo === "falha") {
+    for (const [sid, rooms] of b.evacuados) {
+      const s = io.sockets.sockets.get(sid);
+      if (!s) continue;
+      for (const r of rooms) s.join(r);
+    }
+    return;
+  }
+  const db = getDb();
+  const ativos = await db
+    .select({ userId: memberships.userId })
+    .from(memberships)
+    .where(and(eq(memberships.campaignId, campaignId), eq(memberships.status, "ativo")));
+  const set = new Set(ativos.map((a) => a.userId));
+  // sessões que AINDA existem depois da substituição: só elas voltam a
+  // ser reconstituídas — IDs substituídos nunca são reabertos por
+  // inferência (o cliente entra de novo via mesa:entrar)
+  const ssDepois = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, campaignId));
+  const salasValidas = new Set(ssDepois.map((s) => `sessao:${s.id}`));
+  const salaCampanha = `campanha:${campaignId}`;
+  for (const [sid, rooms] of b.evacuados) {
+    const s = io.sockets.sockets.get(sid);
+    if (!s) continue;
+    const u = s.data.usuario as { id?: string } | undefined;
+    if (!u?.id || !set.has(u.id)) continue; // revogado/inativo: só usuario:*
+    for (const r of rooms) {
+      if (r === salaCampanha || salasValidas.has(r)) s.join(r);
+    }
+  }
 }
 
 /**

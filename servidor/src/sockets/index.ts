@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { autenticarHandshake, type UsuarioAutenticado } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
-import { setIo } from "../lib/io.js";
+import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 
@@ -65,7 +65,7 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
     // Entrar na sala de uma campanha (somente membros não-removidos)
     socket.on("entrar-campanha", async (campaignId: string, cb?: (ok: boolean) => void) => {
       const usuario = socket.data.usuario;
-      if (!usuario || typeof campaignId !== "string") {
+      if (!usuario || typeof campaignId !== "string" || barreiraRestauracaoAtiva(campaignId)) {
         cb?.(false);
         return;
       }

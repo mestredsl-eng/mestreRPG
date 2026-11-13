@@ -9,6 +9,7 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
+import { barreiraRestauracaoAtiva } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import {
@@ -59,6 +60,11 @@ async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { e
     if (row) sessao = { ...row, vttState: null } as typeof sessions.$inferSelect;
   }
   if (!sessao) return { erro: "Sessão não encontrada" };
+  // barreira de restauração: enquanto a campanha está sendo substituída
+  // nenhuma operação de mesa/entrada é autorizada — vale também para
+  // operações que já passaram por uma checagem anterior, pois esta
+  // revalidação acontece imediatamente antes da mutagem/emissão
+  if (barreiraRestauracaoAtiva(sessao.campaignId)) return { erro: "Campanha em restauração" };
   const [m] = await db.select().from(memberships)
     .where(and(eq(memberships.campaignId, sessao.campaignId), eq(memberships.userId, usuario.id), eq(memberships.status, "ativo")))
     .limit(1);
@@ -80,6 +86,9 @@ async function nomeUsuario(id: string | null | undefined): Promise<string> {
 
 /** Emite mensagem de chat respeitando visibilidade (spec §4/§14). */
 async function emitirMensagem(io: SocketIOServer, msg: typeof chatMessages.$inferSelect) {
+  // barreira de restauração: nada é entregue durante a substituição —
+  // inclusive via usuario:* (salas privadas não são evacuadas)
+  if (barreiraRestauracaoAtiva(msg.campaignId)) return;
   const autorNome = await nomeUsuario(msg.authorId);
   const payload = { ...msg, autorNome };
   if (!msg.sessionId) {
@@ -742,7 +751,7 @@ function socket_handlers(
         skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
         status: "pendente", createdAt: agora,
       };
-      if (payload.visibilidade === "privada") {
+      if (payload.visibilidade === "privada" && !barreiraRestauracaoAtiva(ctx.sessao.campaignId)) {
         // privada: só dono do personagem + mestres recebem (com alvo/dados/pool)
         io.to(`usuario:${membroDono.userId}`).emit("mesa:teste", {
           ...publico, alvo: payload.minimo ?? null,
@@ -851,6 +860,7 @@ function socket_handlers(
         visibility: teste.visibility, createdAt: agora,
       };
       // público: sem alvo; privado: dono+mestre com alvo; mestre sempre com alvo
+      if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRoll, alvo: null });
       if (membroDono) io.to(`usuario:${membroDono.userId}`).emit("mesa:rolagem", payloadRoll);
       const mestres = await mestresDaCampanha(teste.campaignId);
@@ -932,7 +942,7 @@ function socket_handlers(
         total, motivo: payload.motivo ?? (modoDano ? "Dano" : null), visibility: vis, createdAt: agora, d10, modo: modoDano,
       };
       if (vis === "publica") io.to(`sessao:${ctx.sessao.id}`).emit("mesa:rolagem", rollPayload);
-      else {
+      else if (!barreiraRestauracaoAtiva(ctx.sessao.campaignId)) {
         io.to(`usuario:${u.id}`).emit("mesa:rolagem", rollPayload);
         const mestres = await mestresDaCampanha(ctx.sessao.campaignId);
         for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:rolagem", rollPayload);
@@ -965,6 +975,7 @@ function socket_handlers(
         characterName: char?.name, outcome: payload.outcome, nota: payload.nota ?? null,
         decididoPor: await nomeUsuario(u.id), visibility: teste.visibility,
       };
+      if (barreiraRestauracaoAtiva(teste.campaignId)) return;
       io.to(`sessao:${teste.sessionId}`).emit("mesa:decisao", { ...decisao, alvo: null, nota: teste.visibility === "privada" ? null : decisao.nota });
       const mestres = await mestresDaCampanha(teste.campaignId);
       for (const mid of mestres) io.to(`usuario:${mid}`).emit("mesa:decisao", decisao);

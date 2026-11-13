@@ -83,7 +83,7 @@ const patchMembro = (mid, body) =>
 
 try {
   await prepararBanco(BANCO);
-  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks`, env: { MESTRE_RESTORE_DELAY_MS: "1200" } });
   proc.stderr.on("data", (d) => process.stderr.write("[srv] " + d));
   proc.stdout?.on("data", (d) => process.stderr.write("[srv] " + d));
   await esperarSaudavel(BASE, proc);
@@ -438,6 +438,69 @@ try {
   await emitirCb(sM, "mesa:mensagem", { sessionId: sid2, content: "pos-import", clientId: crypto.randomUUID() });
   await dormir(300);
   t("esp não recebe eventos de sid2 após import", msgE3 === 0, `msgE3=${msgE3} controleM=${msgM3}`);
+
+  // ---------- L. Barreira de restauração — janela sem eventos ----------
+  sec("L. Barreira: nenhuma operação/entrega durante a substituição");
+  // garante sM e sJ dentro das salas (campanha + sessão sid)
+  for (const s of [sM, sJ]) {
+    s.emit("entrar-campanha", ids.camp, () => undefined);
+    await emitirCb(s, "mesa:entrar", { sessionId: sid });
+  }
+  await dormir(200);
+  // contadores de QUALQUER evento de sala nos sockets do j1 (futuro revogado)
+  let jMsg = 0, jVtt = 0, jTimer = 0, jTeste = 0;
+  sJ.on("mesa:mensagem", () => jMsg++);
+  sJ.on("mesa:vtt", () => jVtt++);
+  sJ.on("mesa:timer", () => jTimer++);
+  sJ.on("mesa:teste", () => jTeste++);
+  const jMsg0 = jMsg, jVtt0 = jVtt, jTimer0 = jTimer, jTeste0 = jTeste;
+  // snapshot SEM j1 — restore fica 1.2s na barreira (env de teste)
+  const snapL = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "sem-j1-L" } });
+  const snapLId = snapL.json?.id;
+  t("snapshot p/ L criado", snapL.status === 201 && !!snapLId);
+  const dbL = abrirDb(BANCO);
+  const linhaL = dbL.prepare("select data from snapshots where id=?").get(snapLId);
+  const dadosL = JSON.parse(linhaL.data);
+  dadosL.memberships = (dadosL.memberships ?? []).filter((m) => m.userId !== ids.j1);
+  dbL.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosL), snapLId);
+  dbL.close();
+  // dispara restore SEM aguardar — a barreira segura 1.2s
+  const pRestL = req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapLId}/restaurar`, { cookie: ids.cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  await dormir(400); // dentro da janela da barreira
+  // operações durante a janela: todas devem falhar/ser descartadas
+  const rMsgL = await emitirCb(sJ, "mesa:mensagem", { sessionId: sid, content: "na janela", clientId: crypto.randomUUID() });
+  t("janela: mensagem do revogado RECUSADA", rMsgL?.ok !== true, JSON.stringify(rMsgL));
+  const rTimerL = await emitirCb(sM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 30 });
+  t("janela: timer RECUSADO", rTimerL?.ok !== true, JSON.stringify(rTimerL));
+  const rVttL = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkL", nome: "L", cor: "#111", x: 0.5, y: 0.5, userId: ids.j1 } });
+  t("janela: mutação VTT RECUSADA", rVttL?.ok !== true, JSON.stringify(rVttL));
+  const rEntrarL = await emitirCb(sJ, "mesa:entrar", { sessionId: sid });
+  t("janela: mesa:entrar RECUSADO", rEntrarL?.ok !== true, JSON.stringify(rEntrarL));
+  const rCampL = await new Promise((r) => sJ.emit("entrar-campanha", ids.camp, (ok) => r(ok)));
+  t("janela: entrar-campanha RECUSADO", rCampL !== true, `ok=${rCampL}`);
+  // operação assíncrona que já passou pela autorização antes da barreira:
+  // emitida agora pode ter resolvido ctx antes — o guard de emissão deve
+  // impedir a entrega durante a janela
+  sM.emit("mesa:mensagem", { sessionId: sid, content: "in-flight", clientId: crypto.randomUUID() }, () => {});
+  await dormir(400);
+  const rRestL = await pRestL;
+  t("restore L concluído", rRestL.status === 200, JSON.stringify(rRestL.json).slice(0, 140));
+  // durante TODA a janela o revogado não recebeu nada de sala
+  t("janela: zero eventos de sala entregues ao revogado",
+    jMsg === jMsg0 && jVtt === jVtt0 && jTimer === jTimer0 && jTeste === jTeste0,
+    `msg=${jMsg - jMsg0} vtt=${jVtt - jVtt0} timer=${jTimer - jTimer0} teste=${jTeste - jTeste0}`);
+  // perm de revogação chega pelo canal privado (usuario:* preservada)
+  // — pode já ter chegado durante a janela; captura o último estado
+  await dormir(500); // dá tempo de eventos em voo chegarem
+  t("revogado recebeu notificação privada (status=removido)",
+    (perms.get(sJ) ?? []).at(-1)?.status === "removido", JSON.stringify((perms.get(sJ) ?? []).at(-1)));
+  // pós-restore: membro mantido funciona; revogado não recebe nada
+  const rMsgPosL = await emitirCb(sM, "mesa:mensagem", { sessionId: sid, content: "pos-barreira", clientId: crypto.randomUUID() });
+  t("pós-barreira: mestre envia mensagem", rMsgPosL?.ok === true, JSON.stringify(rMsgPosL));
+  await dormir(300);
+  t("pós-barreira: revogado continua sem eventos", jMsg === jMsg0, `msg=${jMsg - jMsg0}`);
+  const rEntrarPosL = await emitirCb(sJ, "mesa:entrar", { sessionId: sid });
+  t("pós-barreira: re-entrada do revogado recusada", rEntrarPosL?.ok !== true);
 
 } catch (e) {
   fail++;

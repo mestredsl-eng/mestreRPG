@@ -279,6 +279,15 @@ try {
   // controlar a ordem de chegada das respostas entre gerações de papel
   let armarRetencaoSyncJ = false, armadoUmaVezJ = false, ackSyncJRetido = null;
   const liberarAckSyncJ = () => { if (ackSyncJRetido) { try { pgJWs?.send(ackSyncJRetido); } catch { /* morto */ } ackSyncJRetido = null; } };
+  // retenção genérica de eventos servidor→cliente (pacotes "42[…") —
+  // prova de eventos privados produzidos antes da rebaixamento e
+  // entregues ao navegador DEPOIS dela
+  let reterEvtJ = null; // predicado (msg) => bool
+  const filaEvtJ = [];
+  const liberarEvtJ = () => { const q = filaEvtJ.splice(0); for (const m of q) { try { pgJWs?.send(m); } catch { /* morto */ } } };
+  // retenção de UMA resposta HTTP autenticada (histórico privilegiado)
+  let armarHttpJ = false, httpRetidoJ = null;
+  const liberarHttpJ = async () => { const r = httpRetidoJ; httpRetidoJ = null; if (r) await r.continue().catch(() => {}); };
   let pgJWs = null;
   await pgJ.routeWebSocket(/\/socket\.io/, (ws) => {
     wsCountJ++;
@@ -302,8 +311,24 @@ try {
         ackSyncJRetido = m;
         return; // NÃO entrega — resposta fica retida no cliente
       }
+      // eventos privados retidos a pedido do teste (prova de evento
+      // atrasado após mudança de autorização)
+      if (reterEvtJ && typeof m === "string" && m.startsWith("42") && reterEvtJ(m)) {
+        filaEvtJ.push(m);
+        return; // NÃO entrega — fica retido no transporte do navegador
+      }
       ws.send(m);
     });
+  });
+  // segura a PRIMEIRA resposta de histórico após o arm — prova de
+  // resposta HTTP antiga chegando depois da mudança de papel
+  await pgJ.route("**/mensagens*", async (route) => {
+    if (armarHttpJ && route.request().method() === "GET") {
+      armarHttpJ = false;
+      httpRetidoJ = route;
+      return; // resposta não chega ao JavaScript
+    }
+    await route.continue();
   });
 
   await login(pgM, "mestre_teste", "senha-forte-123");
@@ -1247,6 +1272,137 @@ try {
   // controle: o mestre titular continua vendo o segredo (estava autorizado)
   t("controle: mestre titular mantém o segredo", (await pgM.locator("body").innerText()).includes("SEGREDO-X9"));
   try { sPriv.close(); } catch {}
+
+  sec("Restauração substitui ID da sessão — UI volta à lista sem abrir a nova");
+  // pgJ (jogador) e pgM (mestre) estão dentro da MesaView da sidA
+  const snapSub = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "sid-trocado" } });
+  const snapSubId = snapSub.json?.id;
+  const novoSid = crypto.randomUUID();
+  const dbSub = abrirDb(BANCO);
+  const linSub = dbSub.prepare("select data from snapshots where id=?").get(snapSubId);
+  // troca o ID da sessão em TODO o pacote (id da sessão + sessionId das
+  // entidades filhas) — simula restauração que regenera IDs
+  const dadosSub = JSON.parse(JSON.stringify(JSON.parse(linSub.data)).split(sidA).join(novoSid));
+  dbSub.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSub), snapSubId);
+  dbSub.close();
+  const rSub = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapSubId}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore com ID de sessão substituído", rSub.status === 200, JSON.stringify(rSub.json).slice(0, 140));
+  const listaPosSub = await req(BASE, "GET", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre });
+  const idsPosSub = (listaPosSub.json?.sessoes ?? []).map((s) => s.id);
+  t("API: sid antigo removido e novo presente", !idsPosSub.includes(sidA) && idsPosSub.includes(novoSid), JSON.stringify(idsPosSub));
+  const esperaLista = (p) => p.waitForFunction(
+    () => document.querySelectorAll(".mesa-vtt").length === 0 && document.querySelectorAll(".tabela tbody tr").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await esperaLista(pgJ);
+  await esperaLista(pgM);
+  t("jogador: MesaView antiga desmontada e lista exibida",
+    (await pgJ.locator(".mesa-vtt").count()) === 0 && (await pgJ.locator(".tabela tbody tr").count()) > 0);
+  t("jogador: sessão nova NÃO aberta automaticamente", (await pgJ.locator(".mesa-vtt").count()) === 0);
+  t("mestre: MesaView antiga desmontada e lista exibida",
+    (await pgM.locator(".mesa-vtt").count()) === 0 && (await pgM.locator(".tabela tbody tr").count()) > 0);
+  t("lista exibe a sessão substituída pelo nome", (await pgM.locator("body").innerText()).includes("Mesa Névoa Alfa"));
+  // reentrada manual do mestre na sessão de ID novo
+  await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("mestre re-entrou manualmente na sessão nova", (await pgM.locator(".mesa-vtt").count()) === 1);
+  // controle: ID PRESERVADO — snapshot sem edição; a sessão aberta
+  // continua aberta com o estado autoritativo novo
+  const snapKeep = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: cookieMestre, body: { description: "id-preservado" } });
+  const rKeep = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapKeep.json?.id}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore com ID preservado", rKeep.status === 200, JSON.stringify(rKeep.json).slice(0, 120));
+  await new Promise((r) => setTimeout(r, 1000));
+  t("ID preservado: mesa do mestre permanece aberta", (await pgM.locator(".mesa-vtt").count()) === 1);
+  // jogador volta a entrar na sessão para as provas de evento atrasado
+  await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
+  await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  t("jogador re-entrou na sessão", (await pgJ.locator(".mesa-vtt").count()) === 1);
+
+  sec("Eventos privados atrasados — produzidos antes, entregues depois do rebaixamento");
+  const dbC = abrirDb(BANCO);
+  const memJ1 = dbC.prepare("select id from memberships where campaign_id=? and user_id=?").get(campId, c.jogadores.jogador1.id);
+  dbC.close();
+  // teste privado sobre personagem do MESTRE — j1 não é dono: após o
+  // rebaixamento ele não tem nenhuma autorização para recebê-lo
+  const charIdJ1 = c.personagemMestre;
+  const rPromoC = await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("promoção do j1 para mestre", rPromoC.status === 200, JSON.stringify(rPromoC.json).slice(0, 100));
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0, null, { timeout: 30000 }).catch(() => {});
+  t("j1 vê controles de mestre", (await pgJ.locator(".vtt-nevoa-controles").count()) > 0);
+  // socket do mestre titular na sessão nova
+  const tokC = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sC = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokC)}` },
+  });
+  await new Promise((res, rej) => { sC.on("connect", res); sC.on("connect_error", rej); });
+  const emitirS = (ev, p) => new Promise((r) => {
+    const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000);
+    sC.emit(ev, p, (x) => { clearTimeout(to); r(x); });
+  });
+  sC.emit("entrar-campanha", campId, () => undefined);
+  await emitirS("mesa:entrar", { sessionId: novoSid });
+  // arma a retenção no transporte do pgJ ANTES de produzir os eventos
+  reterEvtJ = (m) => ["\"mesa:mensagem\"", "\"mesa:teste\"", "\"mesa:rolagem\"", "\"mesa:decisao\""].some((k) => m.includes(k));
+  await emitirS("mesa:mensagem", { sessionId: novoSid, content: "EVT-SEGREDO-77", visibilidade: "secreta", clientId: crypto.randomUUID() });
+  const rPedC = await emitirS("mesa:teste:pedir", { sessionId: novoSid, characterId: charIdJ1, rotulo: "PRIV-ROT-99", dadosCount: 1, dadosLados: 20, minimo: 13, visibilidade: "privada" });
+  const testIdC = rPedC?.id;
+  t("teste privado solicitado pelo mestre", rPedC?.ok === true && !!testIdC, JSON.stringify(rPedC).slice(0, 140));
+  if (testIdC) {
+    const rRolC = await emitirS("mesa:teste:rolar", { testId: testIdC });
+    t("teste privado rolado", rRolC?.ok === true, JSON.stringify(rRolC).slice(0, 120));
+    const rDecC = await emitirS("mesa:teste:decidir", { testId: testIdC, outcome: "sucesso", nota: "NOTA-PRIV-66" });
+    t("teste privado decidido c/ nota", rDecC?.ok === true, JSON.stringify(rDecC).slice(0, 120));
+  }
+  await emitirS("mesa:rolar", { sessionId: novoSid, visibilidade: "privada", motivo: "ROLL-PRIV-55", dados: [{ sides: 20, count: 1 }] });
+  // os pacotes server→client ficam retidos na fila do ws do navegador
+  for (let i = 0; i < 100 && filaEvtJ.length < 5; i++) await new Promise((r) => setTimeout(r, 100));
+  t("eventos privados retidos no transporte (≥5 pacotes)", filaEvtJ.length >= 5, `fila=${filaEvtJ.length}`);
+  // rebaixa ANTES de liberar — os eventos chegam com papel já revogado
+  const rRebaixaC = await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("rebaixamento do j1", rRebaixaC.status === 200);
+  await esperarSemIncerto(pgJ, 30000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 800)); // limpeza + sync filtrada assentaram
+  liberarEvtJ();
+  reterEvtJ = null;
+  await new Promise((r) => setTimeout(r, 1000)); // eventos atrasados entregues
+  const corpoAtraso = await pgJ.locator("body").innerText();
+  t("msg secreta atrasada NÃO reaparece", !corpoAtraso.includes("EVT-SEGREDO-77"));
+  t("teste privado atrasado não repovoa (rótulo)", !corpoAtraso.includes("PRIV-ROT-99"));
+  // o anúncio de chat da rolagem privada é endereçado aos destinatários
+  // da época (j1 era mestre) — legítimo; o que não pode voltar é o
+  // CARD de rolagem com dados/motivo no painel de Rolagens
+  t("rolagem privada atrasada não gera card de rolagem",
+    (await pgJ.locator(".rolagem-item", { hasText: "ROLL-PRIV-55" }).count()) === 0);
+  t("decisão privada atrasada não vaza nota", !corpoAtraso.includes("NOTA-PRIV-66"));
+  const corpoMAtraso = await pgM.locator("body").innerText();
+  t("controle: mestre titular recebe o evento secreto", corpoMAtraso.includes("EVT-SEGREDO-77"));
+
+  sec("Resposta HTTP antiga não repovoa histórico privilegiado");
+  // segredo criado enquanto j1 é jogador — só mestres o recebem ao vivo
+  await emitirS("mesa:mensagem", { sessionId: novoSid, content: "HTTP-SEGREDO-88", visibilidade: "secreta", clientId: crypto.randomUUID() });
+  await new Promise((r) => setTimeout(r, 300));
+  t("segredo HTTP invisível ao jogador antes da promoção",
+    !(await pgJ.locator("body").innerText()).includes("HTTP-SEGREDO-88"));
+  // promove → a recarga filtrada da NOVA geração busca /mensagens como
+  // mestre e a resposta fica RETIDA antes de chegar ao JavaScript
+  armarHttpJ = true;
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  for (let i = 0; i < 100 && !httpRetidoJ; i++) await new Promise((r) => setTimeout(r, 100));
+  t("resposta HTTP de histórico retida", httpRetidoJ !== null);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0, null, { timeout: 30000 }).catch(() => {});
+  // rebaixa ANTES de liberar a resposta antiga
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  await esperarSemIncerto(pgJ, 30000).catch(() => {});
+  await new Promise((r) => setTimeout(r, 800));
+  await liberarHttpJ();
+  await new Promise((r) => setTimeout(r, 1000));
+  const corpoHttp = await pgJ.locator("body").innerText();
+  t("HTTP-SEGREDO-88 ausente após resposta antiga liberada", !corpoHttp.includes("HTTP-SEGREDO-88"));
+  // controle positivo: nova promoção → geração nova busca e MOSTRA
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${memJ1.id}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  await pgJ.waitForFunction(() => document.body.innerText.includes("HTTP-SEGREDO-88"), null, { timeout: 30000 }).catch(() => {});
+  t("controle: geração nova mostra o segredo ao mestre", (await pgJ.locator("body").innerText()).includes("HTTP-SEGREDO-88"));
+  try { sC.close(); } catch {}
 
   await pgM.screenshot({ path: join(SHOTS, "nevoa-mestre.png") });
   await pgJ.screenshot({ path: join(SHOTS, "nevoa-jogador.png") });

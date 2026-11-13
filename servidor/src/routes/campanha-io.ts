@@ -10,7 +10,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
-import { emitirCampanha, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao } from "../lib/io.js";
+import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -92,12 +92,20 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     // membros atuais ANTES de substituir: quem não constar no pacote
     // precisa ser revogado e notificado — consultar só o estado final
     // perderia esses usuários.
+    // mesma barreira do snapshot: bloqueia entradas/operações e
+    // evacua sockets ANTES de capturar o estado e restaurar
+    await iniciarBarreiraRestauracao(cid);
+    const delayBarreira = Number(process.env.MESTRE_RESTORE_DELAY_MS ?? 0);
+    if (process.env.NODE_ENV === "test" && delayBarreira > 0) {
+      await new Promise((r) => setTimeout(r, delayBarreira));
+    }
     const membrosAntes = await db.select().from(memberships).where(eq(memberships.campaignId, cid));
     const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
     let resultado;
     try {
       resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
     } catch (e) {
+      await liberarBarreiraRestauracao(cid, "falha");
       res.status(500).json({ erro: "Falha ao importar/substituir", detalhe: String(e) });
       return;
     }
@@ -105,11 +113,13 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     const sessoesDepois = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
     const rec = await reconciliarMembrosAposRestauracao(cid, membrosAntes, membrosDepois, sessoesAntes, sessoesDepois);
     if (rec.falhas.length) {
+      await liberarBarreiraRestauracao(cid, "sucesso");
       res.status(500).json({ erro: "Importação aplicada, mas a reconciliação de sockets falhou para alguns membros", detalhes: rec.falhas });
       return;
     }
+    await liberarBarreiraRestauracao(cid, "sucesso");
     await audit(req, "campanha.importada_substituida", { campaignId: cid, preSnapshotId: preSnapId, ...resultado });
-    emitirCampanha(cid, "campanha:restaurada", {});
+    emitirCampanha(cid, "campanha:restaurada", { campaignId: cid });
     res.json({ ok: true, campaignId: cid, modo, ...resultado });
     return;
   }
