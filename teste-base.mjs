@@ -37,14 +37,16 @@ export function portaLivre() {
   });
 }
 
-export function subirServidor(porta, { banco, arquivos, backups }) {
+export function subirServidor(porta, { banco, arquivos, backups, env }) {
   return spawn("node", ["servidor/dist/index.js"], {
     env: {
       ...process.env,
+      NODE_ENV: "test", // barreiras/hooks de teste só existem neste ambiente
       MESTRE_PORTA: String(porta),
       MESTRE_BANCO: banco,
       MESTRE_ARQUIVOS: arquivos,
       MESTRE_BACKUPS: backups,
+      ...(env ?? {}),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

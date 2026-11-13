@@ -28,6 +28,10 @@ import { log } from "./lib/logs.js";
 import { verificarBackupAgendado } from "./lib/backup.js";
 import { registrarDesligamento } from "./lib/ciclo-vida.js";
 import { localRouter } from "./routes/desligar.js";
+import { vincularLeaseAoHandler, requirePapel } from "./lib/permissoes.js";
+import { requireAuth } from "./middleware/auth.js";
+import { pausaTesteEmit } from "./lib/io.js";
+import { chatMessages } from "./db/schema.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
@@ -47,8 +51,13 @@ function envolver(fn: Handler): Handler {
     try {
       const r = fn(req, res, next);
       if (r && typeof (r as Promise<unknown>).catch === "function") {
+        // retorna a Promise para que o wrapper de lease observe o
+        // settle real do handler; o catch(next) segue encaminhando
+        // erros ao middleware central como antes
         (r as Promise<unknown>).catch(next);
+        return r;
       }
+      return r;
     } catch (e) {
       next(e);
     }
@@ -79,7 +88,13 @@ const routers: Router[] = [
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter,
 ];
-for (const r of routers) blindar(r);
+for (const r of routers) {
+  blindar(r);
+  // depois do blindar: o último handler de cada rota tem sua Promise
+  // observada — o lease HTTP é liberado no settle real do handler,
+  // nunca por eventos de socket (finish/close) nem por res.end
+  vincularLeaseAoHandler(r);
+}
 
 app.use("/api", healthRouter);
 app.use("/api/auth", authRouter);
@@ -103,6 +118,32 @@ app.use("/api/characters", personagensRouter);
 app.use("/api/biblioteca", bibliotecaRouter);
 app.use("/api/novidades", novidadesRouter);
 app.use("/api/admin/novidades", novidadesAdminRouter);
+
+// Rotas de diagnóstico do lease HTTP — SOMENTE NODE_ENV=test.
+// Simulam handlers que enviam a resposta e mantêm trabalho assíncrono
+// pendente (ou rejeitam após a resposta) para provar que o lease só é
+// liberado no settle real da Promise do handler. Inertes em produção.
+if (process.env.NODE_ENV === "test") {
+  const diag = express.Router();
+  diag.post("/campaigns/:campaignId/lease-tardio", requireAuth, requirePapel("mestre"), async (req, res) => {
+    res.status(200).json({ ok: true, fase: "resposta-enviada" });
+    // trabalho assíncrono REAL pendente DEPOIS de res.end: o lease deve
+    // permanecer até esta Promise terminar — a restauração espera por ele
+    await pausaTesteEmit("lease:tardio");
+    await getDb().insert(chatMessages).values({
+      id: randomBytes(16).toString("hex"), campaignId: req.params.campaignId,
+      kind: "sistema", content: "PISR-lease-tardio", visibility: "publica",
+      createdAt: new Date(),
+    });
+  });
+  diag.post("/campaigns/:campaignId/lease-erro", requireAuth, requirePapel("mestre"), async () => {
+    await pausaTesteEmit("lease:erro");
+    throw new Error("PISR-lease-erro");
+  });
+  blindar(diag);
+  vincularLeaseAoHandler(diag);
+  app.use("/api/__teste", diag);
+}
 
 // 404 consistente para rotas de API inexistentes
 app.use("/api", (_req, res) => {

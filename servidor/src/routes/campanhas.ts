@@ -6,7 +6,7 @@ import { getDb } from "../db/index.js";
 import { campaigns, memberships, invitations, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
-import { emitirCampanha, expulsarMembroDaCampanha } from "../lib/io.js";
+import { emitirCampanha, expulsarMembroDaCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
@@ -218,6 +218,10 @@ campanhasRouter.patch(
     if (novoStatus !== "ativo") {
       await expulsarMembroDaCampanha(req.params.campaignId, alvo.userId);
     }
+    // Notificação privada pós-persistência: papel/status/permissões atuais
+    notificarPermissaoAtualizada(req.params.campaignId, {
+      userId: alvo.userId, role: novoPapel, status: novoStatus, permissions: permissoesNovas,
+    });
     emitirCampanha(req.params.campaignId, "membros:atualizados", { membershipId: alvo.id });
     res.json({ ok: true });
   }
@@ -251,6 +255,9 @@ campanhasRouter.delete(
       .set({ status: "removido", updatedAt: new Date() })
       .where(eq(memberships.id, alvo.id));
     await expulsarMembroDaCampanha(req.params.campaignId, alvo.userId);
+    notificarPermissaoAtualizada(req.params.campaignId, {
+      userId: alvo.userId, role: alvo.role, status: "removido", permissions: alvo.permissions,
+    });
     emitirCampanha(req.params.campaignId, "membros:atualizados", { membershipId: alvo.id });
     res.json({ ok: true });
   }
