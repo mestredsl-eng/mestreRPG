@@ -269,6 +269,23 @@ try {
     const rs = rotasSync.splice(0);
     for (const r of rs) void r.abort().catch(() => {});
   };
+  // Desenha e CONFIRMA que o emit chegou ao transporte. O pincel pode
+  // estar desligado por refresh/reconexão da seção anterior — sem a
+  // confirmação, a seção mediria "nenhum timeout" e falharia por
+  // timeout de 150s sem apontar o defeito real. Emits retidos são
+  // descartados em bloco pelas próprias seções, então repetir o gesto
+  // é inócuo.
+  const desenharConfirmado = async (page, pontos) => {
+    for (let tent = 0; tent < 4; tent++) {
+      const n0 = nevoaEmitidos;
+      await garantirPincel(page);
+      await desenhar(page, pontos);
+      const limite = Date.now() + 6000;
+      while (Date.now() < limite && nevoaEmitidos === n0) await page.waitForTimeout(100);
+      if (nevoaEmitidos > n0) return;
+    }
+    throw new Error("desenho de névoa não gerou emit após 4 tentativas");
+  };
   await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
     const srv = ws.connectToServer();
     wsSrvM = srv;
@@ -630,7 +647,7 @@ try {
   // e o SERVIDOR CAI de verdade: o ACK é impossível → timeout → o
   // resultado fica incerto — não é rejeição
   segurarNevoa = true;
-  await desenhar(pgM, [[0.62, 0.62], [0.7, 0.62], [0.7, 0.7]]);
+  await desenharConfirmado(pgM, [[0.62, 0.62], [0.7, 0.62], [0.7, 0.7]]);
   await encerrarServidor(proc);
   // ACK expirou ≠ rejeição: mensagem de resultado DESCONHECIDO e mutações
   // bloqueadas (o botão Sincronizar é a prova persistente do estado
@@ -733,8 +750,7 @@ try {
   // incerto se resolveria sozinho e o botão nunca ficaria visível.
   // A contagem é zerada antes do retry manual, que precisa do ACK.
   derrubarAckM = 50;
-  await garantirPincel(pgM);
-  await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
+  await desenharConfirmado(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
   try {
     await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 150000 });
   } catch (e) {
