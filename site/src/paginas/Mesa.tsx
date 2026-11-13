@@ -899,8 +899,15 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
 
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
+  const inicialConteudoRef = useRef<string | null>(null);
   useEffect(() => {
     const ini = vttInicialParse(inicial);
+    // recargas que devolvem o MESMO vttState (nova referência de objeto,
+    // conteúdo idêntico) não podem derrubar o rascunho do pincel —
+    // só uma mudança real de estado reinicia a visão
+    const chave = JSON.stringify(ini);
+    if (inicialConteudoRef.current === chave) return;
+    inicialConteudoRef.current = chave;
     sincronizarAutoritativo(ini);
     setVtt(ini);
     setPincel(false); setPreviewNevoa(null); // sessão/troca de estado: limpa rascunho
