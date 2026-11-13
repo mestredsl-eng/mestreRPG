@@ -7,6 +7,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, permissoesDe } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { vttStateFiltradoHttp } from "../lib/vtt.js";
 
 const db = getDb();
 export const sessoesRouter = Router({ mergeParams: true });
@@ -58,7 +59,13 @@ export function mensagemVisivel(
 sessoesRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
   const lista = await sessoesComVttSeguro(eq(sessions.campaignId, req.params.campaignId));
   lista.sort((a, b) => b.number - a.number);
-  res.json({ sessoes: lista });
+  // névoa: vttState filtrado por destinatário (jogador não recebe tokens ocultos)
+  const papel = req.membership!.role as "mestre" | "jogador" | "espectador";
+  const uid = req.usuario!.id;
+  const filtrada = await Promise.all(lista.map(async (s) => ({
+    ...s, vttState: await vttStateFiltradoHttp(s, papel, uid),
+  })));
+  res.json({ sessoes: filtrada });
 });
 
 const criarSchema = z.object({ name: z.string().max(160).optional() });
@@ -119,7 +126,10 @@ sessoesRouter.get("/:sessionId", requirePapel("mestre", "jogador", "espectador")
   const s = await sessaoDaCampanha(req.params.sessionId, req.params.campaignId);
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
   const t = await turnosDaSessao(s.id);
-  res.json({ sessao: s, turnos: t?.state ?? { ordem: [], atual: -1, ativo: false } });
+  res.json({
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
+    turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
+  });
 });
 
 /** GET /api/campaigns/:campaignId/sessoes/:sessionId/mensagens?limite=200 */
@@ -215,7 +225,7 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
     : [];
 
   res.json({
-    sessao: s,
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
     duracaoMs: inicio && fim ? fim - inicio : null,
     participantes: autores,
     eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
@@ -236,5 +246,8 @@ sessoesRouter.get("/:sessionId/estado", requirePapel("mestre", "jogador", "espec
   const s = await sessaoDaCampanha(req.params.sessionId, req.params.campaignId);
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
   const t = await turnosDaSessao(s.id);
-  res.json({ sessao: s, turnos: t?.state ?? { ordem: [], atual: -1, ativo: false }, agora: Date.now() });
+  res.json({
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
+    turnos: t?.state ?? { ordem: [], atual: -1, ativo: false }, agora: Date.now(),
+  });
 });

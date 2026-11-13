@@ -11,6 +11,11 @@ import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
+import {
+  lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
+  vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
+  type TokenVtt, type VttState,
+} from "../lib/vtt.js";
 
 const db = getDb();
 
@@ -204,24 +209,54 @@ function socket_handlers(
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
-      socket.join(`sessao:${sessionId}`);
-      // estado VTT fresco após o join: cobre a janela em que uma atualização
-      // foi persistida/emitida entre a leitura do ctx e a entrada na sala
-      socket.emit("mesa:vtt", { sessionId, vtt: await lerVtt(sessionId) });
-      const [t] = await db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1);
-      const podeEnviar = ctx.papel !== "espectador" || permissoesDe(ctx.membership).enviarMensagens === true;
-      cb?.({
-        ok: true, papel: ctx.papel, podeEnviar,
-        // vttState sanitizado: JSON válido com formato inesperado não vai cru ao cliente
-        sessao: { ...ctx.sessao, vttState: vttDeTexto(ctx.sessao.vttState, sessionId) },
-        turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
-        presenca: presentes(sessionId),
-        agora: Date.now(),
-      });
-      await emitirPresenca(sessionId);
-      await registrarChat(io, {
-        campaignId: ctx.sessao.campaignId, sessionId, authorId: usuario()!.id,
-        kind: "evento", content: `${await nomeUsuario(usuario()!.id)} entrou na mesa`, visibility: "publica",
+      // Barreira de teste determinística (somente NODE_ENV=test +
+      // MESTRE_VTT_BARRIER_MS): abre uma janela controlada entre a
+      // validação inicial e a autorização final, permitindo reproduzir
+      // troca de papel/membership no meio da entrada. Inerte em produção.
+      if (process.env.NODE_ENV === "test") {
+        const barreiraMs = Number(process.env.MESTRE_VTT_BARRIER_MS ?? 0);
+        if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
+      }
+      // Seção crítica: o socket SÓ entra na sala depois da autorização
+      // final. Enquanto não ingressa, nenhum evento da sala (mensagens
+      // públicas/sistema emitidas via io.to(room)) pode alcançá-lo.
+      // As leituras ocorrem dentro do lock para refletir mutações VTT
+      // anteriores e serializar a entrada com mapa/token/névoa.
+      await comLockVtt(async () => {
+        const vttEntrar = await lerVtt(sessionId);
+        const [donos, t] = await Promise.all([
+          donosDosTokens(sessionId, vttEntrar.tokens),
+          db.select().from(turns).where(eq(turns.sessionId, sessionId)).limit(1).then((r) => r[0]),
+        ]);
+        // Revalidação final: membership, papel e status da sessão podem
+        // ter mudado durante a espera do lock e as leituras. O join, o
+        // emit e o ACK usam SOMENTE este contexto.
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF || ctxF.sessao.status === "encerrada") {
+          cb?.({ ok: false, erro: "erro" in ctxF ? ctxF.erro : "Sessão encerrada" });
+          return;
+        }
+        socket.join(`sessao:${sessionId}`);
+        const papel = ctxF.papel;
+        const uF = usuario()!;
+        const vttEu = papel === "mestre" || !vttEntrar.nevoa.ativa
+          ? vttEntrar
+          : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
+        socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
+        const podeEnviar = papel !== "espectador" || permissoesDe(ctxF.membership).enviarMensagens === true;
+        cb?.({
+          ok: true, papel, podeEnviar,
+          // vttState filtrado e sanitizado: JSON inválido ou névoa não vazam
+          sessao: { ...ctxF.sessao, vttState: vttEu },
+          turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
+          presenca: presentes(sessionId),
+          agora: Date.now(),
+        });
+        await emitirPresenca(sessionId);
+        await registrarChat(io, {
+          campaignId: ctxF.sessao.campaignId, sessionId, authorId: uF.id,
+          kind: "evento", content: `${await nomeUsuario(uF.id)} entrou na mesa`, visibility: "publica",
+        });
       });
     });
 
@@ -242,56 +277,34 @@ function socket_handlers(
     // Mutações passam por comLockVtt (serialização explícita do ciclo
     // ler→validar→gravar→emitir, independente do driver).
 
-    interface TokenVtt {
-      id: string; nome: string; cor: string; x: number; y: number;
-      personagemId?: string | null; userId?: string | null; ativo: boolean;
-    }
-    interface VttState { mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null; tokens: TokenVtt[] }
-    const VTT_MAX_TOKENS = 100;
-    const VTT_MAX_BYTES = 64 * 1024;
-    const VTT_MAX_NOME = 60;
-    const vttVazio = (): VttState => ({ mapa: null, tokens: [] });
-
-    /** Leitura defensiva do JSON persistido: nunca lança; inválido → vazio + log. */
-    function vttDeTexto(raw: unknown, sessionId: string): VttState {
-      if (raw == null || raw === "") return vttVazio();
-      let v: unknown = raw;
-      if (typeof raw === "string") {
-        try { v = JSON.parse(raw); }
-        catch (e) {
-          console.error(`[vtt] vtt_state inválido na sessão ${sessionId} — usando estado vazio:`, e);
-          return vttVazio();
-        }
-      }
-      const o = v as Partial<VttState> | null;
-      const tokens = (Array.isArray(o?.tokens) ? o.tokens : []).filter((tk): tk is TokenVtt =>
-        !!tk && typeof tk === "object"
-        && typeof (tk as TokenVtt).id === "string"
-        && typeof (tk as TokenVtt).nome === "string"
-        && typeof (tk as TokenVtt).x === "number" && Number.isFinite((tk as TokenVtt).x)
-        && typeof (tk as TokenVtt).y === "number" && Number.isFinite((tk as TokenVtt).y)
-        && (tk as TokenVtt).x >= 0 && (tk as TokenVtt).x <= 1
-        && (tk as TokenVtt).y >= 0 && (tk as TokenVtt).y <= 1
-        && typeof (tk as TokenVtt).cor === "string");
-      const mp = o?.mapa as { fileId?: unknown; nome?: unknown; largura?: unknown; altura?: unknown } | null | undefined;
-      const mapa = mp && typeof mp === "object" && typeof mp.fileId === "string"
-        ? {
-            fileId: mp.fileId,
-            nome: typeof mp.nome === "string" ? mp.nome : "Mapa",
-            largura: typeof mp.largura === "number" && Number.isFinite(mp.largura) ? mp.largura : undefined,
-            altura: typeof mp.altura === "number" && Number.isFinite(mp.altura) ? mp.altura : undefined,
-          }
-        : null;
-      return { mapa, tokens };
-    }
-    /** Lê vtt_state como texto bruto (contorna o parse json do Drizzle). */
-    async function lerVtt(sessionId: string): Promise<VttState> {
-      const [row] = await db.select({ v: sql<string | null>`vtt_state` }).from(sessions).where(eq(sessions.id, sessionId)).limit(1);
-      return vttDeTexto(row?.v, sessionId);
-    }
+    /**
+     * Emissão filtrada por destinatário (Etapa 2 — névoa): cada socket da sala
+     * recebe somente a visão autorizada. Papel e membership são revalidados
+     * no banco a cada emissão — socket.data nunca é fonte de autorização.
+     * Sockets sem usuário autenticado ou sem acesso atual não recebem nada.
+     */
     const emitirVtt = async (sessionId: string, vtt: VttState) => {
-      io.to(`sessao:${sessionId}`).emit("mesa:vtt", { sessionId, vtt });
+      const room = `sessao:${sessionId}`;
+      // sockets reais (não RemoteSocket): emissão direcionada funciona com
+      // qualquer adaptador e preserva socket.data do socket local
+      const sockets = [...io.sockets.sockets.values()].filter((s) => s.rooms.has(room));
+      if (!sockets.length) return;
+      const donos = await donosDosTokens(sessionId, vtt.tokens);
+      await Promise.all(sockets.map(async (s) => {
+        const u = s.data.usuario as Usuario | undefined;
+        if (!u) return;
+        const ctx = await resolverCtx(s, sessionId);
+        if ("erro" in ctx || ctx.sessao.status === "encerrada") return;
+        s.emit("mesa:vtt", { sessionId, vtt: vttParaDestinatario(vtt, ctx.papel, u.id, donos) });
+      }));
     };
+    /** Visão VTT do próprio requisitante (ACKs e mesa:entrar). */
+    const vttParaUsuario = async (sessionId: string, vtt: VttState, papel: string, userId: string): Promise<VttState> => {
+      if (papel === "mestre" || !vtt.nevoa.ativa) return vtt;
+      const donos = await donosDosTokens(sessionId, vtt.tokens);
+      return vttParaDestinatario(vtt, papel as "jogador" | "espectador", userId, donos);
+    };
+
     const posicaoValida = (x: unknown, y: unknown): x is number =>
       typeof x === "number" && Number.isFinite(x) && x >= 0 && x <= 1
       && typeof y === "number" && Number.isFinite(y) && y >= 0 && y <= 1;
@@ -364,6 +377,11 @@ function socket_handlers(
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre altera o mapa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
         const vtt = await lerVtt(sessionId);
         if (payload.acao === "remover") {
           vtt.mapa = null;
@@ -395,7 +413,7 @@ function socket_handlers(
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
-        cb?.({ ok: true, vtt });
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u!.id) });
       });
     });
 
@@ -413,6 +431,11 @@ function socket_handlers(
       if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
       await comLockVtt(async () => {
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectador não pode alterar a mesa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
         const vtt = await lerVtt(sessionId);
         const t = payload.token ?? {};
         const acao = payload.acao;
@@ -424,7 +447,7 @@ function socket_handlers(
           if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre cria tokens" }); return; }
           // idempotência: se o cliente reenviou um criar com id já existente, não duplica
           if (typeof t.id === "string" && vtt.tokens.some((x) => x.id === t.id)) {
-            cb?.({ ok: true, vtt, idempotente: true }); return;
+            cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id), idempotente: true }); return;
           }
           if (vtt.tokens.length >= VTT_MAX_TOKENS) { cb?.({ ok: false, erro: `Limite de ${VTT_MAX_TOKENS} tokens por sessão atingido` }); return; }
           if (!posicaoValida(t.x, t.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
@@ -483,7 +506,95 @@ function socket_handlers(
         await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
         agendarAutosave(ctx.sessao.campaignId);
         await emitirVtt(sessionId, vtt);
-        cb?.({ ok: true, vtt });
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:nevoa {sessionId, acao, traco?} — somente mestre (Etapa 2).
+     * acoes: "revelar" (traco {raioX,raioY,pontos[]} → id gerado no servidor),
+     * "desfazer" (remove o último traço), "ocultarTudo" (ativa névoa sem
+     * regiões), "revelarTudo" (desativa névoa; traços são preservados para
+     * eventual reativação futura — a névoa desativada não os utiliza).
+     */
+    socket.on("mesa:vtt:nevoa", async (payload: {
+      sessionId?: string; acao?: string;
+      traco?: { raioX?: number; raioY?: number; pontos?: { x: number; y: number }[] };
+    }, cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      // Ordenação: a operação entra na fila VTT IMEDIATAMENTE, antes de
+      // qualquer await. Como o transporte preserva a ordem por conexão,
+      // uma sincronização posterior (mesa:vtt:nevoa:sincronizar) só
+      // responde depois que esta operação terminar — nunca existe
+      // mutação antiga pendente atrás de uma consulta de sincronização.
+      await comLockVtt(async () => {
+        // barreira determinística de teste (NODE_ENV=test apenas):
+        // segura a operação DENTRO da seção crítica para provar que a
+        // sincronização fica enfileirada atrás dela. Inerte em produção.
+        if (process.env.NODE_ENV === "test") {
+          const barreiraMs = Number(process.env.MESTRE_VTT_NEVOA_BARRIER_MS ?? 0);
+          if (barreiraMs > 0) await new Promise((r) => setTimeout(r, barreiraMs));
+        }
+        // revalida dentro da seção crítica: membership/papel podem mudar durante a espera do lock
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Somente o mestre pode alterar a névoa" }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        if (!vtt.nevoa || typeof vtt.nevoa !== "object") vtt.nevoa = nevoaPadrao();
+        const acao = payload.acao;
+        if (acao === "revelar") {
+          if (!vtt.nevoa.ativa) vtt.nevoa.ativa = true;
+          const val = tracoRevelarValido(payload.traco);
+          if (!val.ok) { cb?.({ ok: false, erro: val.erro }); return; }
+          const totalAtual = vtt.nevoa.revelados.reduce((s, t) => s + t.pontos.length, 0);
+          if (vtt.nevoa.revelados.length >= NEVOA_MAX_TRAÇOS) { cb?.({ ok: false, erro: `Limite de ${NEVOA_MAX_TRAÇOS} traços de névoa atingido` }); return; }
+          if (totalAtual + val.traco.pontos.length > 1000) { cb?.({ ok: false, erro: "Limite de pontos de névoa atingido" }); return; }
+          vtt.nevoa.revelados.push({ id: randomUUID(), ...val.traco });
+        } else if (acao === "desfazer") {
+          vtt.nevoa.revelados.pop();
+        } else if (acao === "ocultarTudo") {
+          vtt.nevoa = { ativa: true, revelados: [] };
+        } else if (acao === "revelarTudo") {
+          vtt.nevoa.ativa = false; // traços preservados; inertes enquanto desativada
+        } else {
+          cb?.({ ok: false, erro: "Ação inválida" }); return;
+        }
+        if (JSON.stringify(vtt).length > VTT_MAX_BYTES) { cb?.({ ok: false, erro: "Estado da mesa excede o limite" }); return; }
+        await db.update(sessions).set({ vttState: vtt as never, updatedAt: new Date() }).where(eq(sessions.id, sessionId));
+        agendarAutosave(ctx.sessao.campaignId);
+        await emitirVtt(sessionId, vtt);
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:nevoa:sincronizar {sessionId} — leitura autoritativa e
+     * ORDENADA da névoa. Entra em comLockVtt imediatamente ao ser
+     * recebido (antes de qualquer await), na mesma fila das mutações:
+     * como o transporte preserva a ordem por conexão, a resposta só é
+     * produzida depois que toda operação de névoa já entregue ao
+     * servidor tiver terminado — e reflete o estado pós-operações.
+     * Não modifica o VTT nem permissões. Não aceita papel do cliente.
+     */
+    socket.on("mesa:vtt:nevoa:sincronizar", async (payload: { sessionId?: string },
+      cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      await comLockVtt(async () => {
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        // revalidação final após as leituras assíncronas: papel/membership
+        // podem ter mudado durante lerVtt/donosDosTokens
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF) { cb?.({ ok: false, erro: ctxF.erro }); return; }
+        if (ctxF.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id) });
       });
     });
 
