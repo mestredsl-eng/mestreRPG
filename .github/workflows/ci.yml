@@ -110,6 +110,7 @@ jobs:
             homologacao-final-v1.mjs \
             homologacao-mesa.mjs \
             teste-mesa-seguranca.mjs \
+            teste-temporizador.mjs \
             teste-convite-cadastro.mjs \
             homologacao-equipamentos.mjs \
             teste-equipamentos.mjs \
@@ -225,7 +226,8 @@ jobs:
             homologacao-pacotes-forjados.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
-            teste-permissao-tempo-real.mjs
+            teste-permissao-tempo-real.mjs \
+            homologacao-temporizador.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
