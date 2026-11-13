@@ -123,6 +123,8 @@ jobs:
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
             teste-novidades.mjs \
+            teste-novidades-realtime.mjs \
+            teste-sessoes-socket.mjs \
             teste-validacao-personagem.mjs \
             teste-exclusao-personagem.mjs
           do
