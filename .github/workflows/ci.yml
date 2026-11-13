@@ -100,6 +100,7 @@ jobs:
           for s in \
             homologacao-acervo.mjs \
             teste-acervo-campanha.mjs \
+            teste-acervo-sync.mjs \
             teste-acervo-diff.mjs \
             teste-fisica-dados.mjs \
             teste-restauracao-boot.mjs \
@@ -217,6 +218,7 @@ jobs:
             homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
+            homologacao-acervo-sync.mjs \
             homologacao-v1-cobertura.mjs \
             homologacao-primeira-partida.mjs \
             homologacao-visual.mjs \
