@@ -13,6 +13,25 @@ export function setIo(instancia: SocketIOServer) {
   io = instancia;
 }
 
+/** Emite um evento para a sala privada de um usuário autenticado. */
+export function emitirUsuario(userId: string, evento: string, dados: unknown) {
+  io?.to(`usuario:${userId}`).emit(evento, dados);
+}
+
+/**
+ * Desconecta todos os sockets autenticados por uma sessão HTTP específica
+ * (logout). Outras sessões independentes da mesma conta não são afetadas.
+ */
+export function desconectarSessao(sessaoId: string) {
+  io?.in(`sessao:${sessaoId}`).disconnectSockets();
+}
+
+/** Desconecta todos os sockets do usuário — uso quando TODAS as sessões
+ *  da conta foram revogadas (bloqueio, troca de senha, exclusão). */
+export function desconectarUsuario(userId: string) {
+  io?.in(`usuario:${userId}`).disconnectSockets();
+}
+
 /** Emite um evento para todos os membros conectados de uma campanha. */
 export function emitirCampanha(campaignId: string, evento: string, dados: unknown) {
   io?.to(`campanha:${campaignId}`).emit(evento, dados);
