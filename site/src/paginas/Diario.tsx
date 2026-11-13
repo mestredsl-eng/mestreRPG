@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
+import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
 const VISIBILIDADES = [
@@ -28,15 +29,23 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [filtroData, setFiltroData] = useState("");
   const [form, setForm] = useState({ title: "", content: "", category: "livre", characterId: "", important: false, visibility: "privada" as Anotacao["visibility"], recipients: [] as string[] });
 
+  // Geração da carga: respostas de requisições antigas (ex.: troca de aba
+  // ou invalidação durante um fetch em andamento) não sobrescrevem o estado.
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const { anotacoes: lista } = await api.listarAnotacoes(campaignId, aba);
+      if (g !== geracao.current) return;
       setAnotacoes(lista);
       setErro(null);
-    } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+    } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId, aba]);
 
   useEffect(() => { void carregar(); }, [carregar]);
+  // Issue #67: invalidação em tempo real — o evento só dispara novo GET;
+  // a visibilidade continua sendo decidida pelo backend em cada resposta.
+  useSincronizacaoCampanha(["anotacoes:atualizadas"], () => void carregar());
   // Trocar de aba recarrega uma lista diferente — filtros da aba anterior
   // não se aplicam (categorias/visibilidade podem não existir nela) e
   // esconderiam anotações sem controle visível para removê-los.

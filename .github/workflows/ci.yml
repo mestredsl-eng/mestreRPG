@@ -122,6 +122,7 @@ jobs:
             teste-vida-conversao.mjs \
             teste-venda-estoque.mjs \
             teste-financeiro-compras.mjs \
+            teste-financeiro-integracao.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
             teste-novidades.mjs \
@@ -215,6 +216,7 @@ jobs:
             homologacao-hp-historico.mjs \
             homologacao-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
             homologacao-acervo-sync.mjs \
@@ -224,6 +226,7 @@ jobs:
             homologacao-validacao-ficha.mjs \
             homologacao-exclusao-personagem.mjs \
             homologacao-busca-filtros.mjs \
+            teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-nevoa.mjs \
             homologacao-pacotes-forjados.mjs \
