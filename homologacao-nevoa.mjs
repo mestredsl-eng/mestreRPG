@@ -1071,6 +1071,119 @@ try {
       && wsCountJ - wsAntesRT <= 1 && entrarCountJ - entrarAntesRT <= 1,
     `cargas ${cargasAntesRT}→${cargasJ} ws ${wsAntesRT}→${wsCountJ} entrar ${entrarAntesRT}→${entrarCountJ}`);
 
+  sec("Personagens acompanham o papel — lista filtrada sem reload");
+  // Personagem do jogador1 criado DEPOIS da carga inicial da página:
+  // a lista só pode se tornar visível via recarga disparada por mudança
+  // de papel — exatamente o caminho corrigido.
+  const pj1Id = c.novoPersonagem(c.jogadores.jogador1.membershipId, "Heroina J1");
+  const charMestreId = c.personagemMestre;
+  // socket do mestre titular para produzir testes públicos decididos
+  // na sessão atual (sidA), um por personagem
+  const tokP = decodeURIComponent(cookieMestre.split("=")[1]);
+  const sP = ioClient(BASE, {
+    path: "/socket.io", transports: ["websocket"], reconnection: false,
+    extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(tokP)}` },
+  });
+  await new Promise((res, rej) => { sP.on("connect", res); sP.on("connect_error", rej); });
+  const emitirP = (ev, p) => new Promise((r) => {
+    const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000);
+    sP.emit(ev, p, (x) => { clearTimeout(to); r(x); });
+  });
+  sP.emit("entrar-campanha", campId, () => undefined);
+  await emitirP("mesa:entrar", { sessionId: sidA });
+  const mkTestePublico = async (charId, rotulo) => {
+    const ped = await emitirP("mesa:teste:pedir", {
+      sessionId: sidA, characterId: charId, rotulo,
+      dadosCount: 1, dadosLados: 20, visibilidade: "publica",
+      requestId: crypto.randomUUID(),
+    });
+    if (!ped?.ok || !ped?.id) return null;
+    await emitirP("mesa:teste:rolar", { testId: ped.id });
+    await emitirP("mesa:teste:decidir", { testId: ped.id, outcome: "sucesso" });
+    return ped.id;
+  };
+  const tMestreP = await mkTestePublico(charMestreId, "PERS-MESTRE-1");
+  const tJ1P = await mkTestePublico(pj1Id, "PERS-J1-1");
+  t("testes públicos decididos produzidos (mestre + j1)", !!tMestreP && !!tJ1P);
+  // conta GETs de personagens na página do jogador a partir daqui
+  let charsReqJ = 0;
+  pgJ.on("request", (rq) => {
+    if (rq.method() === "GET" && /\/characters(\?|$)/.test(rq.url())) charsReqJ++;
+  });
+  const esperarCharsReq = async (n) => {
+    for (let i = 0; i < 100 && charsReqJ < n; i++) await new Promise((r) => setTimeout(r, 100));
+  };
+  // nomes renderizados na 1ª coluna das decisões recentes, na ordem
+  const nomesDecisoes = () => pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Decisões recentes" }) }).locator(".tabela tbody tr td:first-child").allInnerTexts();
+  await new Promise((r) => setTimeout(r, 1200)); // eventos mesa:teste/decisao assentaram
+  // baseline: lista do jogador ainda vazia (personagem criado pós-carga)
+  let nomes = await nomesDecisoes();
+  t("baseline jogador sem lista: ambos os testes resolvem '?’",
+    nomes.length >= 2 && nomes.every((n) => n.trim() === "?"), JSON.stringify(nomes));
+
+  // 1) jogador → mestre: a lista passa a conter TODOS os personagens
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("PATCH jogador→mestre (personagens)", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await pgJ.getByRole("button", { name: "+ Teste" }).first().click().catch(() => {});
+  await esperarCharsReq(charsReqJ + 1);
+  const opcoesMestre = await pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Solicitar teste" }) }).locator("option").allInnerTexts();
+  t("promoção: select de personagem lista TODOS os personagens",
+    opcoesMestre.some((o) => o.includes("Mestre Herói")) && opcoesMestre.some((o) => o.includes("Heroina J1")),
+    JSON.stringify(opcoesMestre));
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("promoção: decisões resolvem nomes de todos os personagens",
+    nomes.includes("Mestre Herói") && nomes.includes("Heroina J1"), JSON.stringify(nomes));
+
+  // 2) mestre → jogador: personagens alheios saem da lista na hora
+  const charsAntesRebaixa = charsReqJ;
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH mestre→jogador (personagens)", rRT.status === 200);
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0,
+    null, { timeout: 30000 }).catch(() => {});
+  await esperarCharsReq(charsAntesRebaixa + 1);
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("rebaixamento: personagem alheio volta a '?' e o próprio resolve",
+    nomes.includes("?") && nomes.includes("Heroina J1") && !nomes.includes("Mestre Herói"),
+    JSON.stringify(nomes));
+
+  // 3) jogador → espectador: lista esvaziada SEM consultar o endpoint
+  const charsAntesEsp = charsReqJ;
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "espectador" } });
+  t("PATCH jogador→espectador (personagens)", rRT.status === 200);
+  await new Promise((r) => setTimeout(r, 2000)); // janela suficiente p/ um GET indevido
+  t("espectador: nenhum GET /characters é disparado", charsReqJ === charsAntesEsp,
+    `delta=${charsReqJ - charsAntesEsp}`);
+  nomes = await nomesDecisoes();
+  t("espectador: nenhum nome de personagem permanece na lista",
+    !nomes.includes("Mestre Herói") && !nomes.includes("Heroina J1"), JSON.stringify(nomes));
+
+  // 4) espectador → jogador: lista recarrega filtrada
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCH espectador→jogador (personagens)", rRT.status === 200);
+  await esperarCharsReq(charsAntesEsp + 1);
+  await new Promise((r) => setTimeout(r, 800));
+  nomes = await nomesDecisoes();
+  t("volta a jogador: próprio personagem resolve, alheio fica '?'",
+    nomes.includes("Heroina J1") && nomes.includes("?") && !nomes.includes("Mestre Herói"),
+    JSON.stringify(nomes));
+
+  // 5) mudanças rápidas: resposta HTTP da geração antiga não repovoa
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  const rRT2 = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("PATCHs rápidos mestre→jogador aceitos", rRT.status === 200 && rRT2.status === 200);
+  await new Promise((r) => setTimeout(r, 3500)); // gerações assentam
+  await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length === 0,
+    null, { timeout: 20000 }).catch(() => {});
+  nomes = await nomesDecisoes();
+  t("mudança rápida: estado final = jogador filtrado (sem lista privilegiada)",
+    !nomes.includes("Mestre Herói") && (await pgJ.locator(".vtt-nevoa-controles").count()) === 0,
+    JSON.stringify(nomes));
+  sP.close();
+
   // 4) remoção da membership: revogação em tempo real na MESMA conexão
   const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
   rRT = await req(BASE, "DELETE", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre });
@@ -1160,7 +1273,22 @@ try {
   const dbSnap = abrirDb(BANCO);
   const linhaSnap = dbSnap.prepare("select data from snapshots where id=?").get(snapIdRT);
   const dadosSnap = JSON.parse(linhaSnap.data);
+  const j1midRT = c.jogadores.jogador1.membershipId;
   dadosSnap.memberships = (dadosSnap.memberships ?? []).filter((m) => m.userId !== c.jogadores.jogador1.id);
+  // consistência referencial do pacote editado: o jogador1 passou a ter
+  // personagem próprio (seção de personagens) — remover a membership sem
+  // remover personagem/testes/rolagens associados geraria FK órfã no
+  // restore. Limpa a cadeia characters→fields/itens/testes/rolagens/notas.
+  const charsJ1 = new Set((dadosSnap.characters ?? []).filter((ch) => ch.membershipId === j1midRT).map((ch) => ch.id));
+  if (charsJ1.size) {
+    dadosSnap.characters = (dadosSnap.characters ?? []).filter((ch) => !charsJ1.has(ch.id));
+    for (const k of ["characterFields", "inventoryEntries", "equipmentEntries"]) {
+      dadosSnap[k] = (dadosSnap[k] ?? []).filter((r) => !charsJ1.has(r.characterId));
+    }
+    dadosSnap.tests = (dadosSnap.tests ?? []).filter((t2) => !charsJ1.has(t2.characterId));
+    dadosSnap.rolls = (dadosSnap.rolls ?? []).filter((r) => !charsJ1.has(r.characterId));
+    dadosSnap.notes = (dadosSnap.notes ?? []).map((n) => (charsJ1.has(n.characterId) ? { ...n, characterId: null } : n));
+  }
   dbSnap.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSnap), snapIdRT);
   dbSnap.close();
   const wsAntesSnap = wsCountJ;

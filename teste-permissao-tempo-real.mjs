@@ -271,6 +271,66 @@ try {
   const syncJpos = await sincronizar(sJ);
   t("usuário mantido segue operando após restore", syncJpos?.ok === true);
 
+  // ---------- G2. Snapshot: status restaurado é preservado na notificação ----------
+  sec("G2. Restauração notifica status efetivo (pendente/bloqueado/removido)");
+  // três usuários ATIVOS conectados e dentro da sala antes do snapshot:
+  // uP→pendente, uB→bloqueado, uA→ausente do snapshot restaurado
+  const uP = novoUsuario(BANCO, { username: "pt_pend", role: "jogador" });
+  const uB = novoUsuario(BANCO, { username: "pt_bloq", role: "jogador" });
+  const uA = novoUsuario(BANCO, { username: "pt_aus", role: "jogador" });
+  const sP2 = conectar(uP.cookie), sB2 = conectar(uB.cookie), sA2 = conectar(uA.cookie);
+  await Promise.all([pronto(sP2), pronto(sB2), pronto(sA2)]);
+  const entG2 = await Promise.all([
+    emitirCb(sP2, "mesa:entrar", { sessionId: sid }),
+    emitirCb(sB2, "mesa:entrar", { sessionId: sid }),
+    emitirCb(sA2, "mesa:entrar", { sessionId: sid }),
+  ]);
+  t("três usuários ativos entram na mesa", entG2.every((r) => r?.ok === true));
+  const snapG2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots`, { cookie: ids.cookieMestre, body: { description: "status-mistos" } });
+  const snapG2Id = snapG2.json?.id;
+  t("snapshot G2 criado", snapG2.status === 201 && !!snapG2Id, JSON.stringify(snapG2.json));
+  // edita o pacote: uP pendente, uB bloqueado, uA removido das memberships
+  const dbG2 = abrirDb(BANCO);
+  const linhaG2 = dbG2.prepare("select data from snapshots where id=?").get(snapG2Id);
+  const dadosG2 = JSON.parse(linhaG2.data);
+  for (const m of dadosG2.memberships ?? []) {
+    if (m.userId === uP.id) m.status = "pendente";
+    if (m.userId === uB.id) m.status = "bloqueado";
+    if (m.userId === uA.id) m.status = "removido"; // existe mas não-ativo
+  }
+  dadosG2.memberships = (dadosG2.memberships ?? []).filter((m) => m.userId !== uA.id); // ausente de vez
+  dbG2.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosG2), snapG2Id);
+  dbG2.close();
+  const iniP = marcarPerm(sP2), iniB = marcarPerm(sB2), iniA = marcarPerm(sA2);
+  const rRestG2 = await req(BASE, "POST", `/campaigns/${ids.camp}/snapshots/${snapG2Id}/restaurar`, { cookie: ids.cookieMestre, body: { confirmacao: "RESTAURAR" } });
+  t("restore G2 executado", rRestG2.status === 200, JSON.stringify(rRestG2.json).slice(0, 140));
+  const evP = await esperarPerm(sP2, iniP), evBl = await esperarPerm(sB2, iniB), evA = await esperarPerm(sA2, iniA);
+  t("pendente: notificação carrega status=pendente (não 'removido')",
+    evP?.at(-1)?.status === "pendente", JSON.stringify(evP?.at(-1)));
+  t("bloqueado: notificação carrega status=bloqueado (não 'removido')",
+    evBl?.at(-1)?.status === "bloqueado", JSON.stringify(evBl?.at(-1)));
+  t("ausente: notificação continua status=removido",
+    evA?.at(-1)?.status === "removido", JSON.stringify(evA?.at(-1)));
+  // expulsão das salas: broadcast VTT não chega a nenhum dos três
+  const cntG2 = [sP2, sB2, sA2].map((s) => cntVtt.get(s) ?? 0);
+  await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "criar", token: { id: "tkG2", nome: "G2", cor: "#555", x: 0.5, y: 0.5, userId: ids.j1 } });
+  await Promise.all([esperarVtt(sM), esperarVtt(sJ)]);
+  await dormir(300);
+  t("pendente/bloqueado/ausente: nenhum recebeu mesa:vtt pós-restore",
+    [sP2, sB2, sA2].every((s, i) => (cntVtt.get(s) ?? 0) === cntG2[i]),
+    JSON.stringify([sP2, sB2, sA2].map((s) => cntVtt.get(s))));
+  // conexão Socket.IO preservada (só as salas foram expulsas)
+  t("conexão Socket.IO preservada nos três sockets",
+    sP2.connected === true && sB2.connected === true && sA2.connected === true);
+  // status ≠ ativo não autoriza operação nem reentrada
+  const rMsgP = await emitirCb(sP2, "mesa:mensagem", { sessionId: sid, content: "?", clientId: crypto.randomUUID() });
+  const rEntP = await emitirCb(sP2, "mesa:entrar", { sessionId: sid });
+  const rEntB = await emitirCb(sB2, "mesa:entrar", { sessionId: sid });
+  t("pendente: chat e re-entrada recusados", rMsgP?.ok !== true && rEntP?.ok !== true, JSON.stringify([rMsgP, rEntP]));
+  t("bloqueado: re-entrada recusada", rEntB?.ok !== true, JSON.stringify(rEntB));
+  const rEntA = await emitirCb(sA2, "mesa:entrar", { sessionId: sid });
+  t("ausente: re-entrada recusada", rEntA?.ok !== true, JSON.stringify(rEntA));
+
   // ---------- H. Importação modo substituir ----------
   sec("H. Importação substituir revoga ausentes e notifica alterados");
   // H1: pacote sem esp → revogação

@@ -172,6 +172,25 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const testesRef = useRef<TesteMesa[]>([]);
   useEffect(() => { personagensRef.current = personagens; }, [personagens]);
   useEffect(() => { testesRef.current = testes; }, [testes]);
+  // personagens acompanham o papel efetivo: mestre/jogador recebem a
+  // lista autorizada pelo servidor; espectador não consulta o endpoint
+  // (a requisição seria recusada) — a lista é esvaziada. A geração
+  // permSeqRef descarta respostas emitidas antes da mudança de papel
+  // mais recente: um GET iniciado como mestre não pode repovoar a
+  // lista depois de um rebaixamento.
+  const recarregarPersonagens = useCallback(() => {
+    const seq = permSeqRef.current;
+    const limpar = () => { personagensRef.current = []; setPersonagens([]); };
+    if (papelRef.current === "espectador") { limpar(); return; }
+    void api.listarPersonagens(campaignId).then((pers) => {
+      if (seq !== permSeqRef.current) return;
+      personagensRef.current = pers.personagens;
+      setPersonagens(pers.personagens);
+    }).catch(() => {
+      if (seq !== permSeqRef.current) return;
+      limpar(); // erro: não conservar lista privilegiada obsoleta
+    });
+  }, [campaignId]);
   const [texto, setTexto] = useState("");
   const [comoAcao, setComoAcao] = useState(false);
   const [privado, setPrivado] = useState(false);
@@ -251,9 +270,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     setVisaoBloqueada(false);
     recarregarFiltrado();
     if (!p) return;
+    const papelAntes = papelRef.current;
     papelRef.current = p;
     setPapel(p);
-  }, [recarregarFiltrado]);
+    if (p !== papelAntes) recarregarPersonagens();
+  }, [recarregarFiltrado, recarregarPersonagens]);
 
   // socket
   useEffect(() => {
@@ -402,6 +423,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         setMensagens([]);
         setTestes([]);
         setRolagens([]);
+        personagensRef.current = [];
+        setPersonagens([]);
         setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
         return;
       }
@@ -416,19 +439,26 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         // visual imediata (mesmo render) + invalidação do histórico
         // que pode conter dados do papel anterior (mensagens privadas/
         // secretas, testes e rolagens já carregados em memória)
-        const nivelAntes = nivelPapelFn(papelRef.current);
+        const papelAntes = papelRef.current;
+        const nivelAntes = nivelPapelFn(papelAntes);
         const nivelDepois = nivelPapelFn(d.papel);
         if (nivelDepois < nivelAntes) {
           setVisaoBloqueada(true);
           setMensagens([]);
           setTestes([]);
           setRolagens([]);
+          // redução de privilégio: a lista de personagens é limpa no
+          // mesmo render — uma resposta HTTP emitida como papel anterior
+          // não pode repovoá-la (guarda de geração em recarregarPersonagens)
+          personagensRef.current = [];
+          setPersonagens([]);
           recarregarFiltrado();
         } else {
           setVisaoBloqueada(false);
         }
         papelRef.current = d.papel;
         setPapel(d.papel);
+        if (d.papel !== papelAntes) recarregarPersonagens();
       }
       // mesma regra do servidor (mesa:mensagem): espectador só envia se
       // tiver enviarMensagens explícito
@@ -521,7 +551,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       socket.off("disconnect", aoDisconnect);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, sessao.id, recarregarFiltrado, recarregarCompleta, restKey]);
+  }, [campaignId, sessao.id, recarregarFiltrado, recarregarCompleta, recarregarPersonagens, restKey]);
 
   // auto-scroll chat
   useEffect(() => { chatRef.current?.scrollTo({ top: chatRef.current.scrollHeight }); }, [mensagens.length]);

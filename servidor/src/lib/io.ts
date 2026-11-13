@@ -85,7 +85,11 @@ export async function reconciliarMembrosAposRestauracao(
         notificarPermissaoAtualizada(campaignId, {
           userId,
           role: d?.role ?? a?.role ?? "jogador",
-          status: "removido",
+          // status efetivamente restaurado: pendente/bloqueado no
+          // snapshot são notificados como tal — "removido" só quando o
+          // membro não existe no estado restaurado. Status ≠ ativo não
+          // concede acesso: a expulsão das salas acima já ocorreu.
+          status: d?.status ?? "removido",
           permissions: d?.permissions ?? a?.permissions ?? {},
         });
         revogados += 1;
