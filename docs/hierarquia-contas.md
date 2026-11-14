@@ -82,6 +82,9 @@ visibilidade de escopo em todas as telas ("GM — Guilda X", "ADMIN").
 
 - `GET/POST /api/guildas` · `GET/PATCH /api/guildas/:guildId`
 - `GET/POST /api/guildas/:guildId/membros` · `PATCH/DELETE .../membros/:userId`
+  — o roster inclui `contaStatus` (ativo|bloqueado) por membro: status
+  da CONTA, independente do vínculo; GM bloqueado segue visível mas não
+  é elegível a transferência de responsabilidade
 - `GET /api/guildas/:guildId/campanhas` · `PUT .../campanhas/:campaignId`
 - `PUT /api/guildas/:guildId/responsavel` — `{userId}` transfere o
   responsável administrativo. Somente o responsável atual
