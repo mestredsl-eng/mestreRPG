@@ -200,7 +200,9 @@ try {
   const senhaPrincipal = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieAliceAdmin, body: { password: "senha-sequestrada-123" } });
   t("ADMIN secundário NÃO troca senha do principal", senhaPrincipal.status === 403, String(senhaPrincipal.status));
   const rootSeAuto = await req(base, "PATCH", `/admin/users/${pid}`, { cookie: cookieRoot, body: { isAdmin: false } });
-  t("principal não altera a própria conta", rootSeAuto.status === 400);
+  // autoedição de perfil passou a ser permitida ao principal, mas
+  // privilégio/bloqueio/senha do alvo protegido seguem barrados (403)
+  t("principal não rebaixa a si mesmo", rootSeAuto.status === 403, String(rootSeAuto.status));
   const revogaAlice = await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { isAdmin: false } });
   t("principal revoga ADMIN", revogaAlice.status === 200 && revogaAlice.json?.usuario?.isAdmin === false);
   const meAposRevoga = await req(base, "GET", "/auth/me", { cookie: cookieAliceAdmin });

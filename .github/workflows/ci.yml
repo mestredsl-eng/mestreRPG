@@ -135,7 +135,8 @@ jobs:
             teste-rate-limit-socket.mjs \
             teste-validacao-personagem.mjs \
             teste-exclusao-personagem.mjs \
-            teste-guildas-admin.mjs
+            teste-guildas-admin.mjs \
+            teste-sessoes-conta.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
@@ -236,6 +237,7 @@ jobs:
             homologacao-mesa-virtual.mjs \
             homologacao-nevoa.mjs \
             homologacao-guildas.mjs \
+            homologacao-sessoes.mjs \
             homologacao-pacotes-forjados.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \

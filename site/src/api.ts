@@ -26,6 +26,16 @@ export interface Usuario {
   preferences?: { dados?: { corExterna: string; corInterna: string } } & Record<string, unknown>;
 }
 
+export interface SessaoConta {
+  id: string;
+  userAgent: string | null;
+  ip: string | null;
+  createdAt: string;
+  expiresAt: string;
+  /** true para a sessão que originou esta requisição. */
+  atual: boolean;
+}
+
 export interface UsuarioAdmin extends Usuario {
   status: string;
   createdAt: string;
@@ -109,6 +119,10 @@ export const api = {
   logout: () => requisicao<{ ok: boolean }>("/auth/logout", { method: "POST" }),
 
   me: () => requisicao<{ usuario: Usuario }>("/auth/me"),
+
+  listarSessoesAuth: () => requisicao<{ sessoes: SessaoConta[] }>("/auth/sessions"),
+  revogarSessaoAuth: (id: string) =>
+    requisicao<{ ok: boolean }>(`/auth/sessions/${id}`, { method: "DELETE" }),
 
   changePassword: (senhaAtual: string, novaSenha: string) =>
     requisicao<{ ok: boolean }>("/auth/change-password", {

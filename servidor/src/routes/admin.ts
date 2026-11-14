@@ -101,7 +101,12 @@ const atualizarSchema = novoUsuarioSchema.partial().extend({
 /** PATCH /api/admin/users/:id — edita, bloqueia/desbloqueia */
 adminRouter.patch("/users/:id", async (req, res) => {
   const id = req.params.id;
-  if (id === req.usuario!.id) {
+  const requerentePrincipal = await ehAdminPrincipal(req.usuario!.id);
+  // Autoedição pelo painel administrativo: liberada SOMENTE para o ADMIN
+  // principal (campos de perfil — senha, privilégio e bloqueio seguem
+  // bloqueados pelas guardas de alvo protegido abaixo). Demais contas
+  // administram a si mesmas pelos fluxos de /auth (senha, preferências).
+  if (id === req.usuario!.id && !requerentePrincipal) {
     res.status(400).json({ erro: "Você não pode alterar a própria conta por aqui" });
     return;
   }
@@ -117,10 +122,22 @@ adminRouter.patch("/users/:id", async (req, res) => {
   }
   const { username, email, displayName, password, isAdmin, status } = body.data;
   const alvoProtegido = await ehAdminPrincipal(alvo.id);
+  // A conta do ADMIN principal é imutável para ADMINs secundários em
+  // TODOS os campos (username, e-mail, nome, status, privilégio): o
+  // perfil dela muda somente pelo próprio principal — aqui no painel
+  // (campos de perfil) ou pelos fluxos autenticados de /auth.
+  if (alvoProtegido && !requerentePrincipal) {
+    await audit(req, "admin.principal.bloqueado", {
+      userId: id,
+      campos: Object.keys(body.data),
+    });
+    res.status(403).json({ erro: "A conta administradora original só pode ser alterada pelo próprio administrador principal" });
+    return;
+  }
   // Multi-ADMIN (Issue #65): somente o ADMIN principal concede/revoga o
   // privilégio global; o alvo nunca pode ser a própria conta raiz.
   if (isAdmin !== undefined) {
-    if (!(await ehAdminPrincipal(req.usuario!.id))) {
+    if (!requerentePrincipal) {
       res.status(403).json({ erro: "Somente o administrador principal pode conceder ou revogar ADMIN" });
       return;
     }
@@ -164,6 +181,11 @@ adminRouter.patch("/users/:id", async (req, res) => {
   // Trilha de auditoria da concessão/revogação de ADMIN (Issue #65).
   if (isAdmin !== undefined) {
     await audit(req, isAdmin ? "admin.conceder" : "admin.revogar", { userId: id, username: alvo.username });
+  }
+  // Edição de perfil do ADMIN principal por ele mesmo — registra quais
+  // campos mudaram (senha/privilégio/bloqueio já foram barrados acima).
+  if (alvoProtegido && Object.keys(body.data).length > 0) {
+    await audit(req, "admin.principal.perfil", { userId: id, campos: Object.keys(body.data) });
   }
 
   // Bloqueio, troca de senha ou REVOGAÇÃO de ADMIN → derruba sessões
