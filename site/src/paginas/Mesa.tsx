@@ -861,7 +861,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                 <div key={r.id} className="rolagem-item">
                   <div className="linha">
                     <MesaDados3D
-                      dados={r.dados.flatMap((resultados, gi) => resultados.map((v) => ({ lados: r.lados[gi], valor: v })))}
+                      dados={r.dados.flatMap((resultados, gi) => resultados.map((v) => ({
+                        lados: r.lados[gi],
+                        valor: v,
+                        // O servidor já validou o mínimo do desafio/pool D10.
+                        // Reproduz a mesma classificação no histórico para
+                        // que todos os participantes vejam sucesso/falha por dado.
+                        estado: r.d10 && r.lados[gi] === 10
+                          ? (v >= r.d10.minimo ? "sucesso" as const : "falha" as const)
+                          : null,
+                      })))}
                       semente={seedDeId(r.id)}
                     />
                     {r.total !== null && <strong> = {r.total}</strong>}
