@@ -970,7 +970,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
   return (
     <section className="cartao">
       <div className="linha-entre">
-        <h3>Teste manual (dados livres)</h3>
+        <h3>Solicitar teste manual (dados livres)</h3>
         <button className="secundario" onClick={() => setAberto(!aberto)}>+ Teste</button>
       </div>
       {aberto && (
