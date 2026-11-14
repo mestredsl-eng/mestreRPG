@@ -129,6 +129,5 @@ symlink/permissão POSIX).
   carregar a sessão e após ações do próprio usuário (sem polling).
 - Homologado no Windows; acesso externo depende de proxy/túnel do usuário.
 - Chunk do frontend >500 kB (warning do Vite, não funcional).
-- A Issue #33 permanece aberta como roteiro mestre e acompanhamento do
-  projeto; a tag `v1.0.0` e a publicação da release estão pendentes de
-  autorização explícita — esta candidata ainda não é uma release.
+- As cinco etapas da Issue #33 foram concluídas; a Issue permanece como roteiro/histórico. A tag `v1.0.0` e a publicação da release continuam pendentes de autorização explícita — esta candidata ainda não é uma release.
+- Antes da publicação, atualizar as evidências de CI para o HEAD final da `main` e executar homologação integrada após concluir as PRs pendentes.
