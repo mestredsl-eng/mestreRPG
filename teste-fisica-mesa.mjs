@@ -165,7 +165,7 @@ for (const n of [1, 5, 10, 30]) {
 
   // O dado assentado fica imediatamente atrás do móvel, que já está
   // no limite direito. O móvel não tem espaço para a separação em +X.
-  assentado.position = [hi - soma + 0.45, 0, assentado.repouso];
+  assentado.position = [hi - 0.48, 0, assentado.repouso];
   assentado.orientation = [...assentado.alvo];
   assentado.velocity = [0, 0, 0];
   assentado.angularVelocity = [0, 0, 0];
