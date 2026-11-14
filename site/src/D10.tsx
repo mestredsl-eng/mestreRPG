@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
-import { FaceDado } from "./Dados";
+import MesaDados3D, { seedDeId } from "./MesaDados3D";
 
 interface Props {
   sessionId: string;
@@ -21,19 +21,6 @@ interface ResultadoD10 {
 }
 
 const MAX_DADOS = 30;
-
-/** D10 animado: sorteia faces até revelar o valor final. */
-function D10Face({ valor, indice, minimo }: { valor: number; indice: number; minimo: number }) {
-  return (
-    <FaceDado
-      lados={10}
-      valor={valor}
-      indice={indice}
-      estado={valor >= minimo ? "sucesso" : "falha"}
-      className="d10-face"
-    />
-  );
-}
 
 /**
  * Lançador de dados D10 — pool com dados negativos.
@@ -111,9 +98,14 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
             <p className="meta">Nenhum dado efetivo para lançar.</p>
           ) : (
             <div className="d10-dados">
-              {resultado.resultados.map((v, i) => (
-                <D10Face key={`${resultado.id}-${i}`} valor={v} indice={i} minimo={resultado.minimo} />
-              ))}
+              <MesaDados3D
+                dados={resultado.resultados.map((valor) => ({
+                  lados: 10,
+                  valor,
+                  estado: valor >= resultado.minimo ? "sucesso" as const : "falha" as const,
+                }))}
+                semente={seedDeId(resultado.id)}
+              />
             </div>
           )}
           <div className="d10-resumo">
