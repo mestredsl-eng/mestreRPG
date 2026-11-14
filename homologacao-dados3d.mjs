@@ -51,24 +51,28 @@ async function entrarNaMesa(page) {
   else { await page.locator("table.tabela tr.clicavel").first().click(); }
   await page.locator(".chat-form").waitFor({ timeout: 15000 });
 }
-async function rolarLivre(page, lados, qtd = 1) {
+async function rolarLivre(page, lados, qtd = 1, motivo = null) {
   await page.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
   await page.locator(".rolagem-form select").first().selectOption(String(lados));
   if (qtd > 1) await page.locator('.rolagem-form input[type="number"]').fill(String(qtd));
+  if (motivo) await page.locator('.rolagem-form input[placeholder="Motivo (opcional)"]').fill(motivo);
   const totalAntes = await page.locator(".rolagem-resultado .d10-chip-total").last().textContent().catch(() => "");
   const tituloAntes = await page.locator(".rolagem-resultado .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
   await page.getByRole("button", { name: /Lançar/ }).click();
   // o painel mostra só a última rolagem: aguarda resultado novo —
   // total OU face podem coincidir, então espera qualquer um dos dois mudar
   await page.waitForFunction(
-    ([antTotal, antTitulo]) => {
+    ([antTotal, antTitulo, motivoEsperado]) => {
       const totais = document.querySelectorAll(".rolagem-resultado .d10-chip-total");
       const txt = totais.length ? totais[totais.length - 1].textContent : "";
       const canvases = document.querySelectorAll(".rolagem-resultado .mesa-dados-3d-canvas");
       const tit = canvases.length ? canvases[canvases.length - 1].getAttribute("aria-label") : "";
-      return (txt && txt !== antTotal) || (tit && tit !== antTitulo);
+      const itemHistoricoNovo = motivoEsperado
+        && Array.from(document.querySelectorAll(".rolagem-item"))
+          .some((item) => item.textContent?.includes(motivoEsperado));
+      return (txt && txt !== antTotal) || (tit && tit !== antTitulo) || Boolean(itemHistoricoNovo);
     },
-    [totalAntes ?? "", tituloAntes ?? ""], { timeout: 20000 },
+    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000 },
   );
 }
 const valoresCanvas = (page) =>
@@ -352,26 +356,32 @@ try {
     const total = await pgM.locator(".rolagem-resultado .d10-chip-total").last().textContent();
     t(`d${d}: mesa 3D compartilhada exibida (${ultimo})`, new RegExp(`d${d}=\\d`).test(ultimo), ultimo);
     t(`d${d}: canvas da mesa não está em branco`, await canvasPintado(pgM));
-    t(`d${d}: total autoritativo exibido`, /Total:\s*\d+/.test(total ?? ""), total?.trim());
-    await shot(pgM, `02-dado-d${d}`);
+    t(`d${d}: total autoritat  sec("4. Jogador vê a mesma rolagem (servidor autoritativo)");
+  // O ID do servidor identifica a MESMA rolagem nas duas telas. Um motivo
+  // exclusivo localiza o novo item do mestre, e o total é comparado no item
+  // do jogador com o mesmo ID — nunca com qualquer entrada antiga do histórico.
+  const motivoUnico = `homologacao-id-${Date.now()}`;
+  await rolarLivre(pgM, 6, 1, motivoUnico);
+  const itemM = pgM.locator(".rolagem-item").filter({ hasText: motivoUnico }).first();
+  await itemM.waitFor({ timeout: 10000 });
+  const idNovo = await itemM.getAttribute("data-rolagem-id");
+  const totalNovoM = (await itemM.locator(".linha strong").textContent())?.trim() ?? "";
+  t("mestre identifica a nova rolagem pelo ID do servidor", Boolean(idNovo), `id=${idNovo ?? "ausente"}`);
+
+  let itemJ = null;
+  if (idNovo) {
+    itemJ = pg1.locator(`.rolagem-item[data-rolagem-id="${idNovo}"]`);
+    await itemJ.waitFor({ timeout: 10000 }).catch(() => {});
   }
-
-  sec("3. Múltiplos dados");
-  await rolarLivre(pgM, 20, 3);
-  const titulos3 = await valoresCanvas(pgM);
-  const ultimo3 = titulos3[titulos3.length - 1] ?? "";
-  t("3×d20 = 3 dados na mesma mesa", (ultimo3.match(/d20=\d/g) ?? []).length >= 3, ultimo3);
-
-  sec("4. Jogador vê a mesma rolagem (servidor autoritativo)");
-  // pg1 já entrou antes dos pools D10 e permanece conectado para os
-  // demais cenários de histórico/visibilidade da suíte.
-  const totalM = await pgM.locator(".rolagem-resultado .d10-chip-total").last().textContent();
-  await rolarLivre(pgM, 6);
-  const totalNovoM = await pgM.locator(".rolagem-resultado .d10-chip-total").last().textContent();
-  // histórico compartilhado: o jogador deve ver a mesma rolagem (= total)
-  const alvo = (totalNovoM ?? "").replace(/\D/g, "");
-  await pg1.locator(".rolagem-item").last().waitFor({ timeout: 10000 }).catch(() => {});
-  const itens = await pg1.locator(".rolagem-item strong").allTextContents();
+  const totalNovoJ = itemJ
+    ? ((await itemJ.locator(".linha strong").textContent().catch(() => ""))?.trim() ?? "")
+    : "";
+  t("jogador recebe a mesma rolagem identificada pelo ID",
+    Boolean(idNovo) && totalNovoJ.length > 0 && totalNovoJ === totalNovoM,
+    `id=${idNovo ?? "ausente"}; mestre=${totalNovoM}; jogador=${totalNovoJ || "não recebido"}`);
+  const canvasesJ = itemJ ? await itemJ.locator(".mesa-dados-3d-canvas").count() : 0;
+  t("jogador vê mesa de dados 3D da mesma rolagem", canvasesJ > 0, `${canvasesJ} canvas`);
+  await shot(pg1, "04-jogador-dados");nts();
   t("total da rolagem aparece para o jogador", itens.some((x) => x.includes(`= ${alvo}`)), `${alvo} | vistos: ${itens.slice(-3).join(" | ")}`);
   const canvasesJ = await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").count();
   t("jogador vê mesa de dados 3D no histórico", canvasesJ > 0, `${canvasesJ} canvas`);
