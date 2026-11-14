@@ -101,6 +101,23 @@ try {
   t("painel de dados presente na mesa", await pgM.locator(".painel-dados").count() > 0);
   const temAbaLivre = await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" }).count();
   t("aba Rolagem e dano acessível", temAbaLivre > 0);
+
+  sec("1b. Pool D10 também usa uma única mesa compartilhada");
+  const controlesD10 = pgM.locator(".d10-controles input[type=number]");
+  await controlesD10.nth(0).fill("5");
+  await controlesD10.nth(1).fill("2");
+  await pgM.getByRole("button", { name: "Lançar D10" }).click();
+  const canvasD10Pool = pgM.locator(".d10-resultado .mesa-dados-3d-canvas");
+  await canvasD10Pool.waitFor({ timeout: 15000 });
+  const rotuloD10Pool = await canvasD10Pool.getAttribute("aria-label");
+  const valoresD10Pool = rotuloD10Pool?.match(/d10=\\d+/g) ?? [];
+  const estadosD10Pool = rotuloD10Pool?.match(/\\((sucesso|falha)\\)/g) ?? [];
+  t("pool D10 de 5 positivos e 2 negativos gera 3 dados efetivos", valoresD10Pool.length === 3, rotuloD10Pool);
+  t("pool D10 inteiro aparece em um único canvas compartilhado",
+    await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").count() === 1);
+  t("cada D10 mantém indicação individual de sucesso/falha", estadosD10Pool.length === 3, rotuloD10Pool);
+  await shot(pgM, "01b-pool-d10-mesa-compartilhada");
+
   await shot(pgM, "01-mesa-dados");
 
   sec("2. Cinco tipos de dados em canvas 3D");
