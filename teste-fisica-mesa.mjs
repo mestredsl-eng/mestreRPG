@@ -275,7 +275,7 @@ for (const n of [1, 5, 10, 30]) {
       && d.position[1] >= lo - 0.01 && d.position[1] <= hi + 0.01));
   ok("cadeia D6: valores e orientações finais do servidor são preservados",
     cena.every((d, i) => d.finalizado && d.valor === [3, 4, 5][i]
-      && d.orientation.every((v, j) => quase(v, alvos[i][j], 1e-9)));
+      && d.orientation.every((v, j) => quase(v, alvos[i][j], 1e-9))));
 }
 
 const falhas = resultados.filter((r) => !r.ok);
