@@ -227,7 +227,11 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
   for (let i = 0; i < dados.length; i++) {
     for (let j = i + 1; j < dados.length; j++) {
       const a = dados[i], b = dados[j];
-      if (!ativo(a) && !ativo(b)) continue;
+      // Dado finalizado é corpo estático: só o ativo é corrigido —
+      // nunca é empurrado para fora da mesa ou para dentro de outro.
+      const movA = !a.finalizado, movB = !b.finalizado;
+      if (!movA && !movB) continue;
+      const tot = (movA ? 1 : 0) + (movB ? 1 : 0);
       const soma = a.raioColisao + b.raioColisao;
       const dx = b.position[0] - a.position[0];
       const dy = b.position[1] - a.position[1];
@@ -240,26 +244,27 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
       if (dist3 >= soma || dist3 < 1e-6) continue;
       const nx = dx / distPlano, ny = dy / distPlano;
       const pen = soma - dist3;
-      const wx = (nx * pen) / 2, wy = (ny * pen) / 2;
-      a.position[0] -= wx; a.position[1] -= wy;
-      b.position[0] += wx; b.position[1] += wy;
+      const wx = (nx * pen) / tot, wy = (ny * pen) / tot;
+      if (movA) { a.position[0] -= wx; a.position[1] -= wy; }
+      if (movB) { b.position[0] += wx; b.position[1] += wy; }
       // Separação vertical quando um está bem acima do outro.
       if (Math.abs(dz) > 0.35) {
-        const wz = (Math.sign(dz) * pen * 0.4) / 2;
-        a.position[2] -= wz; b.position[2] += wz;
+        const wz = (Math.sign(dz) * pen * 0.4) / tot;
+        if (movA) a.position[2] -= wz;
+        if (movB) b.position[2] += wz;
       }
       // Troca de impulso ao longo da normal (restituição baixa).
       const rvx = b.velocity[0] - a.velocity[0];
       const rvy = b.velocity[1] - a.velocity[1];
       const closing = rvx * nx + rvy * ny;
       if (closing < 0) {
-        const jimp = -(1 + 0.32) * closing / 2;
-        a.velocity[0] -= jimp * nx; a.velocity[1] -= jimp * ny;
-        b.velocity[0] += jimp * nx; b.velocity[1] += jimp * ny;
-        // O impacto "engata" giro nos dois dados.
+        const jimp = -(1 + 0.32) * closing / tot;
+        if (movA) { a.velocity[0] -= jimp * nx; a.velocity[1] -= jimp * ny; }
+        if (movB) { b.velocity[0] += jimp * nx; b.velocity[1] += jimp * ny; }
+        // O impacto "engata" giro nos corpos móveis.
         const kick = Math.min(6, Math.abs(closing) * 0.9);
-        a.angularVelocity[2] += kick * (i % 2 === 0 ? 1 : -1);
-        b.angularVelocity[2] -= kick * (j % 2 === 0 ? 1 : -1);
+        if (movA) a.angularVelocity[2] += kick * (i % 2 === 0 ? 1 : -1);
+        if (movB) b.angularVelocity[2] -= kick * (j % 2 === 0 ? 1 : -1);
         if (Math.abs(closing) > 0.4) quique = true;
       }
     }

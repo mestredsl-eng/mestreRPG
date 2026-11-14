@@ -132,7 +132,9 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
           const n = rotate(normalFor(d.vertices, face), d.orientation);
           if (n[2] <= -0.04) continue;
           const centro = face.reduce((s, i) => add(s, rotate(d.vertices[i], d.orientation)), [0, 0, 0] as Vec3);
-          const profundidade = centro[2] / face.length;
+          // Profundidade global: z local da face + altura do corpo —
+          // um dado acima na mesa cobre o que está abaixo na tela.
+          const profundidade = centro[2] / face.length + d.position[2] * 0.6;
           const luz = Math.max(0, dot(n, unit([-0.35, 0.55, 1])));
           facesVisiveis.push({
             pts: face.map((i) => projetados[i]),
