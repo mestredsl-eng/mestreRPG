@@ -119,7 +119,10 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
         <section key={c.id} className="cartao cartao-campanha" onClick={() => aoAbrir(c.id)}>
           <div className="linha-entre">
             <h2>{c.name}</h2>
-            <span className={`badge badge-${c.status}`}>{statusLabel(c.status)}</span>
+            <span>
+              {c.guildNome && <span className="badge">Guilda: {c.guildNome}</span>}{" "}
+              <span className={`badge badge-${c.status}`}>{statusLabel(c.status)}</span>
+            </span>
           </div>
           {c.system && <p className="sistema">Sistema: {c.system}</p>}
           {c.description && <p>{c.description}</p>}

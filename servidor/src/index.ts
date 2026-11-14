@@ -19,6 +19,7 @@ import { arquivosRouter } from "./routes/arquivos.js";
 import { bibliotecaRouter } from "./routes/biblioteca.js";
 import { campanhaIORouter } from "./routes/campanha-io.js";
 import { novidadesRouter, novidadesAdminRouter } from "./routes/novidades.js";
+import { guildasRouter } from "./routes/guildas.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
@@ -86,7 +87,7 @@ const routers: Router[] = [
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
   personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
-  novidadesRouter, novidadesAdminRouter,
+  novidadesRouter, novidadesAdminRouter, guildasRouter,
 ];
 for (const r of routers) {
   blindar(r);
@@ -118,6 +119,7 @@ app.use("/api/characters", personagensRouter);
 app.use("/api/biblioteca", bibliotecaRouter);
 app.use("/api/novidades", novidadesRouter);
 app.use("/api/admin/novidades", novidadesAdminRouter);
+app.use("/api/guildas", guildasRouter);
 
 // Rotas de diagnóstico do lease HTTP — SOMENTE NODE_ENV=test.
 // Simulam handlers que enviam a resposta e mantêm trabalho assíncrono

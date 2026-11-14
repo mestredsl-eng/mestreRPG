@@ -6,20 +6,64 @@ export interface HealthStatus {
   timestamp: string;
 }
 
+export interface GuildaResumo {
+  guildId: string;
+  nome: string;
+  role: "gm" | "membro";
+  souGM: boolean;
+}
+
 export interface Usuario {
   id: string;
   username: string;
   email: string | null;
   displayName: string | null;
   isAdmin: boolean;
+  /** true apenas para a conta administradora original protegida (admin_principal). */
+  adminPrincipal?: boolean;
+  /** Guildas ativas do usuário com o papel efetivo (gm|membro). */
+  guildas?: GuildaResumo[];
   preferences?: { dados?: { corExterna: string; corInterna: string } } & Record<string, unknown>;
 }
 
 export interface UsuarioAdmin extends Usuario {
   status: string;
   createdAt: string;
-  /** true apenas para a conta administradora original protegida (admin_principal). */
-  adminPrincipal?: boolean;
+  /** Guildas onde o usuário é GM ativo. */
+  gmDe?: { guildId: string; nome: string }[];
+}
+
+export interface Guilda {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  createdBy: string;
+  meuPapel: "gm" | "membro" | "admin" | null;
+  souGM: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GuildaMembro {
+  userId: string;
+  username: string;
+  displayName: string | null;
+  role: "gm" | "membro";
+  status: string;
+  joinedAt: string | null;
+  ehEu: boolean;
+}
+
+export interface GuildaCampanha {
+  id: string;
+  name: string;
+  status: string;
+  ownerId: string;
+}
+
+export interface GuildaCampanhaCandidata extends GuildaCampanha {
+  guildId: string | null;
 }
 
 export class ApiError extends Error {
@@ -79,7 +123,7 @@ export const api = {
     }),
 
   // Administração (somente admin)
-  listarUsuarios: () => requisicao<{ usuarios: UsuarioAdmin[] }>("/admin/users"),
+  listarUsuarios: () => requisicao<{ usuarios: UsuarioAdmin[]; souAdminPrincipal?: boolean }>("/admin/users"),
   criarUsuario: (dados: {
     username: string;
     password: string;
@@ -92,10 +136,34 @@ export const api = {
   removerUsuario: (id: string) =>
     requisicao<{ ok: boolean }>(`/admin/users/${id}`, { method: "DELETE" }),
 
+  // Guildas e GUILD MASTER (Issue #65)
+  listarGuildas: (todas = false) =>
+    requisicao<{ guildas: Guilda[] }>(`/guildas${todas ? "?todas=1" : ""}`),
+  criarGuilda: (dados: { name: string; description?: string }) =>
+    requisicao<{ guilda: Guilda }>("/guildas", { method: "POST", body: JSON.stringify(dados) }),
+  obterGuilda: (id: string) =>
+    requisicao<{ guilda: Guilda; totalMembros: number; totalCampanhas: number }>(`/guildas/${id}`),
+  atualizarGuilda: (id: string, dados: Partial<{ name: string; description: string; status: "ativa" | "arquivada" }>) =>
+    requisicao<{ guilda: Guilda }>(`/guildas/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  listarMembrosGuilda: (id: string) =>
+    requisicao<{ membros: GuildaMembro[] }>(`/guildas/${id}/membros`),
+  adicionarMembroGuilda: (id: string, dados: { username?: string; userId?: string }) =>
+    requisicao<{ ok: boolean }>(`/guildas/${id}/membros`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarMembroGuilda: (id: string, userId: string, dados: { role?: "gm" | "membro"; status?: "ativo" | "removido" }) =>
+    requisicao<{ membro: { userId: string; role: string; status: string } }>(`/guildas/${id}/membros/${userId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  removerMembroGuilda: (id: string, userId: string) =>
+    requisicao<{ ok: boolean }>(`/guildas/${id}/membros/${userId}`, { method: "DELETE" }),
+  listarCampanhasGuilda: (id: string) =>
+    requisicao<{ campanhas: GuildaCampanha[] }>(`/guildas/${id}/campanhas`),
+  listarCampanhasCandidatasGuilda: (id: string) =>
+    requisicao<{ campanhas: GuildaCampanhaCandidata[] }>(`/guildas/${id}/campanhas-candidatas`),
+  vincularCampanhaGuilda: (id: string, campaignId: string, acao: "vincular" | "desvincular") =>
+    requisicao<{ ok: boolean }>(`/guildas/${id}/campanhas/${campaignId}`, { method: "PUT", body: JSON.stringify({ acao }) }),
+
   // Campanhas (Etapa 3)
   listarCampanhas: () =>
     requisicao<{ campanhas: CampanhaResumo[] }>("/campaigns"),
-  criarCampanha: (dados: { name: string; description?: string; system?: string }) =>
+  criarCampanha: (dados: { name: string; description?: string; system?: string; guildId?: string }) =>
     requisicao<{ campanha: CampanhaResumo }>("/campaigns", { method: "POST", body: JSON.stringify(dados) }),
   obterCampanha: (id: string) =>
     requisicao<{ campanha: CampanhaResumo }>(`/campaigns/${id}`),
@@ -967,6 +1035,9 @@ export interface Campanha {
   coverImage: string | null;
   status: string;
   ownerId: string;
+  /** Guilda vinculada (Issue #65) — null = campanha pessoal/legada. */
+  guildId?: string | null;
+  guildNome?: string | null;
   settings: unknown;
   summary: string | null;
   createdAt: string;

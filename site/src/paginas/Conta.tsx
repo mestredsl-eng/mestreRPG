@@ -40,7 +40,13 @@ export default function Conta() {
               <tr><th>Usuário</th><td>{usuario.username}</td></tr>
               <tr><th>Nome</th><td>{usuario.displayName ?? "—"}</td></tr>
               <tr><th>E-mail</th><td>{usuario.email ?? "—"}</td></tr>
-              <tr><th>Papel</th><td>{usuario.isAdmin ? "Administrador" : "Usuário"}</td></tr>
+              <tr><th>Papel</th><td>{usuario.adminPrincipal ? "Administrador principal" : usuario.isAdmin ? "Administrador" : "Usuário"}</td></tr>
+              {(usuario.guildas ?? []).length > 0 && (
+                <tr>
+                  <th>Guildas</th>
+                  <td>{(usuario.guildas ?? []).map((g) => `${g.role === "gm" ? "GM" : "Membro"} — ${g.nome}`).join(" · ")}</td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}

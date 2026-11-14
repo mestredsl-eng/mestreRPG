@@ -7,6 +7,7 @@ import AdminNovidades from "./AdminNovidades";
 
 export default function Admin() {
   const [usuarios, setUsuarios] = useState<UsuarioAdmin[]>([]);
+  const [souPrincipal, setSouPrincipal] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const { notificar } = useNotificar();
   const [editando, setEditando] = useState<string | null>(null);
@@ -19,8 +20,9 @@ export default function Admin() {
 
   const carregar = useCallback(async () => {
     try {
-      const { usuarios } = await api.listarUsuarios();
+      const { usuarios, souAdminPrincipal } = await api.listarUsuarios();
       setUsuarios(usuarios);
+      setSouPrincipal(!!souAdminPrincipal);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar usuários");
@@ -47,6 +49,22 @@ export default function Admin() {
       await carregar();
     } catch (err) {
       setErro(err instanceof Error ? err.message : "Erro ao criar usuário");
+    }
+  };
+
+  const papelDe = (u: UsuarioAdmin) => {
+    const base = u.adminPrincipal ? "Administrador principal" : u.isAdmin ? "Administrador" : "Usuário";
+    const gms = (u.gmDe ?? []).map((g) => `GM — ${g.nome}`);
+    return [base, ...gms].join(" · ");
+  };
+
+  const alternarAdmin = async (u: UsuarioAdmin) => {
+    try {
+      await api.atualizarUsuario(u.id, { isAdmin: !u.isAdmin });
+      notificar(u.isAdmin ? `Privilégio ADMIN revogado de ${u.username}.` : `${u.username} agora é ADMIN.`, "sucesso");
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao alterar privilégio ADMIN");
     }
   };
 
@@ -130,13 +148,18 @@ export default function Admin() {
             <tr key={u.id} className={u.status === "bloqueado" ? "linha-bloqueada" : ""}>
               <td>{u.username}</td>
               <td>{u.displayName ?? "—"}</td>
-              <td>{u.adminPrincipal ? "Administrador principal" : u.isAdmin ? "Administrador" : "Usuário"}</td>
+              <td>{papelDe(u)}</td>
               <td>{u.status === "bloqueado" ? "Bloqueado" : "Ativo"}</td>
               <td>{new Date(u.createdAt).toLocaleDateString("pt-BR")}</td>
               <td className="acoes">
                 <button className="mini" onClick={() => setEditando(editando === u.id ? null : u.id)}>
                   {editando === u.id ? "Fechar" : "Editar"}
                 </button>
+                {souPrincipal && !u.adminPrincipal && (
+                  <button className="mini" onClick={() => void alternarAdmin(u)}>
+                    {u.isAdmin ? "Revogar ADMIN" : "Tornar ADMIN"}
+                  </button>
+                )}
                 {!u.adminPrincipal && (
                   <>
                     <button className="mini" onClick={() => void alternarBloqueio(u)}>
@@ -156,13 +179,18 @@ export default function Admin() {
           <div key={u.id} className={`registro-cartao ${u.status === "bloqueado" ? "linha-bloqueada" : ""}`}>
             <div className="registro-campo"><span className="registro-rotulo">Usuário</span><strong>{u.username}</strong></div>
             <div className="registro-campo"><span className="registro-rotulo">Nome</span><span>{u.displayName ?? "—"}</span></div>
-            <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{u.adminPrincipal ? "Administrador principal" : u.isAdmin ? "Administrador" : "Usuário"}</span></div>
+            <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{papelDe(u)}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{u.status === "bloqueado" ? "Bloqueado" : "Ativo"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Criado em</span><span>{new Date(u.createdAt).toLocaleDateString("pt-BR")}</span></div>
             <div className="registro-acoes">
               <button className="mini" onClick={() => setEditando(editando === u.id ? null : u.id)}>
                 {editando === u.id ? "Fechar" : "Editar"}
               </button>
+              {souPrincipal && !u.adminPrincipal && (
+                <button className="mini" onClick={() => void alternarAdmin(u)}>
+                  {u.isAdmin ? "Revogar ADMIN" : "Tornar ADMIN"}
+                </button>
+              )}
               {!u.adminPrincipal && (
                 <>
                   <button className="mini" onClick={() => void alternarBloqueio(u)}>

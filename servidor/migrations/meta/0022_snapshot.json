@@ -3403,6 +3403,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "vtt_state": {
+          "name": "vtt_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_by": {
           "name": "created_by",
           "type": "text",

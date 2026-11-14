@@ -64,10 +64,11 @@ function armarFlag(raiz, filePath) {
 }
 // Simula banco de versão anterior: remove as tabelas das migrations
 // a partir da 0017 e as colunas das ALTERs (0019 mesa, 0020 financeiro,
-// 0023 índice de sessões), além dos registros correspondentes no journal
-// do Drizzle — a quantidade é derivada do _journal.json (tudo com
-// idx >= 17), não de um número mágico que quebraria a cada migration nova.
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos"];
+// 0023 índice de sessões, 0024 guildas), além dos registros
+// correspondentes no journal do Drizzle — a quantidade é derivada do
+// _journal.json (tudo com idx >= 17), não de um número mágico que
+// quebraria a cada migration nova.
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {
@@ -86,6 +87,10 @@ function rebaixarSchema(arquivoDb) {
     if (colsMoney.has("operacao")) db.exec("alter table money_transactions drop column operacao");
     const colsSess = new Set(db.pragma("table_info(sessions)").map((c) => c.name));
     if (colsSess.has("vtt_state")) db.exec("alter table sessions drop column vtt_state");
+    const colsCamp = new Set(db.pragma("table_info(campaigns)").map((c) => c.name));
+    if (colsCamp.has("guild_id")) db.exec("alter table campaigns drop column guild_id");
+    const colsAudit = new Set(db.pragma("table_info(audit_logs)").map((c) => c.name));
+    if (colsAudit.has("guild_id")) db.exec("alter table audit_logs drop column guild_id");
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {

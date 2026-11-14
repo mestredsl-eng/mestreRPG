@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
-import { campaigns, memberships, invitations, users } from "../db/schema.js";
+import { campaigns, memberships, invitations, users, guilds } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership, contarMestres, permissoesDe, permissoesMembroSchema, type PapelCampanha } from "../lib/permissoes.js";
 import { emitirCampanha, expulsarMembroDaCampanha, notificarPermissaoAtualizada } from "../lib/io.js";
@@ -19,6 +19,9 @@ const criarSchema = z.object({
   name: z.string().min(2).max(120),
   description: z.string().max(4000).optional(),
   system: z.string().max(120).optional(), // texto livre — qualquer sistema de RPG
+  // Issue #65: criar já dentro de uma guilda exige ser GM dela (ou ADMIN);
+  // o criador vira mestre da campanha — guilda NÃO concede papel de mesa.
+  guildId: z.string().optional(),
 });
 
 const atualizarSchema = criarSchema.partial().extend({
@@ -27,7 +30,15 @@ const atualizarSchema = criarSchema.partial().extend({
   summary: z.string().max(20000).nullable().optional(),
 });
 
-function campanhaPublica(c: typeof campaigns.$inferSelect) {
+/** Resolve nomes de guilda em lote para exibição do escopo (Issue #65). */
+async function nomesGuildas(ids: (string | null | undefined)[]) {
+  const unicos = [...new Set(ids.filter((x): x is string => !!x))];
+  if (unicos.length === 0) return new Map<string, string>();
+  const rows = await db.select({ id: guilds.id, name: guilds.name }).from(guilds).where(inArray(guilds.id, unicos));
+  return new Map(rows.map((r) => [r.id, r.name]));
+}
+
+function campanhaPublica(c: typeof campaigns.$inferSelect, guildNome: string | null = null) {
   return {
     id: c.id,
     name: c.name,
@@ -36,6 +47,8 @@ function campanhaPublica(c: typeof campaigns.$inferSelect) {
     coverImage: c.coverImage,
     status: c.status,
     ownerId: c.ownerId,
+    guildId: c.guildId ?? null,
+    guildNome,
     settings: c.settings,
     summary: c.summary,
     createdAt: c.createdAt,
@@ -51,9 +64,10 @@ campanhasRouter.get("/", async (req, res) => {
     .innerJoin(campaigns, eq(memberships.campaignId, campaigns.id))
     .where(eq(memberships.userId, req.usuario!.id))
     .orderBy(desc(campaigns.createdAt));
+  const nomes = await nomesGuildas(rows.map((r) => r.campaign.guildId));
   const lista = rows
     .filter((r) => r.membership.status !== "removido")
-    .map((r) => ({ ...campanhaPublica(r.campaign), meuPapel: r.membership.role, meuStatus: r.membership.status, meuPermissions: permissoesDe(r.membership) }));
+    .map((r) => ({ ...campanhaPublica(r.campaign, nomes.get(r.campaign.guildId ?? "") ?? null), meuPapel: r.membership.role, meuStatus: r.membership.status, meuPermissions: permissoesDe(r.membership) }));
   res.json({ campanhas: lista });
 });
 
@@ -64,6 +78,20 @@ campanhasRouter.post("/", async (req, res) => {
     res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
     return;
   }
+  let guildId: string | null = null;
+  if (body.data.guildId) {
+    const { ehGM } = await import("../lib/guildas.js");
+    const [g] = await db.select().from(guilds).where(eq(guilds.id, body.data.guildId)).limit(1);
+    if (!g || g.status !== "ativa") {
+      res.status(404).json({ erro: "Guilda não encontrada ou arquivada" });
+      return;
+    }
+    if (!req.usuario!.isAdmin && !(await ehGM(g.id, req.usuario!.id))) {
+      res.status(403).json({ erro: "Somente um GM da guilda (ou o ADMIN) pode criar campanhas nela" });
+      return;
+    }
+    guildId = g.id;
+  }
   const agora = new Date();
   const campaignId = crypto.randomUUID();
   await db.insert(campaigns).values({
@@ -73,6 +101,7 @@ campanhasRouter.post("/", async (req, res) => {
     system: body.data.system ?? null,
     status: "preparacao",
     ownerId: req.usuario!.id,
+    guildId,
     settings: {},
     createdAt: agora,
     updatedAt: agora,
@@ -88,7 +117,8 @@ campanhasRouter.post("/", async (req, res) => {
     updatedAt: agora,
   });
   const [criada] = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
-  res.status(201).json({ campanha: { ...campanhaPublica(criada), meuPapel: "mestre", meuStatus: "ativo", meuPermissions: {} } });
+  const nomes = await nomesGuildas([criada.guildId]);
+  res.status(201).json({ campanha: { ...campanhaPublica(criada, nomes.get(criada.guildId ?? "") ?? null), meuPapel: "mestre", meuStatus: "ativo", meuPermissions: {} } });
 });
 
 // ---- Rotas com :campaignId ----
@@ -105,7 +135,8 @@ campanhasRouter.get("/:campaignId", async (req, res) => {
     res.status(404).json({ erro: "Campanha não encontrada" });
     return;
   }
-  res.json({ campanha: { ...campanhaPublica(c), meuPapel: m.role, meuStatus: m.status, meuPermissions: permissoesDe(m) } });
+  const nomes = await nomesGuildas([c.guildId]);
+  res.json({ campanha: { ...campanhaPublica(c, nomes.get(c.guildId ?? "") ?? null), meuPapel: m.role, meuStatus: m.status, meuPermissions: permissoesDe(m) } });
 });
 
 /** PATCH /api/campaigns/:campaignId — edição e status (somente mestre) */

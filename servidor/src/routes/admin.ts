@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { eq, ne, asc } from "drizzle-orm";
+import { eq, ne, and, asc } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { users, authSessions } from "../db/schema.js";
@@ -7,6 +7,8 @@ import { hashSenha, gerarToken, hashToken } from "../lib/password.js";
 import { requireAdmin } from "../middleware/auth.js";
 import { ehAdminPrincipal, idAdminPrincipal } from "../lib/adminPrincipal.js";
 import { desconectarUsuario } from "../lib/io.js";
+import { audit } from "../lib/audit.js";
+import { guildMembers, guilds } from "../db/schema.js";
 
 const db = getDb();
 export const adminRouter = Router();
@@ -33,13 +35,27 @@ function usuarioPublico(u: typeof users.$inferSelect, adminPrincipalId: string |
   };
 }
 
-/** GET /api/admin/users — lista contas */
-adminRouter.get("/users", async (_req, res) => {
-  const [lista, principalId] = await Promise.all([
+/** GET /api/admin/users — lista contas (com guildas onde cada um é GM ativo) */
+adminRouter.get("/users", async (req, res) => {
+  const [lista, principalId, gms] = await Promise.all([
     db.select().from(users).orderBy(asc(users.username)),
     idAdminPrincipal(),
+    db
+      .select({ userId: guildMembers.userId, guildId: guilds.id, nome: guilds.name })
+      .from(guildMembers)
+      .innerJoin(guilds, eq(guildMembers.guildId, guilds.id))
+      .where(and(eq(guildMembers.role, "gm"), eq(guildMembers.status, "ativo"), eq(guilds.status, "ativa"))),
   ]);
-  res.json({ usuarios: lista.map((u) => usuarioPublico(u, principalId)) });
+  const gmPorUsuario = new Map<string, { guildId: string; nome: string }[]>();
+  for (const g of gms) {
+    const arr = gmPorUsuario.get(g.userId) ?? [];
+    arr.push({ guildId: g.guildId, nome: g.nome });
+    gmPorUsuario.set(g.userId, arr);
+  }
+  res.json({
+    usuarios: lista.map((u) => ({ ...usuarioPublico(u, principalId), gmDe: gmPorUsuario.get(u.id) ?? [] })),
+    souAdminPrincipal: req.usuario?.id === principalId,
+  });
 });
 
 /** POST /api/admin/users — cria usuário (mestre/jogador/etc.; papel de campanha vem depois) */
@@ -100,15 +116,32 @@ adminRouter.patch("/users/:id", async (req, res) => {
     return;
   }
   const { username, email, displayName, password, isAdmin, status } = body.data;
-  // Privilégio administrativo global é imutável via API: nenhum fluxo
-  // promove, rebaixa ou altera is_admin (admin_principal + triggers no banco).
-  if (isAdmin !== undefined) {
-    res.status(400).json({ erro: "O privilégio de administrador não pode ser alterado" });
-    return;
-  }
   const alvoProtegido = await ehAdminPrincipal(alvo.id);
+  // Multi-ADMIN (Issue #65): somente o ADMIN principal concede/revoga o
+  // privilégio global; o alvo nunca pode ser a própria conta raiz.
+  if (isAdmin !== undefined) {
+    if (!(await ehAdminPrincipal(req.usuario!.id))) {
+      res.status(403).json({ erro: "Somente o administrador principal pode conceder ou revogar ADMIN" });
+      return;
+    }
+    if (alvoProtegido) {
+      res.status(403).json({ erro: "O privilégio do administrador principal não pode ser alterado" });
+      return;
+    }
+    if (isAdmin === alvo.isAdmin) {
+      res.status(400).json({ erro: "O usuário já possui este privilégio" });
+      return;
+    }
+  }
   if (alvoProtegido && status === "bloqueado") {
     res.status(403).json({ erro: "A conta administradora original não pode ser bloqueada" });
+    return;
+  }
+  // Trocar a senha do principal por aqui permitiria a um ADMIN
+  // secundário assumir a conta raiz — credencial do principal só muda
+  // pelo próprio fluxo de senha autenticado.
+  if (alvoProtegido && password !== undefined) {
+    res.status(403).json({ erro: "A senha da conta administradora original não pode ser alterada pelo painel" });
     return;
   }
   const dados: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
@@ -117,6 +150,7 @@ adminRouter.patch("/users/:id", async (req, res) => {
   if (displayName !== undefined) dados.displayName = displayName || null;
   if (status !== undefined) dados.status = status;
   if (password !== undefined) dados.passwordHash = await hashSenha(password);
+  if (isAdmin !== undefined) dados.isAdmin = isAdmin;
 
   if (username && username !== alvo.username) {
     const [dup] = await db.select({ id: users.id }).from(users).where(eq(users.username, username)).limit(1);
@@ -127,9 +161,15 @@ adminRouter.patch("/users/:id", async (req, res) => {
   }
   await db.update(users).set(dados).where(eq(users.id, id));
 
-  // Bloqueio ou troca de senha → derruba sessões ativas do usuário
-  // (HTTP e sockets — sessões revogadas não podem continuar conectadas)
-  if (status === "bloqueado" || password !== undefined) {
+  // Trilha de auditoria da concessão/revogação de ADMIN (Issue #65).
+  if (isAdmin !== undefined) {
+    await audit(req, isAdmin ? "admin.conceder" : "admin.revogar", { userId: id, username: alvo.username });
+  }
+
+  // Bloqueio, troca de senha ou REVOGAÇÃO de ADMIN → derruba sessões
+  // ativas do usuário (HTTP e sockets — sessões revogadas não podem
+  // continuar conectadas; o privilégio reduzido vale já, sem reload).
+  if (status === "bloqueado" || password !== undefined || isAdmin === false) {
     await db.delete(authSessions).where(eq(authSessions.userId, id));
     desconectarUsuario(id);
   }

@@ -9,11 +9,12 @@ import Campanha from "./paginas/Campanha";
 import Convite from "./paginas/Convite";
 import ConviteCadastro from "./paginas/ConviteCadastro";
 import Acervo from "./paginas/Acervo";
+import Guildas from "./paginas/Guildas";
 import Novidades from "./paginas/Novidades";
 import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
 import { getSocket } from "./socket";
 
-type Aba = "painel" | "campanhas" | "acervo" | "novidades" | "admin" | "conta";
+type Aba = "painel" | "campanhas" | "acervo" | "novidades" | "guildas" | "admin" | "conta";
 
 function Painel() {
   const { estado } = useAuth();
@@ -156,6 +157,7 @@ function Shell() {
             Novidades
             {naoLidas > 0 && <span className="contador-nao-lidas" aria-label={`${naoLidas} não lidas`}>{naoLidas}</span>}
           </button>
+          <button className={aba === "guildas" ? "ativo" : ""} onClick={() => { setAba("guildas"); setCampanhaAberta(null); }}>Guildas</button>
           {usuario?.isAdmin && (
             <button className={aba === "admin" ? "ativo" : ""} onClick={() => setAba("admin")}>Administração</button>
           )}
@@ -172,6 +174,7 @@ function Shell() {
         )}
         {aba === "acervo" && <Acervo />}
         {aba === "novidades" && <Novidades aoMudarLeitura={atualizarNaoLidas} versao={novidadesVersao} />}
+        {aba === "guildas" && <Guildas />}
         {aba === "admin" && usuario?.isAdmin && <Admin />}
         {aba === "conta" && <Conta />}
       </main>

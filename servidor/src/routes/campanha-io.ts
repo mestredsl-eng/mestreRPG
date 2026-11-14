@@ -5,10 +5,11 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  campaigns, memberships, users, snapshots, sessions,
+  campaigns, memberships, users, snapshots, sessions, guilds,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
+import { ehGM } from "../lib/guildas.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
@@ -205,13 +206,27 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
     } catch { /* best-effort: arquivo fica ausente, metadados ainda importam */ }
   }
 
+  // guildId vem do pacote e pode ser forjado: só é honrado se o
+  // importador for ADMIN ou GM ativo daquela guilda — caso contrário
+  // a campanha nasceria vinculada à guilda de terceiros (IDOR).
+  // (validado ANTES da transação: better-sqlite3 não aceita await dentro)
+  const camposCampanha = estado.campanha as Record<string, unknown>;
+  const guildIdPacote = typeof camposCampanha.guildId === "string" ? camposCampanha.guildId : null;
+  let guildIdValido: string | null = null;
+  if (guildIdPacote) {
+    const [g] = await db.select({ id: guilds.id }).from(guilds)
+      .where(and(eq(guilds.id, guildIdPacote), eq(guilds.status, "ativa"))).limit(1);
+    if (g && (req.usuario!.isAdmin || (await ehGM(g.id, req.usuario!.id)))) guildIdValido = g.id;
+  }
+
   const precisaMembroExtra = !(estado.memberships as { userId: string }[]).some((m) => m.userId === req.usuario!.id);
   try {
     db.transaction((tx) => {
-      const { id: _i, ownerId: _o, createdAt: _c, updatedAt: _u, ...campos } = estado.campanha as Record<string, unknown>;
+      const { id: _i, ownerId: _o, createdAt: _c, updatedAt: _u, ...campos } = camposCampanha;
       tx.insert(campaigns).values({
         id: cid, ownerId: req.usuario!.id,
         ...(campos as object),
+        guildId: guildIdValido,
         createdAt: new Date(), updatedAt: new Date(),
       } as never).run();
       inserirEstado(tx, estado);
