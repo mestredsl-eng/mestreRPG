@@ -516,6 +516,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // descartando gerações HTTP antigas via permSeqRef
           recarregarCompleta();
         } else {
+          // RATE_LIMITED é transitório, não rejeição de autorização:
+          // reagenda a entrada após retryAfterMs preservando a visão —
+          // entrar() revalida tudo e só então libera os controles
+          const espera = retryAfterDoAck(r);
+          if (espera !== null) {
+            const msg = avisoRateLimit(espera);
+            if (msg) setErro(msg);
+            window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
+            return;
+          }
           // sessão substituída por restauração/importação: o ID não
           // existe mais — desmonta a view e volta à lista real em vez
           // de manter mapa/tokens/mensagens de uma sessão morta
@@ -525,9 +535,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // chegará; controles e painel saem de cena até nova entrada
           setEntradaFalhou(true);
           setPapel("espectador");
-          const espera = retryAfterDoAck(r);
-          const aviso = espera !== null ? avisoRateLimit(espera) : null;
-          setErro(aviso ?? "Não foi possível entrar na mesa — acesso não autorizado");
+          setErro("Não foi possível entrar na mesa — acesso não autorizado");
         }
       });
     };
