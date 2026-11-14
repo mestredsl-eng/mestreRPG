@@ -140,13 +140,20 @@ try {
   // Muda a regra da campanha com a Mesa aberta: o painel local NÃO
   // recarrega regras — só o ACK do servidor pode trazer o mínimo novo.
   // Painel e histórico devem classificar cada dado de forma idêntica.
-  await pgM.evaluate(async (cid) => {
-    await fetch(`/api/campaigns/${cid}/regras/config`, {
+  const MIN_D10 = 9;
+  const cfgMin = await pgM.evaluate(async ({ cid, min }) => {
+    const put = await fetch(`/api/campaigns/${cid}/regras/config`, {
       method: "PUT", credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ dados: { d10SucessoMinimo: 9 } }),
+      body: JSON.stringify({ dados: { d10SucessoMinimo: min } }),
     });
-  }, cenario.campId);
+    const get = await fetch(`/api/campaigns/${cid}/regras`, { credentials: "same-origin" });
+    const regras = get.ok ? await get.json() : null;
+    return { putStatus: put.status, minLido: regras?.config?.dados?.d10SucessoMinimo };
+  }, { cid: cenario.campId, min: MIN_D10 });
+  t("PUT /regras/config aceito (HTTP 200)", cfgMin.putStatus === 200, `status=${cfgMin.putStatus}`);
+  t(`regra persistida: d10SucessoMinimo=${MIN_D10} confirmado por leitura`,
+    cfgMin.minLido === MIN_D10, `lido=${cfgMin.minLido}`);
   const ctrlD10b = pgM.locator(".d10-controles input[type=number]");
   await ctrlD10b.nth(0).fill("8");
   await ctrlD10b.nth(1).fill("0");
@@ -157,20 +164,35 @@ try {
     return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
   }, null, { timeout: 15000 });
   const rotuloPainelMin = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label");
-  const estadosPainel = rotuloPainelMin?.match(/\((sucesso|falha)\)/g) ?? [];
-  // espera o histórico receber ESTA rolagem (8 dados), não a anterior
+  // espera o histórico receber ESTA rolagem (8 dados), não a anterior.
+  // Mesa.tsx usa rolagens.slice(-8).reverse(): a mais nova é a PRIMEIRA.
   await pgM.waitForFunction(() => {
     const c = document.querySelector(".rolagem-item .mesa-dados-3d-canvas");
     const rotulo = c?.getAttribute("aria-label") ?? "";
     return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
   }, null, { timeout: 15000 });
   const rotuloHistMin = await pgM.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label");
-  const estadosHist = rotuloHistMin?.match(/\((sucesso|falha)\)/g) ?? [];
+  const resumoHistMin = await pgM.locator(".rolagem-item .d10-rolagem").first().innerText();
+  const facesDe = (rotulo) =>
+    [...(rotulo ?? "").matchAll(/d10=(\d+) \((sucesso|falha)\)/g)]
+      .map((m) => ({ valor: Number(m[1]), estado: m[2] }));
+  const facesPainel = facesDe(rotuloPainelMin);
+  const facesHist = facesDe(rotuloHistMin);
+  const classificarOk = (faces) =>
+    faces.length === 8 && faces.every((f) =>
+      f.estado === (f.valor >= MIN_D10 ? "sucesso" : "falha"));
   t("pool D10 com regra alterada: painel classifica os 8 dados",
-    estadosPainel.length === 8, rotuloPainelMin);
-  t("mínimo do servidor: painel e histórico classificam igual",
-    estadosPainel.length === estadosHist.length && estadosPainel.every((e, i) => e === estadosHist[i]),
-    `painel=${estadosPainel.join(",")} historico=${estadosHist.join(",")}`);
+    facesPainel.length === 8, rotuloPainelMin);
+  t("painel: cada face sucesso sse valor >= 9, falha sse valor < 9",
+    classificarOk(facesPainel), rotuloPainelMin);
+  t("histórico: cada face sucesso sse valor >= 9, falha sse valor < 9",
+    classificarOk(facesHist), rotuloHistMin);
+  t("histórico registra o mínimo autoritativo 9",
+    /mín\s*9\b/.test(resumoHistMin ?? ""), resumoHistMin);
+  t("painel e histórico classificam cada dado de forma idêntica",
+    facesPainel.length === facesHist.length &&
+      facesPainel.every((f, i) => f.valor === facesHist[i].valor && f.estado === facesHist[i].estado),
+    `painel=${rotuloPainelMin} historico=${rotuloHistMin}`);
   await pgM.evaluate(async (cid) => {
     await fetch(`/api/campaigns/${cid}/regras/config`, {
       method: "PUT", credentials: "same-origin",
