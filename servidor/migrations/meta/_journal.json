@@ -183,6 +183,13 @@
       "when": 1794668152330,
       "tag": "0025_guilda_convites",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1794680643938,
+      "tag": "0026_guilda_responsavel",
+      "breakpoints": true
     }
   ]
 }
