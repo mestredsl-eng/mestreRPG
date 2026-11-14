@@ -1,5 +1,7 @@
 # Release Candidate v1.0 — Mestre RPG
 
+> **Atualização de estado — 2026-11-14:** as cinco etapas do roteiro mestre da Issue #33 foram concluídas. A candidata continua sem tag/publicação, aguardando autorização explícita. A `main` de referência após a PR #77 é `9046ae3071f99022595ee2b7ea592454755c0b55`. A homologação histórica abaixo não deve ser interpretada como CI executado nesse SHA: a validação final da candidata deve usar o HEAD efetivo após a integração das PRs pendentes.
+
 Documento de preparação da candidata. **Não é uma release publicada**: a
 tag `v1.0.0` e a publicação da release estão pendentes de autorização
 explícita do responsável.
@@ -127,7 +129,6 @@ symlink/permissão POSIX).
 
 ## Limitações conhecidas
 
-- Mesa virtual (mapas/tokens/névoa) não incluída — pós-v1.
 - Novidades não possuem notificação em tempo real: o badge atualiza ao
   carregar a sessão e após ações do próprio usuário (sem polling).
 - Homologado no Windows; acesso externo depende de proxy/túnel do usuário.
