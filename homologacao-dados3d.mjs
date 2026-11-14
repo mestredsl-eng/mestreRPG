@@ -56,7 +56,7 @@ async function rolarLivre(page, lados, qtd = 1) {
   await page.locator(".rolagem-form select").first().selectOption(String(lados));
   if (qtd > 1) await page.locator('.rolagem-form input[type="number"]').fill(String(qtd));
   const totalAntes = await page.locator(".rolagem-resultado .d10-chip-total").last().textContent().catch(() => "");
-  const tituloAntes = await page.locator(".rolagem-resultado .dado-3d-canvas").last().getAttribute("title").catch(() => "");
+  const tituloAntes = await page.locator(".rolagem-resultado .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
   await page.getByRole("button", { name: /Lançar/ }).click();
   // o painel mostra só a última rolagem: aguarda resultado novo —
   // total OU face podem coincidir, então espera qualquer um dos dois mudar
@@ -64,15 +64,23 @@ async function rolarLivre(page, lados, qtd = 1) {
     ([antTotal, antTitulo]) => {
       const totais = document.querySelectorAll(".rolagem-resultado .d10-chip-total");
       const txt = totais.length ? totais[totais.length - 1].textContent : "";
-      const canvases = document.querySelectorAll(".rolagem-resultado .dado-3d-canvas");
-      const tit = canvases.length ? canvases[canvases.length - 1].getAttribute("title") : "";
+      const canvases = document.querySelectorAll(".rolagem-resultado .mesa-dados-3d-canvas");
+      const tit = canvases.length ? canvases[canvases.length - 1].getAttribute("aria-label") : "";
       return (txt && txt !== antTotal) || (tit && tit !== antTitulo);
     },
     [totalAntes ?? "", tituloAntes ?? ""], { timeout: 20000 },
   );
 }
 const valoresCanvas = (page) =>
-  page.$$eval(".rolagem-resultado .dado-3d-canvas", (cs) => cs.map((c) => c.getAttribute("title")));
+  page.$$eval(".rolagem-resultado .mesa-dados-3d-canvas", (cs) => cs.map((c) => c.getAttribute("aria-label")));
+const canvasPintado = (page) => page.evaluate(() => {
+  const c = document.querySelector(".rolagem-resultado .mesa-dados-3d-canvas");
+  if (!c) return false;
+  const ctx = c.getContext("2d");
+  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
+  return false;
+});
 
 try {
   await prepararBanco(BANCO);
@@ -101,7 +109,8 @@ try {
     const titulos = await valoresCanvas(pgM);
     const ultimo = titulos[titulos.length - 1] ?? "";
     const total = await pgM.locator(".rolagem-resultado .d10-chip-total").last().textContent();
-    t(`d${d}: canvas 3D exibido (${ultimo})`, new RegExp(`^d${d} = `).test(ultimo), ultimo);
+    t(`d${d}: mesa 3D compartilhada exibida (${ultimo})`, new RegExp(`d${d}=\\d`).test(ultimo), ultimo);
+    t(`d${d}: canvas da mesa não está em branco`, await canvasPintado(pgM));
     t(`d${d}: total autoritativo exibido`, /Total:\s*\d+/.test(total ?? ""), total?.trim());
     await shot(pgM, `02-dado-d${d}`);
   }
@@ -109,7 +118,8 @@ try {
   sec("3. Múltiplos dados");
   await rolarLivre(pgM, 20, 3);
   const titulos3 = await valoresCanvas(pgM);
-  t("3×d20 = 3 canvas 3D", titulos3.filter((x) => /^d20 = /.test(x ?? "")).length >= 3, titulos3.slice(-3).join(","));
+  const ultimo3 = titulos3[titulos3.length - 1] ?? "";
+  t("3×d20 = 3 dados na mesma mesa", (ultimo3.match(/d20=\d/g) ?? []).length >= 3, ultimo3);
 
   sec("4. Jogador vê a mesma rolagem (servidor autoritativo)");
   const ctx1 = await browser.newContext({ viewport: { width: 1366, height: 900 } });
@@ -125,8 +135,8 @@ try {
   await pg1.locator(".rolagem-item").last().waitFor({ timeout: 10000 }).catch(() => {});
   const itens = await pg1.locator(".rolagem-item strong").allTextContents();
   t("total da rolagem aparece para o jogador", itens.some((x) => x.includes(`= ${alvo}`)), `${alvo} | vistos: ${itens.slice(-3).join(" | ")}`);
-  const canvasesJ = await pg1.locator(".rolagem-item .dado-3d-canvas").count();
-  t("jogador vê dados 3D no histórico", canvasesJ > 0, `${canvasesJ} canvas`);
+  const canvasesJ = await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").count();
+  t("jogador vê mesa de dados 3D no histórico", canvasesJ > 0, `${canvasesJ} canvas`);
   await shot(pg1, "04-jogador-dados");
 
   sec("5. Cores independentes + atualização imediata");
@@ -172,21 +182,45 @@ try {
   const btnRolarD10 = pg1.locator(".teste-card").getByRole("button", { name: "Rolar", exact: true });
   await btnRolarD10.waitFor({ timeout: 5000 });
   await btnRolarD10.click();
-  await pg1.locator(".teste-card .dado-3d-canvas, .rolagem-item .dado-3d-canvas").first().waitFor({ timeout: 15000 }).catch(() => {});
-  const d10Canvas = await pg1.locator(".dado-3d-canvas.d10-face, .rolagem-item .dado-3d-canvas.d10, canvas[title^='d10']").count();
-  t("desafio D10 renderiza dado 3D", (await pg1.locator(".dado-3d-canvas").count()) > 0, `${d10Canvas} canvas d10`);
+  const d10Canvas = await pg1.waitForFunction(() => {
+    const cs = document.querySelectorAll(".rolagem-item .mesa-dados-3d-canvas, .rolagem-resultado .mesa-dados-3d-canvas");
+    return [...cs].some((c) => /d10=\d/.test(c.getAttribute("aria-label") ?? ""));
+  }, null, { timeout: 15000 }).then(() => true).catch(() => false);
+  t("desafio D10 renderiza dado 3D na mesa", d10Canvas, "nenhuma mesa com d10=");
   await shot(pg1, "07-d10-3d");
 
-  sec("8. Mobile 390px");
+  sec("8. Reduced motion: resultado final imediato, sem simulação");
+  const ctxRM = await browser.newContext({ viewport: { width: 1366, height: 900 }, reducedMotion: "reduce" });
+  const pgRM = await ctxRM.newPage();
+  await login(pgRM, "jogador_um", "senha-jogador-123");
+  await irCampanha(pgRM);
+  await entrarNaMesa(pgRM);
+  await rolarLivre(pgRM, 6, 2);
+  const rotuloRM = await pgRM.locator(".rolagem-resultado .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
+  t("reduced-motion: mesa exibe os 2 dados com valores do servidor",
+    (rotuloRM.match(/d6=\d/g) ?? []).length === 2, rotuloRM);
+  t("reduced-motion: canvas pintado", await pgRM.evaluate(() => {
+    const c = document.querySelector(".rolagem-resultado .mesa-dados-3d-canvas");
+    if (!c) return false;
+    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
+    return false;
+  }));
+  await ctxRM.close();
+
+  sec("9. Mobile 390px");
   const ctxMob = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pgMob = await ctxMob.newPage();
   await login(pgMob, "jogador_um", "senha-jogador-123");
   await irCampanha(pgMob);
   await entrarNaMesa(pgMob);
   await rolarLivre(pgMob, 8);
-  const canvasMob = await pgMob.locator(".rolagem-resultado .dado-3d-canvas").count();
-  const w = await pgMob.locator(".rolagem-resultado .dado-3d-canvas").first().evaluate((el) => el.getBoundingClientRect().width).catch(() => 0);
-  t("mobile: canvas 3D visível e compacto", canvasMob > 0 && w > 0 && w <= 40, `w=${w}`);
+  const canvasMob = await pgMob.locator(".rolagem-resultado .mesa-dados-3d-canvas").count();
+  const dim = await pgMob.locator(".rolagem-resultado .mesa-dados-3d-canvas").first().evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { w: r.width, h: r.height };
+  }).catch(() => ({ w: 0, h: 0 }));
+  t("mobile: mesa 3D visível e compacta", canvasMob > 0 && dim.w > 300 && dim.h <= 170, `w=${dim.w} h=${dim.h}`);
   await shot(pgMob, "08-mobile-dados");
   await ctxMob.close();
 

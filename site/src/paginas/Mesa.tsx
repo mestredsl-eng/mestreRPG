@@ -7,7 +7,8 @@ import {
 } from "../api";
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
-import PainelDados, { FaceDado } from "../Dados";
+import PainelDados from "../Dados";
+import MesaDados3D, { seedDeId } from "../MesaDados3D";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
 
@@ -803,7 +804,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                           <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number; codigo?: string; retryAfterMs?: number }) => {
                             const espera = retryAfterDoAck(r);
                             if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
-                            if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.diceSides], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
+                            if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.pool?.dadosLados ?? t.dados?.lados ?? t.diceSides ?? 20], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
                           })}>Rolar</button>
                         )}
                         {ehMestreAtual && (
@@ -859,11 +860,10 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
               {rolagens.slice(-8).reverse().map((r) => (
                 <div key={r.id} className="rolagem-item">
                   <div className="linha">
-                    {r.dados.map((resultados, gi) => (
-                      <span key={gi} className="dados-grupo">
-                        {resultados.map((v, i) => <FaceDado key={i} valor={v} lados={r.lados[gi]} indice={i} />)}
-                      </span>
-                    ))}
+                    <MesaDados3D
+                      dados={r.dados.flatMap((resultados, gi) => resultados.map((v) => ({ lados: r.lados[gi], valor: v })))}
+                      semente={seedDeId(r.id)}
+                    />
                     {r.total !== null && <strong> = {r.total}</strong>}
                   </div>
                   <p className="meta">

@@ -105,6 +105,7 @@ jobs:
             teste-acervo-sync.mjs \
             teste-acervo-diff.mjs \
             teste-fisica-dados.mjs \
+            teste-fisica-mesa.mjs \
             teste-restauracao-boot.mjs \
             teste-trava-instancia.mjs \
             teste-atualizacao-instalacao.mjs \
