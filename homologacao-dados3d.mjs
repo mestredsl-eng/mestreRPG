@@ -110,8 +110,8 @@ try {
   const canvasD10Pool = pgM.locator(".d10-resultado .mesa-dados-3d-canvas");
   await canvasD10Pool.waitFor({ timeout: 15000 });
   const rotuloD10Pool = await canvasD10Pool.getAttribute("aria-label");
-  const valoresD10Pool = rotuloD10Pool?.match(/d10=\\d+/g) ?? [];
-  const estadosD10Pool = rotuloD10Pool?.match(/\\((sucesso|falha)\\)/g) ?? [];
+  const valoresD10Pool = rotuloD10Pool?.match(/d10=\d+/g) ?? [];
+  const estadosD10Pool = rotuloD10Pool?.match(/\((sucesso|falha)\)/g) ?? [];
   t("pool D10 de 5 positivos e 2 negativos gera 3 dados efetivos", valoresD10Pool.length === 3, rotuloD10Pool);
   t("pool D10 inteiro aparece em um único canvas compartilhado",
     await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").count() === 1);
