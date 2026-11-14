@@ -112,6 +112,7 @@ export default function Conta() {
         {sessoes === null && !erroSessoes && <p className="dica">Carregando…</p>}
         {sessoes !== null && sessoes.length === 0 && <p className="dica">Nenhuma sessão ativa.</p>}
         {sessoes !== null && sessoes.length > 0 && (
+          <>
           <table className="tabela tabela-responsiva">
             <thead>
               <tr><th>Dispositivo</th><th>IP</th><th>Criada em</th><th>Expira em</th><th /></tr>
@@ -142,6 +143,35 @@ export default function Conta() {
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {sessoes.map((s) => (
+              <div key={s.id} className="registro-cartao">
+                <div className="registro-campo">
+                  <span className="registro-rotulo">Dispositivo</span>
+                  <span>
+                    {descreverNavegador(s.userAgent)}
+                    {s.atual && <> <span className="badge badge-ativa">esta sessão</span></>}
+                  </span>
+                </div>
+                <div className="registro-campo"><span className="registro-rotulo">IP</span><span>{s.ip ?? "—"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Criada em</span><span>{new Date(s.createdAt).toLocaleString("pt-BR")}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Expira em</span><span>{new Date(s.expiresAt).toLocaleString("pt-BR")}</span></div>
+                {!s.atual && (
+                  <div className="registro-acoes">
+                    <button
+                      type="button"
+                      className="mini secundario"
+                      disabled={revogando === s.id}
+                      onClick={() => void encerrarSessao(s)}
+                    >
+                      {revogando === s.id ? "Encerrando…" : "Encerrar"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </section>
 

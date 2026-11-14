@@ -60,7 +60,7 @@ try {
   await page.getByRole("heading", { name: "Sessões ativas" }).waitFor({ timeout: 10000 });
   await page.waitForTimeout(800);
   t("seção de sessões visível", await page.getByRole("heading", { name: "Sessões ativas" }).isVisible());
-  t("badge desta sessão", await page.getByText("esta sessão").first().isVisible());
+  t("badge desta sessão", await page.locator(".cartao", { hasText: "Sessões ativas" }).getByText("esta sessão").first().isVisible());
   // cenário + login UI + sessão extra = ao menos 2 sessões visíveis
   t("múltiplas sessões listadas", await page.locator(".cartao", { hasText: "Sessões ativas" }).locator("tbody tr").count() >= 2);
   t("IP exibido", await page.locator(".cartao", { hasText: "Sessões ativas" }).getByText("127.0.0.1").first().isVisible());
@@ -76,8 +76,24 @@ try {
   await page.waitForTimeout(1000);
   const totalDepois = await secao.locator("tbody tr").count();
   t("sessão revogada some da lista", totalDepois === totalAntes - 1, `${totalAntes}→${totalDepois}`);
-  t("sessão atual permanece", await secao.getByText("esta sessão").isVisible());
+  t("sessão atual permanece", await secao.getByText("esta sessão").first().isVisible());
   await shot(page, "conta-sessoes-apos-revogacao");
+
+  sec("Mobile — cartões substituem a tabela");
+  const ctxM = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const pgM = await ctxM.newPage();
+  pgM.on("dialog", (d) => void d.accept());
+  await login(pgM, "jogadora_s", "senha-jogador-123");
+  await btnNav(pgM, "Conta").click();
+  await pgM.getByRole("heading", { name: "Sessões ativas" }).waitFor({ timeout: 10000 });
+  await pgM.waitForTimeout(800);
+  const secaoM = pgM.locator(".cartao", { hasText: "Sessões ativas" });
+  t("tabela oculta no mobile", !(await secaoM.locator("table.tabela-responsiva").isVisible()));
+  t("cartões de sessão visíveis", await secaoM.locator(".registro-cartao").first().isVisible());
+  t("badge no cartão", await secaoM.locator(".registro-cartao").getByText("esta sessão").first().isVisible());
+  t("ação Encerrar no cartão", await secaoM.getByRole("button", { name: "Encerrar" }).first().isVisible());
+  await shot(pgM, "conta-sessoes-mobile");
+  await ctxM.close();
 
   sec("Sem erros de página");
   t("sem erros de página", erros.length === 0, erros.join(" | "));
