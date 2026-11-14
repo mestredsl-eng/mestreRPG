@@ -217,6 +217,67 @@ for (const n of [1, 5, 10, 30]) {
     Math.abs(assentado.position[0]) <= hi + 0.01 && Math.abs(movel.position[0]) <= hi + 0.01);
 }
 
+// ---------- colisão em cadeia entre três dados já finalizados ----------
+{
+  const cena = criarCenaMesa([
+    { lados: 6, valor: 3 },
+    { lados: 6, valor: 4 },
+    { lados: 6, valor: 5 },
+  ], 92);
+  const [a, b, c] = cena;
+  const limite = semiLadoMesa(cena.length);
+  const margem = a.raioColisao * 0.8;
+  const hi = limite - margem;
+  const lo = -hi;
+  const soma = a.raioColisao + b.raioColisao;
+
+  // Reproduz a geometria do achado do Devin:
+  // A/B começam separados; B/C se sobrepõem. Corrigir B/C desloca B
+  // para a esquerda e cria uma nova colisão A/B, já visitada nesta passada.
+  const posicoes = [-2.3, 0.2, 1.5];
+  const altura = a.repouso;
+  for (let i = 0; i < cena.length; i++) {
+    const d = cena[i];
+    d.position = [posicoes[i], 0, altura];
+    d.orientation = [...d.alvo];
+    d.velocity = [0, 0, 0];
+    d.angularVelocity = [0, 0, 0];
+    d.simulationTime = 3.2;
+    d.settleTime = 0.5;
+    d.finalizado = true;
+  }
+
+  const distancia = (x, y) => Math.hypot(
+    x.position[0] - y.position[0],
+    x.position[1] - y.position[1],
+  );
+  const abInicial = distancia(a, b);
+  const bcInicial = distancia(b, c);
+  const alvos = cena.map((d) => [...d.alvo]);
+  passoCena(cena, 1 / 60);
+
+  let menorDistancia = Infinity;
+  let paresSeparados = true;
+  for (let i = 0; i < cena.length; i++) {
+    for (let j = i + 1; j < cena.length; j++) {
+      const dist = distancia(cena[i], cena[j]);
+      menorDistancia = Math.min(menorDistancia, dist);
+      if (dist < cena[i].raioColisao + cena[j].raioColisao - 0.01) paresSeparados = false;
+    }
+  }
+  ok("cadeia D6: cenário reproduz A/B separados e B/C sobrepostos",
+    abInicial >= soma - 0.01 && bcInicial < soma - 0.01,
+    `A/B=${abInicial.toFixed(3)}; B/C=${bcInicial.toFixed(3)}`);
+  ok("cadeia D6: passadas iterativas eliminam sobreposição de todos os pares",
+    paresSeparados, `menor distância=${menorDistancia.toFixed(3)} / necessária=${soma.toFixed(3)}`);
+  ok("cadeia D6: todos os dados permanecem dentro das bordas",
+    cena.every((d) => d.position[0] >= lo - 0.01 && d.position[0] <= hi + 0.01
+      && d.position[1] >= lo - 0.01 && d.position[1] <= hi + 0.01));
+  ok("cadeia D6: valores e orientações finais do servidor são preservados",
+    cena.every((d, i) => d.finalizado && d.valor === [3, 4, 5][i]
+      && d.orientation.every((v, j) => quase(v, alvos[i][j], 1e-9)));
+}
+
 const falhas = resultados.filter((r) => !r.ok);
 console.log(`\n${resultados.length - falhas.length}/${resultados.length} verificações ok`);
 if (falhas.length) { console.log("FALHAS:", falhas.map((f) => f.nome).join(" | ")); process.exit(1); }
