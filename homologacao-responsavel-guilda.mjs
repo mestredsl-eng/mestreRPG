@@ -80,6 +80,7 @@ try {
   const gmA = await novoUsuario("gm_resp_a", "GM Resp A");          // criador → responsável inicial
   const gmB = await novoUsuario("gm_resp_b", "GM Resp B");          // vira GM, alvo da 1ª transferência
   const gmC = await novoUsuario("gm_resp_c", "GM Resp C");          // GM comum (não-responsável)
+  const gmD = await novoUsuario("gm_resp_d", "GM Resp D");          // GM que será BLOQUEADO
   const membro = await novoUsuario("membro_resp", "Membro Resp");
 
   // guilda criada pelo gmA via API (criador vira responsável e GM)
@@ -88,15 +89,19 @@ try {
   t("GM cria guilda (responsável inicial)", gA.status === 201 && gA.json?.guilda?.responsavelId === gmA.id,
     `status=${gA.status} resp=${gA.json?.guilda?.responsavelId}`);
 
-  // adiciona gmB, gmC e membro; promove gmB e gmC a GM
-  for (const u of [gmB, gmC, membro]) {
+  // adiciona gmB, gmC, gmD e membro; promove gmB, gmC e gmD a GM
+  for (const u of [gmB, gmC, gmD, membro]) {
     const add = await req(BASE, "POST", `/guildas/${guildaId}/membros`, { cookie: gmA.cookie, body: { username: u.username } });
     t(`membro ${u.username} adicionado`, add.status === 201 || add.status === 200, `status=${add.status}`);
   }
-  for (const u of [gmB, gmC]) {
+  for (const u of [gmB, gmC, gmD]) {
     const prom = await req(BASE, "PATCH", `/guildas/${guildaId}/membros/${u.id}`, { cookie: gmA.cookie, body: { role: "gm" } });
     t(`${u.username} promovido a GM`, prom.status === 200, `status=${prom.status}`);
   }
+  // gmD é bloqueado ANTES de qualquer tela abrir — deve sumir do seletor
+  // de transferência mas permanecer visível no roster de membros.
+  const bloqueio = await req(BASE, "PATCH", `/admin/users/${gmD.id}`, { cookie: admin.cookie, body: { status: "bloqueado" } });
+  t("gmD bloqueado via ADMIN", bloqueio.status === 200, `status=${bloqueio.status}`);
 
   browser = await chromium.launch();
 
@@ -115,8 +120,11 @@ try {
   const opcoes = await respA.locator("select option").allTextContents();
   t("seletor lista apenas GMs elegíveis (B e C)",
     opcoes.some((o) => o.includes("GM Resp B")) && opcoes.some((o) => o.includes("GM Resp C"))
-      && !opcoes.some((o) => o.includes("GM Resp A") || o.includes("Membro Resp")),
+      && !opcoes.some((o) => o.includes("GM Resp A") || o.includes("GM Resp D") || o.includes("Membro Resp")),
     opcoes.join(" | "));
+  t("GM bloqueado (gmD) ausente do seletor", !opcoes.some((o) => o.includes("GM Resp D")), opcoes.join(" | "));
+  t("GM bloqueado permanece visível no roster",
+    (await pgA.getByText("gm_resp_d").count()) > 0);
 
   // segunda tela do mesmo usuário + tela do futuro responsável (gmB)
   const ctxA2 = await browser.newContext({ viewport: { width: 1366, height: 900 } });
@@ -190,6 +198,8 @@ try {
   t("alvo membro comum recusado (409)", putInvalido.status === 409, `status=${putInvalido.status}`);
   const putFora = await req(BASE, "PUT", `/guildas/${guildaId}/responsavel`, { cookie: admin.cookie, body: { userId: crypto.randomUUID() } });
   t("alvo inexistente recusado (409)", putFora.status === 409, `status=${putFora.status}`);
+  const putBloqueado = await req(BASE, "PUT", `/guildas/${guildaId}/responsavel`, { cookie: admin.cookie, body: { userId: gmD.id } });
+  t("alvo GM com conta bloqueada recusado (409)", putBloqueado.status === 409, `status=${putBloqueado.status}`);
   const putMesmo = await req(BASE, "PUT", `/guildas/${guildaId}/responsavel`, { cookie: admin.cookie, body: { userId: gmC.id } });
   t("transferência idempotente para o mesmo responsável", putMesmo.status === 200 && putMesmo.json?.ok === true, `status=${putMesmo.status}`);
 

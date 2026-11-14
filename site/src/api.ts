@@ -62,6 +62,10 @@ export interface GuildaMembro {
   displayName: string | null;
   role: "gm" | "membro";
   status: string;
+  // status da CONTA (ativo|bloqueado) — independente do vínculo;
+  // bloqueados seguem visíveis no roster mas não são elegíveis a
+  // transferência de responsabilidade
+  contaStatus: string;
   joinedAt: string | null;
   ehEu: boolean;
 }

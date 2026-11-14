@@ -231,8 +231,11 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   // esconder o botão é apenas conveniência de UX, nunca a segurança.
   const souResponsavel = !!eu && eu.userId === guilda?.responsavelId && eu.role === "gm" && eu.status === "ativo";
   const podeTransferir = !!guilda && (souAdmin || souResponsavel);
+  // Elegíveis = GM com vínculo ativo E conta ativa (contaStatus do
+  // roster). GM com conta bloqueada segue visível na lista de membros,
+  // apenas não aparece neste seletor — o backend também rejeita (409).
   const gmsElegiveis = guilda
-    ? membros.filter((m) => m.role === "gm" && m.status === "ativo" && m.userId !== guilda.responsavelId)
+    ? membros.filter((m) => m.role === "gm" && m.status === "ativo" && m.contaStatus === "ativo" && m.userId !== guilda.responsavelId)
     : [];
   const alvoResp = gmsElegiveis.find((m) => m.userId === novoResponsavel);
 
