@@ -213,7 +213,18 @@ const conectar = (cookie) => {
     reconnection: false,
   });
 };
-const emitirCb = (s, ev, p) => new Promise((r) => s.emit(ev, p, r));
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+const emitirUmaVez = (s, ev, p) => new Promise((r) => s.emit(ev, p, r));
+// Rate limit Socket.IO (#68): aguarda retryAfterMs e repete. Rejeições de
+// negócio (ok:false sem codigo) não são repetidas.
+const emitirCb = async (s, ev, p) => {
+  for (let i = 0; i < 5; i++) {
+    const r = await emitirUmaVez(s, ev, p);
+    if (r?.codigo !== "RATE_LIMITED") return r;
+    await dormir(Math.min(r.retryAfterMs ?? 500, 2500) + 50);
+  }
+  return emitirUmaVez(s, ev, p);
+};
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
 function tokenIdDoBanco(banco, sessionId, nome) {
   const db = abrirDb(banco);

@@ -51,12 +51,24 @@ export function criarLimitadorSocket(op: OpcoesLimitadorSocket): LimitadorSocket
   const limpezaMs = op.limpezaMs ?? 60_000;
 
   const podar = (agora: number) => {
-    // Remove buckets cheios e parados — não precisam de estado.
+    // 1) Remove buckets expirados e cheios parados — não precisam de
+    // estado. Buckets parcialmente consumidos são usuários ativos:
+    // removê-los renovaria a cota de quem está sendo limitado.
     for (const [k, b] of buckets) {
-      const cheio = b.tokens >= op.capacidade;
       const ocioso = agora - b.atualizadoEm > limpezaMs * 10;
-      if ((cheio && ocioso) || buckets.size > maxChaves) buckets.delete(k);
-      if (buckets.size <= maxChaves) break;
+      const cheioParado = b.tokens >= op.capacidade && agora - b.atualizadoEm > limpezaMs;
+      if (ocioso || cheioParado) buckets.delete(k);
+    }
+    // 2) Acima do teto: remove o bucket CHEIO menos recentemente usado.
+    // Se só restarem buckets ativos, o mapa excede o teto — preferível
+    // a memória temporária a renovar cota de usuário limitado.
+    while (buckets.size > maxChaves) {
+      let alvo: [string, Bucket] | null = null;
+      for (const e of buckets) {
+        if (e[1].tokens >= op.capacidade && (!alvo || e[1].atualizadoEm < alvo[1].atualizadoEm)) alvo = e;
+      }
+      if (!alvo) break;
+      buckets.delete(alvo[0]);
     }
   };
 
@@ -84,7 +96,8 @@ export function criarLimitadorSocket(op: OpcoesLimitadorSocket): LimitadorSocket
         b.tokens -= 1;
         return { permitido: true, retryAfterMs: 0 };
       }
-      const retryAfterMs = Math.max(1, Math.ceil(((1 - b.tokens) / porMs) * 1000));
+      // porMs já é tokens/ms — o resultado está em ms, sem *1000.
+      const retryAfterMs = Math.max(1, Math.ceil((1 - b.tokens) / porMs));
       log("aviso", "socket rate limit excedido", {
         limite: op.nome,
         chave,
@@ -117,6 +130,19 @@ export const LIMITES_SOCKET_MESA = {
   testeDecidir: { nome: "mesa-teste-decidir", capacidade: 6, porSegundo: 1.5 },
   /** `mesa:turno` + `mesa:timer` — controle de turno/tempo */
   turno: { nome: "mesa-turno", capacidade: 8, porSegundo: 2 },
+  /** `mesa:vtt:mapa` — upload/troca de mapa (regrava vtt_state inteiro) */
+  vttMapa: { nome: "mesa-vtt-mapa", capacidade: 4, porSegundo: 0.5 },
+  /** `mesa:vtt:token` — criar/mover tokens (drag = bursts legítimos) */
+  vttToken: { nome: "mesa-vtt-token", capacidade: 10, porSegundo: 2 },
+  /** `mesa:vtt:nevoa` — 1 emit por gesto de pointerup, serializado no
+   *  cliente; cota generosa cobre traços em rajada e flood fica bloqueado */
+  vttNevoa: { nome: "mesa-vtt-nevoa", capacidade: 6, porSegundo: 2 },
+  /** `mesa:vtt:nevoa:sincronizar` — leitura filtrada; tolerante a retries
+   *  de reconexão e estado incerto */
+  vttSync: { nome: "mesa-vtt-sync", capacidade: 10, porSegundo: 2 },
+  /** `mesa:entrar` — entrada na mesa (join + msg de presença + leituras);
+   *  folga para reconexões legítimas de socket */
+  entrar: { nome: "mesa-entrar", capacidade: 10, porSegundo: 2 },
 } as const;
 
 export type AcaoMesaLimitada = keyof typeof LIMITES_SOCKET_MESA;

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
+import { tratarRateLimitSocket } from "./avisoRateLimit";
 import { FaceDado } from "./Dados";
 
 interface Props {
@@ -65,9 +66,9 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       motivo: `D10 ${pos}${neg ? ` − ${neg} negativo${neg > 1 ? "s" : ""}` : ""}`,
       d10: { positivos: pos, negativos: neg, minimo: minimoPadrao },
       requestId: crypto.randomUUID(),
-    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number } }) => {
+    }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number } }) => {
       setRolando(false);
-      if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
+      if (!r?.ok) { if (!tratarRateLimitSocket(r, "rolagem", aoErro)) aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
       const res = r.grupos?.[0]?.resultados ?? [];
       setResultado({
         id: r.id ?? `d10-${Date.now()}`,

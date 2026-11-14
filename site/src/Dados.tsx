@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import { api } from "./api";
 import { getSocket } from "./socket";
+import { tratarRateLimitSocket } from "./avisoRateLimit";
 import LancadorD10 from "./D10";
 import Dado3D from "./Dado3D";
 
@@ -145,9 +146,9 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       modo: modo === "dano" ? "dano" : undefined,
       visibilidade: privado ? "privada" : "publica",
       requestId: crypto.randomUUID(),
-    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados?: number; sides?: number; resultados: number[] }[]; total?: number; modo?: string }) => {
+    }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number; id?: string; grupos?: { lados?: number; sides?: number; resultados: number[] }[]; total?: number; modo?: string }) => {
       setRolando(false);
-      if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar"); return; }
+      if (!r?.ok) { if (!tratarRateLimitSocket(r, "rolagem", aoErro)) aoErro(r?.erro ?? "Erro ao rolar"); return; }
       setResultado({
         id: r.id ?? `rol-${Date.now()}`,
         grupos: (r.grupos ?? [{ lados, resultados: [] }]).map((g) => ({ lados: g.lados ?? g.sides ?? 20, resultados: g.resultados })),

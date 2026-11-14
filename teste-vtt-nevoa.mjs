@@ -36,7 +36,17 @@ function conectar(cookie, base = BASE) {
   return s;
 }
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
-const emitirCb = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
+const emitirUmaVez = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
+// Rate limit Socket.IO (#68): aguarda retryAfterMs e repete. Rejeições de
+// negócio (ok:false sem codigo) não são repetidas.
+const emitirCb = async (s, ev, p) => {
+  for (let i = 0; i < 5; i++) {
+    const r = await emitirUmaVez(s, ev, p);
+    if (r?.codigo !== "RATE_LIMITED") return r;
+    await dormir(Math.min(r.retryAfterMs ?? 500, 2500) + 50);
+  }
+  return emitirUmaVez(s, ev, p);
+};
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 async function esperarVtt(socket, timeout = 8000) {
   const ini = cntVtt.get(socket) ?? 0;

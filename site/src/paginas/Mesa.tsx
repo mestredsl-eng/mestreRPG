@@ -6,6 +6,7 @@ import {
   type VttState, type TokenVtt, arquivoUrl,
 } from "../api";
 import { getSocket } from "../socket";
+import { tratarRateLimitSocket } from "../avisoRateLimit";
 import PainelDados, { FaceDado } from "../Dados";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
@@ -497,7 +498,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       socket.emit("entrar-campanha", campaignId, () => undefined);
       const tentativa = ++tentativaEntrada;
       entradaPendente = true;
-      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string }) => {
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string; codigo?: string; retryAfterMs?: number }) => {
         // ACK de tentativa antiga (conexão anterior) não libera a
         // trava nem atualiza estado de uma tentativa mais recente
         if (!ativo || tentativa !== tentativaEntrada) return;
@@ -519,6 +520,13 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // existe mais — desmonta a view e volta à lista real em vez
           // de manter mapa/tokens/mensagens de uma sessão morta
           if (typeof r?.erro === "string" && /não encontrada/i.test(r.erro)) { aoSair(); return; }
+          // RATE_LIMITED é transitório (reconexões em rajada), não
+          // falta de autorização — não derruba papel nem marca falha
+          // de acesso; o usuário pode tentar entrar de novo
+          if (r?.codigo === "RATE_LIMITED") {
+            tratarRateLimitSocket(r, "entrada na mesa", setErro);
+            return;
+          }
           // rejeição de autorização: invalida a visão — o servidor
           // não juntou o socket à sala, então nenhum evento novo
           // chegará; controles e painel saem de cena até nova entrada
@@ -574,14 +582,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       tipo: comoAcao ? "acao" : "texto",
       visibilidade: secreto ? "secreta" : privado ? "privada" : "publica",
       destinatarioUserId: privado ? destinoPriv || undefined : undefined,
-    }, (r: { ok?: boolean; erro?: string }) => {
-      if (!r?.ok) setErro(r?.erro ?? "Falha ao enviar");
-      else setTexto("");
+    }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (!r?.ok && !tratarRateLimitSocket(r, "mensagem", setErro)) setErro(r?.erro ?? "Falha ao enviar");
+      else if (r?.ok) setTexto("");
     });
   };
 
-  const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
-    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string }) => { if (r && !r.ok) setErro(r.erro ?? "Erro"); }));
+  const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => void) => {
+    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (r && !r.ok && !tratarRateLimitSocket(r, evento, setErro)) setErro(r.erro ?? "Erro");
+    }));
   };
 
   const pausarSessao = async () => {
@@ -780,8 +790,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                     {podeAgir && t.status === "pendente" && (
                       <div className="linha linha-botoes">
                         {(ehMestreAtual || ehDono) && (
-                          <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number }) => {
+                          <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number; dados?: number[]; total?: number }) => {
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.diceSides], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
+                            else if (r && r.ok === false && !tratarRateLimitSocket(r, "teste:rolar", setErro)) setErro(r.erro ?? "Erro ao rolar teste");
                           })}>Rolar</button>
                         )}
                         {ehMestreAtual && (
@@ -800,7 +811,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                               const sel = document.getElementById(`out-${t.id}`) as HTMLSelectElement;
                               if (!sel.value) return;
                               const nota = (document.getElementById(`nota-${t.id}`) as HTMLInputElement)?.value;
-                              getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, () => undefined);
+                              getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+                                if (r && r.ok === false && !tratarRateLimitSocket(r, "teste:decidir", setErro)) setErro(r.erro ?? "Erro ao decidir teste");
+                              });
                             }}>Confirmar</button>
                           </>
                         )}
@@ -948,9 +961,9 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
             minimo: minimo === "" ? undefined : Number(minimo),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
-          }, (r: { ok?: boolean; erro?: string }) => {
+          }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
             if (r?.ok) { setAberto(false); setRotulo(""); }
-            else aoErro(r?.erro ?? "Erro");
+            else if (!tratarRateLimitSocket(r, "teste:pedir", aoErro)) aoErro(r?.erro ?? "Erro");
           });
         }}>
           <label>Personagem
@@ -1060,9 +1073,9 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             dadosLados: 10, malus: Math.max(0, Math.round(negativos) || 0),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
-          }, (r: { ok?: boolean; erro?: string }) => {
+          }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
             if (r?.ok) { setAberto(false); setNegativos(0); }
-            else aoErro(r?.erro ?? "Erro");
+            else if (!tratarRateLimitSocket(r, "teste:pedir", aoErro)) aoErro(r?.erro ?? "Erro");
           });
         }}>
           <label>Personagem
@@ -1611,14 +1624,14 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   };
 
   const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
-    getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
-      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+    getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (r && r.ok === false && !tratarRateLimitSocket(r, "mesa virtual", setErroVtt)) setErroVtt(r.erro ?? "Ação recusada");
       cb?.(r);
     });
   };
   const emitirMapa = (payload: Record<string, unknown>) => {
-    getSocket().emit("mesa:vtt:mapa", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
-      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+    getSocket().emit("mesa:vtt:mapa", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (r && r.ok === false && !tratarRateLimitSocket(r, "mesa virtual", setErroVtt)) setErroVtt(r.erro ?? "Ação recusada");
     });
   };
 

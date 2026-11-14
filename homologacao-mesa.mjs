@@ -46,7 +46,17 @@ function esperar(socket, evento, timeout = 8000, pred) {
   });
 }
 const msgContent = (d) => d?.content ?? "";
-const emitirCb = (socket, evento, payload) => new Promise((resolve) => socket.emit(evento, payload, resolve));
+const emitirUmaVez = (socket, evento, payload) => new Promise((resolve) => socket.emit(evento, payload, resolve));
+// Rate limit Socket.IO (#68): aguarda retryAfterMs e repete. Rejeições de
+// negócio (ok:false sem codigo) não são repetidas.
+const emitirCb = async (socket, evento, payload) => {
+  for (let i = 0; i < 5; i++) {
+    const r = await emitirUmaVez(socket, evento, payload);
+    if (r?.codigo !== "RATE_LIMITED") return r;
+    await dormir(Math.min(r.retryAfterMs ?? 500, 2500) + 50);
+  }
+  return emitirUmaVez(socket, evento, payload);
+};
 
 async function entrar(socket, sessionId) {
   await pronto(socket);

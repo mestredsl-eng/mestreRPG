@@ -81,6 +81,7 @@ async function main() {
   await teste("LIMITES_SOCKET_MESA cobre todas as ações de escrita previstas", () => {
     const esperadas: AcaoMesaLimitada[] = [
       "chat", "rolagem", "testePedir", "testeRolar", "testeDecidir", "turno",
+      "vttMapa", "vttToken", "vttNevoa", "vttSync", "entrar",
     ];
     for (const acao of esperadas) {
       const cfg = LIMITES_SOCKET_MESA[acao];
@@ -95,6 +96,33 @@ async function main() {
     assert.equal(l.consumir("u:x").permitido, false);
     l.reiniciar();
     assert.equal(l.consumir("u:x").permitido, true);
+  });
+
+  await teste("maxChaves não remove buckets ativos nem renova cotas", async () => {
+    // capacidade 2: uA esgota a cota; uB/uC seguem ativos (1 token).
+    // O 4º usuário dispara podar() — nenhum bucket pode ser removido
+    // porque todos estão parcialmente consumidos.
+    const l = criarLimitadorSocket({ nome: "t", capacidade: 2, porSegundo: 0.0001, maxChaves: 3, limpezaMs: 60_000 });
+    assert.equal(l.consumir("uA:x").permitido, true);
+    assert.equal(l.consumir("uA:x").permitido, true);
+    assert.equal(l.consumir("uA:x").permitido, false, "uA esgotado");
+    assert.equal(l.consumir("uB:x").permitido, true);
+    assert.equal(l.consumir("uC:x").permitido, true);
+    // uD é a 4ª chave: com o bug antigo, podar() apagaria uA (ordem de
+    // inserção) e a próxima chamada de uA voltaria a ser permitida.
+    assert.equal(l.consumir("uD:x").permitido, true, "chave nova é aceita");
+    assert.equal(l.consumir("uA:x").permitido, false, "cota de uA NÃO foi renovada pela poda");
+    assert.equal(l.consumir("uB:x").permitido, true, "uB ainda tem seu token");
+  });
+
+  await teste("podar remove buckets expirados mesmo abaixo do teto", async () => {
+    // limpezaMs curto: bucket ocioso por >10x é podado; recriar a chave
+    // é seguro porque o usuário esteve inativo além da janela de refill.
+    const l = criarLimitadorSocket({ nome: "t", capacidade: 1, porSegundo: 0.0001, limpezaMs: 30 });
+    assert.equal(l.consumir("u:x").permitido, true);
+    assert.equal(l.consumir("u:x").permitido, false);
+    await dormir(400); // ~13x limpezaMs — bucket expirado
+    assert.equal(l.consumir("u:x").permitido, true, "após expirar, a cota reinicia");
   });
 
   console.log(falhas === 0 ? "\nTodos os testes passaram." : `\n${falhas} teste(s) falharam.`);

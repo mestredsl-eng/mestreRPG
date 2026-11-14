@@ -34,7 +34,20 @@ function conectar(cookie) {
   return s;
 }
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
-const emitirCb = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
+const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+const emitirUmaVez = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
+// O rate limit Socket.IO (#68) rejeita rajadas legítimas do teste com
+// RATE_LIMITED + retryAfterMs; aguarda a janela e tenta de novo, como um
+// cliente real deve fazer. Rejeições de negócio (ok:false sem codigo) não
+// são repetidas.
+const emitirCb = async (s, ev, p) => {
+  for (let i = 0; i < 4; i++) {
+    const r = await emitirUmaVez(s, ev, p);
+    if (r?.codigo !== "RATE_LIMITED") return r;
+    await dormir(Math.min(r.retryAfterMs ?? 500, 2500) + 50);
+  }
+  return emitirUmaVez(s, ev, p);
+};
 async function esperarVtt(socket, timeout = 8000) {
   const ini = eventosVtt.get(socket) ?? 0;
   const fim = Date.now() + timeout;
@@ -44,7 +57,6 @@ async function esperarVtt(socket, timeout = 8000) {
   }
   throw new Error("timeout mesa:vtt");
 }
-const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function novoUsuario(banco, { username, role = null, permissions = {} }) {
   const db = abrirDb(banco);
@@ -415,7 +427,10 @@ try {
   ]);
   const aceitos = paralelos.filter((r) => r?.ok === true).length;
   const vttConc = [...paralelos].reverse().find((r) => r?.vtt)?.vtt;
-  const tokensConc = vttConc?.tokens ?? [];
+  // O vtt da resposta pode ser um snapshot anterior às mutações paralelas;
+  // faz uma leitura autoritativa para conferir o estado final.
+  const vttFinal = (await emitirCb(sMestre2, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tok-acao", x: 0.5, y: 0.5 } }))?.vtt ?? vttConc;
+  const tokensConc = vttFinal?.tokens ?? [];
   const todosMovidos = criados.filter(Boolean).every((tk) => {
     const fin = tokensConc.find((x) => x.id === tk.id);
     return fin && fin.x !== 0.1;

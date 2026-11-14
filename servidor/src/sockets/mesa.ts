@@ -17,6 +17,10 @@ import {
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
   type TokenVtt, type VttState,
 } from "../lib/vtt.js";
+import {
+  criarLimitadorSocket, chaveSocket, LIMITES_SOCKET_MESA,
+  type AcaoMesaLimitada, type LimitadorSocket,
+} from "../lib/socket-rate-limit.js";
 
 const db = getDb();
 
@@ -80,6 +84,63 @@ async function resolverCtx(socket: Socket, sessionId: string): Promise<Ctx | { e
   return { sessao, membership: m, papel: m.role as Papel };
 }
 
+// ---------- rate limit Socket.IO (Issue #68) ----------
+// Cota por usuário autenticado + ação (userId:acao): várias abas do
+// mesmo usuário compartilham o bucket; usuários distintos são isolados.
+// O consumo acontece DEPOIS da autenticação do handshake e de uma
+// validação estrutural mínima do payload, e ANTES de resolverCtx,
+// consultas, gravações e broadcasts — payload malformado não gasta cota.
+// `mesa:sair` é isento de propósito: bloquear a saída prenderia o
+// socket na sala. `entrar-campanha`/`sair-campanha`/`ping` vivem em
+// index.ts e também não são limitados.
+const LIMITE_POR_EVENTO: Record<string, AcaoMesaLimitada> = {
+  "mesa:entrar": "entrar",
+  "mesa:mensagem": "chat",
+  "mesa:rolar": "rolagem",
+  "mesa:teste:pedir": "testePedir",
+  "mesa:teste:rolar": "testeRolar",
+  "mesa:teste:decidir": "testeDecidir",
+  "mesa:turno": "turno",
+  "mesa:timer": "turno",
+  "mesa:vtt:mapa": "vttMapa",
+  "mesa:vtt:token": "vttToken",
+  "mesa:vtt:nevoa": "vttNevoa",
+  "mesa:vtt:nevoa:sincronizar": "vttSync",
+};
+
+const limitadoresMesa = new Map<AcaoMesaLimitada, LimitadorSocket>();
+function limitadorMesa(acao: AcaoMesaLimitada): LimitadorSocket {
+  let l = limitadoresMesa.get(acao);
+  if (!l) {
+    l = criarLimitadorSocket(LIMITES_SOCKET_MESA[acao]);
+    limitadoresMesa.set(acao, l);
+  }
+  return l;
+}
+
+/** Validação estrutural mínima: só o suficiente para não cobrar cota de
+ *  payload sem identificador. A validação completa continua no handler. */
+function payloadMinimoValido(evento: string, p: unknown): boolean {
+  const pl = p as Record<string, unknown> | null | undefined;
+  const sid = typeof pl?.sessionId === "string" && pl.sessionId.length > 0;
+  switch (evento) {
+    case "mesa:teste:rolar":
+      return typeof pl?.testId === "string" && pl.testId.length > 0;
+    case "mesa:teste:decidir":
+      return typeof pl?.testId === "string" && pl.testId.length > 0
+        && typeof pl.outcome === "string" && pl.outcome.length > 0;
+    case "mesa:mensagem":
+      return sid && typeof pl?.content === "string" && pl.content.trim().length > 0;
+    case "mesa:rolar":
+      return sid && Array.isArray(pl?.dados) && pl.dados.length > 0;
+    case "mesa:turno":
+    case "mesa:timer":
+      return sid && typeof pl?.acao === "string" && pl.acao.length > 0;
+    default:
+      return sid;
+  }
+}
+
 /**
  * Registra handler Socket.IO dentro de um contexto de operação de
  * campanha (AsyncLocalStorage): o resolverCtx adquire o lease uma vez
@@ -90,6 +151,27 @@ function on(socket: Socket, evento: string, handler: (...args: never[]) => unkno
   socket.on(evento, (...args: unknown[]) => {
     void opCampanhaALS.run({ ops: new Map() }, async () => {
       try {
+        const acao = LIMITE_POR_EVENTO[evento];
+        if (acao) {
+          const usuario = socket.data.usuario as Usuario | undefined;
+          const cb = typeof args[args.length - 1] === "function"
+            ? (args[args.length - 1] as (r: unknown) => void)
+            : undefined;
+          // sem usuário autenticado ou payload estruturalmente inválido:
+          // não consome cota — o handler responde o erro normal
+          if (usuario && payloadMinimoValido(evento, args[0])) {
+            const r = limitadorMesa(acao).consumir(chaveSocket(usuario.id, acao));
+            if (!r.permitido) {
+              cb?.({
+                ok: false,
+                codigo: "RATE_LIMITED",
+                erro: "Muitas ações em pouco tempo — aguarde e tente novamente",
+                retryAfterMs: r.retryAfterMs,
+              });
+              return;
+            }
+          }
+        }
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (handler as (...a: any[]) => unknown)(...(args as any[]));
       } finally {
