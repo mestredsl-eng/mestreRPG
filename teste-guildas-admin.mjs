@@ -235,6 +235,37 @@ try {
   const bobSome2 = await req(base, "DELETE", `/guildas/${guildBloq}/membros/${idDe("bob")}`, { cookie: cookieBob });
   t("com GM capaz, a remoção passa", bobSome2.status === 200, JSON.stringify(bobSome2.json));
 
+  sec("GM de conta bloqueada pode ser removido/rebaixado");
+  const gBk = await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda Bloqueada" } });
+  const guildBk = gBk.json.guilda.id;
+  await req(base, "POST", `/guildas/${guildBk}/membros`, { cookie: cookieBob, body: { username: "alice" } });
+  await req(base, "POST", `/guildas/${guildBk}/membros`, { cookie: cookieBob, body: { username: "carol" } });
+  await req(base, "PATCH", `/guildas/${guildBk}/membros/${idDe("alice")}`, { cookie: cookieBob, body: { role: "gm" } });
+  await req(base, "PATCH", `/guildas/${guildBk}/membros/${idDe("carol")}`, { cookie: cookieBob, body: { role: "gm" } });
+  // bloqueia as contas de alice e carol — só bob segue como GM capaz
+  await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { status: "bloqueado" } });
+  await req(base, "PATCH", `/admin/users/${idDe("carol")}`, { cookie: cookieRoot, body: { status: "bloqueado" } });
+  const remAliceBk = await req(base, "DELETE", `/guildas/${guildBk}/membros/${idDe("alice")}`, { cookie: cookieBob });
+  t("remover GM de conta bloqueada passa (resta GM capaz)", remAliceBk.status === 200, JSON.stringify(remAliceBk.json));
+  const rebCarolBk = await req(base, "PATCH", `/guildas/${guildBk}/membros/${idDe("carol")}`, { cookie: cookieBob, body: { role: "membro" } });
+  t("rebaixar GM de conta bloqueada passa", rebCarolBk.status === 200, JSON.stringify(rebCarolBk.json));
+  const remBobBk = await req(base, "DELETE", `/guildas/${guildBk}/membros/${idDe("bob")}`, { cookie: cookieBob });
+  t("remover o último GM capaz continua recusado", remBobBk.status === 409);
+  await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { status: "ativo" } });
+  await req(base, "PATCH", `/admin/users/${idDe("carol")}`, { cookie: cookieRoot, body: { status: "ativo" } });
+  // desbloqueio revoga as sessões — é preciso recertificar cookies
+  const cookieAlice2 = sessaoDb(idDe("alice"));
+  const cookieCarol2 = sessaoDb(idDe("carol"));
+
+  sec("Campanhas candidatas — ADMIN vê todas, GM só as operáveis");
+  const candRoot = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieRoot });
+  t("ADMIN lista candidatas de qualquer usuário", candRoot.status === 200 && (candRoot.json?.campanhas ?? []).some((c) => c.id === campId), JSON.stringify(candRoot.json).slice(0, 200));
+  const candCarol = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieCarol2 });
+  const idsCarol = (candCarol.json?.campanhas ?? []).map((c) => c.id);
+  t("GM vê a própria e não vê campanha alheia", candCarol.status === 200 && idsCarol.includes(campCarol.json.campanha.id) && !idsCarol.includes(campId), JSON.stringify({ st: candCarol.status, ids: idsCarol, resp: candCarol.json }).slice(0, 300));
+  const candAlice = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieAlice2 });
+  t("não-gestor não lista candidatas", candAlice.status === 403, `status=${candAlice.status} body=${JSON.stringify(candAlice.json)}`);
+
   sec("Auditoria");
   const db2 = abrirDb(BANCO);
   const audits = db2.prepare("select action from audit_logs").all().map((r) => r.action);

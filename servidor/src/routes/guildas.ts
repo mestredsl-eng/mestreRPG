@@ -274,7 +274,10 @@ guildasRouter.patch("/:guildId/membros/:userId", requireGuildGestao(), async (re
   const novoRole = body.data.role ?? m.role;
   const novoStatus = body.data.status ?? m.status;
   const perdeGM = m.role === "gm" && m.status === "ativo" && (novoRole !== "gm" || novoStatus !== "ativo");
-  if (perdeGM && (await contarGMs(g.id)) <= 1) {
+  // GM com conta bloqueada não entra em contarGMs — removê-lo/rebaixá-lo
+  // não reduz os GMs capazes, então a proteção do último GM não se aplica.
+  const [alvo] = await db.select({ status: users.status }).from(users).where(eq(users.id, alvoId)).limit(1);
+  if (perdeGM && alvo?.status === "ativo" && (await contarGMs(g.id)) <= 1) {
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
     return;
   }
@@ -304,7 +307,8 @@ guildasRouter.delete("/:guildId/membros/:userId", requireGuildGestao(), async (r
     res.status(404).json({ erro: "Membro não encontrado" });
     return;
   }
-  if (m.role === "gm" && m.status === "ativo" && (await contarGMs(req.params.guildId)) <= 1) {
+  const [alvoDel] = await db.select({ status: users.status }).from(users).where(eq(users.id, alvoId)).limit(1);
+  if (m.role === "gm" && m.status === "ativo" && alvoDel?.status === "ativo" && (await contarGMs(req.params.guildId)) <= 1) {
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
     return;
   }
@@ -322,6 +326,28 @@ guildasRouter.get("/:guildId/campanhas", requireGuildAcesso(), async (req, res) 
   res.json({
     campanhas: rows.map((c) => ({ id: c.id, name: c.name, status: c.status, ownerId: c.ownerId })),
   });
+});
+
+/**
+ * GET /api/guildas/:guildId/campanhas-candidatas — campanhas que o gestor
+ * pode vincular. ADMIN enxerga todas; GM só as que pode operar na mesa
+ * (dono ou mestre ativo) — o mesmo critério aplicado pelo PUT de vínculo.
+ */
+guildasRouter.get("/:guildId/campanhas-candidatas", requireGuildGestao(), async (req, res) => {
+  const uid = req.usuario!.id;
+  const rows = await db
+    .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status, guildId: campaigns.guildId, ownerId: campaigns.ownerId })
+    .from(campaigns);
+  if (ehAdmin(req)) {
+    res.json({ campanhas: rows });
+    return;
+  }
+  const candidatas = [];
+  for (const c of rows) {
+    const m = await getMembership(c.id, uid);
+    if (c.ownerId === uid || (m?.status === "ativo" && m.role === "mestre")) candidatas.push(c);
+  }
+  res.json({ campanhas: candidatas });
 });
 
 /**

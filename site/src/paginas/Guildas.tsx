@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { api, type CampanhaResumo, type Guilda, type GuildaCampanha, type GuildaMembro } from "../api";
+import { api, type Guilda, type GuildaCampanha, type GuildaCampanhaCandidata, type GuildaMembro } from "../api";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
 
@@ -112,12 +112,10 @@ export default function Guildas() {
 
 function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAdmin: boolean; aoVoltar: () => void }) {
   const { notificar } = useNotificar();
-  const { estado } = useAuth();
-  const meuId = estado.status === "autenticado" ? estado.usuario.id : null;
   const [guilda, setGuilda] = useState<Guilda | null>(null);
   const [membros, setMembros] = useState<GuildaMembro[]>([]);
   const [campanhas, setCampanhas] = useState<GuildaCampanha[]>([]);
-  const [minhas, setMinhas] = useState<CampanhaResumo[]>([]);
+  const [candidatas, setCandidatas] = useState<GuildaCampanhaCandidata[]>([]);
   const [campanhaVincular, setCampanhaVincular] = useState("");
   const [novoMembro, setNovoMembro] = useState("");
   const [erro, setErro] = useState<string | null>(null);
@@ -130,20 +128,21 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
         api.obterGuilda(guildId),
         api.listarMembrosGuilda(guildId),
         api.listarCampanhasGuilda(guildId),
-        api.listarCampanhas(),
+        api.listarCampanhasCandidatasGuilda(guildId),
       ]);
       setGuilda(g.guilda);
       setMembros(m.membros);
       setCampanhas(c.campanhas);
-      // candidatas a vínculo: campanhas em que sou mestre ativo (ou dono)
-      setMinhas(mc.campanhas.filter((x) => x.meuStatus === "ativo" && (x.meuPapel === "mestre" || x.ownerId === meuId)));
+      // candidatas já vêm filtradas pelo servidor (ADMIN: todas;
+      // GM: só as que pode operar na mesa) — aqui só o vínculo atual
+      setCandidatas(mc.campanhas);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar guilda");
     } finally {
       setCarregando(false);
     }
-  }, [guildId, meuId]);
+  }, [guildId]);
 
   useEffect(() => {
     void carregar();
@@ -289,13 +288,14 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
       <section className="cartao">
         <h2>Campanhas vinculadas ({campanhas.length})</h2>
         {podeGerir && guilda.status === "ativa" && (() => {
-          const candidatas = minhas.filter((c) => !c.guildId || c.guildId === guildId);
-          return candidatas.length > 0 ? (
+          // GM não move campanhas de outra guilda; ADMIN pode mover
+          const opcoes = candidatas.filter((c) => souAdmin || !c.guildId || c.guildId === guildId);
+          return opcoes.length > 0 ? (
             <form className="formulario" onSubmit={vincular}>
               <div className="linha">
                 <select value={campanhaVincular} onChange={(e) => setCampanhaVincular(e.target.value)} required>
-                  <option value="">Escolha uma campanha que você mestra…</option>
-                  {candidatas.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  <option value="">{souAdmin ? "Escolha uma campanha…" : "Escolha uma campanha que você mestra…"}</option>
+                  {opcoes.map((c) => <option key={c.id} value={c.id}>{c.name}{c.guildId && c.guildId !== guildId ? " (outra guilda)" : ""}</option>)}
                 </select>
                 <button type="submit" disabled={!campanhaVincular}>Vincular</button>
               </div>

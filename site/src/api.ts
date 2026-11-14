@@ -62,6 +62,10 @@ export interface GuildaCampanha {
   ownerId: string;
 }
 
+export interface GuildaCampanhaCandidata extends GuildaCampanha {
+  guildId: string | null;
+}
+
 export class ApiError extends Error {
   detalhes?: unknown;
   status: number;
@@ -151,6 +155,8 @@ export const api = {
     requisicao<{ ok: boolean }>(`/guildas/${id}/membros/${userId}`, { method: "DELETE" }),
   listarCampanhasGuilda: (id: string) =>
     requisicao<{ campanhas: GuildaCampanha[] }>(`/guildas/${id}/campanhas`),
+  listarCampanhasCandidatasGuilda: (id: string) =>
+    requisicao<{ campanhas: GuildaCampanhaCandidata[] }>(`/guildas/${id}/campanhas-candidatas`),
   vincularCampanhaGuilda: (id: string, campaignId: string, acao: "vincular" | "desvincular") =>
     requisicao<{ ok: boolean }>(`/guildas/${id}/campanhas/${campaignId}`, { method: "PUT", body: JSON.stringify({ acao }) }),
 
