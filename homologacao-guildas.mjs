@@ -74,7 +74,9 @@ try {
   await pgAdmin.getByPlaceholder("Nome de usuário existente").fill("jogadora_a");
   await pgAdmin.getByRole("button", { name: "Adicionar", exact: true }).click();
   await pgAdmin.waitForTimeout(800);
-  t("membro adicionada à tabela", await pgAdmin.getByText("jogadora_a").isVisible());
+  // Desktop e mobile renderizam o mesmo dado (tabela + cartão); .first()
+  // desambigua sem enfraquecer a asserção de visibilidade.
+  t("membro adicionada à tabela", await pgAdmin.getByText("jogadora_a").first().isVisible());
   const linhaA = pgAdmin.locator("tr", { hasText: "jogadora_a" });
   await linhaA.getByRole("button", { name: "Promover a GM" }).click();
   await pgAdmin.waitForTimeout(800);

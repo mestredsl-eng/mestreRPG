@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, type Guilda, type GuildaCampanha, type GuildaCampanhaCandidata, type GuildaMembro } from "../api";
+import { api, type ConviteInternoGuilda, type Guilda, type GuildaCampanha, type GuildaCampanhaCandidata, type GuildaMembro } from "../api";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
 import { getSocket } from "../socket";
@@ -17,6 +17,7 @@ export default function Guildas() {
   const [descricao, setDescricao] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const jaCarregou = useRef(false);
   const geracaoCarregamento = useRef(0);
 
   const carregar = useCallback(async () => {
@@ -35,7 +36,10 @@ export default function Guildas() {
       setGuildas([]);
       setErro(e instanceof Error ? e.message : "Erro ao carregar guildas");
     } finally {
-      if (geracao === geracaoCarregamento.current) setCarregando(false);
+      if (geracao === geracaoCarregamento.current) {
+        setCarregando(false);
+        jaCarregou.current = true;
+      }
     }
   }, [usuario?.isAdmin]);
 
@@ -101,11 +105,12 @@ export default function Guildas() {
             <button type="submit">Criar guilda</button>
           </form>
         )}
-        {carregando ? (
+        {carregando && !jaCarregou.current ? (
           <p>Carregando…</p>
         ) : guildas.length === 0 ? (
           <p>Nenhuma guilda ainda. Crie a primeira ou peça a um GM para adicioná-lo.</p>
         ) : (
+          <>
           <table className="tabela tabela-responsiva">
             <thead>
               <tr><th>Nome</th><th>Seu papel</th><th>Status</th><th></th></tr>
@@ -121,6 +126,19 @@ export default function Guildas() {
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {guildas.map((g) => (
+              <div key={g.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><strong>{g.name}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Seu papel</span><span>{g.meuPapel === "gm" ? "GM" : g.meuPapel === "membro" ? "Membro" : g.meuPapel === "admin" ? "Administrador" : "—"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{g.status === "arquivada" ? "Arquivada" : "Ativa"}</span></div>
+                <div className="registro-acoes">
+                  <button className="mini" onClick={() => setSelecionada(g.id)}>Abrir</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </section>
     </>
@@ -267,7 +285,10 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
     }
   };
 
-  if (carregando) return <section className="cartao"><p>Carregando…</p></section>;
+  // Só bloqueia a tela no primeiro carregamento: recargas disparadas por
+  // guilda:atualizada (ex.: convite criado) não podem desmontar a seção de
+  // convites — o código do link só é exibido uma única vez, logo após criar.
+  if (carregando && !guilda) return <section className="cartao"><p>Carregando…</p></section>;
   if (!guilda) return <section className="cartao"><p className="erro">{erro ?? "Guilda não encontrada."}</p><button onClick={aoVoltar}>Voltar</button></section>;
 
   return (
@@ -332,6 +353,27 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
             ))}
           </tbody>
         </table>
+        <div className="cartoes-registro">
+          {membros.map((m) => {
+            const ultimoGM = m.ehEu && m.role === "gm" && membros.filter((x) => x.role === "gm" && x.status === "ativo").length <= 1;
+            return (
+              <div key={m.userId} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Usuário</span><strong>{m.username}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><span>{m.displayName ?? "—"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{m.role === "gm" ? "GM" : "Membro"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{m.status === "ativo" ? "Ativo" : m.status}</span></div>
+                {podeGerir && m.status === "ativo" && (
+                  <div className="registro-acoes">
+                    <button className="mini" onClick={() => void alternarGM(m)} disabled={ultimoGM}>
+                      {m.role === "gm" ? "Rebaixar" : "Promover a GM"}
+                    </button>
+                    <button className="mini perigo" onClick={() => void remover(m)} disabled={ultimoGM}>Remover</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="cartao">
@@ -354,6 +396,7 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
         {campanhas.length === 0 ? (
           <p className="dica">Nenhuma campanha vinculada. Campanhas sem guilda podem ser vinculadas por um mestre delas que seja GM (ou pelo ADMIN).</p>
         ) : (
+          <>
           <table className="tabela tabela-responsiva">
             <thead><tr><th>Nome</th><th>Status</th>{souAdmin && <th>Ações</th>}</tr></thead>
             <tbody>
@@ -370,8 +413,223 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {campanhas.map((c) => (
+              <div key={c.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><strong>{c.name}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{c.status}</span></div>
+                {souAdmin && (
+                  <div className="registro-acoes">
+                    <button className="mini perigo" onClick={() => void desvincular(c)}>Desvincular</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </section>
+
+      {podeGerir && guilda.status === "ativa" && <SecaoConvitesInternos guildId={guildId} />}
     </>
+  );
+}
+
+const SITUACAO_CONVITE: Record<string, string> = {
+  ativo: "Ativo",
+  esgotado: "Esgotado",
+  expirado: "Expirado",
+  revogado: "Revogado",
+};
+
+function situacaoConvite(c: ConviteInternoGuilda): string {
+  // O servidor informa `status`; recalculamos no cliente apenas como
+  // rede de segurança para listas abertas entre expiração/limite.
+  if (c.status === "revogado" || c.status === "expirado" || c.status === "esgotado") return c.status;
+  if (new Date(c.expiraEm).getTime() <= Date.now()) return "expirado";
+  if (c.maxUsos > 0 && c.usos >= c.maxUsos) return "esgotado";
+  return "ativo";
+}
+
+function SecaoConvitesInternos({ guildId }: { guildId: string }) {
+  const [convites, setConvites] = useState<ConviteInternoGuilda[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [criando, setCriando] = useState(false);
+  const [validadeHoras, setValidadeHoras] = useState("168");
+  const [maxUsos, setMaxUsos] = useState("1");
+  // Link recém-criado: o código opaco só é exibido aqui, uma única vez.
+  const [linkCriado, setLinkCriado] = useState<string | null>(null);
+  const [copiado, setCopiado] = useState(false);
+  const [revogando, setRevogando] = useState<string | null>(null);
+
+  const carregar = useCallback(async () => {
+    setErro(null);
+    try {
+      const { convites: lista } = await api.listarConvitesInternosGuilda(guildId);
+      setConvites(lista);
+    } catch (e) {
+      setConvites([]);
+      setErro(e instanceof Error ? e.message : "Erro ao carregar convites");
+    }
+  }, [guildId]);
+
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  // Aceites/revogações emitem guilda:atualizada — sem este listener a
+  // listagem de convites (usos e situação) ficaria desatualizada enquanto
+  // a seção permanecer montada.
+  useEffect(() => {
+    const socket = getSocket();
+    const aoAtualizar = (evento: { guildId?: string }) => {
+      if (evento?.guildId === guildId) void carregar();
+    };
+    socket.on("guilda:atualizada", aoAtualizar);
+    return () => { socket.off("guilda:atualizada", aoAtualizar); };
+  }, [carregar, guildId]);
+
+  const criar = async (e: FormEvent) => {
+    e.preventDefault();
+    if (criando) return;
+    setCriando(true);
+    setErro(null);
+    setLinkCriado(null);
+    try {
+      const { convite } = await api.criarConviteInternoGuilda(guildId, {
+        validadeHoras: Number(validadeHoras),
+        maxUsos: Number(maxUsos),
+      });
+      if (convite.codigo) {
+        setLinkCriado(`${window.location.origin}/?conviteGuilda=${convite.codigo}`);
+        setCopiado(false);
+      }
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao criar convite");
+    } finally {
+      setCriando(false);
+    }
+  };
+
+  const copiar = async () => {
+    if (!linkCriado) return;
+    try {
+      await navigator.clipboard.writeText(linkCriado);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = linkCriado;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+    }
+    setCopiado(true);
+  };
+
+  const revogar = async (c: ConviteInternoGuilda) => {
+    if (revogando) return;
+    setRevogando(c.id);
+    setErro(null);
+    try {
+      await api.revogarConviteInternoGuilda(guildId, c.id);
+      await carregar();
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : "Erro ao revogar convite");
+    } finally {
+      setRevogando(null);
+    }
+  };
+
+  return (
+    <section className="cartao">
+      <h2>Convites internos</h2>
+      <p className="dica">
+        Links para adicionar pessoas a esta guilda como <strong>membro</strong>. O papel de GM
+        nunca é concedido por convite — continua sendo decisão de um GM.
+      </p>
+      {erro && <p className="erro">{erro}</p>}
+
+      <form className="formulario" onSubmit={criar}>
+        <div className="grade-2">
+          <label>Validade
+            <select value={validadeHoras} onChange={(e) => setValidadeHoras(e.target.value)}>
+              <option value="24">24 horas</option>
+              <option value="72">3 dias</option>
+              <option value="168">7 dias</option>
+              <option value="720">30 dias</option>
+            </select>
+          </label>
+          <label>Limite de usos
+            <select value={maxUsos} onChange={(e) => setMaxUsos(e.target.value)}>
+              <option value="1">1 uso</option>
+              <option value="5">5 usos</option>
+              <option value="25">25 usos</option>
+            </select>
+          </label>
+        </div>
+        <button type="submit" disabled={criando}>{criando ? "Gerando…" : "Gerar convite"}</button>
+      </form>
+
+      {linkCriado && (
+        <div className="formulario">
+          <p><strong>Convite criado.</strong> Compartilhe o link — ele só é exibido agora:</p>
+          <div className="linha">
+            <input readOnly value={linkCriado} onFocus={(e) => e.target.select()} aria-label="Link do convite" />
+            <button type="button" className="mini" onClick={() => void copiar()}>{copiado ? "Copiado!" : "Copiar link"}</button>
+          </div>
+        </div>
+      )}
+
+      {convites === null ? (
+        <p>Carregando convites…</p>
+      ) : convites.length === 0 ? (
+        <p className="dica">Nenhum convite criado ainda.</p>
+      ) : (
+        <>
+        <table className="tabela tabela-responsiva">
+          <thead><tr><th>Convite</th><th>Expira em</th><th>Usos</th><th>Situação</th><th>Ações</th></tr></thead>
+          <tbody>
+            {convites.map((c) => {
+              const sit = situacaoConvite(c);
+              return (
+                <tr key={c.id}>
+                  <td>{c.id.slice(0, 8)}…</td>
+                  <td>{new Date(c.expiraEm).toLocaleString("pt-BR")}</td>
+                  <td>{c.usos}/{c.maxUsos > 0 ? c.maxUsos : "∞"}</td>
+                  <td><span className={`badge badge-${sit}`}>{SITUACAO_CONVITE[sit] ?? sit}</span></td>
+                  <td className="acoes">
+                    {sit === "ativo" && (
+                      <button className="mini perigo" onClick={() => void revogar(c)} disabled={revogando === c.id}>
+                        {revogando === c.id ? "Revogando…" : "Revogar"}
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <div className="cartoes-registro">
+          {convites.map((c) => {
+            const sit = situacaoConvite(c);
+            return (
+              <div key={c.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Convite</span><span>{c.id.slice(0, 8)}…</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Expira em</span><span>{new Date(c.expiraEm).toLocaleString("pt-BR")}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Usos</span><span>{c.usos}/{c.maxUsos > 0 ? c.maxUsos : "∞"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Situação</span><span className={`badge badge-${sit}`}>{SITUACAO_CONVITE[sit] ?? sit}</span></div>
+                {sit === "ativo" && (
+                  <div className="registro-acoes">
+                    <button className="mini perigo" onClick={() => void revogar(c)} disabled={revogando === c.id}>
+                      {revogando === c.id ? "Revogando…" : "Revogar"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        </>
+      )}
+    </section>
   );
 }

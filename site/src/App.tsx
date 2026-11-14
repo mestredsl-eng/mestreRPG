@@ -1,6 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { AuthProvider, useAuth } from "./auth";
-import { api, type HealthStatus } from "./api";
+import { api, type ConviteGuildaPreview, type HealthStatus } from "./api";
 import Login from "./paginas/Login";
 import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
 import { getSocket } from "./socket";
@@ -71,6 +71,80 @@ function ErroProposital(): never {
   throw new Error("erro de renderização proposital (diagnóstico)");
 }
 
+/** Tela de aceite de convite interno de guilda (/?conviteGuilda=...). */
+function AceiteConviteGuilda({ codigo, aoConcluir, aoSair }: { codigo: string; aoConcluir: () => void; aoSair: () => void }) {
+  const [preview, setPreview] = useState<ConviteGuildaPreview | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aceitando, setAceitando] = useState(false);
+  const [resultado, setResultado] = useState<string | null>(null);
+  const aceitou = useRef(false);
+
+  useEffect(() => {
+    let ativo = true;
+    api.obterConviteGuilda(codigo)
+      .then((r) => { if (ativo) setPreview(r.convite); })
+      .catch((e) => { if (ativo) setErro(e instanceof Error ? e.message : "Convite inválido"); });
+    return () => { ativo = false; };
+  }, [codigo]);
+
+  const aceitar = async () => {
+    // nunca aceitar automaticamente nem em cliques repetidos
+    if (aceitando || aceitou.current) return;
+    aceitou.current = true;
+    setAceitando(true);
+    setErro(null);
+    try {
+      const r = await api.aceitarConviteGuilda(codigo);
+      setResultado(`Você entrou na guilda como ${r.papel === "gm" ? "GM" : "membro"}.`);
+      setTimeout(aoConcluir, 1200);
+    } catch (e) {
+      aceitou.current = false;
+      setErro(e instanceof Error ? e.message : "Erro ao aceitar convite");
+    } finally {
+      setAceitando(false);
+    }
+  };
+
+  const invalido = erro && !preview;
+  return (
+    <main className="container container-estreito">
+      <h1>Convite de guilda</h1>
+      {invalido && (
+        <section className="cartao">
+          <p className="erro">{erro}</p>
+          <button className="secundario" onClick={aoSair}>Ir para o painel</button>
+        </section>
+      )}
+      {!erro && !preview && <section className="cartao"><p>Verificando convite…</p></section>}
+      {preview && !resultado && (
+        <section className="cartao">
+          <h2>{preview.guilda.nome}</h2>
+          <p className="meta">
+            Convite para entrar como <strong>membro</strong>
+            {preview.usosRestantes >= 0 ? ` · ${preview.usosRestantes} uso${preview.usosRestantes === 1 ? "" : "s"} restante${preview.usosRestantes === 1 ? "" : "s"}` : ""}
+            {` · válido até ${new Date(preview.expiraEm).toLocaleString("pt-BR")}`}
+          </p>
+          {preview.status !== "ativo" && <p className="erro">Este convite está {preview.status}.</p>}
+          {erro && <p className="erro">{erro}</p>}
+          <div className="linha">
+            {preview.status === "ativo" ? (
+              <button onClick={() => void aceitar()} disabled={aceitando}>
+                {aceitando ? "Entrando…" : "Aceitar convite"}
+              </button>
+            ) : null}
+            <button className="secundario" onClick={aoSair}>Ir para o painel</button>
+          </div>
+        </section>
+      )}
+      {resultado && (
+        <section className="cartao">
+          <p className="online">{resultado}</p>
+        </section>
+      )}
+    </main>
+  );
+}
+
 function Shell() {
   const { estado, sair } = useAuth();
   const [aba, setAba] = useState<Aba>("painel");
@@ -82,6 +156,15 @@ function Shell() {
   const usuario = estado.status === "autenticado" ? estado.usuario : null;
   const ehConvite = window.location.pathname.startsWith("/convite");
   const forcarErro = new URLSearchParams(window.location.search).has("__erro");
+  // Convite interno de guilda (/?conviteGuilda=...): o código opaco fica
+  // na URL durante o login e só vira aceite após autenticação + clique
+  // explícito — nunca é consumido pela simples visualização.
+  const [codigoConviteGuilda, setCodigoConviteGuilda] = useState(() =>
+    new URLSearchParams(window.location.search).get("conviteGuilda"));
+  const limparConviteGuilda = useCallback(() => {
+    window.history.replaceState({}, "", "/");
+    setCodigoConviteGuilda(null);
+  }, []);
 
   // Contador de novidades não lidas — uma consulta ao entrar/autenticar e
   // sob demanda após leituras (sem polling).
@@ -144,6 +227,18 @@ function Shell() {
         </header>
         <Convite aoEntrar={() => { window.location.href = "/"; }} />
       </>
+    );
+  }
+
+  // Aceite de convite interno de guilda — somente autenticado.
+  // Anônimos caem no Login acima com o código preservado na URL.
+  if (codigoConviteGuilda) {
+    return (
+      <AceiteConviteGuilda
+        codigo={codigoConviteGuilda}
+        aoConcluir={() => { limparConviteGuilda(); setAba("guildas"); }}
+        aoSair={limparConviteGuilda}
+      />
     );
   }
 
