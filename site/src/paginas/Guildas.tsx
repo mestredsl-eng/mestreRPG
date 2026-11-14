@@ -153,6 +153,9 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   const [candidatas, setCandidatas] = useState<GuildaCampanhaCandidata[]>([]);
   const [campanhaVincular, setCampanhaVincular] = useState("");
   const [novoMembro, setNovoMembro] = useState("");
+  const [novoResponsavel, setNovoResponsavel] = useState("");
+  const [confirmandoResp, setConfirmandoResp] = useState(false);
+  const [transferindo, setTransferindo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const geracaoCarregamento = useRef(0);
@@ -217,6 +220,22 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
 
   const podeGerir = !!guilda && (souAdmin || guilda.souGM);
 
+  // Responsável administrativo (guilda.responsavelId — distinto de
+  // createdBy, que é autoria histórica). O nome é resolvido pelo roster,
+  // que só traz membros não-removidos da própria guilda.
+  const eu = membros.find((m) => m.ehEu);
+  const membroResponsavel = guilda ? membros.find((m) => m.userId === guilda.responsavelId) : undefined;
+  const nomeResponsavel = membroResponsavel ? (membroResponsavel.displayName ?? membroResponsavel.username) : null;
+  // Espelha a regra do backend para exibição: ADMIN sempre; o responsável
+  // só enquanto mantiver vínculo GM ativo. O backend revalida tudo —
+  // esconder o botão é apenas conveniência de UX, nunca a segurança.
+  const souResponsavel = !!eu && eu.userId === guilda?.responsavelId && eu.role === "gm" && eu.status === "ativo";
+  const podeTransferir = !!guilda && (souAdmin || souResponsavel);
+  const gmsElegiveis = guilda
+    ? membros.filter((m) => m.role === "gm" && m.status === "ativo" && m.userId !== guilda.responsavelId)
+    : [];
+  const alvoResp = gmsElegiveis.find((m) => m.userId === novoResponsavel);
+
   const adicionar = async (e: FormEvent) => {
     e.preventDefault();
     setErro(null);
@@ -274,6 +293,33 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
     }
   };
 
+  // Dois passos: primeiro clique pede confirmação explícita com o nome do
+  // novo responsável; só o segundo envia o PUT. Nenhum papel muda —
+  // o responsável anterior continua GM.
+  const transferirResponsavel = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!novoResponsavel || transferindo) return;
+    if (!confirmandoResp) {
+      setConfirmandoResp(true);
+      return;
+    }
+    setTransferindo(true);
+    setErro(null);
+    try {
+      const res = await api.transferirResponsavelGuilda(guildId, novoResponsavel);
+      const alvo = membros.find((m) => m.userId === res.responsavelId);
+      notificar(`Responsabilidade transferida para ${alvo ? (alvo.displayName ?? alvo.username) : "o novo responsável"}.`, "sucesso");
+      setNovoResponsavel("");
+      setConfirmandoResp(false);
+      await carregar();
+    } catch (err) {
+      setConfirmandoResp(false);
+      setErro(err instanceof Error ? err.message : "Erro ao transferir responsabilidade");
+    } finally {
+      setTransferindo(false);
+    }
+  };
+
   const alternarStatus = async () => {
     if (!guilda) return;
     try {
@@ -309,8 +355,53 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
           {guilda.meuPapel === "gm" && " — você gerencia membros e campanhas desta guilda."}
           {guilda.status === "arquivada" && " — guilda arquivada."}
         </p>
+        <p className="dica">
+          Responsável: <strong>{nomeResponsavel ?? "—"}</strong>
+          {souResponsavel && " (você)"}
+        </p>
         {erro && <p className="erro">{erro}</p>}
       </section>
+
+      {podeTransferir && (
+        <section className="cartao">
+          <h2>Transferir responsabilidade</h2>
+          <p className="dica">
+            O responsável administra a guilda. A transferência não altera papéis:
+            o responsável anterior continua GM e nenhum membro de campanha é afetado.
+          </p>
+          {gmsElegiveis.length === 0 ? (
+            <p className="dica">Nenhum outro GM ativo disponível para receber a responsabilidade.</p>
+          ) : (
+            <form className="formulario" onSubmit={transferirResponsavel}>
+              <div className="linha">
+                <select
+                  value={novoResponsavel}
+                  onChange={(e) => { setNovoResponsavel(e.target.value); setConfirmandoResp(false); }}
+                  required
+                  aria-label="Novo responsável"
+                >
+                  <option value="">Escolha o novo responsável…</option>
+                  {gmsElegiveis.map((m) => (
+                    <option key={m.userId} value={m.userId}>{m.displayName ?? m.username} (@{m.username})</option>
+                  ))}
+                </select>
+                <button type="submit" disabled={!novoResponsavel || transferindo}>
+                  {transferindo ? "Transferindo…" : confirmandoResp ? "Confirmar transferência" : "Transferir"}
+                </button>
+              </div>
+              {confirmandoResp && alvoResp && (
+                <p className="dica">
+                  Confirmar: <strong>{alvoResp.displayName ?? alvoResp.username}</strong> passa a ser o
+                  responsável da guilda. O responsável atual continuará como GM — nenhum papel muda.
+                </p>
+              )}
+              {confirmandoResp && (
+                <button type="button" className="mini" onClick={() => setConfirmandoResp(false)}>Cancelar</button>
+              )}
+            </form>
+          )}
+        </section>
+      )}
 
       <section className="cartao">
         <h2>Membros ({membros.length})</h2>
