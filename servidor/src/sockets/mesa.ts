@@ -1079,9 +1079,7 @@ function socket_handlers(
       if (payload.d10) {
         const pos = Math.round(payload.d10.positivos ?? NaN);
         const neg = Math.round(payload.d10.negativos ?? NaN);
-        const minimo = Math.round(payload.d10.minimo ?? NaN);
-        if (!Number.isFinite(pos) || !Number.isFinite(neg) || pos < 0 || neg < 0 || pos > 30 || neg > 30
-          || !Number.isFinite(minimo) || minimo < 2 || minimo > 10) {
+        if (!Number.isFinite(pos) || !Number.isFinite(neg) || pos < 0 || neg < 0 || pos > 30 || neg > 30) {
           cb?.({ ok: false, erro: "Dados D10 inválidos" });
           return;
         }
@@ -1091,6 +1089,14 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Quantidade de dados D10 inconsistente com a rolagem" });
           return;
         }
+
+        // A dificuldade é regra da campanha, não dado confiável do cliente.
+        // O campo minimo do payload é aceito por compatibilidade com versões
+        // antigas do frontend e deliberadamente ignorado: qualquer socket
+        // pode forjar esse campo. O valor autoritativo é relido do ruleset
+        // ativo desta campanha em cada rolagem.
+        const regras = await carregarRegras(ctx.sessao.campaignId);
+        const minimo = regras.config.dados?.d10SucessoMinimo ?? 6;
         const sucessos = resD10.filter((v) => v >= minimo).length;
         d10 = { positivos: pos, negativos: neg, minimo, lancados: resD10.length, sucessos, falhas: resD10.length - sucessos };
       }
