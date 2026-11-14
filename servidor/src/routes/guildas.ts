@@ -453,6 +453,12 @@ guildasRouter.put(
       await db.update(campaigns).set({ guildId, updatedAt: new Date() }).where(eq(campaigns.id, campaignId));
       await audit(req, "guilda.campanha.vincular", { guildId, campaignId });
       await notificarGuildaAtualizada(guildId, "campanha_vinculada");
+      // transferência entre guildas: a origem também precisa remover a
+      // campanha da listagem sem reload — c.guildId ainda é o vínculo
+      // anterior (o update já persistiu, mas o objeto lido antes)
+      if (c.guildId && c.guildId !== guildId) {
+        await notificarGuildaAtualizada(c.guildId, "campanha_desvinculada");
+      }
       res.json({ ok: true, campanha: { id: c.id, guildId } });
       return;
     }

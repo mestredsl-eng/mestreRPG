@@ -178,6 +178,70 @@ try {
     (await pgA.locator("tr", { hasText: "jogador_b" }).count()) === 0);
 
 
+  sec("Transferência de campanha entre guildas propaga para origem e destino");
+  const campId = cenario.campId;
+  // guilda de destino criada via API — o ADMIN é GM das duas
+  const criaB = await req(BASE, "POST", "/guildas", { cookie: cenario.cookieMestre, body: { name: "Guilda do Abismo" } });
+  const guildBId = criaB.json?.guilda?.id;
+  t("guilda de destino criada", criaB.status === 201 && !!guildBId, JSON.stringify(criaB.json));
+
+  // gravador de eventos privados guilda:atualizada no socket do ADMIN
+  // (ele recebe eventos de todas as guildas por ser admin ativo)
+  await pgAdmin.evaluate(() => {
+    window.__evtGuilda = [];
+    window.__mesaSocket?.on("guilda:atualizada", (e) => { window.__evtGuilda.push(e); });
+  });
+  const eventosGuilda = () => pgAdmin.evaluate(() => window.__evtGuilda ?? []);
+
+  // vínculo inicial na guilda A — somente A pode ser notificada
+  const vincA = await req(BASE, "PUT", `/guildas/${guildId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("campanha vinculada à guilda A", vincA.status === 200, String(vincA.status));
+  await pgAdmin.getByRole("heading", { name: "Campanhas vinculadas (1)" }).waitFor({ timeout: 10000 });
+  await pgAdmin.waitForTimeout(400);
+  let evts = await eventosGuilda();
+  t("vínculo inicial notifica só a guilda A",
+    evts.length === 1 && evts[0].guildId === guildId && evts[0].tipo === "campanha_vinculada",
+    JSON.stringify(evts));
+
+  // operação idempotente (já vinculada à A) não pode gerar eventos
+  const vincA2 = await req(BASE, "PUT", `/guildas/${guildId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("vínculo repetido aceito sem efeito", vincA2.status === 200, String(vincA2.status));
+  await pgAdmin.waitForTimeout(400);
+  evts = await eventosGuilda();
+  t("vínculo idempotente não emite eventos", evts.length === 1, JSON.stringify(evts));
+
+  // segunda tela ADMIN aberta já no detalhe da guilda B
+  const ctxAdmin2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const pgAdmin2 = await ctxAdmin2.newPage();
+  await login(pgAdmin2, "mestre_teste", "senha-forte-123");
+  await btnNav(pgAdmin2, "Guildas").click();
+  await pgAdmin2.waitForTimeout(800);
+  await pgAdmin2.locator("tr", { hasText: "Guilda do Abismo" }).getByRole("button", { name: "Abrir" }).click();
+  await pgAdmin2.getByRole("heading", { name: "Guilda do Abismo" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.getByRole("heading", { name: "Campanhas vinculadas (0)" }).waitFor({ timeout: 10000 });
+
+  // transferência A → B: origem remove sem reload, destino recebe sem reload
+  const transf = await req(BASE, "PUT", `/guildas/${guildBId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("transferência A→B aceita", transf.status === 200, String(transf.status));
+  await pgAdmin.getByRole("heading", { name: "Campanhas vinculadas (0)" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.getByRole("heading", { name: "Campanhas vinculadas (1)" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.locator("tr", { hasText: "Campanha Guildas" }).waitFor({ timeout: 10000 });
+  t("guilda de origem remove a campanha sem reload", (await pgAdmin.locator("tr", { hasText: "Campanha Guildas" }).count()) === 0);
+  t("guilda de destino recebe a campanha sem reload", (await pgAdmin2.locator("tr", { hasText: "Campanha Guildas" }).count()) === 1);
+
+  await pgAdmin.waitForTimeout(400);
+  evts = await eventosGuilda();
+  // multiconjunto exato: vínculo inicial em A + par origem/destino da
+  // transferência. Qualquer evento extra (duplicado, guilda errada,
+  // tipo trocado) reprova.
+  const contagem = {};
+  for (const e of evts) { const k = `${e.guildId}:${e.tipo}`; contagem[k] = (contagem[k] ?? 0) + 1; }
+  const esperados = [`${guildId}:campanha_vinculada`, `${guildId}:campanha_desvinculada`, `${guildBId}:campanha_vinculada`];
+  const semEventosInadequados = evts.length === esperados.length
+    && esperados.every((k) => contagem[k] === 1);
+  t("origem notificada como desvinculada e destino como vinculada", semEventosInadequados, JSON.stringify(evts));
+  await shot(pgAdmin2, "guilda-destino-transferencia");
+
   const ctxC = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pgC = await ctxC.newPage();
   await login(pgC, "jogador_c", "senha-jogador-123");
