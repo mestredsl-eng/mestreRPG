@@ -858,7 +858,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             <section className="cartao">
               <h3>Rolagens</h3>
               {rolagens.slice(-8).reverse().map((r) => (
-                <div key={r.id} className="rolagem-item">
+                <div key={r.id} className="rolagem-item" data-rolagem-id={r.id}>
                   <div className="linha">
                     <MesaDados3D
                       dados={r.dados.flatMap((resultados, gi) => resultados.map((v) => ({
