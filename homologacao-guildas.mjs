@@ -82,6 +82,12 @@ try {
   await pgAdmin.getByRole("button", { name: "Adicionar", exact: true }).click();
   await pgAdmin.waitForTimeout(800);
   t("jogador_b adicionado como membro comum", await pgAdmin.locator("tr", { hasText: "jogador_b" }).isVisible());
+  // vincula a campanha para que a leitura de campanhas vinculadas pelo
+  // membro comum seja exercitada com dados reais (não só o título)
+  await pgAdmin.locator("select").selectOption({ label: "Campanha Guildas" });
+  await pgAdmin.getByRole("button", { name: "Vincular", exact: true }).click();
+  await pgAdmin.waitForTimeout(800);
+  t("ADMIN vincula campanha à guilda", await pgAdmin.locator("tr", { hasText: "Campanha Guildas" }).isVisible());
 
   sec("Membro comum não gerencia — UI esconde ações");
   const ctxA = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -107,7 +113,8 @@ try {
   await pgB.waitForTimeout(1000);
   t("membro comum vê o detalhe da guilda", await pgB.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
   t("membro comum vê o roster", await pgB.getByRole("heading", { name: /Membros \(/ }).isVisible());
-  t("membro comum vê campanhas vinculadas", await pgB.getByRole("heading", { name: /Campanhas vinculadas/ }).isVisible());
+  t("membro comum vê campanhas vinculadas", await pgB.getByRole("heading", { name: /Campanhas vinculadas \(1\)/ }).isVisible());
+  t("membro comum vê a campanha vinculada na lista", await pgB.locator("tr", { hasText: "Campanha Guildas" }).isVisible());
   t("sem formulário de gestão para membro comum", (await pgB.getByPlaceholder("Nome de usuário existente").count()) === 0);
   t("sem coluna de ações para membro comum", (await pgB.getByRole("columnheader", { name: "Ações" }).count()) === 0);
   t("sem erro de carregamento para membro comum", (await pgB.locator(".erro").count()) === 0);
