@@ -101,6 +101,107 @@ try {
   t("painel de dados presente na mesa", await pgM.locator(".painel-dados").count() > 0);
   const temAbaLivre = await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" }).count();
   t("aba Rolagem e dano acessível", temAbaLivre > 0);
+
+  sec("1b. Pool D10 também usa uma única mesa compartilhada");
+  const controlesD10 = pgM.locator(".d10-controles input[type=number]");
+  await controlesD10.nth(0).fill("5");
+  await controlesD10.nth(1).fill("2");
+  await pgM.getByRole("button", { name: "Lançar D10" }).click();
+  const canvasD10Pool = pgM.locator(".d10-resultado .mesa-dados-3d-canvas");
+  await canvasD10Pool.waitFor({ timeout: 15000 });
+  const rotuloD10Pool = await canvasD10Pool.getAttribute("aria-label");
+  const valoresD10Pool = rotuloD10Pool?.match(/d10=\d+/g) ?? [];
+  const estadosD10Pool = rotuloD10Pool?.match(/\((sucesso|falha)\)/g) ?? [];
+  t("pool D10 de 5 positivos e 2 negativos gera 3 dados efetivos", valoresD10Pool.length === 3, rotuloD10Pool);
+  t("pool D10 inteiro aparece em um único canvas compartilhado",
+    await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").count() === 1);
+  t("cada D10 mantém indicação individual de sucesso/falha", estadosD10Pool.length === 3, rotuloD10Pool);
+
+  // A mesma classificação deve chegar aos outros participantes pelo
+  // evento autoritativo mesa:rolagem e aparecer no histórico compartilhado.
+  const canvasD10Historico = pgM.locator(".rolagem-item .mesa-dados-3d-canvas").last();
+  await canvasD10Historico.waitFor({ timeout: 15000 });
+  const rotuloD10Historico = await canvasD10Historico.getAttribute("aria-label");
+  const valoresD10Historico = rotuloD10Historico?.match(/d10=\d+/g) ?? [];
+  const estadosD10Historico = rotuloD10Historico?.match(/\((sucesso|falha)\)/g) ?? [];
+  const sucessosVisuais = (rotuloD10Historico?.match(/\(sucesso\)/g) ?? []).length;
+  const falhasVisuais = (rotuloD10Historico?.match(/\(falha\)/g) ?? []).length;
+  const resumoD10Historico = await pgM.locator(".rolagem-item .d10-rolagem").last().innerText();
+  const sucessosServidor = Number(resumoD10Historico.match(/(\d+) sucesso/)?.[1] ?? NaN);
+  const falhasServidor = Number(resumoD10Historico.match(/\/\s*(\d+) falha/)?.[1] ?? NaN);
+  t("histórico compartilhado mostra os três D10 do pool", valoresD10Historico.length === 3, rotuloD10Historico);
+  t("histórico compartilhado preserva sucesso/falha individual", estadosD10Historico.length === 3, rotuloD10Historico);
+  t("cores individuais coincidem com a contagem autoritativa do servidor",
+    sucessosVisuais === sucessosServidor && falhasVisuais === falhasServidor,
+    `visuais=${sucessosVisuais}/${falhasVisuais}; servidor=${sucessosServidor}/${falhasServidor}`);
+  await shot(pgM, "01b-pool-d10-mesa-compartilhada");
+
+  sec("1c. Mínimo autoritativo do servidor na classificação visual");
+  // Muda a regra da campanha com a Mesa aberta: o painel local NÃO
+  // recarrega regras — só o ACK do servidor pode trazer o mínimo novo.
+  // Painel e histórico devem classificar cada dado de forma idêntica.
+  const MIN_D10 = 9;
+  const cfgMin = await pgM.evaluate(async ({ cid, min }) => {
+    const put = await fetch(`/api/campaigns/${cid}/regras/config`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dados: { d10SucessoMinimo: min } }),
+    });
+    const get = await fetch(`/api/campaigns/${cid}/regras`, { credentials: "same-origin" });
+    const regras = get.ok ? await get.json() : null;
+    return { putStatus: put.status, minLido: regras?.config?.dados?.d10SucessoMinimo };
+  }, { cid: cenario.campId, min: MIN_D10 });
+  t("PUT /regras/config aceito (HTTP 200)", cfgMin.putStatus === 200, `status=${cfgMin.putStatus}`);
+  t(`regra persistida: d10SucessoMinimo=${MIN_D10} confirmado por leitura`,
+    cfgMin.minLido === MIN_D10, `lido=${cfgMin.minLido}`);
+  const ctrlD10b = pgM.locator(".d10-controles input[type=number]");
+  await ctrlD10b.nth(0).fill("8");
+  await ctrlD10b.nth(1).fill("0");
+  await pgM.locator("form.d10-form").getByRole("button", { name: /Lançar/ }).click();
+  await pgM.waitForFunction(() => {
+    const c = document.querySelector(".d10-resultado .mesa-dados-3d-canvas");
+    const rotulo = c?.getAttribute("aria-label") ?? "";
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
+  }, null, { timeout: 15000 });
+  const rotuloPainelMin = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label");
+  // espera o histórico receber ESTA rolagem (8 dados), não a anterior.
+  // Mesa.tsx usa rolagens.slice(-8).reverse(): a mais nova é a PRIMEIRA.
+  await pgM.waitForFunction(() => {
+    const c = document.querySelector(".rolagem-item .mesa-dados-3d-canvas");
+    const rotulo = c?.getAttribute("aria-label") ?? "";
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
+  }, null, { timeout: 15000 });
+  const rotuloHistMin = await pgM.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label");
+  const resumoHistMin = await pgM.locator(".rolagem-item .d10-rolagem").first().innerText();
+  const facesDe = (rotulo) =>
+    [...(rotulo ?? "").matchAll(/d10=(\d+) \((sucesso|falha)\)/g)]
+      .map((m) => ({ valor: Number(m[1]), estado: m[2] }));
+  const facesPainel = facesDe(rotuloPainelMin);
+  const facesHist = facesDe(rotuloHistMin);
+  const classificarOk = (faces) =>
+    faces.length === 8 && faces.every((f) =>
+      f.estado === (f.valor >= MIN_D10 ? "sucesso" : "falha"));
+  t("pool D10 com regra alterada: painel classifica os 8 dados",
+    facesPainel.length === 8, rotuloPainelMin);
+  t("painel: cada face sucesso sse valor >= 9, falha sse valor < 9",
+    classificarOk(facesPainel), rotuloPainelMin);
+  t("histórico: cada face sucesso sse valor >= 9, falha sse valor < 9",
+    classificarOk(facesHist), rotuloHistMin);
+  t("histórico registra o mínimo autoritativo 9",
+    /mín\s*9\b/.test(resumoHistMin ?? ""), resumoHistMin);
+  t("painel e histórico classificam cada dado de forma idêntica",
+    facesPainel.length === facesHist.length &&
+      facesPainel.every((f, i) => f.valor === facesHist[i].valor && f.estado === facesHist[i].estado),
+    `painel=${rotuloPainelMin} historico=${rotuloHistMin}`);
+  await pgM.evaluate(async (cid) => {
+    await fetch(`/api/campaigns/${cid}/regras/config`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dados: { d10SucessoMinimo: 6 } }),
+    });
+  }, cenario.campId);
+  await shot(pgM, "01c-d10-minimo-servidor");
+
   await shot(pgM, "01-mesa-dados");
 
   sec("2. Cinco tipos de dados em canvas 3D");
