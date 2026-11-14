@@ -240,8 +240,14 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
     return Number.isFinite(max) ? Math.max(0, max) : Infinity;
   };
 
-  for (let i = 0; i < dados.length; i++) {
-    for (let j = i + 1; j < dados.length; j++) {
+  // Passadas iterativas: corrigir B×C pode criar uma nova penetração
+  // A×B cujo par já foi visitado. Repete até estabilizar ou até um teto
+  // proporcional à quantidade de dados; cada passada recalcula as capacidades.
+  const passadasMaximas = Math.min(30, Math.max(6, dados.length));
+  for (let rodada = 0; rodada < passadasMaximas; rodada++) {
+    let corrigiuPosicao = false;
+    for (let i = 0; i < dados.length; i++) {
+      for (let j = i + 1; j < dados.length; j++) {
       const a = dados[i], b = dados[j];
       const movA = !a.finalizado, movB = !b.finalizado;
       const soma = a.raioColisao + b.raioColisao;
@@ -300,6 +306,7 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
       a.position[1] -= ny * deslocA;
       b.position[0] += nx * deslocB;
       b.position[1] += ny * deslocB;
+      if (deslocA + deslocB > 1e-6) corrigiuPosicao = true;
 
       // Separação vertical somente nos corpos ainda móveis.
       const movCount = (movA ? 1 : 0) + (movB ? 1 : 0);
@@ -323,7 +330,9 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
         if (movB) b.angularVelocity[2] -= kick * (j % 2 === 0 ? 1 : -1);
         if (Math.abs(closing) > 0.4) quique = true;
       }
+      }
     }
+    if (!corrigiuPosicao) break;
   }
   return quique;
 }
