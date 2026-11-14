@@ -116,6 +116,16 @@ try {
   t("pool D10 inteiro aparece em um único canvas compartilhado",
     await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").count() === 1);
   t("cada D10 mantém indicação individual de sucesso/falha", estadosD10Pool.length === 3, rotuloD10Pool);
+
+  // A mesma classificação deve chegar aos outros participantes pelo
+  // evento autoritativo mesa:rolagem e aparecer no histórico compartilhado.
+  const canvasD10Historico = pgM.locator(".rolagem-item .mesa-dados-3d-canvas").last();
+  await canvasD10Historico.waitFor({ timeout: 15000 });
+  const rotuloD10Historico = await canvasD10Historico.getAttribute("aria-label");
+  const valoresD10Historico = rotuloD10Historico?.match(/d10=\d+/g) ?? [];
+  const estadosD10Historico = rotuloD10Historico?.match(/\((sucesso|falha)\)/g) ?? [];
+  t("histórico compartilhado mostra os três D10 do pool", valoresD10Historico.length === 3, rotuloD10Historico);
+  t("histórico compartilhado preserva sucesso/falha individual", estadosD10Historico.length === 3, rotuloD10Historico);
   await shot(pgM, "01b-pool-d10-mesa-compartilhada");
 
   await shot(pgM, "01-mesa-dados");
