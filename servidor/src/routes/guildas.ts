@@ -25,22 +25,31 @@ const db = getDb();
  * que acabaram de ser removidos/rebaixados.
  */
 async function notificarGuildaAtualizada(guildId: string, tipo: string, afetados: string[] = []) {
-  const [membros, admins] = await Promise.all([
-    db.select({ userId: guildMembers.userId })
-      .from(guildMembers)
-      .where(and(eq(guildMembers.guildId, guildId), eq(guildMembers.status, "ativo"))),
-    db.select({ userId: users.id })
-      .from(users)
-      .where(and(eq(users.isAdmin, true), eq(users.status, "ativo"))),
-  ]);
-  const destinatarios = new Set([
-    ...membros.map((m) => m.userId),
-    ...admins.map((a) => a.userId),
-    ...afetados,
-  ]);
-  const evento = { guildId, tipo };
-  for (const userId of destinatarios) {
-    emitirUsuario(userId, "guilda:atualizada", evento);
+  try {
+    const [membros, admins] = await Promise.all([
+      db.select({ userId: guildMembers.userId })
+        .from(guildMembers)
+        .where(and(eq(guildMembers.guildId, guildId), eq(guildMembers.status, "ativo"))),
+      db.select({ userId: users.id })
+        .from(users)
+        .where(and(eq(users.isAdmin, true), eq(users.status, "ativo"))),
+    ]);
+    const destinatarios = new Set([
+      ...membros.map((m) => m.userId),
+      ...admins.map((a) => a.userId),
+      ...afetados,
+    ]);
+    const evento = { guildId, tipo };
+    for (const userId of destinatarios) {
+      emitirUsuario(userId, "guilda:atualizada", evento);
+    }
+  } catch (erro) {
+    // A mutação já foi persistida e auditada antes da notificação.
+    // Falha no canal auxiliar não deve transformar um sucesso gravado
+    // em HTTP 500 (o cliente poderia repetir uma ação já concluída).
+    console.error("[guildas] falha ao propagar atualização em tempo real", {
+      guildId, tipo, erro: String(erro),
+    });
   }
 }
 export const guildasRouter = Router();
