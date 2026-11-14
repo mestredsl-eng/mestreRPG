@@ -1,19 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./auth";
 import { api, type HealthStatus } from "./api";
 import Login from "./paginas/Login";
-import Admin from "./paginas/Admin";
-import Conta from "./paginas/Conta";
-import Campanhas from "./paginas/Campanhas";
-import Campanha from "./paginas/Campanha";
-import Convite from "./paginas/Convite";
-import ConviteCadastro from "./paginas/ConviteCadastro";
-import Acervo from "./paginas/Acervo";
-import Guildas from "./paginas/Guildas";
-import Novidades from "./paginas/Novidades";
 import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
 import { getSocket } from "./socket";
 
+// Telas secundárias são carregadas sob demanda para reduzir o JavaScript
+// necessário no primeiro acesso. O estado e a navegação continuam no Shell.
+const Admin = lazy(() => import("./paginas/Admin"));
+const Conta = lazy(() => import("./paginas/Conta"));
+const Campanhas = lazy(() => import("./paginas/Campanhas"));
+const Campanha = lazy(() => import("./paginas/Campanha"));
+const Convite = lazy(() => import("./paginas/Convite"));
+const ConviteCadastro = lazy(() => import("./paginas/ConviteCadastro"));
+const Acervo = lazy(() => import("./paginas/Acervo"));
+const Guildas = lazy(() => import("./paginas/Guildas"));
+const Novidades = lazy(() => import("./paginas/Novidades"));
 type Aba = "painel" | "campanhas" | "acervo" | "novidades" | "guildas" | "admin" | "conta";
 
 function Painel() {
@@ -186,7 +188,9 @@ export default function App() {
   return (
     <AuthProvider>
       <ProvedorNotificacoes>
-        <Shell />
+        <Suspense fallback={<main className="container"><p>Carregando módulo…</p></main>}>
+          <Shell />
+        </Suspense>
       </ProvedorNotificacoes>
     </AuthProvider>
   );
