@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { api, type Guilda, type GuildaCampanha, type GuildaCampanhaCandidata, type GuildaMembro } from "../api";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
+import { getSocket } from "../socket";
 
 const PAPEL_GUILDA: Record<string, string> = { gm: "GM", membro: "Membro" };
 
@@ -34,6 +35,15 @@ export default function Guildas() {
 
   useEffect(() => {
     void carregar();
+  }, [carregar]);
+
+  // Atualiza a listagem em todas as abas/dispositivos do usuário.
+  // O payload só identifica a guilda; os dados sempre são relidos pela API.
+  useEffect(() => {
+    const socket = getSocket();
+    const aoAtualizar = () => { void carregar(); };
+    socket.on("guilda:atualizada", aoAtualizar);
+    return () => { socket.off("guilda:atualizada", aoAtualizar); };
   }, [carregar]);
 
   const criar = async (e: FormEvent) => {
@@ -146,6 +156,13 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
       else if (mc.status === "rejected") falhas.push("campanhas candidatas");
       setErro(falhas.length ? `Falha ao carregar: ${falhas.join(", ")}` : null);
     } catch (e) {
+      // Revogação pode remover o acesso desta tela enquanto ela está aberta.
+      // Limpa a visão anterior imediatamente (fail-closed) em vez de manter
+      // nomes, membros ou controles que o usuário já não pode consultar.
+      setGuilda(null);
+      setMembros([]);
+      setCampanhas([]);
+      setCandidatas([]);
       setErro(e instanceof Error ? e.message : "Erro ao carregar guilda");
     } finally {
       setCarregando(false);
@@ -155,6 +172,17 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   useEffect(() => {
     void carregar();
   }, [carregar]);
+
+  // A sala privada usuario:<id> entrega a notificação a todas as sessões
+  // autenticadas. Recarregar pela API revalida o papel e o acesso atuais.
+  useEffect(() => {
+    const socket = getSocket();
+    const aoAtualizar = (evento: { guildId?: string }) => {
+      if (evento?.guildId === guildId) void carregar();
+    };
+    socket.on("guilda:atualizada", aoAtualizar);
+    return () => { socket.off("guilda:atualizada", aoAtualizar); };
+  }, [carregar, guildId]);
 
   const podeGerir = !!guilda && (souAdmin || guilda.souGM);
 
