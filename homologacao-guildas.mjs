@@ -113,6 +113,30 @@ try {
   t("sem erro de carregamento para membro comum", (await pgB.locator(".erro").count()) === 0);
   await shot(pgB, "guilda-membro-comum");
 
+  sec("Mudanças de papel e remoção propagadas em tempo real");
+  const linhaBNoAdmin = pgAdmin.locator("tr", { hasText: "jogador_b" });
+  await linhaBNoAdmin.getByRole("button", { name: "Promover a GM" }).click();
+  // Sem refresh manual: o membro afetado e outro membro já conectado
+  // devem reler os papéis persistidos ao receber guilda:atualizada.
+  await pgB.getByText(/GM — você gerencia membros/).waitFor({ timeout: 10000 });
+  await pgA.locator("tr", { hasText: "jogador_b" }).getByText("GM", { exact: true }).waitFor({ timeout: 10000 });
+  t("promoção a GM aparece no cliente afetado sem recarregar", await pgB.getByText(/GM — você gerencia membros/).isVisible());
+  t("promoção a GM aparece para outro membro conectado sem recarregar",
+    await pgA.locator("tr", { hasText: "jogador_b" }).getByText("GM", { exact: true }).isVisible());
+
+  await linhaBNoAdmin.getByRole("button", { name: "Remover", exact: true }).click();
+  // A API passa a responder 403 para o removido; a tela limpa dados e
+  // controles antigos assim que chega o evento privado do servidor.
+  await pgB.getByRole("button", { name: "Voltar", exact: true }).waitFor({ timeout: 10000 });
+  await pgB.getByText(/Sem acesso a esta guilda/).waitFor({ timeout: 10000 });
+  await pgA.locator("tr", { hasText: "jogador_b" }).waitFor({ state: "detached", timeout: 10000 });
+  t("remoção revoga a tela aberta do membro sem refresh manual",
+    (await pgB.getByRole("heading", { name: "Guilda do Trono" }).count()) === 0
+      && (await pgB.locator(".erro").count()) > 0);
+  t("outro membro conectado recebe roster atualizado sem o removido",
+    (await pgA.locator("tr", { hasText: "jogador_b" }).count()) === 0);
+
+
   const ctxC = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pgC = await ctxC.newPage();
   await login(pgC, "jogador_c", "senha-jogador-123");
