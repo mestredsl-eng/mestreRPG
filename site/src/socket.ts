@@ -8,7 +8,12 @@ export function getSocket(): Socket {
     socket = io({
       path: "/socket.io",
       withCredentials: true,
-      transports: ["websocket", "polling"],
+      // Polling primeiro: funciona através de proxies/túneis que não
+      // aceitam o upgrade WebSocket (ex.: NetBird). O socket.io faz o
+      // upgrade automático para websocket quando o transporte está
+      // disponível — nunca fica preso tentando WS primeiro.
+      transports: ["polling", "websocket"],
+      tryAllTransports: false,
     });
     // alça de diagnóstico SOMENTE em localhost (homologações Playwright):
     // permite injetar pacotes forjados pelo MESMO transporte do app.
