@@ -640,7 +640,9 @@ try {
   await pgM.getByRole("button", { name: "Sair da mesa" }).click();
   await abrirSessao(pgM, "Mesa Névoa Beta");
   await pgM.locator(".mesa-vtt input[type=file]").setInputFiles(PNG_PATH);
-  await pgM.locator(".vtt-tabuleiro").waitFor({ timeout: 10000 });
+  // upload + processamento do mapa da sessão B pode exceder 10s sob
+  // carga do runner de CI — mesmo teto usado na reabertura de sessão
+  await pgM.locator(".vtt-tabuleiro").waitFor({ timeout: 30000 });
   await garantirPincel(pgM);
   const cvBoxB = await pgM.locator(".vtt-nevoa-canvas-pincel").boundingBox();
   await pgM.mouse.move(cvBoxB.x + cvBoxB.width * 0.4, cvBoxB.y + cvBoxB.height * 0.4);
