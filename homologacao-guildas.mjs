@@ -60,6 +60,9 @@ try {
   await pgAdmin.waitForTimeout(800);
   t("guilda criada e aberta", await pgAdmin.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
   t("papel GM exibido", await pgAdmin.getByText("GM", { exact: true }).first().isVisible());
+  const listaGuildasCriadas = await req(BASE, "GET", "/guildas", { cookie: cenario.cookieMestre });
+  const guildId = listaGuildasCriadas.json?.guildas?.find((g) => g.name === "Guilda do Trono")?.id;
+  t("ID real da guilda disponível para a homologação Socket.IO", !!guildId);
   // <option> dentro de <select> fechado não tem caixa visível — a
   // asserção é por presença no DOM, não por waitFor de visibilidade
   await pgAdmin.waitForTimeout(500);
