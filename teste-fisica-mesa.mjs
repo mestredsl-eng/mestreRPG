@@ -122,6 +122,69 @@ for (const n of [1, 5, 10, 30]) {
     cena.every((d) => d.labels[d.labels.indexOf(d.valor)] === d.valor && d.valor === itens[cena.indexOf(d)].valor));
 }
 
+// ---------- colisão ativa × finalizada e dado encurralado na borda ----------
+{
+  const cena = criarCenaMesa([{ lados: 6, valor: 3 }, { lados: 6, valor: 4 }], 91);
+  const [assentado, movel] = cena;
+  const limite = semiLadoMesa(cena.length);
+  const margem = assentado.raioColisao * 0.8;
+  const hi = limite - margem;
+  const soma = assentado.raioColisao + movel.raioColisao;
+
+  // O dado assentado fica imediatamente atrás do móvel, que já está
+  // no limite direito. O móvel não tem espaço para a separação em +X.
+  assentado.position = [hi - soma + 0.45, 0, assentado.repouso];
+  assentado.orientation = [...assentado.alvo];
+  assentado.velocity = [0, 0, 0];
+  assentado.angularVelocity = [0, 0, 0];
+  assentado.simulationTime = 3.2;
+  assentado.settleTime = 0.4;
+  assentado.finalizado = true;
+
+  movel.position = [hi, 0, movel.repouso];
+  movel.orientation = [...movel.alvo];
+  movel.velocity = [0, 0, 0];
+  movel.angularVelocity = [0, 0, 0];
+  movel.simulationTime = 0;
+  movel.settleTime = 0;
+  movel.finalizado = false;
+
+  const posAssentadoAntes = [...assentado.position];
+  const orientacaoAssentadoAntes = [...assentado.orientation];
+  passoCena(cena, 1 / 60);
+
+  const distanciaDepois = Math.hypot(
+    assentado.position[0] - movel.position[0],
+    assentado.position[1] - movel.position[1],
+  );
+  ok("colisão ativa × finalizado: dado assentado mantém orientação e estado",
+    assentado.finalizado && assentado.orientation.every((v, i) => quase(v, orientacaoAssentadoAntes[i], 1e-9)));
+  ok("dado encurralado: correção residual desloca o assentado para dentro sem girá-lo",
+    assentado.position[0] < posAssentadoAntes[0] && assentado.angularVelocity.every((v) => v === 0));
+  ok("dado encurralado: nenhum centro ultrapassa as bordas",
+    Math.abs(assentado.position[0]) <= hi + 1e-6 && Math.abs(movel.position[0]) <= hi + 1e-6);
+  ok("dado encurralado: a colisão remove a sobreposição inicial",
+    distanciaDepois >= soma - 0.01, `distância=${distanciaDepois.toFixed(3)} / necessária=${soma.toFixed(3)}`);
+
+  // Continua até o móvel assentar: a correção não pode apenas adiar
+  // a falha, deixando a sobreposição reaparecer no fim da animação.
+  const dt = 1 / 60;
+  let passos = 0;
+  while (!movel.finalizado && passos < 300) {
+    passoCena(cena, dt);
+    passos++;
+  }
+  const distanciaFinal = Math.hypot(
+    assentado.position[0] - movel.position[0],
+    assentado.position[1] - movel.position[1],
+  );
+  ok("dado encurralado: repouso final sem sobreposição persistente",
+    assentado.finalizado && movel.finalizado && distanciaFinal >= soma - 0.01,
+    `distância=${distanciaFinal.toFixed(3)} / necessária=${soma.toFixed(3)}`);
+  ok("dado encurralado: ambos terminam dentro da mesa",
+    Math.abs(assentado.position[0]) <= hi + 0.01 && Math.abs(movel.position[0]) <= hi + 0.01);
+}
+
 const falhas = resultados.filter((r) => !r.ok);
 console.log(`\n${resultados.length - falhas.length}/${resultados.length} verificações ok`);
 if (falhas.length) { console.log("FALHAS:", falhas.map((f) => f.nome).join(" | ")); process.exit(1); }
