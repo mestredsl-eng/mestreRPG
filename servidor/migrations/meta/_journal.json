@@ -166,8 +166,15 @@
     {
       "idx": 23,
       "version": "6",
-      "when": 1794610182713,
-      "tag": "0023_guildas_hierarquia",
+      "when": 1794610744299,
+      "tag": "0023_sessao_numero_unico",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794615352542,
+      "tag": "0024_guildas_hierarquia",
       "breakpoints": true
     }
   ]

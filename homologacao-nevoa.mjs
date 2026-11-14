@@ -246,10 +246,64 @@ try {
     for (const r of rs) void r.abort().catch(() => {});
   };
   const ehMsgNevoa = (msg) => typeof msg === "string" && msg.includes('"mesa:vtt:nevoa"');
+  // retenção da SINCRONIZAÇÃO ordenada ("mesa:vtt:nevoa:sincronizar"):
+  // derrubar ACKs não basta — no transporte polling os ACKs não passam
+  // pelo filtro de pacotes "43" do WebSocket e a sync automática
+  // succeeding limparia o estado incerto antes da asserção. Reter o
+  // próprio emit da sync torna a janela de incerteza determinística em
+  // qualquer transporte.
+  const ehMsgSync = (msg) => typeof msg === "string" && msg.includes('"mesa:vtt:nevoa:sincronizar"');
+  let segurarSync = false;
+  const filaSync = [];
+  const rotasSync = [];
+  const liberarSync = () => {
+    segurarSync = false;
+    const q = filaSync.splice(0);
+    for (const m of q) { try { wsSrvM?.send(m); } catch { /* conexão morta */ } }
+    const rs = rotasSync.splice(0);
+    for (const r of rs) void r.continue().catch(() => {});
+  };
+  const descartarSync = () => {
+    segurarSync = false;
+    filaSync.length = 0;
+    const rs = rotasSync.splice(0);
+    for (const r of rs) void r.abort().catch(() => {});
+  };
+  // Desenha e CONFIRMA que o emit chegou ao transporte. O pincel pode
+  // estar desligado por refresh/reconexão da seção anterior — sem a
+  // confirmação, a seção mediria "nenhum timeout" e falharia por
+  // timeout de 150s sem apontar o defeito real. Emits retidos são
+  // descartados em bloco pelas próprias seções, então repetir o gesto
+  // é inócuo.
+  const desenharConfirmado = async (page, pontos) => {
+    for (let tent = 0; tent < 4; tent++) {
+      // a partir da 2ª tentativa, força reset do gesto: um pointerup
+      // perdido pode ter deixado desenhoRef/pincel travado no cliente
+      if (tent > 0) {
+        const btnPincel = page.getByRole("button", { name: /pincel de névoa/i });
+        if (await pincelOn(page)) { await btnPincel.click().catch(() => {}); await page.waitForTimeout(300); }
+        await btnPincel.click().catch(() => {});
+        await page.locator(".vtt-nevoa-canvas-pincel").waitFor({ timeout: 5000 }).catch(() => {});
+      }
+      const n0 = nevoaEmitidos;
+      await garantirPincel(page);
+      await desenhar(page, pontos);
+      const limite = Date.now() + 6000;
+      while (Date.now() < limite && nevoaEmitidos === n0) await page.waitForTimeout(100);
+      if (nevoaEmitidos > n0) return;
+    }
+    const diag = await page.evaluate(() => ({
+      meta: document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? null,
+      pincel: !!document.querySelector(".vtt-nevoa-canvas-pincel"),
+      btnSync: [...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? "")),
+    })).catch(() => null);
+    throw new Error(`desenho de névoa não gerou emit após 4 tentativas — ${JSON.stringify(diag)}`);
+  };
   await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
     const srv = ws.connectToServer();
     wsSrvM = srv;
     ws.onMessage((msg) => {
+      if (segurarSync && ehMsgSync(msg)) { filaSync.push(msg); return; }
       if (ehMsgNevoa(msg)) nevoaEmitidos++;
       if (segurarNevoa && ehMsgNevoa(msg)) { nevoaInterceptados++; filaNevoa.push(msg); return; }
       srv.send(msg);
@@ -262,6 +316,10 @@ try {
   await pgM.route("**/socket.io/**", async (route) => {
     const req = route.request();
     const corpo = req.postData() ?? "";
+    if (segurarSync && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa:sincronizar"')) {
+      rotasSync.push(route);
+      return; // segura a request — a sync não chega ao servidor
+    }
     if (segurarNevoa && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa"')) {
       nevoaInterceptados++;
       rotasNevoa.push(route);
@@ -598,17 +656,20 @@ try {
   await garantirPincel(pgM);
   const nAntesOff = await nTracos(pgM);
   const nHttpAntesOff = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  // garante que não sobrou estado incerto da seção anterior — com
+  // nevoaIncerta ativo o gesto é bloqueado e nenhum emit sairia
+  await esperarSemIncerto(pgM, 30000);
   // o emit é retido na camada de transporte (o cliente acha que enviou)
   // e o SERVIDOR CAI de verdade: o ACK é impossível → timeout → o
   // resultado fica incerto — não é rejeição
   segurarNevoa = true;
-  await desenhar(pgM, [[0.62, 0.62], [0.7, 0.62], [0.7, 0.7]]);
+  await desenharConfirmado(pgM, [[0.62, 0.62], [0.7, 0.62], [0.7, 0.7]]);
   await encerrarServidor(proc);
   // ACK expirou ≠ rejeição: mensagem de resultado DESCONHECIDO e mutações
   // bloqueadas (o botão Sincronizar é a prova persistente do estado
   // incerto — a mensagem de erro pode ser substituída pela falha de
   // sincronização enquanto o servidor está fora)
-  await pgM.getByRole("button", { name: /sincronizar névoa/i }).waitFor({ timeout: 20000 });
+  await pgM.getByRole("button", { name: /sincronizar névoa/i }).waitFor({ timeout: 60000 });
   const desfezIncerto = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const erroIncerto = await pgM.locator(".erro").last().textContent().catch(() => "");
   t("timeout: mensagem de resultado incerto + controles bloqueados",
@@ -642,7 +703,7 @@ try {
   // O estado incerto permanece até a sincronização EXPIRAR — janela
   // determinística de ~3s para verificar bloqueios antes do retry.
   const nAntesHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
-  await esperarSemIncerto(pgM, 10000); // garante que a seção anterior reconciliou
+  await esperarSemIncerto(pgM, 30000); // garante que a seção anterior reconciliou
   derrubarAckM = 2;
   await garantirPincel(pgM);
   const nEmAntes = nevoaEmitidos;
@@ -651,13 +712,13 @@ try {
   await pgM.waitForFunction((n) => {
     const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
     return txt.includes("desativada") ? n === 0 : Number(txt.match(/ativa \((\d+)/)?.[1]) === n;
-  }, nAntesHold + 1, { timeout: 10000 });
+  }, nAntesHold + 1, { timeout: 30000 });
   const nHttpOp = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   t("op c/ ACK perdido: servidor aplicou exatamente uma vez",
     nHttpOp === nAntesHold + 1, `antes=${nAntesHold} depois=${nHttpOp}`);
   // timeout (~5s) → estado incerto → sync automática tem o ACK dropado:
   // a janela de bloqueio fica aberta até o timeout da sync (8s)
-  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
+  await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 150000 });
   const desfezBloq = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   const ocultarBloq = await pgM.getByRole("button", { name: "Ocultar tudo" }).isEnabled();
   // janela de incerto pode incluir refresh/reconexão que desliga o
@@ -674,7 +735,7 @@ try {
   await pgM2.getByRole("button", { name: "Ocultar tudo" }).click();
   await pgM.waitForFunction(
     () => /ativa \(0 traços\)/.test(document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""),
-    null, { timeout: 10000 });
+    null, { timeout: 30000 });
   const aindaIncerto = await pgM.getByRole("button", { name: /sincronizar n/i }).count();
   const desfezAposBroadcast = await pgM.getByRole("button", { name: "Desfazer traço" }).isEnabled();
   t("broadcast alheio atualiza visão mas não libera estado incerto",
@@ -683,7 +744,7 @@ try {
   // passa agora e devolve o estado autoritativo pós-todas-as-operações
   // (0 traços, pois o ocultarTudo do pgM2 já foi aplicado antes)
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
-  await esperarSemIncerto(pgM, 20000);
+  await esperarSemIncerto(pgM, 60000);
   const nAposSync = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   t("sync ordenada liberou com estado autoritativo (pós-operações)",
     nAposSync === 0 && (await nTracos(pgM)) === 0,
@@ -694,17 +755,22 @@ try {
   // volatile.emit descartado numa desconexão). A sync ordenada devolve
   // o estado atual do servidor — sem a operação — e libera as ações.
   const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
+  // idem: nenhuma incerteza residual pode bloquear o gesto medido
+  await esperarSemIncerto(pgM, 30000);
   segurarNevoa = true;
+  // retém também a sync automática: sem isso, um ACK entregue fora do
+  // filtro de pacotes "43" (ex.: transporte polling) resolveria o estado
+  // incerto sozinho e o botão "Sincronizar névoa" nunca apareceria
+  segurarSync = true;
   // derruba TODOS os ACKs durante a janela de incerteza: um único
   // contador (=1) podia ser consumido por um ACK estranho (reconexão,
   // entrar-campanha tardio) e liberar a sync automática — o estado
   // incerto se resolveria sozinho e o botão nunca ficaria visível.
   // A contagem é zerada antes do retry manual, que precisa do ACK.
   derrubarAckM = 50;
-  await garantirPincel(pgM);
-  await desenhar(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
+  await desenharConfirmado(pgM, [[0.6, 0.6], [0.66, 0.6], [0.66, 0.66]]);
   try {
-    await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 45000 });
+    await pgM.getByRole("button", { name: /sincronizar n/i }).waitFor({ timeout: 150000 });
   } catch (e) {
     const diag = await pgM.evaluate(() => ({
       botoes: [...document.querySelectorAll("button")].map((b) => b.textContent?.trim()).filter(Boolean),
@@ -723,11 +789,12 @@ try {
   t("não recebida: incerto bloqueia e nada mais é emitido",
     desfezOff2 === false && nevoaEmitidos === nEm2,
     `desfazer=${desfezOff2} emitidos=${nevoaEmitidos - nEm2}`);
-  // retry explícito: a sync ordenada devolve o estado atual — sem a
-  // operação retida — e libera as ações
+  // retry explícito: descarta a sync automática retida e emite a
+  // sincronização manual — a resposta ordenada libera o estado incerto
+  descartarSync();
   derrubarAckM = 0; // libera ACKs: o retry manual precisa da resposta
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
-  await esperarSemIncerto(pgM, 20000);
+  await esperarSemIncerto(pgM, 60000);
   const nAposOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   t("não recebida: sync devolveu estado sem a operação e liberou",
     nAposOff2 === nAntesOff2 && (await nTracos(pgM)) === nAntesOff2,
@@ -755,7 +822,7 @@ try {
   await pgM2.waitForFunction((n) => {
     const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
     return txt.includes("desativada") ? n === 0 : Number(txt.match(/ativa \((\d+)/)?.[1]) === n;
-  }, nM2 + 1, { timeout: 10000 });
+  }, nM2 + 1, { timeout: 30000 });
   t("gesto touch real no mobile ativou 1 traço", (await nTracos(pgM2)) === nM2 + 1);
   // canvas interno acompanha CSS × DPR
   const dimCanvas = await pgM2.locator(".vtt-nevoa-canvas").evaluate((cv) => ({

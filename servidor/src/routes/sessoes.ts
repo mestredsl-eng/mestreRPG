@@ -90,15 +90,35 @@ sessoesRouter.post("/", requirePapel("mestre"), async (req, res) => {
   const cid = req.params.campaignId;
   // mutação durante restauração seria sobrescrita pelo commit — rejeita
   if (barreiraRestauracaoAtiva(cid)) { res.status(409).json({ erro: "Campanha em restauração" }); return; }
-  const rows = await db.select({ number: sessions.number }).from(sessions).where(eq(sessions.campaignId, cid));
-  const proximo = rows.reduce((m, r) => Math.max(m, r.number), 0) + 1;
-  const agora = new Date();
-  const id = crypto.randomUUID();
-  await db.insert(sessions).values({
-    id, campaignId: cid, number: proximo, name: body.data.name ?? `Sessão ${proximo}`,
-    status: "ativa", startedAt: agora, createdBy: req.usuario!.id, createdAt: agora, updatedAt: agora,
-  });
-  await db.insert(turns).values({ id: crypto.randomUUID(), sessionId: id, state: { ordem: [], atual: -1, ativo: false }, updatedBy: req.usuario!.id, updatedAt: agora });
+  // Criação atômica: MAX(number)+1, sessão e turno inicial na MESMA
+  // transação — o driver serializa transações, então duas criações
+  // simultâneas não podem ler o mesmo MAX. Se ainda assim houver conflito
+  // de unicidade (constraint sessions_campaign_number_idx), recalcula e
+  // tenta de novo, no máximo 3 vezes. Falha parcial não deixa sessão sem
+  // turno: os dois inserts estão na mesma transação.
+  const MAX_TENTATIVAS = 3;
+  let proximo = 0;
+  let id = "";
+  for (let tentativa = 1; tentativa <= MAX_TENTATIVAS; tentativa++) {
+    try {
+      db.transaction((tx) => {
+        const rows = tx.select({ number: sessions.number }).from(sessions).where(eq(sessions.campaignId, cid)).all();
+        proximo = rows.reduce((m, r) => Math.max(m, r.number), 0) + 1;
+        id = crypto.randomUUID();
+        const agora = new Date();
+        tx.insert(sessions).values({
+          id, campaignId: cid, number: proximo, name: body.data.name ?? `Sessão ${proximo}`,
+          status: "ativa", startedAt: agora, createdBy: req.usuario!.id, createdAt: agora, updatedAt: agora,
+        }).run();
+        tx.insert(turns).values({ id: crypto.randomUUID(), sessionId: id, state: { ordem: [], atual: -1, ativo: false }, updatedBy: req.usuario!.id, updatedAt: agora }).run();
+      });
+      break;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      const conflito = msg.includes("sessions_campaign_number_idx") || msg.includes("UNIQUE constraint failed: sessions.campaign_id");
+      if (!conflito || tentativa === MAX_TENTATIVAS) throw e;
+    }
+  }
   await audit(req, "sessao.criada", { sessionId: id });
   emitirCampanha(cid, "sessao:atualizada", { sessionId: id });
   const [s] = await db.select().from(sessions).where(eq(sessions.id, id)).limit(1);

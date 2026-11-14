@@ -63,15 +63,24 @@ function armarFlag(raiz, filePath) {
   });
 }
 // Simula banco de versão anterior: remove as tabelas das migrations
-// 0017-0023 e as colunas das ALTERs (0019 mesa, 0020 financeiro,
-// 0023 guildas), além dos registros correspondentes no journal do
-// Drizzle (últimas 7 migrations).
+// a partir da 0017 e as colunas das ALTERs (0019 mesa, 0020 financeiro,
+// 0023 índice de sessões, 0024 guildas), além dos registros
+// correspondentes no journal do Drizzle — a quantidade é derivada do
+// _journal.json (tudo com idx >= 17), não de um número mágico que
+// quebraria a cada migration nova.
 const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members"];
+const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
+const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
+function migrationsAReverter() {
+  const j = JSON.parse(readFileSync(JOURNAL_MIGRATIONS, "utf8"));
+  return j.entries.filter((e) => e.idx >= IDX_FRONTEIRA).length;
+}
 function rebaixarSchema(arquivoDb) {
   const db = abrirDb(arquivoDb);
   try {
     for (const tb of TABELAS_ANTIGAS) db.exec(`drop table if exists ${tb}`);
-    // ALTERs sem tabela própria: desfaz as colunas.
+    // ALTERs/índices sem tabela própria: desfaz antes do migrate rodar de novo.
+    db.exec("drop index if exists sessions_campaign_number_idx"); // migration 0023
     // SQLite não aceita IF EXISTS em DROP COLUMN — verifica antes.
     const colsMoney = new Set(db.pragma("table_info(money_transactions)").map((c) => c.name));
     if (colsMoney.has("inventory_item_id")) db.exec("alter table money_transactions drop column inventory_item_id");
@@ -85,7 +94,8 @@ function rebaixarSchema(arquivoDb) {
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
-      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit 7)`);
+      const n = migrationsAReverter();
+      db.exec(`delete from ${jt} where rowid in (select rowid from ${jt} order by rowid desc limit ${n})`);
     }
   } finally { db.close(); }
 }

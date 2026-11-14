@@ -5,6 +5,14 @@
 import Database from "better-sqlite3";
 import { hashToken } from "./servidor/dist/lib/password.js";
 
+// Este roteiro altera a configuração da campanha e cria personagens/sessões de teste.
+// Exija confirmação explícita para evitar execução acidental contra o banco real.
+if (process.env.CONFIRMAR_HOMOLOGACAO_PONTOS_NPC !== "SIM") {
+  console.error("Execução bloqueada: o teste altera dados persistentes.");
+  console.error("Use CONFIRMAR_HOMOLOGACAO_PONTOS_NPC=SIM após conferir BASE_URL e HOMOLOGACAO_DB_PATH.");
+  process.exit(2);
+}
+
 const BASE = process.env.BASE_URL || "http://localhost:3002";
 const CID = "7a1c9c2e-3c7a-4805-9145-d8622d755a36"; // Caçadores & Caças
 const VER = "70cd71b0-6a93-4962-8123-2dc11451b02b"; // Caçador Caçados v7 (publicada)
@@ -16,7 +24,8 @@ const ok = (nome, cond, extra = "") => {
   console.log(`${cond ? "ok" : "FALHOU"} ${nome}${extra ? " — " + extra : ""}`);
 };
 
-const db = new Database("banco/mestre-rpg.db");
+const DB_PATH = process.env.HOMOLOGACAO_DB_PATH || "banco/mestre-rpg.db";
+const db = new Database(DB_PATH);
 const sessao = (userId, tag) => {
   const token = `${tag}-` + crypto.randomUUID();
   db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")

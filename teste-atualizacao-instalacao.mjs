@@ -30,10 +30,10 @@ const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
 const INDICE = join(RAIZ_REPO, "servidor/dist/index.js");
 const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
+// Total de migrations do journal atual — derivado do arquivo, não de
+// número mágico, para não quebrar a cada migration nova.
+const TOTAL_MIGRATIONS = JSON.parse(readFileSync(join(MIGRATIONS, "meta", "_journal.json"), "utf8")).entries.length;
 const ULTIMA_MIGRACAO_ANTIGA = "0013"; // instalação anterior: schema até 0013
-// Total de migrations da versão atual — evita contadores hardcoded que
-// quebram a cada nova migration (Issue #65 adicionou a 0023).
-const TOTAL_MIGRACOES = JSON.parse(readFileSync(join(MIGRATIONS, "meta/_journal.json"), "utf8")).entries.length;
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -172,7 +172,7 @@ try {
   sec("4. Procedimento real de atualização (db:migrate)");
   const mig = rodar("node", [MIGRADOR], envRaiz(RAIZ));
   t("migrate executou com sucesso", mig.code === 0, mig.out.slice(-300));
-  t(`journal agora registra ${TOTAL_MIGRACOES} migrations`, contarJournal(BANCO_VELHO) === TOTAL_MIGRACOES, String(contarJournal(BANCO_VELHO)));
+  t(`journal agora registra ${TOTAL_MIGRATIONS} migrations`, contarJournal(BANCO_VELHO) === TOTAL_MIGRATIONS, String(contarJournal(BANCO_VELHO)));
   {
     const db = abrirDb(BANCO_VELHO);
     const ts = tabelas(db);
@@ -203,7 +203,7 @@ try {
   t("1 campanha preservada", depois.campaigns?.[0]?.name === "Campanha Legada");
   t("2 personagens preservados", depois.characters?.length === 2 && depois.characters.every((c) => c.status === "aprovada"));
   t("dados JSON das fichas intactos", depois.characters?.some((c) => c.name === "Herói Legado" && JSON.parse(c.data).forca === 14));
-  t("journal do drizzle consistente", depois.__drizzle_migrations?.length === TOTAL_MIGRACOES || contarJournal(BANCO_VELHO) === TOTAL_MIGRACOES);
+  t("journal do drizzle consistente", depois.__drizzle_migrations?.length === TOTAL_MIGRATIONS || contarJournal(BANCO_VELHO) === TOTAL_MIGRATIONS);
 
   // ===== 6. INICIALIZAÇÃO DO SISTEMA ATUALIZADO =====
   sec("6. Servidor atualizado inicializa e serve os dados");
@@ -273,7 +273,7 @@ try {
   // re-atualização pós-restore
   const mig2 = rodar("node", [MIGRADOR], env2);
   t("re-atualização pós-restore OK", mig2.code === 0, mig2.out.slice(-200));
-  t(`journal ${TOTAL_MIGRACOES} novamente`, contarJournal(dbPath(RAIZ2)) === TOTAL_MIGRACOES);
+  t(`journal ${TOTAL_MIGRATIONS} novamente`, contarJournal(dbPath(RAIZ2)) === TOTAL_MIGRATIONS);
   {
     const db = abrirDb(dbPath(RAIZ2));
     const pers = db.prepare("select count(*) c from characters").get().c;
