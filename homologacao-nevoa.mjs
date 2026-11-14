@@ -320,10 +320,17 @@ try {
       rotasSync.push(route);
       return; // segura a request — a sync não chega ao servidor
     }
-    if (segurarNevoa && req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa"')) {
-      nevoaInterceptados++;
-      rotasNevoa.push(route);
-      return; // segura a request — o emit não chega ao servidor
+    if (req.method() === "POST" && corpo.includes('"mesa:vtt:nevoa"')) {
+      // Mesma semântica do contador no caminho WebSocket: conta todo emit
+      // do cliente ANTES da retenção/encaminhamento. Sem isso, quando o
+      // Socket.IO cai para polling, desenharConfirmado espera um contador
+      // que nunca sobe, mesmo que o POST tenha sido interceptado ou enviado.
+      nevoaEmitidos++;
+      if (segurarNevoa) {
+        nevoaInterceptados++;
+        rotasNevoa.push(route);
+        return; // segura a request — o emit não chega ao servidor
+      }
     }
     await route.continue();
   });
