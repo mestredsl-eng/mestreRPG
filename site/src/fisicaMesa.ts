@@ -224,14 +224,26 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
   }
 
   // Colisões entre dados (fase estreita: esfera envolvente).
+  // A separação é limitada pelo espaço livre até as bordas. Um dado
+  // finalizado não recebe impulso nem gira; só pode ser deslocado por
+  // correção posicional se o dado móvel estiver fisicamente encurralado
+  // contra a borda. Isso evita expulsar o móvel da mesa e congelá-lo
+  // ainda sobreposto ao dado assentado.
+  const capacidadeXY = (d: DadoMesa, dx: number, dy: number): number => {
+    const margem = d.raioColisao * 0.8;
+    const hi = limite - margem, lo = -limite + margem;
+    let max = Infinity;
+    if (dx > 1e-9) max = Math.min(max, (hi - d.position[0]) / dx);
+    else if (dx < -1e-9) max = Math.min(max, (lo - d.position[0]) / dx);
+    if (dy > 1e-9) max = Math.min(max, (hi - d.position[1]) / dy);
+    else if (dy < -1e-9) max = Math.min(max, (lo - d.position[1]) / dy);
+    return Number.isFinite(max) ? Math.max(0, max) : Infinity;
+  };
+
   for (let i = 0; i < dados.length; i++) {
     for (let j = i + 1; j < dados.length; j++) {
       const a = dados[i], b = dados[j];
-      // Dado finalizado é corpo estático: só o ativo é corrigido —
-      // nunca é empurrado para fora da mesa ou para dentro de outro.
       const movA = !a.finalizado, movB = !b.finalizado;
-      if (!movA && !movB) continue;
-      const tot = (movA ? 1 : 0) + (movB ? 1 : 0);
       const soma = a.raioColisao + b.raioColisao;
       const dx = b.position[0] - a.position[0];
       const dy = b.position[1] - a.position[1];
@@ -242,26 +254,70 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
       if (Math.abs(dz) > soma * 0.9) continue;
       const dist3 = Math.sqrt(distPlano * distPlano + dz * dz);
       if (dist3 >= soma || dist3 < 1e-6) continue;
+
       const nx = dx / distPlano, ny = dy / distPlano;
       const pen = soma - dist3;
-      const wx = (nx * pen) / tot, wy = (ny * pen) / tot;
-      if (movA) { a.position[0] -= wx; a.position[1] -= wy; }
-      if (movB) { b.position[0] += wx; b.position[1] += wy; }
-      // Separação vertical quando um está bem acima do outro.
-      if (Math.abs(dz) > 0.35) {
-        const wz = (Math.sign(dz) * pen * 0.4) / tot;
+      const capA = capacidadeXY(a, -nx, -ny);
+      const capB = capacidadeXY(b, nx, ny);
+      let deslocA = 0, deslocB = 0;
+
+      if (movA && !movB) {
+        // Primeiro tenta resolver tudo movendo apenas o corpo ativo.
+        deslocA = Math.min(pen, capA);
+        // Sem espaço suficiente, o assentado cede apenas o restante,
+        // por translação: orientação, velocidade e giro permanecem intactos.
+        deslocB = Math.min(pen - deslocA, capB);
+      } else if (!movA && movB) {
+        deslocB = Math.min(pen, capB);
+        deslocA = Math.min(pen - deslocB, capA);
+      } else {
+        // Dois móveis ou dois assentados: divisão equilibrada, redistribuindo
+        // a parcela bloqueada para o corpo que ainda tem espaço na mesa.
+        let restante = pen;
+        let livres: ("a" | "b")[] = ["a", "b"];
+        while (restante > 1e-6 && livres.length) {
+          const parcela = restante / livres.length;
+          let aplicado = 0;
+          const proximos: ("a" | "b")[] = [];
+          for (const lado of livres) {
+            if (lado === "a") {
+              const addA = Math.min(parcela, capA - deslocA);
+              deslocA += addA; aplicado += addA;
+              if (capA - deslocA > 1e-6) proximos.push("a");
+            } else {
+              const addB = Math.min(parcela, capB - deslocB);
+              deslocB += addB; aplicado += addB;
+              if (capB - deslocB > 1e-6) proximos.push("b");
+            }
+          }
+          if (aplicado < 1e-6) break;
+          restante -= aplicado;
+          livres = proximos;
+        }
+      }
+
+      a.position[0] -= nx * deslocA;
+      a.position[1] -= ny * deslocA;
+      b.position[0] += nx * deslocB;
+      b.position[1] += ny * deslocB;
+
+      // Separação vertical somente nos corpos ainda móveis.
+      const movCount = (movA ? 1 : 0) + (movB ? 1 : 0);
+      if (movCount > 0 && Math.abs(dz) > 0.35) {
+        const wz = (Math.sign(dz) * pen * 0.4) / movCount;
         if (movA) a.position[2] -= wz;
         if (movB) b.position[2] += wz;
       }
-      // Troca de impulso ao longo da normal (restituição baixa).
+
+      // Troca de impulso somente nos corpos móveis (massa igual).
       const rvx = b.velocity[0] - a.velocity[0];
       const rvy = b.velocity[1] - a.velocity[1];
       const closing = rvx * nx + rvy * ny;
-      if (closing < 0) {
-        const jimp = -(1 + 0.32) * closing / tot;
+      if (movCount > 0 && closing < 0) {
+        const jimp = -(1 + 0.32) * closing / movCount;
         if (movA) { a.velocity[0] -= jimp * nx; a.velocity[1] -= jimp * ny; }
         if (movB) { b.velocity[0] += jimp * nx; b.velocity[1] += jimp * ny; }
-        // O impacto "engata" giro nos corpos móveis.
+        // O impacto "engata" giro somente nos corpos móveis.
         const kick = Math.min(6, Math.abs(closing) * 0.9);
         if (movA) a.angularVelocity[2] += kick * (i % 2 === 0 ? 1 : -1);
         if (movB) b.angularVelocity[2] -= kick * (j % 2 === 0 ? 1 : -1);
