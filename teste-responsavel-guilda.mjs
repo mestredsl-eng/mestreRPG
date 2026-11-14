@@ -227,24 +227,28 @@ try {
   t("mesmo responsável → 200 idempotente", idem.status === 200 && idem.json?.responsavelId === idErin);
   t("sem auditoria extra", auditsDb("guilda.responsavel.transferir").length === antes);
 
-  sec("Concorrência — duas transferências simultâneas");
+  sec("Concorrência — CAS atômico: exatamente uma vence");
   // estado: responsável=erin; alvos válidos dave e alice (ambos GM).
-  // Semântica estrita: a autorização é revalidada na execução — se a
-  // primeira transferência commitar antes da segunda ler o estado, o
-  // ator já não é mais o responsável e recebe 403 (correto: impede que
-  // um ex-responsável dispare transferências em rajada). O que não pode
-  // acontecer é estado corrompido ou auditoria sem persistência.
+  // O UPDATE condicional (responsible_user_id IS <lido>) garante que só
+  // uma gravação commita: a perdedora recebe 403 (leu estado novo na
+  // autorização) ou 409 (passou na autorização mas perdeu o CAS).
+  const eventosAntes = eventosBob.filter((e) => e.tipo === "responsavel_alterado").length;
   const [r1, r2] = await Promise.all([
     put(cookieErin, guildA, idDave),
     put(cookieErin, guildA, idAlice),
   ]);
   const oks = [r1, r2].filter((r) => r.status === 200).length;
-  t("pelo menos uma transferência aplicada", oks >= 1, `${r1.status}|${r2.status}`);
-  t("perdedor recebe 403 ou também 200 — nunca 5xx", [r1.status, r2.status].every((s) => s === 200 || s === 403));
+  t("EXATAMENTE uma transferência vence", oks === 1, `${r1.status}|${r2.status}`);
+  t("perdedora recebe 403 ou 409", [r1.status, r2.status].every((s) => s === 200 || s === 403 || s === 409));
   const final = guildaDb(guildA).responsible_user_id;
-  t("estado final consistente (sem corrupção)", final === idDave || final === idAlice || final === idErin, final);
-  t("auditoria = exatamente os sucessos", auditsDb("guilda.responsavel.transferir").length === antes + oks,
-    `audits=${auditsDb("guilda.responsavel.transferir").length} oks=${oks}`);
+  const vencedor = r1.status === 200 ? idDave : idAlice;
+  t("estado final = transferência vencedora", final === vencedor, `final=${final} vencedor=${vencedor}`);
+  t("apenas UMA auditoria criada", auditsDb("guilda.responsavel.transferir").length === antes + 1,
+    `audits=${auditsDb("guilda.responsavel.transferir").length}`);
+  await new Promise((r) => setTimeout(r, 500));
+  t("apenas UM evento de sucesso emitido",
+    eventosBob.filter((e) => e.tipo === "responsavel_alterado").length === eventosAntes + 1);
+  t("ex-responsável (erin) não transfere novamente", (await put(cookieErin, guildA, idBob)).status === 403);
 
   sec("ADMIN — recuperação autorizada");
   const adm = await put(cookieRoot, guildA, idAlice);

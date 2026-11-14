@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, isNotNull, ne, or } from "drizzle-orm";
+import { and, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { guilds, guildMembers, campaigns, memberships, users } from "../db/schema.js";
@@ -270,10 +270,21 @@ guildasRouter.put("/:guildId/responsavel", async (req, res) => {
     return;
   }
   const agora = new Date();
-  await db
-    .update(guilds)
-    .set({ responsibleUserId: novoId, updatedAt: agora })
-    .where(eq(guilds.id, g.id));
+  // Compare-and-swap atômico: a gravação só acontece se o responsável
+  // lido na autorização AINDA for o atual (IS = igualdade null-safe no
+  // SQLite). Se outra transferência commitar primeiro, changes=0 e esta
+  // requisição perde com 409 — auditoria e evento só ocorrem para a
+  // transferência efetivamente confirmada.
+  const gravacao = await db.run(sql`
+    UPDATE guilds
+    SET responsible_user_id = ${novoId}, updated_at = ${agora.getTime()}
+    WHERE id = ${g.id}
+      AND responsible_user_id IS ${g.responsibleUserId}
+  `);
+  if (gravacao.changes === 0) {
+    res.status(409).json({ erro: "A responsabilidade já foi transferida por outra operação" });
+    return;
+  }
   await audit(req, "guilda.responsavel.transferir",
     { anterior: g.responsibleUserId, novo: novoId, ator: req.usuario!.id });
   await notificarGuildaAtualizada(g.id, "responsavel_alterado", [novoId]);
