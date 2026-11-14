@@ -124,15 +124,53 @@ try {
   t("promoção a GM aparece para outro membro conectado sem recarregar",
     await pgA.locator("tr", { hasText: "jogador_b" }).getByText("GM", { exact: true }).isVisible());
 
+  // Segura uma leitura 200 iniciada antes da remoção. A resposta 403
+  // disparada pelo evento de remoção deve vencer; ao liberar o 200 antigo,
+  // ele não pode repovoar a tela com dados obsoletos.
+  let liberarRespostaAntiga = () => {};
+  let sinalizarRespostaAntiga = () => {};
+  const esperaLiberacaoAntiga = new Promise((resolve) => { liberarRespostaAntiga = resolve; });
+  const respostaAntigaRetida = new Promise((resolve) => { sinalizarRespostaAntiga = resolve; });
+  let reterProximaLeitura = true;
+  let statusRespostaAntiga = 0;
+  await pgB.route(`${BASE}/api/guildas/${guildId}`, async (route) => {
+    if (route.request().method() !== "GET" || !reterProximaLeitura) return route.continue();
+    reterProximaLeitura = false;
+    const resposta = await route.fetch();
+    statusRespostaAntiga = resposta.status();
+    sinalizarRespostaAntiga();
+    await esperaLiberacaoAntiga;
+    return route.fulfill({ response: resposta });
+  });
+  const atualizarDescricao = await req(BASE, "PATCH", `/guildas/${guildId}`, {
+    cookie: cenario.cookieMestre,
+    body: { description: "Atualização usada para testar resposta HTTP obsoleta" },
+  });
+  t("mutação de guilda aceita para iniciar leitura antiga", atualizarDescricao.status === 200);
+  await Promise.race([
+    respostaAntigaRetida,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout segurando leitura antiga da guilda")), 10000)),
+  ]);
+  t("leitura 200 antiga foi retida antes da remoção", statusRespostaAntiga === 200);
+
   await linhaBNoAdmin.getByRole("button", { name: "Remover", exact: true }).click();
   // A API passa a responder 403 para o removido; a tela limpa dados e
   // controles antigos assim que chega o evento privado do servidor.
   await pgB.getByRole("button", { name: "Voltar", exact: true }).waitFor({ timeout: 10000 });
   await pgB.getByText(/Sem acesso a esta guilda/).waitFor({ timeout: 10000 });
+
+  // Entrega por último a resposta 200 iniciada quando o usuário ainda era
+  // membro. A geração mais nova deve descartar esse resultado obsoleto.
+  liberarRespostaAntiga();
+  await pgB.waitForTimeout(250);
+  await pgB.unroute(`${BASE}/api/guildas/${guildId}`);
   await pgA.locator("tr", { hasText: "jogador_b" }).waitFor({ state: "detached", timeout: 10000 });
   t("remoção revoga a tela aberta do membro sem refresh manual",
     (await pgB.getByRole("heading", { name: "Guilda do Trono" }).count()) === 0
       && (await pgB.locator(".erro").count()) > 0);
+  t("resposta 200 antiga não repovoa o detalhe após 403", statusRespostaAntiga === 200
+    && (await pgB.getByRole("heading", { name: "Guilda do Trono" }).count()) === 0
+    && (await pgB.getByText(/Sem acesso a esta guilda/).count()) > 0);
   t("outro membro conectado recebe roster atualizado sem o removido",
     (await pgA.locator("tr", { hasText: "jogador_b" }).count()) === 0);
 
