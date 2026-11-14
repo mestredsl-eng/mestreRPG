@@ -17,6 +17,7 @@ export default function Guildas() {
   const [descricao, setDescricao] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const jaCarregou = useRef(false);
   const geracaoCarregamento = useRef(0);
 
   const carregar = useCallback(async () => {
@@ -35,7 +36,10 @@ export default function Guildas() {
       setGuildas([]);
       setErro(e instanceof Error ? e.message : "Erro ao carregar guildas");
     } finally {
-      if (geracao === geracaoCarregamento.current) setCarregando(false);
+      if (geracao === geracaoCarregamento.current) {
+        setCarregando(false);
+        jaCarregou.current = true;
+      }
     }
   }, [usuario?.isAdmin]);
 
@@ -101,11 +105,12 @@ export default function Guildas() {
             <button type="submit">Criar guilda</button>
           </form>
         )}
-        {carregando ? (
+        {carregando && !jaCarregou.current ? (
           <p>Carregando…</p>
         ) : guildas.length === 0 ? (
           <p>Nenhuma guilda ainda. Crie a primeira ou peça a um GM para adicioná-lo.</p>
         ) : (
+          <>
           <table className="tabela tabela-responsiva">
             <thead>
               <tr><th>Nome</th><th>Seu papel</th><th>Status</th><th></th></tr>
@@ -121,6 +126,19 @@ export default function Guildas() {
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {guildas.map((g) => (
+              <div key={g.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><strong>{g.name}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Seu papel</span><span>{g.meuPapel === "gm" ? "GM" : g.meuPapel === "membro" ? "Membro" : g.meuPapel === "admin" ? "Administrador" : "—"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{g.status === "arquivada" ? "Arquivada" : "Ativa"}</span></div>
+                <div className="registro-acoes">
+                  <button className="mini" onClick={() => setSelecionada(g.id)}>Abrir</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </section>
     </>
@@ -267,7 +285,10 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
     }
   };
 
-  if (carregando) return <section className="cartao"><p>Carregando…</p></section>;
+  // Só bloqueia a tela no primeiro carregamento: recargas disparadas por
+  // guilda:atualizada (ex.: convite criado) não podem desmontar a seção de
+  // convites — o código do link só é exibido uma única vez, logo após criar.
+  if (carregando && !guilda) return <section className="cartao"><p>Carregando…</p></section>;
   if (!guilda) return <section className="cartao"><p className="erro">{erro ?? "Guilda não encontrada."}</p><button onClick={aoVoltar}>Voltar</button></section>;
 
   return (
@@ -332,6 +353,27 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
             ))}
           </tbody>
         </table>
+        <div className="cartoes-registro">
+          {membros.map((m) => {
+            const ultimoGM = m.ehEu && m.role === "gm" && membros.filter((x) => x.role === "gm" && x.status === "ativo").length <= 1;
+            return (
+              <div key={m.userId} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Usuário</span><strong>{m.username}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><span>{m.displayName ?? "—"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Papel</span><span>{m.role === "gm" ? "GM" : "Membro"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{m.status === "ativo" ? "Ativo" : m.status}</span></div>
+                {podeGerir && m.status === "ativo" && (
+                  <div className="registro-acoes">
+                    <button className="mini" onClick={() => void alternarGM(m)} disabled={ultimoGM}>
+                      {m.role === "gm" ? "Rebaixar" : "Promover a GM"}
+                    </button>
+                    <button className="mini perigo" onClick={() => void remover(m)} disabled={ultimoGM}>Remover</button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       <section className="cartao">
@@ -354,6 +396,7 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
         {campanhas.length === 0 ? (
           <p className="dica">Nenhuma campanha vinculada. Campanhas sem guilda podem ser vinculadas por um mestre delas que seja GM (ou pelo ADMIN).</p>
         ) : (
+          <>
           <table className="tabela tabela-responsiva">
             <thead><tr><th>Nome</th><th>Status</th>{souAdmin && <th>Ações</th>}</tr></thead>
             <tbody>
@@ -370,6 +413,20 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
               ))}
             </tbody>
           </table>
+          <div className="cartoes-registro">
+            {campanhas.map((c) => (
+              <div key={c.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Nome</span><strong>{c.name}</strong></div>
+                <div className="registro-campo"><span className="registro-rotulo">Status</span><span>{c.status}</span></div>
+                {souAdmin && (
+                  <div className="registro-acoes">
+                    <button className="mini perigo" onClick={() => void desvincular(c)}>Desvincular</button>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          </>
         )}
       </section>
 
@@ -515,6 +572,7 @@ function SecaoConvitesInternos({ guildId }: { guildId: string }) {
       ) : convites.length === 0 ? (
         <p className="dica">Nenhum convite criado ainda.</p>
       ) : (
+        <>
         <table className="tabela tabela-responsiva">
           <thead><tr><th>Convite</th><th>Expira em</th><th>Usos</th><th>Situação</th><th>Ações</th></tr></thead>
           <tbody>
@@ -538,6 +596,27 @@ function SecaoConvitesInternos({ guildId }: { guildId: string }) {
             })}
           </tbody>
         </table>
+        <div className="cartoes-registro">
+          {convites.map((c) => {
+            const sit = situacaoConvite(c);
+            return (
+              <div key={c.id} className="registro-cartao">
+                <div className="registro-campo"><span className="registro-rotulo">Convite</span><span>{c.id.slice(0, 8)}…</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Expira em</span><span>{new Date(c.expiraEm).toLocaleString("pt-BR")}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Usos</span><span>{c.usos}/{c.maxUsos > 0 ? c.maxUsos : "∞"}</span></div>
+                <div className="registro-campo"><span className="registro-rotulo">Situação</span><span className={`badge badge-${sit}`}>{SITUACAO_CONVITE[sit] ?? sit}</span></div>
+                {sit === "ativo" && (
+                  <div className="registro-acoes">
+                    <button className="mini perigo" onClick={() => void revogar(c)} disabled={revogando === c.id}>
+                      {revogando === c.id ? "Revogando…" : "Revogar"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        </>
       )}
     </section>
   );

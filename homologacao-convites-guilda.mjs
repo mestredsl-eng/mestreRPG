@@ -45,8 +45,11 @@ async function login(page, user, senha) {
 }
 async function abrirGuilda(page, nome) {
   await page.getByRole("button", { name: "Guildas" }).click();
-  const linha = page.locator("table.tabela tbody tr", { hasText: nome }).first();
-  await linha.getByRole("button", { name: "Abrir" }).click();
+  // Desktop renderiza tabela; mobile (<=640px) esconde .tabela-responsiva
+  // e exibe .registro-cartao — o seletor cobre os dois layouts.
+  const item = page.locator("tr:visible, .registro-cartao:visible", { hasText: nome })
+    .filter({ has: page.getByRole("button", { name: "Abrir" }) }).first();
+  await item.getByRole("button", { name: "Abrir" }).click();
   await page.getByRole("heading", { name: /Membros/ }).waitFor({ timeout: 15000 });
 }
 
@@ -97,10 +100,17 @@ try {
   await abrirGuilda(pgGM, "Guilda Alfa");
   await pgGM.getByRole("heading", { name: "Convites internos" }).waitFor({ timeout: 15000 });
   t("seção Convites internos visível para GM", true);
-  await pgGM.locator(".formulario select").nth(1).selectOption("1"); // 1 uso
+  const secConvites = pgGM.locator("section.cartao").filter({ has: pgGM.getByRole("heading", { name: "Convites internos" }) });
+  await secConvites.locator("select").nth(1).selectOption("1"); // Limite de usos = 1
   await pgGM.getByRole("button", { name: "Gerar convite" }).click();
   const inputLink = pgGM.locator('input[aria-label="Link do convite"]');
-  await inputLink.waitFor({ timeout: 15000 });
+  try {
+    await inputLink.waitFor({ timeout: 15000 });
+  } catch (e) {
+    const msgErro = await secConvites.locator(".erro").allTextContents().catch(() => []);
+    const boundary = await pgGM.getByText("Algo deu errado").count();
+    throw new Error(`link do convite não apareceu. erros na seção: ${msgErro.join(" | ") || "(nenhum)"} | boundary=${boundary} | console: ${errosConsole.slice(-3).join(" || ") || "(limpo)"}`);
+  }
   const linkUnico = await inputLink.inputValue();
   t("link de convite gerado no formato /?conviteGuilda=", /\/\?conviteGuilda=.+/.test(linkUnico), linkUnico);
   await pgGM.getByRole("button", { name: "Copiar link" }).click();
@@ -262,8 +272,10 @@ try {
   await login(pgMob, "gm_guilda_a", "senha-123");
   await abrirGuilda(pgMob, "Guilda Alfa");
   await pgMob.getByRole("heading", { name: "Convites internos" }).waitFor({ timeout: 15000 });
-  const tabelaOk = await pgMob.locator(".tabela-responsiva").count() > 0;
-  t("seção de convites responsiva no mobile", tabelaOk || await pgMob.locator(".cartao").count() > 0);
+  const secConvitesMob = pgMob.locator("section.cartao").filter({ has: pgMob.getByRole("heading", { name: "Convites internos" }) });
+  await secConvitesMob.waitFor({ timeout: 15000 });
+  const cartoesConvite = secConvitesMob.locator(".cartoes-registro .registro-cartao");
+  t("seção de convites responsiva no mobile (cartões visíveis)", await cartoesConvite.first().isVisible().catch(() => false));
   await ctxMob.close();
 
   const espurio = /proposital|__erro|Failed to fetch dynamically|dynamically imported module|ChunkLoadError|ERR_ABORTED|ERR_FAILED|net::ERR/i;
