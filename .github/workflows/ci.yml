@@ -94,6 +94,8 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Testes unitários do limitador Socket.IO
+        run: npx tsx servidor/testes/socket-rate-limit.test.ts
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
@@ -129,6 +131,7 @@ jobs:
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \
             teste-sessao-numero.mjs \
+            teste-rate-limit-socket.mjs \
             teste-validacao-personagem.mjs \
             teste-exclusao-personagem.mjs \
             teste-guildas-admin.mjs

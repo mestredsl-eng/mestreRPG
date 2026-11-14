@@ -78,9 +78,43 @@ async function main() {
     assert.equal(l.consumir(chaveSocket("userB", "rolagem")).permitido, true);
   });
 
+  await teste("retryAfterMs é da ordem de milissegundos, não de segundos", async () => {
+    // porSegundo 1 → 1 token por 1000ms; 3 tokens consumidos, falta ~1 token → ~1000ms
+    const l = criarLimitadorSocket({ nome: "t", capacidade: 3, porSegundo: 1 });
+    for (let i = 0; i < 3; i++) l.consumir("u:chat");
+    const r = l.consumir("u:chat");
+    assert.equal(r.permitido, false);
+    // deve ficar na casa das centenas/baixo milhares de ms, nunca 1000x maior
+    assert.ok(r.retryAfterMs > 0 && r.retryAfterMs <= 1500, `retryAfterMs=${r.retryAfterMs} fora da faixa esperada`);
+    await dormir(r.retryAfterMs + 50);
+    assert.equal(l.consumir("u:chat").permitido, true, "recupera após retryAfterMs");
+  });
+
+  await teste("saturação de maxChaves não apaga bucket ativo de outro usuário", async () => {
+    const l = criarLimitadorSocket({ nome: "t", capacidade: 1, porSegundo: 50, maxChaves: 2 });
+    assert.equal(l.consumir("u1:chat").permitido, true);
+    assert.equal(l.consumir("u1:chat").permitido, false);
+    // enche o mapa com chaves novas
+    assert.equal(l.consumir("u2:chat").permitido, true);
+    assert.equal(l.consumir("u2:chat").permitido, false);
+    // u3 não pode criar bucket novo enquanto os 2 ativos não recarregam:
+    // fail-closed — u1 e u2 continuam sem cota extra (não foram despejados)
+    const r3 = l.consumir("u3:chat");
+    assert.equal(r3.permitido, false);
+    assert.ok(r3.retryAfterMs > 0);
+    assert.equal(l.consumir("u1:chat").permitido, false);
+    assert.equal(l.consumir("u2:chat").permitido, false);
+    // após recarga total (~20ms a 50 tokens/s), novas chaves voltam a entrar
+    await dormir(30);
+    assert.equal(l.consumir("u3:chat").permitido, true);
+    // e os antigos seguem válidos — podar só removeu quem já recarregou
+    assert.equal(l.consumir("u1:chat").permitido, true);
+  });
+
   await teste("LIMITES_SOCKET_MESA cobre todas as ações de escrita previstas", () => {
     const esperadas: AcaoMesaLimitada[] = [
       "chat", "rolagem", "testePedir", "testeRolar", "testeDecidir", "turno",
+      "entrar", "vttMapa", "vttToken", "vttNevoa",
     ];
     for (const acao of esperadas) {
       const cfg = LIMITES_SOCKET_MESA[acao];
