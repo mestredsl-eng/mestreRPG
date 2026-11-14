@@ -516,13 +516,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // descartando gerações HTTP antigas via permSeqRef
           recarregarCompleta();
         } else {
-          // RATE_LIMITED é transitório, não rejeição de autorização:
-          // reagenda a entrada após retryAfterMs preservando a visão —
-          // entrar() revalida tudo e só então libera os controles
+          // RATE_LIMITED é transitório, não rejeição de autorização —
+          // mas a espera não pode manter dados privilegiados visíveis:
+          // bloqueia a visão imediatamente e reagenda a entrada após
+          // retryAfterMs; um ACK autorizado reconstrói tudo
           const espera = retryAfterDoAck(r);
           if (espera !== null) {
             const msg = avisoRateLimit(espera);
             if (msg) setErro(msg);
+            setEntradaFalhou(true);
+            setPapel("espectador");
             window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
             return;
           }
