@@ -356,10 +356,20 @@ try {
     const total = await pgM.locator(".rolagem-resultado .d10-chip-total").last().textContent();
     t(`d${d}: mesa 3D compartilhada exibida (${ultimo})`, new RegExp(`d${d}=\\d`).test(ultimo), ultimo);
     t(`d${d}: canvas da mesa não está em branco`, await canvasPintado(pgM));
-    t(`d${d}: total autoritat  sec("4. Jogador vê a mesma rolagem (servidor autoritativo)");
+    t(`d${d}: total autoritativo exibido`, /Total:\s*\d+/.test(total ?? ""), total?.trim());
+    await shot(pgM, `02-dado-d${d}`);
+  }
+
+  sec("3. Múltiplos dados");
+  await rolarLivre(pgM, 20, 3);
+  const titulos3 = await valoresCanvas(pgM);
+  const ultimo3 = titulos3[titulos3.length - 1] ?? "";
+  t("3×d20 = 3 dados na mesma mesa", (ultimo3.match(/d20=\d/g) ?? []).length >= 3, ultimo3);
+
+  sec("4. Jogador vê a mesma rolagem (servidor autoritativo)");
   // O ID do servidor identifica a MESMA rolagem nas duas telas. Um motivo
   // exclusivo localiza o novo item do mestre, e o total é comparado no item
-  // do jogador com o mesmo ID — nunca com qualquer entrada antiga do histórico.
+  // do jogador com o mesmo ID — nunca com uma entrada antiga do histórico.
   const motivoUnico = `homologacao-id-${Date.now()}`;
   await rolarLivre(pgM, 6, 1, motivoUnico);
   const itemM = pgM.locator(".rolagem-item").filter({ hasText: motivoUnico }).first();
@@ -381,10 +391,6 @@ try {
     `id=${idNovo ?? "ausente"}; mestre=${totalNovoM}; jogador=${totalNovoJ || "não recebido"}`);
   const canvasesJ = itemJ ? await itemJ.locator(".mesa-dados-3d-canvas").count() : 0;
   t("jogador vê mesa de dados 3D da mesma rolagem", canvasesJ > 0, `${canvasesJ} canvas`);
-  await shot(pg1, "04-jogador-dados");nts();
-  t("total da rolagem aparece para o jogador", itens.some((x) => x.includes(`= ${alvo}`)), `${alvo} | vistos: ${itens.slice(-3).join(" | ")}`);
-  const canvasesJ = await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").count();
-  t("jogador vê mesa de dados 3D no histórico", canvasesJ > 0, `${canvasesJ} canvas`);
   await shot(pg1, "04-jogador-dados");
 
   sec("5. Cores independentes + atualização imediata");
