@@ -52,18 +52,22 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       motivo: `D10 ${pos}${neg ? ` − ${neg} negativo${neg > 1 ? "s" : ""}` : ""}`,
       d10: { positivos: pos, negativos: neg, minimo: minimoPadrao },
       requestId: crypto.randomUUID(),
-    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number } }) => {
+    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number; minimo?: number } }) => {
       setRolando(false);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
       const res = r.grupos?.[0]?.resultados ?? [];
+      // Mínimo autoritativo devolvido pelo servidor (campanha). Se a
+      // regra mudou com a Mesa aberta, o ACK traz o valor vigente —
+      // o painel local fica consistente com o histórico compartilhado.
+      const minimoEfetivo = r.d10?.minimo ?? minimoPadrao;
       setResultado({
         id: r.id ?? `d10-${Date.now()}`,
         resultados: res,
         positivos: pos,
         negativos: neg,
-        minimo: minimoPadrao,
-        sucessos: r.d10?.sucessos ?? res.filter((v) => v >= minimoPadrao).length,
-        falhas: r.d10?.falhas ?? res.filter((v) => v < minimoPadrao).length,
+        minimo: minimoEfetivo,
+        sucessos: r.d10?.sucessos ?? res.filter((v) => v >= minimoEfetivo).length,
+        falhas: r.d10?.falhas ?? res.filter((v) => v < minimoEfetivo).length,
         ts: Date.now(),
       });
     });

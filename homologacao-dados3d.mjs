@@ -136,6 +136,50 @@ try {
     `visuais=${sucessosVisuais}/${falhasVisuais}; servidor=${sucessosServidor}/${falhasServidor}`);
   await shot(pgM, "01b-pool-d10-mesa-compartilhada");
 
+  sec("1c. Mínimo autoritativo do servidor na classificação visual");
+  // Muda a regra da campanha com a Mesa aberta: o painel local NÃO
+  // recarrega regras — só o ACK do servidor pode trazer o mínimo novo.
+  // Painel e histórico devem classificar cada dado de forma idêntica.
+  await pgM.evaluate(async (cid) => {
+    await fetch(`/api/campaigns/${cid}/regras/config`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dados: { d10SucessoMinimo: 9 } }),
+    });
+  }, cenario.campId);
+  const ctrlD10b = pgM.locator(".d10-controles input[type=number]");
+  await ctrlD10b.nth(0).fill("8");
+  await ctrlD10b.nth(1).fill("0");
+  await pgM.locator("form.d10-form").getByRole("button", { name: /Lançar/ }).click();
+  await pgM.waitForFunction(() => {
+    const c = document.querySelector(".d10-resultado .mesa-dados-3d-canvas");
+    const rotulo = c?.getAttribute("aria-label") ?? "";
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
+  }, null, { timeout: 15000 });
+  const rotuloPainelMin = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label");
+  const estadosPainel = rotuloPainelMin?.match(/\((sucesso|falha)\)/g) ?? [];
+  // espera o histórico receber ESTA rolagem (8 dados), não a anterior
+  await pgM.waitForFunction(() => {
+    const c = document.querySelector(".rolagem-item .mesa-dados-3d-canvas");
+    const rotulo = c?.getAttribute("aria-label") ?? "";
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
+  }, null, { timeout: 15000 });
+  const rotuloHistMin = await pgM.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label");
+  const estadosHist = rotuloHistMin?.match(/\((sucesso|falha)\)/g) ?? [];
+  t("pool D10 com regra alterada: painel classifica os 8 dados",
+    estadosPainel.length === 8, rotuloPainelMin);
+  t("mínimo do servidor: painel e histórico classificam igual",
+    estadosPainel.length === estadosHist.length && estadosPainel.every((e, i) => e === estadosHist[i]),
+    `painel=${estadosPainel.join(",")} historico=${estadosHist.join(",")}`);
+  await pgM.evaluate(async (cid) => {
+    await fetch(`/api/campaigns/${cid}/regras/config`, {
+      method: "PUT", credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dados: { d10SucessoMinimo: 6 } }),
+    });
+  }, cenario.campId);
+  await shot(pgM, "01c-d10-minimo-servidor");
+
   await shot(pgM, "01-mesa-dados");
 
   sec("2. Cinco tipos de dados em canvas 3D");
