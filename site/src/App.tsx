@@ -2,6 +2,8 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { AuthProvider, useAuth } from "./auth";
 import { api, type HealthStatus } from "./api";
 import Login from "./paginas/Login";
+import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
+import { getSocket } from "./socket";
 
 // Telas secundárias são carregadas sob demanda para reduzir o JavaScript
 // necessário no primeiro acesso. O estado e a navegação continuam no Shell.
@@ -14,9 +16,6 @@ const ConviteCadastro = lazy(() => import("./paginas/ConviteCadastro"));
 const Acervo = lazy(() => import("./paginas/Acervo"));
 const Guildas = lazy(() => import("./paginas/Guildas"));
 const Novidades = lazy(() => import("./paginas/Novidades"));
-import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
-import { getSocket } from "./socket";
-
 type Aba = "painel" | "campanhas" | "acervo" | "novidades" | "guildas" | "admin" | "conta";
 
 function Painel() {
