@@ -229,7 +229,15 @@ guildasRouter.put("/:guildId/responsavel", async (req, res) => {
     return;
   }
   const souAdmin = ehAdmin(req);
-  if (!souAdmin && g.responsibleUserId !== req.usuario!.id) {
+  // O responsável só exerce o poder de transferência enquanto mantiver
+  // vínculo GM ativo na guilda — remoção/rebaixamento corta a autorização
+  // (o campo responsible_user_id permanece como registro; ADMIN recupera).
+  let autorizado = souAdmin;
+  if (!autorizado && g.responsibleUserId === req.usuario!.id) {
+    const vinculo = await getGuildMembership(g.id, req.usuario!.id);
+    autorizado = vinculo?.role === "gm";
+  }
+  if (!autorizado) {
     res.status(403).json({ erro: "Somente o responsável atual ou o administrador pode transferir" });
     return;
   }

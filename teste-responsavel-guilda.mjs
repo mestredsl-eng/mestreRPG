@@ -274,6 +274,16 @@ try {
   const detA = await req(base, "GET", `/guildas/${guildA}`, { cookie: cookieAlice });
   t("detalhe expõe responsavelId", detA.json?.guilda?.responsavelId === idAlice);
 
+  sec("Responsável que perdeu o vínculo perde o poder");
+  // rebaixa alice a membro direto no banco (a API impediria o último GM,
+  // mas dave e erin seguem GM — estado possível via remoção administrativa)
+  sqlDb("update guild_members set role='membro' where guild_id=? and user_id=?", guildA, idAlice);
+  t("responsável rebaixado → 403 mesmo sendo responsible_user_id",
+    (await put(cookieAlice, guildA, idDave)).status === 403);
+  const rec2 = await put(cookieRoot, guildA, idDave);
+  t("ADMIN recupera: transfere para GM ativo", rec2.status === 200 && rec2.json?.responsavelId === idDave, JSON.stringify(rec2.json));
+  sqlDb("update guild_members set role='gm' where guild_id=? and user_id=?", guildA, idAlice);
+
   console.log(`\n==== ${pass} ok, ${fail} falhas ====`);
 } finally {
   for (const s of socketsAbertos) s.close();

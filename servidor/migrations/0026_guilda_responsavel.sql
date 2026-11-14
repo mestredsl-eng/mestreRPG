@@ -5,11 +5,12 @@ ALTER TABLE `guilds` ADD `responsible_user_id` text REFERENCES users(id);--> sta
 UPDATE `guilds` SET `responsible_user_id` = (
   SELECT gm.`user_id` FROM `guild_members` gm
   JOIN `users` u ON u.`id` = gm.`user_id`
+  JOIN `guilds` g ON g.`id` = gm.`guild_id`
   WHERE gm.`guild_id` = `guilds`.`id`
     AND gm.`role` = 'gm'
     AND gm.`status` = 'ativo'
     AND u.`status` = 'ativo'
-  ORDER BY CASE WHEN gm.`user_id` = `guilds`.`created_by` THEN 0 ELSE 1 END,
+  ORDER BY CASE WHEN gm.`user_id` = g.`created_by` THEN 0 ELSE 1 END,
            gm.`joined_at` ASC, gm.`created_at` ASC
   LIMIT 1
 );
