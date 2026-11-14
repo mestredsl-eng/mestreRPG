@@ -5,6 +5,7 @@ import { getDb } from "../db/index.js";
 import { guilds, guildMembers, campaigns, memberships, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { audit } from "../lib/audit.js";
+import { emitirUsuario } from "../lib/io.js";
 import {
   requireGuildAcesso,
   requireGuildGestao,
@@ -15,6 +16,33 @@ import {
 import { getMembership } from "../lib/permissoes.js";
 
 const db = getDb();
+
+/**
+ * Informa, por salas privadas de usuário, que a visão de uma guilda mudou.
+ * O payload é intencionalmente mínimo: cada cliente relê os dados pela API,
+ * que revalida sua membership/permissão em toda requisição. Inclui membros
+ * ativos, ADMINs que podem consultar todas as guildas e usuários afetados
+ * que acabaram de ser removidos/rebaixados.
+ */
+async function notificarGuildaAtualizada(guildId: string, tipo: string, afetados: string[] = []) {
+  const [membros, admins] = await Promise.all([
+    db.select({ userId: guildMembers.userId })
+      .from(guildMembers)
+      .where(and(eq(guildMembers.guildId, guildId), eq(guildMembers.status, "ativo"))),
+    db.select({ userId: users.id })
+      .from(users)
+      .where(and(eq(users.isAdmin, true), eq(users.status, "ativo"))),
+  ]);
+  const destinatarios = new Set([
+    ...membros.map((m) => m.userId),
+    ...admins.map((a) => a.userId),
+    ...afetados,
+  ]);
+  const evento = { guildId, tipo };
+  for (const userId of destinatarios) {
+    emitirUsuario(userId, "guilda:atualizada", evento);
+  }
+}
 export const guildasRouter = Router();
 guildasRouter.use(requireAuth);
 
@@ -110,6 +138,7 @@ guildasRouter.post("/", async (req, res) => {
   // a guilda nasce aqui — req.params.guildId ainda não existe; passa o
   // escopo explicitamente para a coluna guild_id ficar preenchida
   await audit(req, "guilda.criar", { guildId: id, nome: body.data.name }, { guildId: id });
+  await notificarGuildaAtualizada(id, "criada", [req.usuario!.id]);
   const [criada] = await db.select().from(guilds).where(eq(guilds.id, id)).limit(1);
   res.status(201).json({ guilda: guildPublica(criada, "gm", ehAdmin(req)) });
 });
@@ -162,6 +191,7 @@ guildasRouter.patch("/:guildId", requireGuildGestao(), async (req, res) => {
     throw e;
   }
   await audit(req, "guilda.atualizar", { guildId: g.id, campos: Object.keys(dados) });
+  await notificarGuildaAtualizada(g.id, "atualizada");
   const [atualizada] = await db.select().from(guilds).where(eq(guilds.id, g.id)).limit(1);
   res.json({ guilda: guildPublica(atualizada, req.guildMembership?.role ?? null, ehAdmin(req)) });
 });
@@ -241,6 +271,7 @@ guildasRouter.post("/:guildId/membros", requireGuildGestao(), async (req, res) =
     });
   }
   await audit(req, "guilda.membro.adicionar", { guildId: g.id, userId: alvo.id });
+  await notificarGuildaAtualizada(g.id, "membro_adicionado", [alvo.id]);
   res.status(201).json({ ok: true, userId: alvo.id, username: alvo.username });
 });
 
@@ -292,6 +323,7 @@ guildasRouter.patch("/:guildId/membros/:userId", requireGuildGestao(), async (re
     status: novoStatus,
   });
   const [atualizado] = await db.select().from(guildMembers).where(eq(guildMembers.id, m.id)).limit(1);
+  await notificarGuildaAtualizada(g.id, "membro_atualizado", [alvoId]);
   res.json({ membro: { userId: atualizado.userId, role: atualizado.role, status: atualizado.status } });
 });
 
@@ -317,6 +349,7 @@ guildasRouter.delete("/:guildId/membros/:userId", requireGuildGestao(), async (r
     .set({ status: "removido", updatedAt: new Date() })
     .where(eq(guildMembers.id, m.id));
   await audit(req, "guilda.membro.remover", { guildId: req.params.guildId, userId: alvoId });
+  await notificarGuildaAtualizada(req.params.guildId, "membro_removido", [alvoId]);
   res.json({ ok: true });
 });
 
@@ -410,6 +443,7 @@ guildasRouter.put(
       }
       await db.update(campaigns).set({ guildId, updatedAt: new Date() }).where(eq(campaigns.id, campaignId));
       await audit(req, "guilda.campanha.vincular", { guildId, campaignId });
+      await notificarGuildaAtualizada(guildId, "campanha_vinculada");
       res.json({ ok: true, campanha: { id: c.id, guildId } });
       return;
     }
@@ -424,6 +458,7 @@ guildasRouter.put(
     }
     await db.update(campaigns).set({ guildId: null, updatedAt: new Date() }).where(eq(campaigns.id, campaignId));
     await audit(req, "guilda.campanha.desvincular", { guildId, campaignId });
+    await notificarGuildaAtualizada(guildId, "campanha_desvinculada");
     res.json({ ok: true, campanha: { id: c.id, guildId: null } });
   }
 );
