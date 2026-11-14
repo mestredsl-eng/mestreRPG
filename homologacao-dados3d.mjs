@@ -124,8 +124,16 @@ try {
   const rotuloD10Historico = await canvasD10Historico.getAttribute("aria-label");
   const valoresD10Historico = rotuloD10Historico?.match(/d10=\d+/g) ?? [];
   const estadosD10Historico = rotuloD10Historico?.match(/\((sucesso|falha)\)/g) ?? [];
+  const sucessosVisuais = (rotuloD10Historico?.match(/\(sucesso\)/g) ?? []).length;
+  const falhasVisuais = (rotuloD10Historico?.match(/\(falha\)/g) ?? []).length;
+  const resumoD10Historico = await pgM.locator(".rolagem-item .d10-rolagem").last().innerText();
+  const sucessosServidor = Number(resumoD10Historico.match(/(\d+) sucesso/)?.[1] ?? NaN);
+  const falhasServidor = Number(resumoD10Historico.match(/\/\s*(\d+) falha/)?.[1] ?? NaN);
   t("histórico compartilhado mostra os três D10 do pool", valoresD10Historico.length === 3, rotuloD10Historico);
   t("histórico compartilhado preserva sucesso/falha individual", estadosD10Historico.length === 3, rotuloD10Historico);
+  t("cores individuais coincidem com a contagem autoritativa do servidor",
+    sucessosVisuais === sucessosServidor && falhasVisuais === falhasServidor,
+    `visuais=${sucessosVisuais}/${falhasVisuais}; servidor=${sucessosServidor}/${falhasServidor}`);
   await shot(pgM, "01b-pool-d10-mesa-compartilhada");
 
   await shot(pgM, "01-mesa-dados");
