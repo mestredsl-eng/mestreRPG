@@ -227,7 +227,7 @@ try {
     const canvas = item?.querySelector(".mesa-dados-3d-canvas");
     const rotulo = canvas?.getAttribute("aria-label") ?? "";
     const resumo = item?.querySelector(".d10-rolagem")?.textContent ?? "";
-    return (rotulo.match(/d10=\\d+/g) ?? []).length === 8 && /mín\\s*9\\b/.test(resumo);
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 8 && /mín\s*9\b/.test(resumo);
   }, null, { timeout: 15000 });
   const rotuloHistJogador = await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label");
   const resumoHistJogador = await pg1.locator(".rolagem-item .d10-rolagem").first().innerText();
@@ -235,7 +235,7 @@ try {
   t("outro participante recebe os 8 D10 sem recarregar",
     facesJogador.length === 8, rotuloHistJogador);
   t("outro participante recebe a regra autoritativa mín 9",
-    /mín\\s*9\\b/.test(resumoHistJogador), resumoHistJogador);
+    /mín\s*9\b/.test(resumoHistJogador), resumoHistJogador);
   t("outro participante vê a mesma classificação individual do mestre",
     facesJogador.length === facesPainel.length &&
       facesJogador.every((f, i) => f.valor === facesPainel[i].valor && f.estado === facesPainel[i].estado),
@@ -269,7 +269,7 @@ try {
     await pgM.locator("form.d10-form").getByRole("button", { name: /Lançar/ }).click();
     await pgM.waitForFunction(({ anterior }) => {
       const rotulo = document.querySelector(".d10-resultado .mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
-      return rotulo !== anterior && (rotulo.match(/d10=\\d+/g) ?? []).length === 20;
+      return rotulo !== anterior && (rotulo.match(/d10=\d+/g) ?? []).length === 20;
     }, { anterior }, { timeout: 20000 });
     rotuloCores = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label") ?? "";
     facesCores = facesDe(rotuloCores);
@@ -292,13 +292,13 @@ try {
         if (Math.abs(pixels[i] - 46) <= 14 && Math.abs(pixels[i + 1] - 143) <= 14 && Math.abs(pixels[i + 2] - 91) <= 14) verde++;
         if (Math.abs(pixels[i] - 138) <= 14 && Math.abs(pixels[i + 1] - 58) <= 14 && Math.abs(pixels[i + 2] - 58) <= 14) vermelho++;
       }
-      return (rotulo.match(/d10=\\d+/g) ?? []).length === 20
-        && /mín\\s*5\\b/.test(resumo) && verde > 0 && vermelho > 0;
+      return (rotulo.match(/d10=\d+/g) ?? []).length === 20
+        && /mín\s*5\b/.test(resumo) && verde > 0 && vermelho > 0;
     }, null, { timeout: 20000 });
     const resumoJogadorCores = await pg1.locator(".rolagem-item .d10-rolagem").first().innerText();
     const facesJogadorCores = facesDe(await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label"));
     t("outro participante recebe o pool misto com mínimo 5",
-      facesJogadorCores.length === 20 && /mín\\s*5\\b/.test(resumoJogadorCores)
+      facesJogadorCores.length === 20 && /mín\s*5\b/.test(resumoJogadorCores)
         && facesJogadorCores.every((f, i) => f.valor === facesCores[i].valor && f.estado === facesCores[i].estado),
       resumoJogadorCores);
 
