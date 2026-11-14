@@ -190,6 +190,9 @@ try {
     return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
   }, null, { timeout: 15000 });
   const rotuloPainelMin = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label");
+  const legendaPainelMin = await pgM.locator(".d10-form .meta").innerText();
+  t("legenda do painel acompanha o mínimo autoritativo 9 recebido no ACK",
+    /sucesso ≥ 9/.test(legendaPainelMin), legendaPainelMin);
   // espera o histórico receber ESTA rolagem (8 dados), não a anterior.
   // Mesa.tsx usa rolagens.slice(-8).reverse(): a mais nova é a PRIMEIRA.
   await pgM.waitForFunction(() => {
@@ -275,6 +278,9 @@ try {
     facesCores = facesDe(rotuloCores);
     if (facesCores.some((f) => f.estado === "sucesso") && facesCores.some((f) => f.estado === "falha")) break;
   }
+  const legendaCores = await pgM.locator(".d10-form .meta").innerText();
+  t("legenda do painel acompanha o mínimo autoritativo 5 recebido no ACK",
+    /sucesso ≥ 5/.test(legendaCores), legendaCores);
   const poolMisto = facesCores.some((f) => f.estado === "sucesso") && facesCores.some((f) => f.estado === "falha");
   t("pool de cores contém D10 de sucesso e de falha", poolMisto, rotuloCores);
 

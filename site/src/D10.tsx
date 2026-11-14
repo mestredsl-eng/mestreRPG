@@ -34,6 +34,9 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
   const [rolando, setRolando] = useState(false);
 
   const efetivos = Math.max(0, Math.min(positivos, MAX_DADOS) - negativos);
+  // A legenda acompanha a última resposta autoritativa do servidor quando
+  // a regra da campanha muda enquanto esta Mesa já está aberta.
+  const minimoExibido = resultado?.minimo ?? minimoPadrao;
 
   const lancar = (e?: FormEvent) => {
     e?.preventDefault();
@@ -90,7 +93,7 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
           </label>
         </div>
         <p className="meta">
-          Efetivos: <strong>{efetivos}</strong> dado{efetivos === 1 ? "" : "s"} · sucesso ≥ {minimoPadrao}
+          Efetivos: <strong>{efetivos}</strong> dado{efetivos === 1 ? "" : "s"} · sucesso ≥ {minimoExibido}
           {negativos > 0 && ` · ${negativos} negativo${negativos > 1 ? "s" : ""} consumido${negativos > 1 ? "s" : ""}`}
         </p>
         <button type="submit" disabled={rolando}>{rolando ? "Rolando…" : resultado ? "Lançar novamente" : "Lançar D10"}</button>
