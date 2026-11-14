@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
-import { FaceDado } from "./Dados";
+import MesaDados3D, { seedDeId } from "./MesaDados3D";
 
 interface Props {
   sessionId: string;
@@ -21,19 +21,6 @@ interface ResultadoD10 {
 }
 
 const MAX_DADOS = 30;
-
-/** D10 animado: sorteia faces até revelar o valor final. */
-function D10Face({ valor, indice, minimo }: { valor: number; indice: number; minimo: number }) {
-  return (
-    <FaceDado
-      lados={10}
-      valor={valor}
-      indice={indice}
-      estado={valor >= minimo ? "sucesso" : "falha"}
-      className="d10-face"
-    />
-  );
-}
 
 /**
  * Lançador de dados D10 — pool com dados negativos.
@@ -65,18 +52,22 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       motivo: `D10 ${pos}${neg ? ` − ${neg} negativo${neg > 1 ? "s" : ""}` : ""}`,
       d10: { positivos: pos, negativos: neg, minimo: minimoPadrao },
       requestId: crypto.randomUUID(),
-    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number } }) => {
+    }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number; minimo?: number } }) => {
       setRolando(false);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
       const res = r.grupos?.[0]?.resultados ?? [];
+      // Mínimo autoritativo devolvido pelo servidor (campanha). Se a
+      // regra mudou com a Mesa aberta, o ACK traz o valor vigente —
+      // o painel local fica consistente com o histórico compartilhado.
+      const minimoEfetivo = r.d10?.minimo ?? minimoPadrao;
       setResultado({
         id: r.id ?? `d10-${Date.now()}`,
         resultados: res,
         positivos: pos,
         negativos: neg,
-        minimo: minimoPadrao,
-        sucessos: r.d10?.sucessos ?? res.filter((v) => v >= minimoPadrao).length,
-        falhas: r.d10?.falhas ?? res.filter((v) => v < minimoPadrao).length,
+        minimo: minimoEfetivo,
+        sucessos: r.d10?.sucessos ?? res.filter((v) => v >= minimoEfetivo).length,
+        falhas: r.d10?.falhas ?? res.filter((v) => v < minimoEfetivo).length,
         ts: Date.now(),
       });
     });
@@ -111,9 +102,14 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
             <p className="meta">Nenhum dado efetivo para lançar.</p>
           ) : (
             <div className="d10-dados">
-              {resultado.resultados.map((v, i) => (
-                <D10Face key={`${resultado.id}-${i}`} valor={v} indice={i} minimo={resultado.minimo} />
-              ))}
+              <MesaDados3D
+                dados={resultado.resultados.map((valor) => ({
+                  lados: 10,
+                  valor,
+                  estado: valor >= resultado.minimo ? "sucesso" as const : "falha" as const,
+                }))}
+                semente={seedDeId(resultado.id)}
+              />
             </div>
           )}
           <div className="d10-resumo">
