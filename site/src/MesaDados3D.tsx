@@ -8,6 +8,8 @@ import {
 export interface ItemDadoMesa {
   lados: number;
   valor: number;
+  /** Estado visual opcional por dado, preservando pools mistos de sucesso/falha. */
+  estado?: "sucesso" | "falha" | null;
 }
 
 /** Semente estável a partir do id da rolagem — trajetória reproduzível. */
@@ -33,6 +35,7 @@ interface FaceVisivel {
   profundidade: number;
   luz: number;
   rotulo: number;
+  estado?: "sucesso" | "falha" | null;
   dado: DadoMesa;
 }
 
@@ -45,7 +48,7 @@ interface FaceVisivel {
 export default function MesaDados3D({ dados, semente = 7, estado, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [canvasUnavailable, setCanvasUnavailable] = useState(false);
-  const chave = dados.map((d) => `${d.lados}:${d.valor}`).join(",");
+  const chave = dados.map((d) => `${d.lados}:${d.valor}:${d.estado ?? ""}`).join(",");
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -138,7 +141,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
           const luz = Math.max(0, dot(n, unit([-0.35, 0.55, 1])));
           facesVisiveis.push({
             pts: face.map((i) => projetados[i]),
-            profundidade, luz, rotulo: d.labels[fi], dado: d,
+            profundidade, luz, rotulo: d.labels[fi], estado: d.estado ?? estado, dado: d,
           });
         }
         // Sombra do dado no tampo.
@@ -172,7 +175,12 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
         ctx.globalAlpha = 1;
         ctx.fillStyle = gradient;
         ctx.fill();
-        ctx.strokeStyle = border;
+        const estadoFace = f.estado;
+        const bordaFace = estadoFace === "sucesso" ? "#2e8f5b"
+          : estadoFace === "falha" ? "#8a3a3a" : border;
+        const textoFace = estadoFace === "sucesso" ? "#8fe6b0"
+          : estadoFace === "falha" ? "#e8a0a0" : textColor;
+        ctx.strokeStyle = bordaFace;
         ctx.lineWidth = Math.max(1, k * 0.045);
         ctx.stroke();
         // Rótulo da face, sempre legível (eixo de tela, sem rotação).
@@ -185,7 +193,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
         ctx.strokeStyle = "rgba(0,0,0,.6)";
         ctx.lineWidth = Math.max(1, k * 0.05);
         ctx.strokeText(String(f.rotulo), centroX, centroY);
-        ctx.fillStyle = textColor;
+        ctx.fillStyle = textoFace;
         ctx.fillText(String(f.rotulo), centroX, centroY);
       }
     };
@@ -248,7 +256,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       ref={canvasRef}
       className={`mesa-dados-3d-canvas ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
       role="img"
-      aria-label={`Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor}`).join(", ")}`}
+      aria-label={`Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor}${d.estado ? ` (${d.estado})` : ""}`).join(", ")}`}
     />
   );
 }
