@@ -217,7 +217,7 @@ let testId;
   await p.locator("tr", { hasText: "Sessão Desafio" }).first().click();
   await p.waitForTimeout(1800);
 
-  ok("UI. card Desafio D10 presente", (await p.locator("text=Desafio D10").count()) > 0);
+  ok("UI. card Solicitar teste pela ficha presente", (await p.locator("text=Solicitar teste pela ficha").count()) > 0);
   await p.locator("button", { hasText: "+ Desafio" }).click();
   await p.waitForTimeout(300);
   const selPersonagem = p.locator(".formulario select").first();
