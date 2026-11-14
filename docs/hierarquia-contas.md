@@ -83,6 +83,14 @@ visibilidade de escopo em todas as telas ("GM — Guilda X", "ADMIN").
 - `GET/POST /api/guildas` · `GET/PATCH /api/guildas/:guildId`
 - `GET/POST /api/guildas/:guildId/membros` · `PATCH/DELETE .../membros/:userId`
 - `GET /api/guildas/:guildId/campanhas` · `PUT .../campanhas/:campaignId`
+- `PUT /api/guildas/:guildId/responsavel` — `{userId}` transfere o
+  responsável administrativo. Somente o responsável atual
+  (`guilds.responsible_user_id`) ou ADMIN global; um GM comum recebe 403.
+  O alvo precisa ser GM ativo da mesma guilda com conta ativa (409 caso
+  contrário). Não altera papéis: o anterior permanece GM. `created_by`
+  é autoria histórica imutável. Resposta `{ok, responsavelAnteriorId,
+  responsavelId}`; idempotente; auditoria `guilda.responsavel.transferir`
+  e evento `guilda:atualizada` tipo `responsavel_alterado`.
 - `GET /api/guildas?todas=1` (somente ADMIN)
 - `PATCH /api/admin/users/:id` agora aceita `isAdmin` (somente principal)
 - `GET /api/auth/me` e login/registro devolvem `adminPrincipal` + `guildas[]`

@@ -63,6 +63,10 @@ export const guilds = sqliteTable("guilds", {
   description: text("description"),
   status: text("status").notNull().default("ativa"), // ativa|arquivada
   createdBy: text("created_by").notNull().references(() => users.id),
+  // Responsável administrativo atual — transferível via API; NUNCA é
+  // confundido com created_by (autoria histórica imutável) nem com o
+  // papel GM de guild_members (vários GMs podem coexistir).
+  responsibleUserId: text("responsible_user_id").references(() => users.id),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, (t) => [uniqueIndex("guilds_name_idx").on(t.name)]);

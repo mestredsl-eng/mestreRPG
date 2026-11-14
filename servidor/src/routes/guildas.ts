@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, isNotNull, ne, or } from "drizzle-orm";
+import { and, eq, isNotNull, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { guilds, guildMembers, campaigns, memberships, users } from "../db/schema.js";
@@ -71,6 +71,7 @@ function guildPublica(g: typeof guilds.$inferSelect, meuPapel: string | null, so
     description: g.description,
     status: g.status,
     createdBy: g.createdBy,
+    responsavelId: g.responsibleUserId ?? null,
     meuPapel: souAdmin && !meuPapel ? "admin" : meuPapel,
     souGM: meuPapel === "gm",
     createdAt: g.createdAt,
@@ -124,6 +125,7 @@ guildasRouter.post("/", async (req, res) => {
       description: body.data.description ?? null,
       status: "ativa",
       createdBy: req.usuario!.id,
+      responsibleUserId: req.usuario!.id,
       createdAt: agora,
       updatedAt: agora,
     });
@@ -203,6 +205,90 @@ guildasRouter.patch("/:guildId", requireGuildGestao(), async (req, res) => {
   await notificarGuildaAtualizada(g.id, "atualizada");
   const [atualizada] = await db.select().from(guilds).where(eq(guilds.id, g.id)).limit(1);
   res.json({ guilda: guildPublica(atualizada, req.guildMembership?.role ?? null, ehAdmin(req)) });
+});
+
+const transferirResponsavelSchema = z.object({
+  userId: z.string().min(1),
+});
+
+/**
+ * PUT /api/guildas/:guildId/responsavel — transferência explícita do
+ * responsável administrativo (Issue #65).
+ *
+ * Autorização: SOMENTE o responsável atual (guilds.responsible_user_id)
+ * ou ADMIN global — um GM que não é o responsável NÃO pode transferir.
+ * O alvo precisa ser GM ativo da mesma guilda com conta ativa; o papel
+ * de ninguém muda (responsável anterior segue GM). created_by é
+ * autoria histórica e nunca é alterado aqui.
+ */
+guildasRouter.put("/:guildId/responsavel", async (req, res) => {
+  const guildId = req.params.guildId;
+  const [g] = await db.select().from(guilds).where(eq(guilds.id, guildId)).limit(1);
+  if (!g) {
+    res.status(404).json({ erro: "Guilda não encontrada" });
+    return;
+  }
+  const souAdmin = ehAdmin(req);
+  // O responsável só exerce o poder de transferência enquanto mantiver
+  // vínculo GM ativo na guilda — remoção/rebaixamento corta a autorização
+  // (o campo responsible_user_id permanece como registro; ADMIN recupera).
+  let autorizado = souAdmin;
+  if (!autorizado && g.responsibleUserId === req.usuario!.id) {
+    const vinculo = await getGuildMembership(g.id, req.usuario!.id);
+    autorizado = vinculo?.role === "gm";
+  }
+  if (!autorizado) {
+    res.status(403).json({ erro: "Somente o responsável atual ou o administrador pode transferir" });
+    return;
+  }
+  const body = transferirResponsavelSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const novoId = body.data.userId;
+  if (novoId === g.responsibleUserId) {
+    // idempotente: já é o responsável — não audita nem notifica de novo
+    res.json({ ok: true, responsavelAnteriorId: g.responsibleUserId, responsavelId: novoId });
+    return;
+  }
+  // alvo: GM ativo DESTA guilda, com conta ativa (mesma régua de contarGMs)
+  const [alvo] = await db
+    .select({ membership: guildMembers, user: users })
+    .from(guildMembers)
+    .innerJoin(users, eq(guildMembers.userId, users.id))
+    .where(and(
+      eq(guildMembers.guildId, g.id),
+      eq(guildMembers.userId, novoId),
+      eq(guildMembers.role, "gm"),
+      eq(guildMembers.status, "ativo"),
+      eq(users.status, "ativo"),
+    ))
+    .limit(1);
+  if (!alvo) {
+    res.status(409).json({ erro: "O novo responsável precisa ser GM ativo desta guilda" });
+    return;
+  }
+  const agora = new Date();
+  // Compare-and-swap atômico: a gravação só acontece se o responsável
+  // lido na autorização AINDA for o atual (IS = igualdade null-safe no
+  // SQLite). Se outra transferência commitar primeiro, changes=0 e esta
+  // requisição perde com 409 — auditoria e evento só ocorrem para a
+  // transferência efetivamente confirmada.
+  const gravacao = await db.run(sql`
+    UPDATE guilds
+    SET responsible_user_id = ${novoId}, updated_at = ${agora.getTime()}
+    WHERE id = ${g.id}
+      AND responsible_user_id IS ${g.responsibleUserId}
+  `);
+  if (gravacao.changes === 0) {
+    res.status(409).json({ erro: "A responsabilidade já foi transferida por outra operação" });
+    return;
+  }
+  await audit(req, "guilda.responsavel.transferir",
+    { anterior: g.responsibleUserId, novo: novoId, ator: req.usuario!.id });
+  await notificarGuildaAtualizada(g.id, "responsavel_alterado", [novoId]);
+  res.json({ ok: true, responsavelAnteriorId: g.responsibleUserId, responsavelId: novoId });
 });
 
 /** GET /api/guildas/:guildId/membros — roster (membro ativo ou ADMIN). */
