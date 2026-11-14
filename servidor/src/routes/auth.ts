@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { eq, count } from "drizzle-orm";
+import { eq, and, gt, desc, count } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { users, authSessions } from "../db/schema.js";
@@ -226,6 +226,57 @@ authRouter.get("/me", async (req, res) => {
       ...(await escopoUsuario(user)),
     },
   });
+});
+
+/** GET /api/auth/sessions — sessões ativas da própria conta.
+ *  Nunca expõe token/tokenHash; expiradas ficam de fora da listagem. */
+authRouter.get("/sessions", requireAuth, async (req, res) => {
+  const rows = await db
+    .select({
+      id: authSessions.id,
+      userAgent: authSessions.userAgent,
+      ip: authSessions.ip,
+      createdAt: authSessions.createdAt,
+      expiresAt: authSessions.expiresAt,
+    })
+    .from(authSessions)
+    .where(and(eq(authSessions.userId, req.usuario!.id), gt(authSessions.expiresAt, new Date())))
+    .orderBy(desc(authSessions.createdAt));
+  res.json({
+    sessoes: rows.map((s) => ({
+      id: s.id,
+      userAgent: s.userAgent,
+      ip: s.ip,
+      createdAt: s.createdAt,
+      expiresAt: s.expiresAt,
+      atual: s.id === req.sessaoId,
+    })),
+  });
+});
+
+/** DELETE /api/auth/sessions/:id — revoga UMA sessão da própria conta.
+ *  A sessão atual não pode ser revogada por aqui (use /auth/logout);
+ *  sessões de outros usuários retornam 404 (sem vazar existência). */
+authRouter.delete("/sessions/:id", requireAuth, async (req, res) => {
+  const id = req.params.id;
+  if (id === req.sessaoId) {
+    res.status(400).json({ erro: "Use o logout para encerrar a sessão atual" });
+    return;
+  }
+  const [s] = await db
+    .select()
+    .from(authSessions)
+    .where(and(eq(authSessions.id, id), eq(authSessions.userId, req.usuario!.id)))
+    .limit(1);
+  if (!s || s.expiresAt <= new Date()) {
+    res.status(404).json({ erro: "Sessão não encontrada" });
+    return;
+  }
+  await db.delete(authSessions).where(eq(authSessions.id, s.id));
+  // derruba os sockets autenticados por ESTA sessão — outras sessões da
+  // mesma conta (e de outros usuários) não são afetadas.
+  desconectarSessao(s.id);
+  res.json({ ok: true });
 });
 
 const corHex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor deve estar no formato #RRGGBB");

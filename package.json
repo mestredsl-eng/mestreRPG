@@ -19,7 +19,9 @@
     "test:rate-limit-socket": "tsx servidor/testes/socket-rate-limit.test.ts",
     "test:rate-limit-socket-e2e": "node teste-rate-limit-socket.mjs",
     "test:realtime-paginas": "node teste-realtime-paginas.mjs",
-    "test:sessao-numero": "node teste-sessao-numero.mjs"
+    "test:sessao-numero": "node teste-sessao-numero.mjs",
+    "test:sessoes-conta": "node teste-sessoes-conta.mjs",
+    "test:sessoes-e2e": "node homologacao-sessoes.mjs"
   },
   "engines": {
     "node": ">=20.19"
