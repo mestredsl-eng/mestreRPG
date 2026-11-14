@@ -240,6 +240,7 @@ jobs:
             homologacao-guildas.mjs \
             homologacao-sessoes.mjs \
             homologacao-pacotes-forjados.mjs \
+            homologacao-split-pages.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
             teste-permissao-tempo-real.mjs \
