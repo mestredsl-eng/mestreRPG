@@ -6,6 +6,7 @@ import {
   type VttState, type TokenVtt, arquivoUrl,
 } from "../api";
 import { getSocket } from "../socket";
+import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
 import PainelDados, { FaceDado } from "../Dados";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
@@ -497,7 +498,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       socket.emit("entrar-campanha", campaignId, () => undefined);
       const tentativa = ++tentativaEntrada;
       entradaPendente = true;
-      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string }) => {
+      socket.emit("mesa:entrar", { sessionId: sessao.id }, (r: { ok?: boolean; papel?: string; podeEnviar?: boolean; turnos?: TurnosState; presenca?: string[]; sessao?: Sessao; erro?: string; codigo?: string; retryAfterMs?: number }) => {
         // ACK de tentativa antiga (conexão anterior) não libera a
         // trava nem atualiza estado de uma tentativa mais recente
         if (!ativo || tentativa !== tentativaEntrada) return;
@@ -524,7 +525,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // chegará; controles e painel saem de cena até nova entrada
           setEntradaFalhou(true);
           setPapel("espectador");
-          setErro("Não foi possível entrar na mesa — acesso não autorizado");
+          const espera = retryAfterDoAck(r);
+          const aviso = espera !== null ? avisoRateLimit(espera) : null;
+          setErro(aviso ?? "Não foi possível entrar na mesa — acesso não autorizado");
         }
       });
     };
@@ -574,14 +577,20 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       tipo: comoAcao ? "acao" : "texto",
       visibilidade: secreto ? "secreta" : privado ? "privada" : "publica",
       destinatarioUserId: privado ? destinoPriv || undefined : undefined,
-    }, (r: { ok?: boolean; erro?: string }) => {
+    }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      const espera = retryAfterDoAck(r);
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
       if (!r?.ok) setErro(r?.erro ?? "Falha ao enviar");
       else setTexto("");
     });
   };
 
-  const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
-    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string }) => { if (r && !r.ok) setErro(r.erro ?? "Erro"); }));
+  const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => void) => {
+    getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      const espera = retryAfterDoAck(r);
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
+      if (r && !r.ok) setErro(r.erro ?? "Erro");
+    }));
   };
 
   const pausarSessao = async () => {
@@ -780,7 +789,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                     {podeAgir && t.status === "pendente" && (
                       <div className="linha linha-botoes">
                         {(ehMestreAtual || ehDono) && (
-                          <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number }) => {
+                          <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number; codigo?: string; retryAfterMs?: number }) => {
+                            const espera = retryAfterDoAck(r);
+                            if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.diceSides], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
                           })}>Rolar</button>
                         )}
@@ -800,7 +811,10 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                               const sel = document.getElementById(`out-${t.id}`) as HTMLSelectElement;
                               if (!sel.value) return;
                               const nota = (document.getElementById(`nota-${t.id}`) as HTMLInputElement)?.value;
-                              getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, () => undefined);
+                              getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, (r: { ok?: boolean; codigo?: string; retryAfterMs?: number }) => {
+                                const espera = retryAfterDoAck(r);
+                                if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); }
+                              });
                             }}>Confirmar</button>
                           </>
                         )}
@@ -948,9 +962,13 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
             minimo: minimo === "" ? undefined : Number(minimo),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
-          }, (r: { ok?: boolean; erro?: string }) => {
+          }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
             if (r?.ok) { setAberto(false); setRotulo(""); }
-            else aoErro(r?.erro ?? "Erro");
+            else {
+              const espera = retryAfterDoAck(r);
+              const aviso = espera !== null ? avisoRateLimit(espera) : null;
+              aoErro(aviso ?? r?.erro ?? "Erro");
+            }
           });
         }}>
           <label>Personagem
@@ -1060,9 +1078,13 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             dadosLados: 10, malus: Math.max(0, Math.round(negativos) || 0),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
-          }, (r: { ok?: boolean; erro?: string }) => {
+          }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
             if (r?.ok) { setAberto(false); setNegativos(0); }
-            else aoErro(r?.erro ?? "Erro");
+            else {
+              const espera = retryAfterDoAck(r);
+              const aviso = espera !== null ? avisoRateLimit(espera) : null;
+              aoErro(aviso ?? r?.erro ?? "Erro");
+            }
           });
         }}>
           <label>Personagem
@@ -1519,14 +1541,16 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     // volatile: se a conexão cair durante o envio, a mutação NÃO fica
     // na fila de saída para execução tardia — ou foi entregue (e a
     // sincronização ordenada resolve) ou nunca existirá no servidor
-    sock.volatile.emit("mesa:vtt:nevoa", { sessionId, acao, traco }, (r: { ok?: boolean; erro?: string }) => {
+    sock.volatile.emit("mesa:vtt:nevoa", { sessionId, acao, traco }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       if (respondido) return; // ACK tardio após o timeout: ignorar
       respondido = true;
       window.clearTimeout(timeout);
       pendenteNevoaRef.current = false;
       setPendenteNevoa(false);
       if (r && r.ok === false) {
-        setErroVtt(r.erro ?? "Ação de névoa recusada");
+        const espera = retryAfterDoAck(r);
+        const aviso = espera !== null ? avisoRateLimit(espera) : null;
+        setErroVtt(aviso ?? r.erro ?? "Ação de névoa recusada");
         setPreviewNevoa(null); // rejeição: limpa prévia, nada é confirmado localmente
       }
       // sucesso: o broadcast mesa:vtt traz o estado autoritativo
@@ -1610,15 +1634,23 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     fimDesenhoRef.current = cancelar;
   };
 
-  const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string }) => void) => {
-    getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
-      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+  const emitir = (payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => void) => {
+    getSocket().emit("mesa:vtt:token", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (r && r.ok === false) {
+        const espera = retryAfterDoAck(r);
+        const aviso = espera !== null ? avisoRateLimit(espera) : null;
+        setErroVtt(aviso ?? r.erro ?? "Ação recusada");
+      }
       cb?.(r);
     });
   };
   const emitirMapa = (payload: Record<string, unknown>) => {
-    getSocket().emit("mesa:vtt:mapa", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string }) => {
-      if (r && r.ok === false) setErroVtt(r.erro ?? "Ação recusada");
+    getSocket().emit("mesa:vtt:mapa", { sessionId, ...payload }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
+      if (r && r.ok === false) {
+        const espera = retryAfterDoAck(r);
+        const aviso = espera !== null ? avisoRateLimit(espera) : null;
+        setErroVtt(aviso ?? r.erro ?? "Ação recusada");
+      }
     });
   };
 

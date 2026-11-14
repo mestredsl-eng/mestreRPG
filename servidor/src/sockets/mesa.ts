@@ -17,8 +17,44 @@ import {
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
   type TokenVtt, type VttState,
 } from "../lib/vtt.js";
+import {
+  criarLimitadorSocket, chaveSocket, LIMITES_SOCKET_MESA,
+  type AcaoMesaLimitada, type LimitadorSocket,
+} from "../lib/socket-rate-limit.js";
 
 const db = getDb();
+
+// ---------- rate limit Socket.IO (Issue #68) ----------
+// Um limitador por tipo de ação; a chave é `userId:acao`, então abas e
+// sockets do mesmo usuário compartilham a cota. O limite é por
+// instância do processo — a aplicação já possui trava de instância
+// única, sem estado compartilhado entre processos.
+const limitadoresMesa = new Map<AcaoMesaLimitada, LimitadorSocket>();
+function limitadorMesa(acao: AcaoMesaLimitada): LimitadorSocket {
+  let l = limitadoresMesa.get(acao);
+  if (!l) {
+    l = criarLimitadorSocket({ ...LIMITES_SOCKET_MESA[acao] });
+    limitadoresMesa.set(acao, l);
+  }
+  return l;
+}
+
+/**
+ * Consome 1 token da cota da ação. Deve ser chamado SOMENTE depois de
+ * autenticação e validação estrutural mínima do payload, e ANTES de
+ * resolverCtx, consultas caras, gravações e broadcasts. Ao exceder,
+ * responde o ACK `{ ok:false, codigo:"RATE_LIMITED", retryAfterMs }`
+ * (se o cliente enviou callback) e retorna false — nunca lança
+ * exceção nem derruba a conexão.
+ */
+function consumirOuRecusar(socket: Socket, acao: AcaoMesaLimitada, cb?: (r: unknown) => void): boolean {
+  const u = socket.data.usuario as Usuario | undefined;
+  if (!u) return true; // handlers respondem "Não autenticado" adiante
+  const r = limitadorMesa(acao).consumir(chaveSocket(u.id, acao));
+  if (r.permitido) return true;
+  cb?.({ ok: false, codigo: "RATE_LIMITED", erro: "Muitas ações em pouco tempo", retryAfterMs: r.retryAfterMs });
+  return false;
+}
 
 // Serialização explícita das mutações da mesa virtual: o ciclo
 // ler→validar→alterar→gravar→emitir precisa ser atômico por sessão.
@@ -270,6 +306,7 @@ function socket_handlers(
     on(socket, "mesa:entrar", async (payload: { sessionId?: string }, cb?: (r: unknown) => void) => {
       const sessionId = payload?.sessionId;
       if (!sessionId || !usuario()) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      if (!consumirOuRecusar(socket, "entrar", cb)) return;
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
@@ -440,6 +477,7 @@ function socket_handlers(
       const u = usuario();
       const sessionId = payload?.sessionId;
       if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      if (!consumirOuRecusar(socket, "vttMapa", cb)) return;
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
@@ -498,6 +536,7 @@ function socket_handlers(
       const u = usuario();
       const sessionId = payload?.sessionId;
       if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      if (!consumirOuRecusar(socket, "vttToken", cb)) return;
       const ctx = await resolverCtx(socket, sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       // P1: espectador é somente leitura — nenhuma mutação de mapa ou token
@@ -600,6 +639,7 @@ function socket_handlers(
       const u = usuario();
       const sessionId = payload?.sessionId;
       if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      if (!consumirOuRecusar(socket, "vttNevoa", cb)) return;
       // Ordenação: a operação entra na fila VTT IMEDIATAMENTE, antes de
       // qualquer await. Como o transporte preserva a ordem por conexão,
       // uma sincronização posterior (mesa:vtt:nevoa:sincronizar) só
@@ -684,6 +724,7 @@ function socket_handlers(
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.content?.trim()) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "chat", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       // espectador só envia mensagem se o mestre concedeu a permissão individual
@@ -730,6 +771,7 @@ function socket_handlers(
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.characterId) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "testePedir", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre solicita testes" }); return; }
@@ -887,6 +929,7 @@ function socket_handlers(
     on(socket, "mesa:teste:rolar", async (payload: { testId?: string; requestId?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "testeRolar", cb)) return;
       // leitura inicial APENAS para localizar a sessão/lease: o registro
       // completo é RELIDO sob o lease — um teste lido antes de uma
       // restauração nunca é usado como fonte de dados para a escrita
@@ -1018,6 +1061,7 @@ function socket_handlers(
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.dados?.length) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "rolagem", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel === "espectador") { cb?.({ ok: false, erro: "Espectadores não podem rolar" }); return; }
@@ -1098,6 +1142,7 @@ function socket_handlers(
     on(socket, "mesa:teste:decidir", async (payload: { testId?: string; outcome?: string; nota?: string }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.testId || !payload.outcome) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "testeDecidir", cb)) return;
       // mesma regra de teste:rolar — leitura inicial só localiza a
       // sessão; o registro é relido sob o lease antes de qualquer uso
       const [ref] = await db.select({ sessionId: tests.sessionId }).from(tests).where(eq(tests.id, payload.testId)).limit(1);
@@ -1156,6 +1201,7 @@ function socket_handlers(
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.acao) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "turno", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla turnos" }); return; }
@@ -1229,6 +1275,7 @@ function socket_handlers(
     on(socket, "mesa:timer", async (payload: { sessionId?: string; acao?: string; duracaoSegundos?: number }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.acao) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (!consumirOuRecusar(socket, "turno", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
       if (ctx.papel !== "mestre") { cb?.({ ok: false, erro: "Só o mestre controla o temporizador" }); return; }
