@@ -122,6 +122,38 @@ for (const n of [1, 5, 10, 30]) {
     cena.every((d) => d.labels[d.labels.indexOf(d.valor)] === d.valor && d.valor === itens[cena.indexOf(d)].valor));
 }
 
+// ---------- corpo finalizado permanece imóvel quando há espaço livre ----------
+{
+  const cena = criarCenaMesa([{ lados: 6, valor: 3 }, { lados: 6, valor: 4 }], 90);
+  const [assentado, movel] = cena;
+  const soma = assentado.raioColisao + movel.raioColisao;
+
+  assentado.position = [0, 0, assentado.repouso];
+  assentado.orientation = [...assentado.alvo];
+  assentado.velocity = [0, 0, 0];
+  assentado.angularVelocity = [0, 0, 0];
+  assentado.simulationTime = 3.2;
+  assentado.finalizado = true;
+
+  movel.position = [soma - 0.4, 0, movel.repouso];
+  movel.orientation = [...movel.alvo];
+  movel.velocity = [0, 0, 0];
+  movel.angularVelocity = [0, 0, 0];
+  movel.simulationTime = 0;
+  movel.finalizado = false;
+
+  const posAntes = [...assentado.position];
+  passoCena(cena, 1 / 60);
+  const distancia = Math.hypot(
+    assentado.position[0] - movel.position[0],
+    assentado.position[1] - movel.position[1],
+  );
+  ok("corpo finalizado: permanece imóvel quando o móvel tem espaço",
+    assentado.position.every((v, i) => quase(v, posAntes[i], 1e-9)));
+  ok("corpo finalizado: colisão separa o móvel sem sobreposição",
+    distancia >= soma - 0.01, `distância=${distancia.toFixed(3)} / necessária=${soma.toFixed(3)}`);
+}
+
 // ---------- colisão ativa × finalizada e dado encurralado na borda ----------
 {
   const cena = criarCenaMesa([{ lados: 6, valor: 3 }, { lados: 6, valor: 4 }], 91);
