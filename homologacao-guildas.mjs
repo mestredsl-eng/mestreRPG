@@ -60,6 +60,9 @@ try {
   await pgAdmin.waitForTimeout(800);
   t("guilda criada e aberta", await pgAdmin.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
   t("papel GM exibido", await pgAdmin.getByText("GM", { exact: true }).first().isVisible());
+  const listaGuildasCriadas = await req(BASE, "GET", "/guildas", { cookie: cenario.cookieMestre });
+  const guildId = listaGuildasCriadas.json?.guildas?.find((g) => g.name === "Guilda do Trono")?.id;
+  t("ID real da guilda disponível para a homologação Socket.IO", !!guildId);
   // <option> dentro de <select> fechado não tem caixa visível — a
   // asserção é por presença no DOM, não por waitFor de visibilidade
   await pgAdmin.waitForTimeout(500);
@@ -112,6 +115,132 @@ try {
   t("sem coluna de ações para membro comum", (await pgB.getByRole("columnheader", { name: "Ações" }).count()) === 0);
   t("sem erro de carregamento para membro comum", (await pgB.locator(".erro").count()) === 0);
   await shot(pgB, "guilda-membro-comum");
+
+  sec("Mudanças de papel e remoção propagadas em tempo real");
+  const linhaBNoAdmin = pgAdmin.locator("tr", { hasText: "jogador_b" });
+  await linhaBNoAdmin.getByRole("button", { name: "Promover a GM" }).click();
+  // Sem refresh manual: o membro afetado e outro membro já conectado
+  // devem reler os papéis persistidos ao receber guilda:atualizada.
+  await pgB.getByText(/GM — você gerencia membros/).waitFor({ timeout: 10000 });
+  await pgA.locator("tr", { hasText: "jogador_b" }).getByText("GM", { exact: true }).waitFor({ timeout: 10000 });
+  t("promoção a GM aparece no cliente afetado sem recarregar", await pgB.getByText(/GM — você gerencia membros/).isVisible());
+  t("promoção a GM aparece para outro membro conectado sem recarregar",
+    await pgA.locator("tr", { hasText: "jogador_b" }).getByText("GM", { exact: true }).isVisible());
+
+  // Segura uma leitura 200 iniciada antes da remoção. A resposta 403
+  // disparada pelo evento de remoção deve vencer; ao liberar o 200 antigo,
+  // ele não pode repovoar a tela com dados obsoletos.
+  let liberarRespostaAntiga = () => {};
+  let sinalizarRespostaAntiga = () => {};
+  const esperaLiberacaoAntiga = new Promise((resolve) => { liberarRespostaAntiga = resolve; });
+  const respostaAntigaRetida = new Promise((resolve) => { sinalizarRespostaAntiga = resolve; });
+  let reterProximaLeitura = true;
+  let statusRespostaAntiga = 0;
+  await pgB.route(`${BASE}/api/guildas/${guildId}`, async (route) => {
+    if (route.request().method() !== "GET" || !reterProximaLeitura) return route.continue();
+    reterProximaLeitura = false;
+    const resposta = await route.fetch();
+    statusRespostaAntiga = resposta.status();
+    sinalizarRespostaAntiga();
+    await esperaLiberacaoAntiga;
+    return route.fulfill({ response: resposta });
+  });
+  const atualizarDescricao = await req(BASE, "PATCH", `/guildas/${guildId}`, {
+    cookie: cenario.cookieMestre,
+    body: { description: "Atualização usada para testar resposta HTTP obsoleta" },
+  });
+  t("mutação de guilda aceita para iniciar leitura antiga", atualizarDescricao.status === 200);
+  await Promise.race([
+    respostaAntigaRetida,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout segurando leitura antiga da guilda")), 10000)),
+  ]);
+  t("leitura 200 antiga foi retida antes da remoção", statusRespostaAntiga === 200);
+
+  await linhaBNoAdmin.getByRole("button", { name: "Remover", exact: true }).click();
+  // A API passa a responder 403 para o removido; a tela limpa dados e
+  // controles antigos assim que chega o evento privado do servidor.
+  await pgB.getByRole("button", { name: "Voltar", exact: true }).waitFor({ timeout: 10000 });
+  await pgB.getByText(/Sem acesso a esta guilda/).waitFor({ timeout: 10000 });
+
+  // Entrega por último a resposta 200 iniciada quando o usuário ainda era
+  // membro. A geração mais nova deve descartar esse resultado obsoleto.
+  liberarRespostaAntiga();
+  await pgB.waitForTimeout(250);
+  await pgB.unroute(`${BASE}/api/guildas/${guildId}`);
+  await pgA.locator("tr", { hasText: "jogador_b" }).waitFor({ state: "detached", timeout: 10000 });
+  t("remoção revoga a tela aberta do membro sem refresh manual",
+    (await pgB.getByRole("heading", { name: "Guilda do Trono" }).count()) === 0
+      && (await pgB.locator(".erro").count()) > 0);
+  t("resposta 200 antiga não repovoa o detalhe após 403", statusRespostaAntiga === 200
+    && (await pgB.getByRole("heading", { name: "Guilda do Trono" }).count()) === 0
+    && (await pgB.getByText(/Sem acesso a esta guilda/).count()) > 0);
+  t("outro membro conectado recebe roster atualizado sem o removido",
+    (await pgA.locator("tr", { hasText: "jogador_b" }).count()) === 0);
+
+
+  sec("Transferência de campanha entre guildas propaga para origem e destino");
+  const campId = cenario.campId;
+  // guilda de destino criada via API — o ADMIN é GM das duas
+  const criaB = await req(BASE, "POST", "/guildas", { cookie: cenario.cookieMestre, body: { name: "Guilda do Abismo" } });
+  const guildBId = criaB.json?.guilda?.id;
+  t("guilda de destino criada", criaB.status === 201 && !!guildBId, JSON.stringify(criaB.json));
+
+  // gravador de eventos privados guilda:atualizada no socket do ADMIN
+  // (ele recebe eventos de todas as guildas por ser admin ativo)
+  await pgAdmin.evaluate(() => {
+    window.__evtGuilda = [];
+    window.__mesaSocket?.on("guilda:atualizada", (e) => { window.__evtGuilda.push(e); });
+  });
+  const eventosGuilda = () => pgAdmin.evaluate(() => window.__evtGuilda ?? []);
+
+  // vínculo inicial na guilda A — somente A pode ser notificada
+  const vincA = await req(BASE, "PUT", `/guildas/${guildId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("campanha vinculada à guilda A", vincA.status === 200, String(vincA.status));
+  await pgAdmin.getByRole("heading", { name: "Campanhas vinculadas (1)" }).waitFor({ timeout: 10000 });
+  await pgAdmin.waitForTimeout(400);
+  let evts = await eventosGuilda();
+  t("vínculo inicial notifica só a guilda A",
+    evts.length === 1 && evts[0].guildId === guildId && evts[0].tipo === "campanha_vinculada",
+    JSON.stringify(evts));
+
+  // operação idempotente (já vinculada à A) não pode gerar eventos
+  const vincA2 = await req(BASE, "PUT", `/guildas/${guildId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("vínculo repetido aceito sem efeito", vincA2.status === 200, String(vincA2.status));
+  await pgAdmin.waitForTimeout(400);
+  evts = await eventosGuilda();
+  t("vínculo idempotente não emite eventos", evts.length === 1, JSON.stringify(evts));
+
+  // segunda tela ADMIN aberta já no detalhe da guilda B
+  const ctxAdmin2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const pgAdmin2 = await ctxAdmin2.newPage();
+  await login(pgAdmin2, "mestre_teste", "senha-forte-123");
+  await btnNav(pgAdmin2, "Guildas").click();
+  await pgAdmin2.waitForTimeout(800);
+  await pgAdmin2.locator("tr", { hasText: "Guilda do Abismo" }).getByRole("button", { name: "Abrir" }).click();
+  await pgAdmin2.getByRole("heading", { name: "Guilda do Abismo" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.getByRole("heading", { name: "Campanhas vinculadas (0)" }).waitFor({ timeout: 10000 });
+
+  // transferência A → B: origem remove sem reload, destino recebe sem reload
+  const transf = await req(BASE, "PUT", `/guildas/${guildBId}/campanhas/${campId}`, { cookie: cenario.cookieMestre, body: { acao: "vincular" } });
+  t("transferência A→B aceita", transf.status === 200, String(transf.status));
+  await pgAdmin.getByRole("heading", { name: "Campanhas vinculadas (0)" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.getByRole("heading", { name: "Campanhas vinculadas (1)" }).waitFor({ timeout: 10000 });
+  await pgAdmin2.locator("tr", { hasText: "Campanha Guildas" }).waitFor({ timeout: 10000 });
+  t("guilda de origem remove a campanha sem reload", (await pgAdmin.locator("tr", { hasText: "Campanha Guildas" }).count()) === 0);
+  t("guilda de destino recebe a campanha sem reload", (await pgAdmin2.locator("tr", { hasText: "Campanha Guildas" }).count()) === 1);
+
+  await pgAdmin.waitForTimeout(400);
+  evts = await eventosGuilda();
+  // multiconjunto exato: vínculo inicial em A + par origem/destino da
+  // transferência. Qualquer evento extra (duplicado, guilda errada,
+  // tipo trocado) reprova.
+  const contagem = {};
+  for (const e of evts) { const k = `${e.guildId}:${e.tipo}`; contagem[k] = (contagem[k] ?? 0) + 1; }
+  const esperados = [`${guildId}:campanha_vinculada`, `${guildId}:campanha_desvinculada`, `${guildBId}:campanha_vinculada`];
+  const semEventosInadequados = evts.length === esperados.length
+    && esperados.every((k) => contagem[k] === 1);
+  t("origem notificada como desvinculada e destino como vinculada", semEventosInadequados, JSON.stringify(evts));
+  await shot(pgAdmin2, "guilda-destino-transferencia");
 
   const ctxC = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pgC = await ctxC.newPage();
