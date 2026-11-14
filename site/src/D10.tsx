@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
 import MesaDados3D, { seedDeId } from "./MesaDados3D";
-import { FaceDado } from "./Dados";
 
 interface Props {
   sessionId: string;
@@ -33,6 +32,8 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
   const [negativos, setNegativos] = useState(0);
   const [resultado, setResultado] = useState<ResultadoD10 | null>(null);
   const [rolando, setRolando] = useState(false);
+  // mesma semente cobre tumble (ACK pendente) e assentamento oficial
+  const [rodada, setRodada] = useState(0);
   // timeout do ACK: libera o botão e avisa se o servidor não responder
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (ackTimer.current) clearTimeout(ackTimer.current); }, []);
@@ -57,6 +58,7 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       aoErro("Sem conexão com o servidor — aguardando reconexão. Tente novamente.");
       return;
     }
+    setRodada((r) => r + 1);
     setRolando(true);
     ackTimer.current = setTimeout(() => {
       ackTimer.current = null;
@@ -114,35 +116,29 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
         <button type="submit" disabled={rolando}>{rolando ? "Rolando…" : resultado ? "Lançar novamente" : "Lançar D10"}</button>
       </form>
 
-      {/* Prévia do pool configurado — valores reais só após ACK do servidor */}
-      {!resultado && efetivos > 0 && (
-        <div className="mesa-dados-preview" aria-label="Prévia do pool D10">
-          <p className="meta">Prévia — {efetivos} dado{efetivos === 1 ? "" : "s"} d10</p>
-          <div className="mesa-dados-preview-grade">
-            {Array.from({ length: Math.min(efetivos, 12) }, (_, i) => (
-              <FaceDado key={i} lados={10} valor={10} indice={i} />
-            ))}
-            {efetivos > 12 && <span className="meta">+{efetivos - 12}</span>}
-          </div>
-        </div>
-      )}
+      {/* Mesa de dados sempre visível: bandeja vazia, tumble real
+          durante o ACK e assentamento nas faces oficiais do servidor
+          (sucesso/falha por dado). Nenhum valor é sorteado no cliente. */}
+      <div className="mesa-dados-area" aria-label="Mesa de dados D10">
+        <MesaDados3D
+          dados={rolando
+            ? Array.from({ length: efetivos }, () => ({ lados: 10, valor: null }))
+            : resultado
+              ? resultado.resultados.map((valor) => ({
+                  lados: 10,
+                  valor,
+                  estado: valor >= resultado.minimo ? "sucesso" as const : "falha" as const,
+                }))
+              : []}
+          semente={seedDeId(`${sessionId}-d10-${rodada}`)}
+        />
+      </div>
 
       {resultado && (
         <div className="d10-resultado">
           {resultado.resultados.length === 0 ? (
             <p className="meta">Nenhum dado efetivo para lançar.</p>
-          ) : (
-            <div className="d10-dados">
-              <MesaDados3D
-                dados={resultado.resultados.map((valor) => ({
-                  lados: 10,
-                  valor,
-                  estado: valor >= resultado.minimo ? "sucesso" as const : "falha" as const,
-                }))}
-                semente={seedDeId(resultado.id)}
-              />
-            </div>
-          )}
+          ) : null}
           <div className="d10-resumo">
             <span className="d10-chip">Lançados: {resultado.resultados.length}</span>
             <span className="d10-chip d10-chip-ok">Sucessos: {resultado.sucessos}</span>

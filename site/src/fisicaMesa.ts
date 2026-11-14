@@ -18,14 +18,16 @@ import {
 
 export interface ItemDado {
   lados: number;
-  valor: number;
+  /** null = dado "no ar" aguardando o resultado do servidor (tumble). */
+  valor: number | null;
   /** Estado visual individual (ex.: sucesso/falha de cada D10). */
   estado?: "sucesso" | "falha" | null;
 }
 
 export interface DadoMesa {
   lados: number;
-  valor: number;
+  /** valor oficial exibido na face de repouso; null durante o tumble */
+  valor: number | null;
   estado?: "sucesso" | "falha" | null;
   vertices: Vec3[];
   faces: Face[];
@@ -40,8 +42,9 @@ export interface DadoMesa {
   velocity: Vec3;
   orientation: Quat;
   angularVelocity: Vec3;
-  /** quaternion alvo: face do valor do servidor apontando para o jogador */
-  alvo: Quat;
+  /** quaternion alvo: face do valor do servidor apontando para o jogador.
+   *  null enquanto o resultado não chegou — o dado continua em tumble. */
+  alvo: Quat | null;
   simulationTime: number;
   settleTime: number;
   finalizado: boolean;
@@ -100,14 +103,18 @@ export function criarCenaMesa(itens: ItemDado[], semente = 1): DadoMesa[] {
   return itens.map((item, i) => {
     const { vertices, faces } = geometry(item.lados);
     const labels = faceValues(item.lados, vertices, faces);
-    const idxFace = labels.indexOf(Math.round(item.valor));
-    const alvo = fromTo(normalFor(vertices, faces[idxFace >= 0 ? idxFace : 0]), [0, 0, 1]);
+    const idxFace = labels.indexOf(Math.round(item.valor ?? 0));
+    const alvo = item.valor === null
+      ? null
+      : fromTo(normalFor(vertices, faces[idxFace >= 0 ? idxFace : 0]), [0, 0, 1]);
     const inicio_q = quaternionAleatorio(rand);
     const gx = inicio + (i % cols) * passo + (rand() - 0.5) * passo * 0.35;
     const gy = inicio + Math.floor(i / cols) * passo + (rand() - 0.5) * passo * 0.35;
     const raio = Math.max(...vertices.map((v) => length(v)));
     const raioColisao = raio * 0.7;
-    const repouso = alturaDeRepouso(vertices, alvo);
+    // sem alvo (tumble): repouso calculado na identidade — a altura de
+    // assentamento final é recalculada quando o valor do servidor chega
+    const repouso = alturaDeRepouso(vertices, alvo ?? ([1, 0, 0, 0] as Quat));
     const spin = quaternionAleatorio(rand);
     return {
       lados: item.lados,
@@ -196,7 +203,8 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
 
     // Repouso natural + teto de tempo: energia baixa por 0.28s contínuos
     // assenta na face do servidor; passado o teto, força o fim.
-    if (d.simulationTime > 1.15) {
+    // Dados SEM alvo (aguardando ACK) nunca finalizam — seguem em tumble.
+    if (d.alvo !== null && d.simulationTime > 1.15) {
       d.angularVelocity = scale(d.angularVelocity, Math.exp(-2.1 * dt));
       const energiaBaixa = noChao
         && length(d.angularVelocity) < 1.05
@@ -217,7 +225,7 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
         d.settleTime = 0;
       }
     }
-    if (d.simulationTime >= 3.2) {
+    if (d.alvo !== null && d.simulationTime >= 3.2) {
       // Teto de segurança: força assentamento direto no alvo.
       d.orientation = d.alvo;
       d.position[2] = d.repouso;
@@ -343,4 +351,23 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
 
 export function cenaRepousada(dados: DadoMesa[]): boolean {
   return dados.every((d) => d.finalizado);
+}
+
+/**
+ * Define (ou limpa) o alvo de assentamento de um dado JÁ existente na
+ * cena — usado quando o resultado chega depois do tumble começar.
+ * Com valor null o dado volta a rolar sem face-alvo.
+ */
+export function definirAlvoDado(d: DadoMesa, valor: number | null): void {
+  d.valor = valor;
+  if (valor === null) {
+    d.alvo = null;
+    d.finalizado = false;
+    return;
+  }
+  const idxFace = d.labels.indexOf(Math.round(valor));
+  d.alvo = fromTo(normalFor(d.vertices, d.faces[idxFace >= 0 ? idxFace : 0]), [0, 0, 1]);
+  // altura de repouso depende da orientação final — recalcula para o novo alvo
+  d.repouso = alturaDeRepouso(d.vertices, d.alvo);
+  d.finalizado = false;
 }

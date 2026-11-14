@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { normalFor, rotate, add, dot, unit, type Vec3 } from "./fisicaDado";
 import {
-  criarCenaMesa, passoCena, cenaRepousada, semiLadoMesa,
+  criarCenaMesa, passoCena, cenaRepousada, semiLadoMesa, definirAlvoDado,
   type DadoMesa,
 } from "./fisicaMesa";
 
 export interface ItemDadoMesa {
   lados: number;
-  valor: number;
+  /** valor oficial do servidor; null = dado em tumble aguardando o ACK */
+  valor: number | null;
   /** Estado visual opcional por dado, preservando pools mistos de sucesso/falha. */
   estado?: "sucesso" | "falha" | null;
 }
@@ -47,28 +48,55 @@ interface FaceVisivel {
  */
 export default function MesaDados3D({ dados, semente = 7, estado, className }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cenaRef = useRef<DadoMesa[] | null>(null);
+  const sementeRef = useRef<number | null>(null);
   const [canvasUnavailable, setCanvasUnavailable] = useState(false);
-  const chave = dados.map((d) => `${d.lados}:${d.valor}:${d.estado ?? ""}`).join(",");
+  const chave = dados.map((d) => `${d.lados}:${d.valor ?? "…"}:${d.estado ?? ""}`).join(",");
 
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (!canvas || !ctx || dados.length === 0) {
-      if (dados.length === 0) return;
+    if (!canvas || !ctx) {
       setCanvasUnavailable(true);
       return;
     }
     setCanvasUnavailable(false);
 
-    const cena: DadoMesa[] = criarCenaMesa(dados, semente);
+    // Cena persistente: mesma semente + mesma quantidade/tipos de dados
+    // → os dados EM VOO continuam a trajetória; só o alvo de assentamento
+    // é atualizado quando o resultado do servidor chega (ACK). Nova
+    // semente ou nova quantidade → cena nova (novo lançamento).
+    const anterior = cenaRef.current;
+    const compativel = anterior !== null
+      && sementeRef.current === semente
+      && anterior.length === dados.length
+      && dados.every((item, i) => anterior[i].lados === item.lados);
+    let cena: DadoMesa[];
+    if (compativel) {
+      cena = anterior;
+      dados.forEach((item, i) => {
+        const d = cena[i];
+        d.estado = item.estado;
+        const mudou = item.valor === null
+          ? d.alvo !== null
+          : d.valor !== item.valor || d.alvo === null;
+        if (mudou) definirAlvoDado(d, item.valor);
+      });
+    } else {
+      cena = criarCenaMesa(dados, semente);
+      cenaRef.current = cena;
+      sementeRef.current = semente;
+    }
     const limite = semiLadoMesa(cena.length);
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) {
       // Sem simulação: cada dado já nasce assentado na face do servidor,
       // distribuído na grade de spawn — resultado final imediato.
       cena.forEach((d) => {
-        d.orientation = d.alvo;
-        d.position[2] = d.repouso;
+        if (d.alvo) {
+          d.orientation = d.alvo;
+          d.position[2] = d.repouso;
+        }
         d.velocity = [0, 0, 0];
         d.angularVelocity = [0, 0, 0];
         d.finalizado = true;
@@ -242,11 +270,14 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chave, semente, estado]);
 
-  if (canvasUnavailable || dados.length === 0) {
+  // Sem contexto 2D o resultado continua legível como texto; com
+  // contexto o canvas SEMPRE renderiza — mesmo vazio ele mostra a
+  // bandeja, tornando a área de dados visível antes do primeiro roll.
+  if (canvasUnavailable) {
     return (
       <span className={`mesa-dados-fallback ${className ?? ""}`}>
         {dados.map((d, i) => (
-          <span key={i} className="dado-3d-fallback" title={`d${d.lados} = ${d.valor}`}>{d.valor}</span>
+          <span key={i} className="dado-3d-fallback" title={`d${d.lados} = ${d.valor ?? "…"}`}>{d.valor ?? "…"}</span>
         ))}
       </span>
     );
@@ -256,7 +287,9 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       ref={canvasRef}
       className={`mesa-dados-3d-canvas ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
       role="img"
-      aria-label={`Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor}${d.estado ? ` (${d.estado})` : ""}`).join(", ")}`}
+      aria-label={dados.length === 0
+        ? "Mesa de dados: bandeja vazia aguardando a rolagem"
+        : `Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor ?? "rolando"}${d.estado ? ` (${d.estado})` : ""}`).join(", ")}`}
     />
   );
 }
