@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type Guilda, type GuildaCampanha, type GuildaCampanhaCandidata, type GuildaMembro } from "../api";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
@@ -17,24 +17,31 @@ export default function Guildas() {
   const [descricao, setDescricao] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const geracaoCarregamento = useRef(0);
 
   const carregar = useCallback(async () => {
+    const geracao = ++geracaoCarregamento.current;
     setCarregando(true);
     try {
       // ADMIN lista todas as guildas (inclusive as que não gerencia);
       // os demais veem as suas, já com status para permitir reativação
       const { guildas } = await api.listarGuildas(!!usuario?.isAdmin);
+      if (geracao !== geracaoCarregamento.current) return;
       setGuildas(guildas);
       setErro(null);
     } catch (e) {
+      if (geracao !== geracaoCarregamento.current) return;
+      // Não conserva uma lista antiga quando a leitura atual falha.
+      setGuildas([]);
       setErro(e instanceof Error ? e.message : "Erro ao carregar guildas");
     } finally {
-      setCarregando(false);
+      if (geracao === geracaoCarregamento.current) setCarregando(false);
     }
   }, [usuario?.isAdmin]);
 
   useEffect(() => {
     void carregar();
+    return () => { geracaoCarregamento.current++; };
   }, [carregar]);
 
   // Atualiza a listagem em todas as abas/dispositivos do usuário.
@@ -130,14 +137,17 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   const [novoMembro, setNovoMembro] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
+  const geracaoCarregamento = useRef(0);
 
   const carregar = useCallback(async () => {
+    const geracao = ++geracaoCarregamento.current;
     setCarregando(true);
     try {
       // o papel efetivo só é conhecido após obterGuilda — candidatas
       // exige gestão (GM da guilda ou ADMIN) e não pode derrubar a
       // visualização dos dados que o membro comum tem direito de ler
       const g = await api.obterGuilda(guildId);
+      if (geracao !== geracaoCarregamento.current) return;
       setGuilda(g.guilda);
       const podeGerir = souAdmin || g.guilda.souGM === true;
       const [m, c, mc] = await Promise.allSettled([
@@ -145,6 +155,7 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
         api.listarCampanhasGuilda(guildId),
         podeGerir ? api.listarCampanhasCandidatasGuilda(guildId) : Promise.resolve(null),
       ]);
+      if (geracao !== geracaoCarregamento.current) return;
       const falhas: string[] = [];
       if (m.status === "fulfilled") setMembros(m.value.membros);
       else falhas.push("membros");
@@ -156,6 +167,7 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
       else if (mc.status === "rejected") falhas.push("campanhas candidatas");
       setErro(falhas.length ? `Falha ao carregar: ${falhas.join(", ")}` : null);
     } catch (e) {
+      if (geracao !== geracaoCarregamento.current) return;
       // Revogação pode remover o acesso desta tela enquanto ela está aberta.
       // Limpa a visão anterior imediatamente (fail-closed) em vez de manter
       // nomes, membros ou controles que o usuário já não pode consultar.
@@ -165,12 +177,13 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
       setCandidatas([]);
       setErro(e instanceof Error ? e.message : "Erro ao carregar guilda");
     } finally {
-      setCarregando(false);
+      if (geracao === geracaoCarregamento.current) setCarregando(false);
     }
   }, [guildId, souAdmin]);
 
   useEffect(() => {
     void carregar();
+    return () => { geracaoCarregamento.current++; };
   }, [carregar]);
 
   // A sala privada usuario:<id> entrega a notificação a todas as sessões
