@@ -156,8 +156,7 @@ Apenas o **administrador global** restaura. Backups nunca são servidos publicam
 
 ## 14. Limitações conhecidas da v1.0
 
-- Mesa virtual (mapas, tokens, névoa de guerra) **não** está incluída — exige etapa futura autorizada.
-- Conversão automática ferimento → vitalidade não implementada (configuração futura).
-- O financeiro do personagem é fictício e **não** se integra automaticamente a compras do inventário.
-- Homologado no Windows; acesso externo depende de proxy/túnel configurado pelo usuário.
-- Chunk do frontend >500 kB (warning do Vite, não funcional).
+- **Novidades:** o indicador de publicações não lidas é atualizado ao carregar a sessão e após ações do próprio usuário; ainda não há notificação/push em tempo real para novas publicações.
+- **Acesso externo:** depende de proxy/túnel configurado pelo usuário; confira `dominioPublico` e `proxyHops` na configuração.
+- **Homologação:** o fluxo operacional foi homologado principalmente no Windows. Em Linux/macOS, os comandos npm são utilizáveis, mas os scripts `.bat` não.
+- **Chunk do frontend >500 kB:** o Vite ainda emite um aviso de tamanho; não é falha funcional e permanece como oportunidade de code-splitting.
