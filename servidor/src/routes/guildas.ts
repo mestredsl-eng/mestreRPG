@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, isNotNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { guilds, guildMembers, campaigns, memberships, users } from "../db/schema.js";
@@ -335,19 +335,29 @@ guildasRouter.get("/:guildId/campanhas", requireGuildAcesso(), async (req, res) 
  */
 guildasRouter.get("/:guildId/campanhas-candidatas", requireGuildGestao(), async (req, res) => {
   const uid = req.usuario!.id;
-  const rows = await db
-    .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status, guildId: campaigns.guildId, ownerId: campaigns.ownerId })
-    .from(campaigns);
+  const campos = {
+    id: campaigns.id, name: campaigns.name, status: campaigns.status,
+    guildId: campaigns.guildId, ownerId: campaigns.ownerId,
+  } as const;
   if (ehAdmin(req)) {
+    const rows = await db.select(campos).from(campaigns);
     res.json({ campanhas: rows });
     return;
   }
-  const candidatas = [];
-  for (const c of rows) {
-    const m = await getMembership(c.id, uid);
-    if (c.ownerId === uid || (m?.status === "ativo" && m.role === "mestre")) candidatas.push(c);
-  }
-  res.json({ campanhas: candidatas });
+  // consulta única: campanhas do próprio gestor OU com membership de
+  // mestre ativa — o JOIN é limitado ao usuário atual e
+  // (campaign_id, user_id) é único, então não há duplicatas
+  const rows = await db
+    .select(campos)
+    .from(campaigns)
+    .leftJoin(memberships, and(
+      eq(memberships.campaignId, campaigns.id),
+      eq(memberships.userId, uid),
+      eq(memberships.status, "ativo"),
+      eq(memberships.role, "mestre"),
+    ))
+    .where(or(eq(campaigns.ownerId, uid), isNotNull(memberships.id)));
+  res.json({ campanhas: rows });
 });
 
 /**

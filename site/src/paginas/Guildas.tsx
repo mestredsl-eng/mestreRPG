@@ -124,25 +124,33 @@ function DetalheGuilda({ guildId, souAdmin, aoVoltar }: { guildId: string; souAd
   const carregar = useCallback(async () => {
     setCarregando(true);
     try {
-      const [g, m, c, mc] = await Promise.all([
-        api.obterGuilda(guildId),
+      // o papel efetivo só é conhecido após obterGuilda — candidatas
+      // exige gestão (GM da guilda ou ADMIN) e não pode derrubar a
+      // visualização dos dados que o membro comum tem direito de ler
+      const g = await api.obterGuilda(guildId);
+      setGuilda(g.guilda);
+      const podeGerir = souAdmin || g.guilda.souGM === true;
+      const [m, c, mc] = await Promise.allSettled([
         api.listarMembrosGuilda(guildId),
         api.listarCampanhasGuilda(guildId),
-        api.listarCampanhasCandidatasGuilda(guildId),
+        podeGerir ? api.listarCampanhasCandidatasGuilda(guildId) : Promise.resolve(null),
       ]);
-      setGuilda(g.guilda);
-      setMembros(m.membros);
-      setCampanhas(c.campanhas);
+      const falhas: string[] = [];
+      if (m.status === "fulfilled") setMembros(m.value.membros);
+      else falhas.push("membros");
+      if (c.status === "fulfilled") setCampanhas(c.value.campanhas);
+      else falhas.push("campanhas vinculadas");
       // candidatas já vêm filtradas pelo servidor (ADMIN: todas;
       // GM: só as que pode operar na mesa) — aqui só o vínculo atual
-      setCandidatas(mc.campanhas);
-      setErro(null);
+      if (mc.status === "fulfilled") setCandidatas(mc.value?.campanhas ?? []);
+      else if (mc.status === "rejected") falhas.push("campanhas candidatas");
+      setErro(falhas.length ? `Falha ao carregar: ${falhas.join(", ")}` : null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar guilda");
     } finally {
       setCarregando(false);
     }
-  }, [guildId]);
+  }, [guildId, souAdmin]);
 
   useEffect(() => {
     void carregar();

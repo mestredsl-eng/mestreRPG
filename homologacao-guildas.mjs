@@ -41,7 +41,7 @@ try {
   proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
 
-  const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Guildas", jogadores: { a: "jogadora_a", b: "jogador_b" } });
+  const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Guildas", jogadores: { a: "jogadora_a", b: "jogador_b", c: "jogador_c" } });
   console.log("seed ok");
 
   browser = await chromium.launch();
@@ -60,6 +60,11 @@ try {
   await pgAdmin.waitForTimeout(800);
   t("guilda criada e aberta", await pgAdmin.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
   t("papel GM exibido", await pgAdmin.getByText("GM", { exact: true }).first().isVisible());
+  // <option> dentro de <select> fechado não tem caixa visível — a
+  // asserção é por presença no DOM, não por waitFor de visibilidade
+  await pgAdmin.waitForTimeout(500);
+  t("ADMIN vê campanhas candidatas de terceiros",
+    (await pgAdmin.locator("option", { hasText: "Campanha Guildas" }).count()) > 0);
   await shot(pgAdmin, "guilda-detalhe");
 
   sec("GM adiciona e promove membro pela UI");
@@ -71,6 +76,12 @@ try {
   await linhaA.getByRole("button", { name: "Promover a GM" }).click();
   await pgAdmin.waitForTimeout(800);
   t("jogadora promovida a GM", await linhaA.getByText("GM", { exact: true }).isVisible());
+  // jogador_b entra como MEMBRO comum (sem promoção) — cobre a leitura
+  // de detalhes da guilda por quem não tem papel de gestão
+  await pgAdmin.getByPlaceholder("Nome de usuário existente").fill("jogador_b");
+  await pgAdmin.getByRole("button", { name: "Adicionar", exact: true }).click();
+  await pgAdmin.waitForTimeout(800);
+  t("jogador_b adicionado como membro comum", await pgAdmin.locator("tr", { hasText: "jogador_b" }).isVisible());
 
   sec("Membro comum não gerencia — UI esconde ações");
   const ctxA = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -82,14 +93,33 @@ try {
   t("membro vê a guilda", await pgA.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
   t("membro vê próprio papel GM", await pgA.getByText(/GM — você gerencia/).isVisible().catch(() => pgA.getByText("GM").first().isVisible()));
   t("sem formulário de adicionar para... (ela é GM agora)", await pgA.getByPlaceholder("Nome de usuário existente").isVisible());
+  // GM não é ADMIN nem mestre da "Campanha Guildas" — ela não pode
+  // aparecer como candidata de vínculo (vazamento seria visível aqui)
+  t("GM não vê campanhas que não opera como candidatas", (await pgA.getByRole("option", { name: /Campanha Guildas/ }).count()) === 0);
 
+  sec("Membro comum abre a guilda sem controles de gestão");
   const ctxB = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const pgB = await ctxB.newPage();
   await login(pgB, "jogador_b", "senha-jogador-123");
   await btnNav(pgB, "Guildas").click();
   await pgB.waitForTimeout(800);
-  t("não-membro não vê a guilda", !(await pgB.getByText("Guilda do Trono").count()));
-  await shot(pgB, "guildas-vazio");
+  await pgB.locator("tr", { hasText: "Guilda do Trono" }).getByRole("button", { name: "Abrir" }).click();
+  await pgB.waitForTimeout(1000);
+  t("membro comum vê o detalhe da guilda", await pgB.getByRole("heading", { name: "Guilda do Trono" }).isVisible());
+  t("membro comum vê o roster", await pgB.getByRole("heading", { name: /Membros \(/ }).isVisible());
+  t("membro comum vê campanhas vinculadas", await pgB.getByRole("heading", { name: /Campanhas vinculadas/ }).isVisible());
+  t("sem formulário de gestão para membro comum", (await pgB.getByPlaceholder("Nome de usuário existente").count()) === 0);
+  t("sem coluna de ações para membro comum", (await pgB.getByRole("columnheader", { name: "Ações" }).count()) === 0);
+  t("sem erro de carregamento para membro comum", (await pgB.locator(".erro").count()) === 0);
+  await shot(pgB, "guilda-membro-comum");
+
+  const ctxC = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const pgC = await ctxC.newPage();
+  await login(pgC, "jogador_c", "senha-jogador-123");
+  await btnNav(pgC, "Guildas").click();
+  await pgC.waitForTimeout(800);
+  t("não-membro não vê a guilda", !(await pgC.getByText("Guilda do Trono").count()));
+  await shot(pgC, "guildas-vazio");
 
   sec("Painel ADMIN — badges e concessão de ADMIN");
   await btnNav(pgAdmin, "Administração").click();
