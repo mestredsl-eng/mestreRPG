@@ -7,6 +7,7 @@ on:
       - feat/mesa-virtual-mapas-tokens
       - feat/mesa-virtual-nevoa-backend
       - feat/mesa-virtual-nevoa-frontend
+      - feat/convites-internos-guilda-api
     types:
       - opened
       - synchronize
@@ -241,6 +242,7 @@ jobs:
             homologacao-sessoes.mjs \
             homologacao-pacotes-forjados.mjs \
             homologacao-split-pages.mjs \
+            homologacao-convites-guilda.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
             teste-permissao-tempo-real.mjs \
