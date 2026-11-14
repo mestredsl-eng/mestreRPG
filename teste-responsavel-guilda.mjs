@@ -288,6 +288,29 @@ try {
   t("ADMIN recupera: transfere para GM ativo", rec2.status === 200 && rec2.json?.responsavelId === idDave, JSON.stringify(rec2.json));
   sqlDb("update guild_members set role='gm' where guild_id=? and user_id=?", guildA, idAlice);
 
+  sec("Status da conta no roster (Issue #90)");
+  // estado: responsável=dave; GMs ativos alice/dave/erin; bob membro
+  const roster1 = await req(base, "GET", `/guildas/${guildA}/membros`, { cookie: cookieDave });
+  const membroErin1 = roster1.json?.membros?.find((m) => m.userId === idErin);
+  t("GM com conta ativa aparece com contaStatus ativo", membroErin1?.contaStatus === "ativo", JSON.stringify(membroErin1));
+  t("contaStatus independente do vínculo (membro)",
+    roster1.json?.membros?.find((m) => m.userId === idBob)?.contaStatus === "ativo");
+  // bloqueia a conta de erin — o vínculo guild_members NÃO muda
+  const blk = await req(base, "PATCH", `/admin/users/${idErin}`, { cookie: cookieRoot, body: { status: "bloqueado" } });
+  t("admin bloqueia conta de erin", blk.status === 200, `status=${blk.status}`);
+  const roster2 = await req(base, "GET", `/guildas/${guildA}/membros`, { cookie: cookieDave });
+  const membroErin2 = roster2.json?.membros?.find((m) => m.userId === idErin);
+  t("GM bloqueado PERMANECECE no roster", !!membroErin2, JSON.stringify(roster2.json?.membros?.length));
+  t("contaStatus=bloqueado no roster", membroErin2?.contaStatus === "bloqueado");
+  t("status do VÍNCULO continua ativo (independente da conta)", membroErin2?.status === "ativo");
+  t("papel gm preservado no roster", membroErin2?.role === "gm");
+  // bloqueado não é alvo elegível de transferência
+  const trBloq = await put(cookieDave, guildA, idErin);
+  t("transferência para GM bloqueado → 409", trBloq.status === 409, `status=${trBloq.status}`);
+  t("responsável inalterado após tentativa", guildaDb(guildA).responsible_user_id === idDave);
+  // desbloqueia para não contaminar estado final
+  await req(base, "PATCH", `/admin/users/${idErin}`, { cookie: cookieRoot, body: { status: "ativo" } });
+
   console.log(`\n==== ${pass} ok, ${fail} falhas ====`);
 } finally {
   for (const s of socketsAbertos) s.close();

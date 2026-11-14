@@ -306,6 +306,10 @@ guildasRouter.get("/:guildId/membros", requireGuildAcesso(), async (req, res) =>
       displayName: r.user.displayName,
       role: r.membership.role,
       status: r.membership.status,
+      // status da CONTA (ativo|bloqueado) — independente do vínculo;
+      // GM bloqueado segue visível no roster mas não é elegível a
+      // transferência de responsabilidade (backend valida na escrita)
+      contaStatus: r.user.status,
       joinedAt: r.membership.joinedAt,
       ehEu: r.membership.userId === req.usuario!.id,
     })),
