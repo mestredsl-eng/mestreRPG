@@ -19,11 +19,14 @@ import {
 export interface ItemDado {
   lados: number;
   valor: number;
+  /** Estado visual individual (ex.: sucesso/falha de cada D10). */
+  estado?: "sucesso" | "falha" | null;
 }
 
 export interface DadoMesa {
   lados: number;
   valor: number;
+  estado?: "sucesso" | "falha" | null;
   vertices: Vec3[];
   faces: Face[];
   labels: number[];
@@ -109,6 +112,7 @@ export function criarCenaMesa(itens: ItemDado[], semente = 1): DadoMesa[] {
     return {
       lados: item.lados,
       valor: item.valor,
+      estado: item.estado,
       vertices, faces, labels,
       raio, raioColisao,
       repouso,
