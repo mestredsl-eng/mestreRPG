@@ -1960,6 +1960,26 @@ textarea:focus-visible,
 }
 .dado-3d-canvas.dado-3d-indisponivel { display: none; }
 
+/* ---- Mesa compartilhada de dados 3D ---- */
+.mesa-dados-3d-canvas {
+  display: block;
+  width: 100%;
+  height: 190px;
+  border-radius: 10px;
+  background: rgba(10, 14, 24, .55);
+  overflow: hidden;
+}
+@media (max-width: 600px) {
+  .mesa-dados-3d-canvas { height: 150px; }
+}
+.mesa-dados-fallback {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mesa-dados-3d-canvas.estado-sucesso { box-shadow: inset 0 0 0 1px rgba(46,143,91,.5); }
+.mesa-dados-3d-canvas.estado-falha { box-shadow: inset 0 0 0 1px rgba(138,58,58,.5); }
+
 /* ---- Central de Novidades (Issue #42) ---- */
 .contador-nao-lidas {
   display: inline-block;

@@ -3,6 +3,7 @@ import { api } from "./api";
 import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
 import Dado3D from "./Dado3D";
+import MesaDados3D, { seedDeId } from "./MesaDados3D";
 
 // ---------- Preferências visuais de dados (por usuário, persistidas no servidor) ----------
 
@@ -191,11 +192,10 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
 
       {resultado && (
         <div className="rolagem-resultado">
-          {resultado.grupos.map((g, gi) => (
-            <div key={gi} className="dados-grupo">
-              {g.resultados.map((v, i) => <FaceDado key={`${resultado.id}-${gi}-${i}`} lados={g.lados} valor={v} indice={i} />)}
-            </div>
-          ))}
+          <MesaDados3D
+            dados={resultado.grupos.flatMap((g) => g.resultados.map((v) => ({ lados: g.lados, valor: v })))}
+            semente={seedDeId(resultado.id)}
+          />
           <div className="d10-resumo">
             {resultado.modo === "dano" && <span className="d10-chip d10-chip-neg">Dano</span>}
             <span className="d10-chip">{resultado.grupos.reduce((s, g) => s + g.resultados.length, 0)} dado{resultado.grupos.reduce((s, g) => s + g.resultados.length, 0) === 1 ? "" : "s"}</span>
