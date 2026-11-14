@@ -184,6 +184,9 @@ try {
   await pgM.waitForLoadState("load");
   // sessão persiste via cookie; /convite autenticado mostra a tela de aceite
   await pgM.getByRole("heading", { name: "Convite para campanha" }).waitFor({ timeout: 20000 });
+  // os botões dependem da resposta assíncrona de validarConvite
+  await pgM.getByRole("button", { name: /Aceitar convite|Ir para o painel/ }).first()
+    .waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
   t("após remover a falha, módulo carrega e tela recupera",
     await pgM.getByRole("button", { name: /Aceitar convite|Ir para o painel/ }).count() > 0);
 
