@@ -20,6 +20,17 @@ export function criarBanco(caminho: string = CAMINHOS.banco) {
   const sqlite = new Database(caminho);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");
+  // MESTRE_SQL_TRACE=1: loga cada statement preparado no stderr —
+  // ferramenta de depuração e evidência de testes (ex.: provar ausência
+  // de N+1). better-sqlite3 não tem evento de profile; prepare() é o
+  // ponto onde todo SQL passa antes da execução.
+  if (process.env.MESTRE_SQL_TRACE === "1") {
+    const prepararOriginal = sqlite.prepare.bind(sqlite);
+    sqlite.prepare = ((sql: string) => {
+      console.error(`[sql] ${sql}`);
+      return prepararOriginal(sql);
+    }) as typeof sqlite.prepare;
+  }
   sqliteInstancia = sqlite;
   return drizzle(sqlite, { schema });
 }

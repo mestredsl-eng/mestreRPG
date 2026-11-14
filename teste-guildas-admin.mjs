@@ -36,7 +36,7 @@ async function esperarSaudavel(base, proc) {
 }
 function subir(porta) {
   return spawn("node", ["servidor/dist/index.js"], {
-    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks" },
+    env: { ...process.env, MESTRE_PORTA: String(porta), MESTRE_BANCO: BANCO, MESTRE_ARQUIVOS: DIR + "/arq", MESTRE_BACKUPS: DIR + "/bks", MESTRE_SQL_TRACE: "1" },
     stdio: ["ignore", "pipe", "pipe"],
   });
 }
@@ -72,6 +72,19 @@ const principalId = () => {
 const porta = await portaLivre();
 const base = `http://127.0.0.1:${porta}`;
 const proc = subir(porta);
+// evidência de N+1: conta SELECTs diretos em "memberships" emitidos no
+// stderr (MESTRE_SQL_TRACE). O JOIN de campanhas-candidatas usa
+// `left join "memberships"` e NÃO casa com /from "memberships"/.
+let sqlBuf = "", sqlMemberships = 0;
+proc.stderr.on("data", (d) => {
+  sqlBuf += d;
+  let i;
+  while ((i = sqlBuf.indexOf("\n")) >= 0) {
+    const linha = sqlBuf.slice(0, i);
+    sqlBuf = sqlBuf.slice(i + 1);
+    if (linha.includes("[sql]") && /from "memberships"/.test(linha)) sqlMemberships++;
+  }
+});
 await esperarSaudavel(base, proc);
 
 try {
@@ -262,11 +275,29 @@ try {
   sec("Campanhas candidatas — ADMIN vê todas, GM só as operáveis");
   const candRoot = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieRoot });
   t("ADMIN lista candidatas de qualquer usuário", candRoot.status === 200 && (candRoot.json?.campanhas ?? []).some((c) => c.id === campId), JSON.stringify(candRoot.json).slice(0, 200));
+  // controle positivo: o vínculo via PUT já consultou memberships —
+  // se o contador estivesse quebrado, o delta abaixo passaria à toa
+  t("instrumentação SQL registrou consultas a memberships", sqlMemberships > 0, `total=${sqlMemberships}`);
+  const antesN1 = sqlMemberships;
   const candCarol = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieCarol2 });
+  t("listagem de candidatas do GM não faz N+1 em memberships", sqlMemberships - antesN1 === 0, `consultas diretas em memberships: ${sqlMemberships - antesN1}`);
   const idsCarol = (candCarol.json?.campanhas ?? []).map((c) => c.id);
   t("GM vê a própria e não vê campanha alheia", candCarol.status === 200 && idsCarol.includes(campCarol.json.campanha.id) && !idsCarol.includes(campId), JSON.stringify({ st: candCarol.status, ids: idsCarol, resp: candCarol.json }).slice(0, 300));
   const candAlice = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieAlice2 });
   t("não-gestor não lista candidatas", candAlice.status === 403, `status=${candAlice.status} body=${JSON.stringify(candAlice.json)}`);
+
+  sec("Membro comum le a guilda sem permissoes de gestao");
+  // carol e GM da Guilda B, mas na Guilda A entra como MEMBRO comum
+  const addCarolA = await req(base, "POST", `/guildas/${guildA}/membros`, { cookie: cookieAlice2, body: { username: "carol" } });
+  t("alice adiciona carol como membro comum da Guilda A", addCarolA.status === 201, JSON.stringify(addCarolA.json));
+  const detCarol = await req(base, "GET", `/guildas/${guildA}`, { cookie: cookieCarol2 });
+  t("membro comum abre detalhe da guilda", detCarol.status === 200 && detCarol.json?.guilda?.meuPapel === "membro" && detCarol.json?.guilda?.souGM === false, JSON.stringify(detCarol.json).slice(0, 200));
+  const memCarol = await req(base, "GET", `/guildas/${guildA}/membros`, { cookie: cookieCarol2 });
+  t("membro comum le roster", memCarol.status === 200 && (memCarol.json?.membros ?? []).length === 3, JSON.stringify(memCarol.json).slice(0, 200));
+  const campVincCarol = await req(base, "GET", `/guildas/${guildA}/campanhas`, { cookie: cookieCarol2 });
+  t("membro comum le campanhas vinculadas", campVincCarol.status === 200, JSON.stringify(campVincCarol.json).slice(0, 200));
+  const candCarolComum = await req(base, "GET", `/guildas/${guildA}/campanhas-candidatas`, { cookie: cookieCarol2 });
+  t("membro comum NAO lista candidatas (403)", candCarolComum.status === 403, String(candCarolComum.status));
 
   sec("Auditoria");
   const db2 = abrirDb(BANCO);
