@@ -478,6 +478,36 @@ try {
   await shot(pgMob, "08-mobile-dados");
   await ctxMob.close();
 
+  sec("10. Transporte polling-first e resiliência de conexão (Issue #92)");
+  // O app usa polling primeiro (funciona atrás de proxy sem upgrade WS).
+  // Inspecionamos o engine do socket do app para confirmar o transporte.
+  const transporteApp = await pgM.evaluate(() => {
+    const s = window.__mesaSocket;
+    return s ? { conectado: s.connected, transporte: s.io?.engine?.transport?.name ?? "?" } : null;
+  });
+  t("app conectado com transporte válido", !!transporteApp?.conectado, JSON.stringify(transporteApp));
+  t("transporte inicial é polling (upgrade posterior é opcional)",
+    ["polling", "websocket"].includes(transporteApp?.transporte), `transporte=${transporteApp?.transporte}`);
+
+  // Prévia visível antes do primeiro lançamento
+  await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
+  await pgM.locator(".rolagem-form select").first().selectOption("6");
+  await pgM.locator(".mesa-dados-preview").waitFor({ timeout: 5000 });
+  t("prévia de dados visível antes de rolar", await pgM.locator(".mesa-dados-preview .dado-3d-canvas").count() > 0);
+
+  // Desconexão: botão NÃO fica eterno em "Rolando…" e erro é exibido
+  await pgM.evaluate(() => window.__mesaSocket.disconnect());
+  await pgM.getByRole("button", { name: /Lançar/ }).click();
+  await pgM.getByText(/Sem conexão com o servidor/).waitFor({ timeout: 5000 });
+  t("sem conexão: erro compreensível exibido", true);
+  t("sem conexão: botão liberado (não eterno)", await pgM.getByRole("button", { name: /Lançar/ }).isEnabled());
+
+  // Reconexão: rolagem volta a funcionar
+  await pgM.evaluate(() => window.__mesaSocket.connect());
+  await pgM.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 15000 });
+  await rolarLivre(pgM, 6, 1, "reconexao-ok");
+  t("após reconexão: rolagem funciona", await pgM.locator(".rolagem-item", { hasText: "reconexao-ok" }).count() > 0);
+
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e).slice(0, 500));

@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { api } from "./api";
 import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
@@ -123,6 +123,8 @@ interface ResultadoLivre {
   ts: number;
 }
 
+const count0 = (v: number) => Math.max(1, Math.min(30, Math.round(v) || 1));
+
 function RolagemDados({ sessionId, aoErro, souMestre }: {
   sessionId: string; aoErro: (e: string | null) => void; souMestre: boolean;
 }) {
@@ -133,13 +135,27 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
   const [privado, setPrivado] = useState(false);
   const [resultado, setResultado] = useState<ResultadoLivre | null>(null);
   const [rolando, setRolando] = useState(false);
+  // timeout do ACK: sem resposta do servidor em 15s, libera o botão e
+  // avisa — nunca deixa "Rolando…" eterno quando o socket cai
+  const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (ackTimer.current) clearTimeout(ackTimer.current); }, []);
 
   const lancar = (e?: FormEvent) => {
     e?.preventDefault();
     if (rolando) return;
+    const socket = getSocket();
+    if (!socket.connected) {
+      aoErro("Sem conexão com o servidor — aguardando reconexão. Tente novamente.");
+      return;
+    }
     const count = Math.max(1, Math.min(30, Math.round(qtd) || 1));
     setRolando(true);
-    getSocket().emit("mesa:rolar", {
+    ackTimer.current = setTimeout(() => {
+      ackTimer.current = null;
+      setRolando(false);
+      aoErro("O servidor não respondeu à rolagem a tempo — verifique a conexão e tente novamente.");
+    }, 15000);
+    socket.emit("mesa:rolar", {
       sessionId,
       dados: [{ sides: lados, count }],
       motivo: motivo || (modo === "dano" ? "Dano" : undefined),
@@ -147,6 +163,7 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       visibilidade: privado ? "privada" : "publica",
       requestId: crypto.randomUUID(),
     }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados?: number; sides?: number; resultados: number[] }[]; total?: number; modo?: string }) => {
+      if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; }
       setRolando(false);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar"); return; }
       setResultado({
@@ -189,6 +206,20 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
           <button type="submit" disabled={rolando}>{rolando ? "Rolando…" : resultado ? "Lançar novamente" : "Lançar"}</button>
         </div>
       </form>
+
+      {/* Prévia da configuração — os valores reais vêm do servidor e só
+          aparecem na mesa 3D após o ACK; nada é sorteado no cliente. */}
+      {!resultado && (
+        <div className="mesa-dados-preview" aria-label="Prévia dos dados configurados">
+          <p className="meta">Prévia — {count0(qtd)} dado{count0(qtd) === 1 ? "" : "s"} d{lados}{modo === "dano" ? " (dano)" : ""}</p>
+          <div className="mesa-dados-preview-grade">
+            {Array.from({ length: Math.min(count0(qtd), 12) }, (_, i) => (
+              <FaceDado key={i} lados={lados} valor={lados} indice={i} />
+            ))}
+            {count0(qtd) > 12 && <span className="meta">+{count0(qtd) - 12}</span>}
+          </div>
+        </div>
+      )}
 
       {resultado && (
         <div className="rolagem-resultado">

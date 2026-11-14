@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
 import MesaDados3D, { seedDeId } from "./MesaDados3D";
+import { FaceDado } from "./Dados";
 
 interface Props {
   sessionId: string;
@@ -32,6 +33,9 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
   const [negativos, setNegativos] = useState(0);
   const [resultado, setResultado] = useState<ResultadoD10 | null>(null);
   const [rolando, setRolando] = useState(false);
+  // timeout do ACK: libera o botão e avisa se o servidor não responder
+  const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (ackTimer.current) clearTimeout(ackTimer.current); }, []);
 
   const efetivos = Math.max(0, Math.min(positivos, MAX_DADOS) - negativos);
   // A legenda acompanha a última resposta autoritativa do servidor quando
@@ -48,14 +52,25 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       setResultado({ id: `local-${Date.now()}`, resultados: [], positivos: pos, negativos: neg, minimo: minimoPadrao, sucessos: 0, falhas: 0, ts: Date.now() });
       return;
     }
+    const socket = getSocket();
+    if (!socket.connected) {
+      aoErro("Sem conexão com o servidor — aguardando reconexão. Tente novamente.");
+      return;
+    }
     setRolando(true);
-    getSocket().emit("mesa:rolar", {
+    ackTimer.current = setTimeout(() => {
+      ackTimer.current = null;
+      setRolando(false);
+      aoErro("O servidor não respondeu à rolagem a tempo — verifique a conexão e tente novamente.");
+    }, 15000);
+    socket.emit("mesa:rolar", {
       sessionId,
       dados: [{ sides: 10, count: efetivos }],
       motivo: `D10 ${pos}${neg ? ` − ${neg} negativo${neg > 1 ? "s" : ""}` : ""}`,
       d10: { positivos: pos, negativos: neg, minimo: minimoPadrao },
       requestId: crypto.randomUUID(),
     }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number; minimo?: number } }) => {
+      if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; }
       setRolando(false);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
       const res = r.grupos?.[0]?.resultados ?? [];
@@ -98,6 +113,19 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
         </p>
         <button type="submit" disabled={rolando}>{rolando ? "Rolando…" : resultado ? "Lançar novamente" : "Lançar D10"}</button>
       </form>
+
+      {/* Prévia do pool configurado — valores reais só após ACK do servidor */}
+      {!resultado && efetivos > 0 && (
+        <div className="mesa-dados-preview" aria-label="Prévia do pool D10">
+          <p className="meta">Prévia — {efetivos} dado{efetivos === 1 ? "" : "s"} d10</p>
+          <div className="mesa-dados-preview-grade">
+            {Array.from({ length: Math.min(efetivos, 12) }, (_, i) => (
+              <FaceDado key={i} lados={10} valor={10} indice={i} />
+            ))}
+            {efetivos > 12 && <span className="meta">+{efetivos - 12}</span>}
+          </div>
+        </div>
+      )}
 
       {resultado && (
         <div className="d10-resultado">
