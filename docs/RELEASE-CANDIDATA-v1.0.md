@@ -1,5 +1,7 @@
 # Release Candidate v1.0 — Mestre RPG
 
+> **Atualização de estado — 2026-11-14:** as cinco etapas do roteiro mestre da Issue #33 foram concluídas. A candidata continua sem tag/publicação, aguardando autorização explícita. A `main` de referência após a PR #77 é `9046ae3071f99022595ee2b7ea592454755c0b55`. A homologação histórica abaixo não deve ser interpretada como CI executado nesse SHA: a validação final da candidata deve usar o HEAD efetivo após a integração das PRs pendentes.
+
 Documento de preparação da candidata. **Não é uma release publicada**: a
 tag `v1.0.0` e a publicação da release estão pendentes de autorização
 explícita do responsável.
@@ -17,15 +19,12 @@ explícita do responsável.
   - *SHA efetivo da tag:* a tag `v1.0.0` deverá apontar para o HEAD da
     `main` conferido imediatamente antes da publicação — **não** para um
     SHA registrado antecipadamente neste documento.
-- **PRs integradas:** #37 (Etapa 2), #43 (Acervo/suplementos/restauração/
-  dados 3D), #44 (financeiro com compras e vendas), #45 (conversão de
-  ferimentos em Vitalidade) e #46 (Central de Novidades). A Issue #42 foi
-  concluída e fechada. A Issue #33 permanece aberta como roteiro mestre
-  e registro de acompanhamento do projeto; a criação da tag `v1.0.0` e
-  a publicação da release continuam pendentes de autorização do
-  responsável.
-- **Última migration:** `0018_striped_firedrake` (tabelas `novidades` e
-  `novidade_leituras`).
+- **PRs integradas:** #37 (Etapa 2), #43 (Acervo/suplementos/restauração), #44 (financeiro com compras e vendas), #45 (conversão de ferimentos em Vitalidade), #46 (Central de Novidades) e entregas posteriores registradas no histórico, incluindo #72 (hierarquia), #75 (rate limit Socket.IO) e #77 (mesa compartilhada de dados 3D).
+- **Pendências de estabilização em 2026-11-14:** PR #74 (correções de guildas), PR #78 (integração do pool D10 à mesa compartilhada) e PR #79 (propagação de eventos de guilda em tempo real) ainda exigem conclusão/revisão/CI antes da validação final da candidata. A Issue #65 permanece aberta para acompanhar pontos residuais da hierarquia de guildas.
+- As cinco etapas da Issue #33 foram concluídas; a Issue permanece como roteiro/histórico do projeto. A criação da tag `v1.0.0` e a publicação da release continuam pendentes de autorização explícita do responsável.
+- **Última migration:** `0024_guildas_hierarquia` (tabelas `guilds` e
+  `guild_members`, colunas `guild_id` em `campaigns`/`audit_logs` e
+  trigger de proteção do privilégio de ADMIN principal).
 
 ## Funcionalidades
 
@@ -127,11 +126,9 @@ symlink/permissão POSIX).
 
 ## Limitações conhecidas
 
-- Mesa virtual (mapas/tokens/névoa) não incluída — pós-v1.
 - Novidades não possuem notificação em tempo real: o badge atualiza ao
   carregar a sessão e após ações do próprio usuário (sem polling).
 - Homologado no Windows; acesso externo depende de proxy/túnel do usuário.
 - Chunk do frontend >500 kB (warning do Vite, não funcional).
-- A Issue #33 permanece aberta como roteiro mestre e acompanhamento do
-  projeto; a tag `v1.0.0` e a publicação da release estão pendentes de
-  autorização explícita — esta candidata ainda não é uma release.
+- As cinco etapas da Issue #33 foram concluídas; a Issue permanece como roteiro/histórico. A tag `v1.0.0` e a publicação da release continuam pendentes de autorização explícita — esta candidata ainda não é uma release.
+- Antes da publicação, atualizar as evidências de CI para o HEAD final da `main` e executar homologação integrada após concluir as PRs pendentes.
