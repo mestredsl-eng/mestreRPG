@@ -126,13 +126,14 @@ function AceiteConviteGuilda({ codigo, aoConcluir, aoSair }: { codigo: string; a
           </p>
           {preview.status !== "ativo" && <p className="erro">Este convite está {preview.status}.</p>}
           {erro && <p className="erro">{erro}</p>}
-          {preview.status === "ativo" ? (
-            <button onClick={() => void aceitar()} disabled={aceitando}>
-              {aceitando ? "Entrando…" : "Aceitar convite"}
-            </button>
-          ) : (
+          <div className="linha">
+            {preview.status === "ativo" ? (
+              <button onClick={() => void aceitar()} disabled={aceitando}>
+                {aceitando ? "Entrando…" : "Aceitar convite"}
+              </button>
+            ) : null}
             <button className="secundario" onClick={aoSair}>Ir para o painel</button>
-          )}
+          </div>
         </section>
       )}
       {resultado && (

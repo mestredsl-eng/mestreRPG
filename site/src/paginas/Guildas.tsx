@@ -475,6 +475,18 @@ function SecaoConvitesInternos({ guildId }: { guildId: string }) {
 
   useEffect(() => { void carregar(); }, [carregar]);
 
+  // Aceites/revogações emitem guilda:atualizada — sem este listener a
+  // listagem de convites (usos e situação) ficaria desatualizada enquanto
+  // a seção permanecer montada.
+  useEffect(() => {
+    const socket = getSocket();
+    const aoAtualizar = (evento: { guildId?: string }) => {
+      if (evento?.guildId === guildId) void carregar();
+    };
+    socket.on("guilda:atualizada", aoAtualizar);
+    return () => { socket.off("guilda:atualizada", aoAtualizar); };
+  }, [carregar, guildId]);
+
   const criar = async (e: FormEvent) => {
     e.preventDefault();
     if (criando) return;
