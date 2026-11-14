@@ -24,7 +24,7 @@ const db = getDb();
  * ativos, ADMINs que podem consultar todas as guildas e usuários afetados
  * que acabaram de ser removidos/rebaixados.
  */
-async function notificarGuildaAtualizada(guildId: string, tipo: string, afetados: string[] = []) {
+export async function notificarGuildaAtualizada(guildId: string, tipo: string, afetados: string[] = []) {
   try {
     const [membros, admins] = await Promise.all([
       db.select({ userId: guildMembers.userId })

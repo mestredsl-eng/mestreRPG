@@ -84,6 +84,25 @@ export const guildMembers = sqliteTable("guild_members", {
   index("guild_members_user_idx").on(t.userId),
 ]);
 
+// Convites internos de guilda (Issue #65): código secreto nunca persistido
+// em claro — apenas o hash SHA-256 (mesmo padrão de `invitations.code`).
+// Concessão exclusiva do papel `membro`; nunca GM/ADMIN.
+export const guildInvites = sqliteTable("guild_invites", {
+  id: id(),
+  guildId: text("guild_id").notNull().references(() => guilds.id, { onDelete: "cascade" }),
+  code: text("code").notNull(), // SHA-256 hex do código apresentado
+  createdBy: text("created_by").notNull().references(() => users.id),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  maxUses: integer("max_uses").notNull(),
+  uses: integer("uses").notNull().default(0),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("guild_invites_code_idx").on(t.code),
+  index("guild_invites_guild_idx").on(t.guildId),
+]);
+
 export const campaigns = sqliteTable("campaigns", {
   id: id(),
   name: text("name").notNull(),
