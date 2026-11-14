@@ -54,6 +54,43 @@ function sanitizarArquivamento(row: Record<string, unknown>) {
   row.data = data;
 }
 
+// Snapshots e pacotes exportados antes da migration 0023 podem conter
+// (campaign_id, number) duplicados em sessions — a constraint única
+// rejeitaria a restauração/importação. Mesma regra da migration: a
+// ocorrência mais antiga de cada número é preservada e as demais recebem
+// números acima do MAX da campanha, na ordem de criação. IDs e demais
+// referências das sessões não mudam.
+export function normalizarNumerosSessao(rows: unknown[] | undefined) {
+  if (!rows?.length) return rows;
+  const criadoEm = (r: Record<string, unknown>) => {
+    const v = r.createdAt ?? r.created_at;
+    if (v instanceof Date) return v.getTime();
+    if (typeof v === "number") return v;
+    const t = Date.parse(String(v ?? ""));
+    return Number.isNaN(t) ? 0 : t;
+  };
+  const porCampanha = new Map<string, Record<string, unknown>[]>();
+  for (const row of rows as Record<string, unknown>[]) {
+    const cid = String(row.campaignId ?? row.campaign_id ?? "");
+    const lista = porCampanha.get(cid) ?? [];
+    lista.push(row);
+    porCampanha.set(cid, lista);
+  }
+  for (const lista of porCampanha.values()) {
+    const ordenada = [...lista].sort(
+      (a, b) => criadoEm(a) - criadoEm(b) || String(a.id ?? "").localeCompare(String(b.id ?? "")),
+    );
+    const ocupados = new Set<number>();
+    let proximo = Math.max(0, ...lista.map((r) => Number(r.number ?? 0) || 0)) + 1;
+    for (const r of ordenada) {
+      const n = Number(r.number ?? 0) || 0;
+      if (!ocupados.has(n)) { ocupados.add(n); continue; }
+      r.number = proximo++;
+    }
+  }
+  return rows;
+}
+
 /** Insere todas as entidades do estado na ordem de dependência (restauração e importação). */
 export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
   for (const r of (dados.characters ?? []) as Record<string, unknown>[]) sanitizarArquivamento(r);
@@ -71,7 +108,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
   inserir(tx, vehicles, dados.vehicles);
   inserir(tx, financialAccounts, dados.financialAccounts);
   inserir(tx, moneyTransactions, dados.moneyTransactions);
-  inserir(tx, sessions, dados.sessions);
+  inserir(tx, sessions, normalizarNumerosSessao(dados.sessions));
   inserir(tx, turns, dados.turns);
   inserir(tx, chatMessages, dados.chatMessages);
   inserir(tx, rolls, dados.rolls);

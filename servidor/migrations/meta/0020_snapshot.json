@@ -2,7 +2,7 @@
   "version": "6",
   "dialect": "sqlite",
   "id": "9ee467c8-6e79-4c1f-8405-a620fdf15303",
-  "prevId": "fdaf3e7f-68df-45c0-9935-478f9ba94274",
+  "prevId": "d0701084-f2dc-4545-892b-b6efa5b276d0",
   "tables": {
     "admin_principal": {
       "name": "admin_principal",
@@ -3313,6 +3313,13 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "vtt_state": {
+          "name": "vtt_state",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         }
       },

@@ -17,7 +17,8 @@
     "start": "npm run start -w servidor",
     "test:ajuda-contextual": "node homologacao-ajuda-contextual.mjs",
     "test:rate-limit-socket": "tsx servidor/testes/socket-rate-limit.test.ts",
-    "test:realtime-paginas": "node teste-realtime-paginas.mjs"
+    "test:realtime-paginas": "node teste-realtime-paginas.mjs",
+    "test:sessao-numero": "node teste-sessao-numero.mjs"
   },
   "engines": {
     "node": ">=20.19"
