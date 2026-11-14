@@ -243,7 +243,7 @@ export function passoCena(dados: DadoMesa[], dt: number): boolean {
   // Passadas iterativas: corrigir B×C pode criar uma nova penetração
   // A×B cujo par já foi visitado. Repete até estabilizar ou até um teto
   // proporcional à quantidade de dados; cada passada recalcula as capacidades.
-  const passadasMaximas = Math.min(30, Math.max(6, dados.length));
+  const passadasMaximas = Math.min(30, Math.max(12, dados.length));
   for (let rodada = 0; rodada < passadasMaximas; rodada++) {
     let corrigiuPosicao = false;
     for (let i = 0; i < dados.length; i++) {
