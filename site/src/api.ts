@@ -76,6 +76,25 @@ export interface GuildaCampanhaCandidata extends GuildaCampanha {
   guildId: string | null;
 }
 
+/** Convite interno de guilda — gerência pelo GM/ADMIN (Issue #65). */
+export interface ConviteInternoGuilda {
+  id: string;
+  /** código opaco — exibido UMA vez na criação, nunca na listagem */
+  codigo?: string;
+  expiraEm: string;
+  maxUsos: number;
+  usos: number;
+  status: "ativo" | "esgotado" | "expirado" | "revogado" | string;
+}
+
+/** Preview público do convite — não consome usos nem vaza dados privados. */
+export interface ConviteGuildaPreview {
+  guilda: { id: string; nome: string };
+  expiraEm: string;
+  usosRestantes: number;
+  status: string;
+}
+
 export class ApiError extends Error {
   detalhes?: unknown;
   status: number;
@@ -173,6 +192,19 @@ export const api = {
     requisicao<{ campanhas: GuildaCampanhaCandidata[] }>(`/guildas/${id}/campanhas-candidatas`),
   vincularCampanhaGuilda: (id: string, campaignId: string, acao: "vincular" | "desvincular") =>
     requisicao<{ ok: boolean }>(`/guildas/${id}/campanhas/${campaignId}`, { method: "PUT", body: JSON.stringify({ acao }) }),
+
+  // Convites internos de guilda (Issue #65) — gestão GM/ADMIN
+  listarConvitesInternosGuilda: (id: string) =>
+    requisicao<{ convites: ConviteInternoGuilda[] }>(`/guildas/${id}/convites-internos`),
+  criarConviteInternoGuilda: (id: string, dados: { validadeHoras: number; maxUsos: number }) =>
+    requisicao<{ convite: ConviteInternoGuilda }>(`/guildas/${id}/convites-internos`, { method: "POST", body: JSON.stringify(dados) }),
+  revogarConviteInternoGuilda: (id: string, conviteId: string) =>
+    requisicao<{ ok: boolean }>(`/guildas/${id}/convites-internos/${conviteId}`, { method: "DELETE" }),
+  // Consulta e aceite pelo código opaco do link (qualquer autenticado)
+  obterConviteGuilda: (codigo: string) =>
+    requisicao<{ convite: ConviteGuildaPreview }>(`/convites-guilda/${encodeURIComponent(codigo)}`),
+  aceitarConviteGuilda: (codigo: string) =>
+    requisicao<{ ok: boolean; guildaId: string; papel: string }>(`/convites-guilda/${encodeURIComponent(codigo)}/aceitar`, { method: "POST" }),
 
   // Campanhas (Etapa 3)
   listarCampanhas: () =>
