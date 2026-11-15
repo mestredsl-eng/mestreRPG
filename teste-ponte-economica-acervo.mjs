@@ -4,6 +4,7 @@
 // sugestão ≠ pagamento, ausência de débito automático, não conversão
 // de moeda, override local, compatibilidade legada e anti-forja.
 // Roda contra servidor com banco SQLite temporário (teste-base.mjs).
+import { readFileSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, abrirDb, req, encerrarServidor, limparDir,
@@ -71,6 +72,30 @@ try {
     weight: 800, valueCents: 5000000, economia: ECON(50000, 40000, 60000),
     fuel: "gasolina", capacity: "4 ocupantes",
     veiculo: { consumoOuAutonomia: "aprox. 10 km/L", baseDoPeso: "ordem de marcha" },
+  });
+  // ---- Tolerância granular do schema econômico (auditoria PR #108) ----
+  // Metadados econômicos inválidos/parciais NÃO podem derrubar o elemento.
+  insRegra("item", "econ_parcial", "Item economia parcial", {
+    economia: { moeda: "BRL", observacao: "só observação válida" },
+  });
+  insRegra("item", "econ_sujo", "Item economia suja", {
+    weight: "0,5", valueCents: 12.5,
+    economia: {
+      moeda: 123,
+      unidadeCompra: "caixa",
+      precoReferenciaBRL: "abc",
+      base: "x".repeat(700),
+      observacao: "ok",
+      extra: "descartado",
+    },
+  });
+  insRegra("item", "econ_invalida", "Item economia inválida", {
+    weight: 2, valueCents: 1000,
+    economia: "não-é-objeto",
+  });
+  insRegra("veiculo", "van_suja", "Van suja", {
+    fuel: 42, capacity: "2 ocupantes",
+    veiculo: { consumoOuAutonomia: 9, baseDoPeso: "peso bruto" },
   });
 
   // Contas: BRL (espécie) e USD (banco) do personagem do mestre.
@@ -290,6 +315,119 @@ try {
   const cat4 = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
   const tplSemRow = (cat4.json?.itens ?? []).find((i) => i.id === tplSem.json?.id);
   t("13d. ausência permanece ausência", tplSemRow?.data?.weight === undefined && tplSemRow?.data?.valueCents === undefined && tplSemRow?.data?.economia === undefined, JSON.stringify(tplSemRow?.data));
+
+  // ---- 14. Tolerância granular do schema econômico (auditoria PR #108) ----
+  // Metadados econômicos inválidos/parciais NÃO podem derrubar o elemento;
+  // cada campo inválido é descartado individualmente e os válidos sobrevivem.
+  sec("14. schema econômico tolerante e granular");
+  const catToler = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const acervoTol = catToler.json?.acervo ?? [];
+  const achAcervo = (kind, key) => acervoTol.find((e) => e.regra.kind === kind && e.regra.key === key);
+  const eParcial = achAcervo("item", "econ_parcial");
+  const eSujo = achAcervo("item", "econ_sujo");
+  const eInv = achAcervo("item", "econ_invalida");
+  const eVan = achAcervo("veiculo", "van_suja");
+  t("14a. elemento com economia parcial carrega", !!eParcial, "ausente do acervo");
+  t("14b. economia parcial preserva só campos válidos",
+    eParcial?.economia?.moeda === "BRL" && eParcial?.economia?.observacao === "só observação válida"
+      && eParcial?.economia?.unidadeCompra === undefined && eParcial?.economia?.precoReferenciaBRL === undefined,
+    JSON.stringify(eParcial?.economia));
+  t("14c. elemento com economia suja carrega", !!eSujo, "ausente do acervo");
+  t("14d. campos econômicos válidos sobrevivem à sanitização",
+    eSujo?.economia?.unidadeCompra === "caixa" && eSujo?.economia?.observacao === "ok"
+      && eSujo?.economia?.moeda === undefined && eSujo?.economia?.precoReferenciaBRL === undefined
+      && eSujo?.economia?.base === undefined && eSujo?.economia?.extra === undefined,
+    JSON.stringify(eSujo?.economia));
+  t("14e. weight/valueCents válidos preservados, inválidos descartados",
+    eSujo?.weight === 0.5 && eSujo?.valueCents === undefined,
+    `weight=${eSujo?.weight} valueCents=${eSujo?.valueCents}`);
+  t("14f. economia completamente inválida não derruba o elemento", !!eInv, "ausente do acervo");
+  t("14g. economia inválida vira ausência; campos econômicos válidos ficam",
+    eInv?.economia === undefined && eInv?.weight === 2 && eInv?.valueCents === 1000,
+    JSON.stringify({ economia: eInv?.economia, weight: eInv?.weight, valueCents: eInv?.valueCents }));
+  t("14h. veiculo com campos sujos carrega e sanitiza",
+    !!eVan && eVan?.fuel === undefined && eVan?.capacity === "2 ocupantes"
+      && eVan?.veiculo?.baseDoPeso === "peso bruto" && eVan?.veiculo?.consumoOuAutonomia === undefined,
+    JSON.stringify({ fuel: eVan?.fuel, capacity: eVan?.capacity, veiculo: eVan?.veiculo }));
+  // Definição real do Acervo continua parseando pelo schema (POST /regras/elementos).
+  const livroReal = JSON.parse(readFileSync(new URL("./acervo/pacote-completo-cacadores-cacados.v1.json", import.meta.url), "utf8"));
+  const itemReal = livroReal.livros.flatMap((l) => l.itens ?? []).find((i) => i.kind === "item" && i.definition?.economia);
+  t("14i. definição real do Acervo encontrada", !!itemReal);
+  const elReal = await req(BASE, "POST", `/campaigns/${ids.camp}/regras/elementos`, {
+    cookie: ids.cm,
+    body: { kind: "item", key: "check_real_acervo", name: "Check Real", definition: itemReal.definition },
+  });
+  t("14j. definição real do Acervo parseia sem erro", elReal.status === 201, `status=${elReal.status} ${JSON.stringify(elReal.json).slice(0, 200)}`);
+  const elRealRow = await req(BASE, "GET", `/campaigns/${ids.camp}/regras/elementos`, { cookie: ids.cm });
+  const elRealDef = (elRealRow.json?.elementos ?? []).find((e) => e.key === "check_real_acervo")?.definition;
+  t("14k. campos econômicos reais preservados no round-trip",
+    elRealDef?.weight === itemReal.definition.weight && elRealDef?.valueCents === itemReal.definition.valueCents
+      && elRealDef?.economia?.precoReferenciaBRL === itemReal.definition.economia.precoReferenciaBRL,
+    JSON.stringify({ w: elRealDef?.weight, v: elRealDef?.valueCents, econ: elRealDef?.economia?.precoReferenciaBRL }));
+  // Validação estrutural das regras NÃO foi enfraquecida.
+  const elEstrutural = await req(BASE, "POST", `/campaigns/${ids.camp}/regras/elementos`, {
+    cookie: ids.cm,
+    body: { kind: "item", key: "check_ruim", name: "Check Ruim", definition: { custoPontos: "abc" } },
+  });
+  t("14l. campo estrutural inválido continua rejeitado", elEstrutural.status === 400, `status=${elEstrutural.status}`);
+
+  // ---- 15. valueCents de veículo = valor local declarado (auditoria PR #108) ----
+  // O valor superior do POST /veiculos é declarado pelo mestre: é local,
+  // não altera o Acervo, não significa valor pago e não movimenta dinheiro.
+  sec("15. veículo: valueCents declarado é local, sem débito");
+  const finAntes = await req(BASE, "GET", `/characters/${pjJ1}/financeiro`, { cookie: ids.j1.cookie });
+  const nFinAntes = (finAntes.json?.historico ?? []).length;
+  const veicDecl = await req(BASE, "POST", `/characters/${pjJ1}/veiculos`, {
+    cookie: ids.j1.cookie,
+    body: { name: "Van Declarada", regra: { kind: "veiculo", key: "van_suja" }, valueCents: 777000 },
+  });
+  t("15a. veículo com valor declarado criado", veicDecl.status === 201, JSON.stringify(veicDecl.json));
+  const veicDeclId = veicDecl.json?.id;
+  const veicRow = await req(BASE, "GET", `/characters/${pjJ1}/veiculos`, { cookie: ids.j1.cookie });
+  const vDecl = (veicRow.json?.veiculos ?? []).find((v) => v.id === veicDeclId);
+  const veicData = vDecl?.data;
+  t("15b. valueCents declarado fica local no veículo",
+    veicData?.valueCents === 777000 && veicData?.capacity === "2 ocupantes" && veicData?.veiculo?.baseDoPeso === "peso bruto",
+    JSON.stringify(veicData));
+  t("15c. fuel inválido do Acervo permanece ausente (não inventado)",
+    veicData?.fuel === undefined && vDecl?.fuel === null, JSON.stringify({ data: veicData?.fuel, col: vDecl?.fuel }));
+  t("15d. regra vinculada permanece no snapshot local", veicData?.regra?.key === "van_suja", JSON.stringify(veicData?.regra));
+  const finDepois = await req(BASE, "GET", `/characters/${pjJ1}/financeiro`, { cookie: ids.j1.cookie });
+  const nFinDepois = (finDepois.json?.historico ?? []).length;
+  t("15e. nenhum débito/movimento financeiro criado", nFinDepois === nFinAntes, `${nFinAntes}→${nFinDepois}`);
+
+  // ---- 16. Desvinculação de template preserva dados econômicos locais ----
+  sec("16. PATCH regra:null preserva snapshot econômico local");
+  const desv = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplNula.json?.id}`, {
+    cookie: ids.cm, body: { regra: null },
+  });
+  t("16a. desvinculação aceita", desv.status === 200 || desv.status === 204, `status=${desv.status}`);
+  const catDesv = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tplDesv = (catDesv.json?.itens ?? []).find((i) => i.id === tplNula.json?.id);
+  t("16b. vínculo removido", !tplDesv?.data?.regra && tplDesv?.regra === undefined, JSON.stringify(tplDesv?.data?.regra));
+  t("16c. weight/valueCents/economia/fuel/capacity/veiculo preservados",
+    tplDesv?.data?.weight === 1.2 && tplDesv?.data?.valueCents === undefined
+      && tplDesv?.data?.economia?.precoReferenciaBRL === null && tplDesv?.data?.economia?.faixaPrecoBRL === null
+      && tplDesv?.data?.economia?.moeda === "BRL",
+    JSON.stringify(tplDesv?.data));
+  // Desvinculação de template veicular preserva os seis campos econômicos.
+  const tplBuggy = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, {
+    cookie: ids.cm, body: { name: "Template Buggy", regra: { kind: "veiculo", key: "buggy_teste" } },
+  });
+  t("16d. template veicular vinculado", tplBuggy.status === 201, JSON.stringify(tplBuggy.json));
+  const desvBuggy = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplBuggy.json?.id}`, {
+    cookie: ids.cm, body: { regra: null },
+  });
+  t("16e. desvinculação veicular aceita", desvBuggy.status === 200, `status=${desvBuggy.status}`);
+  const catDesv2 = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tplBuggyRow = (catDesv2.json?.itens ?? []).find((i) => i.id === tplBuggy.json?.id);
+  t("16f. seis campos econômicos preservados após desvincular",
+    !tplBuggyRow?.data?.regra
+      && tplBuggyRow?.data?.weight === 800 && tplBuggyRow?.data?.valueCents === 5000000
+      && tplBuggyRow?.data?.fuel === "gasolina" && tplBuggyRow?.data?.capacity === "4 ocupantes"
+      && tplBuggyRow?.data?.veiculo?.consumoOuAutonomia === "aprox. 10 km/L"
+      && tplBuggyRow?.data?.economia?.precoReferenciaBRL === 50000,
+    JSON.stringify(tplBuggyRow?.data));
 
   // Imutabilidade final do Acervo (após TODAS as operações).
   {

@@ -136,6 +136,9 @@ catalogoRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) =>
     dataNova = { ...dataEnviada };
     // Campos econômicos não enviados explicitamente são preservados —
     // um PATCH de dados não pode removê-los inadvertidamente (Issue #103).
+    // Isso inclui a desvinculação (regra:null): os dados já copiados do
+    // Acervo permanecem como valores locais do template — o mestre pode
+    // limpá-los explicitamente se quiser.
     const enviadasKeys = new Set(Object.keys(d.data ?? {}));
     for (const k of CAMPOS_ECON_TEMPLATE) {
       if (!enviadasKeys.has(k) && dataAtual[k] !== undefined) dataNova[k] = dataAtual[k];

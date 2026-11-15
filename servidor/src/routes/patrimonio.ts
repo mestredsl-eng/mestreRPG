@@ -1018,6 +1018,10 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
     for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosClienteVeiculo[k];
   }
   const dataVeiculo: Record<string, unknown> = { ...econVeiculo, ...dadosClienteVeiculo };
+  // valueCents declarado pelo mestre é um valor LOCAL (override/declaração
+  // de patrimônio): não altera o Acervo, não significa valor efetivamente
+  // pago e não movimenta dinheiro — nenhum débito automático existe aqui.
+  // A referência econômica do elemento permanece em data.economia.
   if (valueCents !== undefined) dataVeiculo.valueCents = valueCents;
   if (regra) dataVeiculo.regra = regra;
   const agora = new Date();
