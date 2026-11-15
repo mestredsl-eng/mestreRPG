@@ -42,6 +42,20 @@ h1 {
   font-size: 1.1rem;
 }
 
+/* Fluxo principal da mesa: desafio pela ficha destacado sobre a
+   rolagem personalizada (Issue #93). */
+.cartao-destaque {
+  border-color: rgba(130, 144, 189, .55);
+  box-shadow: 0 0 0 1px rgba(130, 144, 189, .12), 0 4px 18px rgba(0, 0, 0, .25);
+}
+.desafio-pool {
+  font-size: .95rem;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(46, 143, 91, .12);
+  border: 1px solid rgba(46, 143, 91, .35);
+}
+
 /* ---- Etapa 2: autenticação e admin ---- */
 
 .container-estreito {

@@ -263,12 +263,12 @@ try {
   sec("9. Chat entre participantes");
   const msgJ1 = "Olá mesa! Preparados para rolar?";
   await pg1.getByPlaceholder("Mensagem…").fill(msgJ1);
-  await pg1.getByRole("button", { name: "Enviar" }).click();
+  await pg1.getByRole("button", { name: "Enviar", exact: true }).click();
   await pgM.getByText(msgJ1).waitFor({ timeout: 10000 });
   t("chat j1→mestre", true);
   const msgM = "Sessão aberta — pode rolar.";
   await pgM.getByPlaceholder("Mensagem…").fill(msgM);
-  await pgM.getByRole("button", { name: "Enviar" }).click();
+  await pgM.getByRole("button", { name: "Enviar", exact: true }).click();
   await pg2.getByText(msgM).waitFor({ timeout: 10000 });
   t("chat mestre→jogadores", true);
   await shot(pgM, "09-chat");
@@ -288,8 +288,11 @@ try {
 
   // ===== 11. TESTE DE HABILIDADE D10 (desafio do mestre) =====
   sec("11. Desafio D10 de habilidade");
-  await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  // o formulário do desafio abre por padrão; expande só se estiver fechado
   const formD = pgM.locator("form", { has: pgM.getByRole("button", { name: "Enviar desafio" }) });
+  if (!(await formD.isVisible().catch(() => false))) {
+    await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  }
   const selPers = formD.locator("label", { hasText: "Personagem" }).locator("select");
   const opcoesPers = await selPers.locator("option").allTextContents();
   const idxPers = opcoesPers.findIndex((o) => o.includes(J1.nome));

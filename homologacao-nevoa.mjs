@@ -1235,9 +1235,11 @@ try {
   t("PATCH jogador→mestre (personagens)", rRT.status === 200);
   await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
     null, { timeout: 30000 }).catch(() => {});
-  await pgJ.getByRole("button", { name: "+ Teste" }).first().click().catch(() => {});
+  // formulário manual agora se chama "Rolagem personalizada" e abre por
+  // botão próprio; o card do desafio pela ficha já vem aberto por padrão
+  await pgJ.getByRole("button", { name: "+ Personalizada" }).first().click().catch(() => {});
   await esperarCharsReq(charsReqJ + 1);
-  const opcoesMestre = await pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Solicitar teste" }) }).locator("option").allInnerTexts();
+  const opcoesMestre = await pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "teste manual" }) }).locator("option").allInnerTexts();
   t("promoção: select de personagem lista TODOS os personagens",
     opcoesMestre.some((o) => o.includes("Mestre Herói")) && opcoesMestre.some((o) => o.includes("Heroina J1")),
     JSON.stringify(opcoesMestre));

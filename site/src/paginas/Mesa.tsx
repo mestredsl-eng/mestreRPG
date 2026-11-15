@@ -970,8 +970,8 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
   return (
     <section className="cartao">
       <div className="linha-entre">
-        <h3>Solicitar teste manual (dados livres)</h3>
-        <button className="secundario" onClick={() => setAberto(!aberto)}>+ Teste</button>
+        <h3>Rolagem personalizada (teste manual)</h3>
+        <button className="secundario" onClick={() => setAberto(!aberto)}>{aberto ? "− Fechar" : "+ Personalizada"}</button>
       </div>
       {aberto && (
         <form className="formulario" onSubmit={(e: FormEvent) => {
@@ -1043,7 +1043,9 @@ interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 function DesafioD10({ sessionId, personagens, aoErro }: {
   sessionId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
 }) {
-  const [aberto, setAberto] = useState(false);
+  // Fluxo principal: o formulário já abre visível — o mestre não precisa
+  // descobrir uma ação escondida para solicitar teste pela ficha.
+  const [aberto, setAberto] = useState(true);
   const [characterId, setCharacterId] = useState("");
   const [grupos, setGrupos] = useState<GrupoTeste[]>([]);
   const [campoId, setCampoId] = useState("");
@@ -1084,10 +1086,10 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
   const efetivos = campoSel ? Math.max(0, Math.round(campoSel.valor) - Math.max(0, Math.round(negativos) || 0)) : null;
 
   return (
-    <section className="cartao">
+    <section className="cartao cartao-destaque">
       <div className="linha-entre">
         <h3>Solicitar teste pela ficha</h3>
-        <button className="secundario" onClick={() => setAberto(!aberto)}>+ Desafio</button>
+        <button className="secundario" onClick={() => setAberto(!aberto)}>{aberto ? "− Fechar" : "+ Desafio"}</button>
       </div>
       {aberto && (
         <form className="formulario" onSubmit={(e: FormEvent) => {
@@ -1141,8 +1143,12 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             </label>
             <label className="check"><input type="checkbox" checked={privado} onChange={(e) => setPrivado(e.target.checked)} /> Desafio privado</label>
           </div>
-          {efetivos !== null && (
-            <p className="meta">Efetivos: <strong>{efetivos}</strong> d10 · sucesso ≥ mínimo da campanha</p>
+          {campoSel && (
+            <p className="desafio-pool">
+              Pool: <strong>{Math.round(campoSel.valor)}</strong> positivos
+              {Math.max(0, Math.round(negativos) || 0) > 0 && <> − <strong>{Math.max(0, Math.round(negativos) || 0)}</strong> negativos</>}
+              {" "}= <strong>{efetivos}</strong> d10 efetivo{efetivos === 1 ? "" : "s"} · sucesso ≥ mínimo da campanha
+            </p>
           )}
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
