@@ -238,9 +238,15 @@ try {
   r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplLivre.json?.id }, ids.j1.cookie);
   t("template manual sem vínculo aceito", r.status === 201, `status=${r.status}`);
 
-  sec("equipamentos protegidos");
+  sec("equipamentos protegidos e kind coerente por rota");
   r = await post(pjJ1, "/equipamentos", { name: "Colete", regra: REGRA_F16 }, ids.j1.cookie);
-  t("equipamento com pré-req não atendido bloqueado", r.status === 403, `status=${r.status}`);
+  t("equipamento com veículo do Acervo recusado por kind", r.status === 400, `status=${r.status}`);
+  r = await post(pjJ1, "/veiculos", { name: "Carro", regra: REGRA_CARRO }, ids.j1.cookie);
+  t("rota de veículos recusa elemento kind:item", r.status === 400, `status=${r.status}`);
+  r = await post(pjJ1, "/inventario", { name: "F-16", regra: REGRA_F16 }, ids.j1.cookie);
+  t("rota de inventário recusa elemento kind:veiculo", r.status === 400, `status=${r.status}`);
+  r = await post(pjJ1, "/equipamentos", { name: "Colete", regra: REGRA_CARRO }, ids.j1.cookie);
+  t("equipamento com pré-req insuficiente bloqueado", r.status === 403, `status=${r.status}`);
 
   sec("mestre: bypass explícito auditado, sem flag respeita");
   // PJ do mestre com a mesma ficha e ficha vazia
