@@ -3,8 +3,18 @@
 // equivalentes às da campanha original — nenhum acesso a banco, campanha
 // ou UUID real. Cobre transferências, exclusividade, incompatibilidades
 // e fórmulas com os mesmos elementos e custos de antes.
-import { validarRegras, aplicarTransferencias, aplicarCustosSelecao, configRegrasSchema } from "./servidor/dist/lib/regras.js";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { calcularPontos } from "./servidor/dist/lib/ficha.js";
+
+// `regras.js` executa getDb() no top-level do módulo: apontamos
+// MESTRE_BANCO para um arquivo temporário ANTES do import dinâmico,
+// para que nenhum banco real (nem o vazio do worktree) seja criado.
+const TMP_REGRAS = mkdtempSync(join(tmpdir(), "mrpg-regras-"));
+process.env.MESTRE_BANCO = join(TMP_REGRAS, "banco.db");
+const { validarRegras, aplicarTransferencias, aplicarCustosSelecao, configRegrasSchema } =
+  await import("./servidor/dist/lib/regras.js");
 
 const AGORA = new Date();
 const RULESET_FX = "fx-regras-lote0";
@@ -161,4 +171,7 @@ r = validarRegras(est, { forca: 2, vantagens: ["req"] }, regras);
 t("requisito fórmula passa com forca 2", !r.erros.some((e) => e.codigo === "requisito_formula"), JSON.stringify(r.erros.map(e=>e.mensagem)));
 
 console.log(`\n${pass} passaram, ${fail} falharam`);
+// Limpeza dos artefatos temporários próprios (banco vazio + trava).
+try { (await import("./servidor/dist/db/index.js")).fecharBanco(); } catch {}
+try { rmSync(TMP_REGRAS, { recursive: true, force: true }); } catch {}
 process.exit(fail ? 1 : 0);
