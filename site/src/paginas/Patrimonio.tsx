@@ -1148,13 +1148,18 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [itens, setItens] = useState<ItemCatalogo[]>([]);
+  const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
   const [novo, setNovo] = useState<ItemCatalogoInput>({ name: "", category: "" });
   const [busca, setBusca] = useState("");
   const [confirmandoItem, setConfirmandoItem] = useState<ItemCatalogo | null>(null);
   const [ocupadoItem, setOcupadoItem] = useState(false);
 
   const carregar = useCallback(async () => {
-    try { setItens((await api.listarCatalogo(campaignId)).itens); } catch (e) { aoErro(e); }
+    try {
+      const r = await api.listarCatalogo(campaignId);
+      setItens(r.itens);
+      setAcervo((r.acervo ?? []).filter((el) => el.regra.kind === "item"));
+    } catch (e) { aoErro(e); }
   }, [campaignId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
@@ -1168,26 +1173,50 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
       </div>
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
-        try { await api.criarItemCatalogo(campaignId, { ...novo, category: novo.category || undefined }); setNovo({ name: "", category: "" }); await carregar(); }
-        catch (err) { aoErro(err instanceof ApiError ? err.message : err); }
+        try {
+          await api.criarItemCatalogo(campaignId, { ...novo, category: novo.category || undefined });
+          setNovo({ name: "", category: "" });
+          await carregar();
+        } catch (err) { aoErro(err instanceof ApiError ? err.message : err); }
       }}>
-        <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
-        <input placeholder="Categoria" value={novo.category ?? ""} onChange={(e) => setNovo({ ...novo, category: e.target.value })} />
-        <input placeholder="Descrição" value={novo.description ?? ""} onChange={(e) => setNovo({ ...novo, description: e.target.value })} />
+        <label>Vínculo do Acervo (opcional)
+          <select aria-label="Vínculo do Acervo" value={novo.regra ? `${novo.regra.kind}:${novo.regra.key}` : ""} onChange={(e) => {
+            const ref = e.target.value;
+            if (!ref) { setNovo({ ...novo, regra: undefined }); return; }
+            const el = acervo.find((x) => `${x.regra.kind}:${x.regra.key}` === ref);
+            if (el) setNovo({ ...novo, name: el.nome, category: el.categoria ?? "", description: el.descricao ?? "", regra: el.regra });
+          }}>
+            <option value="">Item manual — sem vínculo</option>
+            {acervo.map((el) => (
+              <option key={`${el.regra.kind}:${el.regra.key}`} value={`${el.regra.kind}:${el.regra.key}`}>
+                {el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")}` : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <input placeholder="Nome do item" value={novo.name} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
+        <input placeholder="Categoria" value={novo.category ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, category: e.target.value })} />
+        <input placeholder="Descrição" value={novo.description ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, description: e.target.value })} />
         <button type="submit">Adicionar ao catálogo</button>
       </form>
       <table className="tabela">
-        <thead><tr><th>Item</th><th>Categoria</th><th>Descrição</th><th></th></tr></thead>
+        <thead><tr><th>Item</th><th>Categoria</th><th>Descrição</th><th>Vínculo Acervo</th><th></th></tr></thead>
         <tbody>
-          {visiveis.map((i) => (
+          {visiveis.map((i) => {
+            const regra = (i.data as Record<string, unknown> | undefined)?.regra as { kind?: string; key?: string } | undefined;
+            const vinculo = regra?.kind && regra.key
+              ? acervo.find((el) => el.regra.kind === regra.kind && el.regra.key === regra.key)?.nome ?? `${regra.kind}:${regra.key}`
+              : null;
+            return (
             <tr key={i.id}>
               <td>{i.name}</td>
               <td>{i.category ?? "—"}</td>
               <td>{i.description ?? "—"}</td>
+              <td>{vinculo ?? "Manual"}</td>
               <td><button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button></td>
             </tr>
-          ))}
-          {visiveis.length === 0 && <tr><td colSpan={4} className="meta">Catálogo vazio.</td></tr>}
+          );})}
+          {visiveis.length === 0 && <tr><td colSpan={5} className="meta">Catálogo vazio.</td></tr>}
         </tbody>
       </table>
       {confirmandoItem && (
