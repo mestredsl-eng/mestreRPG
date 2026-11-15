@@ -1,0 +1,581 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento VIII — Profissões, Artes, Esportes e Animais",
+      "descricao": "Materiais e equipamentos associados a atividades profissionais, artísticas, esportivas e ao manejo de animais. Os pré-requisitos usam Talentos, Perícias e profissões já existentes na ficha, sem criar novas características.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — atividades e ofícios",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "kit_marcenaria",
+          "name": "Kit de marcenaria",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas para trabalhos de marcenaria.",
+            "subcategoria": "Ofícios",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "bancada_marcenaria",
+          "name": "Bancada de trabalho",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bancada para atividades de montagem e reparo.",
+            "subcategoria": "Ofícios",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "maquina_costura",
+          "name": "Máquina de costura",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para costura e reparos têxteis.",
+            "subcategoria": "Ofícios",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "kit_couro",
+          "name": "Kit de trabalho em couro",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas e materiais para trabalhos artesanais em couro.",
+            "subcategoria": "Ofícios",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "kit_ceramica",
+          "name": "Kit de cerâmica",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para modelagem e acabamento de peças cerâmicas.",
+            "subcategoria": "Artes",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "cavalete_pintura",
+          "name": "Cavalete de pintura",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Suporte para telas e atividades de pintura.",
+            "subcategoria": "Artes",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "tintas_profissionais",
+          "name": "Conjunto de tintas artísticas",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para pintura e expressão visual.",
+            "subcategoria": "Artes",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "kit_escultura",
+          "name": "Kit de escultura",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas para modelagem e escultura.",
+            "subcategoria": "Artes",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "kit_desenho_profissional",
+          "name": "Kit de desenho profissional",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para desenho, ilustração e esboço.",
+            "subcategoria": "Artes",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "teclado_musical",
+          "name": "Teclado musical",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento musical de teclas.",
+            "subcategoria": "Música",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "violao",
+          "name": "Violão",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento musical de cordas.",
+            "subcategoria": "Música",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "bateria_musical",
+          "name": "Bateria musical",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de instrumentos de percussão.",
+            "subcategoria": "Música",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "microfone_estudio",
+          "name": "Microfone de estúdio",
+          "category": "Música e gravação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Microfone para captação de voz e áudio.",
+            "subcategoria": "Música e gravação",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "mesa_som",
+          "name": "Mesa de som",
+          "category": "Música e gravação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para controle e mistura de sinais de áudio.",
+            "subcategoria": "Música e gravação",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "iluminacao_palco",
+          "name": "Kit de iluminação de palco",
+          "category": "Artes cênicas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamentos de iluminação para apresentações.",
+            "subcategoria": "Artes cênicas",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "kit_fotografia",
+          "name": "Kit de fotografia",
+          "category": "Fotografia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de acessórios para registro fotográfico.",
+            "subcategoria": "Fotografia",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "bola_futebol",
+          "name": "Bola de futebol",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bola para prática de futebol.",
+            "subcategoria": "Esportes",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "kit_treinamento_atletico",
+          "name": "Kit de treinamento esportivo",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para exercícios e treinamento físico.",
+            "subcategoria": "Esportes",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "halteres",
+          "name": "Conjunto de halteres",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamentos de treinamento de força.",
+            "subcategoria": "Esportes",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "luvas_mma",
+          "name": "Luvas de combate esportivo",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Luvas utilizadas em modalidades esportivas de combate.",
+            "subcategoria": "Esportes",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "protetor_bucal_esportivo",
+          "name": "Protetor bucal esportivo",
+          "category": "Proteção esportiva",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção para atividades esportivas.",
+            "subcategoria": "Proteção esportiva",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "tatame",
+          "name": "Tatame",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Superfície para práticas esportivas e treinamento.",
+            "subcategoria": "Esportes",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "bicicleta_competicao",
+          "name": "Bicicleta de competição",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bicicleta preparada para atividades esportivas.",
+            "subcategoria": "Esportes",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "prancha_surfe",
+          "name": "Prancha de surfe",
+          "category": "Esportes aquáticos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para prática de surfe.",
+            "subcategoria": "Esportes aquáticos",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "guia_adestramento",
+          "name": "Guia de adestramento",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Guia e acessórios para condução de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "coleira_identificacao",
+          "name": "Coleira de identificação",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Coleira para identificação e condução de animal.",
+            "subcategoria": "Manejo animal",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "focinheira",
+          "name": "Focinheira",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de manejo e segurança animal.",
+            "subcategoria": "Manejo animal",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "caixa_transporte_animal",
+          "name": "Caixa de transporte animal",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Caixa apropriada para transporte de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "kit_higiene_animal",
+          "name": "Kit de higiene animal",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para higiene e cuidado de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_primeiros_socorros_veterinarios",
+          "name": "Kit de primeiros socorros veterinários",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto básico de materiais para cuidado inicial de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "clicker_adestramento",
+          "name": "Clicker de adestramento",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório para treinamento e associação de comandos.",
+            "subcategoria": "Manejo animal",
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 30
+        }
+      ]
+    }
+  ]
+}
