@@ -20,7 +20,14 @@
           "definition": {
             "descricao": "Lâmina curta de uso utilitário e combate próximo. Fácil de ocultar e transportar; também serve para cortar cordas, tecido e materiais leves.",
             "subcategoria": "Armas brancas",
-            "ordem": 0
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 0
         },
@@ -33,7 +40,14 @@
           "definition": {
             "descricao": "Ferramenta dobrável compacta, comum no cotidiano. Menos intimidadora que uma faca de combate, mas útil em tarefas simples.",
             "subcategoria": "Armas brancas",
-            "ordem": 1
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 1
         },
@@ -46,7 +60,14 @@
           "definition": {
             "descricao": "Lâmina longa e pesada usada para abrir passagem em vegetação e como arma improvisada.",
             "subcategoria": "Armas brancas",
-            "ordem": 2
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 2
         },
@@ -59,7 +80,14 @@
           "definition": {
             "descricao": "Bastão metálico expansível, discreto quando fechado e eficiente para defesa em curta distância.",
             "subcategoria": "Armas brancas",
-            "ordem": 3
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 3
         },
@@ -72,7 +100,14 @@
           "definition": {
             "descricao": "Machado de uma mão, útil como ferramenta de campo e arma contundente/cortante.",
             "subcategoria": "Armas brancas",
-            "ordem": 4
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 4
         },
@@ -98,7 +133,14 @@
           "definition": {
             "descricao": "Arma curta de fácil porte e ocultação. Capacidade, calibre e disponibilidade dependem do modelo escolhido pelo mestre.",
             "subcategoria": "Armas de fogo",
-            "ordem": 6
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 6
         },
@@ -111,7 +153,14 @@
           "definition": {
             "descricao": "Pistola semiautomática de porte ostensivo ou velado. Modelo comum em forças de segurança.",
             "subcategoria": "Armas de fogo",
-            "ordem": 7
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 7
         },
@@ -124,7 +173,14 @@
           "definition": {
             "descricao": "Arma curta de mecanismo simples e robusto. O tambor limita a quantidade de disparos antes da recarga.",
             "subcategoria": "Armas de fogo",
-            "ordem": 8
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 8
         },
@@ -137,7 +193,14 @@
           "definition": {
             "descricao": "Arma longa de uso especializado, especialmente perigosa em curta distância. Transporte e posse chamam atenção.",
             "subcategoria": "Armas de fogo",
-            "ordem": 9
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 9
         },
@@ -150,7 +213,14 @@
           "definition": {
             "descricao": "Arma longa compacta, com melhor controle que uma pistola em situações apropriadas. Requer estojo e transporte cuidadoso.",
             "subcategoria": "Armas de fogo",
-            "ordem": 10
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 10
         },
@@ -280,7 +350,14 @@
           "definition": {
             "descricao": "Conjunto de ferramentas de precisão para fechaduras e mecanismos simples. Seu uso exige perícia e pode deixar evidências.",
             "subcategoria": "Ferramentas",
-            "ordem": 20
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "hacker",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 20
         },
@@ -345,7 +422,14 @@
           "definition": {
             "descricao": "Moto leve para deslocamentos rápidos em áreas urbanas. Oferece agilidade, mas pouca proteção para os ocupantes.",
             "subcategoria": "Motocicletas",
-            "ordem": 25
+            "ordem": 25,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 25
         },
@@ -358,7 +442,14 @@
           "definition": {
             "descricao": "Moto versátil para asfalto ruim e estradas de terra. Boa opção para regiões rurais e acesso a locais afastados.",
             "subcategoria": "Motocicletas",
-            "ordem": 26
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 26
         },
@@ -371,7 +462,14 @@
           "definition": {
             "descricao": "Veículo discreto e econômico para deslocamentos cotidianos. Espaço limitado para carga e passageiros.",
             "subcategoria": "Automóveis",
-            "ordem": 27
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 27
         },
@@ -384,7 +482,14 @@
           "definition": {
             "descricao": "Carro confortável para viagens e uso urbano. Aparência comum facilita circulação sem chamar atenção.",
             "subcategoria": "Automóveis",
-            "ordem": 28
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 28
         },
@@ -397,7 +502,14 @@
           "definition": {
             "descricao": "Veículo com maior espaço interno e altura em relação ao solo. Útil em estradas variadas, mas menos discreto que um compacto.",
             "subcategoria": "Automóveis",
-            "ordem": 29
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 29
         },
@@ -410,7 +522,14 @@
           "definition": {
             "descricao": "Veículo com caçamba para transportar ferramentas, equipamentos e carga. Adequado para trabalho e deslocamentos rurais.",
             "subcategoria": "Automóveis",
-            "ordem": 30
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 30
         },
@@ -423,7 +542,14 @@
           "definition": {
             "descricao": "Veículo espaçoso para equipe, equipamentos ou carga. Maior porte dificulta estacionamento e circulação em ruas estreitas.",
             "subcategoria": "Utilitários",
-            "ordem": 31
+            "ordem": 31,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 31
         },
@@ -436,7 +562,14 @@
           "definition": {
             "descricao": "Veículo robusto para terrenos difíceis e estradas sem pavimentação. Consumo e manutenção tendem a ser maiores.",
             "subcategoria": "Utilitários",
-            "ordem": 32
+            "ordem": 32,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 32
         },
@@ -449,7 +582,14 @@
           "definition": {
             "descricao": "Veículo com proteção adicional definida pelo mestre. Peso, consumo, manutenção e aparência podem impor limitações.",
             "subcategoria": "Veículos especiais",
-            "ordem": 33
+            "ordem": 33,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 33
         },
@@ -462,7 +602,14 @@
           "definition": {
             "descricao": "Veículo equipado para transporte e atendimento pré-hospitalar. Acesso a áreas restritas depende de autorização e contexto.",
             "subcategoria": "Veículos especiais",
-            "ordem": 34
+            "ordem": 34,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 34
         }
