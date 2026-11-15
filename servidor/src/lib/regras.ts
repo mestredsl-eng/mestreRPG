@@ -473,6 +473,91 @@ export function extrairEscolhas(estrutura: EstruturaFicha, dados: Record<string,
   return escolhas;
 }
 
+/**
+ * CAMINHO CANÔNICO de avaliação de pré-requisitos do Acervo para aquisição
+ * de patrimônio (itens, equipamentos, veículos). ÚNICA implementação —
+ * `verificarPrerequisitosElemento` delega a esta função.
+ *
+ * - Reutiliza `extrairEscolhas`: resolve campos pela estrutura publicada
+ *   (regra/regraKind), nunca por IDs fixos.
+ * - Ausência de escolha = nível 0; exige TODOS os pré-requisitos.
+ * - Elemento ou pré-requisito inexistente falha fechado.
+ * - Retorna nível atual/exigido e situação de cada requisito para a UI.
+ */
+export interface RequisitoAquisicao {
+  kind: string;
+  key: string;
+  nome: string;
+  minLevel: number;
+  nivelAtual: number;
+  atendido: boolean;
+  /** pré-requisito aponta para elemento que não existe nas regras */
+  inexistente?: boolean;
+  /** pré-requisito existe, mas foi desativado pelo mestre */
+  indisponivel?: boolean;
+}
+
+export interface ResultadoPrerequisitosAquisicao {
+  ok: boolean;
+  elemento: ElementoRegra | null;
+  requisitos: RequisitoAquisicao[];
+  /** mensagens prontas para o usuário (nível atual vs exigido) */
+  mensagens: string[];
+}
+
+const nomeLegivel = (key: string) =>
+  key.replace(/_/g, " ").replace(/\w/g, (letra) => letra.toLocaleUpperCase("pt-BR"));
+
+export function avaliarPrerequisitosAquisicao(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>,
+  regras: RegrasCampanha,
+  kind: string,
+  key: string,
+): ResultadoPrerequisitosAquisicao {
+  const elemento = regras.elementos.get(CHAVE(kind, key)) ?? null;
+  if (!elemento) {
+    return {
+      ok: false, elemento: null, requisitos: [],
+      mensagens: [`Elemento ${kind}:${key} não existe nas regras da campanha`],
+    };
+  }
+  const mensagens: string[] = [];
+  if (elemento.definition.disponivel === false) {
+    mensagens.push(`"${elemento.name}" está desativado nesta campanha`);
+  }
+
+  // Nível atual por elemento — MESMA fonte de validarRegras
+  // (extrairEscolhas resolve regra/regraKind da estrutura publicada).
+  const nivelPorElemento = new Map<string, number>();
+  for (const e of extrairEscolhas(estrutura, dados, regras)) {
+    if (!e.elemento || !e.selecionado) continue;
+    const c = CHAVE(e.elemento.kind, e.elemento.key);
+    nivelPorElemento.set(c, Math.max(nivelPorElemento.get(c) ?? 0, e.level));
+  }
+
+  const requisitos = (elemento.definition.prerequisitos ?? []).map((pre): RequisitoAquisicao => {
+    const chavePre = CHAVE(pre.kind, pre.key);
+    const atual = nivelPorElemento.get(chavePre) ?? 0;
+    const alvo = regras.elementos.get(chavePre);
+    const exigido = pre.minLevel ?? 1;
+    const nome = alvo?.name ?? nomeLegivel(pre.key);
+    const inexistente = !alvo;
+    const indisponivel = !!alvo && alvo.definition.disponivel === false;
+    const atendido = !inexistente && !indisponivel && atual >= exigido;
+    if (!atendido) {
+      mensagens.push(inexistente
+        ? `"${elemento.name}" exige ${pre.kind}:${pre.key} (elemento inexistente nas regras)`
+        : indisponivel
+          ? `O pré-requisito ${nome} está desativado nas regras da campanha`
+          : `Você precisa de ${nome} nível ${exigido}. Seu nível atual é ${atual}.`);
+    }
+    return { kind: pre.kind, key: pre.key, nome, minLevel: exigido, nivelAtual: atual, atendido, inexistente, indisponivel };
+  });
+
+  return { ok: mensagens.length === 0, elemento, requisitos, mensagens };
+}
+
 export interface ErroRegra {
   campoId?: string;
   codigo: string;
@@ -926,3 +1011,48 @@ export function pontosParaFicha(estrutura: EstruturaFicha, regras: RegrasCampanh
 
 // Re-export para uso em rotas
 export { calcularPontos };
+
+// ---------- Pré-requisitos de elementos fora da ficha (patrimônio) ----------
+
+export interface ResultadoPrereq {
+  ok: boolean;
+  elemento: ElementoRegra | null;
+  erros: { codigo: string; mensagem: string }[];
+  /** nível atual de cada pré-requisito (kind:key → nível) para a UI */
+  niveis: Record<string, number>;
+}
+
+/**
+ * Verifica se a ficha do personagem atende aos `definition.prerequisitos`
+ * de um elemento do Acervo (ex.: item/veiculo do patrimônio). Reutiliza
+ * `extrairEscolhas` — a mesma fonte de verdade da validação da ficha.
+ * Nível ausente = 0; pré-requisito que não existe no catálogo NUNCA é
+ * considerado cumprido.
+ */
+export function verificarPrerequisitosElemento(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>,
+  regras: RegrasCampanha,
+  kind: string,
+  key: string,
+): ResultadoPrereq {
+  // Delega ao caminho canônico (avaliarPrerequisitosAquisicao).
+  const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, kind, key);
+  const niveis: Record<string, number> = {};
+  for (const q of r.requisitos) niveis[CHAVE(q.kind, q.key)] = q.nivelAtual;
+  if (!r.elemento) {
+    return { ok: false, elemento: null, erros: [{ codigo: "elemento_inexistente", mensagem: `Elemento ${kind}:${key} não existe nas regras da campanha` }], niveis };
+  }
+  const erros: ResultadoPrereq["erros"] = [];
+  if (r.elemento.definition.disponivel === false) {
+    erros.push({ codigo: "indisponivel", mensagem: `"${r.elemento.name}" está desativado nesta campanha` });
+  }
+  for (const q of r.requisitos.filter((x) => !x.atendido)) {
+    erros.push(q.inexistente
+      ? { codigo: "pre_requisito_inexistente", mensagem: `"${r.elemento!.name}" exige ${q.kind}:${q.key} (elemento inexistente nas regras)` }
+      : q.indisponivel
+        ? { codigo: "pre_requisito_indisponivel", mensagem: `"${r.elemento!.name}" exige ${q.nome}, mas esse pré-requisito está desativado` }
+        : { codigo: "pre_requisito", mensagem: `"${r.elemento!.name}" exige ${q.nome} nível ${q.minLevel} (atual: ${q.nivelAtual})` });
+  }
+  return { ok: erros.length === 0, elemento: r.elemento, erros, niveis };
+}

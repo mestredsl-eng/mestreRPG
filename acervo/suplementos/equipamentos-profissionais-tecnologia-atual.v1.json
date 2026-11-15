@@ -72,7 +72,14 @@
           "definition": {
             "descricao": "Computador portátil reforçado para uso em ambientes de trabalho e deslocamentos. Autonomia e resistência variam por modelo.",
             "subcategoria": "Computação",
-            "ordem": 4
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 4
         },
@@ -85,7 +92,14 @@
           "definition": {
             "descricao": "Tablet com estrutura e proteção voltadas ao uso profissional em campo, útil para mapas, formulários e consulta de documentos.",
             "subcategoria": "Computação",
-            "ordem": 5
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 5
         },
@@ -98,7 +112,14 @@
           "definition": {
             "descricao": "Unidade portátil de armazenamento para cópias de arquivos e registros. Pode utilizar criptografia e controle de acesso.",
             "subcategoria": "Armazenamento",
-            "ordem": 6
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 6
         },
@@ -150,7 +171,14 @@
           "definition": {
             "descricao": "Conjunto de câmeras e gravador para monitoramento de áreas sob responsabilidade do operador, com sinalização e tratamento adequado das imagens.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 10
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 10
         },
@@ -163,7 +191,14 @@
           "definition": {
             "descricao": "Equipamento que recebe e armazena imagens de câmeras IP compatíveis. Capacidade depende dos discos, resolução e retenção configurada.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 11
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 11
         },
@@ -189,7 +224,14 @@
           "definition": {
             "descricao": "Fechadura com abertura por senha, cartão ou outro método eletrônico. Requer instalação adequada e alternativa de acesso em caso de falha.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 13
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 13
         },
@@ -202,7 +244,14 @@
           "definition": {
             "descricao": "Central que recebe sinais de sensores instalados em um imóvel e aciona alertas conforme configuração.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 14
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 14
         },
@@ -215,7 +264,14 @@
           "definition": {
             "descricao": "Sensor utilizado em sistemas de iluminação ou alarme para detectar movimento dentro de uma área configurada.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 15
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 15
         },
@@ -267,7 +323,14 @@
           "definition": {
             "descricao": "Instrumento para medir grandezas elétricas, como tensão, corrente e resistência, dentro dos limites especificados pelo fabricante.",
             "subcategoria": "Manutenção",
-            "ordem": 19
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 19
         },
@@ -280,7 +343,14 @@
           "definition": {
             "descricao": "Instrumento para medir corrente elétrica sem abrir o circuito, quando utilizado em condições e instalações compatíveis.",
             "subcategoria": "Manutenção",
-            "ordem": 20
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 20
         },
@@ -293,7 +363,14 @@
           "definition": {
             "descricao": "Câmera pequena com cabo flexível para visualizar espaços internos de máquinas, tubulações e estruturas sem desmontagem extensa.",
             "subcategoria": "Manutenção",
-            "ordem": 21
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 21
         },
@@ -306,7 +383,14 @@
           "definition": {
             "descricao": "Câmera que representa diferenças de temperatura aparente em uma imagem. A leitura depende de emissividade, distância e condições do ambiente.",
             "subcategoria": "Inspeção técnica",
-            "ordem": 22
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 22
         },
@@ -371,7 +455,14 @@
           "definition": {
             "descricao": "Receptor de posicionamento por satélite utilizado em levantamentos geográficos. A precisão depende do equipamento, método e condições de recepção.",
             "subcategoria": "Navegação e levantamento",
-            "ordem": 27
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 27
         },
@@ -384,7 +475,14 @@
           "definition": {
             "descricao": "Instrumento óptico-eletrônico para medir ângulos e distâncias em levantamentos de engenharia e topografia.",
             "subcategoria": "Levantamento",
-            "ordem": 28
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 28
         },

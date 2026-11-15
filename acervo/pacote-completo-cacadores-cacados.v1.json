@@ -1,0 +1,5198 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento I — Arsenal, Veículos e Equipamentos",
+      "descricao": "Catálogo inicial de armas, proteção, ferramentas, tecnologia, suprimentos e veículos para campanhas modernas de Caçadores Caçados. As descrições são neutras: custos, dano, proteção, peso, disponibilidade e requisitos ficam a critério do mestre e das regras configuradas na campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — catálogo-base",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "faca_tatica",
+          "name": "Faca tática",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lâmina curta de uso utilitário e combate próximo. Fácil de ocultar e transportar; também serve para cortar cordas, tecido e materiais leves.",
+            "subcategoria": "Armas brancas",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "canivete",
+          "name": "Canivete",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta dobrável compacta, comum no cotidiano. Menos intimidadora que uma faca de combate, mas útil em tarefas simples.",
+            "subcategoria": "Armas brancas",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "facao",
+          "name": "Facão",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lâmina longa e pesada usada para abrir passagem em vegetação e como arma improvisada.",
+            "subcategoria": "Armas brancas",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "bastao_retratil",
+          "name": "Bastão retrátil",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bastão metálico expansível, discreto quando fechado e eficiente para defesa em curta distância.",
+            "subcategoria": "Armas brancas",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "machado_pequeno",
+          "name": "Machado compacto",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Machado de uma mão, útil como ferramenta de campo e arma contundente/cortante.",
+            "subcategoria": "Armas brancas",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "arco_composto",
+          "name": "Arco composto",
+          "category": "Armas à distância",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma silenciosa que exige prática. Depende de flechas adequadas e espaço para disparo.",
+            "subcategoria": "Armas à distância",
+            "ordem": 5
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "pistola_compacta",
+          "name": "Pistola compacta",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de fácil porte e ocultação. Capacidade, calibre e disponibilidade dependem do modelo escolhido pelo mestre.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "pistola_servico",
+          "name": "Pistola de serviço",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Pistola semiautomática de porte ostensivo ou velado. Modelo comum em forças de segurança.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "revolver",
+          "name": "Revólver",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de mecanismo simples e robusto. O tambor limita a quantidade de disparos antes da recarga.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "espingarda",
+          "name": "Espingarda",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa de uso especializado, especialmente perigosa em curta distância. Transporte e posse chamam atenção.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "carabina",
+          "name": "Carabina",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa compacta, com melhor controle que uma pistola em situações apropriadas. Requer estojo e transporte cuidadoso.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "municao_comum",
+          "name": "Munição comum",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Pacote de munição compatível com uma arma específica. O calibre/modelo deve ser registrado no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 11
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "colete_discreto",
+          "name": "Colete de proteção discreto",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Proteção vestível sob roupas largas. Pode reduzir mobilidade ou chamar atenção em revistas e exames.",
+            "subcategoria": "Proteção",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "colete_tatico",
+          "name": "Colete tático",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Colete externo com painéis de proteção e espaço para acessórios. Visível e difícil de justificar em ambientes civis.",
+            "subcategoria": "Proteção",
+            "ordem": 13
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "capacete_protecao",
+          "name": "Capacete de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capacete resistente para operações, deslocamentos de risco e atividades em locais com possibilidade de impacto.",
+            "subcategoria": "Proteção",
+            "ordem": 14
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "oculos_protecao",
+          "name": "Óculos de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Protege os olhos contra poeira, fragmentos leves, vento e respingos. Modelos específicos podem ter filtros ou visão noturna.",
+            "subcategoria": "Proteção",
+            "ordem": 15
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "kit_primeiros_socorros",
+          "name": "Kit de primeiros socorros",
+          "category": "Medicina e sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Material básico para limpeza, curativos e estabilização inicial. Não substitui atendimento médico.",
+            "subcategoria": "Medicina e sobrevivência",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "kit_medico",
+          "name": "Bolsa médica",
+          "category": "Medicina e sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto mais completo de materiais para atendimento em campo. Exige conhecimento para uso adequado.",
+            "subcategoria": "Medicina e sobrevivência",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "lanterna_tatica",
+          "name": "Lanterna resistente",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lanterna de alto impacto, útil em buscas, exploração e emergências. Pode possuir modos de foco e sinalização.",
+            "subcategoria": "Ferramentas",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "mult_ferramenta",
+          "name": "Multiferramenta",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta dobrável com lâmina, alicate e acessórios simples. Útil em reparos e improvisos.",
+            "subcategoria": "Ferramentas",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "kit_arrombamento",
+          "name": "Kit de ferramentas finas",
+          "category": "Ferramentas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas de precisão para fechaduras e mecanismos simples. Seu uso exige perícia e pode deixar evidências.",
+            "subcategoria": "Ferramentas",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "hacker",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "radio_portatil",
+          "name": "Rádio comunicador portátil",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Permite comunicação por canal e alcance compatíveis com o equipamento e o terreno. Não garante sigilo.",
+            "subcategoria": "Tecnologia",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "celular_descartavel",
+          "name": "Celular pré-pago",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aparelho simples para comunicação temporária. Ainda pode deixar rastros por rede, pagamento e comportamento de uso.",
+            "subcategoria": "Tecnologia",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "notebook",
+          "name": "Notebook",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Computador portátil para pesquisa, análise e trabalho. Autonomia depende da bateria e do acesso à rede.",
+            "subcategoria": "Tecnologia",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "drone_civil",
+          "name": "Drone civil",
+          "category": "Tecnologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Drone leve para observação e registro de imagens. Ruído, bateria, clima e restrições locais limitam seu uso.",
+            "subcategoria": "Tecnologia",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_urbana",
+          "name": "Motocicleta urbana",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Moto leve para deslocamentos rápidos em áreas urbanas. Oferece agilidade, mas pouca proteção para os ocupantes.",
+            "subcategoria": "Motocicletas",
+            "ordem": 25,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_trilha",
+          "name": "Motocicleta trail",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Moto versátil para asfalto ruim e estradas de terra. Boa opção para regiões rurais e acesso a locais afastados.",
+            "subcategoria": "Motocicletas",
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "veiculo",
+          "key": "hatch_comum",
+          "name": "Carro compacto",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo discreto e econômico para deslocamentos cotidianos. Espaço limitado para carga e passageiros.",
+            "subcategoria": "Automóveis",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "veiculo",
+          "key": "sedan",
+          "name": "Sedã",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Carro confortável para viagens e uso urbano. Aparência comum facilita circulação sem chamar atenção.",
+            "subcategoria": "Automóveis",
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "veiculo",
+          "key": "suv",
+          "name": "SUV",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com maior espaço interno e altura em relação ao solo. Útil em estradas variadas, mas menos discreto que um compacto.",
+            "subcategoria": "Automóveis",
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "veiculo",
+          "key": "picape",
+          "name": "Picape",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com caçamba para transportar ferramentas, equipamentos e carga. Adequado para trabalho e deslocamentos rurais.",
+            "subcategoria": "Automóveis",
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "veiculo",
+          "key": "van",
+          "name": "Van de transporte",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo espaçoso para equipe, equipamentos ou carga. Maior porte dificulta estacionamento e circulação em ruas estreitas.",
+            "subcategoria": "Utilitários",
+            "ordem": 31,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "veiculo",
+          "key": "veiculo_utilitario_4x4",
+          "name": "Utilitário 4x4",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo robusto para terrenos difíceis e estradas sem pavimentação. Consumo e manutenção tendem a ser maiores.",
+            "subcategoria": "Utilitários",
+            "ordem": 32,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhonete_blindada",
+          "name": "Veículo reforçado",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo com proteção adicional definida pelo mestre. Peso, consumo, manutenção e aparência podem impor limitações.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 33,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "veiculo",
+          "key": "ambulancia",
+          "name": "Ambulância",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo equipado para transporte e atendimento pré-hospitalar. Acesso a áreas restritas depende de autorização e contexto.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 34,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 34
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento II — Medicina, Investigação e Sobrevivência",
+      "descricao": "Catálogo de equipamentos para atendimento em campo, proteção individual, investigação, observação, navegação, comunicação, resgate e sobrevivência em campanhas modernas de Caçadores Caçados. Conteúdo descritivo; regras, custos, peso e disponibilidade são definidos por campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — catálogo de campo",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "kit_sutura",
+          "name": "Kit de sutura",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo com materiais para fechamento de ferimentos, destinado a profissionais habilitados. O uso inadequado pode agravar lesões e deixar marcas.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "desfibrilador_portatil",
+          "name": "Desfibrilador portátil",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de emergência para situações específicas de parada cardíaca. Exige treinamento e avaliação do cenário.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "oximetro",
+          "name": "Oxímetro",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo que estima a saturação de oxigênio e a frequência cardíaca. Leituras devem ser interpretadas no contexto clínico.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "estetoscopio",
+          "name": "Estetoscópio",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para auscultar sons cardíacos, respiratórios e outros sinais corporais.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "termometro_digital",
+          "name": "Termômetro digital",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento portátil para aferição de temperatura corporal.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "tala_imobilizacao",
+          "name": "Kit de imobilização",
+          "category": "Medicina de campo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de talas e faixas para restringir movimentos de membros lesionados durante o transporte.",
+            "subcategoria": "Medicina de campo",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "maca_dobravel",
+          "name": "Maca dobrável",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maca portátil para remoção de pessoas feridas. Requer espaço e mais de um operador em muitos cenários.",
+            "subcategoria": "Resgate",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "cobertor_termico",
+          "name": "Manta térmica",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Manta leve para auxiliar na conservação de calor corporal em situações de exposição.",
+            "subcategoria": "Resgate",
+            "ordem": 7
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "mascara_pff2",
+          "name": "Máscaras de proteção respiratória",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Máscaras para reduzir a inalação de partículas. A proteção depende do ajuste, conservação e tipo de contaminante.",
+            "subcategoria": "Proteção individual",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "luvas_descartaveis",
+          "name": "Luvas descartáveis",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Barreira de uso único para procedimentos e manipulação de materiais. Não substituem higiene adequada.",
+            "subcategoria": "Proteção individual",
+            "ordem": 9
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "oculos_laboratorio",
+          "name": "Óculos vedados",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Proteção ocular contra respingos e partículas em ambientes de risco.",
+            "subcategoria": "Proteção individual",
+            "ordem": 10
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "macacao_descartavel",
+          "name": "Macacão de proteção descartável",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vestimenta de barreira para reduzir contaminação de roupas em locais específicos. Deve ser descartada conforme o protocolo aplicável.",
+            "subcategoria": "Proteção individual",
+            "ordem": 11
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "kit_descontaminacao",
+          "name": "Kit de descontaminação",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para limpeza inicial de pessoas e objetos expostos a contaminantes conhecidos. O procedimento depende da substância.",
+            "subcategoria": "Proteção individual",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_evidencias",
+          "name": "Kit de coleta de evidências",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embalagens, etiquetas e instrumentos básicos para acondicionar vestígios sem misturá-los. A cadeia de custódia deve ser registrada.",
+            "subcategoria": "Investigação",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "camera_fotografica",
+          "name": "Câmera fotográfica",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera para registro de cenas, objetos e documentos. Data, contexto e escala das imagens devem ser preservados.",
+            "subcategoria": "Investigação",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "camera_termica",
+          "name": "Câmera termográfica",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo que registra diferenças de temperatura aparente. Não identifica sozinho pessoas ou causas de calor.",
+            "subcategoria": "Investigação",
+            "ordem": 15
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "gravador_audio",
+          "name": "Gravador de áudio",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Gravador portátil para entrevistas e registros autorizados. O uso deve respeitar a legislação e o consentimento aplicável.",
+            "subcategoria": "Investigação",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "lupa_luz",
+          "name": "Lupa com iluminação",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lupa portátil com luz para examinar detalhes de superfícies, documentos e pequenos objetos.",
+            "subcategoria": "Investigação",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "lanterna_uv",
+          "name": "Lanterna ultravioleta",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte UV para observações específicas em materiais compatíveis. Fluorescência não comprova, por si só, a origem de um vestígio.",
+            "subcategoria": "Investigação",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "maleta_documentos",
+          "name": "Maleta para documentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maleta rígida para transportar papéis, mapas, fotografias e registros sem danificá-los.",
+            "subcategoria": "Investigação",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "scanner_portatil",
+          "name": "Scanner portátil",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para digitalizar documentos em campo, preservando cópias de consulta.",
+            "subcategoria": "Investigação",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "gravador_video",
+          "name": "Câmera de vídeo portátil",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registrar entrevistas, deslocamentos e ocorrências, conforme autorização e regras locais.",
+            "subcategoria": "Investigação",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "binoculo",
+          "name": "Binóculo",
+          "category": "Observação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento óptico para observar pontos distantes sem aproximação. O desempenho varia conforme ampliação e luminosidade.",
+            "subcategoria": "Observação",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "mapa_topografico",
+          "name": "Mapa topográfico",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Mapa com relevo, curvas de nível e referências geográficas para planejamento de deslocamentos.",
+            "subcategoria": "Navegação",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "gps_portatil",
+          "name": "GPS portátil",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Receptor de posicionamento por satélite. Pode perder precisão em ambientes fechados, cânions ou áreas com interferência.",
+            "subcategoria": "Navegação",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "bussola",
+          "name": "Bússola",
+          "category": "Navegação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento magnético para orientação quando usado com mapa e referências adequadas.",
+            "subcategoria": "Navegação",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "radio_base",
+          "name": "Rádio comunicador de base",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Unidade de comunicação de maior porte para uma equipe ou ponto de apoio. Depende de energia, antena e frequências autorizadas.",
+            "subcategoria": "Comunicação",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "bateria_externa",
+          "name": "Bateria externa",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte portátil para recarregar dispositivos compatíveis. Capacidade e conectores devem ser anotados.",
+            "subcategoria": "Energia",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "painel_solar_portatil",
+          "name": "Painel solar portátil",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Painel dobrável para recarga em locais com luz solar. A geração varia com clima, posição e equipamento conectado.",
+            "subcategoria": "Energia",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_reparo_campo",
+          "name": "Kit de reparo de campo",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas e consumíveis para pequenos reparos em equipamentos, roupas e acessórios.",
+            "subcategoria": "Manutenção",
+            "ordem": 29
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "corda_estatica",
+          "name": "Corda de uso técnico",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Corda destinada a atividades técnicas específicas. Carga, inspeção, ancoragem e treinamento são indispensáveis.",
+            "subcategoria": "Resgate",
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "item",
+          "key": "mosquetao_certificado",
+          "name": "Mosquetões certificados",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conectores para sistemas de segurança compatíveis. Devem ser inspecionados e usados conforme especificação.",
+            "subcategoria": "Resgate",
+            "ordem": 31,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "item",
+          "key": "capacete_resgate",
+          "name": "Capacete de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capacete para proteção em atividades de busca e salvamento, compatível com os riscos do ambiente.",
+            "subcategoria": "Resgate",
+            "ordem": 32
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "item",
+          "key": "barraca_campo",
+          "name": "Barraca de campo",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Abrigo portátil para pernoite e proteção contra intempéries. Capacidade e resistência dependem do modelo.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 33
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "item",
+          "key": "saco_dormir",
+          "name": "Saco de dormir",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Isolamento térmico para descanso em campo. A faixa de temperatura adequada depende do modelo e das condições.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 34
+          },
+          "ordem": 34
+        },
+        {
+          "kind": "item",
+          "key": "filtro_agua",
+          "name": "Filtro portátil de água",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo para tratamento de água conforme os contaminantes para os quais foi projetado. Nem todo filtro remove agentes químicos.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 35
+          },
+          "ordem": 35
+        },
+        {
+          "kind": "item",
+          "key": "cantil",
+          "name": "Cantíl de água",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Recipiente reutilizável para transporte de água potável.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 36
+          },
+          "ordem": 36
+        },
+        {
+          "kind": "item",
+          "key": "fogareiro_camping",
+          "name": "Fogareiro portátil",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fogareiro compacto para preparo de alimentos em área ventilada e segura, usando combustível compatível.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 37
+          },
+          "ordem": 37
+        },
+        {
+          "kind": "item",
+          "key": "kit_alimentacao",
+          "name": "Ração de campo",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de alimentos não perecíveis para deslocamentos e períodos sem acesso a cozinha.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 38
+          },
+          "ordem": 38
+        },
+        {
+          "kind": "item",
+          "key": "poncho_impermeavel",
+          "name": "Poncho impermeável",
+          "category": "Sobrevivência",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capa leve para chuva, útil em deslocamentos e atividades externas.",
+            "subcategoria": "Sobrevivência",
+            "ordem": 39
+          },
+          "ordem": 39
+        },
+        {
+          "kind": "item",
+          "key": "bota_tatica",
+          "name": "Bota de campo",
+          "category": "Vestuário",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Calçado resistente para caminhadas e terrenos irregulares. Ajuste e conservação influenciam conforto e segurança.",
+            "subcategoria": "Vestuário",
+            "ordem": 40
+          },
+          "ordem": 40
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento III — Equipamentos Profissionais e Tecnologia Atual",
+      "descricao": "Catálogo realista de equipamentos existentes no mundo contemporâneo, usados em comunicação, computação, registro, segurança patrimonial, inspeção, manutenção, medição, energia e proteção individual. Não inclui dispositivos fictícios. Custos, peso, disponibilidade e efeitos em jogo são definidos por campanha; o uso de equipamentos sujeitos a autorização deve respeitar a legislação aplicável.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — equipamentos contemporâneos",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "radio_ht",
+          "name": "Rádio comunicador portátil",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Transceptor portátil para comunicação entre integrantes de uma equipe. Alcance depende de relevo, potência, antena e condições locais; operação sujeita às regras de radiofrequência.",
+            "subcategoria": "Comunicação",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "fone_comunicacao",
+          "name": "Fone com microfone para rádio",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório para transmitir e receber áudio com as mãos livres, compatível com o modelo de rádio utilizado.",
+            "subcategoria": "Comunicação",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "telefone_satellite",
+          "name": "Telefone via satélite",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Telefone que utiliza rede de satélites para comunicação em regiões sem cobertura celular. Depende de plano ativo e visada adequada do céu.",
+            "subcategoria": "Comunicação",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "telefone_rugged",
+          "name": "Celular reforçado",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Telefone com proteção adicional contra poeira, água e impactos, conforme a classificação do fabricante.",
+            "subcategoria": "Comunicação",
+            "ordem": 3
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "notebook_campo",
+          "name": "Notebook resistente",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Computador portátil reforçado para uso em ambientes de trabalho e deslocamentos. Autonomia e resistência variam por modelo.",
+            "subcategoria": "Computação",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "tablet_rugged",
+          "name": "Tablet reforçado",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Tablet com estrutura e proteção voltadas ao uso profissional em campo, útil para mapas, formulários e consulta de documentos.",
+            "subcategoria": "Computação",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "ssd_externo",
+          "name": "Unidade SSD externa",
+          "category": "Armazenamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Unidade portátil de armazenamento para cópias de arquivos e registros. Pode utilizar criptografia e controle de acesso.",
+            "subcategoria": "Armazenamento",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "gravador_digital",
+          "name": "Gravador digital de voz",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo dedicado à gravação de áudio em entrevistas ou reuniões autorizadas. A utilização deve respeitar consentimento e legislação aplicável.",
+            "subcategoria": "Registro",
+            "ordem": 7
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "camera_corporal",
+          "name": "Câmera corporal",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera fixada ao uniforme para documentar atividades profissionais. Regras de gravação, guarda e acesso às imagens devem ser definidas previamente.",
+            "subcategoria": "Registro",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "camera_painel",
+          "name": "Câmera veicular",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera instalada no veículo para registrar o trajeto e ocorrências. Posicionamento e uso devem respeitar privacidade e legislação.",
+            "subcategoria": "Registro",
+            "ordem": 9
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "sistema_cftv",
+          "name": "Sistema de câmeras CFTV",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de câmeras e gravador para monitoramento de áreas sob responsabilidade do operador, com sinalização e tratamento adequado das imagens.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "gravador_nvr",
+          "name": "Gravador de vídeo em rede (NVR)",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento que recebe e armazena imagens de câmeras IP compatíveis. Capacidade depende dos discos, resolução e retenção configurada.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "controle_acesso",
+          "name": "Controlador de acesso eletrônico",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sistema para administrar entrada em áreas autorizadas por credencial, cartão ou identificação compatível.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "fechadura_eletronica",
+          "name": "Fechadura eletrônica",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fechadura com abertura por senha, cartão ou outro método eletrônico. Requer instalação adequada e alternativa de acesso em caso de falha.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "alarme_intrusao",
+          "name": "Central de alarme patrimonial",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Central que recebe sinais de sensores instalados em um imóvel e aciona alertas conforme configuração.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "sensor_movimento",
+          "name": "Sensor de movimento",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sensor utilizado em sistemas de iluminação ou alarme para detectar movimento dentro de uma área configurada.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "detector_fumaca",
+          "name": "Detector de fumaça",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Dispositivo de alerta precoce para presença de fumaça em ambientes compatíveis. Não substitui sistema completo de prevenção e combate a incêndio.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "detector_gas",
+          "name": "Detector portátil de gases",
+          "category": "Segurança do trabalho",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para indicar a presença de determinados gases. Deve ser calibrado e adequado aos agentes que se pretende monitorar.",
+            "subcategoria": "Segurança do trabalho",
+            "ordem": 17
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "medidor_ruido",
+          "name": "Decibelímetro",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir níveis de pressão sonora em ambientes de trabalho ou investigação de ruído.",
+            "subcategoria": "Medição",
+            "ordem": 18
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "multimetro",
+          "name": "Multímetro digital",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir grandezas elétricas, como tensão, corrente e resistência, dentro dos limites especificados pelo fabricante.",
+            "subcategoria": "Manutenção",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "alicate_amperimetro",
+          "name": "Alicate amperímetro",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir corrente elétrica sem abrir o circuito, quando utilizado em condições e instalações compatíveis.",
+            "subcategoria": "Manutenção",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "camera_inspecao",
+          "name": "Câmera de inspeção articulada",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera pequena com cabo flexível para visualizar espaços internos de máquinas, tubulações e estruturas sem desmontagem extensa.",
+            "subcategoria": "Manutenção",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "termovisor",
+          "name": "Termovisor portátil",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera que representa diferenças de temperatura aparente em uma imagem. A leitura depende de emissividade, distância e condições do ambiente.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "detector_metais",
+          "name": "Detector de metais portátil",
+          "category": "Inspeção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para indicar a presença de objetos metálicos em inspeções realizadas com autorização e dentro dos procedimentos aplicáveis.",
+            "subcategoria": "Inspeção",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "medidor_distancia_laser",
+          "name": "Medidor de distância a laser",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medir distâncias e dimensões em ambientes internos ou externos, conforme alcance e condições de uso.",
+            "subcategoria": "Medição",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "nivel_laser",
+          "name": "Nível a laser",
+          "category": "Medição",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta que projeta linhas ou pontos de referência para alinhamento e nivelamento em levantamentos e manutenção.",
+            "subcategoria": "Medição",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "drone_comercial",
+          "name": "Drone civil com câmera",
+          "category": "Aeronaves não tripuladas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave remotamente pilotada para fotografia, mapeamento e inspeção em atividades autorizadas. Operação depende das regras aeronáuticas, de telecomunicações e de privacidade.",
+            "subcategoria": "Aeronaves não tripuladas",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "receptor_gnss",
+          "name": "Receptor GNSS de precisão",
+          "category": "Navegação e levantamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Receptor de posicionamento por satélite utilizado em levantamentos geográficos. A precisão depende do equipamento, método e condições de recepção.",
+            "subcategoria": "Navegação e levantamento",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "estacao_total",
+          "name": "Estação total topográfica",
+          "category": "Levantamento",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento óptico-eletrônico para medir ângulos e distâncias em levantamentos de engenharia e topografia.",
+            "subcategoria": "Levantamento",
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "detector_cabo_tubulacao",
+          "name": "Localizador de cabos e tubulações",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para auxiliar na localização de instalações embutidas antes de perfurações ou intervenções. O resultado deve ser confirmado por métodos adequados.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 29
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "maleta_ferramentas",
+          "name": "Maleta profissional de ferramentas",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto organizado de ferramentas manuais para montagem, ajuste e manutenção de equipamentos.",
+            "subcategoria": "Manutenção",
+            "ordem": 30
+          },
+          "ordem": 30
+        },
+        {
+          "kind": "item",
+          "key": "furadeira_bateria",
+          "name": "Furadeira/parafusadeira a bateria",
+          "category": "Manutenção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta elétrica portátil para perfuração e fixação com acessórios compatíveis e uso conforme as normas de segurança.",
+            "subcategoria": "Manutenção",
+            "ordem": 31
+          },
+          "ordem": 31
+        },
+        {
+          "kind": "item",
+          "key": "gerador_portatil",
+          "name": "Gerador elétrico portátil",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Gerador para fornecer energia em locais sem rede elétrica. Deve operar em área externa ventilada, devido ao risco de monóxido de carbono.",
+            "subcategoria": "Energia",
+            "ordem": 32
+          },
+          "ordem": 32
+        },
+        {
+          "kind": "item",
+          "key": "nobreak",
+          "name": "Nobreak (UPS)",
+          "category": "Energia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento com bateria que mantém dispositivos eletrônicos alimentados por período limitado e pode proteger contra variações de energia.",
+            "subcategoria": "Energia",
+            "ordem": 33
+          },
+          "ordem": 33
+        },
+        {
+          "kind": "item",
+          "key": "iluminacao_trabalho",
+          "name": "Refletor LED portátil",
+          "category": "Iluminação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de iluminação de trabalho para inspeções e atividades noturnas, com alimentação por bateria ou rede elétrica.",
+            "subcategoria": "Iluminação",
+            "ordem": 34
+          },
+          "ordem": 34
+        },
+        {
+          "kind": "item",
+          "key": "tripe_profissional",
+          "name": "Tripé profissional",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Suporte ajustável para câmeras, instrumentos ópticos, iluminação ou equipamentos de medição compatíveis.",
+            "subcategoria": "Acessórios",
+            "ordem": 35
+          },
+          "ordem": 35
+        },
+        {
+          "kind": "item",
+          "key": "maleta_rigida",
+          "name": "Maleta rígida de transporte",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo resistente para proteger instrumentos e equipamentos durante armazenamento e transporte.",
+            "subcategoria": "Acessórios",
+            "ordem": 36
+          },
+          "ordem": 36
+        },
+        {
+          "kind": "item",
+          "key": "colete_refletivo",
+          "name": "Colete de alta visibilidade",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vestimenta refletiva para aumentar a visibilidade de trabalhadores em vias, obras e ambientes com circulação de veículos.",
+            "subcategoria": "Proteção individual",
+            "ordem": 37
+          },
+          "ordem": 37
+        },
+        {
+          "kind": "item",
+          "key": "protetor_auditivo",
+          "name": "Protetor auditivo",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção individual para reduzir exposição a ruído, selecionado conforme avaliação do ambiente.",
+            "subcategoria": "Proteção individual",
+            "ordem": 38
+          },
+          "ordem": 38
+        },
+        {
+          "kind": "item",
+          "key": "respirador_semifacial",
+          "name": "Respirador semifacial reutilizável",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Peça facial reutilizável que aceita filtros compatíveis para riscos específicos. Seleção, vedação e manutenção exigem orientação técnica.",
+            "subcategoria": "Proteção individual",
+            "ordem": 39
+          },
+          "ordem": 39
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento IV — Armas, Combate e Proteção",
+      "descricao": "Catálogo complementar de armas brancas, armas de fogo, munições, acessórios e proteção individual para campanhas de Caçadores Caçados. Não define dano, alcance, capacidade, peso, preço ou bônus; esses valores permanecem sob controle do mestre e das regras da campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — arsenal complementar",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "cassetete_profissional",
+          "name": "Cassetete profissional",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bastão de uso defensivo, destinado a situações de confronto próximo.",
+            "subcategoria": "Armas brancas",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "tonfa",
+          "name": "Tonfa",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bastão lateral de defesa e controle em curta distância.",
+            "subcategoria": "Armas brancas",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "bastao_defesa",
+          "name": "Bastão de defesa",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bastão rígido utilizado para defesa e treinamento.",
+            "subcategoria": "Armas brancas",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "lamina_utilitaria",
+          "name": "Lâmina utilitária",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta cortante compacta para tarefas gerais.",
+            "subcategoria": "Armas brancas",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "faca_resgate",
+          "name": "Faca de resgate",
+          "category": "Ferramentas de resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta de corte para operações de resgate e emergência.",
+            "subcategoria": "Ferramentas de resgate",
+            "ordem": 4
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "espada_esportiva",
+          "name": "Espada de treinamento",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de prática esportiva e treinamento de esgrima.",
+            "subcategoria": "Armas brancas",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "machadinha_campo",
+          "name": "Machadinha de campo",
+          "category": "Armas brancas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta compacta para trabalhos de campo.",
+            "subcategoria": "Armas brancas",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_brancas",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "pistola_compacta_reserva",
+          "name": "Pistola compacta de reserva",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de porte compacto. Modelo e características são definidos pelo mestre.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "pistola_alta_capacidade",
+          "name": "Pistola de serviço",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de uso profissional. Modelo e características são definidos pelo mestre.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "revolver_cano_curto",
+          "name": "Revólver compacto",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma curta de mecanismo de tambor.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "espingarda_caca",
+          "name": "Espingarda de campo",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa associada a atividades de campo. Uso e disponibilidade dependem do cenário.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "rifle_caca",
+          "name": "Rifle de campo",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa para atividades de campo. Modelo e características ficam a cargo do mestre.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "carabina_servico",
+          "name": "Carabina de serviço",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa compacta de uso especializado.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "submetralhadora",
+          "name": "Submetralhadora",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma de fogo longa compacta, destinada a cenários de uso especializado.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "fuzil_servico",
+          "name": "Fuzil de serviço",
+          "category": "Armas de fogo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Arma longa de uso especializado. Características e disponibilidade dependem da campanha.",
+            "subcategoria": "Armas de fogo",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "municao_pistola",
+          "name": "Munição para pistola",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Munição compatível com modelo de pistola definido no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "municao_revolver",
+          "name": "Munição para revólver",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Munição compatível com modelo de revólver definido no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "municao_espingarda",
+          "name": "Munição para espingarda",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Munição compatível com modelo de espingarda definido no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "municao_carabina",
+          "name": "Munição para carabina",
+          "category": "Suprimentos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Munição compatível com modelo de carabina definido no inventário.",
+            "subcategoria": "Suprimentos",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "armas_de_fogo",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "estojo_transporte_armas",
+          "name": "Estojo de transporte de armas",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo para acondicionamento e transporte de equipamento.",
+            "subcategoria": "Acessórios",
+            "ordem": 19
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "coldre_cintura",
+          "name": "Coldre de cintura",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório de porte para arma curta compatível.",
+            "subcategoria": "Acessórios",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "coldre_perna",
+          "name": "Coldre de perna",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório de porte fixado à perna.",
+            "subcategoria": "Acessórios",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "suporte_optico",
+          "name": "Suporte para acessório óptico",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Suporte compatível com equipamento e modelo definidos pelo mestre.",
+            "subcategoria": "Acessórios",
+            "ordem": 22
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "mira_optica",
+          "name": "Mira óptica",
+          "category": "Acessórios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório de observação e enquadramento para equipamento compatível.",
+            "subcategoria": "Acessórios",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "colete_placas",
+          "name": "Colete com placas de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Proteção corporal com componentes removíveis. O nível de proteção é definido pela campanha.",
+            "subcategoria": "Proteção",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "escudo_protecao",
+          "name": "Escudo de proteção",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Escudo portátil para proteção em situações específicas.",
+            "subcategoria": "Proteção",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "capacete_operacional",
+          "name": "Capacete operacional",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Capacete de proteção para atividades de risco.",
+            "subcategoria": "Proteção",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "protetor_articular",
+          "name": "Conjunto de proteção articular",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de joelheiras e cotoveleiras para atividades físicas e de campo.",
+            "subcategoria": "Proteção",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "luvas_operacionais",
+          "name": "Luvas de proteção operacional",
+          "category": "Proteção",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Luvas para proteção das mãos em tarefas e atividades de campo.",
+            "subcategoria": "Proteção",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "mascara_protecao_integral",
+          "name": "Máscara de proteção integral",
+          "category": "Proteção individual",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Máscara de proteção para ambientes que exijam proteção facial específica.",
+            "subcategoria": "Proteção individual",
+            "ordem": 29
+          },
+          "ordem": 29
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento V — Transporte, Aviação e Veículos Especiais",
+      "descricao": "Catálogo de veículos terrestres, náuticos e aéreos. Os registros usam a perícia Condução existente na ficha: nível 1 como requisito geral de operação e nível 5 para o F-16, conforme exemplo solicitado. O livro não cria uma perícia de pilotagem nova.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — mobilidade e veículos especiais",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "veiculo",
+          "key": "carro_esportivo",
+          "name": "Automóvel esportivo",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel de perfil esportivo para deslocamentos e cenas de perseguição.",
+            "subcategoria": "Automóveis",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_eletrico",
+          "name": "Automóvel elétrico",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel movido a energia elétrica.",
+            "subcategoria": "Automóveis",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_hibrido",
+          "name": "Automóvel híbrido",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel com sistema de propulsão híbrido.",
+            "subcategoria": "Automóveis",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "veiculo",
+          "key": "suv_blindado",
+          "name": "SUV reforçado",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Utilitário com proteção adicional definida pelo mestre.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "veiculo",
+          "key": "picape_4x4",
+          "name": "Picape 4x4",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Picape com tração integral para estradas e terrenos variados.",
+            "subcategoria": "Utilitários",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_carga",
+          "name": "Caminhão de carga",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo pesado destinado ao transporte de carga.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_guincho",
+          "name": "Caminhão-guincho",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de apoio para remoção e transporte de outros veículos.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "veiculo",
+          "key": "onibus_rodoviario",
+          "name": "Ônibus rodoviário",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo para transporte coletivo em trajetos rodoviários.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "veiculo",
+          "key": "micro_onibus",
+          "name": "Micro-ônibus",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de transporte coletivo de menor porte.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "veiculo",
+          "key": "quadriciclo",
+          "name": "Quadriciclo",
+          "category": "Veículos fora de estrada",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo leve para circulação em terrenos apropriados.",
+            "subcategoria": "Veículos fora de estrada",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_policial",
+          "name": "Motocicleta de serviço",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta configurada para atividade profissional.",
+            "subcategoria": "Motocicletas",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_grande_porte",
+          "name": "Motocicleta de grande porte",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta de maior porte para deslocamentos rodoviários.",
+            "subcategoria": "Motocicletas",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "veiculo",
+          "key": "lancha_motorizada",
+          "name": "Lancha motorizada",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação motorizada para deslocamento aquático.",
+            "subcategoria": "Embarcações",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "veiculo",
+          "key": "barco_pesca",
+          "name": "Barco de pesca",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação de uso pesqueiro.",
+            "subcategoria": "Embarcações",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "veiculo",
+          "key": "veleiro",
+          "name": "Veleiro",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação movida principalmente pela força do vento.",
+            "subcategoria": "Embarcações",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_aquatica",
+          "name": "Moto aquática",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo aquático individual motorizado.",
+            "subcategoria": "Embarcações",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_civil",
+          "name": "Helicóptero civil",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asas rotativas para transporte.",
+            "subcategoria": "Aeronaves",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_resgate",
+          "name": "Helicóptero de resgate",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de apoio a operações de busca e resgate.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_servico",
+          "name": "Helicóptero de serviço",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de uso profissional ou institucional.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_monomotor",
+          "name": "Avião monomotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave leve de asa fixa.",
+            "subcategoria": "Aeronaves",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_bimotor",
+          "name": "Avião bimotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asa fixa com dois motores.",
+            "subcategoria": "Aeronaves",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_carga",
+          "name": "Avião de transporte",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada ao transporte de carga.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_treinamento",
+          "name": "Aeronave de treinamento",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada a treinamento de voo.",
+            "subcategoria": "Aeronaves",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "veiculo",
+          "key": "caca_f16",
+          "name": "Caça F-16 Fighting Falcon",
+          "category": "Aeronaves militares",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave militar de combate. No sistema atual, exige Condução nível 5, conforme orientação do mestre.",
+            "subcategoria": "Aeronaves militares",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 5
+              }
+            ]
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "veiculo",
+          "key": "veiculo_blindado_transporte",
+          "name": "Veículo blindado de transporte",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo militar ou institucional de transporte protegido.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 24
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento VI — Ciências, Geologia e Laboratório",
+      "descricao": "Equipamentos de laboratório, análise científica, coleta de amostras, geologia e trabalho de campo. Os pré-requisitos usam apenas Conhecimentos e Talentos já presentes na ficha enviada.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — ciência e campo",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "microscopio_laboratorio",
+          "name": "Microscópio de laboratório",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento óptico para observação de amostras.",
+            "subcategoria": "Laboratório",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "microscopio_digital",
+          "name": "Microscópio digital",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de observação com captura e exibição digital.",
+            "subcategoria": "Laboratório",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "centrifuga_laboratorial",
+          "name": "Centrífuga laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de laboratório para processamento de amostras.",
+            "subcategoria": "Laboratório",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "balanca_analitica",
+          "name": "Balança analítica",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de pesagem de precisão.",
+            "subcategoria": "Medição científica",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "medidor_ph",
+          "name": "Medidor de pH",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medição de acidez e alcalinidade.",
+            "subcategoria": "Medição científica",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "espectrometro_portatil",
+          "name": "Espectrômetro portátil",
+          "category": "Análise científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento portátil para análise de propriedades de amostras.",
+            "subcategoria": "Análise científica",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "kit_reagentes_laboratorio",
+          "name": "Kit de reagentes de laboratório",
+          "category": "Química",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de reagentes para atividades laboratoriais supervisionadas.",
+            "subcategoria": "Química",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "capela_exaustao",
+          "name": "Capela de exaustão",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção coletiva para procedimentos laboratoriais.",
+            "subcategoria": "Laboratório",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "estufa_laboratorio",
+          "name": "Estufa de laboratório",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de laboratório para controle de temperatura.",
+            "subcategoria": "Laboratório",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "autoclave_laboratorial",
+          "name": "Autoclave laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de esterilização usado em ambientes apropriados.",
+            "subcategoria": "Laboratório",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "pipetas_laboratoriais",
+          "name": "Conjunto de pipetas laboratoriais",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumentos de medição e transferência de líquidos.",
+            "subcategoria": "Laboratório",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "vidraria_laboratorio",
+          "name": "Conjunto de vidrarias",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vidrarias para atividades de análise e experimentação.",
+            "subcategoria": "Laboratório",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "placa_aquecimento",
+          "name": "Placa de aquecimento laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de aquecimento controlado para laboratório.",
+            "subcategoria": "Laboratório",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_solo",
+          "name": "Kit de coleta de solo",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto para coleta e acondicionamento de amostras de solo.",
+            "subcategoria": "Geologia",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "martelo_geologico",
+          "name": "Martelo geológico",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta para trabalho de campo e estudo de rochas.",
+            "subcategoria": "Geologia",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "lupa_geologica",
+          "name": "Lupa geológica",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lupa para observação de minerais e detalhes de rochas.",
+            "subcategoria": "Geologia",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "peneira_geologica",
+          "name": "Peneira para amostras geológicas",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para separação e análise de amostras.",
+            "subcategoria": "Geologia",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "bussola_geologica",
+          "name": "Bússola geológica",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de orientação e levantamento em campo.",
+            "subcategoria": "Geologia",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "medidor_umidade_solo",
+          "name": "Medidor de umidade do solo",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento portátil para medição de umidade em amostras e terrenos.",
+            "subcategoria": "Geologia",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "sonda_terreno",
+          "name": "Sonda de terreno",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta para coleta ou observação de características do terreno.",
+            "subcategoria": "Geologia",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "kit_mapeamento_geologico",
+          "name": "Kit de mapeamento geológico",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais para registros e levantamentos geológicos.",
+            "subcategoria": "Geologia",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "caixa_amostras_minerais",
+          "name": "Caixa para amostras minerais",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo para organizar e transportar amostras minerais.",
+            "subcategoria": "Geologia",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "caderno_campo_cientifico",
+          "name": "Caderno de campo científico",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Caderno destinado a observações e registros de campo.",
+            "subcategoria": "Registro",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "termometro_ambiente",
+          "name": "Termômetro ambiental",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medição de temperatura do ambiente.",
+            "subcategoria": "Medição científica",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "barometro_portatil",
+          "name": "Barômetro portátil",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para observação da pressão atmosférica.",
+            "subcategoria": "Medição científica",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "medidor_radiacao",
+          "name": "Medidor portátil de radiação",
+          "category": "Segurança laboratorial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de monitoramento ambiental.",
+            "subcategoria": "Segurança laboratorial",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "kit_pesquisa_biologica",
+          "name": "Kit de pesquisa biológica",
+          "category": "Ciências",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto para observação e registro de materiais biológicos.",
+            "subcategoria": "Ciências",
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "kit_documentacao_cientifica",
+          "name": "Kit de documentação científica",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para identificação, catalogação e registro de amostras.",
+            "subcategoria": "Registro",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "maleta_instrumentos_cientificos",
+          "name": "Maleta de instrumentos científicos",
+          "category": "Transporte e organização",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maleta para acondicionar instrumentos de medição e análise.",
+            "subcategoria": "Transporte e organização",
+            "ordem": 28
+          },
+          "ordem": 28
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento VII — Medicina, Investigação e Resgate Avançado",
+      "descricao": "Equipamentos complementares de atendimento médico, resgate, documentação de evidências e investigação. Os requisitos de Medicina e Investigação são baseados nas perícias e conhecimentos existentes no dump da campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — atendimento e investigação",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "monitor_sinais_vitais",
+          "name": "Monitor de sinais vitais",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para acompanhamento de sinais vitais em atendimento.",
+            "subcategoria": "Medicina",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "ultrassom_portatil",
+          "name": "Ultrassom portátil",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de diagnóstico por imagem para uso profissional.",
+            "subcategoria": "Medicina",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "eletrocardiografo",
+          "name": "Eletrocardiógrafo",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registro de atividade elétrica cardíaca.",
+            "subcategoria": "Medicina",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "aspirador_hospitalar",
+          "name": "Aspirador hospitalar portátil",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de apoio a procedimentos de atendimento.",
+            "subcategoria": "Medicina",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "oxigenio_portatil",
+          "name": "Unidade portátil de oxigênio",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para suporte de oxigênio em contexto assistencial.",
+            "subcategoria": "Medicina",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "kit_trauma_avancado",
+          "name": "Bolsa avançada de trauma",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais para atendimento de trauma por profissional capacitado.",
+            "subcategoria": "Medicina",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "tala_vacuo",
+          "name": "Conjunto de talas a vácuo",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de imobilização para resgate e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "maca_cesto",
+          "name": "Maca tipo cesto",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maca para remoção e transporte em áreas de acesso difícil.",
+            "subcategoria": "Resgate",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "maca_prancha",
+          "name": "Prancha de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento rígido para movimentação e transporte de pessoas.",
+            "subcategoria": "Resgate",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "colchao_vacuo",
+          "name": "Colchão a vácuo",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de imobilização e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "kit_contencao_hemorragia",
+          "name": "Kit de controle de hemorragia",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais de atendimento emergencial.",
+            "subcategoria": "Medicina",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_laboratorial",
+          "name": "Kit de coleta laboratorial",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para coleta e acondicionamento de amostras clínicas.",
+            "subcategoria": "Medicina",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "swab_forense",
+          "name": "Kit de coleta por swab",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para coleta e acondicionamento de amostras para análise.",
+            "subcategoria": "Investigação",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "envelope_evidencia",
+          "name": "Envelopes para evidências",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embalagens para acondicionamento e identificação de evidências.",
+            "subcategoria": "Investigação",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "lacre_evidencia",
+          "name": "Lacres de evidência",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lacres numerados para organização e controle de materiais coletados.",
+            "subcategoria": "Investigação",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "luvas_forenses",
+          "name": "Luvas para coleta forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção utilizado em atividades de coleta.",
+            "subcategoria": "Investigação",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "kit_impressao_digital",
+          "name": "Kit de registro de impressões digitais",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para registro e documentação de impressões.",
+            "subcategoria": "Investigação",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "iluminador_forense_uv",
+          "name": "Iluminador UV forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de iluminação especializada para inspeção e documentação.",
+            "subcategoria": "Investigação",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "camera_forense",
+          "name": "Câmera para documentação forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera destinada ao registro de locais, objetos e evidências.",
+            "subcategoria": "Investigação",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "scanner_documentos",
+          "name": "Scanner portátil de documentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para digitalização e organização de documentos.",
+            "subcategoria": "Investigação",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "lupa_forense",
+          "name": "Lupa de inspeção forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de observação de detalhes em objetos e superfícies.",
+            "subcategoria": "Investigação",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "kit_croqui_local",
+          "name": "Kit de registro de local",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para anotações, medidas e representação de um local.",
+            "subcategoria": "Investigação",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "medidor_distancia_local",
+          "name": "Medidor de distância para perícia",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para registro de medidas em locais de investigação.",
+            "subcategoria": "Investigação",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "gravador_depoimento",
+          "name": "Gravador de depoimentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registro de entrevistas e depoimentos.",
+            "subcategoria": "Investigação",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "maleta_documentacao_forense",
+          "name": "Maleta de documentação forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo para acondicionamento de formulários e materiais de registro.",
+            "subcategoria": "Investigação",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "kit_resgate_altura",
+          "name": "Kit de resgate em altura",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de equipamentos de proteção e movimentação para resgate em altura.",
+            "subcategoria": "Resgate",
+            "ordem": 25,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "tripode_resgate",
+          "name": "Tripé de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estrutura de apoio para operações de resgate em locais confinados.",
+            "subcategoria": "Resgate",
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "detector_ambiente_resgate",
+          "name": "Detector ambiental portátil",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de monitoramento ambiental em áreas de risco.",
+            "subcategoria": "Resgate",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "manta_resgate",
+          "name": "Manta de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Manta de proteção e apoio em atendimento e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_identificacao_vitima",
+          "name": "Kit de identificação de atendimento",
+          "category": "Medicina e resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para identificação e organização de atendimentos.",
+            "subcategoria": "Medicina e resgate",
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 29
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento VIII — Profissões, Artes, Esportes e Animais",
+      "descricao": "Materiais e equipamentos associados a atividades profissionais, artísticas, esportivas e ao manejo de animais. Os pré-requisitos usam Talentos, Perícias e profissões já existentes na ficha, sem criar novas características.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — atividades e ofícios",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "kit_marcenaria",
+          "name": "Kit de marcenaria",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas para trabalhos de marcenaria.",
+            "subcategoria": "Ofícios",
+            "ordem": 0
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "bancada_marcenaria",
+          "name": "Bancada de trabalho",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bancada para atividades de montagem e reparo.",
+            "subcategoria": "Ofícios",
+            "ordem": 1
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "maquina_costura",
+          "name": "Máquina de costura",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para costura e reparos têxteis.",
+            "subcategoria": "Ofícios",
+            "ordem": 2
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "kit_couro",
+          "name": "Kit de trabalho em couro",
+          "category": "Ofícios",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas e materiais para trabalhos artesanais em couro.",
+            "subcategoria": "Ofícios",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "kit_ceramica",
+          "name": "Kit de cerâmica",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para modelagem e acabamento de peças cerâmicas.",
+            "subcategoria": "Artes",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "cavalete_pintura",
+          "name": "Cavalete de pintura",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Suporte para telas e atividades de pintura.",
+            "subcategoria": "Artes",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "tintas_profissionais",
+          "name": "Conjunto de tintas artísticas",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para pintura e expressão visual.",
+            "subcategoria": "Artes",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "kit_escultura",
+          "name": "Kit de escultura",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas para modelagem e escultura.",
+            "subcategoria": "Artes",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "kit_desenho_profissional",
+          "name": "Kit de desenho profissional",
+          "category": "Artes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para desenho, ilustração e esboço.",
+            "subcategoria": "Artes",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "teclado_musical",
+          "name": "Teclado musical",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento musical de teclas.",
+            "subcategoria": "Música",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "violao",
+          "name": "Violão",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento musical de cordas.",
+            "subcategoria": "Música",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "bateria_musical",
+          "name": "Bateria musical",
+          "category": "Música",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de instrumentos de percussão.",
+            "subcategoria": "Música",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "microfone_estudio",
+          "name": "Microfone de estúdio",
+          "category": "Música e gravação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Microfone para captação de voz e áudio.",
+            "subcategoria": "Música e gravação",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "mesa_som",
+          "name": "Mesa de som",
+          "category": "Música e gravação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para controle e mistura de sinais de áudio.",
+            "subcategoria": "Música e gravação",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "iluminacao_palco",
+          "name": "Kit de iluminação de palco",
+          "category": "Artes cênicas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamentos de iluminação para apresentações.",
+            "subcategoria": "Artes cênicas",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "kit_fotografia",
+          "name": "Kit de fotografia",
+          "category": "Fotografia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de acessórios para registro fotográfico.",
+            "subcategoria": "Fotografia",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "artista",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "bola_futebol",
+          "name": "Bola de futebol",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bola para prática de futebol.",
+            "subcategoria": "Esportes",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "kit_treinamento_atletico",
+          "name": "Kit de treinamento esportivo",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para exercícios e treinamento físico.",
+            "subcategoria": "Esportes",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "halteres",
+          "name": "Conjunto de halteres",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamentos de treinamento de força.",
+            "subcategoria": "Esportes",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "luvas_mma",
+          "name": "Luvas de combate esportivo",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Luvas utilizadas em modalidades esportivas de combate.",
+            "subcategoria": "Esportes",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "protetor_bucal_esportivo",
+          "name": "Protetor bucal esportivo",
+          "category": "Proteção esportiva",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção para atividades esportivas.",
+            "subcategoria": "Proteção esportiva",
+            "ordem": 20
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "tatame",
+          "name": "Tatame",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Superfície para práticas esportivas e treinamento.",
+            "subcategoria": "Esportes",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "bicicleta_competicao",
+          "name": "Bicicleta de competição",
+          "category": "Esportes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Bicicleta preparada para atividades esportivas.",
+            "subcategoria": "Esportes",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "prancha_surfe",
+          "name": "Prancha de surfe",
+          "category": "Esportes aquáticos",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para prática de surfe.",
+            "subcategoria": "Esportes aquáticos",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "esportes",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "guia_adestramento",
+          "name": "Guia de adestramento",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Guia e acessórios para condução de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "coleira_identificacao",
+          "name": "Coleira de identificação",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Coleira para identificação e condução de animal.",
+            "subcategoria": "Manejo animal",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "focinheira",
+          "name": "Focinheira",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de manejo e segurança animal.",
+            "subcategoria": "Manejo animal",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "caixa_transporte_animal",
+          "name": "Caixa de transporte animal",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Caixa apropriada para transporte de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "kit_higiene_animal",
+          "name": "Kit de higiene animal",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para higiene e cuidado de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 28
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_primeiros_socorros_veterinarios",
+          "name": "Kit de primeiros socorros veterinários",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto básico de materiais para cuidado inicial de animais.",
+            "subcategoria": "Manejo animal",
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 29
+        },
+        {
+          "kind": "item",
+          "key": "clicker_adestramento",
+          "name": "Clicker de adestramento",
+          "category": "Manejo animal",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Acessório para treinamento e associação de comandos.",
+            "subcategoria": "Manejo animal",
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "empatia_com_animal",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 30
+        }
+      ]
+    },
+    {
+      "titulo": "Suplemento IX — Tecnologia Profissional e Segurança Eletrônica",
+      "descricao": "Equipamentos complementares de computação, redes, eletrônica, manutenção técnica, monitoramento e segurança patrimonial. Os requisitos são ligados às habilidades existentes no dump, como Computador, Tecnologia e Segurança.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — infraestrutura e tecnologia",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "servidor_rack",
+          "name": "Servidor em rack",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Servidor para infraestrutura local de processamento e serviços.",
+            "subcategoria": "Computação",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "switch_rede",
+          "name": "Switch de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para interligação de dispositivos em rede.",
+            "subcategoria": "Redes",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "roteador_profissional",
+          "name": "Roteador profissional",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de roteamento para redes locais.",
+            "subcategoria": "Redes",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "access_point_profissional",
+          "name": "Ponto de acesso sem fio",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para fornecer conectividade sem fio.",
+            "subcategoria": "Redes",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "testador_cabos_rede",
+          "name": "Testador de cabos de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para verificação de cabos de comunicação.",
+            "subcategoria": "Redes",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "certificador_cabos",
+          "name": "Certificador de cabos",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de teste e certificação de cabeamento.",
+            "subcategoria": "Redes",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "analisador_espectro",
+          "name": "Analisador de espectro",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para análise de sinais.",
+            "subcategoria": "Eletrônica",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "terminal_diagnostico",
+          "name": "Terminal de diagnóstico",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação de acesso para diagnóstico de sistemas e equipamentos.",
+            "subcategoria": "Computação",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "osciloscopio_digital",
+          "name": "Osciloscópio digital",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de medição e visualização de sinais elétricos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "estacao_solda",
+          "name": "Estação de solda eletrônica",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para trabalho técnico em componentes eletrônicos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "fonte_bancada",
+          "name": "Fonte de alimentação de bancada",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de energia ajustável para atividades de manutenção.",
+            "subcategoria": "Eletrônica",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "kit_microeletronica",
+          "name": "Kit de manutenção eletrônica",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas para manutenção de componentes eletrônicos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "impressora_3d",
+          "name": "Impressora 3D",
+          "category": "Fabricação digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de fabricação aditiva para protótipos e peças.",
+            "subcategoria": "Fabricação digital",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "scanner_3d",
+          "name": "Scanner 3D",
+          "category": "Fabricação digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de captura tridimensional de objetos.",
+            "subcategoria": "Fabricação digital",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "camera_termica_industrial",
+          "name": "Câmera térmica industrial",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de inspeção térmica.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "controle_acesso_biometrico",
+          "name": "Controlador biométrico de acesso",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento eletrônico de controle de acesso.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "leitor_cartao_acesso",
+          "name": "Leitor de cartão de acesso",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Leitor para sistemas eletrônicos de controle de acesso.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "central_monitoramento",
+          "name": "Central de monitoramento",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação para acompanhar sistemas de monitoramento.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "detector_radiofrequencia",
+          "name": "Detector de radiofrequência",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de inspeção de sinais de radiofrequência.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "cftv_portatil",
+          "name": "Sistema portátil de CFTV",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto portátil de câmeras e registro de imagens.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "registrador_log_rede",
+          "name": "Registrador de eventos de rede",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento ou software de registro de eventos em rede.",
+            "subcategoria": "Computação",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "armazenamento_nas",
+          "name": "Servidor de armazenamento NAS",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sistema dedicado ao armazenamento em rede.",
+            "subcategoria": "Computação",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "firewall_hardware",
+          "name": "Firewall dedicado",
+          "category": "Segurança digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de segurança para infraestrutura de rede.",
+            "subcategoria": "Segurança digital",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "modem_satellite",
+          "name": "Modem via satélite",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de conectividade via satélite.",
+            "subcategoria": "Comunicação",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "repetidor_radio",
+          "name": "Repetidor de rádio",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para ampliar a cobertura de comunicação por rádio.",
+            "subcategoria": "Comunicação",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "antena_direcional",
+          "name": "Antena direcional",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Antena para sistemas de comunicação compatíveis.",
+            "subcategoria": "Comunicação",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "radio_base_operacional",
+          "name": "Rádio-base operacional",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação fixa de radiocomunicação.",
+            "subcategoria": "Comunicação",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "kit_interfonia",
+          "name": "Kit de interfonia",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de comunicação interna para instalações.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "kit_rede_cabeada",
+          "name": "Kit de instalação de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas e acessórios para instalação de rede.",
+            "subcategoria": "Redes",
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 28
+        }
+      ]
+    }
+  ]
+}

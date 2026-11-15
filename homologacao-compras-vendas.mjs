@@ -59,12 +59,25 @@ async function abrirCompra(page) {
   await modal.waitFor({ timeout: 5000 });
   return modal;
 }
-async function preencherCompra(page, modal, { item, qtd, valor, contaIdx }) {
-  if (item) await modal.locator("select").first().selectOption({ index: 1 });
-  else await modal.locator('input').first().fill("Item avulso E2E");
+// Seletores semânticos: o modal tem selects de catálogo, Acervo e conta —
+// posição fixa (nth) quebra quando o Acervo adiciona opções.
+const selCatalogo = (modal) => modal.locator("label", { hasText: "Item do catálogo" }).locator("select");
+const selContaCompra = (modal) => modal.locator("label", { hasText: "Conta que paga" }).locator("select");
+const selContaVenda = (modal) => modal.locator("label", { hasText: "Conta que recebe" }).locator("select");
+async function preencherCompra(page, modal, { item, qtd, valor, contaIdx, itemNome = "Poção de Cura" }) {
+  if (item) {
+    // Templates ligados ao Acervo podem mudar a ordenação da lista.
+    // Escolhe pelo nome do item manual esperado, nunca por nth/index.
+    const opcao = selCatalogo(modal).locator("option").filter({ hasText: itemNome }).first();
+    const value = await opcao.getAttribute("value");
+    if (!value) throw new Error(`Item de catálogo "${itemNome}" não apareceu no seletor`);
+    await selCatalogo(modal).selectOption(value);
+  } else {
+    await modal.locator('input').first().fill("Item avulso E2E");
+  }
   await modal.locator('input[type="number"]').nth(0).fill(String(qtd));
   await modal.locator('input[type="number"]').nth(1).fill(String(valor));
-  await modal.locator("select").nth(1).selectOption({ index: contaIdx ?? 1 });
+  await selContaCompra(modal).selectOption({ index: contaIdx ?? 1 });
 }
 const page_modal = (page) => page.locator(".modal");
 // Desktop usa a tabela; mobile usa os cartões — escolhe o botão visível
@@ -80,7 +93,7 @@ async function vender(page, { item, qtd, valor, contaIdx = 1 }) {
   await modal.waitFor({ timeout: 5000 });
   await modal.locator('input[type="number"]').nth(0).fill(String(qtd));
   await modal.locator('input[type="number"]').nth(1).fill(String(valor));
-  await modal.locator("select").first().selectOption({ index: contaIdx });
+  await selContaVenda(modal).selectOption({ index: contaIdx });
   return modal;
 }
 
@@ -89,6 +102,31 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_um" } });
+  const prerequisitoConducao = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "pericia", key: "conducao", name: "Condução",
+      definition: { prerequisitos: [] },
+    },
+  });
+  if (prerequisitoConducao.status !== 201) throw new Error(`Não foi possível criar perícia de homologação: ${prerequisitoConducao.status}`);
+  const regraVeiculoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "veiculo", key: "veiculo_catalogo_homologacao", name: "Veículo de homologação",
+      definition: { prerequisitos: [{ kind: "pericia", key: "conducao", minLevel: 1 }] },
+    },
+  });
+  if (regraVeiculoE2E.status !== 201) throw new Error(`Não foi possível criar veículo de homologação: ${regraVeiculoE2E.status}`);
+  const regraAcervoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "item", key: "kit_catalogo_homologacao", name: "Kit de catálogo E2E",
+      category: "Homologação",
+      definition: { descricao: "Elemento usado para validar vínculo no Catálogo", prerequisitos: [{ kind: "pericia", key: "conducao", minLevel: 5 }] },
+    },
+  });
+  if (regraAcervoE2E.status !== 201) throw new Error(`Não foi possível criar regra Acervo para homologação: ${regraAcervoE2E.status}`);
   const charJ = cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína CV");
   const cookieJ = cenario.jogadores.jogador1.cookie;
   // setup via API: contas BRL 100 + EUR 50, EUR configurada, item do catálogo
@@ -106,6 +144,16 @@ try {
     cookie: cenario.cookieMestre,
     body: { name: "Poção de Cura", category: "Consumível", description: "Restaura PV" },
   });
+  const templateRestrito = await req(BASE, "POST", `/campaigns/${cenario.campId}/inventario`, {
+    cookie: cenario.cookieMestre,
+    body: { name: "Kit de catálogo restrito", regra: { kind: "item", key: "kit_catalogo_homologacao" } },
+  });
+  if (templateRestrito.status !== 201) throw new Error(`Não foi possível criar template restrito: ${templateRestrito.status}`);
+  const templateVeiculo = await req(BASE, "POST", `/campaigns/${cenario.campId}/inventario`, {
+    cookie: cenario.cookieMestre,
+    body: { name: "Veículo de catálogo", regra: { kind: "veiculo", key: "veiculo_catalogo_homologacao" } },
+  });
+  if (templateVeiculo.status !== 201) throw new Error(`Não foi possível criar template de veículo: ${templateVeiculo.status}`);
   // item "legado": valueCents=TOTAL de compra antiga, sem marcador aquisicao
   await req(BASE, "POST", `/characters/${charJ}/inventario`, {
     cookie: cookieJ,
@@ -129,9 +177,22 @@ try {
   t("saldo EUR inicial 50 visível", /50/.test(saldoEur0 ?? ""), saldoEur0?.trim());
   await shot(pgJ, "01-saldos-iniciais");
 
-  sec("2. Compra de item do catálogo com débito em BRL");
+  sec("2. Template do Acervo mostra pré-requisito e bloqueia antes do pagamento");
   await abaPatrimonio(pgJ, "Inventário");
   let modal = await abrirCompra(pgJ);
+  await selCatalogo(modal).selectOption(templateRestrito.json.id);
+  const avisoRequisitoTemplate = modal.locator(".meta", { hasText: "Aquisição indisponível" });
+  t("template vinculado ao Acervo mostra bloqueio de pré-requisito", await avisoRequisitoTemplate.isVisible().catch(() => false), await avisoRequisitoTemplate.textContent().catch(() => ""));
+  t("template com pré-requisito não pode ser comprado pelo jogador", await modal.getByRole("button", { name: "Confirmar compra", exact: true }).isDisabled());
+  await shot(pgJ, "02-template-acervo-bloqueado");
+  await selCatalogo(modal).selectOption(templateVeiculo.json.id);
+  const avisoVeiculoTemplate = modal.locator(".meta.erro", { hasText: "aba Veículos" });
+  t("template kind:veiculo explica o fluxo correto", await avisoVeiculoTemplate.isVisible().catch(() => false), await avisoVeiculoTemplate.textContent().catch(() => ""));
+  t("template kind:veiculo não pode ser comprado como item", await modal.getByRole("button", { name: "Confirmar compra", exact: true }).isDisabled());
+  await modal.getByRole("button", { name: "Cancelar", exact: true }).click();
+
+  sec("3. Compra de item manual do catálogo com débito em BRL");
+  modal = await abrirCompra(pgJ);
   await preencherCompra(pgJ, modal, { item: true, qtd: 2, valor: 10, contaIdx: 1 });
   await shot(pgJ, "02-compra-modal-brl");
   await modal.getByRole("button", { name: "Confirmar compra" }).click();
@@ -149,7 +210,7 @@ try {
   await modal.locator('input').first().fill("Mapa do Tesouro");
   await modal.locator('input[type="number"]').nth(0).fill("1");
   await modal.locator('input[type="number"]').nth(1).fill("5");
-  const selConta = modal.locator("select").nth(1);
+  const selConta = selContaCompra(modal);
   await selConta.selectOption({ index: 1 }); // Carteira (BRL)
   const txtBrl = await modal.locator(".meta").allTextContents();
   t("moeda BRL exibida para conta BRL", txtBrl.some((x) => x.includes("BRL")), JSON.stringify(txtBrl));
@@ -172,7 +233,7 @@ try {
   await modal.locator('input').first().fill("Item minúsculo");
   await modal.locator('input[type="number"]').nth(0).fill("1");
   await modal.locator('input[type="number"]').nth(1).fill("0.001");
-  await modal.locator("select").nth(1).selectOption({ index: 1 });
+  await selContaCompra(modal).selectOption({ index: 1 });
   await modal.getByRole("button", { name: "Confirmar compra" }).click();
   await pgJ.waitForTimeout(1200);
   const erroVisivel = await pgJ.locator(".erro").first().textContent().catch(() => "");
@@ -269,6 +330,42 @@ try {
   await login(pgM, "mestre_teste", "senha-forte-123");
   await irCampanha(pgM);
   await abrirPersonagem(pgM, "Heroína CV");
+
+  sec("7.1 Mestre vincula e edita template do catálogo com o Acervo");
+  await abaPatrimonio(pgM, "Catálogo");
+  const seletorAcervo = pgM.getByLabel("Vínculo do Acervo");
+  await seletorAcervo.selectOption("item:kit_catalogo_homologacao");
+  const nomeTemplate = pgM.locator('input[placeholder="Nome do item"]');
+  t("selecionar Acervo preenche identidade canônica", await nomeTemplate.inputValue() === "Kit de catálogo E2E" && await nomeTemplate.isDisabled());
+  await pgM.getByRole("button", { name: "Adicionar ao catálogo" }).click();
+  // A linha antiga "Kit de catálogo restrito" também exibe "Kit de catálogo E2E"
+  // na coluna do vínculo. Identifica o template recém-criado pela PRIMEIRA
+  // coluna (nome próprio), evitando editar o registro antigo por colisão textual.
+  const linhasTemplate = pgM.locator("tr").filter({
+    has: pgM.locator("td").nth(0).getByText("Kit de catálogo E2E", { exact: true }),
+  });
+  await linhasTemplate.first().waitFor({ timeout: 5000 });
+  if (await linhasTemplate.count() !== 1) throw new Error("Template E2E recém-criado não é único no catálogo");
+  const linhaTemplate = linhasTemplate.first();
+  t("mestre cria template com vínculo ao Acervo", (await linhaTemplate.textContent() ?? "").includes("Kit de catálogo E2E"));
+  await linhaTemplate.getByRole("button", { name: "Editar" }).click();
+  await seletorAcervo.selectOption({ value: "" });
+  await pgM.getByRole("button", { name: "Salvar alterações" }).click();
+  const catalogoDepoisEdicao = await req(BASE, "GET", `/campaigns/${cenario.campId}/inventario`, { cookie: cenario.cookieMestre });
+  const templateDepoisEdicao = catalogoDepoisEdicao.json?.itens?.find((i) => i.name === "Kit de catálogo E2E");
+  t("API confirma remoção do vínculo no template", catalogoDepoisEdicao.status === 200 && templateDepoisEdicao?.data?.regra === undefined, JSON.stringify({ status: catalogoDepoisEdicao.status, data: templateDepoisEdicao?.data }));
+  const linhasSemVinculo = pgM.locator("tr").filter({
+    has: pgM.locator("td").nth(0).getByText("Kit de catálogo E2E", { exact: true }),
+  });
+  await linhasSemVinculo.first().waitFor({ timeout: 5000 });
+  if (await linhasSemVinculo.count() !== 1) throw new Error("Template editado deixou de ser único no catálogo");
+  const linhaSemVinculo = linhasSemVinculo.first();
+  // A API já confirmou a remoção; a UI recarrega o catálogo de forma
+  // assíncrona. Aguarda a célula de vínculo chegar a "Manual" — se o
+  // estado nunca refletir, o waitFor estoura e a falha continua real.
+  await linhaSemVinculo.locator("td").nth(3).getByText("Manual", { exact: true }).waitFor({ timeout: 5000 });
+  t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"), await linhaSemVinculo.textContent());
+
   await abaPatrimonio(pgM, "Dinheiro");
   const saldoM = await saldoTag(pgM);
   t("mestre vê saldo 89,99 idêntico", /89[.,]99/.test(saldoM ?? ""), saldoM?.trim());

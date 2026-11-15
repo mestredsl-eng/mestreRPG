@@ -20,7 +20,14 @@
           "definition": {
             "descricao": "Estojo com materiais para fechamento de ferimentos, destinado a profissionais habilitados. O uso inadequado pode agravar lesões e deixar marcas.",
             "subcategoria": "Medicina de campo",
-            "ordem": 0
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 0
         },
@@ -33,7 +40,14 @@
           "definition": {
             "descricao": "Equipamento de emergência para situações específicas de parada cardíaca. Exige treinamento e avaliação do cenário.",
             "subcategoria": "Medicina de campo",
-            "ordem": 1
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 1
         },
@@ -46,7 +60,14 @@
           "definition": {
             "descricao": "Dispositivo que estima a saturação de oxigênio e a frequência cardíaca. Leituras devem ser interpretadas no contexto clínico.",
             "subcategoria": "Medicina de campo",
-            "ordem": 2
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 2
         },
@@ -59,7 +80,14 @@
           "definition": {
             "descricao": "Instrumento para auscultar sons cardíacos, respiratórios e outros sinais corporais.",
             "subcategoria": "Medicina de campo",
-            "ordem": 3
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 3
         },
@@ -72,7 +100,14 @@
           "definition": {
             "descricao": "Instrumento portátil para aferição de temperatura corporal.",
             "subcategoria": "Medicina de campo",
-            "ordem": 4
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 4
         },
@@ -85,7 +120,14 @@
           "definition": {
             "descricao": "Conjunto de talas e faixas para restringir movimentos de membros lesionados durante o transporte.",
             "subcategoria": "Medicina de campo",
-            "ordem": 5
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 5
         },
@@ -98,7 +140,14 @@
           "definition": {
             "descricao": "Maca portátil para remoção de pessoas feridas. Requer espaço e mais de um operador em muitos cenários.",
             "subcategoria": "Resgate",
-            "ordem": 6
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 6
         },
@@ -189,7 +238,14 @@
           "definition": {
             "descricao": "Embalagens, etiquetas e instrumentos básicos para acondicionar vestígios sem misturá-los. A cadeia de custódia deve ser registrada.",
             "subcategoria": "Investigação",
-            "ordem": 13
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 13
         },
@@ -202,7 +258,14 @@
           "definition": {
             "descricao": "Câmera para registro de cenas, objetos e documentos. Data, contexto e escala das imagens devem ser preservados.",
             "subcategoria": "Investigação",
-            "ordem": 14
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 14
         },
@@ -228,7 +291,14 @@
           "definition": {
             "descricao": "Gravador portátil para entrevistas e registros autorizados. O uso deve respeitar a legislação e o consentimento aplicável.",
             "subcategoria": "Investigação",
-            "ordem": 16
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 16
         },
@@ -280,7 +350,14 @@
           "definition": {
             "descricao": "Equipamento para digitalizar documentos em campo, preservando cópias de consulta.",
             "subcategoria": "Investigação",
-            "ordem": 20
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 20
         },
@@ -293,7 +370,14 @@
           "definition": {
             "descricao": "Equipamento para registrar entrevistas, deslocamentos e ocorrências, conforme autorização e regras locais.",
             "subcategoria": "Investigação",
-            "ordem": 21
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 21
         },
@@ -410,7 +494,14 @@
           "definition": {
             "descricao": "Corda destinada a atividades técnicas específicas. Carga, inspeção, ancoragem e treinamento são indispensáveis.",
             "subcategoria": "Resgate",
-            "ordem": 30
+            "ordem": 30,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 30
         },
@@ -423,7 +514,14 @@
           "definition": {
             "descricao": "Conectores para sistemas de segurança compatíveis. Devem ser inspecionados e usados conforme especificação.",
             "subcategoria": "Resgate",
-            "ordem": 31
+            "ordem": 31,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ]
           },
           "ordem": 31
         },

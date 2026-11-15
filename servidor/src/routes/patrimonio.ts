@@ -11,12 +11,14 @@ import {
   moneyTransactions,
   operacaoEstornos,
   itemTemplates,
+  sheetVersions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { somenteEnviados } from "../lib/parcial.js";
-import { carregarRegras, configRegrasSchema } from "../lib/regras.js";
+import { carregarRegras, configRegrasSchema, avaliarPrerequisitosAquisicao, type ElementoRegra } from "../lib/regras.js";
+import { estruturaFichaSchema } from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 
@@ -50,6 +52,125 @@ async function acessoOuErro(req: Request, res: import("express").Response): Prom
 async function configPatrimonio(campaignId: string) {
   const regras = await carregarRegras(campaignId);
   return regras.config;
+}
+
+// ---------- Pré-requisitos do Acervo em aquisições de patrimônio ----------
+
+const regraRefSchema = z.object({
+  kind: z.string().min(1).max(40),
+  key: z.string().min(1).max(80),
+});
+export type RegraRef = z.infer<typeof regraRefSchema>;
+
+/** Lê o vínculo salvo pelo mestre no template; valores inválidos falham fechado. */
+function lerRegraTemplate(data: unknown): { regra: RegraRef | null; invalida: boolean } {
+  const registro = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const raw = registro.regra;
+  if (raw === undefined || raw === null) return { regra: null, invalida: false };
+  const parsed = regraRefSchema.safeParse(raw);
+  return parsed.success
+    ? { regra: parsed.data, invalida: false }
+    : { regra: null, invalida: true };
+}
+
+function mesmaRegraRef(a: RegraRef | null | undefined, b: RegraRef | null | undefined): boolean {
+  return (a?.kind ?? null) === (b?.kind ?? null) && (a?.key ?? null) === (b?.key ?? null);
+}
+
+/** Estrutura publicada da ficha do personagem (null se não houver). */
+async function estruturaDoPersonagem(p: typeof characters.$inferSelect) {
+  if (!p.templateVersionId) return null;
+  const [v] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, p.templateVersionId)).limit(1);
+  if (!v) return null;
+  const parse = estruturaFichaSchema.safeParse(v.structure);
+  return parse.success ? parse.data : null;
+}
+
+/**
+ * Valida pré-requisitos de um elemento do Acervo contra a ficha do
+ * personagem. Retorna null quando a aquisição é permitida; caso
+ * contrário {status, erro} pronto para res.json. O mestre só ignora
+ * com `ignorarPrerequisitos === true` explícito — auditado pelo caller.
+ */
+interface AvaliacaoAquisicao {
+  /** elemento canônico resolvido no ruleset da campanha (null sem vínculo) */
+  elemento: ElementoRegra | null;
+  /** resposta de erro pronta, ou null quando a aquisição é permitida */
+  negacao: { status: number; erro: string; detalhes?: unknown } | null;
+  /** mestre ignorou explicitamente — caller DEVE auditar */
+  bypass: boolean;
+}
+
+/**
+ * Caminho canônico de avaliação de pré-requisitos do Acervo. Resolve o
+ * elemento em rule_definitions (nunca confia em nome/dados do cliente) e
+ * delega a `avaliarPrerequisitosAquisicao` (motor único em regras.ts).
+ * Mestre só passa com `ignorar === true` explícito — bypass auditável.
+ */
+async function avaliarAquisicao(
+  a: Acesso,
+  regra: RegraRef | undefined,
+  ignorar: boolean | undefined,
+  alvo: typeof characters.$inferSelect = a.personagem,
+): Promise<AvaliacaoAquisicao> {
+  const vazio = { elemento: null, negacao: null, bypass: false };
+  if (!regra) return vazio;
+  const estrutura = await estruturaDoPersonagem(alvo);
+  if (!estrutura) {
+    return { ...vazio, negacao: { status: 403, erro: "Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo" } };
+  }
+  const regras = await carregarRegras(alvo.campaignId);
+  const dados = (alvo.data ?? {}) as Record<string, unknown>;
+  const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, regra.kind, regra.key);
+  if (r.ok) return { elemento: r.elemento, negacao: null, bypass: false };
+
+  // O bypass só ignora níveis insuficientes de requisitos existentes.
+  // Nunca pode reativar elemento desativado, aceitar referência inexistente
+  // ou mascarar pré-requisito apontando para chave ausente nas regras.
+  const elementoDesativado = r.elemento?.definition.disponivel === false;
+  const prerequisitoInvalido = r.requisitos.some((q) => q.inexistente || q.indisponivel);
+  const prerequisitoIndisponivel = r.requisitos.some((q) => q.indisponivel);
+  const podeIgnorar = !!r.elemento && !elementoDesativado && !prerequisitoInvalido;
+  if (a.ehMestre && ignorar === true && podeIgnorar) {
+    return { elemento: r.elemento, negacao: null, bypass: true };
+  }
+
+  const erro = !r.elemento
+    ? "Elemento do Acervo não encontrado"
+    : elementoDesativado
+      ? `"${r.elemento.name}" está desativado nesta campanha`
+      : prerequisitoIndisponivel
+        ? `"${r.elemento.name}" possui pré-requisito desativado nas regras da campanha`
+        : prerequisitoInvalido
+          ? `"${r.elemento.name}" possui pré-requisito inexistente nas regras da campanha`
+          : `Pré-requisitos não atendidos para "${r.elemento.name}"`;
+  return {
+    elemento: r.elemento,
+    bypass: false,
+    negacao: {
+      status: 403,
+      erro,
+      detalhes: { requisitos: r.requisitos, mensagens: r.mensagens },
+    },
+  };
+}
+
+/** Aplica a identidade canônica do elemento ao registro persistido:
+ *  nome/categoria/descrição vêm do ruleset — o cliente não pode usar a
+ *  referência de um elemento livre para "vestir" outro nome. */
+function identidadeDoElemento<T extends { name: string; category?: string | null; description?: string | null }>(
+  base: T, elemento: ElementoRegra | null,
+): T {
+  if (!elemento) return base;
+  const descricao = (elemento.definition as { descricao?: string }).descricao;
+  return {
+    ...base,
+    name: elemento.name,
+    category: elemento.category ?? base.category ?? null,
+    description: descricao ?? base.description ?? null,
+  };
 }
 
 const paraCentavos = (valor: number, casas: number) => Math.round(valor * 10 ** casas);
@@ -126,6 +247,10 @@ function limparEstadoInventario(data: Record<string, unknown> | undefined) {
   if (!data) return data;
   const limpo = { ...data };
   delete limpo.equipped;
+  // `regra` e `templateId` são procedência controlada pelo servidor:
+  // nunca aceitos dentro de data enviada pelo cliente.
+  delete limpo.regra;
+  delete limpo.templateId;
   return limpo;
 }
 
@@ -158,7 +283,59 @@ const itemSchema = z.object({
   valueCents: z.number().int().optional(),
   transferable: z.boolean().default(true),
   templateId: z.string().optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
+});
+
+/** GET /api/characters/:id/patrimonio/requisitos — disponibilidade de
+ *  cada elemento do Acervo (item/veiculo) para ESTE personagem, calculada
+ *  pelo motor canônico. A UI consome sem duplicar regras. */
+patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
+  const a = await acessoOuErro(req, res); if (!a) return;
+  const regras = await carregarRegras(a.personagem.campaignId);
+  const elementos = [...regras.porKind.entries()]
+    .filter(([kind]) => kind === "item" || kind === "veiculo")
+    .flatMap(([, els]) => els.filter((e) => e.definition.disponivel !== false));
+  const estrutura = await estruturaDoPersonagem(a.personagem);
+  const dados = (a.personagem.data ?? {}) as Record<string, unknown>;
+  const mapa: Record<string, {
+    ok: boolean; nome: string; categoria: string | null;
+    prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean; inexistente?: boolean; indisponivel?: boolean }[];
+    mensagens: string[];
+  }> = {};
+  for (const el of elementos) {
+    const chave = `${el.kind}:${el.key}`;
+    if (!estrutura) {
+      // A API de aquisição já falha fechado sem ficha publicada; a UI
+      // precisa receber o mesmo bloqueio para não exibir disponibilidade falsa.
+      mapa[chave] = {
+        ok: false, nome: el.name, categoria: el.category,
+        prerequisitos: (el.definition.prerequisitos ?? []).map((p) => {
+          const alvo = regras.elementos.get(`${p.kind}:${p.key}`);
+          return {
+            kind: p.kind, key: p.key,
+            nome: alvo?.name ?? `${p.kind}:${p.key}`,
+            minLevel: p.minLevel ?? 1, nivelAtual: 0, atendido: false,
+            inexistente: !alvo, indisponivel: !!alvo && alvo.definition.disponivel === false,
+          };
+        }),
+        mensagens: ["Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo"],
+      };
+      continue;
+    }
+    const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, el.kind, el.key);
+    mapa[chave] = {
+      ok: r.ok, nome: el.name, categoria: el.category,
+      prerequisitos: r.requisitos.map((q) => ({
+        kind: q.kind, key: q.key, nome: q.nome,
+        minLevel: q.minLevel, nivelAtual: q.nivelAtual, atendido: q.atendido,
+        inexistente: q.inexistente, indisponivel: q.indisponivel,
+      })),
+      mensagens: r.mensagens,
+    };
+  }
+  res.json({ requisitos: mapa });
 });
 
 /** GET /api/characters/:id/inventario */
@@ -186,18 +363,92 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorAdicionaItens) {
     res.status(403).json({ erro: "Você não pode adicionar itens nesta campanha" }); return;
   }
+  // Quando há templateId, o vínculo salvo no catálogo pelo mestre é a
+  // única autoridade. A regra enviada pelo jogador nunca substitui o template.
+  let template: typeof itemTemplates.$inferSelect | null = null;
+  let regraEfetiva = body.data.regra;
+  if (body.data.templateId) {
+    const [tpl] = await db.select().from(itemTemplates).where(and(
+      eq(itemTemplates.id, body.data.templateId),
+      eq(itemTemplates.campaignId, a.personagem.campaignId),
+      eq(itemTemplates.isActive, true),
+    )).limit(1);
+    if (!tpl) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    template = tpl;
+    const vinculo = lerRegraTemplate(tpl.data);
+    if (vinculo.invalida) { res.status(409).json({ erro: "Vínculo do Acervo no item do catálogo é inválido" }); return; }
+    if (body.data.regra && !mesmaRegraRef(body.data.regra, vinculo.regra)) {
+      res.status(403).json({ erro: "A referência do Acervo deve corresponder ao vínculo definido no catálogo" }); return;
+    }
+    regraEfetiva = vinculo.regra ?? undefined;
+  }
+  if (regraEfetiva && regraEfetiva.kind !== "item") {
+    res.status(400).json({ erro: "Somente elementos kind:item podem ser adicionados ao inventário" }); return;
+  }
+  const av = await avaliarAquisicao(a, regraEfetiva, body.data.ignorarPrerequisitos);
+  if (av.negacao) { res.status(av.negacao.status).json({ erro: av.negacao.erro, detalhes: av.negacao.detalhes }); return; }
+  if (av.bypass && regraEfetiva) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraEfetiva });
+  }
   const agora = new Date();
   const id = crypto.randomUUID();
-  const { templateId, valueCents, transferable, data, ...resto } = body.data;
-  await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto, data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
-  });
+  const { templateId: _templateId, valueCents, transferable, data, ignorarPrerequisitos, ...resto } = body.data;
+  let templateFinal = template;
+  try {
+    db.transaction((tx) => {
+      if (template) {
+        // Revalidação do template e do vínculo dentro da mesma transação da
+        // gravação: uma edição concorrente no catálogo não contorna a regra.
+        const [tplTx] = tx.select().from(itemTemplates).where(and(
+          eq(itemTemplates.id, template.id),
+          eq(itemTemplates.campaignId, a.personagem.campaignId),
+          eq(itemTemplates.isActive, true),
+        )).limit(1).all();
+        if (!tplTx) throw new Error("template_sumiu");
+        const vinculoTx = lerRegraTemplate(tplTx.data);
+        if (vinculoTx.invalida || !mesmaRegraRef(vinculoTx.regra, regraEfetiva ?? null)) {
+          throw new Error("template_regra_mudou");
+        }
+        templateFinal = tplTx;
+      }
+
+      const dadosTemplate = (templateFinal?.data ?? {}) as Record<string, unknown>;
+      const ident = identidadeDoElemento({
+        ...resto,
+        name: templateFinal?.name ?? resto.name,
+        category: templateFinal?.category ?? resto.category,
+        description: templateFinal?.description ?? resto.description,
+      }, av.elemento);
+      const dadosFinais = limparEstadoInventario({ ...dadosTemplate, ...(data ?? {}) }) ?? {};
+      delete dadosFinais.templateId;
+      if (templateFinal) dadosFinais.templateId = templateFinal.id;
+      const valorTemplate = typeof dadosTemplate.valueCents === "number" ? dadosTemplate.valueCents : undefined;
+      dadosFinais.valueCents = valueCents ?? valorTemplate;
+      dadosFinais.transferable = transferable;
+      if (regraEfetiva) dadosFinais.regra = regraEfetiva;
+
+      const pesoTemplate = typeof dadosTemplate.weight === "number" ? dadosTemplate.weight : undefined;
+      tx.insert(inventoryEntries).values({
+        id, characterId: a.personagem.id, name: ident.name, quantity: ident.quantity,
+        description: ident.description ?? null, category: ident.category ?? null,
+        location: resto.location ?? null, condition: resto.condition ?? null,
+        weight: resto.weight ?? pesoTemplate ?? null,
+        data: dadosFinais,
+        createdAt: agora, updatedAt: agora,
+      }).run();
+    });
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    if (msg.includes("template_regra_mudou")) { res.status(409).json({ erro: "O vínculo do Acervo mudou durante a aquisição — atualize e tente novamente" }); return; }
+    throw e;
+  }
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
 });
 
-const itemPatchSchema = itemSchema.partial().omit({ templateId: true });
+const itemPatchSchema = itemSchema.partial().omit({ templateId: true, regra: true, ignorarPrerequisitos: true });
 
 /** PATCH /api/characters/:id/inventario/:itemId */
 patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
@@ -276,6 +527,7 @@ patrimonioRouter.delete("/inventario/:itemId", async (req, res) => {
 const transferirSchema = z.object({
   destinoCharacterId: z.string().min(1),
   quantidade: z.number().positive().optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
 });
 
 /** POST /api/characters/:id/inventario/:itemId/transferir — move item (ou parte) para outro personagem da mesma campanha */
@@ -292,6 +544,21 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
     res.status(400).json({ erro: "Destino inválido" }); return;
   }
   const qtdPedida = body.data.quantidade;
+
+  // Item vinculado a elemento do Acervo: o DESTINO precisa atender aos
+  // pré-requisitos (mesmo caminho canônico da aquisição). O bypass é
+  // explícito (ignorarPrerequisitos), exclusivo do mestre e auditado —
+  // sem a flag, o mestre também respeita os requisitos.
+  const regraItem = ((item.data ?? {}) as { regra?: RegraRef }).regra;
+  if (regraItem) {
+    const avTr = await avaliarAquisicao(a, regraItem, body.data.ignorarPrerequisitos, destino);
+    if (avTr.negacao) {
+      res.status(avTr.negacao.status).json({ erro: `O personagem de destino não atende aos pré-requisitos do item`, detalhes: avTr.negacao.detalhes }); return;
+    }
+    if (avTr.bypass) {
+      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: destino.id, regra: regraItem, tipo: "transferencia", de: a.personagem.id });
+    }
+  }
 
   // Releitura do item, verificação de vínculos/equipado e mutação na
   // MESMA transação — um equipar concorrente não cria vínculo no meio
@@ -358,6 +625,8 @@ const equipSchema = z.object({
   equipped: z.boolean().default(false),
   description: z.string().max(4000).optional(),
   inventoryEntryId: z.string().optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -375,6 +644,14 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
+  }
+  if (body.data.regra && body.data.regra.kind !== "item") {
+    res.status(400).json({ erro: "Equipamentos do Acervo devem referenciar elementos kind:item" }); return;
+  }
+  const avEq = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (avEq.negacao) { res.status(avEq.negacao.status).json({ erro: avEq.negacao.erro, detalhes: avEq.negacao.detalhes }); return; }
+  if (avEq.bypass && body.data.regra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "equipamento" });
   }
   // Ocupação de slot verificada dentro da transação (consistência com
   // POST /equipar): dois cadastros simultâneos não tomam o mesmo slot.
@@ -394,10 +671,15 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
     // injetar procedência falsa via data/origem/inventoryEntryId.
     tx.insert(equipmentEntries).values({
       id, characterId: a.personagem.id,
-      name: body.data.name, kind: body.data.kind ?? null,
+      name: avEq.elemento?.name ?? body.data.name, kind: body.data.kind ?? null,
       slot: body.data.slot ?? null, equipped: body.data.equipped,
       description: body.data.description ?? null,
-      data: limparProcedencia(body.data.data) ?? {},
+      data: (() => {
+        const limpo = limparProcedencia(body.data.data) ?? {};
+        delete limpo.regra;
+        if (body.data.regra) limpo.regra = body.data.regra;
+        return limpo;
+      })(),
       createdAt: agora, updatedAt: agora,
     }).run();
   });
@@ -595,7 +877,14 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
     // requestId), que é mesclada preservando os valores do servidor.
     const { data: dataEnviada, ...resto } = d;
     const dataFinal = dataEnviada !== undefined
-      ? { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limparProcedencia(dataEnviada) }
+      ? (() => {
+          // `regra` é vínculo validado na aquisição — o PATCH não pode
+          // forjá-lo nem removê-lo via data.
+          const limpo = limparProcedencia(dataEnviada) ?? {};
+          delete limpo.regra;
+          const regraAtual = ((eqpTx.data ?? {}) as Record<string, unknown>).regra;
+          return { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limpo, ...(regraAtual !== undefined ? { regra: regraAtual } : {}) };
+        })()
       : eqpTx.data;
     tx.update(equipmentEntries).set({
       name: resto.name ?? eqpTx.name,
@@ -665,6 +954,8 @@ const veiculoSchema = z.object({
   fuel: z.string().max(120).optional(),
   capacity: z.string().max(120).optional(),
   ownership: z.enum(["propriedade", "compartilhado"]).default("propriedade"),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -682,10 +973,23 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaVeiculos) {
     res.status(403).json({ erro: "Edição de veículos não permitida" }); return;
   }
-  const { valueCents, data, ...resto } = body.data;
+  if (body.data.regra && body.data.regra.kind !== "veiculo") {
+    res.status(400).json({ erro: "Veículos devem referenciar elementos kind:veiculo" }); return;
+  }
+  const avV = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (avV.negacao) { res.status(avV.negacao.status).json({ erro: avV.negacao.erro, detalhes: avV.negacao.detalhes }); return; }
+  if (avV.bypass && body.data.regra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "veiculo" });
+  }
+  const { valueCents, data, regra, ignorarPrerequisitos, ...resto } = body.data;
+  const dataSemRegra = { ...data };
+  delete dataSemRegra.regra;
   const agora = new Date();
   const id = crypto.randomUUID();
-  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, data: { ...data, valueCents }, createdAt: agora, updatedAt: agora });
+  // Identidade canônica do elemento do Acervo (nome; kind é o tipo
+  // do veículo — categoria do elemento não o substitui).
+  const nomeVeiculo = avV.elemento?.name ?? resto.name;
+  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, name: nomeVeiculo, data: { ...dataSemRegra, valueCents, ...(regra ? { regra } : {}) }, createdAt: agora, updatedAt: agora });
   await audit(req, "veiculo.criado", { characterId: a.personagem.id, veiculoId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -701,11 +1005,14 @@ patrimonioRouter.patch("/veiculos/:veiculoId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [v] = await db.select().from(vehicles).where(and(eq(vehicles.id, req.params.veiculoId), eq(vehicles.characterId, a.personagem.id))).limit(1);
   if (!v) { res.status(404).json({ erro: "Veículo não encontrado" }); return; }
-  const { valueCents, data, ...resto } = somenteEnviados(body.data, req.body);
+  const { valueCents, data, regra: _regraPatch, ignorarPrerequisitos: _ignorarPatch, ...resto } = somenteEnviados(body.data, req.body);
   const dAtual = (v.data ?? {}) as Record<string, unknown>;
+  // `regra` é imutável após a aquisição (vínculo validado no servidor).
+  const dataSemRegra = { ...(data ?? {}) };
+  delete dataSemRegra.regra;
   await db.update(vehicles).set({
     ...resto,
-    data: { ...dAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}) },
+    data: { ...dAtual, ...dataSemRegra, ...(valueCents !== undefined ? { valueCents } : {}) },
     updatedAt: new Date(),
   }).where(eq(vehicles.id, v.id));
   emitir(a.personagem);
@@ -1054,6 +1361,8 @@ const operacaoSchema = z.object({
   quantidade: z.number().positive().optional(),
   contraparte: z.string().max(160).optional(),
   requestId: z.string().max(120).optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
 });
 
 /** Metadados persistidos na movimentação para rastreio e estorno. */
@@ -1126,6 +1435,46 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     }
   } else if (!body.data.item && !body.data.templateId) {
     res.status(400).json({ erro: "Compra requer dados do item ou templateId do catálogo" }); return;
+  }
+
+  // Vínculo template→Acervo: o template é relido aqui para resolver o
+  // elemento associado (data.regra gravada pelo mestre no catálogo).
+  // Quando o template tem vínculo, ELE é a autoridade — o cliente não
+  // pode trocar os requisitos enviando outro kind:key.
+  let tplRegra: RegraRef | null = null;
+  if (isCompra && body.data.templateId) {
+    const [tplPre] = await db.select().from(itemTemplates)
+      .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
+      .limit(1).all();
+    if (!tplPre) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    const vinculo = lerRegraTemplate(tplPre.data);
+    if (vinculo.invalida) { res.status(409).json({ erro: "Vínculo do Acervo no item do catálogo é inválido" }); return; }
+    tplRegra = vinculo.regra;
+    for (const tentativa of [body.data.regra, body.data.item?.regra]) {
+      if (tentativa && !mesmaRegraRef(tentativa, tplRegra)) {
+        res.status(403).json({ erro: "A referência do Acervo deve corresponder ao vínculo definido no catálogo" }); return;
+      }
+    }
+  }
+  // Com templateId, ausência de vínculo significa item legado/manual:
+  // nunca permita que metadados enviados pelo navegador criem outro vínculo.
+  const regraCompra = body.data.templateId
+    ? tplRegra ?? undefined
+    : body.data.regra ?? body.data.item?.regra;
+
+  // Esta operação sempre cria inventory_entries. Veículos pertencem à rota
+  // /veiculos e não podem entrar no inventário por chamada direta à API.
+  if (regraCompra && regraCompra.kind !== "item") {
+    res.status(400).json({ erro: "Compras do patrimônio devem referenciar elementos kind:item" }); return;
+  }
+
+  // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
+  const avOp = isCompra ? await avaliarAquisicao(a, regraCompra ?? undefined, body.data.ignorarPrerequisitos) : { elemento: null, negacao: null, bypass: false };
+  if (avOp.negacao) {
+    res.status(avOp.negacao.status).json({ erro: avOp.negacao.erro, detalhes: avOp.negacao.detalhes }); return;
+  }
+  if (avOp.bypass && regraCompra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraCompra, tipo: "compra" });
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
@@ -1203,6 +1552,10 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
           .limit(1).all();
         if (!tpl) throw new Error("template_sumiu");
+        const vinculoTx = lerRegraTemplate(tpl.data);
+        if (vinculoTx.invalida || !mesmaRegraRef(vinculoTx.regra, tplRegra)) {
+          throw new Error("template_regra_mudou");
+        }
         tplTx = tpl;
         templateValidado = tpl.id;
       }
@@ -1222,12 +1575,18 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
         const unitExato = cents / qtd;
         const unitCents = Number.isInteger(unitExato) ? unitExato : null;
-        const itemNome = itemDados?.name ?? tplTx?.name ?? "item";
+        // Com vínculo ao Acervo, a identidade é a do elemento resolvido:
+        // o nome enviado pelo cliente não pode "vestir" outro item.
+        const identCompra = identidadeDoElemento({
+          name: itemDados?.name ?? tplTx?.name ?? "item",
+          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          description: itemDados?.description ?? tplTx?.description ?? undefined,
+        }, avOp.elemento);
         tx.insert(inventoryEntries).values({
           id: novoItemId, characterId: a.personagem.id,
-          name: itemNome, quantity: qtd,
-          description: itemDados?.description ?? tplTx?.description ?? undefined,
-          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          name: identCompra.name, quantity: qtd,
+          description: identCompra.description ?? undefined,
+          category: identCompra.category ?? undefined,
           location: itemDados?.location, condition: itemDados?.condition,
           weight: itemDados?.weight ?? (tplData.weight as number | undefined),
           data: (() => {
@@ -1240,6 +1599,9 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             // item.data, item.templateId ou tplData — só tplTx.id
             // (template relido e validado na transação) pode persistir.
             delete mesclado.templateId;
+            // `regra` só pode vir de regraCompra (validada no servidor);
+            // nunca de templateData/item.data forjados pelo cliente.
+            delete mesclado.regra;
             if (tplTx) mesclado.templateId = tplTx.id;
             // Campos internos sempre definidos pelo servidor.
             mesclado.valueCents = unitCents ?? undefined;
@@ -1250,6 +1612,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             };
             mesclado.origem = "compra";
             mesclado.operacaoId = requestId;
+            if (regraCompra) mesclado.regra = regraCompra;
             return mesclado;
           })(),
           createdAt: agora, updatedAt: agora,
@@ -1308,6 +1671,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     if (msg.includes("item_sumiu")) { res.status(404).json({ erro: "Item não encontrado" }); return; }
     if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    if (msg.includes("template_regra_mudou")) { res.status(409).json({ erro: "O vínculo do Acervo mudou durante a compra — atualize e tente novamente" }); return; }
     if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
   }
