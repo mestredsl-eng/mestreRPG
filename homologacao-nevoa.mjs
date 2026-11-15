@@ -1530,7 +1530,9 @@ try {
   // se o socket estiver reconectando no instante do emit, o evento se
   // perde e a UI nunca mostra "revogado" (flake observado no CI).
   await pgJ.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
-  await socketVivo(pgJ);
+  const vivoJ = await socketVivo(pgJ);
+  t("socket do jogador respondeu ping/pong antes do restore", vivoJ === true);
+  if (!vivoJ) throw new Error("socketVivo(pgJ)=false — restore de revogação abortado: a notificação única não pode ser comprovada");
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
@@ -1549,7 +1551,9 @@ try {
   // revogação vai para a room usuario:* sem fila — emitida com o socket
   // reconectando, ela se perde e a UI nunca exibe "revogado" (flake CI).
   await pgE.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
-  await socketVivo(pgE);
+  const vivoE = await socketVivo(pgE);
+  t("socket do espectador respondeu ping/pong antes do import", vivoE === true);
+  if (!vivoE) throw new Error("socketVivo(pgE)=false — import de revogação abortado: a notificação única não pode ser comprovada");
   const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
     cookie: cookieMestre,
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
