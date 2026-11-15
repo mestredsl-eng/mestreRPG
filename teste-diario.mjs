@@ -2,8 +2,8 @@
 // Isolado (Lote 1): banco SQLite, uploads e backups vivem em diretórios
 // temporários via teste-base.mjs — nenhum acesso a banco/mestre-rpg.db,
 // usuários, campanhas ou arquivos reais.
-import { join } from "node:path";
-import { readdirSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
+import { existsSync, readdirSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   encerrarServidor, limparDir, req as reqBase, criarCenario, comDb, abrirDb,
@@ -162,6 +162,9 @@ try {
   // isolamento: anotação de OUTRA campanha com o mesmo título não aparece
   const camp2 = await reqBase(BASE, "POST", "/campaigns", { cookie: ADMIN.cookie, body: { name: "Campanha Isolada" } });
   const CID2 = camp2.json?.campanha?.id;
+  t("25a segunda campanha criada para o teste de isolamento",
+    camp2.status === 201 && typeof CID2 === "string" && CID2.length > 0,
+    `status=${camp2.status} id=${CID2}`);
   if (CID2) {
     const w = abrirDb(BANCO);
     try {
@@ -205,13 +208,47 @@ try {
     method: "POST", headers: { cookie: ADMIN.cookie, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("../../fora-do-temp.txt"), "x-file-mime": "text/plain", "x-visibility": "publica" },
     body: Buffer.from("hostil"),
   });
-  t("29d upload com nome hostil não quebra nem vaza", upHostil.status === 201, `status=${upHostil.status}`);
+  const hostilJson = await upHostil.json();
+  const hostilId = hostilJson?.id;
+  t("29d upload com nome hostil não quebra nem vaza", upHostil.status === 201 && !!hostilId, `status=${upHostil.status}`);
+  // Prova real: o nome enviado pelo cliente NÃO controla o caminho físico.
+  // storageName é gerado no servidor (<uuid>.<ext>); o arquivo tem que
+  // existir dentro do diretório temporário da campanha e nenhum arquivo
+  // chamado "fora-do-temp.txt" pode ter sido criado em lugar algum.
+  const rowHostil = hostilId
+    ? comDb(BANCO, (db) => db.prepare("select storage_name,file_name from files where id=?").get(hostilId))
+    : null;
+  const sn = rowHostil?.storage_name ?? "";
+  const fisico = sn ? resolve(ARQUIVOS, CID, sn) : "";
+  const storageSeguro = !!sn && !sn.includes("..") && !sn.includes("/") && !sn.includes("\\");
+  const confinado = storageSeguro && existsSync(fisico)
+    && resolve(fisico).startsWith(resolve(ARQUIVOS) + sep);
+  const semArquivoFora = !readdirSync(RAIZ, { recursive: true })
+    .some((f) => typeof f === "string" && f.endsWith("fora-do-temp.txt"));
+  t("29e nome hostil não controla o caminho físico",
+    !!rowHostil && storageSeguro && confinado && semArquivoFora,
+    JSON.stringify({ storageName: sn, fileName: rowHostil?.file_name, fisico }));
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
 } finally {
-  await encerrarServidor(proc);
-  limparDir(RAIZ);
+  // Limpeza garantida: falha ao encerrar o servidor NÃO impede a
+  // tentativa de remover o diretório temporário. Falhas de teardown
+  // são registradas e tornam o teste não-zero via exitCode.
+  let teardownFalhou = false;
+  try {
+    await encerrarServidor(proc);
+  } catch (e) {
+    teardownFalhou = true;
+    res.push("TEARDOWN servidor: " + (e?.message ?? e));
+  }
+  try {
+    if (!limparDir(RAIZ)) teardownFalhou = true;
+  } catch (e) {
+    teardownFalhou = true;
+    res.push("TEARDOWN limpeza: " + (e?.message ?? e));
+  }
+  if (teardownFalhou) fail++;
   console.log(res.join("\n"));
   console.log(`\n${pass} passaram, ${fail} falharam`);
-  process.exit(fail ? 1 : 0);
+  process.exitCode = fail ? 1 : 0;
 }
