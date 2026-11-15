@@ -1,11 +1,46 @@
 // Testes do motor de regras — ajustes finais Etapa 5
-import { carregarRegras, validarRegras, aplicarTransferencias, aplicarCustosSelecao } from "./servidor/dist/lib/regras.js";
+// Isolado (Lote 0): regras montadas em memória com fixtures sintéticas
+// equivalentes às da campanha original — nenhum acesso a banco, campanha
+// ou UUID real. Cobre transferências, exclusividade, incompatibilidades
+// e fórmulas com os mesmos elementos e custos de antes.
+import { validarRegras, aplicarTransferencias, aplicarCustosSelecao, configRegrasSchema } from "./servidor/dist/lib/regras.js";
 import { calcularPontos } from "./servidor/dist/lib/ficha.js";
 
-const CID = "e8bbf8ea-c4d0-4bc1-9f1b-c4e6ec8558c0";
-const regras = await carregarRegras(CID);
+const AGORA = new Date();
+const RULESET_FX = "fx-regras-lote0";
+const definicaoPadrao = {
+  descricao: undefined, subcategoria: undefined, custoPontos: undefined,
+  custoProgressivo: undefined, minimo: undefined, maximo: undefined,
+  prerequisitos: [], dependencias: [], grupoExclusividade: undefined,
+  gruposExclusividade: [], exclusivos: [], obrigatorios: [],
+  reservaPontos: undefined, disponivel: true, ordem: 0, formulas: {},
+};
+const mkEl = (kind, key, name, def) => ({
+  id: `fx-${kind}-${key}`, ruleSetId: RULESET_FX, kind, key, name,
+  category: null, parentKey: null,
+  definition: { ...definicaoPadrao, ...def },
+  createdAt: AGORA, updatedAt: AGORA,
+});
+
+// Fixtures fiéis aos elementos usados pela suíte (mesmos custos e
+// grupos de exclusividade da campanha de referência).
+const elementos = new Map();
+const porKind = new Map();
+const addEl = (e) => {
+  elementos.set(`${e.kind}:${e.key}`, e);
+  const l = porKind.get(e.kind) ?? [];
+  l.push(e);
+  porKind.set(e.kind, l);
+};
+addEl(mkEl("atributo", "forca", "Força", { custoPontos: 7, minimo: 0, maximo: 5 }));
+addEl(mkEl("vantagem", "memoria_excepcional", "Memória Excepcional", { reservaPontos: "vantagens", custoPontos: 1 }));
+addEl(mkEl("vantagem", "patrimonio", "Patrimônio", { reservaPontos: "vantagens", custoPontos: 3 }));
+addEl(mkEl("vantagem", "reflexos_treinados", "Reflexos Treinados", { reservaPontos: "vantagens", custoPontos: 2 }));
+addEl(mkEl("poder", "telepatia", "Telepatia", { custoPontos: 3, grupoExclusividade: "poderes_ocultos", obrigatorios: ["defeito:preco_oculto"] }));
+addEl(mkEl("poder", "magia", "Magia", { custoPontos: 3, grupoExclusividade: "poderes_ocultos", obrigatorios: ["defeito:preco_oculto"] }));
+
+const regras = { ruleSetId: RULESET_FX, config: configRegrasSchema.parse({}), elementos, porKind };
 // Pontos precisam estar habilitados para os testes de transferência —
-// restaurações de snapshot podem reverter a config persistida, então
 // fixamos o estado esperado em memória (determinístico, sem tocar no banco).
 regras.config.pontos = { habilitado: true, pontosIniciais: 20, pools: [
   { id: "vantagens", nome: "Vantagens", pontos: 5 },
@@ -75,12 +110,7 @@ r = validarRegras(est, { forca: 1, poderes: ["telepatia", "magia"], defeitos: un
 const temGrupo = r.erros.some((e) => e.codigo === "exclusividade" && e.mensagem.includes("poderes_ocultos"));
 t("legado: telepatia+magia conflita", temGrupo, JSON.stringify(r.erros.map(e=>e.mensagem)));
 
-// injeta elementos de teste nos mapas do ruleset carregado
-const mkEl = (kind, key, name, def) => ({
-  id: `t-${key}`, ruleSetId: regras.ruleSetId, kind, key, name, category: null, parentKey: null,
-  definition: { descricao: undefined, subcategoria: undefined, custoPontos: undefined, custoProgressivo: undefined, minimo: undefined, maximo: undefined, prerequisitos: [], dependencias: [], grupoExclusividade: undefined, gruposExclusividade: [], exclusivos: [], obrigatorios: [], reservaPontos: undefined, disponivel: true, ordem: 0, formulas: {}, ...def },
-  createdAt: new Date(), updatedAt: new Date(),
-});
+// injeta elementos de teste nos mapas do ruleset sintético
 // sombra em DOIS grupos; Ritual em transformacoes apenas
 regras.elementos.set("poder:sombra", mkEl("poder", "sombra", "Sombra", { gruposExclusividade: ["poderes_ocultos", "transformacoes"] }));
 regras.elementos.set("poder:ritual", mkEl("poder", "ritual", "Ritual", { gruposExclusividade: ["transformacoes"] }));
