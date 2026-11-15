@@ -301,7 +301,7 @@ patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
   const dados = (a.personagem.data ?? {}) as Record<string, unknown>;
   const mapa: Record<string, {
     ok: boolean; nome: string; categoria: string | null;
-    prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean }[];
+    prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean; inexistente?: boolean; indisponivel?: boolean }[];
     mensagens: string[];
   }> = {};
   for (const el of elementos) {
@@ -311,11 +311,15 @@ patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
       // precisa receber o mesmo bloqueio para não exibir disponibilidade falsa.
       mapa[chave] = {
         ok: false, nome: el.name, categoria: el.category,
-        prerequisitos: (el.definition.prerequisitos ?? []).map((p) => ({
-          kind: p.kind, key: p.key,
-          nome: regras.elementos.get(`${p.kind}:${p.key}`)?.name ?? `${p.kind}:${p.key}`,
-          minLevel: p.minLevel ?? 1, nivelAtual: 0, atendido: false,
-        })),
+        prerequisitos: (el.definition.prerequisitos ?? []).map((p) => {
+          const alvo = regras.elementos.get(`${p.kind}:${p.key}`);
+          return {
+            kind: p.kind, key: p.key,
+            nome: alvo?.name ?? `${p.kind}:${p.key}`,
+            minLevel: p.minLevel ?? 1, nivelAtual: 0, atendido: false,
+            inexistente: !alvo, indisponivel: !!alvo && alvo.definition.disponivel === false,
+          };
+        }),
         mensagens: ["Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo"],
       };
       continue;
@@ -326,6 +330,7 @@ patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
       prerequisitos: r.requisitos.map((q) => ({
         kind: q.kind, key: q.key, nome: q.nome,
         minLevel: q.minLevel, nivelAtual: q.nivelAtual, atendido: q.atendido,
+        inexistente: q.inexistente, indisponivel: q.indisponivel,
       })),
       mensagens: r.mensagens,
     };
