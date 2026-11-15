@@ -1,0 +1,548 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento VI — Ciências, Geologia e Laboratório",
+      "descricao": "Equipamentos de laboratório, análise científica, coleta de amostras, geologia e trabalho de campo. Os pré-requisitos usam apenas Conhecimentos e Talentos já presentes na ficha enviada.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — ciência e campo",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "microscopio_laboratorio",
+          "name": "Microscópio de laboratório",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento óptico para observação de amostras.",
+            "subcategoria": "Laboratório",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "microscopio_digital",
+          "name": "Microscópio digital",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de observação com captura e exibição digital.",
+            "subcategoria": "Laboratório",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "centrifuga_laboratorial",
+          "name": "Centrífuga laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de laboratório para processamento de amostras.",
+            "subcategoria": "Laboratório",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "balanca_analitica",
+          "name": "Balança analítica",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de pesagem de precisão.",
+            "subcategoria": "Medição científica",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "medidor_ph",
+          "name": "Medidor de pH",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medição de acidez e alcalinidade.",
+            "subcategoria": "Medição científica",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "espectrometro_portatil",
+          "name": "Espectrômetro portátil",
+          "category": "Análise científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento portátil para análise de propriedades de amostras.",
+            "subcategoria": "Análise científica",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "kit_reagentes_laboratorio",
+          "name": "Kit de reagentes de laboratório",
+          "category": "Química",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de reagentes para atividades laboratoriais supervisionadas.",
+            "subcategoria": "Química",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "capela_exaustao",
+          "name": "Capela de exaustão",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção coletiva para procedimentos laboratoriais.",
+            "subcategoria": "Laboratório",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "estufa_laboratorio",
+          "name": "Estufa de laboratório",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de laboratório para controle de temperatura.",
+            "subcategoria": "Laboratório",
+            "ordem": 8
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "autoclave_laboratorial",
+          "name": "Autoclave laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de esterilização usado em ambientes apropriados.",
+            "subcategoria": "Laboratório",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "pipetas_laboratoriais",
+          "name": "Conjunto de pipetas laboratoriais",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumentos de medição e transferência de líquidos.",
+            "subcategoria": "Laboratório",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "vidraria_laboratorio",
+          "name": "Conjunto de vidrarias",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Vidrarias para atividades de análise e experimentação.",
+            "subcategoria": "Laboratório",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "placa_aquecimento",
+          "name": "Placa de aquecimento laboratorial",
+          "category": "Laboratório",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de aquecimento controlado para laboratório.",
+            "subcategoria": "Laboratório",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "quimico",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_solo",
+          "name": "Kit de coleta de solo",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto para coleta e acondicionamento de amostras de solo.",
+            "subcategoria": "Geologia",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "martelo_geologico",
+          "name": "Martelo geológico",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta para trabalho de campo e estudo de rochas.",
+            "subcategoria": "Geologia",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "lupa_geologica",
+          "name": "Lupa geológica",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lupa para observação de minerais e detalhes de rochas.",
+            "subcategoria": "Geologia",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "peneira_geologica",
+          "name": "Peneira para amostras geológicas",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para separação e análise de amostras.",
+            "subcategoria": "Geologia",
+            "ordem": 16
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "bussola_geologica",
+          "name": "Bússola geológica",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de orientação e levantamento em campo.",
+            "subcategoria": "Geologia",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "medidor_umidade_solo",
+          "name": "Medidor de umidade do solo",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento portátil para medição de umidade em amostras e terrenos.",
+            "subcategoria": "Geologia",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "sonda_terreno",
+          "name": "Sonda de terreno",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramenta para coleta ou observação de características do terreno.",
+            "subcategoria": "Geologia",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "kit_mapeamento_geologico",
+          "name": "Kit de mapeamento geológico",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais para registros e levantamentos geológicos.",
+            "subcategoria": "Geologia",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "geologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "caixa_amostras_minerais",
+          "name": "Caixa para amostras minerais",
+          "category": "Geologia",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo para organizar e transportar amostras minerais.",
+            "subcategoria": "Geologia",
+            "ordem": 21
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "caderno_campo_cientifico",
+          "name": "Caderno de campo científico",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Caderno destinado a observações e registros de campo.",
+            "subcategoria": "Registro",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "termometro_ambiente",
+          "name": "Termômetro ambiental",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para medição de temperatura do ambiente.",
+            "subcategoria": "Medição científica",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "barometro_portatil",
+          "name": "Barômetro portátil",
+          "category": "Medição científica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para observação da pressão atmosférica.",
+            "subcategoria": "Medição científica",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "medidor_radiacao",
+          "name": "Medidor portátil de radiação",
+          "category": "Segurança laboratorial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de monitoramento ambiental.",
+            "subcategoria": "Segurança laboratorial",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "kit_pesquisa_biologica",
+          "name": "Kit de pesquisa biológica",
+          "category": "Ciências",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto para observação e registro de materiais biológicos.",
+            "subcategoria": "Ciências",
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "kit_documentacao_cientifica",
+          "name": "Kit de documentação científica",
+          "category": "Registro",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para identificação, catalogação e registro de amostras.",
+            "subcategoria": "Registro",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "maleta_instrumentos_cientificos",
+          "name": "Maleta de instrumentos científicos",
+          "category": "Transporte e organização",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maleta para acondicionar instrumentos de medição e análise.",
+            "subcategoria": "Transporte e organização",
+            "ordem": 28
+          },
+          "ordem": 28
+        }
+      ]
+    }
+  ]
+}
