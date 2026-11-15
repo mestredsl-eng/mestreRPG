@@ -62,6 +62,23 @@ const regraRefSchema = z.object({
 });
 export type RegraRef = z.infer<typeof regraRefSchema>;
 
+/** Lê o vínculo salvo pelo mestre no template; valores inválidos falham fechado. */
+function lerRegraTemplate(data: unknown): { regra: RegraRef | null; invalida: boolean } {
+  const registro = data && typeof data === "object" && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  const raw = registro.regra;
+  if (raw === undefined || raw === null) return { regra: null, invalida: false };
+  const parsed = regraRefSchema.safeParse(raw);
+  return parsed.success
+    ? { regra: parsed.data, invalida: false }
+    : { regra: null, invalida: true };
+}
+
+function mesmaRegraRef(a: RegraRef | null | undefined, b: RegraRef | null | undefined): boolean {
+  return (a?.kind ?? null) === (b?.kind ?? null) && (a?.key ?? null) === (b?.key ?? null);
+}
+
 /** Estrutura publicada da ficha do personagem (null se não houver). */
 async function estruturaDoPersonagem(p: typeof characters.$inferSelect) {
   if (!p.templateVersionId) return null;
@@ -268,18 +285,31 @@ patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
     prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean }[];
     mensagens: string[];
   }> = {};
-  if (estrutura) {
-    for (const el of elementos) {
-      const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, el.kind, el.key);
-      mapa[`${el.kind}:${el.key}`] = {
-        ok: r.ok, nome: el.name, categoria: el.category,
-        prerequisitos: r.requisitos.map((q) => ({
-          kind: q.kind, key: q.key, nome: q.nome,
-          minLevel: q.minLevel, nivelAtual: q.nivelAtual, atendido: q.atendido,
+  for (const el of elementos) {
+    const chave = `${el.kind}:${el.key}`;
+    if (!estrutura) {
+      // A API de aquisição já falha fechado sem ficha publicada; a UI
+      // precisa receber o mesmo bloqueio para não exibir disponibilidade falsa.
+      mapa[chave] = {
+        ok: false, nome: el.name, categoria: el.category,
+        prerequisitos: (el.definition.prerequisitos ?? []).map((p) => ({
+          kind: p.kind, key: p.key,
+          nome: regras.elementos.get(`${p.kind}:${p.key}`)?.name ?? `${p.kind}:${p.key}`,
+          minLevel: p.minLevel ?? 1, nivelAtual: 0, atendido: false,
         })),
-        mensagens: r.mensagens,
+        mensagens: ["Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo"],
       };
+      continue;
     }
+    const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, el.kind, el.key);
+    mapa[chave] = {
+      ok: r.ok, nome: el.name, categoria: el.category,
+      prerequisitos: r.requisitos.map((q) => ({
+        kind: q.kind, key: q.key, nome: q.nome,
+        minLevel: q.minLevel, nivelAtual: q.nivelAtual, atendido: q.atendido,
+      })),
+      mensagens: r.mensagens,
+    };
   }
   res.json({ requisitos: mapa });
 });
@@ -309,24 +339,83 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorAdicionaItens) {
     res.status(403).json({ erro: "Você não pode adicionar itens nesta campanha" }); return;
   }
-  const av = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  // Quando há templateId, o vínculo salvo no catálogo pelo mestre é a
+  // única autoridade. A regra enviada pelo jogador nunca substitui o template.
+  let template: typeof itemTemplates.$inferSelect | null = null;
+  let regraEfetiva = body.data.regra;
+  if (body.data.templateId) {
+    const [tpl] = await db.select().from(itemTemplates).where(and(
+      eq(itemTemplates.id, body.data.templateId),
+      eq(itemTemplates.campaignId, a.personagem.campaignId),
+      eq(itemTemplates.isActive, true),
+    )).limit(1);
+    if (!tpl) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    template = tpl;
+    const vinculo = lerRegraTemplate(tpl.data);
+    if (vinculo.invalida) { res.status(409).json({ erro: "Vínculo do Acervo no item do catálogo é inválido" }); return; }
+    if (body.data.regra && !mesmaRegraRef(body.data.regra, vinculo.regra)) {
+      res.status(403).json({ erro: "A referência do Acervo deve corresponder ao vínculo definido no catálogo" }); return;
+    }
+    regraEfetiva = vinculo.regra ?? undefined;
+  }
+  const av = await avaliarAquisicao(a, regraEfetiva, body.data.ignorarPrerequisitos);
   if (av.negacao) { res.status(av.negacao.status).json({ erro: av.negacao.erro, detalhes: av.negacao.detalhes }); return; }
-  if (av.bypass && body.data.regra) {
-    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra });
+  if (av.bypass && regraEfetiva) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraEfetiva });
   }
   const agora = new Date();
   const id = crypto.randomUUID();
-  const { templateId, valueCents, transferable, data, regra, ignorarPrerequisitos, ...resto } = body.data;
-  // Identidade canônica: com vínculo ao Acervo, nome/categoria/descrição
-  // são os do elemento resolvido — nunca os enviados pelo cliente.
-  const ident = identidadeDoElemento({ ...resto }, av.elemento);
-  await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, name: ident.name, quantity: ident.quantity,
-    description: ident.description ?? null, category: ident.category ?? null,
-    location: resto.location ?? null, condition: resto.condition ?? null, weight: resto.weight ?? null,
-    data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId, ...(regra ? { regra } : {}) },
-    createdAt: agora, updatedAt: agora,
-  });
+  const { templateId: _templateId, valueCents, transferable, data, ignorarPrerequisitos, ...resto } = body.data;
+  let templateFinal = template;
+  try {
+    db.transaction((tx) => {
+      if (template) {
+        // Revalidação do template e do vínculo dentro da mesma transação da
+        // gravação: uma edição concorrente no catálogo não contorna a regra.
+        const [tplTx] = tx.select().from(itemTemplates).where(and(
+          eq(itemTemplates.id, template.id),
+          eq(itemTemplates.campaignId, a.personagem.campaignId),
+          eq(itemTemplates.isActive, true),
+        )).limit(1).all();
+        if (!tplTx) throw new Error("template_sumiu");
+        const vinculoTx = lerRegraTemplate(tplTx.data);
+        if (vinculoTx.invalida || !mesmaRegraRef(vinculoTx.regra, regraEfetiva ?? null)) {
+          throw new Error("template_regra_mudou");
+        }
+        templateFinal = tplTx;
+      }
+
+      const dadosTemplate = (templateFinal?.data ?? {}) as Record<string, unknown>;
+      const ident = identidadeDoElemento({
+        ...resto,
+        name: templateFinal?.name ?? resto.name,
+        category: templateFinal?.category ?? resto.category,
+        description: templateFinal?.description ?? resto.description,
+      }, av.elemento);
+      const dadosFinais = limparEstadoInventario({ ...dadosTemplate, ...(data ?? {}) }) ?? {};
+      delete dadosFinais.templateId;
+      if (templateFinal) dadosFinais.templateId = templateFinal.id;
+      const valorTemplate = typeof dadosTemplate.valueCents === "number" ? dadosTemplate.valueCents : undefined;
+      dadosFinais.valueCents = valueCents ?? valorTemplate;
+      dadosFinais.transferable = transferable;
+      if (regraEfetiva) dadosFinais.regra = regraEfetiva;
+
+      const pesoTemplate = typeof dadosTemplate.weight === "number" ? dadosTemplate.weight : undefined;
+      tx.insert(inventoryEntries).values({
+        id, characterId: a.personagem.id, name: ident.name, quantity: ident.quantity,
+        description: ident.description ?? null, category: ident.category ?? null,
+        location: resto.location ?? null, condition: resto.condition ?? null,
+        weight: resto.weight ?? pesoTemplate ?? null,
+        data: dadosFinais,
+        createdAt: agora, updatedAt: agora,
+      }).run();
+    });
+  } catch (e) {
+    const msg = String(e);
+    if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    if (msg.includes("template_regra_mudou")) { res.status(409).json({ erro: "O vínculo do Acervo mudou durante a aquisição — atualize e tente novamente" }); return; }
+    throw e;
+  }
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -1324,12 +1413,21 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     const [tplPre] = await db.select().from(itemTemplates)
       .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
       .limit(1).all();
-    if (tplPre) {
-      const rd = (tplPre.data ?? {}) as { regra?: RegraRef };
-      if (rd.regra && typeof rd.regra.kind === "string" && typeof rd.regra.key === "string") tplRegra = rd.regra;
+    if (!tplPre) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    const vinculo = lerRegraTemplate(tplPre.data);
+    if (vinculo.invalida) { res.status(409).json({ erro: "Vínculo do Acervo no item do catálogo é inválido" }); return; }
+    tplRegra = vinculo.regra;
+    for (const tentativa of [body.data.regra, body.data.item?.regra]) {
+      if (tentativa && !mesmaRegraRef(tentativa, tplRegra)) {
+        res.status(403).json({ erro: "A referência do Acervo deve corresponder ao vínculo definido no catálogo" }); return;
+      }
     }
   }
-  const regraCompra = tplRegra ?? body.data.regra ?? body.data.item?.regra;
+  // Com templateId, ausência de vínculo significa item legado/manual:
+  // nunca permita que metadados enviados pelo navegador criem outro vínculo.
+  const regraCompra = body.data.templateId
+    ? tplRegra ?? undefined
+    : body.data.regra ?? body.data.item?.regra;
 
   // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
   const avOp = isCompra ? await avaliarAquisicao(a, regraCompra ?? undefined, body.data.ignorarPrerequisitos) : { elemento: null, negacao: null, bypass: false };
@@ -1415,6 +1513,10 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
           .limit(1).all();
         if (!tpl) throw new Error("template_sumiu");
+        const vinculoTx = lerRegraTemplate(tpl.data);
+        if (vinculoTx.invalida || !mesmaRegraRef(vinculoTx.regra, tplRegra)) {
+          throw new Error("template_regra_mudou");
+        }
         tplTx = tpl;
         templateValidado = tpl.id;
       }
@@ -1530,6 +1632,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     if (msg.includes("conta_sumiu")) { res.status(404).json({ erro: "Conta não encontrada" }); return; }
     if (msg.includes("item_sumiu")) { res.status(404).json({ erro: "Item não encontrado" }); return; }
     if (msg.includes("template_sumiu")) { res.status(404).json({ erro: "Item do catálogo não encontrado ou inativo" }); return; }
+    if (msg.includes("template_regra_mudou")) { res.status(409).json({ erro: "O vínculo do Acervo mudou durante a compra — atualize e tente novamente" }); return; }
     if (msg.includes("estoque_mudou")) { res.status(409).json({ erro: "Estoque alterado por outra operação — tente novamente" }); return; }
     throw e;
   }
