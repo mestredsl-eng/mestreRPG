@@ -122,6 +122,10 @@ try {
   r = await req(BASE, "POST", `/characters/${idNpc}/npc-visibilidade`, { cookie: ids.cookieMestre, body: { visivel: true } });
   r = await req(BASE, "PATCH", `/characters/${idNpc}`, { cookie: ids.cookieMestre, body: { data: { for: 5 } } });
   t("mestre define FOR=5 no NPC", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
+  // HP real: máximo 150; atual persistido 145 (95 pós-dano + 50 de cura,
+  // limitado ao máximo) — prova que resumoHp grampeia o "atual" visível.
+  r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "recuperar", quantidade: 50, motivo: "Descanso" } });
+  t("mestre cura NPC p/ HP persistido 145", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? r.json ?? "")}`);
 
   const fM = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.cookieMestre });
   const fJ = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
@@ -129,7 +133,9 @@ try {
   const hpM = fM.json?.ficha?.vida?.hp;
   const hpJ = fJ.json?.ficha?.vida?.hp;
   t("mestre vê HP máximo com FOR (100+5×10=150)", hpM?.maximo === 150, JSON.stringify(hpM));
+  t("mestre vê HP atual real persistido (145)", hpM?.atual === 145, JSON.stringify(hpM));
   t("jogador vê HP máximo SEM o atributo privado (base 100)", hpJ?.maximo === 100, JSON.stringify(hpJ));
+  t("jogador nunca vê 'atual' acima do máximo visível (≤100)", typeof hpJ?.atual === "number" && hpJ.atual <= 100, JSON.stringify(hpJ));
   t("histórico de HP do mestre preservado", (hpM?.historico ?? []).length > 0, JSON.stringify(hpM?.historico));
   t("histórico de HP oculto do jogador (sem vazamento indireto)", Array.isArray(hpJ?.historico) && hpJ.historico.length === 0, JSON.stringify(hpJ?.historico));
   t("campo privado ausente dos campos do jogador", !("for" in (fJ.json?.ficha?.campos ?? {})));

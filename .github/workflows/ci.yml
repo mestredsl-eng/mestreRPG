@@ -228,6 +228,7 @@ jobs:
             teste-acessibilidade.mjs \
             homologacao-hp-historico.mjs \
             homologacao-patrimonio.mjs \
+            homologacao-npc-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
             homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
