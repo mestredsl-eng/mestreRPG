@@ -260,7 +260,14 @@ function montarFicha(
                   cfgVit.niveis.length - 1
                 )
               : 0; // sem snapshot: conservador — só o piso manual é visível
-            const nivelExibido = Math.max(pisoManual, Math.min(vit.nivel, tetoPublico));
+            // O piso manual pode apontar para um índice que não existe
+            // mais na escala ATUAL (o mestre pode reduzi-la depois da
+            // definição manual). Normaliza para o topo da escala —
+            // "no mínimo este estado" tem como teto o último nível
+            // vigente; sem o clamp, niveis[nivelExibido] seria
+            // undefined e a leitura da ficha quebraria.
+            const pisoNaEscala = Math.min(pisoManual, cfgVit.niveis.length - 1);
+            const nivelExibido = Math.max(pisoNaEscala, Math.min(vit.nivel, tetoPublico));
             if (nivelExibido !== vit.nivel) {
               const niv = cfgVit.niveis[nivelExibido];
               vit.nivel = nivelExibido;

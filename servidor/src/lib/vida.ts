@@ -132,9 +132,14 @@ export function aplicarHp(
 export function lerVitalidade(dados: Record<string, unknown>): EstadoVitalidade {
   const bruto = dados[CHAVE_VITALIDADE] as EstadoVitalidade | undefined;
   const nivel = bruto && typeof bruto === "object" ? num(bruto.nivel) : null;
+  const nivelManual = bruto && typeof bruto === "object" ? num(bruto.nivelManual) : null;
   const historico = bruto && typeof bruto === "object" && Array.isArray(bruto.historico) ? bruto.historico : undefined;
   return {
     nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0,
+    // nivelManual precisa voltar na leitura: a conversão automática
+    // regrava o estado com {...vitAnt} — sem este campo, o piso
+    // narrativo seria apagado a cada ferimento automático.
+    ...(nivelManual !== null && nivelManual >= 0 ? { nivelManual: Math.floor(nivelManual) } : {}),
     alteradoEm: bruto?.alteradoEm,
     alteradoPor: bruto?.alteradoPor ?? null,
     historico,

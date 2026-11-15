@@ -291,6 +291,87 @@ try {
   t("evento automático sem snapshot → fallback conservador (só piso 2)",
     fJ6.json?.ficha?.vida?.vitalidade?.nivel === 2, JSON.stringify(fJ6.json?.ficha?.vida?.vitalidade));
 
+  // ---------- Regressão: nivelManual sobrevive à conversão automática ----------
+  // Auditoria PR #105: lerVitalidade() não devolvia nivelManual, então a
+  // conversão ({...vitAnt}) apagava o piso narrativo persistido.
+  sec("Regressão — nivelManual persistido sob conversão automática");
+  const npcVit = await req(BASE, "POST", `/campaigns/${ids.camp}/characters`, {
+    cookie: ids.cookieMestre,
+    body: { name: "Escala Vitalidade", templateVersionId: verId, isNpc: true },
+  });
+  const idVit = npcVit.json?.personagem?.id;
+  t("NPC de vitalidade criado", npcVit.status === 201 && !!idVit, `status=${npcVit.status}`);
+  await req(BASE, "POST", `/characters/${idVit}/npc-visibilidade`, { cookie: ids.cookieMestre, body: { visivel: true } });
+  // FOR=5 → HP máximo real 150, público 100 (for é privado p/ jogador).
+  r = await req(BASE, "PATCH", `/characters/${idVit}`, { cookie: ids.cookieMestre, body: { data: { for: 5 } } });
+  t("mestre define FOR=5", r.status === 200, `status=${r.status}`);
+  const fVitHp = await req(BASE, "GET", `/characters/${idVit}`, { cookie: ids.cookieMestre });
+  t("HP máximo real = 150 com FOR=5", fVitHp.json?.ficha?.vida?.hp?.maximo === 150, JSON.stringify(fVitHp.json?.ficha?.vida?.hp));
+  // Piso manual 5 — dentro da escala de 7 níveis vigente.
+  r = await req(BASE, "POST", `/characters/${idVit}/vitalidade`, { cookie: ids.cookieMestre, body: { nivel: 5, motivo: "Ferimentos graves" } });
+  t("mestre define piso manual 5", r.status === 200, `status=${r.status}`);
+  const vitDb1 = comDb(BANCO, (db) => JSON.parse(db.prepare("select data from characters where id=?").get(idVit).data)?.__vitalidade);
+  t("nivelManual=5 gravado no banco", vitDb1?.nivelManual === 5, JSON.stringify(vitDb1?.nivelManual));
+  // Conversão: __hp.atual=100 (persistido antes do FOR=5); dano 40 →
+  // HP 60/150 = 40% ≤ 50 → exige nível 6 (> piso 5).
+  // Público: 60/100 = 60% > 50 → incremento automático NÃO é justificável.
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 50, nivel: 6 }] } },
+  });
+  t("limiar ate:50→6 configurado", r.status === 200, `status=${r.status}`);
+  r = await req(BASE, "POST", `/characters/${idVit}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 40, motivo: "Dose letal" } });
+  t("conversão automática eleva p/ nível 6", r.status === 200 && r.json?.ferimento?.para === 6, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
+  const vitDb2 = comDb(BANCO, (db) => JSON.parse(db.prepare("select data from characters where id=?").get(idVit).data)?.__vitalidade);
+  t("nivelManual=5 SOBREVIVE à conversão automática", vitDb2?.nivelManual === 5, `nivel=${vitDb2?.nivel} nivelManual=${vitDb2?.nivelManual}`);
+  // Remove os eventos manuais do histórico: o piso só pode vir do campo
+  // persistido — antes da correção o jogador veria nível 0.
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const row = w.prepare("select data from characters where id=?").get(idVit);
+      const dados = JSON.parse(row.data);
+      dados.__vitalidade.historico = (dados.__vitalidade.historico ?? []).filter((e) => e.origem === "conversao-ferimento");
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), idVit);
+    } finally { w.close(); }
+  }
+  const fVitJ = await req(BASE, "GET", `/characters/${idVit}`, { cookie: ids.j1.cookie });
+  t("jogador segue vendo piso manual 5 sem evento manual no histórico",
+    fVitJ.status === 200 && fVitJ.json?.ficha?.vida?.vitalidade?.nivel === 5,
+    `status=${fVitJ.status} ${JSON.stringify(fVitJ.json?.ficha?.vida?.vitalidade ?? fVitJ.json?.erro ?? "")}`);
+  const fVitM = await req(BASE, "GET", `/characters/${idVit}`, { cookie: ids.cookieMestre });
+  t("mestre segue vendo nível real 6", fVitM.json?.ficha?.vida?.vitalidade?.nivel === 6, JSON.stringify(fVitM.json?.ficha?.vida?.vitalidade));
+
+  // ---------- Regressão: piso manual além da escala atual ----------
+  // Auditoria PR #105: escala reduzida de 7 → 5 níveis com nivelManual=5
+  // persistido → nivelExibido=5 indexava niveis[5] === undefined → 500.
+  sec("Regressão — piso manual acima da escala reduzida");
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: {
+      conversaoFerimento: { habilitada: false, limiares: [] },
+      vitalidade: {
+        edicaoPor: "mestre",
+        niveis: [
+          { nome: "Escoriado", penalidadeDados: 0, bloqueiaAcoes: false },
+          { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
+          { nome: "Ferido", penalidadeDados: 1, bloqueiaAcoes: false },
+          { nome: "Grave", penalidadeDados: 2, bloqueiaAcoes: false },
+          { nome: "Crítico", penalidadeDados: 5, bloqueiaAcoes: true },
+        ],
+      },
+    },
+  });
+  t("escala reduzida p/ 5 níveis", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
+  const fVitJ2 = await req(BASE, "GET", `/characters/${idVit}`, { cookie: ids.j1.cookie });
+  const vitJ2 = fVitJ2.json?.ficha?.vida?.vitalidade;
+  t("ficha do jogador responde 200 com escala reduzida", fVitJ2.status === 200, `status=${fVitJ2.status}`);
+  t("nível exibido dentro da escala vigente (0–4)",
+    vitJ2 != null && Number.isInteger(vitJ2.nivel) && vitJ2.nivel >= 0 && vitJ2.nivel <= 4 && typeof vitJ2.nome === "string",
+    JSON.stringify(vitJ2));
+  const fVitM2 = await req(BASE, "GET", `/characters/${idVit}`, { cookie: ids.cookieMestre });
+  t("ficha do mestre também íntegra", fVitM2.status === 200 && fVitM2.json?.ficha?.vida?.vitalidade != null, `status=${fVitM2.status}`);
+
   // ---------- VTT: token de NPC oculto ----------
   sec("VTT — token de NPC oculto por padrão");
   const sess = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa NPC" } });
