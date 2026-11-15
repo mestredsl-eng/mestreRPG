@@ -1,11 +1,12 @@
 # Acervo de suplementos — Caçadores Caçados
 
-Pacote organizado para o **Mestre RPG**, construído tomando como referência o dump enviado da campanha e o formato de importação oficial `mestre-rpg-biblioteca`, versão 1.
+Pacote organizado para o **Mestre RPG**, construído tomando como referência o dump da campanha e o formato de importação oficial `mestre-rpg-biblioteca`, versão 1.
 
 ## Pacote completo
 
 - [pacote-completo-cacadores-cacados.v1.json](./pacote-completo-cacadores-cacados.v1.json) — **um único arquivo com os nove livros**, pronto para importar no Acervo.
 - [Pasta de suplementos](./suplementos/) — JSONs individuais para baixar, revisar e evoluir separadamente.
+- [Referências de preços, pesos e critérios](./REFERENCIAS-PRECOS-PESOS-2026.md) — metodologia e fontes consultadas.
 
 ## Conteúdo
 
@@ -22,7 +23,20 @@ Pacote organizado para o **Mestre RPG**, construído tomando como referência o 
 | IX | Tecnologia Profissional e Segurança Eletrônica | 29 |
 | **Total** | **9 livros** | **290** |
 
-Os três livros originais foram preservados e complementados. Os seis livros novos acrescentam 174 itens. Ao todo, 189 itens têm pré-requisitos registrados.
+## Dados econômicos e físicos — revisão de novembro de 2026
+
+Todos os 290 itens têm peso aproximado em kg, valor de referência em reais quando há base defensável, faixa estimada de mercado e unidade de compra. Os dados ficam dentro de `definition`:
+
+- `weight`: massa em kg da unidade indicada.
+- `valueCents`: preço de referência em centavos de BRL; omitido quando não existe preço civil/institucional comparável e confiável.
+- `economia.precoReferenciaBRL`: preço de referência legível em reais ou `null` quando não se aplica.
+- `economia.faixaPrecoBRL`: faixa mínima/máxima estimada ou `null`.
+- `economia.unidadeCompra`: unidade, par, kit, caixa, pacote, rolo ou veículo a que preço e peso se referem.
+- `economia.dataReferencia`: `2026-11`.
+
+Os veículos também registram combustível, capacidade/lotação, consumo ou autonomia aproximados e a base usada para o peso. Veículos terrestres usam referência de usados/seminovos em bom estado; bens e equipamentos geralmente usam configurações novas econômicas/intermediárias. Consumíveis foram padronizados por caixa, pacote, conjunto ou rolo quando necessário.
+
+**São estimativas para referência de jogo, não cotações, avaliação pericial ou garantia de preço.** Modelo, ano, condição, região, certificação, acessórios, instalação, documentação e disponibilidade podem alterar bastante o custo. Para classes restritas ou institucionais sem preço civil regular, o valor fica em aberto em vez de criar falsa precisão.
 
 ## Pré-requisitos
 
@@ -32,33 +46,12 @@ Os requisitos usam as chaves realmente existentes no dump da ficha. Exemplos:
 - Armas de fogo: `pericia:armas_de_fogo`, nível 1.
 - Veículos comuns: `pericia:conducao`, nível 1.
 - Caça F-16 Fighting Falcon: `pericia:conducao`, nível 5.
-- Ferramentas científicas e profissionais: Conhecimentos ou Talentos existentes, conforme a atividade, por exemplo `conhecimento:geologia`, `conhecimento:medicina`, `conhecimento:investigacao`, `conhecimento:computador`, `talento:quimico`, `talento:tecnologia`, `talento:artista` e `talento:esportes`.
-
-O campo segue a estrutura oficial de regras:
-
-```json
-{
-  "prerequisitos": [
-    {
-      "kind": "pericia",
-      "key": "conducao",
-      "minLevel": 5
-    }
-  ]
-}
-```
-
-## Limites intencionais do conteúdo
-
-- Não foram criados atributos, perícias, talentos, profissões ou poderes novos.
-- Não foram atribuídos preços, pesos, danos, alcances, bônus ou capacidades sem definição na base.
-- As descrições são de catálogo. Valores e efeitos específicos continuam sob decisão do mestre e das regras da campanha.
-- Os pré-requisitos estão gravados no formato reconhecido pelo motor de regras. **A checagem automática ao adquirir/adicionar um registro no Inventário ou em Veículos ainda exige integração específica no fluxo de Patrimônio**; este pacote de dados, sozinho, não bloqueia operações.
+- Ferramentas científicas e profissionais: Conhecimentos ou Talentos existentes, conforme a atividade.
 
 ## Importação
 
 No Mestre RPG, abra **Acervo → Importar JSON**, selecione `pacote-completo-cacadores-cacados.v1.json`, confira a prévia dos nove livros e confirme. O pacote é um envelope de importação, não é o dump de campanha. Ao importar, preserve os dados existentes quando a prévia indicar conflitos; não substitua livros sem revisar.
 
-## Referência
+## Origem do conteúdo
 
-Base de conteúdo: dump `dump-cacadores-e-cacas.json` fornecido pelo usuário. Foram usados nomes e chaves de regras da ficha para definir os requisitos. Dados de personagens, membros e informações particulares da campanha não foram copiados para os livros.
+Base de regras: dump `dump-cacadores-e-cacas.json` fornecido pelo usuário. Dados de personagens, membros e informações particulares da campanha não foram copiados para os livros.
