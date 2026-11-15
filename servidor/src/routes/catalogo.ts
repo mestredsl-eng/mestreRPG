@@ -89,8 +89,15 @@ catalogoRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) =>
   const dataAtual = (tpl.data ?? {}) as Record<string, unknown>;
   const dataNova = d.data !== undefined ? dataTemplateSemRegra(d.data) : { ...dataAtual };
   delete dataNova.regra;
-  if ("regra" in d) {
-    if (d.regra) dataNova.regra = d.regra;
+  // Preserva a semântica tri-state do PATCH com base no body original:
+  // ausente = manter; null = remover; objeto validado = substituir.
+  const regraEnviada = Object.prototype.hasOwnProperty.call(req.body ?? {}, "regra");
+  if (regraEnviada) {
+    if (req.body.regra === null) {
+      delete dataNova.regra;
+    } else if (d.regra) {
+      dataNova.regra = d.regra;
+    }
   } else if (dataAtual.regra !== undefined) {
     dataNova.regra = dataAtual.regra;
   }
