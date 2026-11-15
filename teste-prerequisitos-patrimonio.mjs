@@ -245,10 +245,11 @@ try {
 
   sec("PATCH não troca nem remove o vínculo regra");
   const itemRegra = comDb(BANCO, (db) => db.prepare("select id, data from inventory_entries where character_id=? and name='Carro Popular'").get(pjJ1));
-  r = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${itemRegra?.id}`, { cookie: ids.j1.cookie, body: { data: { regra: { kind: "item", key: "kit_campo" } } } });
-  t("PATCH data.regra não altera vínculo", r.status === 200, `status=${r.status}`);
+  r = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${itemRegra?.id}`, { cookie: ids.j1.cookie, body: { data: { regra: { kind: "item", key: "kit_campo" }, templateId: "template-forjado" } } });
+  t("PATCH data.regra/templateId não altera procedência", r.status === 200, `status=${r.status}`);
   const aposPatch = JSON.parse(comDb(BANCO, (db) => db.prepare("select data from inventory_entries where id=?").get(itemRegra?.id))?.data ?? "{}");
   t("vínculo original preservado", aposPatch.regra?.key === "carro_popular", JSON.stringify(aposPatch.regra));
+  t("templateId forjado via PATCH é removido", aposPatch.templateId === undefined, JSON.stringify(aposPatch.templateId));
 
   sec("templateId vinculado ao Acervo");
   // mestre cria template vinculado ao F-16
