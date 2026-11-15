@@ -201,9 +201,29 @@ try {
   const tplF16 = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Caça F-16 (catálogo)", regra: { kind: "veiculo", key: "caca_f16" } } });
   t("template vinculado criado", tplF16.status === 201, `status=${tplF16.status} ${JSON.stringify(tplF16.json).slice(0,120)}`);
   const tplF16Id = tplF16.json?.id;
+  // Template de item do Acervo: a regra do catálogo deve ser aplicada
+  // também na rota direta de inclusão no inventário (não só na compra).
+  const tplCarro = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, {
+    cookie: ids.cm, body: { name: "Carro do catálogo", regra: { kind: "item", key: "carro_popular" } },
+  });
+  t("template Carro Popular vinculado criado", tplCarro.status === 201, `status=${tplCarro.status}`);
+  const tplCarroId = tplCarro.json?.id;
   // template manual sem vínculo segue legado
   const tplLivre = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Suprimento", data: { peso: 1 } } });
   t("template manual criado", tplLivre.status === 201, `status=${tplLivre.status}`);
+
+  r = await post(pjJ2, "/inventario", { name: "Carro", templateId: tplCarroId }, ids.j2.cookie);
+  t("POST inventário por template restrito bloqueia sem Condução", r.status === 403, `status=${r.status}`);
+  r = await post(pjJ2, "/inventario", { name: "Carro", templateId: tplCarroId, regra: REGRA_LIVRE }, ids.j2.cookie);
+  t("regra livre do cliente não substitui vínculo restrito do template", r.status === 403, `status=${r.status}`);
+  r = await post(pjJ1, "/inventario", { name: "Nome forjado", templateId: tplCarroId }, ids.j1.cookie);
+  t("POST inventário por template permite personagem elegível", r.status === 201, `status=${r.status}`);
+  const itemTpl = comDb(BANCO, (db) => db.prepare("select name, data from inventory_entries where id=?").get(r.json?.id));
+  const dataTpl = JSON.parse(itemTpl?.data ?? "{}");
+  t("template persiste identidade e vínculo canônicos", itemTpl?.name === "Carro Popular" && dataTpl.regra?.key === "carro_popular" && dataTpl.templateId === tplCarroId, JSON.stringify({ name: itemTpl?.name, regra: dataTpl.regra, templateId: dataTpl.templateId }));
+  r = await post(pjJ1, "/inventario", { name: "Suprimento", templateId: tplLivre.json?.id }, ids.j1.cookie);
+  t("POST inventário preserva template manual legado", r.status === 201, `status=${r.status}`);
+
   // j1 (Condução 2) compra template F-16 → bloqueado antes do débito
   const contaId2 = contaId;
   const saldoAntes2 = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId2)?.balance_cents);
@@ -254,6 +274,23 @@ try {
   t("catálogo lista elementos do Acervo", acervo.some((e) => e.regra?.key === "carro_popular"), JSON.stringify(acervo).slice(0, 200));
   const f16 = acervo.find((e) => e.regra?.key === "caca_f16");
   t("F-16 expõe pré-requisito Condução 5", f16?.prerequisitos?.some((p) => p.key === "conducao" && p.minLevel === 5), JSON.stringify(f16?.prerequisitos));
+
+  sec("disponibilidade falha fechado sem ficha publicada");
+  {
+    const w = abrirDb(BANCO);
+    try { w.prepare("update characters set template_version_id=NULL where id=?").run(pjJ2); }
+    finally { w.close(); }
+  }
+  const reqSemFicha = await req(BASE, "GET", `/characters/${pjJ2}/patrimonio/requisitos`, { cookie: ids.j2.cookie });
+  const dispCarro = reqSemFicha.json?.requisitos?.["item:carro_popular"];
+  const dispKit = reqSemFicha.json?.requisitos?.["item:kit_campo"];
+  t("Acervo restrito indisponível sem ficha publicada", reqSemFicha.status === 200 && dispCarro?.ok === false && dispCarro?.prerequisitos?.[0]?.nivelAtual === 0);
+  t("até item sem requisito exige ficha verificável", dispKit?.ok === false && /sem ficha publicada/i.test((dispKit?.mensagens ?? []).join(" ")));
+  {
+    const w = abrirDb(BANCO);
+    try { w.prepare("update characters set template_version_id=? where id=?").run(verId, pjJ2); }
+    finally { w.close(); }
+  }
 
   t("sem erros fatais", true);
 } catch (e) {
