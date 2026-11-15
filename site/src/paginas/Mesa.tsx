@@ -154,7 +154,10 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       api.listarTestes(campaignId, sessao.id),
       api.obterEstadoMesa(campaignId, sessao.id),
     ]).then(([msgs, tes, est]) => {
-      if (seq !== permSeqRef.current) return;
+      // geração superada: rebusca sob a seq vigente — um evento de
+      // permissão (sem troca de papel) pode não disparar novo reload e
+      // a lista ficaria vazia/obsoleta até a próxima mudança de papel
+      if (seq !== permSeqRef.current) { recarregarFiltrado(); return; }
       setMensagens(msgs.mensagens);
       setTestes(tes.testes);
       setTurnos(est.turnos);
@@ -186,11 +189,12 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     const limpar = () => { personagensRef.current = []; setPersonagens([]); };
     if (papelRef.current === "espectador") { limpar(); return; }
     void api.listarPersonagens(campaignId).then((pers) => {
-      if (seq !== permSeqRef.current) return;
+      // idem: geração superada → rebusca com a seq atual (ver recarregarFiltrado)
+      if (seq !== permSeqRef.current) { recarregarPersonagens(); return; }
       personagensRef.current = pers.personagens;
       setPersonagens(pers.personagens);
     }).catch(() => {
-      if (seq !== permSeqRef.current) return;
+      if (seq !== permSeqRef.current) { recarregarPersonagens(); return; }
       limpar(); // erro: não conservar lista privilegiada obsoleta
     });
   }, [campaignId]);
@@ -230,7 +234,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           api.listarPersonagens(campaignId).catch(() => ({ personagens: [] as PersonagemResumo[] })),
           api.obterRegras(campaignId).catch(() => null),
         ]);
-        if (seq !== permSeqRef.current) return; // gerada antes de mudança de papel
+        // geração superada → rebusca com a seq vigente (mesmo motivo de
+        // recarregarFiltrado/recarregarPersonagens)
+        if (seq !== permSeqRef.current) { recarregarCompleta(); return; }
         setMensagens(msgs.mensagens);
         setTestes(tes.testes);
         setTurnos(est.turnos);
