@@ -750,8 +750,8 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
   const tipoVeiculoAcervo = (el: AcervoCatalogoItem): string => {
-    const nome = el.nome.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
-    const categoria = (el.categoria ?? "").normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+    const nome = el.nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const categoria = (el.categoria ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     if (categoria.includes("motociclet") || nome.includes("motocicleta")) return "motocicleta";
     if (categoria.includes("embarc") || nome.includes("lancha") || nome.includes("aquatica")) return "barco";
     if (nome.includes("helicopter")) return "helicoptero";
