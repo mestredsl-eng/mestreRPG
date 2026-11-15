@@ -57,7 +57,7 @@ async function rolarLivre(page, lados, qtd = 1, motivo = null) {
   if (qtd > 1) await page.locator('.rolagem-form input[type="number"]').fill(String(qtd));
   if (motivo) await page.locator('.rolagem-form input[placeholder="Motivo (opcional)"]').fill(motivo);
   const totalAntes = await page.locator(".rolagem-resultado .d10-chip-total").last().textContent().catch(() => "");
-  const tituloAntes = await page.locator(".rolagem-resultado .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
+  const tituloAntes = await page.locator(".mesa-dados-area .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
   await page.getByRole("button", { name: /Lançar/ }).click();
   // o painel mostra só a última rolagem: aguarda resultado novo —
   // total OU face podem coincidir, então espera qualquer um dos dois mudar
@@ -65,20 +65,23 @@ async function rolarLivre(page, lados, qtd = 1, motivo = null) {
     ([antTotal, antTitulo, motivoEsperado]) => {
       const totais = document.querySelectorAll(".rolagem-resultado .d10-chip-total");
       const txt = totais.length ? totais[totais.length - 1].textContent : "";
-      const canvases = document.querySelectorAll(".rolagem-resultado .mesa-dados-3d-canvas");
+      const canvases = document.querySelectorAll(".mesa-dados-area .mesa-dados-3d-canvas");
       const tit = canvases.length ? canvases[canvases.length - 1].getAttribute("aria-label") : "";
       const itemHistoricoNovo = motivoEsperado
         && Array.from(document.querySelectorAll(".rolagem-item"))
           .some((item) => item.textContent?.includes(motivoEsperado));
-      return (txt && txt !== antTotal) || (tit && tit !== antTitulo) || Boolean(itemHistoricoNovo);
+      // "rolando" é o tumble pré-ACK — só conta como resultado o label
+      // já fixado nos valores oficiais do servidor
+      const titPronto = tit && tit !== antTitulo && !tit.includes("rolando");
+      return (txt && txt !== antTotal) || titPronto || Boolean(itemHistoricoNovo);
     },
     [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000 },
   );
 }
 const valoresCanvas = (page) =>
-  page.$$eval(".rolagem-resultado .mesa-dados-3d-canvas", (cs) => cs.map((c) => c.getAttribute("aria-label")));
+  page.$$eval(".mesa-dados-area .mesa-dados-3d-canvas", (cs) => cs.map((c) => c.getAttribute("aria-label")));
 const canvasPintado = (page) => page.evaluate(() => {
-  const c = document.querySelector(".rolagem-resultado .mesa-dados-3d-canvas");
+  const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
   if (!c) return false;
   const ctx = c.getContext("2d");
   const d = ctx.getImageData(0, 0, c.width, c.height).data;
@@ -137,14 +140,19 @@ try {
   await controlesD10.nth(0).fill("5");
   await controlesD10.nth(1).fill("2");
   await pgM.getByRole("button", { name: "Lançar D10" }).click();
-  const canvasD10Pool = pgM.locator(".d10-resultado .mesa-dados-3d-canvas");
+  const canvasD10Pool = pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas");
   await canvasD10Pool.waitFor({ timeout: 15000 });
+  // o canvas existe desde o tumble ("rolando"); aguarda o ACK fixar os valores
+  await pgM.waitForFunction(() => {
+    const rotulo = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
+    return (rotulo.match(/d10=\d+/g) ?? []).length === 3;
+  }, null, { timeout: 15000 });
   const rotuloD10Pool = await canvasD10Pool.getAttribute("aria-label");
   const valoresD10Pool = rotuloD10Pool?.match(/d10=\d+/g) ?? [];
   const estadosD10Pool = rotuloD10Pool?.match(/\((sucesso|falha)\)/g) ?? [];
   t("pool D10 de 5 positivos e 2 negativos gera 3 dados efetivos", valoresD10Pool.length === 3, rotuloD10Pool);
   t("pool D10 inteiro aparece em um único canvas compartilhado",
-    await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").count() === 1);
+    await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").count() === 1);
   t("cada D10 mantém indicação individual de sucesso/falha", estadosD10Pool.length === 3, rotuloD10Pool);
 
   // A mesma classificação deve chegar aos outros participantes pelo
@@ -189,11 +197,11 @@ try {
   await ctrlD10b.nth(1).fill("0");
   await pgM.locator("form.d10-form").getByRole("button", { name: /Lançar/ }).click();
   await pgM.waitForFunction(() => {
-    const c = document.querySelector(".d10-resultado .mesa-dados-3d-canvas");
+    const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     const rotulo = c?.getAttribute("aria-label") ?? "";
     return (rotulo.match(/d10=\d+/g) ?? []).length === 8;
   }, null, { timeout: 15000 });
-  const rotuloPainelMin = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label");
+  const rotuloPainelMin = await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").getAttribute("aria-label");
   const legendaPainelMin = await pgM.locator(".d10-form .meta").innerText();
   t("legenda do painel acompanha o mínimo autoritativo 9 recebido no ACK",
     /sucesso ≥ 9/.test(legendaPainelMin), legendaPainelMin);
@@ -269,16 +277,16 @@ try {
   let rotuloCores = "";
   let facesCores = [];
   for (let tentativa = 1; tentativa <= 3; tentativa++) {
-    const anterior = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label").catch(() => "");
+    const anterior = await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").getAttribute("aria-label").catch(() => "");
     const ctrlCores = pgM.locator(".d10-controles input[type=number]");
     await ctrlCores.nth(0).fill("20");
     await ctrlCores.nth(1).fill("0");
     await pgM.locator("form.d10-form").getByRole("button", { name: /Lançar/ }).click();
     await pgM.waitForFunction(({ anterior }) => {
-      const rotulo = document.querySelector(".d10-resultado .mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
+      const rotulo = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
       return rotulo !== anterior && (rotulo.match(/d10=\d+/g) ?? []).length === 20;
     }, { anterior }, { timeout: 20000 });
-    rotuloCores = await pgM.locator(".d10-resultado .mesa-dados-3d-canvas").getAttribute("aria-label") ?? "";
+    rotuloCores = await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").getAttribute("aria-label") ?? "";
     facesCores = facesDe(rotuloCores);
     if (facesCores.some((f) => f.estado === "sucesso") && facesCores.some((f) => f.estado === "falha")) break;
   }
@@ -313,7 +321,7 @@ try {
       resumoJogadorCores);
 
     await pgM.waitForFunction(() => {
-      const canvas = document.querySelector(".d10-resultado .mesa-dados-3d-canvas");
+      const canvas = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
       const ctx = canvas?.getContext("2d");
       if (!canvas || !ctx) return false;
       const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
@@ -325,8 +333,8 @@ try {
       }
       return verde > 0 && vermelho > 0;
     }, null, { timeout: 20000 });
-    const verdePainel = await pixelsNaCor(pgM.locator(".d10-resultado .mesa-dados-3d-canvas"), [46, 143, 91]);
-    const vermelhoPainel = await pixelsNaCor(pgM.locator(".d10-resultado .mesa-dados-3d-canvas"), [138, 58, 58]);
+    const verdePainel = await pixelsNaCor(pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas"), [46, 143, 91]);
+    const vermelhoPainel = await pixelsNaCor(pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas"), [138, 58, 58]);
     const verdeHistorico = await pixelsNaCor(pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first(), [46, 143, 91]);
     const vermelhoHistorico = await pixelsNaCor(pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first(), [138, 58, 58]);
     t("canvas do painel desenha borda verde real para sucesso", verdePainel > 0, `pixels verdes=${verdePainel}`);
@@ -437,7 +445,7 @@ try {
   await btnRolarD10.waitFor({ timeout: 5000 });
   await btnRolarD10.click();
   const d10Canvas = await pg1.waitForFunction(() => {
-    const cs = document.querySelectorAll(".rolagem-item .mesa-dados-3d-canvas, .rolagem-resultado .mesa-dados-3d-canvas");
+    const cs = document.querySelectorAll(".rolagem-item .mesa-dados-3d-canvas, .mesa-dados-area .mesa-dados-3d-canvas");
     return [...cs].some((c) => /d10=\d/.test(c.getAttribute("aria-label") ?? ""));
   }, null, { timeout: 15000 }).then(() => true).catch(() => false);
   t("desafio D10 renderiza dado 3D na mesa", d10Canvas, "nenhuma mesa com d10=");
@@ -450,11 +458,11 @@ try {
   await irCampanha(pgRM);
   await entrarNaMesa(pgRM);
   await rolarLivre(pgRM, 6, 2);
-  const rotuloRM = await pgRM.locator(".rolagem-resultado .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
+  const rotuloRM = await pgRM.locator(".mesa-dados-area .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
   t("reduced-motion: mesa exibe os 2 dados com valores do servidor",
     (rotuloRM.match(/d6=\d/g) ?? []).length === 2, rotuloRM);
   t("reduced-motion: canvas pintado", await pgRM.evaluate(() => {
-    const c = document.querySelector(".rolagem-resultado .mesa-dados-3d-canvas");
+    const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     if (!c) return false;
     const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
     for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
@@ -469,8 +477,8 @@ try {
   await irCampanha(pgMob);
   await entrarNaMesa(pgMob);
   await rolarLivre(pgMob, 8);
-  const canvasMob = await pgMob.locator(".rolagem-resultado .mesa-dados-3d-canvas").count();
-  const dim = await pgMob.locator(".rolagem-resultado .mesa-dados-3d-canvas").first().evaluate((el) => {
+  const canvasMob = await pgMob.locator(".mesa-dados-area .mesa-dados-3d-canvas").count();
+  const dim = await pgMob.locator(".mesa-dados-area .mesa-dados-3d-canvas").first().evaluate((el) => {
     const r = el.getBoundingClientRect();
     return { w: r.width, h: r.height };
   }).catch(() => ({ w: 0, h: 0 }));
@@ -489,11 +497,42 @@ try {
   t("transporte inicial é polling (upgrade posterior é opcional)",
     ["polling", "websocket"].includes(transporteApp?.transporte), `transporte=${transporteApp?.transporte}`);
 
-  // Prévia visível antes do primeiro lançamento
+  // Área de dados visível ANTES do primeiro lançamento: o canvas 3D da
+  // bandeja está montado e pintado — não é mais uma prévia estática.
   await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
   await pgM.locator(".rolagem-form select").first().selectOption("6");
-  await pgM.locator(".mesa-dados-preview").waitFor({ timeout: 5000 });
-  t("prévia de dados visível antes de rolar", await pgM.locator(".mesa-dados-preview .dado-3d-canvas").count() > 0);
+  await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").waitFor({ timeout: 5000 });
+  t("mesa de dados 3D visível antes de rolar", await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").count() === 1);
+  t("bandeja pintada antes da primeira rolagem", await canvasPintado(pgM));
+
+  // Animação real em andamento: o tumble começa no clique (antes do
+  // ACK) e continua durante o assentamento — pixels do canvas mudam.
+  const amostraPixels = () => pgM.evaluate(() => {
+    const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
+    if (!c) return "";
+    const ctx = c.getContext("2d");
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let h = 0;
+    for (let i = 0; i < d.length; i += 4096) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0;
+    return String(h);
+  });
+  await pgM.getByRole("button", { name: /Lançar/ }).click();
+  // polling dentro da janela de animação (~2-3s): o tumble começa no
+  // clique (antes do ACK) e o assentamento continua depois — qualquer
+  // mudança de pixel prova lançamento/giro/colisão em andamento
+  let pix1 = "", pix2 = "", animou = false;
+  for (let i = 0; i < 9 && !animou; i++) {
+    pix1 = await amostraPixels();
+    await pgM.waitForTimeout(300);
+    pix2 = await amostraPixels();
+    animou = pix1 !== "" && pix1 !== pix2;
+  }
+  t("animação 3D em andamento durante a rolagem", animou, `${pix1}→${pix2}`);
+  // aguarda o ACK da rolagem de amostragem terminar antes de desconectar
+  await pgM.waitForFunction(
+    () => document.querySelector(".rolagem-form button[type='submit']")?.disabled !== true,
+    null, { timeout: 20000 },
+  );
 
   // Desconexão: botão NÃO fica eterno em "Rolando…" e erro é exibido
   await pgM.evaluate(() => window.__mesaSocket.disconnect());

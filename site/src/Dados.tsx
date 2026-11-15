@@ -135,6 +135,10 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
   const [privado, setPrivado] = useState(false);
   const [resultado, setResultado] = useState<ResultadoLivre | null>(null);
   const [rolando, setRolando] = useState(false);
+  // rodada identifica a tentativa de lançamento: a mesma semente cobre o
+  // tumble (ACK pendente) e o assentamento no resultado oficial — a cena
+  // de física continua de onde estava em vez de reiniciar do zero.
+  const [rodada, setRodada] = useState(0);
   // timeout do ACK: sem resposta do servidor em 15s, libera o botão e
   // avisa — nunca deixa "Rolando…" eterno quando o socket cai
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -149,6 +153,7 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       return;
     }
     const count = Math.max(1, Math.min(30, Math.round(qtd) || 1));
+    setRodada((r) => r + 1);
     setRolando(true);
     ackTimer.current = setTimeout(() => {
       ackTimer.current = null;
@@ -207,26 +212,22 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
         </div>
       </form>
 
-      {/* Prévia da configuração — os valores reais vêm do servidor e só
-          aparecem na mesa 3D após o ACK; nada é sorteado no cliente. */}
-      {!resultado && (
-        <div className="mesa-dados-preview" aria-label="Prévia dos dados configurados">
-          <p className="meta">Prévia — {count0(qtd)} dado{count0(qtd) === 1 ? "" : "s"} d{lados}{modo === "dano" ? " (dano)" : ""}</p>
-          <div className="mesa-dados-preview-grade">
-            {Array.from({ length: Math.min(count0(qtd), 12) }, (_, i) => (
-              <FaceDado key={i} lados={lados} valor={lados} indice={i} />
-            ))}
-            {count0(qtd) > 12 && <span className="meta">+{count0(qtd) - 12}</span>}
-          </div>
-        </div>
-      )}
+      {/* Mesa de dados sempre visível: bandeja vazia antes da primeira
+          rolagem, tumble real durante o ACK e assentamento na face
+          oficial do servidor. Nenhum valor é sorteado no cliente. */}
+      <div className="mesa-dados-area" aria-label="Mesa de dados 3D">
+        <MesaDados3D
+          dados={rolando
+            ? Array.from({ length: count0(qtd) }, () => ({ lados, valor: null }))
+            : resultado
+              ? resultado.grupos.flatMap((g) => g.resultados.map((v) => ({ lados: g.lados, valor: v })))
+              : []}
+          semente={seedDeId(`${sessionId}-rol-${rodada}`)}
+        />
+      </div>
 
       {resultado && (
         <div className="rolagem-resultado">
-          <MesaDados3D
-            dados={resultado.grupos.flatMap((g) => g.resultados.map((v) => ({ lados: g.lados, valor: v })))}
-            semente={seedDeId(resultado.id)}
-          />
           <div className="d10-resumo">
             {resultado.modo === "dano" && <span className="d10-chip d10-chip-neg">Dano</span>}
             <span className="d10-chip">{resultado.grupos.reduce((s, g) => s + g.resultados.length, 0)} dado{resultado.grupos.reduce((s, g) => s + g.resultados.length, 0) === 1 ? "" : "s"}</span>
