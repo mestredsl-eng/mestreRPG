@@ -205,10 +205,30 @@ try {
   t("sessões criadas", !!sidA && !!sidB);
 
   browser = await chromium.launch();
-  const ctxM = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const ctxJ = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const ctxE = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  const ctxM2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  // routeWebSocket(connectToServer) mantém um WebSocket NATIVO interno
+  // (_ws) como transporte real e o escreve via _ws.send() sem checar
+  // readyState — se o socket já estiver CLOSING/CLOSED (corrida com
+  // reconexões, keepalive ou fechamento propagado), o Chromium registra
+  // "WebSocket is already in CLOSING or CLOSED state." como erro de
+  // console. O app só enxerga o mock; este init script blinda APENAS o
+  // protótipo nativo (transporte interno do Playwright), descartando
+  // envios fora de OPEN — mesmo critério que o engine.io aplica ao mock.
+  // Registrado antes do routeWebSocket para rodar antes do inject.
+  const novoCtx = async (opts) => {
+    const ctx = await browser.newContext(opts);
+    await ctx.addInitScript(() => {
+      const Nativo = WebSocket;
+      const send = Nativo.prototype.send;
+      Nativo.prototype.send = function (...args) {
+        if (this.readyState === Nativo.OPEN) return send.apply(this, args);
+      };
+    });
+    return ctx;
+  };
+  const ctxM = await novoCtx({ viewport: { width: 1920, height: 1080 } });
+  const ctxJ = await novoCtx({ viewport: { width: 1920, height: 1080 } });
+  const ctxE = await novoCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const ctxM2 = await novoCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
   // prova de "mesma página": reload zeraria o estado React e não pode
@@ -1021,7 +1041,7 @@ try {
   t("reconexão sem reload: propagação de névoa segue funcionando", ehTransparente(pxJTransp), JSON.stringify(pxJTransp));
 
   sec("Página aberta com servidor fora + rejeição por membership");
-  const ctxX = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const ctxX = await novoCtx({ viewport: { width: 1920, height: 1080 } });
   const pgX = await ctxX.newPage();
   vigiar(pgX, "j2-offline");
   // ACK drop controlado + contagem de mesa:entrar (prova de reentrada
