@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — atendimento e investigação",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -27,7 +27,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 22000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 0
         },
@@ -47,7 +62,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 6,
+            "valueCents": 5000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 50000,
+              "faixaPrecoBRL": {
+                "min": 30000,
+                "max": 100000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Equipamento de diagnóstico profissional; transdutores, software, registro e suporte alteram o custo."
+            }
           },
           "ordem": 1
         },
@@ -67,7 +97,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 5000,
+                "max": 25000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -87,7 +132,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 400000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4000,
+              "faixaPrecoBRL": {
+                "min": 1500,
+                "max": 9000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 3
         },
@@ -107,7 +167,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 5,
+            "valueCents": 150000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1500,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 3000
+              },
+              "unidadeCompra": "conjunto cilindro e regulador",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -127,7 +202,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 5,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 4000
+              },
+              "unidadeCompra": "bolsa equipada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 5
         },
@@ -147,7 +237,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 170000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1700,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 3500
+              },
+              "unidadeCompra": "conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 6
         },
@@ -167,7 +272,22 @@
                 "key": "sobrevivencia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 12,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1800,
+                "max": 7500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de material, certificação, acessórios e sistema de içamento."
+            }
           },
           "ordem": 7
         },
@@ -187,7 +307,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 7,
+            "valueCents": 70000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 700,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 1500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 8
         },
@@ -207,7 +342,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 10,
+            "valueCents": 700000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 7000,
+              "faixaPrecoBRL": {
+                "min": 3500,
+                "max": 14000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 9
         },
@@ -227,7 +377,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 900
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 10
         },
@@ -247,7 +412,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 11
         },
@@ -267,7 +447,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.2,
+            "valueCents": 12000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 120,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 350
+              },
+              "unidadeCompra": "kit de coleta",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 12
         },
@@ -287,7 +482,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.4,
+            "valueCents": 9000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 90,
+              "faixaPrecoBRL": {
+                "min": 35,
+                "max": 180
+              },
+              "unidadeCompra": "pacote com 50 envelopes",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 13
         },
@@ -307,7 +517,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.25,
+            "valueCents": 6500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 65,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 140
+              },
+              "unidadeCompra": "pacote com 50 lacres",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 14
         },
@@ -327,7 +552,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 6000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 60,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 130
+              },
+              "unidadeCompra": "caixa com 100 unidades",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 15
         },
@@ -347,7 +587,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 800
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 16
         },
@@ -367,7 +622,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.7,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 17
         },
@@ -387,7 +657,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.7,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 12000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 18
         },
@@ -407,7 +692,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.7,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 2800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -427,7 +727,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.2,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 550
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -447,7 +762,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 21
         },
@@ -467,7 +797,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.2,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1200
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -487,7 +832,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.2,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 1100
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -507,7 +867,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 40000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 400,
+              "faixaPrecoBRL": {
+                "min": 160,
+                "max": 900
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -527,7 +902,22 @@
                 "key": "sobrevivencia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 12,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 14000
+              },
+              "unidadeCompra": "kit certificado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Kit certificado; composição, cordas, ancoragens e EPIs alteram o preço e o peso."
+            }
           },
           "ordem": 25
         },
@@ -547,7 +937,22 @@
                 "key": "sobrevivencia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 18,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 14000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estrutura certificada; altura, carga de trabalho, guincho e acessórios variam."
+            }
           },
           "ordem": 26
         },
@@ -567,7 +972,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1200,
+                "max": 8000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende dos gases ou agentes monitorados, sensores e calibração."
+            }
           },
           "ordem": 27
         },
@@ -580,7 +1000,22 @@
           "definition": {
             "descricao": "Manta de proteção e apoio em atendimento e transporte.",
             "subcategoria": "Resgate",
-            "ordem": 28
+            "ordem": 28,
+            "weight": 1,
+            "valueCents": 12000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 120,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 280
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 28
         },
@@ -600,7 +1035,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 29
         }
