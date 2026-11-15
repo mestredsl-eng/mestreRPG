@@ -1481,6 +1481,11 @@ try {
   }
   dbSnap.prepare("update snapshots set data=? where id=?").run(JSON.stringify(dadosSnap), snapIdRT);
   dbSnap.close();
+  // Garante que o socket do jogador está CONECTADO antes do restore:
+  // a notificação de revogação é emitida na room usuario:* sem fila —
+  // se o socket estiver reconectando no instante do emit, o evento se
+  // perde e a UI nunca mostra "revogado" (flake observado no CI).
+  await pgJ.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
@@ -1495,6 +1500,10 @@ try {
   const expRT = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
   const pacoteRT = expRT.json;
   pacoteRT.estado.memberships = (pacoteRT.estado.memberships ?? []).filter((m) => m.userId !== espId);
+  // socket do espectador CONECTADO antes do import: a notificação de
+  // revogação vai para a room usuario:* sem fila — emitida com o socket
+  // reconectando, ela se perde e a UI nunca exibe "revogado" (flake CI).
+  await pgE.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
   const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
     cookie: cookieMestre,
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },

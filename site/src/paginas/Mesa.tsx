@@ -916,6 +916,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         ehEspectador={papel === "espectador"}
         meuUserId={meuUserId}
         membros={membros}
+        npcs={personagens.filter((p) => p.isNpc)}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
         atualizacaoPapel={permSeq}
@@ -1239,9 +1240,9 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; encerrada: boolean; inicial: VttState | string | null;
+  membros: Membro[]; npcs: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
   atualizacaoPapel: number;
   // geração autoritativa de permissões: referência do PAI, incrementada
   // sincronicamente no handler de mesa:permissao:atualizada — o filho
@@ -1256,6 +1257,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [erroVtt, setErroVtt] = useState<string | null>(null);
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
+  const [novoNpcId, setNovoNpcId] = useState("");
   const [selVtt, setSelVtt] = useState<string | null>(null);
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
@@ -1801,9 +1803,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
               <button
                 key={tk.id}
                 type="button"
-                className={`vtt-token ${meu ? "vtt-token-meu" : ""} ${tk.userId === meuUserId || (!tk.userId && !tk.personagemId && souMestre) ? "" : ""}`}
+                className={`vtt-token ${meu ? "vtt-token-meu" : ""} ${tk.oculto ? "vtt-token-oculto" : ""}`}
                 style={{ left: `${tk.x * 100}%`, top: `${tk.y * 100}%`, background: tk.cor, borderColor: tk.cor }}
-                title={tk.nome}
+                title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
                 onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
               >{tk.nome.slice(0, 2).toUpperCase()}</button>
@@ -1814,25 +1816,45 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       {souMestre && !encerrada && vtt.mapa && (
         <div className="linha vtt-controles">
           <input placeholder="Nome do token" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
-          <select value={novoUserId} onChange={(e) => setNovoUserId(e.target.value)}>
+          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); if (e.target.value) setNovoNpcId(""); }}>
             <option value="">Sem dono</option>
             {membros.filter((m) => m.status !== "removido").map((m) => (
               <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>
             ))}
           </select>
+          {npcs.length > 0 && (
+            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
+              <option value="">Sem NPC</option>
+              {npcs.map((p) => <option key={p.id} value={p.id}>{p.name} (NPC)</option>)}
+            </select>
+          )}
           <button
             className="primario"
             onClick={() => {
               if (!novoNome.trim()) return;
+              const npc = npcs.find((p) => p.id === novoNpcId);
               emitir({
                 acao: "criar",
-                token: { nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5, userId: novoUserId || null },
-              }, () => { setNovoNome(""); setNovoUserId(""); });
+                token: {
+                  nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5,
+                  userId: novoUserId || null,
+                  personagemId: npc?.id ?? null,
+                },
+              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); });
             }}
           >Adicionar token</button>
-          {selVtt && (
-            <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
-          )}
+          {selVtt && (() => {
+            const tk = vtt.tokens.find((t) => t.id === selVtt);
+            return tk ? (
+              <>
+                <button
+                  className="secundario"
+                  onClick={() => emitir({ acao: "atualizar", token: { id: tk.id, oculto: !tk.oculto } })}
+                >{tk.oculto ? "Exibir" : "Ocultar"}</button>
+                <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
+              </>
+            ) : null;
+          })()}
         </div>
       )}
       {souMestreCena && (

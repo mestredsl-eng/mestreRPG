@@ -307,7 +307,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const arquivado = personagem.status === "arquivado";
   // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
   // mestre reabrir/restaurar; o mestre edita tudo que não está arquivado.
-  const podeEditar = !arquivado && (souMestre || (personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
+  // NPC nunca é editável por quem não é o dono (jogador que apenas LÊ a
+  // ficha revelada não pode editar nem em status "reaberta" — o backend
+  // também rejeita, mas a UI não deve nem oferecer o botão).
+  const podeEditar = !arquivado && (souMestre ||
+    (personagem.isNpc !== true && personagem.ehEu === true &&
+      personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
   // Exclusão: mestre sempre; jogador só o próprio personagem em status editável.
   const podeExcluir = souMestre || (personagem.ehEu === true && STATUS_EXCLUIVEIS.has(personagem.status));
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
@@ -387,7 +392,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       <section className="cartao">
         <div className="linha-entre">
           <div>
-            <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}</h2>
+            <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}{personagem.isNpc && <span className={`badge ${personagem.npcRevelado ? "badge-aprovada" : "badge-bloqueada"}`}>{personagem.npcRevelado ? " ficha visível" : " ficha oculta"}</span>}</h2>
             <p className="meta ficha-dono">
               Jogador: <strong>{personagem.isNpc ? "Mestre (NPC)" : (personagem.donoNome ?? "—")}</strong>
               {" · "}
@@ -427,6 +432,24 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           )}
           {souMestre && !editando && arquivado && (
             <button className="secundario" onClick={() => setConfirmando("restaurar")}>Restaurar</button>
+          )}
+          {souMestre && personagem.isNpc && !editando && (
+            <button
+              className="secundario"
+              disabled={operando}
+              title="Define se os jogadores podem ler a ficha deste NPC (somente campos públicos)"
+              onClick={async () => {
+                setOperando(true); setErro(null); setMsg(null);
+                try {
+                  await api.definirNpcVisibilidade(personagem.id, !personagem.npcRevelado);
+                  await aoRecarregar();
+                } catch (e) {
+                  setErro(e instanceof Error ? e.message : "Erro ao alterar visibilidade");
+                } finally {
+                  setOperando(false);
+                }
+              }}
+            >{personagem.npcRevelado ? "Ocultar ficha dos jogadores" : "Exibir ficha para jogadores"}</button>
           )}
           {!editando && podeExcluir && (
             <button className="perigo" onClick={() => setConfirmando("excluir")}>Excluir</button>
@@ -534,7 +557,11 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         )}
       </section>
 
-      <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
+          dono — montar o componente dispararia consultas 403 desnecessárias. */}
+      {(souMestre || personagem.ehEu === true) && (
+        <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      )}
     </>
   );
 }

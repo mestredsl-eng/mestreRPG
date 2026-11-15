@@ -346,7 +346,11 @@ function socket_handlers(
         socket.join(`sessao:${sessionId}`);
         const papel = ctxF.papel;
         const uF = usuario()!;
-        const vttEu = papel === "mestre" || !vttEntrar.nevoa.ativa
+        // vttParaDestinatario é a ÚNICA via de filtragem: cobre névoa
+        // desligada, tokens ocultos (NPCs não revelados) e tokens do
+        // próprio jogador — o atalho "névoa off → estado completo"
+        // vazaria tokens ocultos para não-mestres.
+        const vttEu = papel === "mestre"
           ? vttEntrar
           : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
         socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
@@ -407,7 +411,9 @@ function socket_handlers(
     };
     /** Visão VTT do próprio requisitante (ACKs e mesa:entrar). */
     const vttParaUsuario = async (sessionId: string, vtt: VttState, papel: string, userId: string): Promise<VttState> => {
-      if (papel === "mestre" || !vtt.nevoa.ativa) return vtt;
+      // Mesma regra do mesa:entrar — névoa desligada NÃO libera tokens
+      // ocultos para não-mestres; o filtro canônico decide tudo.
+      if (papel === "mestre") return vtt;
       const donos = await donosDosTokens(sessionId, vtt.tokens);
       return vttParaDestinatario(vtt, papel as "jogador" | "espectador", userId, donos);
     };
@@ -444,9 +450,10 @@ function socket_handlers(
      * do mesmo usuário. Retorna { ok, userId, personagemId } ou { erro }.
      */
     async function validarVinculo(campaignId: string, userId: unknown, personagemId: unknown):
-      Promise<{ ok: true; userId: string | null; personagemId: string | null } | { ok: false; erro: string }> {
+      Promise<{ ok: true; userId: string | null; personagemId: string | null; personagemNpc: boolean } | { ok: false; erro: string }> {
       let uid: string | null = null;
       let pid: string | null = null;
+      let personagemNpc = false;
       if (userId !== undefined && userId !== null) {
         if (typeof userId !== "string" || !userId) return { ok: false, erro: "userId inválido" };
         const [mem] = await db.select({ id: memberships.id }).from(memberships)
@@ -456,17 +463,18 @@ function socket_handlers(
       }
       if (personagemId !== undefined && personagemId !== null) {
         if (typeof personagemId !== "string" || !personagemId) return { ok: false, erro: "personagemId inválido" };
-        const [ch] = await db.select({ membershipId: characters.membershipId }).from(characters)
+        const [ch] = await db.select({ membershipId: characters.membershipId, isNpc: characters.isNpc }).from(characters)
           .where(and(eq(characters.id, personagemId), eq(characters.campaignId, campaignId))).limit(1);
         if (!ch) return { ok: false, erro: "Personagem não encontrado na campanha" };
         pid = personagemId;
+        personagemNpc = ch.isNpc === true;
         if (uid) {
           const [mem] = await db.select({ userId: memberships.userId }).from(memberships)
             .where(and(eq(memberships.id, ch.membershipId), eq(memberships.status, "ativo"))).limit(1);
           if (!mem || mem.userId !== uid) return { ok: false, erro: "Personagem pertence a outro jogador" };
         }
       }
-      return { ok: true, userId: uid, personagemId: pid };
+      return { ok: true, userId: uid, personagemId: pid, personagemNpc };
     }
 
     /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
@@ -571,9 +579,13 @@ function socket_handlers(
           const vinc = await validarVinculo(ctx.sessao.campaignId, t.userId, t.personagemId);
           if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
           const idToken = typeof t.id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(t.id) ? t.id : randomUUID();
+          // Token vinculado a NPC nasce oculto por padrão — o mestre
+          // decide explicitamente quando exibir aos jogadores.
+          const oculto = t.oculto !== undefined ? !!t.oculto : vinc.personagemNpc;
           const novo: TokenVtt = {
             id: idToken, nome, cor, x: t.x as number, y: t.y as number,
             userId: vinc.userId, personagemId: vinc.personagemId, ativo: t.ativo !== false,
+            ...(oculto ? { oculto: true } : {}),
           };
           vtt.tokens.push(novo);
         } else if (acao === "atualizar" || acao === "mover") {
@@ -589,6 +601,9 @@ function socket_handlers(
               existente.cor = t.cor;
             }
             if (t.ativo !== undefined) existente.ativo = !!t.ativo;
+            if (t.oculto !== undefined) {
+              if (t.oculto) existente.oculto = true; else delete existente.oculto;
+            }
             if (t.userId !== undefined || t.personagemId !== undefined) {
               // P4: reatribuição valida coerência usuário×personagem.
               // Campos não enviados mantêm o vínculo atual.
@@ -598,6 +613,9 @@ function socket_handlers(
               if (!vinc.ok) { cb?.({ ok: false, erro: vinc.erro }); return; }
               existente.userId = vinc.userId;
               existente.personagemId = vinc.personagemId;
+              // Revincular a um NPC volta a ocultar por padrão (salvo
+              // oculto explícito no mesmo payload).
+              if (vinc.personagemNpc && t.oculto === undefined) existente.oculto = true;
             }
           } else {
             // jogador: somente posição do próprio token — nada mais

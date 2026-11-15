@@ -199,13 +199,39 @@ function montarFicha(
   }
 
   // Pontos de Vida e Vitalidade (config da campanha; estado em data.__hp/__vitalidade)
+  // NPC revelado lido por não-mestre/não-dono: HP é calculado sobre a
+  // MESMA visão filtrada dos campos — um atributo privado não pode ser
+  // deduzido pelo máximo, pelo atual nem pelo histórico. O estado __hp
+  // (atual) é incluído para não exibir um "atual" inventado; o histórico
+  // é esvaziado pois as quantidades registradas também dependem do
+  // atributo. Personagens normais mantêm o comportamento anterior.
+  const vidaNpcLeitor = personagem.isNpc && !ehMestre && !ehDono;
   const vida = regras
-    ? {
-        hp: resumoHp(regras.config.hp, estrutura, dados),
-        vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
-        podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
-        podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
-      }
+    ? (() => {
+        if (!vidaNpcLeitor) {
+          return {
+            hp: resumoHp(regras.config.hp, estrutura, dados),
+            vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
+            podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
+            podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
+          };
+        }
+        const dadosVida = {
+          ...(campos as Record<string, unknown>),
+          [CHAVE_HP]: dados[CHAVE_HP],
+          [CHAVE_VITALIDADE]: dados[CHAVE_VITALIDADE],
+        };
+        const hp = resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
+        if (hp) hp.historico = [];
+        const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
+        if (vit) vit.historico = [];
+        return {
+          hp,
+          vitalidade: vit,
+          podeEditarHp: false,
+          podeEditarVitalidade: false,
+        };
+      })()
     : null;
 
   return {
@@ -258,6 +284,7 @@ async function personagemPublico(
       templateId: carregada.templateId,
       donoNome: dono?.displayName ?? dono?.username ?? null,
       isNpc: p.isNpc,
+      npcRevelado: p.isNpc ? npcFichaVisivel(p.data) : undefined,
       ehEu: ehDono,
       arquivadoDe: p.status === "arquivado" ? (metaArquivamento(p.data)?.statusAnterior ?? null) : null,
       createdAt: p.createdAt,
@@ -275,6 +302,24 @@ const STATUS_EXCLUIVEIS_JOGADOR = new Set(["rascunho", "devolvida", "reaberta"])
  *  nunca vem de campos da ficha — validarFicha descarta chaves fora do modelo. */
 const CHAVE_ARQUIVAMENTO = "__arquivamento";
 const STATUS_VALIDOS = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
+
+// ---------- Visibilidade de ficha do NPC (decisão do mestre) ----------
+// Metadado reservado em characters.data — nunca vem de campos da ficha.
+const CHAVE_NPC_VISIVEL = "__npcVisivel";
+
+interface NpcVisivelMeta { visivel: boolean; em?: string; por?: string }
+
+function metaNpcVisivel(data: unknown): NpcVisivelMeta | null {
+  const meta = (data as Record<string, unknown> | null)?.[CHAVE_NPC_VISIVEL];
+  if (!meta || typeof meta !== "object") return null;
+  const m = meta as NpcVisivelMeta;
+  return typeof m.visivel === "boolean" ? m : null;
+}
+
+/** Ficha do NPC liberada para leitura pelos jogadores da campanha. */
+function npcFichaVisivel(data: unknown): boolean {
+  return metaNpcVisivel(data)?.visivel === true;
+}
 
 function metaArquivamento(data: unknown): { statusAnterior?: string; arquivadoEm?: string; arquivadoPor?: string } | null {
   const meta = (data as Record<string, unknown> | null)?.[CHAVE_ARQUIVAMENTO];
@@ -313,6 +358,17 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       .innerJoin(users, eq(memberships.userId, users.id))
       .where(and(eq(characters.campaignId, campaignId), eq(memberships.userId, req.usuario!.id), filtroStatus))
       .orderBy(desc(characters.updatedAt));
+    // NPCs com ficha liberada pelo mestre entram na listagem do jogador
+    // (somente leitura — mutações seguem exigindo mestre/dono).
+    const npcs = await db
+      .select({ personagem: characters, user: users, membership: memberships })
+      .from(characters)
+      .innerJoin(memberships, eq(characters.membershipId, memberships.id))
+      .innerJoin(users, eq(memberships.userId, users.id))
+      .where(and(eq(characters.campaignId, campaignId), eq(characters.isNpc, true), filtroStatus));
+    for (const r of npcs) {
+      if (npcFichaVisivel(r.personagem.data)) rows.push(r);
+    }
   }
   res.json({
     personagens: rows.map((r) => ({
@@ -324,6 +380,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       membershipId: r.personagem.membershipId,
       ehEu: r.membership.userId === req.usuario!.id,
       isNpc: r.personagem.isNpc,
+      npcRevelado: r.personagem.isNpc ? npcFichaVisivel(r.personagem.data) : undefined,
       arquivadoDe: r.personagem.status === "arquivado" ? (metaArquivamento(r.personagem.data)?.statusAnterior ?? null) : null,
       updatedAt: r.personagem.updatedAt,
     })),
@@ -460,15 +517,65 @@ export async function carregarPersonagemComAcesso(req: Request) {
   return { personagem: p, membership, ehMestre, ehDono, membershipId: p.membershipId };
 }
 
-/** GET /api/characters/:characterId — ficha conforme permissões de visibilidade */
+/** GET /api/characters/:characterId — ficha conforme permissões de visibilidade.
+ *  Exceção de leitura: NPC com ficha liberada pelo mestre (`__npcVisivel`)
+ *  pode ser lido por qualquer membro ativo — montarFicha já filtra os
+ *  campos "mestre"/"dono_mestre" para não-mestres/não-donos. */
 personagensRouter.get("/:characterId", async (req, res) => {
   const acesso = await carregarPersonagemComAcesso(req);
   if ("erro" in acesso) {
+    if (acesso.erro === 403) {
+      const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
+      const membership = p ? await getMembership(p.campaignId, req.usuario!.id) : null;
+      if (p && p.isNpc && membership?.status === "ativo" && npcFichaVisivel(p.data)) {
+        // membershipId = membership do REQUISITANTE → ehDono=false:
+        // campos "dono"/"dono_mestre" do NPC não vazam para o jogador.
+        const resp = await personagemPublico(p, req.usuario!.id, membership.id, false);
+        res.json(resp);
+        return;
+      }
+    }
     res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
     return;
   }
   const resp = await personagemPublico(acesso.personagem, req.usuario!.id, acesso.membershipId, acesso.ehMestre);
   res.json(resp);
+});
+
+const npcVisibilidadeSchema = z.object({ visivel: z.boolean() });
+
+/** POST /api/characters/:characterId/npc-visibilidade — somente mestre:
+ *  decide se a ficha do NPC fica visível para leitura pelos jogadores.
+ *  Edição do NPC continua exclusiva do mestre; jogadores só leem os
+ *  campos cuja visibilidade os autoriza (montarFicha filtra). */
+personagensRouter.post("/:characterId/npc-visibilidade", requireLeasePersonagem(), async (req, res) => {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (!ehMestre) {
+    res.status(403).json({ erro: "Somente o mestre controla a visibilidade do NPC" });
+    return;
+  }
+  if (!p.isNpc) {
+    res.status(400).json({ erro: "Personagem não é um NPC" });
+    return;
+  }
+  const body = npcVisibilidadeSchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos" });
+    return;
+  }
+  const dados = {
+    ...((p.data ?? {}) as Record<string, unknown>),
+    [CHAVE_NPC_VISIVEL]: { visivel: body.data.visivel, em: new Date().toISOString(), por: req.usuario!.id },
+  };
+  await db.update(characters).set({ data: dados, updatedAt: new Date() }).where(eq(characters.id, p.id));
+  await audit(req, "personagem.npc_visibilidade", { characterId: p.id, visivel: body.data.visivel });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, visivel: body.data.visivel });
 });
 
 const previaPontosSchema = z.object({
@@ -681,6 +788,10 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
   // `__arquivamento` é metadado reservado do backend — o PATCH nunca o
   // grava, mesmo que um modelo de ficha use um campo com esse id.
   delete (dadosFinais as Record<string, unknown>).__arquivamento;
+  // `__npcVisivel` idem: só o endpoint /npc-visibilidade o altera.
+  const npcVisAntes = (p.data as Record<string, unknown> | null)?.[CHAVE_NPC_VISIVEL];
+  delete (dadosFinais as Record<string, unknown>)[CHAVE_NPC_VISIVEL];
+  if (npcVisAntes !== undefined) (dadosFinais as Record<string, unknown>)[CHAVE_NPC_VISIVEL] = npcVisAntes;
 
   // Transições de status
   let novoStatus = body.data.status ?? p.status;
