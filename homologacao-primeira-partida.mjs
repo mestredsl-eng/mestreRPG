@@ -263,12 +263,12 @@ try {
   sec("9. Chat entre participantes");
   const msgJ1 = "Olá mesa! Preparados para rolar?";
   await pg1.getByPlaceholder("Mensagem…").fill(msgJ1);
-  await pg1.getByRole("button", { name: "Enviar" }).click();
+  await pg1.getByRole("button", { name: "Enviar", exact: true }).click();
   await pgM.getByText(msgJ1).waitFor({ timeout: 10000 });
   t("chat j1→mestre", true);
   const msgM = "Sessão aberta — pode rolar.";
   await pgM.getByPlaceholder("Mensagem…").fill(msgM);
-  await pgM.getByRole("button", { name: "Enviar" }).click();
+  await pgM.getByRole("button", { name: "Enviar", exact: true }).click();
   await pg2.getByText(msgM).waitFor({ timeout: 10000 });
   t("chat mestre→jogadores", true);
   await shot(pgM, "09-chat");
