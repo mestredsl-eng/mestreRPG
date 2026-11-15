@@ -104,8 +104,8 @@ try {
   sec("nível insuficiente (Condução 2 < 5)");
   r = await post(pjJ1, "/veiculos", { name: "F-16", regra: REGRA_F16 }, ids.j1.cookie);
   t("j1 Condução 2: F-16 (exige 5) bloqueado", r.status === 403, `status=${r.status}`);
-  const det = r.json?.detalhes?.[0]?.mensagem ?? "";
-  t("mensagem explica nível atual/exigido", /Condução/.test(det) && /nível 5/.test(det), det);
+  const det = (r.json?.detalhes?.mensagens ?? []).join(" ");
+  t("mensagem explica nível atual/exigido", /Condução/.test(det) && /nível 5/.test(det) && /atual: 2|nível atual é 2/.test(det), det);
 
   sec("pré-requisito atendido");
   r = await post(pjJ1, "/inventario", { name: "Carro Popular", regra: REGRA_CARRO }, ids.j1.cookie);
@@ -154,7 +154,7 @@ try {
   r = await req(BASE, "POST", `/characters/${pjJ1}/inventario/${itemId}/transferir`, { cookie: ids.j1.cookie, body: { destinoCharacterId: pjJ2 } });
   t("transferir carro p/ sem Condução recusado", r.status === 403, `status=${r.status} ${JSON.stringify(r.json).slice(0, 120)}`);
   // j1 transfere kit (sem regra) para j2 → ok
-  const kitRow = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and name='Kit'").get(pjJ1));
+  const kitRow = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and name='Kit de Campo'").get(pjJ1));
   r = await req(BASE, "POST", `/characters/${pjJ1}/inventario/${kitRow?.id}/transferir`, { cookie: ids.j1.cookie, body: { destinoCharacterId: pjJ2 } });
   t("transferir item sem regra ok", r.status === 200, `status=${r.status}`);
 
@@ -177,6 +177,76 @@ try {
   t("jogador não pode usar ignorarPrerequisitos", r.status === 403, `status=${r.status}`);
   // mestre administra patrimônio do próprio PJ? sem PJ do mestre com ficha — pula;
   // ao menos confirma que flag não abre brecha para jogador.
+
+
+  sec("identidade canônica — nome não pode vestir outro elemento");
+  // j1 (Condução 2): referencia kit_campo (livre) mas chama de "Caça F-16"
+  r = await post(pjJ1, "/inventario", { name: "Caça F-16 Fighting Falcon", regra: REGRA_LIVRE }, ids.j1.cookie);
+  t("spoof de nome aceito só como o elemento real", r.status === 201, `status=${r.status}`);
+  const spoofRow = comDb(BANCO, (db) => db.prepare("select name, data from inventory_entries where id=?").get(r.json?.id));
+  t("nome persistido é o do elemento, não o forjado", spoofRow?.name === "Kit de Campo", spoofRow?.name);
+  // spoof reverso: nome inocente + referência restrita continua exigindo requisito
+  r = await post(pjJ2, "/inventario", { name: "Item comum", regra: REGRA_F16 }, ids.j2.cookie);
+  t("F-16 por jogador com Condução 5 aceito", r.status === 201, `status=${r.status}`);
+
+  sec("PATCH não troca nem remove o vínculo regra");
+  const itemRegra = comDb(BANCO, (db) => db.prepare("select id, data from inventory_entries where character_id=? and name='Carro Popular'").get(pjJ1));
+  r = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${itemRegra?.id}`, { cookie: ids.j1.cookie, body: { data: { regra: { kind: "item", key: "kit_campo" } } } });
+  t("PATCH data.regra não altera vínculo", r.status === 200, `status=${r.status}`);
+  const aposPatch = JSON.parse(comDb(BANCO, (db) => db.prepare("select data from inventory_entries where id=?").get(itemRegra?.id))?.data ?? "{}");
+  t("vínculo original preservado", aposPatch.regra?.key === "carro_popular", JSON.stringify(aposPatch.regra));
+
+  sec("templateId vinculado ao Acervo");
+  // mestre cria template vinculado ao F-16
+  const tplF16 = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Caça F-16 (catálogo)", regra: { kind: "veiculo", key: "caca_f16" } } });
+  t("template vinculado criado", tplF16.status === 201, `status=${tplF16.status} ${JSON.stringify(tplF16.json).slice(0,120)}`);
+  const tplF16Id = tplF16.json?.id;
+  // template manual sem vínculo segue legado
+  const tplLivre = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Suprimento", data: { peso: 1 } } });
+  t("template manual criado", tplLivre.status === 201, `status=${tplLivre.status}`);
+  // j1 (Condução 2) compra template F-16 → bloqueado antes do débito
+  const contaId2 = contaId;
+  const saldoAntes2 = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId2)?.balance_cents);
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", accountId: contaId2, valor: 99900, templateId: tplF16Id }, ids.j1.cookie);
+  t("compra por template restrito bloqueada", r.status === 403, `status=${r.status} ${JSON.stringify(r.json).slice(0,140)}`);
+  const saldoDepois2 = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId2)?.balance_cents);
+  t("saldo intacto (template)", saldoAntes2 === saldoDepois2);
+  // cliente tenta minar o vínculo enviando regra livre junto ao template
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplF16Id, regra: { kind: "item", key: "kit_campo" } }, ids.j1.cookie);
+  t("regra do cliente não sobrepõe vínculo do template", r.status === 403, `status=${r.status}`);
+  // template manual funciona sem requisito
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplLivre.json?.id }, ids.j1.cookie);
+  t("template manual sem vínculo aceito", r.status === 201, `status=${r.status}`);
+
+  sec("equipamentos protegidos");
+  r = await post(pjJ1, "/equipamentos", { name: "Colete", regra: REGRA_F16 }, ids.j1.cookie);
+  t("equipamento com pré-req não atendido bloqueado", r.status === 403, `status=${r.status}`);
+
+  sec("mestre: bypass explícito auditado, sem flag respeita");
+  // PJ do mestre com a mesma ficha e ficha vazia
+  const pjMestre = crypto.randomUUID();
+  mkPj(pjMestre, cenario.membMestre, {});
+  r = await post(pjMestre, "/inventario", { name: "F-16 mestre", regra: REGRA_F16 }, ids.cm);
+  t("mestre SEM flag também é bloqueado", r.status === 403, `status=${r.status}`);
+  r = await post(pjMestre, "/inventario", { name: "F-16 mestre", regra: REGRA_F16, ignorarPrerequisitos: true }, ids.cm);
+  t("mestre COM flag explícita adquire", r.status === 201, `status=${r.status}`);
+  // audit() resolve campaignId via req.params.campaignId — nas rotas de
+  // personagem esse param não existe, então o escopo fica no detail.
+  const auditBypass = comDb(BANCO, (db) => db.prepare("select id, detail from audit_logs where action='patrimonio.prerequisito.ignorado'").all());
+  const bypassOk = (auditBypass ?? []).some((r) => { try { return JSON.parse(r.detail ?? "{}").regra?.key === "caca_f16"; } catch { return false; } });
+  t("bypass auditado", bypassOk, `audits=${auditBypass?.length}`);
+  // transferência: mestre sem flag deve falhar; com flag passa
+  const f16Mestre = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and data like '%caca_f16%'").get(pjMestre));
+  r = await req(BASE, "POST", `/characters/${pjMestre}/inventario/${f16Mestre?.id}/transferir`, { cookie: ids.cm, body: { destinoCharacterId: pjJ1 } });
+  t("mestre transfere sem flag → destino inelegível recusado", r.status === 403, `status=${r.status}`);
+  r = await req(BASE, "POST", `/characters/${pjMestre}/inventario/${f16Mestre?.id}/transferir`, { cookie: ids.cm, body: { destinoCharacterId: pjJ1, ignorarPrerequisitos: true } });
+  t("mestre transfere com flag explícita → ok", r.status === 200, `status=${r.status} ${JSON.stringify(r.json).slice(0,120)}`);
+
+  sec("venda/remoção não bloqueadas por pré-req");
+  const kitId = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and name='Kit de Campo'").get(pjJ1));
+  const contaVend = await req(BASE, "POST", `/characters/${pjJ1}/financeiro/contas`, { cookie: ids.j1.cookie, body: { type: "especie", name: "Venda", balanceReais: 0 } });
+  r = await req(BASE, "POST", `/characters/${pjJ1}/financeiro/operacao`, { cookie: ids.j1.cookie, body: { tipo: "venda", accountId: contaVend.json?.id, valor: 10, itemId: kitId?.id, quantidade: 1, requestId: `venda-prq-${Date.now()}` } });
+  t("venda de item COM regra permitida", r.status === 201, `status=${r.status} ${JSON.stringify(r.json).slice(0,140)}`);
 
   sec("catálogo expõe acervo");
   const cat = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.j1.cookie });

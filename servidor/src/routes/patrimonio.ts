@@ -17,7 +17,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { somenteEnviados } from "../lib/parcial.js";
-import { carregarRegras, configRegrasSchema, verificarPrerequisitosElemento } from "../lib/regras.js";
+import { carregarRegras, configRegrasSchema, avaliarPrerequisitosAquisicao, type ElementoRegra } from "../lib/regras.js";
 import { estruturaFichaSchema } from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -77,25 +77,64 @@ async function estruturaDoPersonagem(p: typeof characters.$inferSelect) {
  * contrário {status, erro} pronto para res.json. O mestre só ignora
  * com `ignorarPrerequisitos === true` explícito — auditado pelo caller.
  */
-async function validarPrereqAquisicao(
+interface AvaliacaoAquisicao {
+  /** elemento canônico resolvido no ruleset da campanha (null sem vínculo) */
+  elemento: ElementoRegra | null;
+  /** resposta de erro pronta, ou null quando a aquisição é permitida */
+  negacao: { status: number; erro: string; detalhes?: unknown } | null;
+  /** mestre ignorou explicitamente — caller DEVE auditar */
+  bypass: boolean;
+}
+
+/**
+ * Caminho canônico de avaliação de pré-requisitos do Acervo. Resolve o
+ * elemento em rule_definitions (nunca confia em nome/dados do cliente) e
+ * delega a `avaliarPrerequisitosAquisicao` (motor único em regras.ts).
+ * Mestre só passa com `ignorar === true` explícito — bypass auditável.
+ */
+async function avaliarAquisicao(
   a: Acesso,
   regra: RegraRef | undefined,
   ignorar: boolean | undefined,
-): Promise<{ status: number; erro: string; detalhes?: unknown } | null> {
-  if (!regra) return null;
-  const estrutura = await estruturaDoPersonagem(a.personagem);
+  alvo: typeof characters.$inferSelect = a.personagem,
+): Promise<AvaliacaoAquisicao> {
+  const vazio = { elemento: null, negacao: null, bypass: false };
+  if (!regra) return vazio;
+  const estrutura = await estruturaDoPersonagem(alvo);
   if (!estrutura) {
-    return { status: 403, erro: "Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo" };
+    return { ...vazio, negacao: { status: 403, erro: "Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo" } };
   }
-  const regras = await carregarRegras(a.personagem.campaignId);
-  const dados = (a.personagem.data ?? {}) as Record<string, unknown>;
-  const r = verificarPrerequisitosElemento(estrutura, dados, regras, regra.kind, regra.key);
-  if (r.ok) return null;
-  if (a.ehMestre && ignorar === true) return null; // exceção explícita — caller audita
+  const regras = await carregarRegras(alvo.campaignId);
+  const dados = (alvo.data ?? {}) as Record<string, unknown>;
+  const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, regra.kind, regra.key);
+  if (r.ok) return { elemento: r.elemento, negacao: null, bypass: false };
+  if (a.ehMestre && ignorar === true) {
+    return { elemento: r.elemento, negacao: null, bypass: true };
+  }
   return {
-    status: 403,
-    erro: r.elemento ? `Pré-requisitos não atendidos para "${r.elemento.name}"` : "Elemento do Acervo não encontrado",
-    detalhes: r.erros,
+    elemento: r.elemento,
+    bypass: false,
+    negacao: {
+      status: 403,
+      erro: r.elemento ? `Pré-requisitos não atendidos para "${r.elemento.name}"` : "Elemento do Acervo não encontrado",
+      detalhes: { requisitos: r.requisitos, mensagens: r.mensagens },
+    },
+  };
+}
+
+/** Aplica a identidade canônica do elemento ao registro persistido:
+ *  nome/categoria/descrição vêm do ruleset — o cliente não pode usar a
+ *  referência de um elemento livre para "vestir" outro nome. */
+function identidadeDoElemento<T extends { name: string; category?: string | null; description?: string | null }>(
+  base: T, elemento: ElementoRegra | null,
+): T {
+  if (!elemento) return base;
+  const descricao = (elemento.definition as { descricao?: string }).descricao;
+  return {
+    ...base,
+    name: elemento.name,
+    category: elemento.category ?? base.category ?? null,
+    description: descricao ?? base.description ?? null,
   };
 }
 
@@ -213,6 +252,38 @@ const itemSchema = z.object({
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
+/** GET /api/characters/:id/patrimonio/requisitos — disponibilidade de
+ *  cada elemento do Acervo (item/veiculo) para ESTE personagem, calculada
+ *  pelo motor canônico. A UI consome sem duplicar regras. */
+patrimonioRouter.get("/patrimonio/requisitos", async (req, res) => {
+  const a = await acessoOuErro(req, res); if (!a) return;
+  const regras = await carregarRegras(a.personagem.campaignId);
+  const elementos = [...regras.porKind.entries()]
+    .filter(([kind]) => kind === "item" || kind === "veiculo")
+    .flatMap(([, els]) => els.filter((e) => e.definition.disponivel !== false));
+  const estrutura = await estruturaDoPersonagem(a.personagem);
+  const dados = (a.personagem.data ?? {}) as Record<string, unknown>;
+  const mapa: Record<string, {
+    ok: boolean; nome: string; categoria: string | null;
+    prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean }[];
+    mensagens: string[];
+  }> = {};
+  if (estrutura) {
+    for (const el of elementos) {
+      const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, el.kind, el.key);
+      mapa[`${el.kind}:${el.key}`] = {
+        ok: r.ok, nome: el.name, categoria: el.category,
+        prerequisitos: r.requisitos.map((q) => ({
+          kind: q.kind, key: q.key, nome: q.nome,
+          minLevel: q.minLevel, nivelAtual: q.nivelAtual, atendido: q.atendido,
+        })),
+        mensagens: r.mensagens,
+      };
+    }
+  }
+  res.json({ requisitos: mapa });
+});
+
 /** GET /api/characters/:id/inventario */
 patrimonioRouter.get("/inventario", async (req, res) => {
   const a = await acessoOuErro(req, res); if (!a) return;
@@ -238,18 +309,21 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorAdicionaItens) {
     res.status(403).json({ erro: "Você não pode adicionar itens nesta campanha" }); return;
   }
-  const neg = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
-  if (neg) {
-    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
-      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra });
-    }
-    res.status(neg.status).json({ erro: neg.erro, detalhes: neg.detalhes }); return;
+  const av = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (av.negacao) { res.status(av.negacao.status).json({ erro: av.negacao.erro, detalhes: av.negacao.detalhes }); return; }
+  if (av.bypass && body.data.regra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra });
   }
   const agora = new Date();
   const id = crypto.randomUUID();
   const { templateId, valueCents, transferable, data, regra, ignorarPrerequisitos, ...resto } = body.data;
+  // Identidade canônica: com vínculo ao Acervo, nome/categoria/descrição
+  // são os do elemento resolvido — nunca os enviados pelo cliente.
+  const ident = identidadeDoElemento({ ...resto }, av.elemento);
   await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto,
+    id, characterId: a.personagem.id, name: ident.name, quantity: ident.quantity,
+    description: ident.description ?? null, category: ident.category ?? null,
+    location: resto.location ?? null, condition: resto.condition ?? null, weight: resto.weight ?? null,
     data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId, ...(regra ? { regra } : {}) },
     createdAt: agora, updatedAt: agora,
   });
@@ -337,6 +411,7 @@ patrimonioRouter.delete("/inventario/:itemId", async (req, res) => {
 const transferirSchema = z.object({
   destinoCharacterId: z.string().min(1),
   quantidade: z.number().positive().optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
 });
 
 /** POST /api/characters/:id/inventario/:itemId/transferir — move item (ou parte) para outro personagem da mesma campanha */
@@ -355,17 +430,17 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   const qtdPedida = body.data.quantidade;
 
   // Item vinculado a elemento do Acervo: o DESTINO precisa atender aos
-  // pré-requisitos (mesma regra da aquisição). Jogador nunca ignora;
-  // mestre administra conforme as permissões da campanha.
+  // pré-requisitos (mesmo caminho canônico da aquisição). O bypass é
+  // explícito (ignorarPrerequisitos), exclusivo do mestre e auditado —
+  // sem a flag, o mestre também respeita os requisitos.
   const regraItem = ((item.data ?? {}) as { regra?: RegraRef }).regra;
-  if (regraItem && !a.ehMestre) {
-    const estruturaDest = await estruturaDoPersonagem(destino);
-    const regras = await carregarRegras(destino.campaignId);
-    const r = estruturaDest
-      ? verificarPrerequisitosElemento(estruturaDest, (destino.data ?? {}) as Record<string, unknown>, regras, regraItem.kind, regraItem.key)
-      : null;
-    if (!r || !r.ok) {
-      res.status(403).json({ erro: "O personagem de destino não atende aos pré-requisitos do item" }); return;
+  if (regraItem) {
+    const avTr = await avaliarAquisicao(a, regraItem, body.data.ignorarPrerequisitos, destino);
+    if (avTr.negacao) {
+      res.status(avTr.negacao.status).json({ erro: `O personagem de destino não atende aos pré-requisitos do item`, detalhes: avTr.negacao.detalhes }); return;
+    }
+    if (avTr.bypass) {
+      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: destino.id, regra: regraItem, tipo: "transferencia", de: a.personagem.id });
     }
   }
 
@@ -454,12 +529,10 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
   }
-  const negEq = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
-  if (negEq) {
-    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
-      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "equipamento" });
-    }
-    res.status(negEq.status).json({ erro: negEq.erro, detalhes: negEq.detalhes }); return;
+  const avEq = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (avEq.negacao) { res.status(avEq.negacao.status).json({ erro: avEq.negacao.erro, detalhes: avEq.negacao.detalhes }); return; }
+  if (avEq.bypass && body.data.regra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "equipamento" });
   }
   // Ocupação de slot verificada dentro da transação (consistência com
   // POST /equipar): dois cadastros simultâneos não tomam o mesmo slot.
@@ -479,7 +552,7 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
     // injetar procedência falsa via data/origem/inventoryEntryId.
     tx.insert(equipmentEntries).values({
       id, characterId: a.personagem.id,
-      name: body.data.name, kind: body.data.kind ?? null,
+      name: avEq.elemento?.name ?? body.data.name, kind: body.data.kind ?? null,
       slot: body.data.slot ?? null, equipped: body.data.equipped,
       description: body.data.description ?? null,
       data: (() => {
@@ -781,19 +854,20 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaVeiculos) {
     res.status(403).json({ erro: "Edição de veículos não permitida" }); return;
   }
-  const negV = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
-  if (negV) {
-    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
-      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "veiculo" });
-    }
-    res.status(negV.status).json({ erro: negV.erro, detalhes: negV.detalhes }); return;
+  const avV = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (avV.negacao) { res.status(avV.negacao.status).json({ erro: avV.negacao.erro, detalhes: avV.negacao.detalhes }); return; }
+  if (avV.bypass && body.data.regra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "veiculo" });
   }
   const { valueCents, data, regra, ignorarPrerequisitos, ...resto } = body.data;
   const dataSemRegra = { ...data };
   delete dataSemRegra.regra;
   const agora = new Date();
   const id = crypto.randomUUID();
-  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, data: { ...dataSemRegra, valueCents, ...(regra ? { regra } : {}) }, createdAt: agora, updatedAt: agora });
+  // Identidade canônica do elemento do Acervo (nome; kind é o tipo
+  // do veículo — categoria do elemento não o substitui).
+  const nomeVeiculo = avV.elemento?.name ?? resto.name;
+  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, name: nomeVeiculo, data: { ...dataSemRegra, valueCents, ...(regra ? { regra } : {}) }, createdAt: agora, updatedAt: agora });
   await audit(req, "veiculo.criado", { characterId: a.personagem.id, veiculoId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -1241,18 +1315,29 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     res.status(400).json({ erro: "Compra requer dados do item ou templateId do catálogo" }); return;
   }
 
-  // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
-  // A referência vem do cliente apenas como kind:key — o servidor resolve
-  // o elemento e os requisitos a partir de rule_definitions da campanha.
-  const regraCompra = body.data.regra ?? body.data.item?.regra;
-  if (isCompra && regraCompra) {
-    const negOp = await validarPrereqAquisicao(a, regraCompra, body.data.ignorarPrerequisitos);
-    if (negOp) {
-      if (a.ehMestre && body.data.ignorarPrerequisitos === true) {
-        await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraCompra, tipo: "compra" });
-      }
-      res.status(negOp.status).json({ erro: negOp.erro, detalhes: negOp.detalhes }); return;
+  // Vínculo template→Acervo: o template é relido aqui para resolver o
+  // elemento associado (data.regra gravada pelo mestre no catálogo).
+  // Quando o template tem vínculo, ELE é a autoridade — o cliente não
+  // pode trocar os requisitos enviando outro kind:key.
+  let tplRegra: RegraRef | null = null;
+  if (isCompra && body.data.templateId) {
+    const [tplPre] = await db.select().from(itemTemplates)
+      .where(and(eq(itemTemplates.id, body.data.templateId), eq(itemTemplates.campaignId, a.personagem.campaignId), eq(itemTemplates.isActive, true)))
+      .limit(1).all();
+    if (tplPre) {
+      const rd = (tplPre.data ?? {}) as { regra?: RegraRef };
+      if (rd.regra && typeof rd.regra.kind === "string" && typeof rd.regra.key === "string") tplRegra = rd.regra;
     }
+  }
+  const regraCompra = tplRegra ?? body.data.regra ?? body.data.item?.regra;
+
+  // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
+  const avOp = isCompra ? await avaliarAquisicao(a, regraCompra ?? undefined, body.data.ignorarPrerequisitos) : { elemento: null, negacao: null, bypass: false };
+  if (avOp.negacao) {
+    res.status(avOp.negacao.status).json({ erro: avOp.negacao.erro, detalhes: avOp.negacao.detalhes }); return;
+  }
+  if (avOp.bypass && regraCompra) {
+    await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraCompra, tipo: "compra" });
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
@@ -1349,12 +1434,18 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
         // (ex.: 1 centavo por 2 un) não viram sugestão de revenda.
         const unitExato = cents / qtd;
         const unitCents = Number.isInteger(unitExato) ? unitExato : null;
-        const itemNome = itemDados?.name ?? tplTx?.name ?? "item";
+        // Com vínculo ao Acervo, a identidade é a do elemento resolvido:
+        // o nome enviado pelo cliente não pode "vestir" outro item.
+        const identCompra = identidadeDoElemento({
+          name: itemDados?.name ?? tplTx?.name ?? "item",
+          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          description: itemDados?.description ?? tplTx?.description ?? undefined,
+        }, avOp.elemento);
         tx.insert(inventoryEntries).values({
           id: novoItemId, characterId: a.personagem.id,
-          name: itemNome, quantity: qtd,
-          description: itemDados?.description ?? tplTx?.description ?? undefined,
-          category: itemDados?.category ?? tplTx?.category ?? undefined,
+          name: identCompra.name, quantity: qtd,
+          description: identCompra.description ?? undefined,
+          category: identCompra.category ?? undefined,
           location: itemDados?.location, condition: itemDados?.condition,
           weight: itemDados?.weight ?? (tplData.weight as number | undefined),
           data: (() => {

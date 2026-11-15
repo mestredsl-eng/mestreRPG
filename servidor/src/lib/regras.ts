@@ -474,9 +474,15 @@ export function extrairEscolhas(estrutura: EstruturaFicha, dados: Record<string,
 }
 
 /**
- * Avalia os requisitos de um item/veículo do Acervo contra a ficha publicada.
- * A leitura é feita pela semântica de regra do campo (regra/regraKind), nunca
- * por IDs fixos de campos nem por metadados enviados pelo navegador.
+ * CAMINHO CANÔNICO de avaliação de pré-requisitos do Acervo para aquisição
+ * de patrimônio (itens, equipamentos, veículos). ÚNICA implementação —
+ * `verificarPrerequisitosElemento` delega a esta função.
+ *
+ * - Reutiliza `extrairEscolhas`: resolve campos pela estrutura publicada
+ *   (regra/regraKind), nunca por IDs fixos.
+ * - Ausência de escolha = nível 0; exige TODOS os pré-requisitos.
+ * - Elemento ou pré-requisito inexistente falha fechado.
+ * - Retorna nível atual/exigido e situação de cada requisito para a UI.
  */
 export interface RequisitoAquisicao {
   kind: string;
@@ -485,76 +491,66 @@ export interface RequisitoAquisicao {
   minLevel: number;
   nivelAtual: number;
   atendido: boolean;
+  /** pré-requisito aponta para elemento que não existe nas regras */
+  inexistente?: boolean;
 }
 
 export interface ResultadoPrerequisitosAquisicao {
   ok: boolean;
+  elemento: ElementoRegra | null;
   requisitos: RequisitoAquisicao[];
+  /** mensagens prontas para o usuário (nível atual vs exigido) */
   mensagens: string[];
 }
+
+const nomeLegivel = (key: string) =>
+  key.replace(/_/g, " ").replace(/\w/g, (letra) => letra.toLocaleUpperCase("pt-BR"));
 
 export function avaliarPrerequisitosAquisicao(
   estrutura: EstruturaFicha,
   dados: Record<string, unknown>,
   regras: RegrasCampanha,
-  elemento: Pick<ElementoRegra, "name" | "definition">,
+  kind: string,
+  key: string,
 ): ResultadoPrerequisitosAquisicao {
-  const nivelAtual = (kind: string, key: string): number => {
-    let maior = 0;
-    for (const campo of todosCampos(estrutura)) {
-      const valor = dados[campo.id];
-      if (valor === undefined || valor === null) continue;
-
-      if (campo.regra?.kind === kind && campo.regra.key === key) {
-        const n = typeof valor === "number" && Number.isFinite(valor) ? valor : 0;
-        maior = Math.max(maior, Math.max(0, n));
-      }
-
-      if (campo.regraKind !== kind) continue;
-      if (campo.tipo === "selecao_nivel") {
-        const itens = Array.isArray(valor) ? valor : [];
-        for (const item of itens) {
-          if (typeof item !== "object" || item === null) continue;
-          const escolha = item as Record<string, unknown>;
-          if (escolha.key !== key) continue;
-          const n = typeof escolha.nivel === "number" && Number.isInteger(escolha.nivel)
-            ? Math.max(0, escolha.nivel)
-            : 0;
-          maior = Math.max(maior, n);
-        }
-        continue;
-      }
-      const selecionados = Array.isArray(valor) ? valor : [valor];
-      if (selecionados.some((selecionado) => String(selecionado) === key)) {
-        maior = Math.max(maior, 1);
-      }
-    }
-    return maior;
-  };
-
-  const requisitos = (elemento.definition.prerequisitos ?? []).map((pre) => {
-    const atual = nivelAtual(pre.kind, pre.key);
-    const exigido = pre.minLevel ?? 1;
-    const nome = regras.elementos.get(CHAVE(pre.kind, pre.key))?.name
-      ?? pre.key.replace(/_/g, " ").replace(/\b\w/g, (letra) => letra.toLocaleUpperCase("pt-BR"));
+  const elemento = regras.elementos.get(CHAVE(kind, key)) ?? null;
+  if (!elemento) {
     return {
-      kind: pre.kind,
-      key: pre.key,
-      nome,
-      minLevel: exigido,
-      nivelAtual: atual,
-      atendido: atual >= exigido,
+      ok: false, elemento: null, requisitos: [],
+      mensagens: [`Elemento ${kind}:${key} não existe nas regras da campanha`],
     };
+  }
+  const mensagens: string[] = [];
+  if (elemento.definition.disponivel === false) {
+    mensagens.push(`"${elemento.name}" está desativado nesta campanha`);
+  }
+
+  // Nível atual por elemento — MESMA fonte de validarRegras
+  // (extrairEscolhas resolve regra/regraKind da estrutura publicada).
+  const nivelPorElemento = new Map<string, number>();
+  for (const e of extrairEscolhas(estrutura, dados, regras)) {
+    if (!e.elemento || !e.selecionado) continue;
+    const c = CHAVE(e.elemento.kind, e.elemento.key);
+    nivelPorElemento.set(c, Math.max(nivelPorElemento.get(c) ?? 0, e.level));
+  }
+
+  const requisitos = (elemento.definition.prerequisitos ?? []).map((pre): RequisitoAquisicao => {
+    const chavePre = CHAVE(pre.kind, pre.key);
+    const atual = nivelPorElemento.get(chavePre) ?? 0;
+    const alvo = regras.elementos.get(chavePre);
+    const exigido = pre.minLevel ?? 1;
+    const nome = alvo?.name ?? nomeLegivel(pre.key);
+    const inexistente = !alvo;
+    const atendido = !inexistente && atual >= exigido;
+    if (!atendido) {
+      mensagens.push(inexistente
+        ? `"${elemento.name}" exige ${pre.kind}:${pre.key} (elemento inexistente nas regras)`
+        : `Você precisa de ${nome} nível ${exigido}. Seu nível atual é ${atual}.`);
+    }
+    return { kind: pre.kind, key: pre.key, nome, minLevel: exigido, nivelAtual: atual, atendido, inexistente };
   });
 
-  const faltantes = requisitos.filter((requisito) => !requisito.atendido);
-  return {
-    ok: faltantes.length === 0,
-    requisitos,
-    mensagens: faltantes.map((requisito) =>
-      `Você precisa de ${requisito.nome} nível ${requisito.minLevel}. Seu nível atual é ${requisito.nivelAtual}.`
-    ),
-  };
+  return { ok: mensagens.length === 0, elemento, requisitos, mensagens };
 }
 
 export interface ErroRegra {
@@ -1035,35 +1031,21 @@ export function verificarPrerequisitosElemento(
   kind: string,
   key: string,
 ): ResultadoPrereq {
-  const elemento = regras.elementos.get(CHAVE(kind, key)) ?? null;
-  const erros: ResultadoPrereq["erros"] = [];
+  // Delega ao caminho canônico (avaliarPrerequisitosAquisicao).
+  const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, kind, key);
   const niveis: Record<string, number> = {};
-  if (!elemento) {
-    return { ok: false, elemento, erros: [{ codigo: "elemento_inexistente", mensagem: `Elemento ${kind}:${key} não existe nas regras da campanha` }], niveis };
+  for (const q of r.requisitos) niveis[CHAVE(q.kind, q.key)] = q.nivelAtual;
+  if (!r.elemento) {
+    return { ok: false, elemento: null, erros: [{ codigo: "elemento_inexistente", mensagem: `Elemento ${kind}:${key} não existe nas regras da campanha` }], niveis };
   }
-  if (!elemento.definition.disponivel) {
-    erros.push({ codigo: "indisponivel", mensagem: `"${elemento.name}" está desativado nesta campanha` });
+  const erros: ResultadoPrereq["erros"] = [];
+  if (r.elemento.definition.disponivel === false) {
+    erros.push({ codigo: "indisponivel", mensagem: `"${r.elemento.name}" está desativado nesta campanha` });
   }
-  // Nível atual por elemento — mesmo critério de validarRegras (maior nível vence)
-  const nivelPorElemento = new Map<string, number>();
-  for (const e of extrairEscolhas(estrutura, dados, regras)) {
-    if (!e.elemento || !e.selecionado) continue;
-    const chave = CHAVE(e.elemento.kind, e.elemento.key);
-    nivelPorElemento.set(chave, Math.max(nivelPorElemento.get(chave) ?? 0, e.level));
+  for (const q of r.requisitos.filter((x) => !x.atendido)) {
+    erros.push(q.inexistente
+      ? { codigo: "pre_requisito_inexistente", mensagem: `"${r.elemento!.name}" exige ${q.kind}:${q.key} (elemento inexistente nas regras)` }
+      : { codigo: "pre_requisito", mensagem: `"${r.elemento!.name}" exige ${q.nome} nível ${q.minLevel} (atual: ${q.nivelAtual})` });
   }
-  for (const pre of elemento.definition.prerequisitos ?? []) {
-    const chavePre = CHAVE(pre.kind, pre.key);
-    const atual = nivelPorElemento.get(chavePre) ?? 0;
-    niveis[chavePre] = atual;
-    const alvo = regras.elementos.get(chavePre);
-    if (!alvo) {
-      erros.push({ codigo: "pre_requisito_inexistente", mensagem: `"${elemento.name}" exige ${pre.kind}:${pre.key} (elemento inexistente nas regras)` });
-      continue;
-    }
-    const exigido = pre.minLevel ?? 1;
-    if (atual < exigido) {
-      erros.push({ codigo: "pre_requisito", mensagem: `"${elemento.name}" exige ${alvo.name} nível ${exigido} (atual: ${atual})` });
-    }
-  }
-  return { ok: erros.length === 0, elemento, erros, niveis };
+  return { ok: erros.length === 0, elemento: r.elemento, erros, niveis };
 }
