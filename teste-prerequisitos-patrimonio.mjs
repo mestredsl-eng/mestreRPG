@@ -83,12 +83,13 @@ try {
     "pericia:sobrevivencia", "pericia:seguranca", "pericia:empatia_com_animal",
     "talento:hacker", "talento:tecnologia", "talento:quimico", "talento:artista", "talento:esportes",
     "conhecimento:computador", "conhecimento:ciencias",
+    "conhecimento:medicina", "conhecimento:investigacao", "conhecimento:geologia",
   ];
   const seedPresentes = comDb(BANCO, (db) => new Set(
     db.prepare("select kind || ':' || key as chave from rule_definitions where rule_set_id=?").all(rs).map((r) => r.chave)
   ));
   const seedAusentes = chavesAcervo.filter((chave) => !seedPresentes.has(chave));
-  t("biblioteca inicial inclui as 13 regras exigidas pelos suplementos", seedBiblioteca.status === 200 && seedAusentes.length === 0, seedAusentes.join(", "));
+  t("biblioteca inicial inclui os 16 destinos de pré-requisito dos suplementos", seedBiblioteca.status === 200 && seedAusentes.length === 0, seedAusentes.join(", "));
   const insRegra = (kind, key, name, prereqs, disponivel = true) => {
     const w = abrirDb(BANCO);
     try {
