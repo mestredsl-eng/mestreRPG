@@ -64,9 +64,17 @@ async function abrirCompra(page) {
 const selCatalogo = (modal) => modal.locator("label", { hasText: "Item do catálogo" }).locator("select");
 const selContaCompra = (modal) => modal.locator("label", { hasText: "Conta que paga" }).locator("select");
 const selContaVenda = (modal) => modal.locator("label", { hasText: "Conta que recebe" }).locator("select");
-async function preencherCompra(page, modal, { item, qtd, valor, contaIdx }) {
-  if (item) await selCatalogo(modal).selectOption({ index: 1 });
-  else await modal.locator('input').first().fill("Item avulso E2E");
+async function preencherCompra(page, modal, { item, qtd, valor, contaIdx, itemNome = "Poção de Cura" }) {
+  if (item) {
+    // Templates ligados ao Acervo podem mudar a ordenação da lista.
+    // Escolhe pelo nome do item manual esperado, nunca por nth/index.
+    const opcao = selCatalogo(modal).locator("option").filter({ hasText: itemNome }).first();
+    const value = await opcao.getAttribute("value");
+    if (!value) throw new Error(`Item de catálogo "${itemNome}" não apareceu no seletor`);
+    await selCatalogo(modal).selectOption(value);
+  } else {
+    await modal.locator('input').first().fill("Item avulso E2E");
+  }
   await modal.locator('input[type="number"]').nth(0).fill(String(qtd));
   await modal.locator('input[type="number"]').nth(1).fill(String(valor));
   await selContaCompra(modal).selectOption({ index: contaIdx ?? 1 });
