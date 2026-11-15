@@ -1,52 +1,57 @@
 // Testes de integração — Etapa 11: diário, anotações do mestre, anexos e histórico de sessões
-import Database from "better-sqlite3";
-import { hashToken } from "./servidor/dist/lib/password.js";
+// Isolado (Lote 1): banco SQLite, uploads e backups vivem em diretórios
+// temporários via teste-base.mjs — nenhum acesso a banco/mestre-rpg.db,
+// usuários, campanhas ou arquivos reais.
+import { join } from "node:path";
+import { readdirSync } from "node:fs";
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  encerrarServidor, limparDir, req as reqBase, criarCenario, comDb, abrirDb,
+} from "./teste-base.mjs";
 
-const BASE = "http://localhost:3001";
-const API = BASE + "/api";
-const db = new Database("banco/mestre-rpg.db");
-
-const CID = "e8bbf8ea-c4d0-4bc1-9f1b-c4e6ec8558c0";   // Caçadores & Caçados
-const CID2 = "1de51765-25aa-4713-b3f4-1ca866d10a27";  // Campanha Teste E4
-const CHAR_T3 = "fc54075d-6eb0-4692-bff0-b225d404da41"; // personagem de jogador_e5
-
-function sessaoHttp(username) {
-  const u = db.prepare("select id from users where username=?").get(username);
-  const token = "t11-" + crypto.randomUUID();
-  db.prepare("insert into auth_sessions (id,user_id,token_hash,user_agent,ip,expires_at,created_at) values (?,?,?,?,?,?,?)")
-    .run(crypto.randomUUID(), u.id, hashToken(token), "t", "127.0.0.1", Date.now() + 86400000, Date.now());
-  return { token, cookie: `mestre_rpg_session=${encodeURIComponent(token)}` };
-}
-const ADMIN = sessaoHttp("admin");
-const JOG5 = sessaoHttp("jogador_e5");
-const JOG2 = sessaoHttp("jogador2");
-
-async function req(metodo, path, { cookie = ADMIN.cookie, body, cid = CID, raw } = {}) {
-  const r = await fetch(`${API}/campaigns/${cid}${path}`, {
-    method: metodo,
-    headers: { "content-type": "application/json", cookie },
-    body: body !== undefined ? (raw ? body : JSON.stringify(body)) : undefined,
-  });
-  let json = null; try { json = await r.json(); } catch { }
-  return { status: r.status, json };
-}
+const RAIZ = dirTeste("diario");
+const BANCO = join(RAIZ, "banco", "mestre-rpg.db");
+const ARQUIVOS = join(RAIZ, "arquivos", "campanhas");
+const BACKUPS = join(RAIZ, "backups");
 
 let pass = 0, fail = 0;
 const res = [];
 const t = (n, c, extra = "") => { if (c) { pass++; res.push("ok " + n); } else { fail++; res.push("FALHOU " + n + " " + extra); } };
 
 const RUN = Date.now().toString(36);
+let proc = null;
+let BASE = "";
 
 try {
+  await prepararBanco(BANCO);
+  const porta = await portaLivre();
+  BASE = `http://127.0.0.1:${porta}`;
+  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
+  await esperarSaudavel(BASE, proc);
+
+  const ids = await criarCenario(BASE, BANCO, {
+    jogadores: { jog5: "jogador_cinco", jog2: "jogador_dois" },
+  });
+  const CID = ids.campId;
+  const ADMIN = { cookie: ids.cookieMestre };
+  const JOG5 = { cookie: ids.jogadores.jog5.cookie };
+  const JOG2 = { cookie: ids.jogadores.jog2.cookie };
+  const uJ5 = ids.jogadores.jog5.id;
+  const uJ2 = ids.jogadores.jog2.id;
+  const CHAR = ids.novoPersonagem(ids.jogadores.jog5.membershipId, "P5 Diário");
+
+  const req = (metodo, path, { cookie = ADMIN.cookie, body } = {}) =>
+    reqBase(BASE, metodo, `/campaigns/${CID}${path}`, { cookie, body });
+
   // ============ 1-6: diário do jogador ============
-  let r = await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title: `Diario E11 ${RUN}`, content: "encontrei uma pista", category: "pista", characterId: CHAR_T3, kind: "diario", visibility: "privada" } });
+  let r = await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title: `Diario E11 ${RUN}`, content: "encontrei uma pista", category: "pista", characterId: CHAR, kind: "diario", visibility: "privada" } });
   t("1 criar anotação no diário", r.status === 201, JSON.stringify(r.json));
   const notaId = r.json?.id;
 
   r = await req("PATCH", `/anotacoes/${notaId}`, { cookie: JOG5.cookie, body: { content: "pista confirmada", important: true } });
   t("2 editar anotação", r.status === 200);
 
-  // privacidade: jogador2 não vê diário privado de jogador_e5
+  // privacidade: jogador2 não vê diário privado de jogador5
   let lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG2.cookie })).json?.anotacoes ?? [];
   t("3 diário privado não vaza", !lista.some((a) => a.id === notaId));
 
@@ -57,7 +62,6 @@ try {
   t("4b mestre vê compartilhada", lista.some((a) => a.id === notaId));
 
   // compartilhamento seletivo com jogador2
-  const uJ2 = db.prepare("select id from users where username='jogador2'").get().id;
   r = await req("PATCH", `/anotacoes/${notaId}`, { cookie: JOG5.cookie, body: { visibility: "selecionada", recipients: [uJ2] } });
   t("5 compartilhar com selecionado", r.status === 200, JSON.stringify(r.json));
   lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG2.cookie })).json?.anotacoes ?? [];
@@ -80,7 +84,6 @@ try {
   t("9 jogador não cria nota de mestre", r.status === 403);
 
   // mestre compartilha com jogador selecionado
-  const uJ5 = db.prepare("select id from users where username='jogador_e5'").get().id;
   r = await req("PATCH", `/anotacoes/${notaMestre}`, { cookie: ADMIN.cookie, body: { visibility: "selecionada", recipients: [uJ5] } });
   t("10 mestre compartilha selecionado", r.status === 200);
   lista = (await req("GET", "/anotacoes?tipo=mestre", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
@@ -90,17 +93,21 @@ try {
 
   // ============ 13-18: anexos ============
   // arquivo privado do mestre (visibility=mestre) e arquivo público
-  const upPriv = await fetch(`${API}/campaigns/${CID}/arquivos/upload`, {
+  const upPriv = await fetch(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
     method: "POST", headers: { cookie: ADMIN.cookie, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("segredo-mestre.txt"), "x-file-mime": "text/plain", "x-visibility": "mestre" },
     body: Buffer.from("segredo"),
   });
   const filePriv = (await upPriv.json())?.id;
-  const upPub = await fetch(`${API}/campaigns/${CID}/arquivos/upload`, {
+  const upPub = await fetch(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
     method: "POST", headers: { cookie: ADMIN.cookie, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("mapa-e11.txt"), "x-file-mime": "text/plain", "x-visibility": "publica" },
     body: Buffer.from("mapa"),
   });
   const filePub = (await upPub.json())?.id;
   t("13 uploads de anexo criados", !!filePriv && !!filePub, `${upPriv.status}/${upPub.status}`);
+
+  // evidência de isolamento: os binários ficam no diretório temporário
+  const gravados = readdirSync(ARQUIVOS, { recursive: true }).filter((f) => typeof f === "string");
+  t("13c uploads gravados só no diretório temporário", gravados.length >= 2, gravados.join(","));
 
   // anexa arquivo público à nota do jogador
   r = await req("POST", `/anotacoes/${notaId}/anexos`, { cookie: JOG5.cookie, body: { fileId: filePub } });
@@ -115,7 +122,6 @@ try {
   const notaLista = lista.find((a) => a.id === notaId);
   t("16 anexo aparece na listagem", (notaLista?.anexos ?? []).some((a) => a.fileId === filePub), JSON.stringify(notaLista?.anexos));
 
-  // jogador2 não vê a nota (agora selecionada p/ ele na verdade — usa outra nota privada)
   // remove anexo
   r = await req("DELETE", `/anotacoes/${notaId}/anexos/${filePub}`, { cookie: JOG5.cookie });
   t("17 remover anexo", r.status === 200);
@@ -123,7 +129,7 @@ try {
   t("17b anexo sumiu", !(lista.find((a) => a.id === notaId)?.anexos ?? []).length);
 
   // upload direto com x-note-id (mestre anexa à própria nota)
-  const upAnexo = await fetch(`${API}/campaigns/${CID}/arquivos/upload`, {
+  const upAnexo = await fetch(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
     method: "POST", headers: { cookie: ADMIN.cookie, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("anexo-nota.txt"), "x-file-mime": "text/plain", "x-visibility": "publica", "x-note-id": notaMestre },
     body: Buffer.from("conteudo anexo"),
   });
@@ -153,14 +159,26 @@ try {
   t("24c mestre vê detalhe das alterações", histM?.alteracoes?.some((a) => a.detalhe !== undefined));
 
   // ============ 25-28: integridade, isolamento, persistência ============
-  // isolamento: anotação da outra campanha não aparece
+  // isolamento: anotação de OUTRA campanha com o mesmo título não aparece
+  const camp2 = await reqBase(BASE, "POST", "/campaigns", { cookie: ADMIN.cookie, body: { name: "Campanha Isolada" } });
+  const CID2 = camp2.json?.campanha?.id;
+  if (CID2) {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare(
+        "insert into notes (id,campaign_id,owner_id,kind,title,content,created_at,updated_at) values (?,?,?,?,?,?,?,?)"
+      ).run(crypto.randomUUID(), CID2, uJ5, "diario", `Diario E11 ${RUN}`, "nota de outra campanha", Date.now(), Date.now());
+    } finally { w.close(); }
+  }
   lista = (await req("GET", "/anotacoes?tipo=todas", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
   t("25 isolamento entre campanhas", !lista.some((a) => a.title === `Diario E11 ${RUN}` && a.campaignId === CID2));
 
-  // persistência direta no banco
-  const rowNota = db.prepare("select * from notes where id=?").get(notaId);
-  const rowAtt = db.prepare("select count(*) c from note_attachments where note_id=?").get(notaMestre).c;
-  t("26 registros persistidos no SQLite", !!rowNota && rowNota.kind === "diario" && rowAtt === 1, `atts=${rowAtt}`);
+  // persistência direta no banco temporário
+  comDb(BANCO, (db) => {
+    const rowNota = db.prepare("select * from notes where id=?").get(notaId);
+    const rowAtt = db.prepare("select count(*) c from note_attachments where note_id=?").get(notaMestre).c;
+    t("26 registros persistidos no SQLite", !!rowNota && rowNota.kind === "diario" && rowAtt === 1, `atts=${rowAtt}`);
+  });
 
   // nota de mestre continua privada para jogador2 via API (mesmo forçando id)
   r = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
@@ -171,10 +189,29 @@ try {
   t("28 excluir anotação do diário", r.status === 200);
   lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
   t("28b anotação removida", !lista.some((a) => a.id === notaId));
+
+  // ============ 29-31: regressões de anexos ============
+  // anexo em anotação inexistente → 404
+  r = await req("POST", "/anotacoes/nota-inexistente/anexos", { cookie: JOG5.cookie, body: { fileId: filePub } });
+  t("29 anexo em anotação inexistente rejeitado", r.status === 404, `status=${r.status}`);
+  // jogador não anexa arquivo na nota de outro dono → 403
+  r = await req("POST", `/anotacoes/${notaMestre}/anexos`, { cookie: JOG5.cookie, body: { fileId: filePub } });
+  t("29b anexo em nota alheia rejeitado", r.status === 403, `status=${r.status}`);
+  // arquivo inexistente → 404
+  r = await req("POST", `/anotacoes/${notaMestre}/anexos`, { cookie: ADMIN.cookie, body: { fileId: "arquivo-inexistente" } });
+  t("29c anexo de arquivo inexistente rejeitado", r.status === 404, `status=${r.status}`);
+  // nome de arquivo hostil não escapa do diretório temporário
+  const upHostil = await fetch(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
+    method: "POST", headers: { cookie: ADMIN.cookie, "content-type": "application/octet-stream", "x-file-name": encodeURIComponent("../../fora-do-temp.txt"), "x-file-mime": "text/plain", "x-visibility": "publica" },
+    body: Buffer.from("hostil"),
+  });
+  t("29d upload com nome hostil não quebra nem vaza", upHostil.status === 201, `status=${upHostil.status}`);
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
+} finally {
+  await encerrarServidor(proc);
+  limparDir(RAIZ);
+  console.log(res.join("\n"));
+  console.log(`\n${pass} passaram, ${fail} falharam`);
+  process.exit(fail ? 1 : 0);
 }
-
-console.log(res.join("\n"));
-console.log(`\n${pass} passaram, ${fail} falharam`);
-process.exit(fail ? 1 : 0);
