@@ -244,9 +244,10 @@ function limparEstadoInventario(data: Record<string, unknown> | undefined) {
   if (!data) return data;
   const limpo = { ...data };
   delete limpo.equipped;
-  // `regra` é metadado controlado pelo servidor (validado na aquisição):
-  // nunca aceito dentro de data pelo cliente.
+  // `regra` e `templateId` são procedência controlada pelo servidor:
+  // nunca aceitos dentro de data enviada pelo cliente.
   delete limpo.regra;
+  delete limpo.templateId;
   return limpo;
 }
 
