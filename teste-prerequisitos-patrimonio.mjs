@@ -75,12 +75,12 @@ try {
 
   // Elementos do Acervo no rule_set ativo
   const rs = comDb(BANCO, (db) => db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(ids.camp).id);
-  const insRegra = (kind, key, name, prereqs) => {
+  const insRegra = (kind, key, name, prereqs, disponivel = true) => {
     const w = abrirDb(BANCO);
     try {
       w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
         .run(crypto.randomUUID(), rs, kind, key, name, null, null,
-          JSON.stringify({ descricao: "", custoPontos: 0, niveis: [], minimo: 0, maximo: 1, prerequisitos: prereqs, dependencias: [], gruposExclusividade: [], exclusivos: [], obrigatorios: [], formulas: {}, disponivel: true }),
+          JSON.stringify({ descricao: "", custoPontos: 0, niveis: [], minimo: 0, maximo: 1, prerequisitos: prereqs, dependencias: [], gruposExclusividade: [], exclusivos: [], obrigatorios: [], formulas: {}, disponivel }),
           agora, agora);
     } finally { w.close(); }
   };
@@ -100,6 +100,7 @@ try {
   insRegra("item", "fuzil_servico", "Fuzil de serviço", [{ kind: "pericia", key: "armas_de_fogo", minLevel: 1 }]);
   insRegra("item", "tonfa", "Tonfa", [{ kind: "pericia", key: "armas_brancas", minLevel: 1 }]);
   insRegra("item", "kit_campo", "Kit de Campo", []);
+  insRegra("item", "item_desativado", "Item desativado", [], false);
   insRegra("item", "combo", "Combo", [
     { kind: "pericia", key: "conducao", minLevel: 1 },
     { kind: "pericia", key: "inexistente_xyz", minLevel: 1 },
@@ -252,8 +253,13 @@ try {
   sec("templateId vinculado ao Acervo");
   // mestre cria template vinculado ao F-16
   const tplF16 = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Caça F-16 (catálogo)", regra: { kind: "veiculo", key: "caca_f16" } } });
-  t("template vinculado criado", tplF16.status === 201, `status=${tplF16.status} ${JSON.stringify(tplF16.json).slice(0,120)}`);
+  t("template de veículo vinculado criado", tplF16.status === 201, `status=${tplF16.status} ${JSON.stringify(tplF16.json).slice(0,120)}`);
   const tplF16Id = tplF16.json?.id;
+  const tplItemRestrito = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, {
+    cookie: ids.cm, body: { name: "Item restrito (catálogo)", regra: REGRA_ITEM_F16 },
+  });
+  t("template de item restrito criado", tplItemRestrito.status === 201, `status=${tplItemRestrito.status}`);
+  const tplItemRestritoId = tplItemRestrito.json?.id;
   // Template de item do Acervo: a regra do catálogo deve ser aplicada
   // também na rota direta de inclusão no inventário (não só na compra).
   const tplCarro = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, {
@@ -267,6 +273,8 @@ try {
 
   r = await post(pjSemPericias, "/inventario", { name: "Carro", templateId: tplCarroId }, ids.j2.cookie);
   t("POST inventário por template restrito bloqueia sem Condução", r.status === 403, `status=${r.status}`);
+  r = await post(pjJ1, "/inventario", { name: "F-16", templateId: tplF16Id }, ids.j1.cookie);
+  t("inventário recusa template vinculado a veículo", r.status === 400, `status=${r.status}`);
   r = await post(pjJ2, "/inventario", { name: "Carro", templateId: tplCarroId, regra: REGRA_LIVRE }, ids.j2.cookie);
   t("regra livre do cliente não substitui vínculo restrito do template", r.status === 403, `status=${r.status}`);
   r = await post(pjJ1, "/inventario", { name: "Nome forjado", templateId: tplCarroId }, ids.j1.cookie);
@@ -280,12 +288,18 @@ try {
   // j1 (Condução 2) compra template F-16 → bloqueado antes do débito
   const contaId2 = contaId;
   const saldoAntes2 = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId2)?.balance_cents);
-  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", accountId: contaId2, valor: 99900, templateId: tplF16Id }, ids.j1.cookie);
-  t("compra por template restrito bloqueada", r.status === 403, `status=${r.status} ${JSON.stringify(r.json).slice(0,140)}`);
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", accountId: contaId2, valor: 99900, templateId: tplItemRestritoId }, ids.j1.cookie);
+  t("compra por template de item restrito bloqueada", r.status === 403, `status=${r.status} ${JSON.stringify(r.json).slice(0,140)}`);
   const saldoDepois2 = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId2)?.balance_cents);
   t("saldo intacto (template)", saldoAntes2 === saldoDepois2);
+  // Template de veículo não pode ser adquirido pela operação financeira,
+  // que grava em inventory_entries, nem por referência enviada diretamente.
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplF16Id }, ids.j1.cookie);
+  t("compra financeira recusa template kind:veiculo", r.status === 400, `status=${r.status}`);
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, item: { name: "F-16", regra: REGRA_F16 } }, ids.j1.cookie);
+  t("compra financeira recusa referência kind:veiculo", r.status === 400, `status=${r.status}`);
   // cliente tenta minar o vínculo enviando regra livre junto ao template
-  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplF16Id, regra: { kind: "item", key: "kit_campo" } }, ids.j1.cookie);
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplItemRestritoId, regra: REGRA_LIVRE }, ids.j1.cookie);
   t("regra do cliente não sobrepõe vínculo do template", r.status === 403, `status=${r.status}`);
   // template manual funciona sem requisito
   r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", pagar: false, templateId: tplLivre.json?.id }, ids.j1.cookie);
@@ -309,6 +323,12 @@ try {
   t("mestre SEM flag também é bloqueado", r.status === 403, `status=${r.status}`);
   r = await post(pjMestre, "/inventario", { name: "Item restrito mestre", regra: REGRA_ITEM_F16, ignorarPrerequisitos: true }, ids.cm);
   t("mestre COM flag explícita adquire", r.status === 201, `status=${r.status}`);
+  r = await post(pjMestre, "/inventario", { name: "Item inexistente", regra: { kind: "item", key: "nao_existe" }, ignorarPrerequisitos: true }, ids.cm);
+  t("bypass não permite referência inexistente", r.status === 403, `status=${r.status}`);
+  r = await post(pjMestre, "/inventario", { name: "Item desativado", regra: { kind: "item", key: "item_desativado" }, ignorarPrerequisitos: true }, ids.cm);
+  t("bypass não reativa elemento desativado", r.status === 403, `status=${r.status}`);
+  r = await post(pjMestre, "/inventario", { name: "Combo inválido", regra: { kind: "item", key: "combo" }, ignorarPrerequisitos: true }, ids.cm);
+  t("bypass não ignora pré-requisito inexistente", r.status === 403, `status=${r.status}`);
   // audit() resolve campaignId via req.params.campaignId — nas rotas de
   // personagem esse param não existe, então o escopo fica no detail.
   const auditBypass = comDb(BANCO, (db) => db.prepare("select id, detail from audit_logs where action='patrimonio.prerequisito.ignorado'").all());
