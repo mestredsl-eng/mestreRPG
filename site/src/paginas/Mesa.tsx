@@ -838,14 +838,14 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             </section>
           )}
 
-          {/* solicitar teste (mestre) */}
-          {ehMestreAtual && (
-            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
-          )}
-
-          {/* desafio D10 (mestre) */}
+          {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
             <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+          )}
+
+          {/* teste manual genérico (mestre) — opção secundária */}
+          {ehMestreAtual && (
+            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
           )}
 
           {/* lançador unificado: testes D10 | rolagem livre e dano */}
@@ -970,7 +970,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
   return (
     <section className="cartao">
       <div className="linha-entre">
-        <h3>Solicitar teste</h3>
+        <h3>Solicitar teste manual (dados livres)</h3>
         <button className="secundario" onClick={() => setAberto(!aberto)}>+ Teste</button>
       </div>
       {aberto && (
@@ -1086,7 +1086,7 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
   return (
     <section className="cartao">
       <div className="linha-entre">
-        <h3>Desafio D10</h3>
+        <h3>Solicitar teste pela ficha</h3>
         <button className="secundario" onClick={() => setAberto(!aberto)}>+ Desafio</button>
       </div>
       {aberto && (
@@ -1124,7 +1124,11 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             </select>
           </label>
           {campos.length === 0 && characterId && !carregando && (
-            <p className="meta">Nenhum campo elegível para teste nesta ficha. Marque "Usado em testes" no editor de fichas ou use atributos/habilidades/conhecimentos.</p>
+            <p className="meta">
+              Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) das seções
+              Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como "Usado em testes" no editor de
+              fichas — podem gerar dados. Itens, moedas e contadores não entram no desafio.
+            </p>
           )}
           {campoSel && (
             <p className="meta">
