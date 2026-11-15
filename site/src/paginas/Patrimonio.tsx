@@ -4,7 +4,7 @@ import {
   type ItemInventario, type ItemInventarioInput, type Equipamento,
   type Veiculo, type VeiculoInput, type Financeiro, type ContaFinanceira, type ContaInput,
   type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo, type TransacaoFinanceira,
-  type AcervoCatalogoItem,
+  type AcervoCatalogoItem, type DisponibilidadeAcervo,
 } from "../api";
 import { getSocket } from "../socket";
 import { ModalConfirmar } from "../Modal";
@@ -81,6 +81,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   const [pesoExcedido, setPesoExcedido] = useState(false);
   const [catalogo, setCatalogo] = useState<{ id: string; name: string; category: string | null; data: Record<string, unknown> }[]>([]);
   const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
+  const [requisitos, setRequisitos] = useState<Record<string, DisponibilidadeAcervo>>({});
   const [busca, setBusca] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
@@ -109,13 +110,15 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
 
   const carregar = useCallback(async () => {
     try {
-      const [inv, cat, pers] = await Promise.all([
+      const [inv, cat, pers, reqs] = await Promise.all([
         api.listarInventario(characterId),
         api.listarCatalogo(campaignId).catch((): { itens: never[]; categorias: never[]; acervo: AcervoCatalogoItem[] } => ({ itens: [], categorias: [], acervo: [] })),
         api.listarPersonagens(campaignId).catch(() => ({ personagens: [] })),
+        api.listarRequisitosPatrimonio(characterId).catch(() => ({ requisitos: {} })),
       ]);
       setItens(inv.itens); setPesoTotal(inv.pesoTotal); setPesoMax(inv.pesoMaximo); setPesoExcedido(inv.pesoExcedido);
       setCatalogo(cat.itens); setAcervo(cat.acervo ?? []); setPersonagens(pers.personagens);
+      setRequisitos(reqs.requisitos);
     } catch (e) { aoErro(e); }
   }, [characterId, campaignId, aoErro]);
 
@@ -129,10 +132,21 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   useEffect(() => { void carregarFin(); }, [carregarFin]);
 
   const acervoItens = acervo.filter((e) => e.regra.kind === "item");
+  const dispDe = (regra?: { kind: string; key: string }) =>
+    regra ? requisitos[`${regra.kind}:${regra.key}`] : undefined;
   const textoRequisito = (e?: AcervoCatalogoItem) =>
     !e ? "" : e.prerequisitos.length
       ? "Requisito: " + e.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")
       : "Sem pré-requisitos";
+  const detalheRequisito = (e?: AcervoCatalogoItem) => {
+    if (!e) return "";
+    const d = dispDe(e.regra);
+    if (!d) return textoRequisito(e);
+    if (d.prerequisitos.length === 0) return "Sem pré-requisitos";
+    return "Requisito: " + d.prerequisitos
+      .map((p) => `${p.nome} nível ${p.minLevel} — personagem: ${p.nivelAtual}${p.atendido ? "" : " ✗"}`)
+      .join(" + ");
+  };
   const categorias = [...new Set([...itens.map((i) => i.category).filter(Boolean) as string[], ...catalogo.map((c) => c.category).filter(Boolean) as string[]])].sort();
   const visiveis = itens.filter((i) =>
     (!filtroCat || i.category === filtroCat) &&
@@ -192,7 +206,10 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
           if (el) setNovo({ name: el.nome, quantity: 1, category: el.categoria ?? undefined, regra: el.regra });
         }}>
           <option value="">Do Acervo…</option>
-          {acervoItens.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")}` : ""}</option>)}
+          {acervoItens.map((el) => {
+            const d = dispDe(el.regra);
+            return <option key={el.regra.key} value={el.regra.key}>{el.nome}{d && d.prerequisitos.length ? ` — ${d.prerequisitos.map((p) => `${p.nome} ${p.nivelAtual}/${p.minLevel}`).join(" + ")}` : el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")}` : ""}</option>;
+          })}
         </select>
         <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value, regra: undefined })} required />
         <input type="number" min="0.01" step="any" placeholder="Qtd" value={novo.quantity} onChange={(e) => setNovo({ ...novo, quantity: Number(e.target.value) })} style={{ width: 80 }} />
@@ -200,13 +217,20 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
         <datalist id="cats-inv">{categorias.map((c) => <option key={c} value={c} />)}</datalist>
         <input placeholder="Peso (kg)" type="number" min="0" step="any" value={novo.weight ?? ""} onChange={(e) => setNovo({ ...novo, weight: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ width: 110 }} />
         <input placeholder="Local" value={novo.location ?? ""} onChange={(e) => setNovo({ ...novo, location: e.target.value })} />
-        <button type="submit">Adicionar</button>
+        <button type="submit" disabled={!!(novo.regra && dispDe(novo.regra) && !dispDe(novo.regra)!.ok)}>Adicionar</button>
         {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
       )}
-      {novo.regra && (
-        <p className="meta">{textoRequisito(acervoItens.find((x) => x.regra.key === novo.regra!.key))} — o servidor valida o nível atual da ficha na confirmação.</p>
-      )}
+      {novo.regra && (() => {
+        const el = acervoItens.find((x) => x.regra!.key === novo.regra!.key);
+        const d = dispDe(novo.regra);
+        return (
+          <p className={`meta ${d && !d.ok ? "erro" : ""}`}>
+            {detalheRequisito(el)}
+            {d && !d.ok && <> Aquisição indisponível. {d.mensagens.join(" ")}</>}
+          </p>
+        );
+      })()}
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Item</th><th>Qtd</th><th>Categoria</th><th>Peso</th><th>Local</th><th></th></tr></thead>
         <tbody>
@@ -331,6 +355,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
           characterId={characterId}
           catalogo={catalogo}
           acervo={acervoItens}
+          requisitos={requisitos}
           fin={fin}
           aoErro={aoErro}
           aoOk={async () => { setComprando(false); await carregar(); await carregarFin(); }}
@@ -394,10 +419,11 @@ function TransferirButton({ item, personagens, proprioId, souMestre, onTransfer,
 
 const fmtOp = (v: number, casas: number) => v.toFixed(casas);
 
-function ModalCompra({ characterId, catalogo, acervo = [], fin, aoErro, aoOk, aoFechar }: {
+function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin, aoErro, aoOk, aoFechar }: {
   characterId: string;
   catalogo: { id: string; name: string; category: string | null; data: Record<string, unknown> }[];
   acervo?: AcervoCatalogoItem[];
+  requisitos?: Record<string, DisponibilidadeAcervo>;
   fin: Financeiro | null;
   aoErro: (e: unknown) => void;
   aoOk: () => Promise<void>;
@@ -415,10 +441,12 @@ function ModalCompra({ characterId, catalogo, acervo = [], fin, aoErro, aoOk, ao
   const casas = fin?.config.casasDecimais ?? 2;
   // A moeda do valor é a da CONTA selecionada — nunca a principal por
   // padrão (o backend movimenta o valor nominal na moeda da conta).
+  const dispSel = acervoSel ? requisitos[`${acervoSel.regra.kind}:${acervoSel.regra.key}`] : undefined;
+  const bloqueado = !!(dispSel && !dispSel.ok);
   const contaSel = fin?.contas.find((c) => c.id === contaId);
   const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
-  const valido = (templateId !== "" || acervoSel !== null || nome.trim().length > 0) && Number(qtd) > 0 &&
+  const valido = !bloqueado && (templateId !== "" || acervoSel !== null || nome.trim().length > 0) && Number(qtd) > 0 &&
     (pagar ? !!contaId && Number(valorUnit) > 0 : true);
   const submeter = async (e: FormEvent) => {
     e.preventDefault();
@@ -457,15 +485,21 @@ function ModalCompra({ characterId, catalogo, acervo = [], fin, aoErro, aoOk, ao
                 if (el) setNome(el.nome);
               }}>
                 <option value="">Item avulso…</option>
-                {acervo.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>)}
+                {acervo.map((el) => {
+                const d = requisitos[`${el.regra.kind}:${el.regra.key}`];
+                return <option key={el.regra.key} value={el.regra.key}>{el.nome}{d && d.prerequisitos.length ? ` — ${d.prerequisitos.map((pr) => `${pr.nome} ${pr.nivelAtual}/${pr.minLevel}`).join(" + ")}` : el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>;
+              })}
               </select>
             </label>
           )}
           {acervoSel && (
-            <p className="meta">
-              {acervoSel.prerequisitos.length
-                ? "Requisito: " + acervoSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ") + ". O servidor valida seu nível atual na confirmação."
-                : "Sem pré-requisitos."}
+            <p className={`meta ${bloqueado ? "erro" : ""}`}>
+              {dispSel && dispSel.prerequisitos.length
+                ? "Requisito: " + dispSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel} — personagem: ${pr.nivelAtual}`).join(" + ")
+                : acervoSel.prerequisitos.length
+                  ? "Requisito: " + acervoSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ")
+                  : "Sem pré-requisitos."}
+              {bloqueado && <> Aquisição indisponível. {dispSel!.mensagens.join(" ")}</>}
             </p>
           )}
           {templateId === "" && acervoSel === null && (
@@ -695,6 +729,7 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
   const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
+  const [requisitos, setRequisitos] = useState<Record<string, DisponibilidadeAcervo>>({});
   const [busca, setBusca] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
@@ -703,11 +738,13 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
 
   const carregar = useCallback(async () => {
     try {
-      const [v, cat] = await Promise.all([
+      const [v, cat, reqs] = await Promise.all([
         api.listarVeiculos(characterId),
         api.listarCatalogo(campaignId).catch((): { itens: never[]; categorias: never[]; acervo: AcervoCatalogoItem[] } => ({ itens: [], categorias: [], acervo: [] })),
+        api.listarRequisitosPatrimonio(characterId).catch(() => ({ requisitos: {} })),
       ]);
       setLista(v.veiculos); setAcervo((cat.acervo ?? []).filter((e) => e.regra.kind === "veiculo"));
+      setRequisitos(reqs.requisitos);
     } catch (e) { aoErro(e); }
   }, [characterId, campaignId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
@@ -763,17 +800,22 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
             </select>
           </label>
         </div>
-        {novo.regra && (
-          <p className="meta">
-            {(() => {
-              const el = acervo.find((x) => x.regra!.key === novo.regra!.key);
-              return el?.prerequisitos.length
-                ? "Requisito: " + el.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ") + ". O servidor valida seu nível atual na confirmação."
-                : "Sem pré-requisitos.";
-            })()}
-          </p>
-        )}
-        <button type="submit">Adicionar veículo</button>
+        {novo.regra && (() => {
+          const el = acervo.find((x) => x.regra!.key === novo.regra!.key);
+          const d = novo.regra ? requisitos[`${novo.regra.kind}:${novo.regra.key}`] : undefined;
+          const bloqueado = !!(d && !d.ok);
+          return (
+            <p className={`meta ${bloqueado ? "erro" : ""}`}>
+              {d && d.prerequisitos.length
+                ? "Requisito: " + d.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel} — personagem: ${pr.nivelAtual}`).join(" + ")
+                : el?.prerequisitos.length
+                  ? "Requisito: " + el.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ")
+                  : "Sem pré-requisitos."}
+              {bloqueado && <> Aquisição indisponível. {d!.mensagens.join(" ")}</>}
+            </p>
+          );
+        })()}
+        <button type="submit" disabled={!!(novo.regra && requisitos[`${novo.regra.kind}:${novo.regra.key}`] && !requisitos[`${novo.regra.kind}:${novo.regra.key}`].ok)}>Adicionar veículo</button>
       </form>
       )}
       <table className="tabela tabela-responsiva">

@@ -59,12 +59,17 @@ async function abrirCompra(page) {
   await modal.waitFor({ timeout: 5000 });
   return modal;
 }
+// Seletores semânticos: o modal tem selects de catálogo, Acervo e conta —
+// posição fixa (nth) quebra quando o Acervo adiciona opções.
+const selCatalogo = (modal) => modal.locator("label", { hasText: "Item do catálogo" }).locator("select");
+const selContaCompra = (modal) => modal.locator("label", { hasText: "Conta que paga" }).locator("select");
+const selContaVenda = (modal) => modal.locator("label", { hasText: "Conta que recebe" }).locator("select");
 async function preencherCompra(page, modal, { item, qtd, valor, contaIdx }) {
-  if (item) await modal.locator("select").first().selectOption({ index: 1 });
+  if (item) await selCatalogo(modal).selectOption({ index: 1 });
   else await modal.locator('input').first().fill("Item avulso E2E");
   await modal.locator('input[type="number"]').nth(0).fill(String(qtd));
   await modal.locator('input[type="number"]').nth(1).fill(String(valor));
-  await modal.locator("select").nth(1).selectOption({ index: contaIdx ?? 1 });
+  await selContaCompra(modal).selectOption({ index: contaIdx ?? 1 });
 }
 const page_modal = (page) => page.locator(".modal");
 // Desktop usa a tabela; mobile usa os cartões — escolhe o botão visível
@@ -80,7 +85,7 @@ async function vender(page, { item, qtd, valor, contaIdx = 1 }) {
   await modal.waitFor({ timeout: 5000 });
   await modal.locator('input[type="number"]').nth(0).fill(String(qtd));
   await modal.locator('input[type="number"]').nth(1).fill(String(valor));
-  await modal.locator("select").first().selectOption({ index: contaIdx });
+  await selContaVenda(modal).selectOption({ index: contaIdx });
   return modal;
 }
 
@@ -149,7 +154,7 @@ try {
   await modal.locator('input').first().fill("Mapa do Tesouro");
   await modal.locator('input[type="number"]').nth(0).fill("1");
   await modal.locator('input[type="number"]').nth(1).fill("5");
-  const selConta = modal.locator("select").nth(1);
+  const selConta = selContaCompra(modal);
   await selConta.selectOption({ index: 1 }); // Carteira (BRL)
   const txtBrl = await modal.locator(".meta").allTextContents();
   t("moeda BRL exibida para conta BRL", txtBrl.some((x) => x.includes("BRL")), JSON.stringify(txtBrl));
@@ -172,7 +177,7 @@ try {
   await modal.locator('input').first().fill("Item minúsculo");
   await modal.locator('input[type="number"]').nth(0).fill("1");
   await modal.locator('input[type="number"]').nth(1).fill("0.001");
-  await modal.locator("select").nth(1).selectOption({ index: 1 });
+  await selContaCompra(modal).selectOption({ index: 1 });
   await modal.getByRole("button", { name: "Confirmar compra" }).click();
   await pgJ.waitForTimeout(1200);
   const erroVisivel = await pgJ.locator(".erro").first().textContent().catch(() => "");

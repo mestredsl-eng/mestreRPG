@@ -324,6 +324,8 @@ export const api = {
     requisicao<SimulacaoResultado>(`/campaigns/${cid}/regras/simulacao`, { method: "POST", body: JSON.stringify(dados) }),
 
   // Patrimônio (Etapa 6)
+  listarRequisitosPatrimonio: (charId: string) =>
+    requisicao<{ requisitos: Record<string, DisponibilidadeAcervo> }>(`/characters/${charId}/patrimonio/requisitos`),
   listarInventario: (charId: string) =>
     requisicao<{ itens: ItemInventario[]; pesoTotal: number | null; pesoMaximo: number | null; pesoExcedido: boolean }>(`/characters/${charId}/inventario`),
   adicionarItem: (charId: string, dados: ItemInventarioInput) =>
@@ -854,6 +856,16 @@ export interface AcervoCatalogoItem {
   categoria: string | null;
   descricao: string | null;
   prerequisitos: { kind: string; key: string; nome: string; minLevel: number }[];
+}
+
+/** Disponibilidade de um elemento do Acervo para o personagem —
+ *  calculada no servidor (nível atual da ficha vs exigido). */
+export interface DisponibilidadeAcervo {
+  ok: boolean;
+  nome: string;
+  categoria: string | null;
+  prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean }[];
+  mensagens: string[];
 }
 
 export interface Equipamento {
