@@ -429,8 +429,12 @@ try {
   t("preferências gravadas via API", me?.corExterna === "#7c3aed" && me?.corInterna === "#fde047", JSON.stringify(me));
 
   sec("7. D10 desafio continua autoritativo");
-  await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  // o formulário do desafio abre por padrão (fluxo principal); só clica
+  // para expandir se por acaso estiver recolhido
   const formD = pgM.locator("form", { has: pgM.getByRole("button", { name: "Enviar desafio" }) });
+  if (!(await formD.isVisible().catch(() => false))) {
+    await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  }
   const selPers = formD.locator("label", { hasText: "Personagem" }).locator("select");
   const opcoesPers = await selPers.locator("option").allTextContents();
   const idxPers = opcoesPers.findIndex((o) => o.includes("Heroína"));
