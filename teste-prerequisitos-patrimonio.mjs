@@ -184,7 +184,7 @@ try {
   const contaId = conta.json?.id;
   // F-16 pago por j1 (Condução 2 < 5): deve falhar SEM débito
   const saldoAntes = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
-  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", accountId: contaId, valor: 500, item: { name: "F-16", regra: REGRA_F16 } }, ids.j1.cookie);
+  r = await post(pjJ1, "/financeiro/operacao", { tipo: "compra", accountId: contaId, valor: 500, item: { name: "Item restrito", regra: REGRA_ITEM_F16 } }, ids.j1.cookie);
   t("compra paga F-16 bloqueada", r.status === 403, `status=${r.status}`);
   const saldoDepois = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
   t("saldo intacto após bloqueio", saldoAntes === saldoDepois, `${saldoAntes}→${saldoDepois}`);
