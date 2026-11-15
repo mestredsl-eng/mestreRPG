@@ -5633,11 +5633,11 @@
                 "min": 300000000,
                 "max": 450000000
               },
-              "unidadeCompra": "aeronave militar por unidade; contrato institucional",
+              "unidadeCompra": "aeronave militar por unidade; referência institucional ilustrativa",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
-              "observacao": "Valor de aquisição governamental do F-16 Block 70 convertido de contrato em dólar; não é preço civil nem inclui necessariamente suporte, treinamento e infraestrutura."
+              "base": "referência institucional estimada por unidade a partir de amostra didática de LOA; não representa mercado de usado/seminovo",
+              "observacao": "Exemplo unitário estimado do material didático LOA 101: US$ 59.638.951,24 para F-16C Block 70 em lote de 56 aeronaves. Conversão pela PTAX de venda de 13/11/2026 (R$ 5,6518/US$), arredondada para R$ 337 milhões. Não é contrato executado nem preço civil; não necessariamente inclui suporte, treinamento e infraestrutura."
             },
             "fuel": "querosene de aviação",
             "capacity": "1 piloto (versões de treinamento podem ter 2)",
