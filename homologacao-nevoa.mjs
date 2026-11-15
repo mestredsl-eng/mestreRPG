@@ -198,6 +198,28 @@ try {
     .run(crypto.randomUUID(), campId, espId, agoraE, agoraE, agoraE);
   dbE.close();
 
+  // Garante socket com transporte VIVO antes de mutações que emitem
+  // notificação única sem fila (revogação via room usuario:*): a flag
+  // `connected` pode estar obsoleta num socket meio-aberto — o emit se
+  // perderia e a UI nunca exibiria "revogado" (flake observado no CI).
+  // Roundtrip ping/pong prova que o servidor recebe e responde NESTE
+  // socket; se o transporte estiver morto, aguarda a reconexão.
+  const socketVivo = (page) => page.evaluate(() => new Promise((res) => {
+    const s = window.__mesaSocket;
+    if (!s) return res(false);
+    const limite = Date.now() + 40000;
+    const tentar = () => {
+      if (Date.now() >= limite) return res(false);
+      if (!s.connected) return setTimeout(tentar, 250);
+      let done = false;
+      const t = setTimeout(() => { if (!done) { done = true; tentar(); } }, 4000);
+      try {
+        s.emit("ping", (v) => { if (!done) { done = true; clearTimeout(t); res(v === "pong"); } });
+      } catch { if (!done) { done = true; clearTimeout(t); tentar(); } }
+    };
+    tentar();
+  })).catch(() => false);
+
   const sessA = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Alfa" } });
   const sessB = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Beta" } });
   const sidA = sessA.json?.sessao?.id ?? sessA.json?.id;
@@ -1105,7 +1127,9 @@ try {
     .run(Date.now(), campId, c.jogadores.jogador2.id);
   dbRem.close();
   await reiniciarServidor();
-  await pgX.getByText(/não foi possível entrar/i).waitFor({ timeout: 30000 });
+  // reconexão + mesa:entrar rejeitado + render: margem para backoff do
+  // socket.io e subida do servidor (mesmo padrão das esperas de 60s+)
+  await pgX.getByText(/não foi possível entrar/i).waitFor({ timeout: 60000 });
   // isolada da sala: mensagem posterior do mestre não chega ao removido
   await pgM.waitForTimeout(3000); // mestre re-entra também
   await pgM.locator(".chat-form").getByRole("textbox").fill("ping-removido");
@@ -1506,6 +1530,7 @@ try {
   // se o socket estiver reconectando no instante do emit, o evento se
   // perde e a UI nunca mostra "revogado" (flake observado no CI).
   await pgJ.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
+  await socketVivo(pgJ);
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
@@ -1524,6 +1549,7 @@ try {
   // revogação vai para a room usuario:* sem fila — emitida com o socket
   // reconectando, ela se perde e a UI nunca exibe "revogado" (flake CI).
   await pgE.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
+  await socketVivo(pgE);
   const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
     cookie: cookieMestre,
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
