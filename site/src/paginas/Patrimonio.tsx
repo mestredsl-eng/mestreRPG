@@ -4,7 +4,7 @@ import {
   type ItemInventario, type ItemInventarioInput, type Equipamento,
   type Veiculo, type VeiculoInput, type Financeiro, type ContaFinanceira, type ContaInput,
   type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo, type TransacaoFinanceira,
-  type AcervoCatalogoItem, type DisponibilidadeAcervo,
+  type AcervoCatalogoItem, type DisponibilidadeAcervo, type RegraRef,
 } from "../api";
 import { getSocket } from "../socket";
 import { ModalConfirmar } from "../Modal";
