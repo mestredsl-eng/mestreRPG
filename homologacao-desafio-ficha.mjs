@@ -215,15 +215,21 @@ try {
   await abrirMesa(pM);
   await abrirMesa(pJ);
 
-  // fluxo principal: "Solicitar teste pela ficha" antes do manual
+  // fluxo principal: "Solicitar teste pela ficha" é o card de destaque e
+  // já abre com o formulário visível — sem precisar procurar ação escondida
   const tituloFicha = pM.locator("section.cartao", { has: pM.locator("h3", { hasText: "Solicitar teste pela ficha" }) });
   t("UI. card 'Solicitar teste pela ficha' presente", (await tituloFicha.count()) > 0);
-  const manual = pM.locator("section.cartao h3", { hasText: "Teste manual" });
-  t("UI. formulário manual preservado como secundário", (await manual.count()) > 0);
+  t("UI. desafio pela ficha é o card de destaque", await tituloFicha.evaluate((el) => el.classList.contains("cartao-destaque")));
+  const manual = pM.locator("section.cartao h3", { hasText: "teste manual" });
+  t("UI. rolagem personalizada preservada como secundária", (await manual.count()) > 0);
 
-  await tituloFicha.locator("button", { hasText: "+ Desafio" }).click();
-  await pM.waitForTimeout(300);
+  // o formulário já vem aberto (fluxo principal); só clica se estiver fechado
   const form = tituloFicha.locator("form.formulario");
+  if (!(await form.isVisible().catch(() => false))) {
+    await tituloFicha.locator("button", { hasText: "+ Desafio" }).click();
+    await pM.waitForTimeout(300);
+  }
+  t("UI. formulário da ficha visível sem clique extra", await form.isVisible());
   const selPers = form.locator("select").first();
   const opsPers = await selPers.locator("option").allTextContents();
   const idxPers = opsPers.findIndex((o) => o.includes("PJ Ficha"));
@@ -244,8 +250,9 @@ try {
   t("UI. informa 5 dados positivos", metaPos.some((m) => /5\s*dados?\s*positivos?/.test(m)), metaPos.join(" | "));
   await form.locator('input[type="number"]').first().fill("2");
   await pM.waitForTimeout(200);
-  const metaEf = await form.locator(".meta").allTextContents();
-  t("UI. efetivos = 3 d10 com penalidade 2", metaEf.some((m) => /Efetivos:\s*<strong>3<\/strong>\s*d10/.test(m.replace(/<[^>]+>/g, "")) || /Efetivos:[\s\S]*3[\s\S]*d10/.test(m)), metaEf.join(" | "));
+  const metaEf = await form.locator(".meta, .desafio-pool").allTextContents();
+  t("UI. pool exibido: 5 positivos − 2 negativos = 3 efetivos",
+    metaEf.some((m) => /positivos/.test(m) && /negativos/.test(m) && /=\s*3\s*d10/.test(m)), metaEf.join(" | "));
 
   // envia o desafio pela UI
   await form.locator('button[type="submit"]').click();
