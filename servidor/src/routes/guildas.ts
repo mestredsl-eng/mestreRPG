@@ -272,14 +272,24 @@ guildasRouter.put("/:guildId/responsavel", async (req, res) => {
   const agora = new Date();
   // Compare-and-swap atômico: a gravação só acontece se o responsável
   // lido na autorização AINDA for o atual (IS = igualdade null-safe no
-  // SQLite). Se outra transferência commitar primeiro, changes=0 e esta
-  // requisição perde com 409 — auditoria e evento só ocorrem para a
-  // transferência efetivamente confirmada.
+  // SQLite) E se o alvo continuar GM ativo com conta ativa NO INSTANTE
+  // da escrita — o EXISTS fecha a corrida com PATCH/DELETE de membros:
+  // se um rebaixamento/remoção do alvo commitar entre a validação e
+  // este UPDATE, changes=0 e a transferência perde com 409.
   const gravacao = await db.run(sql`
     UPDATE guilds
     SET responsible_user_id = ${novoId}, updated_at = ${agora.getTime()}
     WHERE id = ${g.id}
       AND responsible_user_id IS ${g.responsibleUserId}
+      AND EXISTS (
+        SELECT 1 FROM guild_members gm
+        JOIN users u ON u.id = gm.user_id
+        WHERE gm.guild_id = ${g.id}
+          AND gm.user_id = ${novoId}
+          AND gm.role = 'gm'
+          AND gm.status = 'ativo'
+          AND u.status = 'ativo'
+      )
   `);
   if (gravacao.changes === 0) {
     res.status(409).json({ erro: "A responsabilidade já foi transferida por outra operação" });
@@ -411,6 +421,14 @@ guildasRouter.patch("/:guildId/membros/:userId", requireGuildGestao(), async (re
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
     return;
   }
+  // O responsável atual não pode perder o vínculo GM ativo sem
+  // transferência prévia (PUT /:guildId/responsavel) — do contrário
+  // responsible_user_id apontaria para quem já não pode exercer a
+  // função e a recuperação dependeria do ADMIN.
+  if (g.responsibleUserId === alvoId && (novoRole !== "gm" || novoStatus !== "ativo")) {
+    res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser rebaixado ou removido" });
+    return;
+  }
   const dados: Partial<typeof guildMembers.$inferInsert> = { updatedAt: new Date() };
   if (body.data.role !== undefined) dados.role = body.data.role;
   if (body.data.status !== undefined) dados.status = body.data.status;
@@ -438,9 +456,20 @@ guildasRouter.delete("/:guildId/membros/:userId", requireGuildGestao(), async (r
     res.status(404).json({ erro: "Membro não encontrado" });
     return;
   }
+  const [g] = await db
+    .select({ responsibleUserId: guilds.responsibleUserId })
+    .from(guilds)
+    .where(eq(guilds.id, req.params.guildId))
+    .limit(1);
   const [alvoDel] = await db.select({ status: users.status }).from(users).where(eq(users.id, alvoId)).limit(1);
   if (m.role === "gm" && m.status === "ativo" && alvoDel?.status === "ativo" && (await contarGMs(req.params.guildId)) <= 1) {
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
+    return;
+  }
+  // Mesma proteção do PATCH: remover o vínculo do responsável atual
+  // sem transferência prévia deixaria responsible_user_id órfão.
+  if (g?.responsibleUserId === alvoId) {
+    res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser removido" });
     return;
   }
   await db

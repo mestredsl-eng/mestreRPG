@@ -311,6 +311,46 @@ try {
   // desbloqueia para não contaminar estado final
   await req(base, "PATCH", `/admin/users/${idErin}`, { cookie: cookieRoot, body: { status: "ativo" } });
 
+  sec("Proteção do responsável — vínculo GM não pode ser perdido sem transferência");
+  // estado: responsável=dave; GMs ativos alice/dave/erin; bob membro.
+  const patchM = (ck, uid, body) => req(base, "PATCH", `/guildas/${guildA}/membros/${uid}`, { cookie: ck, body });
+  const delM = (ck, uid) => req(base, "DELETE", `/guildas/${guildA}/membros/${uid}`, { cookie: ck });
+  t("estado inicial: dave é o responsável", guildaDb(guildA).responsible_user_id === idDave);
+  t("responsável rebaixa a si mesmo → 409", (await patchM(cookieDave, idDave, { role: "membro" })).status === 409);
+  t("responsável remove a si mesmo via PATCH → 409", (await patchM(cookieDave, idDave, { status: "removido" })).status === 409);
+  t("GM comum rebaixa o responsável → 409", (await patchM(cookieAlice, idDave, { role: "membro" })).status === 409);
+  t("GM comum remove o responsável → 409", (await delM(cookieAlice, idDave)).status === 409);
+  t("ADMIN remove o responsável atual → 409", (await delM(cookieRoot, idDave)).status === 409);
+  t("responsável exclui o próprio vínculo → 409", (await delM(cookieDave, idDave)).status === 409);
+  t("vínculo do responsável intacto após tentativas", membroDb(guildA, idDave)?.role === "gm" && membroDb(guildA, idDave)?.status === "ativo");
+  t("responsible_user_id continua dave", guildaDb(guildA).responsible_user_id === idDave);
+
+  const tr2 = await put(cookieDave, guildA, idAlice);
+  t("transferência prévia → 200", tr2.status === 200, `status=${tr2.status}`);
+  t("responsável agora é alice", guildaDb(guildA).responsible_user_id === idAlice);
+  t("antigo responsável rebaixado após transferência → 200",
+    (await patchM(cookieAlice, idDave, { role: "membro" })).status === 200);
+  t("antigo responsável removido após transferência → 200",
+    (await delM(cookieAlice, idDave)).status === 200);
+  const vincResp = membroDb(guildA, idAlice);
+  t("responsável final é GM ativo", vincResp?.role === "gm" && vincResp?.status === "ativo");
+
+  sec("Corrida — transferência × remoção do alvo: invariante preservada");
+  // estado: responsável=alice; GMs ativos alice/erin (dave removido).
+  // PUT alice→erin corre em paralelo com PATCH que rebaixaria erin.
+  // Vencer o PATCH primeiro → erin deixa de ser GM → CAS do PUT falha (409).
+  // Vencer o PUT primeiro → erin vira responsável → PATCH é bloqueado (409).
+  const [cPut, cPatch] = await Promise.all([
+    put(cookieAlice, guildA, idErin),
+    patchM(cookieAlice, idErin, { role: "membro" }),
+  ]);
+  const exatamenteUma = (cPut.status === 200 && cPatch.status === 409) || (cPut.status === 409 && cPatch.status === 200);
+  t("exatamente uma operação vence a corrida", exatamenteUma, `put=${cPut.status} patch=${cPatch.status}`);
+  const respFinal = guildaDb(guildA).responsible_user_id;
+  const vincFinal = membroDb(guildA, respFinal);
+  t("responsável final é GM ativo (invariante)", vincFinal?.role === "gm" && vincFinal?.status === "ativo",
+    `resp=${respFinal} vinc=${JSON.stringify(vincFinal)}`);
+
   console.log(`\n==== ${pass} ok, ${fail} falhas ====`);
 } finally {
   for (const s of socketsAbertos) s.close();
