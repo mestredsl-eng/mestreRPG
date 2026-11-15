@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — atividades e ofícios",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -20,7 +20,22 @@
           "definition": {
             "descricao": "Conjunto de ferramentas para trabalhos de marcenaria.",
             "subcategoria": "Ofícios",
-            "ordem": 0
+            "ordem": 0,
+            "weight": 8,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 500,
+                "max": 2600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 0
         },
@@ -33,7 +48,22 @@
           "definition": {
             "descricao": "Bancada para atividades de montagem e reparo.",
             "subcategoria": "Ofícios",
-            "ordem": 1
+            "ordem": 1,
+            "weight": 45,
+            "valueCents": 130000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1300,
+              "faixaPrecoBRL": {
+                "min": 600,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 1
         },
@@ -46,7 +76,22 @@
           "definition": {
             "descricao": "Equipamento para costura e reparos têxteis.",
             "subcategoria": "Ofícios",
-            "ordem": 2
+            "ordem": 2,
+            "weight": 8,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 4500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -66,7 +111,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1100
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 3
         },
@@ -86,7 +146,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 6,
+            "valueCents": 65000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 650,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -106,7 +181,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.5,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 90,
+                "max": 600
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 5
         },
@@ -126,7 +216,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.5,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 90,
+                "max": 650
+              },
+              "unidadeCompra": "conjunto básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 6
         },
@@ -146,7 +251,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1200
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 7
         },
@@ -166,7 +286,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 8
         },
@@ -186,7 +321,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 5,
+            "valueCents": 170000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1700,
+              "faixaPrecoBRL": {
+                "min": 600,
+                "max": 4500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 9
         },
@@ -206,7 +356,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 10
         },
@@ -226,7 +391,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 35,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 15000
+              },
+              "unidadeCompra": "conjunto acústico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 11
         },
@@ -246,7 +426,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.4,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 12
         },
@@ -266,7 +461,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 130000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1300,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 4500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 13
         },
@@ -286,7 +496,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 18,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2000,
+                "max": 18000
+              },
+              "unidadeCompra": "kit básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 14
         },
@@ -306,7 +531,22 @@
                 "key": "artista",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 5,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 1500,
+                "max": 12000
+              },
+              "unidadeCompra": "kit de acessórios e câmera básica",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 15
         },
@@ -326,7 +566,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.45,
+            "valueCents": 15000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 150,
+              "faixaPrecoBRL": {
+                "min": 50,
+                "max": 350
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 16
         },
@@ -346,7 +601,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 60000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 600,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 1500
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 17
         },
@@ -366,7 +636,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 20,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 1000
+              },
+              "unidadeCompra": "par ou conjunto de referência de 20 kg",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Peso e preço referem-se ao conjunto de referência de 20 kg; a carga pode ser ajustada pelo mestre."
+            }
           },
           "ordem": 18
         },
@@ -386,7 +671,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 550
+              },
+              "unidadeCompra": "par",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -399,7 +699,22 @@
           "definition": {
             "descricao": "Equipamento de proteção para atividades esportivas.",
             "subcategoria": "Proteção esportiva",
-            "ordem": 20
+            "ordem": 20,
+            "weight": 0.05,
+            "valueCents": 6000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 60,
+              "faixaPrecoBRL": {
+                "min": 20,
+                "max": 150
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -419,7 +734,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 90,
+                "max": 350
+              },
+              "unidadeCompra": "placa de 1 m²",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Peso e preço referem-se a uma placa de 1 m²; modelos e espessuras variam."
+            }
           },
           "ordem": 21
         },
@@ -439,7 +769,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 9,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 18000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -459,7 +804,22 @@
                 "key": "esportes",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.5,
+            "valueCents": 220000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2200,
+              "faixaPrecoBRL": {
+                "min": 900,
+                "max": 5000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -479,7 +839,22 @@
                 "key": "empatia_com_animal",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.4,
+            "valueCents": 8000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 80,
+              "faixaPrecoBRL": {
+                "min": 30,
+                "max": 180
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -492,7 +867,22 @@
           "definition": {
             "descricao": "Coleira para identificação e condução de animal.",
             "subcategoria": "Manejo animal",
-            "ordem": 25
+            "ordem": 25,
+            "weight": 0.15,
+            "valueCents": 4500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 45,
+              "faixaPrecoBRL": {
+                "min": 15,
+                "max": 110
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 25
         },
@@ -505,7 +895,22 @@
           "definition": {
             "descricao": "Equipamento de manejo e segurança animal.",
             "subcategoria": "Manejo animal",
-            "ordem": 26
+            "ordem": 26,
+            "weight": 0.2,
+            "valueCents": 7500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 75,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 180
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 26
         },
@@ -518,7 +923,22 @@
           "definition": {
             "descricao": "Caixa apropriada para transporte de animais.",
             "subcategoria": "Manejo animal",
-            "ordem": 27
+            "ordem": 27,
+            "weight": 6,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1200
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 27
         },
@@ -531,7 +951,22 @@
           "definition": {
             "descricao": "Materiais para higiene e cuidado de animais.",
             "subcategoria": "Manejo animal",
-            "ordem": 28
+            "ordem": 28,
+            "weight": 1,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 28
         },
@@ -551,7 +986,22 @@
                 "key": "empatia_com_animal",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 32000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 320,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 750
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 29
         },
@@ -571,7 +1021,22 @@
                 "key": "empatia_com_animal",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.02,
+            "valueCents": 2500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 25,
+              "faixaPrecoBRL": {
+                "min": 10,
+                "max": 60
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 30
         }

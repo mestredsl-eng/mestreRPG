@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — catálogo de campo",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -27,7 +27,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.4,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 400
+              },
+              "unidadeCompra": "kit básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 0
         },
@@ -47,7 +62,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2.4,
+            "valueCents": 850000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 8500,
+              "faixaPrecoBRL": {
+                "min": 6000,
+                "max": 15000
+              },
+              "unidadeCompra": "unidade DEA",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 1
         },
@@ -67,7 +97,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.08,
+            "valueCents": 12000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 120,
+              "faixaPrecoBRL": {
+                "min": 50,
+                "max": 300
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -87,7 +132,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.2,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 700
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 3
         },
@@ -107,7 +167,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.08,
+            "valueCents": 4500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 45,
+              "faixaPrecoBRL": {
+                "min": 20,
+                "max": 120
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -127,7 +202,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.2,
+            "valueCents": 30000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 300,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 650
+              },
+              "unidadeCompra": "conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 5
         },
@@ -147,7 +237,22 @@
                 "key": "medicina",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 7.5,
+            "valueCents": 140000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1400,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 2800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 6
         },
@@ -160,7 +265,22 @@
           "definition": {
             "descricao": "Manta leve para auxiliar na conservação de calor corporal em situações de exposição.",
             "subcategoria": "Resgate",
-            "ordem": 7
+            "ordem": 7,
+            "weight": 0.05,
+            "valueCents": 1500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 15,
+              "faixaPrecoBRL": {
+                "min": 6,
+                "max": 35
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 7
         },
@@ -173,7 +293,22 @@
           "definition": {
             "descricao": "Máscaras para reduzir a inalação de partículas. A proteção depende do ajuste, conservação e tipo de contaminante.",
             "subcategoria": "Proteção individual",
-            "ordem": 8
+            "ordem": 8,
+            "weight": 0.25,
+            "valueCents": 6000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 60,
+              "faixaPrecoBRL": {
+                "min": 30,
+                "max": 120
+              },
+              "unidadeCompra": "caixa com 10 unidades",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 8
         },
@@ -186,7 +321,22 @@
           "definition": {
             "descricao": "Barreira de uso único para procedimentos e manipulação de materiais. Não substituem higiene adequada.",
             "subcategoria": "Proteção individual",
-            "ordem": 9
+            "ordem": 9,
+            "weight": 0.5,
+            "valueCents": 5000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 50,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 100
+              },
+              "unidadeCompra": "caixa com 100 unidades",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 9
         },
@@ -199,7 +349,22 @@
           "definition": {
             "descricao": "Proteção ocular contra respingos e partículas em ambientes de risco.",
             "subcategoria": "Proteção individual",
-            "ordem": 10
+            "ordem": 10,
+            "weight": 0.12,
+            "valueCents": 8500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 85,
+              "faixaPrecoBRL": {
+                "min": 35,
+                "max": 180
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 10
         },
@@ -212,7 +377,22 @@
           "definition": {
             "descricao": "Vestimenta de barreira para reduzir contaminação de roupas em locais específicos. Deve ser descartada conforme o protocolo aplicável.",
             "subcategoria": "Proteção individual",
-            "ordem": 11
+            "ordem": 11,
+            "weight": 0.3,
+            "valueCents": 3500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 35,
+              "faixaPrecoBRL": {
+                "min": 15,
+                "max": 90
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 11
         },
@@ -225,7 +405,22 @@
           "definition": {
             "descricao": "Materiais para limpeza inicial de pessoas e objetos expostos a contaminantes conhecidos. O procedimento depende da substância.",
             "subcategoria": "Proteção individual",
-            "ordem": 12
+            "ordem": 12,
+            "weight": 2.5,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 1200
+              },
+              "unidadeCompra": "kit básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 12
         },
@@ -245,7 +440,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 400
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 13
         },
@@ -265,7 +475,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 2000,
+                "max": 9000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 14
         },
@@ -278,7 +503,22 @@
           "definition": {
             "descricao": "Dispositivo que registra diferenças de temperatura aparente. Não identifica sozinho pessoas ou causas de calor.",
             "subcategoria": "Investigação",
-            "ordem": 15
+            "ordem": 15,
+            "weight": 1,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 6000,
+                "max": 30000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de resolução térmica, lente, faixa e calibração."
+            }
           },
           "ordem": 15
         },
@@ -298,7 +538,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.15,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 900
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 16
         },
@@ -311,7 +566,22 @@
           "definition": {
             "descricao": "Lupa portátil com luz para examinar detalhes de superfícies, documentos e pequenos objetos.",
             "subcategoria": "Investigação",
-            "ordem": 17
+            "ordem": 17,
+            "weight": 0.2,
+            "valueCents": 13000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 130,
+              "faixaPrecoBRL": {
+                "min": 50,
+                "max": 300
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 17
         },
@@ -324,7 +594,22 @@
           "definition": {
             "descricao": "Fonte UV para observações específicas em materiais compatíveis. Fluorescência não comprova, por si só, a origem de um vestígio.",
             "subcategoria": "Investigação",
-            "ordem": 18
+            "ordem": 18,
+            "weight": 0.25,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 70,
+                "max": 450
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 18
         },
@@ -337,7 +622,22 @@
           "definition": {
             "descricao": "Maleta rígida para transportar papéis, mapas, fotografias e registros sem danificá-los.",
             "subcategoria": "Investigação",
-            "ordem": 19
+            "ordem": 19,
+            "weight": 0.8,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 90,
+                "max": 500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -357,7 +657,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 75000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 750,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 1600
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -377,7 +692,22 @@
                 "key": "investigacao",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.9,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 900,
+                "max": 6000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 21
         },
@@ -390,7 +720,22 @@
           "definition": {
             "descricao": "Instrumento óptico para observar pontos distantes sem aproximação. O desempenho varia conforme ampliação e luminosidade.",
             "subcategoria": "Observação",
-            "ordem": 22
+            "ordem": 22,
+            "weight": 0.65,
+            "valueCents": 65000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 650,
+              "faixaPrecoBRL": {
+                "min": 220,
+                "max": 1800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -403,7 +748,22 @@
           "definition": {
             "descricao": "Mapa com relevo, curvas de nível e referências geográficas para planejamento de deslocamentos.",
             "subcategoria": "Navegação",
-            "ordem": 23
+            "ordem": 23,
+            "weight": 0.15,
+            "valueCents": 4500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 45,
+              "faixaPrecoBRL": {
+                "min": 20,
+                "max": 120
+              },
+              "unidadeCompra": "folha ou mapa dobrável",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -416,7 +776,22 @@
           "definition": {
             "descricao": "Receptor de posicionamento por satélite. Pode perder precisão em ambientes fechados, cânions ou áreas com interferência.",
             "subcategoria": "Navegação",
-            "ordem": 24
+            "ordem": 24,
+            "weight": 0.2,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 1800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -429,7 +804,22 @@
           "definition": {
             "descricao": "Instrumento magnético para orientação quando usado com mapa e referências adequadas.",
             "subcategoria": "Navegação",
-            "ordem": 25
+            "ordem": 25,
+            "weight": 0.1,
+            "valueCents": 13000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 130,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 350
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 25
         },
@@ -442,7 +832,22 @@
           "definition": {
             "descricao": "Unidade de comunicação de maior porte para uma equipe ou ponto de apoio. Depende de energia, antena e frequências autorizadas.",
             "subcategoria": "Comunicação",
-            "ordem": 26
+            "ordem": 26,
+            "weight": 4.5,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 900,
+                "max": 5500
+              },
+              "unidadeCompra": "estação sem antena externa",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 26
         },
@@ -455,7 +860,22 @@
           "definition": {
             "descricao": "Fonte portátil para recarregar dispositivos compatíveis. Capacidade e conectores devem ser anotados.",
             "subcategoria": "Energia",
-            "ordem": 27
+            "ordem": 27,
+            "weight": 0.5,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 600
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 27
         },
@@ -468,7 +888,22 @@
           "definition": {
             "descricao": "Painel dobrável para recarga em locais com luz solar. A geração varia com clima, posição e equipamento conectado.",
             "subcategoria": "Energia",
-            "ordem": 28
+            "ordem": 28,
+            "weight": 1.2,
+            "valueCents": 110000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1100,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 2500
+              },
+              "unidadeCompra": "painel dobrável",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Potência, controlador, cabos e estojo podem alterar preço e peso."
+            }
           },
           "ordem": 28
         },
@@ -481,7 +916,22 @@
           "definition": {
             "descricao": "Conjunto de ferramentas e consumíveis para pequenos reparos em equipamentos, roupas e acessórios.",
             "subcategoria": "Manutenção",
-            "ordem": 29
+            "ordem": 29,
+            "weight": 2,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 750
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 29
         },
@@ -501,7 +951,22 @@
                 "key": "sobrevivencia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 100000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1000,
+              "faixaPrecoBRL": {
+                "min": 500,
+                "max": 1600
+              },
+              "unidadeCompra": "rolo de 50 m",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Peso e preço referem-se a rolo de 50 m; diâmetro, carga, certificação e fabricante variam."
+            }
           },
           "ordem": 30
         },
@@ -521,7 +986,22 @@
                 "key": "sobrevivencia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.08,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 70,
+                "max": 400
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência para conector certificado de trabalho/resgate, não mosquetão recreativo."
+            }
           },
           "ordem": 31
         },
@@ -534,7 +1014,22 @@
           "definition": {
             "descricao": "Capacete para proteção em atividades de busca e salvamento, compatível com os riscos do ambiente.",
             "subcategoria": "Resgate",
-            "ordem": 32
+            "ordem": 32,
+            "weight": 0.5,
+            "valueCents": 65000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 650,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 1300
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 32
         },
@@ -547,7 +1042,22 @@
           "definition": {
             "descricao": "Abrigo portátil para pernoite e proteção contra intempéries. Capacidade e resistência dependem do modelo.",
             "subcategoria": "Sobrevivência",
-            "ordem": 33
+            "ordem": 33,
+            "weight": 3.2,
+            "valueCents": 55000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 550,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 1200
+              },
+              "unidadeCompra": "unidade para 2 a 3 pessoas",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 33
         },
@@ -560,7 +1070,22 @@
           "definition": {
             "descricao": "Isolamento térmico para descanso em campo. A faixa de temperatura adequada depende do modelo e das condições.",
             "subcategoria": "Sobrevivência",
-            "ordem": 34
+            "ordem": 34,
+            "weight": 1.4,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 34
         },
@@ -573,7 +1098,22 @@
           "definition": {
             "descricao": "Dispositivo para tratamento de água conforme os contaminantes para os quais foi projetado. Nem todo filtro remove agentes químicos.",
             "subcategoria": "Sobrevivência",
-            "ordem": 35
+            "ordem": 35,
+            "weight": 0.4,
+            "valueCents": 30000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 300,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 700
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Capacidade e contaminantes filtrados dependem do modelo; nem todo filtro remove vírus ou contaminantes químicos."
+            }
           },
           "ordem": 35
         },
@@ -586,7 +1126,22 @@
           "definition": {
             "descricao": "Recipiente reutilizável para transporte de água potável.",
             "subcategoria": "Sobrevivência",
-            "ordem": 36
+            "ordem": 36,
+            "weight": 0.35,
+            "valueCents": 7000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 70,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 160
+              },
+              "unidadeCompra": "unidade de 1 L",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 36
         },
@@ -599,7 +1154,22 @@
           "definition": {
             "descricao": "Fogareiro compacto para preparo de alimentos em área ventilada e segura, usando combustível compatível.",
             "subcategoria": "Sobrevivência",
-            "ordem": 37
+            "ordem": 37,
+            "weight": 0.45,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "unidade sem cartucho",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 37
         },
@@ -612,7 +1182,22 @@
           "definition": {
             "descricao": "Conjunto de alimentos não perecíveis para deslocamentos e períodos sem acesso a cozinha.",
             "subcategoria": "Sobrevivência",
-            "ordem": 38
+            "ordem": 38,
+            "weight": 0.5,
+            "valueCents": 5500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 55,
+              "faixaPrecoBRL": {
+                "min": 30,
+                "max": 100
+              },
+              "unidadeCompra": "ração individual para 1 dia",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 38
         },
@@ -625,7 +1210,22 @@
           "definition": {
             "descricao": "Capa leve para chuva, útil em deslocamentos e atividades externas.",
             "subcategoria": "Sobrevivência",
-            "ordem": 39
+            "ordem": 39,
+            "weight": 0.45,
+            "valueCents": 10000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 100,
+              "faixaPrecoBRL": {
+                "min": 35,
+                "max": 250
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 39
         },
@@ -638,7 +1238,22 @@
           "definition": {
             "descricao": "Calçado resistente para caminhadas e terrenos irregulares. Ajuste e conservação influenciam conforto e segurança.",
             "subcategoria": "Vestuário",
-            "ordem": 40
+            "ordem": 40,
+            "weight": 1.2,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 220,
+                "max": 900
+              },
+              "unidadeCompra": "par",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 40
         }
