@@ -114,6 +114,8 @@ try {
   insRegra("item", "tonfa", "Tonfa", [{ kind: "pericia", key: "armas_brancas", minLevel: 1 }]);
   insRegra("item", "kit_campo", "Kit de Campo", []);
   insRegra("item", "item_desativado", "Item desativado", [], false);
+  insRegra("pericia", "pericia_desativada", "Perícia desativada", [], false);
+  insRegra("item", "item_requer_pericia_desativada", "Item que exige perícia desativada", [{ kind: "pericia", key: "pericia_desativada", minLevel: 1 }]);
   insRegra("item", "combo", "Combo", [
     { kind: "pericia", key: "conducao", minLevel: 1 },
     { kind: "pericia", key: "inexistente_xyz", minLevel: 1 },
@@ -343,6 +345,12 @@ try {
   t("bypass não reativa elemento desativado", r.status === 403, `status=${r.status}`);
   r = await post(pjMestre, "/inventario", { name: "Combo inválido", regra: { kind: "item", key: "combo" }, ignorarPrerequisitos: true }, ids.cm);
   t("bypass não ignora pré-requisito inexistente", r.status === 403, `status=${r.status}`);
+  r = await post(pjMestre, "/inventario", { name: "Item com perícia desativada", regra: { kind: "item", key: "item_requer_pericia_desativada" }, ignorarPrerequisitos: true }, ids.cm);
+  t("bypass não ignora pré-requisito desativado", r.status === 403, `status=${r.status}`);
+  t("detalhes identificam pré-requisito desativado", r.json?.detalhes?.requisitos?.some((q) => q.indisponivel === true), JSON.stringify(r.json?.detalhes?.requisitos));
+  const disponibilidadeDesativada = await req(BASE, "GET", `/characters/${pjJ1}/patrimonio/requisitos`, { cookie: ids.j1.cookie });
+  const dispDesativada = disponibilidadeDesativada.json?.requisitos?.["item:item_requer_pericia_desativada"];
+  t("endpoint de disponibilidade expõe estado desativado", dispDesativada?.ok === false && dispDesativada?.prerequisitos?.[0]?.indisponivel === true);
   // audit() resolve campaignId via req.params.campaignId — nas rotas de
   // personagem esse param não existe, então o escopo fica no detail.
   const auditBypass = comDb(BANCO, (db) => db.prepare("select id, detail from audit_logs where action='patrimonio.prerequisito.ignorado'").all());
