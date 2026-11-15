@@ -550,6 +550,15 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
           {templateId !== "" && !temRegraTemplate && (
             <p className="meta">Template manual — sem vínculo com pré-requisitos do Acervo.</p>
           )}
+          {templateId !== "" && bloqueado && !itemAcervoSelecionado && (
+            <p className="meta erro">
+              Aquisição indisponível. {templateApontaVeiculo
+                ? "Este template está vinculado a um veículo. Faça a aquisição pela aba Veículos."
+                : regraTemplateInvalida
+                  ? "O vínculo do Acervo no catálogo é inválido. Peça ao mestre para revisar o template."
+                  : "O elemento vinculado não está ativo ou não existe nas regras desta campanha. Peça ao mestre para revisar o catálogo."}
+            </p>
+          )}
           {templateId === "" && acervoSel === null && (
             <label>Nome do item
               <input value={nome} onChange={(e) => setNome(e.target.value)} required />
