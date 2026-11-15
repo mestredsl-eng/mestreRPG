@@ -69,6 +69,8 @@ try {
   // j1: conducao 2 · j2: sem perícias
   mkPj(pjJ1, ids.j1.membershipId, { "cmp-pericias": [{ key: "conducao", nivel: 2 }] });
   mkPj(pjJ2, ids.j2.membershipId, {});
+  const pjSemPericias = crypto.randomUUID();
+  mkPj(pjSemPericias, ids.j2.membershipId, {});
 
   // Elementos do Acervo no rule_set ativo
   const rs = comDb(BANCO, (db) => db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(ids.camp).id);
@@ -83,8 +85,16 @@ try {
   };
   // perícia conducao (pré-requisito referenciável)
   insRegra("pericia", "conducao", "Condução", []);
+  insRegra("pericia", "armas_de_fogo", "Armas de Fogo", []);
+  insRegra("pericia", "armas_brancas", "Armas Brancas", []);
   insRegra("item", "carro_popular", "Carro Popular", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
+  insRegra("veiculo", "suv_blindado", "SUV reforçado", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
+  insRegra("veiculo", "moto_policial", "Motocicleta de serviço", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
+  insRegra("veiculo", "helicoptero_civil", "Helicóptero civil", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
   insRegra("veiculo", "caca_f16", "Caça F-16", [{ kind: "pericia", key: "conducao", minLevel: 5 }]);
+  insRegra("item", "pistola_compacta_reserva", "Pistola compacta de reserva", [{ kind: "pericia", key: "armas_de_fogo", minLevel: 1 }]);
+  insRegra("item", "fuzil_servico", "Fuzil de serviço", [{ kind: "pericia", key: "armas_de_fogo", minLevel: 1 }]);
+  insRegra("item", "tonfa", "Tonfa", [{ kind: "pericia", key: "armas_brancas", minLevel: 1 }]);
   insRegra("item", "kit_campo", "Kit de Campo", []);
   insRegra("item", "combo", "Combo", [
     { kind: "pericia", key: "conducao", minLevel: 1 },
@@ -113,6 +123,45 @@ try {
   const itemCarro = r.json?.id;
   const itemRow = comDb(BANCO, (db) => db.prepare("select data from inventory_entries where id=?").get(itemCarro));
   t("referência da regra persistida no item", JSON.parse(itemRow?.data ?? "{}").regra?.key === "carro_popular");
+
+  sec("veículos reais do suplemento exigem Condução 1");
+  for (const [key, nome] of [
+    ["suv_blindado", "SUV reforçado"],
+    ["moto_policial", "Motocicleta de serviço"],
+    ["helicoptero_civil", "Helicóptero civil"],
+  ]) {
+    r = await post(pjJ1, "/veiculos", { name: nome, regra: { kind: "veiculo", key } }, ids.j1.cookie);
+    t(`${key}: Condução 2 atende ao nível 1`, r.status === 201, `status=${r.status}`);
+  }
+
+  sec("armas reais do suplemento exigem perícia correspondente");
+  for (const [key, nome] of [
+    ["pistola_compacta_reserva", "Pistola compacta de reserva"],
+    ["fuzil_servico", "Fuzil de serviço"],
+    ["tonfa", "Tonfa"],
+  ]) {
+    r = await post(pjJ2, "/inventario", { name: nome, regra: { kind: "item", key } }, ids.j2.cookie);
+    t(`${key}: sem perícia, aquisição bloqueada`, r.status === 403, `status=${r.status}`);
+  }
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify({
+        "cmp-pericias": [
+          { key: "armas_de_fogo", nivel: 1 },
+          { key: "armas_brancas", nivel: 1 },
+        ],
+      }), pjJ2);
+    } finally { w.close(); }
+  }
+  for (const [key, nome] of [
+    ["pistola_compacta_reserva", "Pistola compacta de reserva"],
+    ["fuzil_servico", "Fuzil de serviço"],
+    ["tonfa", "Tonfa"],
+  ]) {
+    r = await post(pjJ2, "/inventario", { name: nome, regra: { kind: "item", key } }, ids.j2.cookie);
+    t(`${key}: nível 1 libera aquisição`, r.status === 201, `status=${r.status}`);
+  }
 
   sec("dois pré-requisitos / inexistente");
   r = await post(pjJ1, "/inventario", { name: "Combo", regra: { kind: "item", key: "combo" } }, ids.j1.cookie);
@@ -245,7 +294,7 @@ try {
   t("rota de veículos recusa elemento kind:item", r.status === 400, `status=${r.status}`);
   r = await post(pjJ1, "/inventario", { name: "F-16", regra: REGRA_F16 }, ids.j1.cookie);
   t("rota de inventário recusa elemento kind:veiculo", r.status === 400, `status=${r.status}`);
-  r = await post(pjJ2, "/equipamentos", { name: "Colete", regra: REGRA_CARRO }, ids.j2.cookie);
+  r = await post(pjSemPericias, "/equipamentos", { name: "Colete", regra: REGRA_CARRO }, ids.j2.cookie);
   t("equipamento com pré-req insuficiente bloqueado", r.status === 403, `status=${r.status}`);
 
   sec("mestre: bypass explícito auditado, sem flag respeita");
@@ -284,17 +333,17 @@ try {
   sec("disponibilidade falha fechado sem ficha publicada");
   {
     const w = abrirDb(BANCO);
-    try { w.prepare("update characters set template_version_id=NULL where id=?").run(pjJ2); }
+    try { w.prepare("update characters set template_version_id=NULL where id=?").run(pjSemPericias); }
     finally { w.close(); }
   }
-  const reqSemFicha = await req(BASE, "GET", `/characters/${pjJ2}/patrimonio/requisitos`, { cookie: ids.j2.cookie });
+  const reqSemFicha = await req(BASE, "GET", `/characters/${pjSemPericias}/patrimonio/requisitos`, { cookie: ids.j2.cookie });
   const dispCarro = reqSemFicha.json?.requisitos?.["item:carro_popular"];
   const dispKit = reqSemFicha.json?.requisitos?.["item:kit_campo"];
   t("Acervo restrito indisponível sem ficha publicada", reqSemFicha.status === 200 && dispCarro?.ok === false && dispCarro?.prerequisitos?.[0]?.nivelAtual === 0);
   t("até item sem requisito exige ficha verificável", dispKit?.ok === false && /sem ficha publicada/i.test((dispKit?.mensagens ?? []).join(" ")));
   {
     const w = abrirDb(BANCO);
-    try { w.prepare("update characters set template_version_id=? where id=?").run(verId, pjJ2); }
+    try { w.prepare("update characters set template_version_id=? where id=?").run(verId, pjSemPericias); }
     finally { w.close(); }
   }
 
