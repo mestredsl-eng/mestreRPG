@@ -40,7 +40,7 @@
               "unidadeCompra": "servidor de entrada sem rack completo",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
               "observacao": "Configuração de entrada; CPU, RAM, discos, fontes redundantes e licenças alteram preço e peso."
             }
           },
@@ -75,8 +75,8 @@
               "unidadeCompra": "switch gerenciável de referência",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 1
@@ -110,8 +110,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 2
@@ -145,8 +145,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 3
@@ -180,8 +180,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 4
@@ -215,8 +215,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende da categoria de cabeamento, acessórios, calibração e fabricante."
             }
           },
           "ordem": 5
@@ -250,8 +250,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Equipamento profissional; faixa de frequência, precisão e calibração determinam o preço."
             }
           },
           "ordem": 6
@@ -285,8 +285,8 @@
               "unidadeCompra": "estação de trabalho configurada",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 7
@@ -320,8 +320,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 8
@@ -355,8 +355,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 9
@@ -390,8 +390,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 10
@@ -425,8 +425,8 @@
               "unidadeCompra": "kit",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 11
@@ -453,8 +453,8 @@
               "unidadeCompra": "unidade de mesa",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 12
@@ -488,8 +488,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende da precisão, área de captura, software e acessórios."
             }
           },
           "ordem": 13
@@ -523,8 +523,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 14
@@ -558,8 +558,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 15
@@ -593,8 +593,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 16
@@ -628,8 +628,8 @@
               "unidadeCompra": "estação completa com monitores",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço de estação com monitores, sem obras ou infraestrutura física da sala."
             }
           },
           "ordem": 17
@@ -663,8 +663,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 18
@@ -698,8 +698,8 @@
               "unidadeCompra": "kit portátil",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 19
@@ -733,8 +733,8 @@
               "unidadeCompra": "appliance de entrada",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 20
@@ -765,10 +765,10 @@
                 "min": 1800,
                 "max": 10000
               },
-              "unidadeCompra": "NAS de 2 baias sem discos de grande capacidade",
+              "unidadeCompra": "NAS de 2 baias sem discos grandes",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
               "observacao": "NAS de duas baias sem discos de grande capacidade; discos e capacidade final são adicionais."
             }
           },
@@ -803,8 +803,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 22
@@ -831,8 +831,8 @@
               "unidadeCompra": "terminal sem serviço de conexão",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 23
@@ -859,8 +859,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 24
@@ -887,8 +887,8 @@
               "unidadeCompra": "unidade",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 25
@@ -915,8 +915,8 @@
               "unidadeCompra": "unidade sem sistema irradiante completo",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 26
@@ -943,8 +943,8 @@
               "unidadeCompra": "kit para instalação básica",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 27
@@ -978,8 +978,8 @@
               "unidadeCompra": "kit de ferramentas e acessórios",
               "mercadoReferencia": "Brasil",
               "dataReferencia": "2026-11",
-              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
-              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
             }
           },
           "ordem": 28
