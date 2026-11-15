@@ -130,8 +130,9 @@ async function avaliarAquisicao(
   // Nunca pode reativar elemento desativado, aceitar referência inexistente
   // ou mascarar pré-requisito apontando para chave ausente nas regras.
   const elementoDesativado = r.elemento?.definition.disponivel === false;
-  const prerequisitoInexistente = r.requisitos.some((q) => q.inexistente);
-  const podeIgnorar = !!r.elemento && !elementoDesativado && !prerequisitoInexistente;
+  const prerequisitoInvalido = r.requisitos.some((q) => q.inexistente || q.indisponivel);
+  const prerequisitoIndisponivel = r.requisitos.some((q) => q.indisponivel);
+  const podeIgnorar = !!r.elemento && !elementoDesativado && !prerequisitoInvalido;
   if (a.ehMestre && ignorar === true && podeIgnorar) {
     return { elemento: r.elemento, negacao: null, bypass: true };
   }
@@ -140,9 +141,11 @@ async function avaliarAquisicao(
     ? "Elemento do Acervo não encontrado"
     : elementoDesativado
       ? `"${r.elemento.name}" está desativado nesta campanha`
-      : prerequisitoInexistente
-        ? `"${r.elemento.name}" possui pré-requisito inexistente nas regras da campanha`
-        : `Pré-requisitos não atendidos para "${r.elemento.name}"`;
+      : prerequisitoIndisponivel
+        ? `"${r.elemento.name}" possui pré-requisito desativado nas regras da campanha`
+        : prerequisitoInvalido
+          ? `"${r.elemento.name}" possui pré-requisito inexistente nas regras da campanha`
+          : `Pré-requisitos não atendidos para "${r.elemento.name}"`;
   return {
     elemento: r.elemento,
     bypass: false,
