@@ -360,6 +360,10 @@ try {
   await linhasSemVinculo.first().waitFor({ timeout: 5000 });
   if (await linhasSemVinculo.count() !== 1) throw new Error("Template editado deixou de ser único no catálogo");
   const linhaSemVinculo = linhasSemVinculo.first();
+  // A API já confirmou a remoção; a UI recarrega o catálogo de forma
+  // assíncrona. Aguarda a célula de vínculo chegar a "Manual" — se o
+  // estado nunca refletir, o waitFor estoura e a falha continua real.
+  await linhaSemVinculo.locator("td").nth(3).getByText("Manual", { exact: true }).waitFor({ timeout: 5000 });
   t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"), await linhaSemVinculo.textContent());
 
   await abaPatrimonio(pgM, "Dinheiro");
