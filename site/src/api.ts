@@ -1003,6 +1003,8 @@ export interface ItemCatalogoInput {
   name: string;
   category?: string;
   description?: string;
+  /** Vínculo opcional que o mestre escolhe no Acervo da campanha. */
+  regra?: RegraRef | null;
   data?: Record<string, unknown>;
   isActive?: boolean;
 }
