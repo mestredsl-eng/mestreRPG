@@ -338,8 +338,14 @@ try {
   const nomeTemplate = pgM.locator('input[placeholder="Nome do item"]');
   t("selecionar Acervo preenche identidade canônica", await nomeTemplate.inputValue() === "Kit de catálogo E2E" && await nomeTemplate.isDisabled());
   await pgM.getByRole("button", { name: "Adicionar ao catálogo" }).click();
-  const linhaTemplate = pgM.locator("tr", { hasText: "Kit de catálogo E2E" }).first();
+  // A linha antiga "Kit de catálogo restrito" também exibe "Kit de catálogo E2E"
+  // na coluna do vínculo. Identifica o template recém-criado pela PRIMEIRA
+  // coluna (nome próprio), evitando editar o registro antigo por colisão textual.
+  const linhaTemplate = pgM.locator("tr").filter({
+    has: pgM.locator("td").nth(0).getByText("Kit de catálogo E2E", { exact: true }),
+  }).first();
   await linhaTemplate.waitFor({ timeout: 5000 });
+  if (await linhaTemplate.count() !== 1) throw new Error("Template E2E recém-criado não é único no catálogo");
   t("mestre cria template com vínculo ao Acervo", (await linhaTemplate.textContent() ?? "").includes("Kit de catálogo E2E"));
   await linhaTemplate.getByRole("button", { name: "Editar" }).click();
   await seletorAcervo.selectOption({ value: "" });
@@ -347,7 +353,9 @@ try {
   const catalogoDepoisEdicao = await req(BASE, "GET", `/campaigns/${cenario.campId}/inventario`, { cookie: cenario.cookieMestre });
   const templateDepoisEdicao = catalogoDepoisEdicao.json?.itens?.find((i) => i.name === "Kit de catálogo E2E");
   t("API confirma remoção do vínculo no template", catalogoDepoisEdicao.status === 200 && templateDepoisEdicao?.data?.regra === undefined, JSON.stringify({ status: catalogoDepoisEdicao.status, data: templateDepoisEdicao?.data }));
-  const linhaSemVinculo = pgM.locator("tr", { hasText: "Kit de catálogo E2E" }).first();
+  const linhaSemVinculo = pgM.locator("tr").filter({
+    has: pgM.locator("td").nth(0).getByText("Kit de catálogo E2E", { exact: true }),
+  }).first();
   await linhaSemVinculo.waitFor({ timeout: 5000 });
   t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"), await linhaSemVinculo.textContent());
 
