@@ -35,6 +35,7 @@ export const SEED_BIBLIOTECA: ItemSeed[] = [
   // ===== Tecnologia e computação =====
   conhecimento("informatica", "Informática", "Tecnologia e computação"),
   conhecimento("computacao", "Computação", "Tecnologia e computação"),
+  conhecimento("computador", "Computador", "Tecnologia e computação"),
   conhecimento("programacao", "Programação", "Tecnologia e computação"),
   conhecimento("dev_software", "Desenvolvimento de software", "Tecnologia e computação"),
   conhecimento("redes", "Redes de computadores", "Tecnologia e computação"),
@@ -61,6 +62,7 @@ export const SEED_BIBLIOTECA: ItemSeed[] = [
 
   // ===== Ciências =====
   conhecimento("geologia", "Geologia", "Ciências"),
+  conhecimento("ciencias", "Ciências", "Ciências"),
   conhecimento("quimica", "Química", "Ciências"),
   conhecimento("fisica", "Física", "Ciências"),
   conhecimento("biologia", "Biologia", "Ciências"),
@@ -122,13 +124,23 @@ export const SEED_BIBLIOTECA: ItemSeed[] = [
   conhecimento("culinaria", "Culinária", "Conhecimentos práticos"),
 
   // ===== Talentos (spec §5.2 — custo progressivo padrão) =====
-  ...(["atletismo", "reflexos", "furtividade", "percepcao_agucada", "memoria", "concentracao", "sorte", "coragem"] as const).map((k) =>
+  ...(["atletismo", "reflexos", "furtividade", "percepcao_agucada", "memoria", "concentracao", "sorte", "coragem", "hacker", "tecnologia", "quimico", "artista", "esportes"] as const).map((k) =>
     E("talento", k, k.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), "Talentos", {
       custoProgressivo: [1, 2, 3, 4, 5],
       minimo: 0,
       maximo: 5,
     })
   ),
+
+  // ===== Perícias usadas pelos pré-requisitos do Acervo =====
+  // As chaves precisam existir no ruleset para que o motor possa resolver
+  // o nível da ficha; sem elas, a aquisição falha fechado como referência ausente.
+  E("pericia", "armas_brancas", "Armas Brancas", "Perícias de combate", { minimo: 0, maximo: 5 }),
+  E("pericia", "armas_de_fogo", "Armas de Fogo", "Perícias de combate", { minimo: 0, maximo: 5 }),
+  E("pericia", "conducao", "Condução", "Perícias de transporte", { minimo: 0, maximo: 5 }),
+  E("pericia", "sobrevivencia", "Sobrevivência", "Perícias práticas", { minimo: 0, maximo: 5 }),
+  E("pericia", "seguranca", "Segurança", "Perícias técnicas", { minimo: 0, maximo: 5 }),
+  E("pericia", "empatia_com_animal", "Empatia com animais", "Perícias com animais", { minimo: 0, maximo: 5 }),
 
   // ===== Defeitos (spec §7 — reserva própria) =====
   E("defeito", "gagueira", "Gagueira", "Defeitos", { reservaPontos: "defeitos", custoPontos: -1 }),
