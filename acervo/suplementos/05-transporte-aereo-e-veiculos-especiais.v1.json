@@ -1,0 +1,517 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento V — Transporte, Aviação e Veículos Especiais",
+      "descricao": "Catálogo de veículos terrestres, náuticos e aéreos. Os registros usam a perícia Condução existente na ficha: nível 1 como requisito geral de operação e nível 5 para o F-16, conforme exemplo solicitado. O livro não cria uma perícia de pilotagem nova.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — mobilidade e veículos especiais",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "veiculo",
+          "key": "carro_esportivo",
+          "name": "Automóvel esportivo",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel de perfil esportivo para deslocamentos e cenas de perseguição.",
+            "subcategoria": "Automóveis",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_eletrico",
+          "name": "Automóvel elétrico",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel movido a energia elétrica.",
+            "subcategoria": "Automóveis",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_hibrido",
+          "name": "Automóvel híbrido",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel com sistema de propulsão híbrido.",
+            "subcategoria": "Automóveis",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "veiculo",
+          "key": "suv_blindado",
+          "name": "SUV reforçado",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Utilitário com proteção adicional definida pelo mestre.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "veiculo",
+          "key": "picape_4x4",
+          "name": "Picape 4x4",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Picape com tração integral para estradas e terrenos variados.",
+            "subcategoria": "Utilitários",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_carga",
+          "name": "Caminhão de carga",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo pesado destinado ao transporte de carga.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_guincho",
+          "name": "Caminhão-guincho",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de apoio para remoção e transporte de outros veículos.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "veiculo",
+          "key": "onibus_rodoviario",
+          "name": "Ônibus rodoviário",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo para transporte coletivo em trajetos rodoviários.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "veiculo",
+          "key": "micro_onibus",
+          "name": "Micro-ônibus",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de transporte coletivo de menor porte.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "veiculo",
+          "key": "quadriciclo",
+          "name": "Quadriciclo",
+          "category": "Veículos fora de estrada",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo leve para circulação em terrenos apropriados.",
+            "subcategoria": "Veículos fora de estrada",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_policial",
+          "name": "Motocicleta de serviço",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta configurada para atividade profissional.",
+            "subcategoria": "Motocicletas",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_grande_porte",
+          "name": "Motocicleta de grande porte",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta de maior porte para deslocamentos rodoviários.",
+            "subcategoria": "Motocicletas",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "veiculo",
+          "key": "lancha_motorizada",
+          "name": "Lancha motorizada",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação motorizada para deslocamento aquático.",
+            "subcategoria": "Embarcações",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "veiculo",
+          "key": "barco_pesca",
+          "name": "Barco de pesca",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação de uso pesqueiro.",
+            "subcategoria": "Embarcações",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "veiculo",
+          "key": "veleiro",
+          "name": "Veleiro",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação movida principalmente pela força do vento.",
+            "subcategoria": "Embarcações",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_aquatica",
+          "name": "Moto aquática",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo aquático individual motorizado.",
+            "subcategoria": "Embarcações",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_civil",
+          "name": "Helicóptero civil",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asas rotativas para transporte.",
+            "subcategoria": "Aeronaves",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_resgate",
+          "name": "Helicóptero de resgate",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de apoio a operações de busca e resgate.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_servico",
+          "name": "Helicóptero de serviço",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de uso profissional ou institucional.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_monomotor",
+          "name": "Avião monomotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave leve de asa fixa.",
+            "subcategoria": "Aeronaves",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_bimotor",
+          "name": "Avião bimotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asa fixa com dois motores.",
+            "subcategoria": "Aeronaves",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_carga",
+          "name": "Avião de transporte",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada ao transporte de carga.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_treinamento",
+          "name": "Aeronave de treinamento",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada a treinamento de voo.",
+            "subcategoria": "Aeronaves",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "veiculo",
+          "key": "caca_f16",
+          "name": "Caça F-16 Fighting Falcon",
+          "category": "Aeronaves militares",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave militar de combate. No sistema atual, exige Condução nível 5, conforme orientação do mestre.",
+            "subcategoria": "Aeronaves militares",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 5
+              }
+            ]
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "veiculo",
+          "key": "veiculo_blindado_transporte",
+          "name": "Veículo blindado de transporte",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo militar ou institucional de transporte protegido.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 24
+        }
+      ]
+    }
+  ]
+}
