@@ -306,6 +306,14 @@ try {
       meta: document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? null,
       pincel: !!document.querySelector(".vtt-nevoa-canvas-pincel"),
       btnSync: [...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? "")),
+      // diagnóstico de quiescência: qual estado residual impediu o gesto?
+      sincronizando: [...document.querySelectorAll("button")].some((b) => /sincronizando/i.test(b.textContent ?? "")),
+      controles: [...document.querySelectorAll(".vtt-nevoa-controles button")].map((b) => ({
+        t: b.textContent?.trim(), d: b.disabled,
+      })),
+      erros: [...document.querySelectorAll(".vtt-erro, .erro, [class*=erro]")].map((e) => e.textContent?.trim()).filter(Boolean),
+      visaoBloqueada: !!document.querySelector(".vtt-visao-bloqueada, [class*=bloqueada]"),
+      mapa: !!document.querySelector(".vtt-tabuleiro"),
     })).catch(() => null);
     throw new Error(`desenho de névoa não gerou emit após 4 tentativas — ${JSON.stringify(diag)}`);
   };
@@ -349,6 +357,37 @@ try {
   const esperarSemIncerto = (page, timeout = 30000) => page.waitForFunction(() => {
     return ![...document.querySelectorAll("button")].some((b) => /sincronizar n/i.test(b.textContent ?? ""));
   }, null, { timeout });
+  // Quiescência REAL antes de uma seção medida — esperarSemIncerto só
+  // cobre o botão de névoa. Estado residual de sync pendente, visão de
+  // papel bloqueada ou canvas desmontado faz o gesto medido não emitir
+  // (flake reproduzido: "desenho não gerou emit" com btnSync=true).
+  // Se a UI oferece "Sincronizar névoa", resolve pelo fluxo legítimo —
+  // nunca toca estado interno do React.
+  const garantirQuietNevoa = async (page, timeout = 60000) => {
+    const limite = Date.now() + timeout;
+    let ultimo = null;
+    for (;;) {
+      const estado = await page.evaluate(() => {
+        const botoes = [...document.querySelectorAll("button")].map((b) => b.textContent?.trim() ?? "");
+        return {
+          btnSync: botoes.some((t) => /sincronizar n/i.test(t)),
+          syncPendente: botoes.some((t) => /sincronizando/i.test(t)),
+          visaoPendente: /aguardando a visão autorizada/i.test(document.body.innerText),
+          tabuleiro: !!document.querySelector(".vtt-tabuleiro"),
+        };
+      }).catch(() => null);
+      ultimo = estado;
+      if (estado && estado.tabuleiro && !estado.visaoPendente && !estado.syncPendente) {
+        if (!estado.btnSync) return; // quieto de verdade
+        // névoa incerta residual: o próprio usuário resolveria assim
+        await page.getByRole("button", { name: /sincronizar n/i }).click().catch(() => {});
+      }
+      if (Date.now() > limite) {
+        throw new Error(`quiescência da névoa não atingida — ${JSON.stringify(ultimo)}`);
+      }
+      await page.waitForTimeout(300);
+    }
+  };
   let entrarCountJ = 0, wsCountJ = 0;
   // corrida VTT: reter o ACK (pacote "43[..."] ) da sincronização para
   // controlar a ordem de chegada das respostas entre gerações de papel
@@ -722,7 +761,7 @@ try {
   // O estado incerto permanece até a sincronização EXPIRAR — janela
   // determinística de ~3s para verificar bloqueios antes do retry.
   const nAntesHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
-  await esperarSemIncerto(pgM, 30000); // garante que a seção anterior reconciliou
+  await garantirQuietNevoa(pgM); // quiescência real: a seção anterior reconciliou de verdade
   // janela ampla de ACKs derrubados: qualquer ACK de op/sync de névoa
   // nesta seção é perdido — inclusive syncs extras disparadas por
   // atualizações de papel — então a incerteza não pode se resolver
@@ -786,8 +825,9 @@ try {
   // volatile.emit descartado numa desconexão). A sync ordenada devolve
   // o estado atual do servidor — sem a operação — e libera as ações.
   const nAntesOff2 = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
-  // idem: nenhuma incerteza residual pode bloquear o gesto medido
-  await esperarSemIncerto(pgM, 30000);
+  // idem: quiescência real — nenhuma incerteza/sync/visão residual pode
+  // bloquear o gesto medido (flake reproduzido na linha do desenho)
+  await garantirQuietNevoa(pgM);
   segurarNevoa = true;
   // retém também a sync automática: sem isso, um ACK entregue fora do
   // filtro de pacotes "43" (ex.: transporte polling) resolveria o estado
@@ -1256,10 +1296,20 @@ try {
   rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
   t("PATCH jogador→mestre (personagens)", rRT.status === 200);
   await pgJ.waitForFunction(() => document.querySelectorAll(".vtt-nevoa-controles").length > 0,
-    null, { timeout: 30000 }).catch(() => {});
+    null, { timeout: 30000 });
   // formulário manual agora se chama "Rolagem personalizada" e abre por
-  // botão próprio; o card do desafio pela ficha já vem aberto por padrão
-  await pgJ.getByRole("button", { name: "+ Personalizada" }).first().click().catch(() => {});
+  // botão próprio; o card do desafio pela ficha já vem aberto por padrão.
+  // Sem catch cego: se o botão não existe (papel ainda não propagou) a
+  // espera abaixo estoura com diagnóstico em vez de ler select vazio.
+  const btnPers = pgJ.getByRole("button", { name: "+ Personalizada" }).first();
+  if (await btnPers.count()) await btnPers.click();
+  // espera as OPÇÕES renderizadas de verdade — o GET /characters e o
+  // re-render são assíncronos; ler cedo demais media select vazio
+  await pgJ.waitForFunction(() => {
+    const sec = [...document.querySelectorAll("section.cartao")]
+      .find((s) => /teste manual/i.test(s.querySelector("h3")?.textContent ?? ""));
+    return !!sec && sec.querySelectorAll("option").length > 1;
+  }, null, { timeout: 20000 });
   await esperarCharsReq(charsReqJ + 1);
   const opcoesMestre = await pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "teste manual" }) }).locator("option").allInnerTexts();
   t("promoção: select de personagem lista TODOS os personagens",
