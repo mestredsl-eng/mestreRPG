@@ -39,6 +39,9 @@ try {
   ids = { admin: cenario.adminId, camp: cenario.campId, cm: cenario.cookieMestre };
   ids.j1 = cenario.jogadores.jogador1; ids.j2 = cenario.jogadores.jogador2;
 
+  const seedBiblioteca = await req(BASE, "POST", `/campaigns/${ids.camp}/regras/seed`, { cookie: ids.cm });
+  if (seedBiblioteca.status !== 200) throw new Error(`Falha ao carregar biblioteca inicial: ${seedBiblioteca.status}`);
+
   // Ficha com Perícias (regraKind=pericia) — IDs resolvidos pela estrutura, não fixos.
   const ESTRUTURA = {
     versao: 1,
@@ -75,6 +78,17 @@ try {
 
   // Elementos do Acervo no rule_set ativo
   const rs = comDb(BANCO, (db) => db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(ids.camp).id);
+  const chavesAcervo = [
+    "pericia:armas_brancas", "pericia:armas_de_fogo", "pericia:conducao",
+    "pericia:sobrevivencia", "pericia:seguranca", "pericia:empatia_com_animal",
+    "talento:hacker", "talento:tecnologia", "talento:quimico", "talento:artista", "talento:esportes",
+    "conhecimento:computador", "conhecimento:ciencias",
+  ];
+  const seedPresentes = comDb(BANCO, (db) => new Set(
+    db.prepare("select kind || ':' || key as chave from rule_definitions where rule_set_id=?").all(rs).map((r) => r.chave)
+  ));
+  const seedAusentes = chavesAcervo.filter((chave) => !seedPresentes.has(chave));
+  t("biblioteca inicial inclui as 13 regras exigidas pelos suplementos", seedBiblioteca.status === 200 && seedAusentes.length === 0, seedAusentes.join(", "));
   const insRegra = (kind, key, name, prereqs, disponivel = true) => {
     const w = abrirDb(BANCO);
     try {
@@ -84,10 +98,8 @@ try {
           agora, agora);
     } finally { w.close(); }
   };
-  // perícia conducao (pré-requisito referenciável)
-  insRegra("pericia", "conducao", "Condução", []);
-  insRegra("pericia", "armas_de_fogo", "Armas de Fogo", []);
-  insRegra("pericia", "armas_brancas", "Armas Brancas", []);
+  // Elementos de apoio (pericias/talentos/conhecimentos) vêm da biblioteca
+  // inicial real; aqui o teste cria somente os itens/veículos que consomem essas regras.
   insRegra("item", "carro_popular", "Carro Popular", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
   // Fixture kind:item para exercitar as rotas de inventário/bypass sem
   // classificar um veículo real como item.
