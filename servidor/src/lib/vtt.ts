@@ -10,6 +10,9 @@ import { sessions, memberships, characters } from "../db/schema.js";
 export interface TokenVtt {
   id: string; nome: string; cor: string; x: number; y: number;
   personagemId?: string | null; userId?: string | null; ativo: boolean;
+  // Token oculto nunca é entregue a não-mestres — independente da névoa.
+  // Usado para NPCs/inimigos que o mestre só exibe como alvo quando decide.
+  oculto?: boolean;
 }
 export interface MapaVtt { fileId: string; nome: string; largura?: number; altura?: number }
 export interface PontoNevoa { x: number; y: number }
@@ -118,7 +121,8 @@ export function vttDeTexto(raw: unknown, sessionId: string): VttState {
     && typeof (tk as TokenVtt).y === "number" && Number.isFinite((tk as TokenVtt).y)
     && (tk as TokenVtt).x >= 0 && (tk as TokenVtt).x <= 1
     && (tk as TokenVtt).y >= 0 && (tk as TokenVtt).y <= 1
-    && typeof (tk as TokenVtt).cor === "string");
+    && typeof (tk as TokenVtt).cor === "string"
+    && ((tk as TokenVtt).oculto === undefined || typeof (tk as TokenVtt).oculto === "boolean"));
   const mp = o?.mapa as { fileId?: unknown; nome?: unknown; largura?: unknown; altura?: unknown } | null | undefined;
   const mapa = mp && typeof mp === "object" && typeof mp.fileId === "string"
     ? {
@@ -237,9 +241,16 @@ export type PapelVtt = "mestre" | "jogador" | "espectador";
 export function vttParaDestinatario(
   vtt: VttState, papel: PapelVtt, userId: string, donos: Map<string, string | null>
 ): VttState {
-  if (papel === "mestre" || !vtt.nevoa.ativa) return vtt;
+  if (papel === "mestre" || !vtt.nevoa.ativa) {
+    // névoa desligada: estado completo para o mestre; para os demais,
+    // tokens marcados como ocultos (ex.: NPCs não revelados) continuam
+    // fora — a ocultação é independente da névoa.
+    if (papel === "mestre") return vtt;
+    return { ...vtt, tokens: vtt.tokens.filter((tk) => tk.oculto !== true) };
+  }
   const tokens = vtt.tokens.filter((tk) =>
-    pontoVisivelNevoa(vtt.nevoa, tk.x, tk.y) || (papel === "jogador" && donos.get(tk.id) === userId));
+    tk.oculto !== true &&
+    (pontoVisivelNevoa(vtt.nevoa, tk.x, tk.y) || (papel === "jogador" && donos.get(tk.id) === userId)));
   return { ...vtt, tokens };
 }
 
@@ -254,7 +265,9 @@ export async function vttStateFiltradoHttp(
   const raw = sessao.vttState;
   if (raw == null || raw === "") return raw ?? null;
   const vtt = vttDeTexto(typeof raw === "string" ? raw : JSON.stringify(raw), sessao.id);
-  if (papel === "mestre" || !vtt.nevoa.ativa) return raw;
+  // Não-mestre SEMPRE passa pelo filtro canônico: com a névoa desligada
+  // o estado cru vazaria tokens ocultos (NPCs não revelados).
+  if (papel === "mestre") return raw;
   const donos = await donosDosTokens(sessao.id, vtt.tokens);
   return JSON.stringify(vttParaDestinatario(vtt, papel, userId, donos));
 }

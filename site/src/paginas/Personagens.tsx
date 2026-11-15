@@ -387,7 +387,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       <section className="cartao">
         <div className="linha-entre">
           <div>
-            <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}</h2>
+            <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}{personagem.isNpc && <span className={`badge ${personagem.npcRevelado ? "badge-aprovada" : "badge-bloqueada"}`}>{personagem.npcRevelado ? " ficha visível" : " ficha oculta"}</span>}</h2>
             <p className="meta ficha-dono">
               Jogador: <strong>{personagem.isNpc ? "Mestre (NPC)" : (personagem.donoNome ?? "—")}</strong>
               {" · "}
@@ -427,6 +427,24 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           )}
           {souMestre && !editando && arquivado && (
             <button className="secundario" onClick={() => setConfirmando("restaurar")}>Restaurar</button>
+          )}
+          {souMestre && personagem.isNpc && !editando && (
+            <button
+              className="secundario"
+              disabled={operando}
+              title="Define se os jogadores podem ler a ficha deste NPC (somente campos públicos)"
+              onClick={async () => {
+                setOperando(true); setErro(null); setMsg(null);
+                try {
+                  await api.definirNpcVisibilidade(personagem.id, !personagem.npcRevelado);
+                  await aoRecarregar();
+                } catch (e) {
+                  setErro(e instanceof Error ? e.message : "Erro ao alterar visibilidade");
+                } finally {
+                  setOperando(false);
+                }
+              }}
+            >{personagem.npcRevelado ? "Ocultar ficha dos jogadores" : "Exibir ficha para jogadores"}</button>
           )}
           {!editando && podeExcluir && (
             <button className="perigo" onClick={() => setConfirmando("excluir")}>Excluir</button>

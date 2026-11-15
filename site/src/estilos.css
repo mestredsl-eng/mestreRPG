@@ -2142,6 +2142,8 @@ textarea:focus-visible,
 }
 .vtt-token:active { cursor: grabbing; }
 .vtt-token-meu { border-color: #ffd166; box-shadow: 0 0 0 2px #ffd16688, 0 2px 6px rgba(0,0,0,.5); }
+/* Token oculto: visível só para o mestre — jogadores nunca o recebem. */
+.vtt-token-oculto { opacity: .55; border-style: dashed; }
 .vtt-controles { margin-top: 10px; flex-wrap: wrap; gap: 8px; }
 .vtt-controles input { min-width: 140px; }
 /* névoa de guerra: canvas cobre o tabuleiro; z-index abaixo dos tokens,

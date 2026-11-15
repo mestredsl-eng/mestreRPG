@@ -280,6 +280,9 @@ export const api = {
   alterarVitalidade: (charId: string, nivel: number, motivo?: string) =>
     requisicao<{ ok: boolean; vitalidade: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"] }>(`/characters/${charId}/vitalidade`, { method: "POST", body: JSON.stringify({ nivel, motivo }) }),
   /** Bônus individual de pontos — somente mestre. */
+  /** Somente mestre: decide se a ficha do NPC fica visível para leitura pelos jogadores. */
+  definirNpcVisibilidade: (charId: string, visivel: boolean) =>
+    requisicao<{ ok: boolean; visivel: boolean }>(`/characters/${charId}/npc-visibilidade`, { method: "POST", body: JSON.stringify({ visivel }) }),
   adminPontos: (charId: string, dados: { acao: "conceder" | "remover"; quantidade: number; motivo: string }) =>
     requisicao<{ ok: boolean; pontos: { bonus: number; selado: boolean; historico: { em: string; quantidade: number; motivo: string; autorNome: string | null }[] } }>(`/characters/${charId}/pontos`, { method: "POST", body: JSON.stringify(dados) }),
   excluirPersonagem: (charId: string) =>
@@ -641,6 +644,7 @@ export interface PersonagemResumo {
   membershipId: string;
   ehEu: boolean;
   isNpc?: boolean;
+  npcRevelado?: boolean;
   arquivadoDe?: string | null;
   updatedAt: string;
 }
@@ -998,6 +1002,7 @@ export interface Sessao {
 export interface TokenVtt {
   id: string; nome: string; cor: string; x: number; y: number;
   personagemId?: string | null; userId?: string | null; ativo: boolean;
+  oculto?: boolean;
 }
 export interface PontoNevoa { x: number; y: number }
 export interface TracoNevoa { id: string; raioX: number; raioY: number; pontos: PontoNevoa[] }
@@ -1070,6 +1075,7 @@ export interface PersonagemDetalhe {
     templateId?: string;
     donoNome?: string | null;
     isNpc?: boolean;
+    npcRevelado?: boolean;
     ehEu?: boolean;
     arquivadoDe?: string | null;
     createdAt?: string;

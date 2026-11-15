@@ -118,6 +118,7 @@ jobs:
             homologacao-mesa.mjs \
             teste-mesa-seguranca.mjs \
             teste-mesa-virtual.mjs \
+            teste-npc-visibilidade.mjs \
             teste-temporizador.mjs \
             teste-convite-cadastro.mjs \
             homologacao-equipamentos.mjs \
