@@ -94,11 +94,20 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_um" } });
+  const prerequisitoConducao = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "pericia", key: "conducao", name: "Condução",
+      definition: { prerequisitos: [] },
+    },
+  });
+  if (prerequisitoConducao.status !== 201) throw new Error(`Não foi possível criar perícia de homologação: ${prerequisitoConducao.status}`);
   const regraAcervoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
     cookie: cenario.cookieMestre,
     body: {
       kind: "item", key: "kit_catalogo_homologacao", name: "Kit de catálogo E2E",
-      category: "Homologação", definition: { descricao: "Elemento usado para validar vínculo no Catálogo", prerequisitos: [] },
+      category: "Homologação",
+      definition: { descricao: "Elemento usado para validar vínculo no Catálogo", prerequisitos: [{ kind: "pericia", key: "conducao", minLevel: 5 }] },
     },
   });
   if (regraAcervoE2E.status !== 201) throw new Error(`Não foi possível criar regra Acervo para homologação: ${regraAcervoE2E.status}`);
@@ -119,6 +128,11 @@ try {
     cookie: cenario.cookieMestre,
     body: { name: "Poção de Cura", category: "Consumível", description: "Restaura PV" },
   });
+  const templateRestrito = await req(BASE, "POST", `/campaigns/${cenario.campId}/inventario`, {
+    cookie: cenario.cookieMestre,
+    body: { name: "Kit de catálogo restrito", regra: { kind: "item", key: "kit_catalogo_homologacao" } },
+  });
+  if (templateRestrito.status !== 201) throw new Error(`Não foi possível criar template restrito: ${templateRestrito.status}`);
   // item "legado": valueCents=TOTAL de compra antiga, sem marcador aquisicao
   await req(BASE, "POST", `/characters/${charJ}/inventario`, {
     cookie: cookieJ,
@@ -142,9 +156,18 @@ try {
   t("saldo EUR inicial 50 visível", /50/.test(saldoEur0 ?? ""), saldoEur0?.trim());
   await shot(pgJ, "01-saldos-iniciais");
 
-  sec("2. Compra de item do catálogo com débito em BRL");
+  sec("2. Template do Acervo mostra pré-requisito e bloqueia antes do pagamento");
   await abaPatrimonio(pgJ, "Inventário");
   let modal = await abrirCompra(pgJ);
+  await selCatalogo(modal).selectOption(templateRestrito.json.id);
+  const avisoRequisitoTemplate = modal.locator(".meta", { hasText: "Aquisição indisponível" });
+  t("template vinculado ao Acervo mostra bloqueio de pré-requisito", await avisoRequisitoTemplate.isVisible().catch(() => false), await avisoRequisitoTemplate.textContent().catch(() => ""));
+  t("template com pré-requisito não pode ser comprado pelo jogador", await modal.getByRole("button", { name: "Confirmar compra", exact: true }).isDisabled());
+  await shot(pgJ, "02-template-acervo-bloqueado");
+  await modal.getByRole("button", { name: "Cancelar", exact: true }).click();
+
+  sec("3. Compra de item manual do catálogo com débito em BRL");
+  modal = await abrirCompra(pgJ);
   await preencherCompra(pgJ, modal, { item: true, qtd: 2, valor: 10, contaIdx: 1 });
   await shot(pgJ, "02-compra-modal-brl");
   await modal.getByRole("button", { name: "Confirmar compra" }).click();
