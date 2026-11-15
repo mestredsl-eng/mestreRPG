@@ -1150,6 +1150,7 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
   const [itens, setItens] = useState<ItemCatalogo[]>([]);
   const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
   const [novo, setNovo] = useState<ItemCatalogoInput>({ name: "", category: "" });
+  const [editandoId, setEditandoId] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [confirmandoItem, setConfirmandoItem] = useState<ItemCatalogo | null>(null);
   const [ocupadoItem, setOcupadoItem] = useState(false);
@@ -1164,6 +1165,22 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
   const visiveis = itens.filter((i) => !busca || i.name.toLowerCase().includes(busca.toLowerCase()) || (i.category ?? "").toLowerCase().includes(busca.toLowerCase()));
+  const editarItemCatalogo = (item: ItemCatalogo) => {
+    const regra = item.data?.regra as RegraRef | undefined;
+    setNovo({
+      name: item.name,
+      category: item.category ?? "",
+      description: item.description ?? "",
+      regra: regra ?? null,
+      data: item.data ?? {},
+      isActive: item.isActive,
+    });
+    setEditandoId(item.id);
+  };
+  const cancelarEdicaoCatalogo = () => {
+    setNovo({ name: "", category: "" });
+    setEditandoId(null);
+  };
 
   return (
     <div>
@@ -1174,15 +1191,17 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try {
-          await api.criarItemCatalogo(campaignId, { ...novo, category: novo.category || undefined });
-          setNovo({ name: "", category: "" });
+          const dados = { ...novo, category: novo.category || undefined };
+          if (editandoId) await api.atualizarItemCatalogo(campaignId, editandoId, dados);
+          else await api.criarItemCatalogo(campaignId, dados);
+          cancelarEdicaoCatalogo();
           await carregar();
         } catch (err) { aoErro(err instanceof ApiError ? err.message : err); }
       }}>
         <label>Vínculo do Acervo (opcional)
           <select aria-label="Vínculo do Acervo" value={novo.regra ? `${novo.regra.kind}:${novo.regra.key}` : ""} onChange={(e) => {
             const ref = e.target.value;
-            if (!ref) { setNovo({ ...novo, regra: undefined }); return; }
+            if (!ref) { setNovo({ ...novo, regra: editandoId ? null : undefined }); return; }
             const el = acervo.find((x) => `${x.regra.kind}:${x.regra.key}` === ref);
             if (el) setNovo({ ...novo, name: el.nome, category: el.categoria ?? "", description: el.descricao ?? "", regra: el.regra });
           }}>
@@ -1197,7 +1216,8 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
         <input placeholder="Nome do item" value={novo.name} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
         <input placeholder="Categoria" value={novo.category ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, category: e.target.value })} />
         <input placeholder="Descrição" value={novo.description ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, description: e.target.value })} />
-        <button type="submit">Adicionar ao catálogo</button>
+        <button type="submit">{editandoId ? "Salvar alterações" : "Adicionar ao catálogo"}</button>
+        {editandoId && <button type="button" className="secundario" onClick={cancelarEdicaoCatalogo}>Cancelar edição</button>}
       </form>
       <table className="tabela">
         <thead><tr><th>Item</th><th>Categoria</th><th>Descrição</th><th>Vínculo Acervo</th><th></th></tr></thead>
@@ -1213,7 +1233,10 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
               <td>{i.category ?? "—"}</td>
               <td>{i.description ?? "—"}</td>
               <td>{vinculo ?? "Manual"}</td>
-              <td><button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button></td>
+              <td className="linha">
+                <button className="secundario" onClick={() => editarItemCatalogo(i)}>Editar</button>
+                <button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button>
+              </td>
             </tr>
           );})}
           {visiveis.length === 0 && <tr><td colSpan={5} className="meta">Catálogo vazio.</td></tr>}
