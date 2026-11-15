@@ -358,6 +358,9 @@ patrimonioRouter.post("/inventario", async (req, res) => {
     }
     regraEfetiva = vinculo.regra ?? undefined;
   }
+  if (regraEfetiva && regraEfetiva.kind !== "item") {
+    res.status(400).json({ erro: "Somente elementos kind:item podem ser adicionados ao inventário" }); return;
+  }
   const av = await avaliarAquisicao(a, regraEfetiva, body.data.ignorarPrerequisitos);
   if (av.negacao) { res.status(av.negacao.status).json({ erro: av.negacao.erro, detalhes: av.negacao.detalhes }); return; }
   if (av.bypass && regraEfetiva) {
@@ -617,6 +620,9 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
+  }
+  if (body.data.regra && body.data.regra.kind !== "item") {
+    res.status(400).json({ erro: "Equipamentos do Acervo devem referenciar elementos kind:item" }); return;
   }
   const avEq = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
   if (avEq.negacao) { res.status(avEq.negacao.status).json({ erro: avEq.negacao.erro, detalhes: avEq.negacao.detalhes }); return; }
@@ -942,6 +948,9 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaVeiculos) {
     res.status(403).json({ erro: "Edição de veículos não permitida" }); return;
+  }
+  if (body.data.regra && body.data.regra.kind !== "veiculo") {
+    res.status(400).json({ erro: "Veículos devem referenciar elementos kind:veiculo" }); return;
   }
   const avV = await avaliarAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
   if (avV.negacao) { res.status(avV.negacao.status).json({ erro: avV.negacao.erro, detalhes: avV.negacao.detalhes }); return; }
