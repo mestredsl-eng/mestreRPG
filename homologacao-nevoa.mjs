@@ -230,8 +230,18 @@ try {
   let nevoaEmitidos = 0; // TODOS os emits de névoa (retidos ou não)
   // perda controlada de ACKs servidor→cliente (pacotes socket.io tipo 3
   // = frames "43…"): o servidor PROCESSA a operação, mas o cliente
-  // nunca recebe a confirmação — timeout → estado incerto real
+  // nunca recebe a confirmação — timeout → estado incerto real.
+  // O consumo do contador é por PAYLOAD, não por contagem cega: só ACKs
+  // que embutem o estado VTT com névoa ("vtt" + "nevoa") contam — ACKs
+  // de outros eventos (entrar-campanha, chat, presença, testes) não
+  // podem "salvar" a sincronização consumindo o contador errado, o que
+  // antes produzia timeout de 150s no botão "Sincronizar névoa" quando
+  // um ACK estranho chegava entre o arm e o ACK da operação.
+  // ACKs de mapa/token também embutem vtt e consomem — semanticamente
+  // correto, pois são mutações VTT ordenadas da mesma fila.
   let derrubarAckM = 0;
+  const ehAckVttNevoa = (m) => typeof m === "string" && m.startsWith("43")
+    && m.includes('"vtt"') && m.includes('"nevoa"');
   const liberarNevoa = () => {
     segurarNevoa = false;
     const q = filaNevoa.splice(0);
@@ -309,7 +319,7 @@ try {
       srv.send(msg);
     });
     srv.onMessage((m) => {
-      if (derrubarAckM > 0 && typeof m === "string" && m.startsWith("43")) { derrubarAckM--; return; }
+      if (derrubarAckM > 0 && ehAckVttNevoa(m)) { derrubarAckM--; return; }
       ws.send(m);
     });
   });
@@ -713,10 +723,19 @@ try {
   // determinística de ~3s para verificar bloqueios antes do retry.
   const nAntesHold = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
   await esperarSemIncerto(pgM, 30000); // garante que a seção anterior reconciliou
-  derrubarAckM = 2;
+  // janela ampla de ACKs derrubados: qualquer ACK de op/sync de névoa
+  // nesta seção é perdido — inclusive syncs extras disparadas por
+  // atualizações de papel — então a incerteza não pode se resolver
+  // sozinha. Contador exato (=2) era frágil: um ACK de sync espúrio
+  // consumia a cota e a sync automática real era entregue, apagando o
+  // estado incerto antes do botão aparecer (flake de 150s no CI).
+  derrubarAckM = 50;
   await garantirPincel(pgM);
   const nEmAntes = nevoaEmitidos;
-  await desenhar(pgM, [[0.15, 0.75], [0.22, 0.75], [0.22, 0.82]]);
+  // desenharConfirmado: se o gesto não gerar emit (pincel perdido em
+  // reconexão, pointerup engolido), falha RÁPIDO com diagnóstico em vez
+  // de esperar 150s por um botão que nunca poderá aparecer
+  await desenharConfirmado(pgM, [[0.15, 0.75], [0.22, 0.75], [0.22, 0.82]]);
   // o broadcast mesa:vtt prova que o servidor aplicou a operação
   await pgM.waitForFunction((n) => {
     const txt = document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? "";
@@ -751,7 +770,10 @@ try {
     aindaIncerto > 0 && desfezAposBroadcast === false, `syncBtn=${aindaIncerto} desfazer=${desfezAposBroadcast}`);
   // retry explícito: novo pedido de sincronização ordenada — o ACK
   // passa agora e devolve o estado autoritativo pós-todas-as-operações
-  // (0 traços, pois o ocultarTudo do pgM2 já foi aplicado antes)
+  // (0 traços, pois o ocultarTudo do pgM2 já foi aplicado antes).
+  // Zera o contador: qualquer ACK VTT residual não pode derrubar a
+  // resposta deste retry manual.
+  derrubarAckM = 0;
   await pgM.getByRole("button", { name: /sincronizar n/i }).click();
   await esperarSemIncerto(pgM, 60000);
   const nAposSync = ((await vttStateHttp({ camp: campId, id: sidA, cookie: cookieMestre }))?.nevoa?.revelados ?? []).length;
