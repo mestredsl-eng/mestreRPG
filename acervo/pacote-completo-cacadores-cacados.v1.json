@@ -3688,7 +3688,7 @@
     },
     {
       "titulo": "Suplemento IV — Armas, Combate e Proteção",
-      "descricao": "Catálogo complementar de armas brancas, armas de fogo, munições, acessórios e proteção individual para campanhas de Caçadores Caçados. Não define dano, alcance, capacidade, peso, preço ou bônus; esses valores permanecem sob controle do mestre e das regras da campanha.",
+      "descricao": "Catálogo complementar de armas brancas, armas de fogo, munições, acessórios e proteção individual para campanhas de Caçadores Caçados. Não define dano, alcance, capacidade ou bônus. Cada item traz peso (kg) e preço de referência em BRL (definition.weight/valueCents/economia) como valores orientativos, sempre sob controle do mestre e das regras da campanha.",
       "autor": "Mestre RPG",
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — arsenal complementar",
