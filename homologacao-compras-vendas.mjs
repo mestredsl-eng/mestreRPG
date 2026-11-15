@@ -94,6 +94,14 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_um" } });
+  const regraAcervoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "item", key: "kit_catalogo_homologacao", name: "Kit de catálogo E2E",
+      category: "Homologação", definition: { descricao: "Elemento usado para validar vínculo no Catálogo", prerequisitos: [] },
+    },
+  });
+  if (regraAcervoE2E.status !== 201) throw new Error(`Não foi possível criar regra Acervo para homologação: ${regraAcervoE2E.status}`);
   const charJ = cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína CV");
   const cookieJ = cenario.jogadores.jogador1.cookie;
   // setup via API: contas BRL 100 + EUR 50, EUR configurada, item do catálogo
@@ -274,6 +282,24 @@ try {
   await login(pgM, "mestre_teste", "senha-forte-123");
   await irCampanha(pgM);
   await abrirPersonagem(pgM, "Heroína CV");
+
+  sec("7.1 Mestre vincula e edita template do catálogo com o Acervo");
+  await abaPatrimonio(pgM, "Catálogo");
+  const seletorAcervo = pgM.getByLabel("Vínculo do Acervo");
+  await seletorAcervo.selectOption("item:kit_catalogo_homologacao");
+  const nomeTemplate = pgM.locator('input[placeholder="Nome do item"]');
+  t("selecionar Acervo preenche identidade canônica", await nomeTemplate.inputValue() === "Kit de catálogo E2E" && await nomeTemplate.isDisabled());
+  await pgM.getByRole("button", { name: "Adicionar ao catálogo" }).click();
+  const linhaTemplate = pgM.locator("tr", { hasText: "Kit de catálogo E2E" }).first();
+  await linhaTemplate.waitFor({ timeout: 5000 });
+  t("mestre cria template com vínculo ao Acervo", (await linhaTemplate.textContent() ?? "").includes("Kit de catálogo E2E"));
+  await linhaTemplate.getByRole("button", { name: "Editar" }).click();
+  await seletorAcervo.selectOption({ value: "" });
+  await pgM.getByRole("button", { name: "Salvar alterações" }).click();
+  const linhaSemVinculo = pgM.locator("tr", { hasText: "Kit de catálogo E2E" }).first();
+  await linhaSemVinculo.waitFor({ timeout: 5000 });
+  t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"));
+
   await abaPatrimonio(pgM, "Dinheiro");
   const saldoM = await saldoTag(pgM);
   t("mestre vê saldo 89,99 idêntico", /89[.,]99/.test(saldoM ?? ""), saldoM?.trim());
