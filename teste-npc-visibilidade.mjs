@@ -139,7 +139,37 @@ try {
   t("histórico de HP do mestre preservado", (hpM?.historico ?? []).length > 0, JSON.stringify(hpM?.historico));
   t("histórico de HP oculto do jogador (sem vazamento indireto)", Array.isArray(hpJ?.historico) && hpJ.historico.length === 0, JSON.stringify(hpJ?.historico));
   t("campo privado ausente dos campos do jogador", !("for" in (fJ.json?.ficha?.campos ?? {})));
-  t("jogador não pode editar HP do NPC", (await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.j1.cookie, body: { acao: "curar", quantidade: 10 } })).status === 403);
+  t("jogador não pode editar HP do NPC", (await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.j1.cookie, body: { acao: "dano", quantidade: 10 } })).status === 403);
+
+  // ---------- Vazamento por Vitalidade (conversão de ferimentos) ----------
+  // A conversão calcula % sobre o HP MÁXIMO REAL (150). Se o limiar
+  // dispara com 150 mas não dispararia com os 100 públicos, o nível de
+  // vitalidade exibido ao jogador denuncia o atributo privado.
+  sec("Privacidade — Vitalidade não vaza atributo privado");
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 90, nivel: 1 }] } },
+  });
+  t("mestre habilita conversão de ferimentos", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
+  // atual 145 − 20 = 125 → pct real 83,3% ≤ 90 → vitalidade sobe p/ nível 1.
+  // Para o jogador: HP exibido grampeia em 100/100 → pct público 100% →
+  // o nível 1 seria inexplicável sem conhecer o máximo real.
+  r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 20, motivo: "Golpe pesado" } });
+  t("mestre aplica dano que cruza o limiar real", r.status === 200 && r.json?.ferimento?.para === 1, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
+
+  const fM2 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.cookieMestre });
+  const fJ2 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  const vitM = fM2.json?.ficha?.vida?.vitalidade;
+  const vitJ = fJ2.json?.ficha?.vida?.vitalidade;
+  t("mestre vê vitalidade real convertida (nível 1)", vitM?.nivel === 1, JSON.stringify(vitM));
+  t("jogador NÃO vê nível de vitalidade inexplicável pelo HP público",
+    vitJ == null || vitJ.nivel === 0, JSON.stringify(vitJ));
+  // Vitalidade definida MANUALMENTE pelo mestre é escolha narrativa —
+  // não deriva do HP oculto e deve continuar visível ao leitor.
+  r = await req(BASE, "POST", `/characters/${idNpc}/vitalidade`, { cookie: ids.cookieMestre, body: { nivel: 3, motivo: "Costela trincada" } });
+  t("mestre define vitalidade manual", r.status === 200, `status=${r.status}`);
+  const fJ3 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("jogador vê vitalidade manual do mestre (nível 3)", fJ3.json?.ficha?.vida?.vitalidade?.nivel === 3, JSON.stringify(fJ3.json?.ficha?.vida?.vitalidade));
 
   // ---------- VTT: token de NPC oculto ----------
   sec("VTT — token de NPC oculto por padrão");
