@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — ciência e campo",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -27,7 +27,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 7,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1500,
+                "max": 12000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 0
         },
@@ -47,7 +62,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 6500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 1
         },
@@ -67,7 +97,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 12,
+            "valueCents": 900000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 9000,
+              "faixaPrecoBRL": {
+                "min": 4000,
+                "max": 20000
+              },
+              "unidadeCompra": "unidade de bancada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -87,7 +132,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 8,
+            "valueCents": 1268500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12685,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 22000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência de preço de compra pública; precisão, calibração e marca alteram o preço."
+            }
           },
           "ordem": 3
         },
@@ -107,7 +167,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 1200,
+                "max": 8000
+              },
+              "unidadeCompra": "unidade de bancada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -127,7 +202,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.5,
+            "valueCents": 5000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 50000,
+              "faixaPrecoBRL": {
+                "min": 20000,
+                "max": 150000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Equipamento profissional; tecnologia analítica, calibração e acessórios definem o preço."
+            }
           },
           "ordem": 5
         },
@@ -147,7 +237,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 80000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 800,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 3000
+              },
+              "unidadeCompra": "kit para lote de análises",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 6
         },
@@ -167,7 +272,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 90,
+            "valueCents": 1500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 15000,
+              "faixaPrecoBRL": {
+                "min": 5000,
+                "max": 35000
+              },
+              "unidadeCompra": "unidade sem obra ou instalação",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Equipamento sem obra, dutos ou instalação; dimensões e vazão alteram o custo."
+            }
           },
           "ordem": 7
         },
@@ -180,7 +300,22 @@
           "definition": {
             "descricao": "Equipamento de laboratório para controle de temperatura.",
             "subcategoria": "Laboratório",
-            "ordem": 8
+            "ordem": 8,
+            "weight": 32,
+            "valueCents": 500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 5000,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 10000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 8
         },
@@ -200,7 +335,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 60,
+            "valueCents": 2000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 20000,
+              "faixaPrecoBRL": {
+                "min": 10000,
+                "max": 40000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de volume, ciclo, certificação e instalação."
+            }
           },
           "ordem": 9
         },
@@ -220,7 +370,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 500,
+                "max": 5000
+              },
+              "unidadeCompra": "conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 10
         },
@@ -240,7 +405,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 150000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1500,
+              "faixaPrecoBRL": {
+                "min": 500,
+                "max": 4000
+              },
+              "unidadeCompra": "conjunto básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 11
         },
@@ -260,7 +440,22 @@
                 "key": "quimico",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 350,
+                "max": 2200
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 12
         },
@@ -280,7 +475,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1000
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 13
         },
@@ -300,7 +510,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 700
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 14
         },
@@ -320,7 +545,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.1,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 15
         },
@@ -333,7 +573,22 @@
           "definition": {
             "descricao": "Equipamento para separação e análise de amostras.",
             "subcategoria": "Geologia",
-            "ordem": 16
+            "ordem": 16,
+            "weight": 2,
+            "valueCents": 30000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 300,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 800
+              },
+              "unidadeCompra": "unidade ou conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 16
         },
@@ -353,7 +608,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.3,
+            "valueCents": 110000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1100,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 2500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 17
         },
@@ -373,7 +643,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 65000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 650,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 18
         },
@@ -393,7 +678,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -413,7 +713,22 @@
                 "key": "geologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.5,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1200
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -426,7 +741,22 @@
           "definition": {
             "descricao": "Estojo para organizar e transportar amostras minerais.",
             "subcategoria": "Geologia",
-            "ordem": 21
+            "ordem": 21,
+            "weight": 1.2,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 600
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 21
         },
@@ -446,7 +776,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.3,
+            "valueCents": 3500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 35,
+              "faixaPrecoBRL": {
+                "min": 15,
+                "max": 90
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -459,7 +804,22 @@
           "definition": {
             "descricao": "Instrumento para medição de temperatura do ambiente.",
             "subcategoria": "Medição científica",
-            "ordem": 23
+            "ordem": 23,
+            "weight": 0.2,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -472,7 +832,22 @@
           "definition": {
             "descricao": "Instrumento para observação da pressão atmosférica.",
             "subcategoria": "Medição científica",
-            "ordem": 24
+            "ordem": 24,
+            "weight": 0.4,
+            "valueCents": 75000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 750,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -485,7 +860,22 @@
           "definition": {
             "descricao": "Instrumento de monitoramento ambiental.",
             "subcategoria": "Segurança laboratorial",
-            "ordem": 25
+            "ordem": 25,
+            "weight": 0.3,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 900,
+                "max": 6500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 25
         },
@@ -505,7 +895,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.5,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 350,
+                "max": 2200
+              },
+              "unidadeCompra": "kit básico",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 26
         },
@@ -525,7 +930,22 @@
                 "key": "ciencias",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 400
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 27
         },
@@ -538,7 +958,22 @@
           "definition": {
             "descricao": "Maleta para acondicionar instrumentos de medição e análise.",
             "subcategoria": "Transporte e organização",
-            "ordem": 28
+            "ordem": 28,
+            "weight": 3.5,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 28
         }
