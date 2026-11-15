@@ -102,6 +102,14 @@ try {
     },
   });
   if (prerequisitoConducao.status !== 201) throw new Error(`Não foi possível criar perícia de homologação: ${prerequisitoConducao.status}`);
+  const regraVeiculoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
+    cookie: cenario.cookieMestre,
+    body: {
+      kind: "veiculo", key: "veiculo_catalogo_homologacao", name: "Veículo de homologação",
+      definition: { prerequisitos: [{ kind: "pericia", key: "conducao", minLevel: 1 }] },
+    },
+  });
+  if (regraVeiculoE2E.status !== 201) throw new Error(`Não foi possível criar veículo de homologação: ${regraVeiculoE2E.status}`);
   const regraAcervoE2E = await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/elementos`, {
     cookie: cenario.cookieMestre,
     body: {
@@ -133,6 +141,11 @@ try {
     body: { name: "Kit de catálogo restrito", regra: { kind: "item", key: "kit_catalogo_homologacao" } },
   });
   if (templateRestrito.status !== 201) throw new Error(`Não foi possível criar template restrito: ${templateRestrito.status}`);
+  const templateVeiculo = await req(BASE, "POST", `/campaigns/${cenario.campId}/inventario`, {
+    cookie: cenario.cookieMestre,
+    body: { name: "Veículo de catálogo", regra: { kind: "veiculo", key: "veiculo_catalogo_homologacao" } },
+  });
+  if (templateVeiculo.status !== 201) throw new Error(`Não foi possível criar template de veículo: ${templateVeiculo.status}`);
   // item "legado": valueCents=TOTAL de compra antiga, sem marcador aquisicao
   await req(BASE, "POST", `/characters/${charJ}/inventario`, {
     cookie: cookieJ,
@@ -164,6 +177,10 @@ try {
   t("template vinculado ao Acervo mostra bloqueio de pré-requisito", await avisoRequisitoTemplate.isVisible().catch(() => false), await avisoRequisitoTemplate.textContent().catch(() => ""));
   t("template com pré-requisito não pode ser comprado pelo jogador", await modal.getByRole("button", { name: "Confirmar compra", exact: true }).isDisabled());
   await shot(pgJ, "02-template-acervo-bloqueado");
+  await selCatalogo(modal).selectOption(templateVeiculo.json.id);
+  const avisoVeiculoTemplate = modal.locator(".meta.erro", { hasText: "aba Veículos" });
+  t("template kind:veiculo explica o fluxo correto", await avisoVeiculoTemplate.isVisible().catch(() => false), await avisoVeiculoTemplate.textContent().catch(() => ""));
+  t("template kind:veiculo não pode ser comprado como item", await modal.getByRole("button", { name: "Confirmar compra", exact: true }).isDisabled());
   await modal.getByRole("button", { name: "Cancelar", exact: true }).click();
 
   sec("3. Compra de item manual do catálogo com débito em BRL");
