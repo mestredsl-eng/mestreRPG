@@ -287,6 +287,66 @@ const listaNumeros = z.preprocess((v) => {
 const listaOuVazia = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (v === null ? undefined : v), schema);
 
+// Referência econômica do Acervo (Issue #103): peso e preço de
+// referência em BRL — informação de catálogo, nunca valor pago nem
+// gatilho de débito. Campos ausentes permanecem ausentes.
+const numNaoNegativo = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") {
+    const t = v.trim().replace(",", ".");
+    if (t === "" || Number.isNaN(Number(t))) return v;
+    return Number(t);
+  }
+  return v;
+}, z.number().nonnegative().optional());
+
+const intNaoNegativo = z.preprocess((v) => {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t === "" || !Number.isInteger(Number(t))) return v;
+    return Number(t);
+  }
+  return v;
+}, z.number().int().nonnegative().optional());
+
+// `precoReferenciaBRL`/`faixaPrecoBRL` aceitam null explícito: o Acervo
+// distingue "sem referência" (null) de "campo ausente" e ambos devem
+// sobreviver ao round-trip sem invenção de valores.
+const economiaSchema = z.object({
+  moeda: z.string().max(10),
+  precoReferenciaBRL: z.union([z.number().nonnegative(), z.null()]).optional(),
+  faixaPrecoBRL: z.union([
+    z.object({ min: z.number().nonnegative(), max: z.number().nonnegative() }),
+    z.null(),
+  ]).optional(),
+  unidadeCompra: z.string().max(160),
+  mercadoReferencia: z.string().max(160),
+  dataReferencia: z.string().max(40),
+  base: z.string().max(600),
+  observacao: z.string().max(1200),
+});
+
+/** Campos econômicos/de referência copiados do Acervo para o template. */
+export const CAMPOS_ECONOMICOS_ACERVO = ["weight", "valueCents", "economia", "fuel", "capacity", "veiculo"] as const;
+export type CampoEconomicoAcervo = (typeof CAMPOS_ECONOMICOS_ACERVO)[number];
+
+/** Extrai os campos econômicos presentes numa definição de elemento. */
+export function dadosEconomicosDefinicao(def: unknown): Partial<Record<CampoEconomicoAcervo, unknown>> {
+  const d = (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
+  const out: Partial<Record<CampoEconomicoAcervo, unknown>> = {};
+  for (const k of CAMPOS_ECONOMICOS_ACERVO) {
+    if (d[k] !== undefined) out[k] = d[k];
+  }
+  return out;
+}
+
+/** Extrai os campos econômicos presentes num registro `data` genérico
+ *  (template.data, item.data etc.) — mesma lista do Acervo. */
+export function dadosEconomicosRegistro(data: unknown): Partial<Record<CampoEconomicoAcervo, unknown>> {
+  return dadosEconomicosDefinicao(data);
+}
+
 export const definicaoElementoSchema = z.object({
   descricao: nuloComoAusente(z.string().max(4000).optional()),
   subcategoria: nuloComoAusente(z.string().max(120).optional()),
@@ -326,6 +386,17 @@ export const definicaoElementoSchema = z.object({
   // há dependências circulares.
   formulas: listaOuVazia(z.record(z.string().max(60), z.string().max(500)).default({})),
   reservaPontos: nuloComoAusente(z.string().max(80).optional()),
+  // Ponte econômica Acervo → Patrimônio (Issue #103): referência de
+  // catálogo — nunca débito automático nem valor efetivamente pago.
+  weight: numNaoNegativo,
+  valueCents: intNaoNegativo,
+  economia: nuloComoAusente(economiaSchema.optional()),
+  fuel: nuloComoAusente(z.string().max(160).optional()),
+  capacity: nuloComoAusente(z.string().max(160).optional()),
+  veiculo: nuloComoAusente(z.object({
+    consumoOuAutonomia: nuloComoAusente(z.string().max(300).optional()),
+    baseDoPeso: nuloComoAusente(z.string().max(600).optional()),
+  }).optional()),
   disponivel: z.boolean().default(true),
   ordem: z.preprocess((v) => (v === null ? undefined : v), z.number().default(0)),
 });

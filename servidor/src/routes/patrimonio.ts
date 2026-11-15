@@ -17,7 +17,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { somenteEnviados } from "../lib/parcial.js";
-import { carregarRegras, configRegrasSchema, avaliarPrerequisitosAquisicao, type ElementoRegra } from "../lib/regras.js";
+import { carregarRegras, configRegrasSchema, avaliarPrerequisitosAquisicao, dadosEconomicosDefinicao, dadosEconomicosRegistro, CAMPOS_ECONOMICOS_ACERVO, type ElementoRegra } from "../lib/regras.js";
 import { estruturaFichaSchema } from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -419,20 +419,38 @@ patrimonioRouter.post("/inventario", async (req, res) => {
         category: templateFinal?.category ?? resto.category,
         description: templateFinal?.description ?? resto.description,
       }, av.elemento);
-      const dadosFinais = limparEstadoInventario({ ...dadosTemplate, ...(data ?? {}) }) ?? {};
+      // Ponte econômica Acervo → Patrimônio (Issue #103): com vínculo
+      // ao Acervo, os campos de referência são autoridade do template
+      // (override do mestre) com fallback na definição do elemento —
+      // o cliente não injeta nem sobrescreve via data/peso/valor.
+      const econElemento = regraEfetiva ? dadosEconomicosDefinicao(av.elemento?.definition) : {};
+      const fonteEcon = { ...econElemento, ...dadosEconomicosRegistro(dadosTemplate) };
+      const dadosCliente = limparEstadoInventario({ ...(data ?? {}) }) ?? {};
+      if (regraEfetiva) {
+        for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosCliente[k];
+      }
+      const dadosFinais = limparEstadoInventario({ ...dadosTemplate, ...dadosCliente }) ?? {};
       delete dadosFinais.templateId;
       if (templateFinal) dadosFinais.templateId = templateFinal.id;
+      if (regraEfetiva) {
+        for (const k of CAMPOS_ECONOMICOS_ACERVO) {
+          if (fonteEcon[k] === undefined) delete dadosFinais[k];
+          else dadosFinais[k] = fonteEcon[k];
+        }
+      }
       const valorTemplate = typeof dadosTemplate.valueCents === "number" ? dadosTemplate.valueCents : undefined;
-      dadosFinais.valueCents = valueCents ?? valorTemplate;
+      const valorFonte = typeof fonteEcon.valueCents === "number" ? fonteEcon.valueCents : undefined;
+      dadosFinais.valueCents = regraEfetiva ? valorFonte : (valueCents ?? valorTemplate);
       dadosFinais.transferable = transferable;
       if (regraEfetiva) dadosFinais.regra = regraEfetiva;
 
       const pesoTemplate = typeof dadosTemplate.weight === "number" ? dadosTemplate.weight : undefined;
+      const pesoFonte = typeof fonteEcon.weight === "number" ? fonteEcon.weight : undefined;
       tx.insert(inventoryEntries).values({
         id, characterId: a.personagem.id, name: ident.name, quantity: ident.quantity,
         description: ident.description ?? null, category: ident.category ?? null,
         location: resto.location ?? null, condition: resto.condition ?? null,
-        weight: resto.weight ?? pesoTemplate ?? null,
+        weight: regraEfetiva ? (pesoFonte ?? null) : (resto.weight ?? pesoTemplate ?? null),
         data: dadosFinais,
         createdAt: agora, updatedAt: agora,
       }).run();
@@ -476,10 +494,16 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
       if (!reduz && !config.patrimonio.jogadorAdicionaItens) { negado = "editar"; return; }
     }
     const dataAtual = (itemTx.data ?? {}) as Record<string, unknown>;
+    const dadosPatch = limparEstadoInventario(data) ?? {};
+    // Item vinculado ao Acervo: campos econômicos são autoridade do
+    // template/elemento — PATCH não pode forjá-los via data (Issue #103).
+    if (dataAtual.regra) {
+      for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosPatch[k];
+    }
     tx.update(inventoryEntries).set({
       ...resto,
       quantity: d.quantity ?? itemTx.quantity,
-      data: { ...dataAtual, ...(limparEstadoInventario(data) ?? {}), ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      data: { ...dataAtual, ...dadosPatch, ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
       updatedAt: new Date(),
     }).where(eq(inventoryEntries.id, itemTx.id)).run();
   });
@@ -984,12 +1008,28 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
   const { valueCents, data, regra, ignorarPrerequisitos, ...resto } = body.data;
   const dataSemRegra = { ...data };
   delete dataSemRegra.regra;
+  // Ponte econômica (Issue #103): veículo vinculado ao Acervo recebe
+  // fuel/capacity/veiculo (e demais campos de referência presentes) em
+  // data — o elemento é a autoridade; o cliente não injeta valores
+  // econômicos arbitrários quando há vínculo.
+  const econVeiculo = regra ? dadosEconomicosDefinicao(avV.elemento?.definition) : {};
+  const dadosClienteVeiculo = { ...dataSemRegra };
+  if (regra) {
+    for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosClienteVeiculo[k];
+  }
+  const dataVeiculo: Record<string, unknown> = { ...econVeiculo, ...dadosClienteVeiculo };
+  if (valueCents !== undefined) dataVeiculo.valueCents = valueCents;
+  if (regra) dataVeiculo.regra = regra;
   const agora = new Date();
   const id = crypto.randomUUID();
   // Identidade canônica do elemento do Acervo (nome; kind é o tipo
   // do veículo — categoria do elemento não o substitui).
   const nomeVeiculo = avV.elemento?.name ?? resto.name;
-  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, name: nomeVeiculo, data: { ...dataSemRegra, valueCents, ...(regra ? { regra } : {}) }, createdAt: agora, updatedAt: agora });
+  // fuel/capacity do elemento prevalecem sobre o enviado quando o
+  // vínculo existe; sem vínculo, os campos do cliente seguem valendo.
+  const fuelFinal = typeof econVeiculo.fuel === "string" ? econVeiculo.fuel : resto.fuel;
+  const capacityFinal = typeof econVeiculo.capacity === "string" ? econVeiculo.capacity : resto.capacity;
+  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, name: nomeVeiculo, fuel: fuelFinal, capacity: capacityFinal, data: dataVeiculo, createdAt: agora, updatedAt: agora });
   await audit(req, "veiculo.criado", { characterId: a.personagem.id, veiculoId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -1010,6 +1050,11 @@ patrimonioRouter.patch("/veiculos/:veiculoId", async (req, res) => {
   // `regra` é imutável após a aquisição (vínculo validado no servidor).
   const dataSemRegra = { ...(data ?? {}) };
   delete dataSemRegra.regra;
+  // Veículo vinculado ao Acervo: campos econômicos não podem ser
+  // forjados via PATCH de data (Issue #103).
+  if (dAtual.regra) {
+    for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dataSemRegra[k];
+  }
   await db.update(vehicles).set({
     ...resto,
     data: { ...dAtual, ...dataSemRegra, ...(valueCents !== undefined ? { valueCents } : {}) },
@@ -1582,19 +1627,33 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
           category: itemDados?.category ?? tplTx?.category ?? undefined,
           description: itemDados?.description ?? tplTx?.description ?? undefined,
         }, avOp.elemento);
+        // Ponte econômica (Issue #103): com vínculo, os campos de
+        // referência são autoridade do template (override do mestre)
+        // com fallback na definição do elemento — o cliente não injeta
+        // weight/valueCents/economia/fuel/capacity/veiculo via item.data.
+        const econCompra = regraCompra
+          ? { ...dadosEconomicosDefinicao(avOp.elemento?.definition), ...dadosEconomicosRegistro(tplData) }
+          : {};
+        const dadosItemCliente = { ...(itemDados?.data ?? {}) };
+        if (regraCompra) {
+          for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosItemCliente[k];
+        }
+        const pesoCompra = regraCompra
+          ? (typeof econCompra.weight === "number" ? econCompra.weight : undefined)
+          : (itemDados?.weight ?? (tplData.weight as number | undefined));
         tx.insert(inventoryEntries).values({
           id: novoItemId, characterId: a.personagem.id,
           name: identCompra.name, quantity: qtd,
           description: identCompra.description ?? undefined,
           category: identCompra.category ?? undefined,
           location: itemDados?.location, condition: itemDados?.condition,
-          weight: itemDados?.weight ?? (tplData.weight as number | undefined),
+          weight: pesoCompra ?? null,
           data: (() => {
             // Mescla rasa e consciente: dados do template são a base e a
             // personalização do item sobrescreve campo a campo — o schema
             // aplica default {} em item.data, então nunca usar
             // `item.data ?? tplData` ({} não é ausência).
-            const mesclado: Record<string, unknown> = { ...tplData, ...(itemDados?.data ?? {}) };
+            const mesclado: Record<string, unknown> = { ...tplData, ...dadosItemCliente };
             // Sanitização explícita: templateId nunca é aceito de
             // item.data, item.templateId ou tplData — só tplTx.id
             // (template relido e validado na transação) pode persistir.
@@ -1603,6 +1662,15 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             // nunca de templateData/item.data forjados pelo cliente.
             delete mesclado.regra;
             if (tplTx) mesclado.templateId = tplTx.id;
+            // Campos econômicos do vínculo: reafirmados da fonte
+            // autoritativa (elemento + template) — ausentes permanecem
+            // ausentes, nunca inventados.
+            if (regraCompra) {
+              for (const k of CAMPOS_ECONOMICOS_ACERVO) {
+                if (econCompra[k] === undefined) delete mesclado[k];
+                else mesclado[k] = econCompra[k];
+              }
+            }
             // Campos internos sempre definidos pelo servidor.
             mesclado.valueCents = unitCents ?? undefined;
             mesclado.totalValueCents = cents > 0 ? cents : undefined;
