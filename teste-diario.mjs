@@ -22,11 +22,51 @@ const RUN = Date.now().toString(36);
 let proc = null;
 let BASE = "";
 
+// Buffers limitados dos pipes do servidor: stdout/stderr são consumidos
+// continuamente (senão o pipe enche e o processo filho bloqueia) e só as
+// últimas linhas são retidas para diagnóstico em caso de falha.
+const LOG_LIMITE = 200;
+const logsServidor = { out: [], err: [] };
+function consumirStream(stream, destino) {
+  if (!stream) return;
+  let resto = "";
+  stream.on("data", (chunk) => {
+    resto += String(chunk);
+    const linhas = resto.split("\n");
+    resto = linhas.pop() ?? "";
+    for (const l of linhas) {
+      if (l.trim()) { destino.push(l); if (destino.length > LOG_LIMITE) destino.shift(); }
+    }
+  });
+}
+function despejarLogs() {
+  const cauda = (arr) => arr.slice(-15).join("\n");
+  if (logsServidor.err.length) console.log("--- stderr do servidor (cauda) ---\n" + cauda(logsServidor.err));
+  if (logsServidor.out.length) console.log("--- stdout do servidor (cauda) ---\n" + cauda(logsServidor.out));
+}
+
+// Lista SOMENTE arquivos regulares (Dirent.isFile) — readdirSync
+// recursivo também retorna diretórios e não serve para contagem.
+function arquivosRegulares(dir, prefixo = "") {
+  const saida = [];
+  let entradas;
+  try { entradas = readdirSync(dir, { withFileTypes: true, recursive: true }); }
+  catch { return saida; }
+  for (const e of entradas) {
+    if (!e.isFile()) continue;
+    const rel = e.parentPath ? join(e.parentPath, e.name).slice(dir.length + 1) : e.name;
+    saida.push(prefixo + rel);
+  }
+  return saida;
+}
+
 try {
   await prepararBanco(BANCO);
   const porta = await portaLivre();
   BASE = `http://127.0.0.1:${porta}`;
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
+  consumirStream(proc.stdout, logsServidor.out);
+  consumirStream(proc.stderr, logsServidor.err);
   await esperarSaudavel(BASE, proc);
 
   const ids = await criarCenario(BASE, BANCO, {
@@ -103,11 +143,31 @@ try {
     body: Buffer.from("mapa"),
   });
   const filePub = (await upPub.json())?.id;
-  t("13 uploads de anexo criados", !!filePriv && !!filePub, `${upPriv.status}/${upPub.status}`);
+  t("13 uploads de anexo criados",
+    upPriv.status === 201 && upPub.status === 201
+      && typeof filePriv === "string" && filePriv.length > 0
+      && typeof filePub === "string" && filePub !== filePriv,
+    `${upPriv.status}/${upPub.status} ids=${filePriv}/${filePub}`);
 
-  // evidência de isolamento: os binários ficam no diretório temporário
-  const gravados = readdirSync(ARQUIVOS, { recursive: true }).filter((f) => typeof f === "string");
-  t("13c uploads gravados só no diretório temporário", gravados.length >= 2, gravados.join(","));
+  // registros + arquivos físicos dos DOIS uploads, confinados ao temp
+  const dirCampanha = join(ARQUIVOS, CID);
+  const metaUploads = comDb(BANCO, (db) => ({
+    priv: db.prepare("select storage_name from files where id=?").get(filePriv),
+    pub: db.prepare("select storage_name from files where id=?").get(filePub),
+  }));
+  const snOk = (sn) => typeof sn === "string" && sn.length > 0
+    && !sn.includes("..") && !sn.includes("/") && !sn.includes("\\");
+  const fisicoDe = (sn) => snOk(sn) ? resolve(dirCampanha, sn) : "";
+  const confinadoEm = (p) => p && existsSync(p) && resolve(p).startsWith(resolve(dirCampanha) + sep);
+  t("13b registros de upload no banco temporário com storage_name seguro",
+    snOk(metaUploads.priv?.storage_name) && snOk(metaUploads.pub?.storage_name)
+      && metaUploads.priv.storage_name !== metaUploads.pub.storage_name,
+    JSON.stringify(metaUploads));
+  t("13c dois arquivos físicos reais dentro do diretório temporário da campanha",
+    confinadoEm(fisicoDe(metaUploads.priv?.storage_name)) && confinadoEm(fisicoDe(metaUploads.pub?.storage_name))
+      && fisicoDe(metaUploads.priv?.storage_name) !== fisicoDe(metaUploads.pub?.storage_name)
+      && arquivosRegulares(dirCampanha).length >= 2,
+    `priv=${metaUploads.priv?.storage_name} pub=${metaUploads.pub?.storage_name}`);
 
   // anexa arquivo público à nota do jogador
   r = await req("POST", `/anotacoes/${notaId}/anexos`, { cookie: JOG5.cookie, body: { fileId: filePub } });
@@ -248,6 +308,7 @@ try {
     res.push("TEARDOWN limpeza: " + (e?.message ?? e));
   }
   if (teardownFalhou) fail++;
+  if (fail > 0) despejarLogs();
   console.log(res.join("\n"));
   console.log(`\n${pass} passaram, ${fail} falharam`);
   process.exitCode = fail ? 1 : 0;
