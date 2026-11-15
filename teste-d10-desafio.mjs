@@ -218,8 +218,12 @@ let testId;
   await p.waitForTimeout(1800);
 
   ok("UI. card Solicitar teste pela ficha presente", (await p.locator("text=Solicitar teste pela ficha").count()) > 0);
-  await p.locator("button", { hasText: "+ Desafio" }).click();
-  await p.waitForTimeout(300);
+  // o formulário abre por padrão (fluxo principal); clica só se fechado
+  const formFicha = p.locator(".cartao-destaque form.formulario");
+  if (!(await formFicha.isVisible().catch(() => false))) {
+    await p.locator("button", { hasText: "+ Desafio" }).click();
+    await p.waitForTimeout(300);
+  }
   const selPersonagem = p.locator(".formulario select").first();
   await selPersonagem.selectOption({ label: /PJ Vida/ }).catch(async () => {
     const opts = await selPersonagem.locator("option").allTextContents();

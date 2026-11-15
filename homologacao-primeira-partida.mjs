@@ -288,8 +288,11 @@ try {
 
   // ===== 11. TESTE DE HABILIDADE D10 (desafio do mestre) =====
   sec("11. Desafio D10 de habilidade");
-  await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  // o formulário do desafio abre por padrão; expande só se estiver fechado
   const formD = pgM.locator("form", { has: pgM.getByRole("button", { name: "Enviar desafio" }) });
+  if (!(await formD.isVisible().catch(() => false))) {
+    await pgM.getByRole("button", { name: "+ Desafio" }).click();
+  }
   const selPers = formD.locator("label", { hasText: "Personagem" }).locator("select");
   const opcoesPers = await selPers.locator("option").allTextContents();
   const idxPers = opcoesPers.findIndex((o) => o.includes(J1.nome));
