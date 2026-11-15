@@ -371,9 +371,11 @@ try {
   });
   t("14l. campo estrutural inválido continua rejeitado", elEstrutural.status === 400, `status=${elEstrutural.status}`);
 
-  // ---- 15. valueCents de veículo = valor local declarado (auditoria PR #108) ----
-  // O valor superior do POST /veiculos é declarado pelo mestre: é local,
-  // não altera o Acervo, não significa valor pago e não movimenta dinheiro.
+  // ---- 15. valueCents de veículo = valor local declarado ----
+  // O valor superior do POST /veiculos é declarado por quem está
+  // autorizado a editar o veículo (aqui, o jogador com
+  // jogadorEditaVeiculos): é local, não altera o Acervo, não significa
+  // valor pago e não movimenta dinheiro.
   sec("15. veículo: valueCents declarado é local, sem débito");
   const finAntes = await req(BASE, "GET", `/characters/${pjJ1}/financeiro`, { cookie: ids.j1.cookie });
   const nFinAntes = (finAntes.json?.historico ?? []).length;
@@ -428,6 +430,66 @@ try {
       && tplBuggyRow?.data?.veiculo?.consumoOuAutonomia === "aprox. 10 km/L"
       && tplBuggyRow?.data?.economia?.precoReferenciaBRL === 50000,
     JSON.stringify(tplBuggyRow?.data));
+
+  // ---- 17. PATCH /veiculos: fuel/capacity do Acervo são autoridade ----
+  // Veículo vinculado: colunas fuel/capacity não podem ser substituídas
+  // quando o valor é originário do Acervo (snapshot local ou elemento).
+  sec("17. PATCH veículo vinculado protege fuel/capacity do Acervo");
+  const veicProt = await req(BASE, "POST", `/characters/${pjJ1}/veiculos`, {
+    cookie: ids.j1.cookie,
+    body: { name: "Buggy Protegido", regra: { kind: "veiculo", key: "buggy_teste" } },
+  });
+  t("17a. veículo vinculado criado", veicProt.status === 201, JSON.stringify(veicProt.json));
+  const veicProtId = veicProt.json?.id;
+  const patchProt = await req(BASE, "PATCH", `/characters/${pjJ1}/veiculos/${veicProtId}`, {
+    cookie: ids.j1.cookie,
+    body: {
+      name: "Buggy Protegido 2", brand: "Oficina X",
+      fuel: "etanol", capacity: "12 lugares",
+      data: { fuel: "fake", capacity: "fake", obs: "anotação local" },
+    },
+  });
+  t("17b. PATCH misto aceito", patchProt.status === 200, `status=${patchProt.status}`);
+  const listaProt = await req(BASE, "GET", `/characters/${pjJ1}/veiculos`, { cookie: ids.j1.cookie });
+  const vProt = (listaProt.json?.veiculos ?? []).find((v) => v.id === veicProtId);
+  t("17c. campos locais editáveis funcionam",
+    vProt?.name === "Buggy Protegido 2" && vProt?.brand === "Oficina X", JSON.stringify({ name: vProt?.name, brand: vProt?.brand }));
+  t("17d. colunas fuel/capacity do Acervo preservadas",
+    vProt?.fuel === "gasolina" && vProt?.capacity === "4 ocupantes",
+    JSON.stringify({ fuel: vProt?.fuel, capacity: vProt?.capacity }));
+  t("17e. data.fuel/capacity do snapshot preservados, data.obs editável",
+    vProt?.data?.fuel === "gasolina" && vProt?.data?.capacity === "4 ocupantes"
+      && vProt?.data?.obs === "anotação local",
+    JSON.stringify(vProt?.data));
+  t("17f. vínculo e snapshot econômico intactos",
+    vProt?.data?.regra?.key === "buggy_teste" && vProt?.data?.valueCents === 5000000
+      && vProt?.data?.economia?.precoReferenciaBRL === 50000
+      && vProt?.data?.veiculo?.consumoOuAutonomia === "aprox. 10 km/L",
+    JSON.stringify(vProt?.data));
+  // Acervo não fornece fuel para van_suja → campo local continua editável;
+  // capacity veio do Acervo ("2 ocupantes") → protegido.
+  const patchVan = await req(BASE, "PATCH", `/characters/${pjJ1}/veiculos/${veicDeclId}`, {
+    cookie: ids.j1.cookie,
+    body: { fuel: "solar", capacity: "99 lugares" },
+  });
+  t("17g. PATCH na van aceita", patchVan.status === 200, `status=${patchVan.status}`);
+  const listaVan = await req(BASE, "GET", `/characters/${pjJ1}/veiculos`, { cookie: ids.j1.cookie });
+  const vVan = (listaVan.json?.veiculos ?? []).find((v) => v.id === veicDeclId);
+  t("17h. fuel local editável quando Acervo não fornece",
+    vVan?.fuel === "solar" && vVan?.data?.valueCents === 777000, JSON.stringify({ fuel: vVan?.fuel, data: vVan?.data }));
+  t("17i. capacity do Acervo protegido mesmo sem fuel",
+    vVan?.capacity === "2 ocupantes" && vVan?.data?.capacity === "2 ocupantes",
+    JSON.stringify({ capacity: vVan?.capacity, dataCap: vVan?.data?.capacity }));
+  // valueCents declarado não pode ser negativo (patrimônio, não saldo).
+  const neg = await req(BASE, "POST", `/characters/${pjJ1}/veiculos`, {
+    cookie: ids.j1.cookie,
+    body: { name: "Van Negativa", valueCents: -100 },
+  });
+  t("17j. valueCents negativo rejeitado", neg.status === 400, `status=${neg.status}`);
+  const negPatch = await req(BASE, "PATCH", `/characters/${pjJ1}/veiculos/${veicProtId}`, {
+    cookie: ids.j1.cookie, body: { valueCents: -1 },
+  });
+  t("17k. PATCH valueCents negativo rejeitado", negPatch.status === 400, `status=${negPatch.status}`);
 
   // Imutabilidade final do Acervo (após TODAS as operações).
   {

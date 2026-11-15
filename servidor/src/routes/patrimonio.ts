@@ -974,7 +974,9 @@ const veiculoSchema = z.object({
   plate: z.string().max(30).optional(),
   serialNumber: z.string().max(120).optional(),
   condition: z.string().max(120).optional(),
-  valueCents: z.number().int().optional(),
+  // Valor declarado local (centavos): nunca negativo — é uma declaração
+  // de patrimônio, não um saldo que possa ficar devendo.
+  valueCents: z.number().int().nonnegative().optional(),
   fuel: z.string().max(120).optional(),
   capacity: z.string().max(120).optional(),
   ownership: z.enum(["propriedade", "compartilhado"]).default("propriedade"),
@@ -1018,9 +1020,10 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
     for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosClienteVeiculo[k];
   }
   const dataVeiculo: Record<string, unknown> = { ...econVeiculo, ...dadosClienteVeiculo };
-  // valueCents declarado pelo mestre é um valor LOCAL (override/declaração
-  // de patrimônio): não altera o Acervo, não significa valor efetivamente
-  // pago e não movimenta dinheiro — nenhum débito automático existe aqui.
+  // valueCents declarado é um valor LOCAL de quem está autorizado a
+  // editar o veículo (mestre ou jogador, conforme jogadorEditaVeiculos):
+  // não altera o Acervo, não significa valor efetivamente pago e não
+  // movimenta dinheiro — nenhum débito automático existe aqui.
   // A referência econômica do elemento permanece em data.economia.
   if (valueCents !== undefined) dataVeiculo.valueCents = valueCents;
   if (regra) dataVeiculo.regra = regra;
@@ -1058,6 +1061,24 @@ patrimonioRouter.patch("/veiculos/:veiculoId", async (req, res) => {
   // forjados via PATCH de data (Issue #103).
   if (dAtual.regra) {
     for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dataSemRegra[k];
+    // fuel/capacity também existem como colunas de primeiro nível em
+    // `resto`. Quando o valor é originário do Acervo — evidenciado pelo
+    // snapshot local (data.fuel/data.capacity, populados só pelo vínculo,
+    // já que o cliente não injeta campos econômicos em data) ou pelo
+    // próprio elemento vinculado — o PATCH não pode substituí-lo: o
+    // Acervo segue como autoridade. Se o Acervo não fornece o campo,
+    // nada é inventado nem apagado e o valor local continua editável.
+    const refV = dAtual.regra as { kind?: unknown; key?: unknown };
+    const elV = typeof refV?.kind === "string" && typeof refV?.key === "string"
+      ? (await carregarRegras(a.personagem.campaignId)).elementos.get(`${refV.kind}:${refV.key}`)
+      : undefined;
+    const econV = elV ? dadosEconomicosDefinicao(elV.definition) : {};
+    const fuelAcervo = typeof econV.fuel === "string" ? econV.fuel
+      : (typeof dAtual.fuel === "string" ? dAtual.fuel : undefined);
+    const capAcervo = typeof econV.capacity === "string" ? econV.capacity
+      : (typeof dAtual.capacity === "string" ? dAtual.capacity : undefined);
+    if (fuelAcervo !== undefined) delete resto.fuel;
+    if (capAcervo !== undefined) delete resto.capacity;
   }
   await db.update(vehicles).set({
     ...resto,
