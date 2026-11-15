@@ -344,9 +344,12 @@ try {
   await linhaTemplate.getByRole("button", { name: "Editar" }).click();
   await seletorAcervo.selectOption({ value: "" });
   await pgM.getByRole("button", { name: "Salvar alterações" }).click();
+  const catalogoDepoisEdicao = await req(BASE, "GET", `/campaigns/${cenario.campId}/inventario`, { cookie: cenario.cookieMestre });
+  const templateDepoisEdicao = catalogoDepoisEdicao.json?.itens?.find((i) => i.name === "Kit de catálogo E2E");
+  t("API confirma remoção do vínculo no template", catalogoDepoisEdicao.status === 200 && templateDepoisEdicao?.data?.regra === undefined, JSON.stringify({ status: catalogoDepoisEdicao.status, data: templateDepoisEdicao?.data }));
   const linhaSemVinculo = pgM.locator("tr", { hasText: "Kit de catálogo E2E" }).first();
   await linhaSemVinculo.waitFor({ timeout: 5000 });
-  t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"));
+  t("mestre consegue remover vínculo de template existente", (await linhaSemVinculo.textContent() ?? "").includes("Manual"), await linhaSemVinculo.textContent());
 
   await abaPatrimonio(pgM, "Dinheiro");
   const saldoM = await saldoTag(pgM);
