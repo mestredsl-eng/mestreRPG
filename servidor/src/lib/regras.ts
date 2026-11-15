@@ -473,6 +473,90 @@ export function extrairEscolhas(estrutura: EstruturaFicha, dados: Record<string,
   return escolhas;
 }
 
+/**
+ * Avalia os requisitos de um item/veículo do Acervo contra a ficha publicada.
+ * A leitura é feita pela semântica de regra do campo (regra/regraKind), nunca
+ * por IDs fixos de campos nem por metadados enviados pelo navegador.
+ */
+export interface RequisitoAquisicao {
+  kind: string;
+  key: string;
+  nome: string;
+  minLevel: number;
+  nivelAtual: number;
+  atendido: boolean;
+}
+
+export interface ResultadoPrerequisitosAquisicao {
+  ok: boolean;
+  requisitos: RequisitoAquisicao[];
+  mensagens: string[];
+}
+
+export function avaliarPrerequisitosAquisicao(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>,
+  regras: RegrasCampanha,
+  elemento: Pick<ElementoRegra, "name" | "definition">,
+): ResultadoPrerequisitosAquisicao {
+  const nivelAtual = (kind: string, key: string): number => {
+    let maior = 0;
+    for (const campo of todosCampos(estrutura)) {
+      const valor = dados[campo.id];
+      if (valor === undefined || valor === null) continue;
+
+      if (campo.regra?.kind === kind && campo.regra.key === key) {
+        const n = typeof valor === "number" && Number.isFinite(valor) ? valor : 0;
+        maior = Math.max(maior, Math.max(0, n));
+      }
+
+      if (campo.regraKind !== kind) continue;
+      if (campo.tipo === "selecao_nivel") {
+        const itens = Array.isArray(valor) ? valor : [];
+        for (const item of itens) {
+          if (typeof item !== "object" || item === null) continue;
+          const escolha = item as Record<string, unknown>;
+          if (escolha.key !== key) continue;
+          const n = typeof escolha.nivel === "number" && Number.isInteger(escolha.nivel)
+            ? Math.max(0, escolha.nivel)
+            : 0;
+          maior = Math.max(maior, n);
+        }
+        continue;
+      }
+      const selecionados = Array.isArray(valor) ? valor : [valor];
+      if (selecionados.some((selecionado) => String(selecionado) === key)) {
+        maior = Math.max(maior, 1);
+      }
+    }
+    return maior;
+  };
+
+  const requisitos = (elemento.definition.prerequisitos ?? []).map((pre) => {
+    const atual = nivelAtual(pre.kind, pre.key);
+    const exigido = pre.minLevel ?? 1;
+    const nome = regras.elementos.get(CHAVE(pre.kind, pre.key))?.name
+      ?? pre.key.replace(/_/g, " ").replace(/\b\w/g, (letra) => letra.toLocaleUpperCase("pt-BR"));
+    return {
+      kind: pre.kind,
+      key: pre.key,
+      nome,
+      minLevel: exigido,
+      nivelAtual: atual,
+      atendido: atual >= exigido,
+    };
+  });
+
+  const faltantes = requisitos.filter((requisito) => !requisito.atendido);
+  return {
+    ok: faltantes.length === 0,
+    requisitos,
+    mensagens: faltantes.map((requisito) =>
+      `Você precisa de ${requisito.nome} nível ${requisito.minLevel}. Seu nível atual é ${requisito.nivelAtual}.`
+    ),
+  };
+}
+
 export interface ErroRegra {
   campoId?: string;
   codigo: string;
