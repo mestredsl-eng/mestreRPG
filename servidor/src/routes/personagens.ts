@@ -199,13 +199,39 @@ function montarFicha(
   }
 
   // Pontos de Vida e Vitalidade (config da campanha; estado em data.__hp/__vitalidade)
+  // NPC revelado lido por não-mestre/não-dono: HP é calculado sobre a
+  // MESMA visão filtrada dos campos — um atributo privado não pode ser
+  // deduzido pelo máximo, pelo atual nem pelo histórico. O estado __hp
+  // (atual) é incluído para não exibir um "atual" inventado; o histórico
+  // é esvaziado pois as quantidades registradas também dependem do
+  // atributo. Personagens normais mantêm o comportamento anterior.
+  const vidaNpcLeitor = personagem.isNpc && !ehMestre && !ehDono;
   const vida = regras
-    ? {
-        hp: resumoHp(regras.config.hp, estrutura, dados),
-        vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
-        podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
-        podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
-      }
+    ? (() => {
+        if (!vidaNpcLeitor) {
+          return {
+            hp: resumoHp(regras.config.hp, estrutura, dados),
+            vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
+            podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
+            podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
+          };
+        }
+        const dadosVida = {
+          ...(campos as Record<string, unknown>),
+          [CHAVE_HP]: dados[CHAVE_HP],
+          [CHAVE_VITALIDADE]: dados[CHAVE_VITALIDADE],
+        };
+        const hp = resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
+        if (hp) hp.historico = [];
+        const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
+        if (vit) vit.historico = [];
+        return {
+          hp,
+          vitalidade: vit,
+          podeEditarHp: false,
+          podeEditarVitalidade: false,
+        };
+      })()
     : null;
 
   return {

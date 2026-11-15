@@ -105,6 +105,36 @@ try {
   r = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
   t("NPC volta a 403 após ocultar", r.status === 403, `status=${r.status}`);
 
+  // ---------- Privacidade: HP não pode vazar atributo privado ----------
+  // O HP máximo = base + atributo×porNivel. Se o atributo for "mestre",
+  // o jogador não pode deduzi-lo pelo máximo, pelo atual nem pelo
+  // histórico — tudo é calculado sobre a visão filtrada da ficha.
+  sec("Privacidade — HP não vaza atributo privado");
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const row = w.prepare("select structure from sheet_versions limit 1").get();
+      const est = JSON.parse(row.structure);
+      est.secoes[0].campos[0].visibilidade = "mestre"; // "for" vira privado
+      w.prepare("update sheet_versions set structure=?").run(JSON.stringify(est));
+    } finally { w.close(); }
+  }
+  r = await req(BASE, "POST", `/characters/${idNpc}/npc-visibilidade`, { cookie: ids.cookieMestre, body: { visivel: true } });
+  r = await req(BASE, "PATCH", `/characters/${idNpc}`, { cookie: ids.cookieMestre, body: { data: { for: 5 } } });
+  t("mestre define FOR=5 no NPC", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
+
+  const fM = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.cookieMestre });
+  const fJ = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("mestre e jogador leem o NPC revelado", fM.status === 200 && fJ.status === 200);
+  const hpM = fM.json?.ficha?.vida?.hp;
+  const hpJ = fJ.json?.ficha?.vida?.hp;
+  t("mestre vê HP máximo com FOR (100+5×10=150)", hpM?.maximo === 150, JSON.stringify(hpM));
+  t("jogador vê HP máximo SEM o atributo privado (base 100)", hpJ?.maximo === 100, JSON.stringify(hpJ));
+  t("histórico de HP do mestre preservado", (hpM?.historico ?? []).length > 0, JSON.stringify(hpM?.historico));
+  t("histórico de HP oculto do jogador (sem vazamento indireto)", Array.isArray(hpJ?.historico) && hpJ.historico.length === 0, JSON.stringify(hpJ?.historico));
+  t("campo privado ausente dos campos do jogador", !("for" in (fJ.json?.ficha?.campos ?? {})));
+  t("jogador não pode editar HP do NPC", (await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.j1.cookie, body: { acao: "curar", quantidade: 10 } })).status === 403);
+
   // ---------- VTT: token de NPC oculto ----------
   sec("VTT — token de NPC oculto por padrão");
   const sess = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa NPC" } });

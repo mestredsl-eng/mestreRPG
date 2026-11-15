@@ -307,7 +307,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const arquivado = personagem.status === "arquivado";
   // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
   // mestre reabrir/restaurar; o mestre edita tudo que não está arquivado.
-  const podeEditar = !arquivado && (souMestre || (personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
+  // NPC nunca é editável por quem não é o dono (jogador que apenas LÊ a
+  // ficha revelada não pode editar nem em status "reaberta" — o backend
+  // também rejeita, mas a UI não deve nem oferecer o botão).
+  const podeEditar = !arquivado && (souMestre ||
+    (personagem.isNpc !== true && personagem.ehEu === true &&
+      personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
   // Exclusão: mestre sempre; jogador só o próprio personagem em status editável.
   const podeExcluir = souMestre || (personagem.ehEu === true && STATUS_EXCLUIVEIS.has(personagem.status));
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
@@ -552,7 +557,11 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         )}
       </section>
 
-      <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
+          dono — montar o componente dispararia consultas 403 desnecessárias. */}
+      {(souMestre || personagem.ehEu === true) && (
+        <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      )}
     </>
   );
 }
