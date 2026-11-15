@@ -1,0 +1,555 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento IX — Tecnologia Profissional e Segurança Eletrônica",
+      "descricao": "Equipamentos complementares de computação, redes, eletrônica, manutenção técnica, monitoramento e segurança patrimonial. Os requisitos são ligados às habilidades existentes no dump, como Computador, Tecnologia e Segurança.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — infraestrutura e tecnologia",
+      "tipo": "suplemento",
+      "versao": 1,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "servidor_rack",
+          "name": "Servidor em rack",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Servidor para infraestrutura local de processamento e serviços.",
+            "subcategoria": "Computação",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "switch_rede",
+          "name": "Switch de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para interligação de dispositivos em rede.",
+            "subcategoria": "Redes",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "roteador_profissional",
+          "name": "Roteador profissional",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de roteamento para redes locais.",
+            "subcategoria": "Redes",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "access_point_profissional",
+          "name": "Ponto de acesso sem fio",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para fornecer conectividade sem fio.",
+            "subcategoria": "Redes",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "testador_cabos_rede",
+          "name": "Testador de cabos de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para verificação de cabos de comunicação.",
+            "subcategoria": "Redes",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "certificador_cabos",
+          "name": "Certificador de cabos",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de teste e certificação de cabeamento.",
+            "subcategoria": "Redes",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "analisador_espectro",
+          "name": "Analisador de espectro",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para análise de sinais.",
+            "subcategoria": "Eletrônica",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "terminal_diagnostico",
+          "name": "Terminal de diagnóstico",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação de acesso para diagnóstico de sistemas e equipamentos.",
+            "subcategoria": "Computação",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "osciloscopio_digital",
+          "name": "Osciloscópio digital",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de medição e visualização de sinais elétricos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "estacao_solda",
+          "name": "Estação de solda eletrônica",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para trabalho técnico em componentes eletrônicos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "fonte_bancada",
+          "name": "Fonte de alimentação de bancada",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de energia ajustável para atividades de manutenção.",
+            "subcategoria": "Eletrônica",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "kit_microeletronica",
+          "name": "Kit de manutenção eletrônica",
+          "category": "Eletrônica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Ferramentas para manutenção de componentes eletrônicos.",
+            "subcategoria": "Eletrônica",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "impressora_3d",
+          "name": "Impressora 3D",
+          "category": "Fabricação digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de fabricação aditiva para protótipos e peças.",
+            "subcategoria": "Fabricação digital",
+            "ordem": 12
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "scanner_3d",
+          "name": "Scanner 3D",
+          "category": "Fabricação digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de captura tridimensional de objetos.",
+            "subcategoria": "Fabricação digital",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "camera_termica_industrial",
+          "name": "Câmera térmica industrial",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de inspeção térmica.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "controle_acesso_biometrico",
+          "name": "Controlador biométrico de acesso",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento eletrônico de controle de acesso.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "leitor_cartao_acesso",
+          "name": "Leitor de cartão de acesso",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Leitor para sistemas eletrônicos de controle de acesso.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "central_monitoramento",
+          "name": "Central de monitoramento",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação para acompanhar sistemas de monitoramento.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "detector_radiofrequencia",
+          "name": "Detector de radiofrequência",
+          "category": "Inspeção técnica",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de inspeção de sinais de radiofrequência.",
+            "subcategoria": "Inspeção técnica",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "cftv_portatil",
+          "name": "Sistema portátil de CFTV",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto portátil de câmeras e registro de imagens.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "seguranca",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "registrador_log_rede",
+          "name": "Registrador de eventos de rede",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento ou software de registro de eventos em rede.",
+            "subcategoria": "Computação",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "armazenamento_nas",
+          "name": "Servidor de armazenamento NAS",
+          "category": "Computação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Sistema dedicado ao armazenamento em rede.",
+            "subcategoria": "Computação",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "firewall_hardware",
+          "name": "Firewall dedicado",
+          "category": "Segurança digital",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de segurança para infraestrutura de rede.",
+            "subcategoria": "Segurança digital",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "computador",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "modem_satellite",
+          "name": "Modem via satélite",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de conectividade via satélite.",
+            "subcategoria": "Comunicação",
+            "ordem": 23
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "repetidor_radio",
+          "name": "Repetidor de rádio",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para ampliar a cobertura de comunicação por rádio.",
+            "subcategoria": "Comunicação",
+            "ordem": 24
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "antena_direcional",
+          "name": "Antena direcional",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Antena para sistemas de comunicação compatíveis.",
+            "subcategoria": "Comunicação",
+            "ordem": 25
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "radio_base_operacional",
+          "name": "Rádio-base operacional",
+          "category": "Comunicação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estação fixa de radiocomunicação.",
+            "subcategoria": "Comunicação",
+            "ordem": 26
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "kit_interfonia",
+          "name": "Kit de interfonia",
+          "category": "Segurança patrimonial",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de comunicação interna para instalações.",
+            "subcategoria": "Segurança patrimonial",
+            "ordem": 27
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "kit_rede_cabeada",
+          "name": "Kit de instalação de rede",
+          "category": "Redes",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de ferramentas e acessórios para instalação de rede.",
+            "subcategoria": "Redes",
+            "ordem": 28,
+            "prerequisitos": [
+              {
+                "kind": "talento",
+                "key": "tecnologia",
+                "minLevel": 1
+              }
+            ]
+          },
+          "ordem": 28
+        }
+      ]
+    }
+  ]
+}
