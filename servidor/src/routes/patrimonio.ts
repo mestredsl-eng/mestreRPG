@@ -125,15 +125,30 @@ async function avaliarAquisicao(
   const dados = (alvo.data ?? {}) as Record<string, unknown>;
   const r = avaliarPrerequisitosAquisicao(estrutura, dados, regras, regra.kind, regra.key);
   if (r.ok) return { elemento: r.elemento, negacao: null, bypass: false };
-  if (a.ehMestre && ignorar === true) {
+
+  // O bypass só ignora níveis insuficientes de requisitos existentes.
+  // Nunca pode reativar elemento desativado, aceitar referência inexistente
+  // ou mascarar pré-requisito apontando para chave ausente nas regras.
+  const elementoDesativado = r.elemento?.definition.disponivel === false;
+  const prerequisitoInexistente = r.requisitos.some((q) => q.inexistente);
+  const podeIgnorar = !!r.elemento && !elementoDesativado && !prerequisitoInexistente;
+  if (a.ehMestre && ignorar === true && podeIgnorar) {
     return { elemento: r.elemento, negacao: null, bypass: true };
   }
+
+  const erro = !r.elemento
+    ? "Elemento do Acervo não encontrado"
+    : elementoDesativado
+      ? `"${r.elemento.name}" está desativado nesta campanha`
+      : prerequisitoInexistente
+        ? `"${r.elemento.name}" possui pré-requisito inexistente nas regras da campanha`
+        : `Pré-requisitos não atendidos para "${r.elemento.name}"`;
   return {
     elemento: r.elemento,
     bypass: false,
     negacao: {
       status: 403,
-      erro: r.elemento ? `Pré-requisitos não atendidos para "${r.elemento.name}"` : "Elemento do Acervo não encontrado",
+      erro,
       detalhes: { requisitos: r.requisitos, mensagens: r.mensagens },
     },
   };
@@ -1437,6 +1452,12 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
   const regraCompra = body.data.templateId
     ? tplRegra ?? undefined
     : body.data.regra ?? body.data.item?.regra;
+
+  // Esta operação sempre cria inventory_entries. Veículos pertencem à rota
+  // /veiculos e não podem entrar no inventário por chamada direta à API.
+  if (regraCompra && regraCompra.kind !== "item") {
+    res.status(400).json({ erro: "Compras do patrimônio devem referenciar elementos kind:item" }); return;
+  }
 
   // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
   const avOp = isCompra ? await avaliarAquisicao(a, regraCompra ?? undefined, body.data.ignorarPrerequisitos) : { elemento: null, negacao: null, bypass: false };
