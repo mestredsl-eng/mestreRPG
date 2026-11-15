@@ -749,6 +749,18 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
   }, [characterId, campaignId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
+  const tipoVeiculoAcervo = (el: AcervoCatalogoItem): string => {
+    const nome = el.nome.normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+    const categoria = (el.categoria ?? "").normalize("NFD").replace(/[\\u0300-\\u036f]/g, "").toLowerCase();
+    if (categoria.includes("motociclet") || nome.includes("motocicleta")) return "motocicleta";
+    if (categoria.includes("embarc") || nome.includes("lancha") || nome.includes("aquatica")) return "barco";
+    if (nome.includes("helicopter")) return "helicoptero";
+    if (categoria.includes("militar") || nome.includes("caca ")) return "militar";
+    if (categoria.includes("aeronave") || nome.includes("aviao")) return "aviao";
+    if (nome.includes("caminhao")) return "caminhao";
+    return "carro";
+  };
+
   const TIPOS = ["carro", "motocicleta", "caminhao", "barco", "helicoptero", "aviao", "militar", "futurista", "outro"];
 
   const q = busca.trim().toLowerCase();
@@ -776,7 +788,7 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
           <label>Veículo do Acervo
             <select value="" onChange={(e) => {
               const el = acervo.find((x) => x.regra.key === e.target.value);
-              if (el) setNovo({ name: el.nome, kind: "carro", regra: el.regra });
+              if (el) setNovo({ name: el.nome, kind: tipoVeiculoAcervo(el), regra: el.regra });
             }}>
               <option value="">Cadastro livre…</option>
               {acervo.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>)}
