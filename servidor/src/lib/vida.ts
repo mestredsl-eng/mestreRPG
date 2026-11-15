@@ -42,6 +42,10 @@ export interface EventoVitalidade {
   // "conversao-ferimento" (subida automática por dano de HP).
   // Ausente em eventos antigos = tratado como manual.
   origem?: "manual" | "conversao-ferimento";
+  // Snapshot dos limiares de conversão usados NESTE evento — a leitura
+  // pública de NPC avalia privacidade pela regra que produziu o evento,
+  // não pela configuração atual (que o mestre pode mudar depois).
+  limiares?: { ate: number; nivel: number }[];
 }
 
 export interface EstadoVitalidade {
@@ -49,6 +53,10 @@ export interface EstadoVitalidade {
   alteradoEm?: string;
   alteradoPor?: string | null;
   historico?: EventoVitalidade[];
+  // Último nível definido MANUALMENTE pelo mestre — piso narrativo
+  // persistido fora do histórico (que sofre slice(-100)): conversões
+  // automáticas nunca o sobrescrevem.
+  nivelManual?: number;
 }
 
 const num = (v: unknown): number | null =>

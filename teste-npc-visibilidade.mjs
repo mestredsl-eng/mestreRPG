@@ -201,6 +201,96 @@ try {
   const fPj = await req(BASE, "GET", `/characters/${idPj}`, { cookie: ids.j1.cookie });
   t("personagem normal do jogador inalterado", fPj.status === 200 && fPj.json?.ficha != null);
 
+  // ---------- Snapshot de limiares: regra atual não é prova ----------
+  // A leitura pública deve avaliar o evento automático pela regra que o
+  // PRODUZIU (snapshot no histórico), não pela config atual mutável.
+  sec("Privacidade — snapshot de limiares da conversão");
+  // HP real para 125 (recuperar não dispara conversão); depois dano 5 →
+  // atual 120 → pct real 80% ≤ 90 → conversão eleva p/ nível 4.
+  // Jogador vê HP grampeado 100/100 → pct público 100% > 90 → oculto.
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 90, nivel: 4 }] } },
+  });
+  t("mestre define limiar ate:90→4", r.status === 200, `status=${r.status}`);
+  await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "recuperar", quantidade: 40, motivo: "Descanso longo" } });
+  r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 5, motivo: "Arranhão" } });
+  t("conversão eleva p/ nível 4 com HP público 100%", r.status === 200 && r.json?.ferimento?.para === 4, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
+  let fJ6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("jogador vê só o piso manual (nível 1), não o 4 automático",
+    fJ6.json?.ficha?.vida?.vitalidade?.nivel === 1, JSON.stringify(fJ6.json?.ficha?.vida?.vitalidade));
+
+  // DESATIVA a conversão: o clamp continua — a prova é o snapshot do
+  // evento, não a config atual (antes da correção isto vazava o 4).
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: false, limiares: [] } },
+  });
+  t("mestre desabilita conversão", r.status === 200, `status=${r.status}`);
+  fJ6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("com conversão DESABILITADA jogador segue sem o nível automático",
+    fJ6.json?.ficha?.vida?.vitalidade?.nivel === 1, JSON.stringify(fJ6.json?.ficha?.vida?.vitalidade));
+  const fM6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.cookieMestre });
+  t("mestre segue vendo vitalidade real 4", fM6.json?.ficha?.vida?.vitalidade?.nivel === 4);
+
+  // ALTERA os limiares p/ algo que justificaria 4 no HP público:
+  // o cálculo usa o snapshot do evento, não a config nova.
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 100, nivel: 4 }] } },
+  });
+  t("mestre altera limiares p/ ate:100→4", r.status === 200, `status=${r.status}`);
+  fJ6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("limiares novos NÃO reabilitam o nível automático ao jogador",
+    fJ6.json?.ficha?.vida?.vitalidade?.nivel === 1, JSON.stringify(fJ6.json?.ficha?.vida?.vitalidade));
+
+  // Decisão manual posterior substitui o piso.
+  r = await req(BASE, "POST", `/characters/${idNpc}/vitalidade`, { cookie: ids.cookieMestre, body: { nivel: 2, motivo: "Avaliação do mestre" } });
+  t("mestre redefine piso p/ nível 2", r.status === 200, `status=${r.status}`);
+  fJ6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("jogador vê novo piso manual (nível 2)", fJ6.json?.ficha?.vida?.vitalidade?.nivel === 2);
+
+  // O piso manual é persistido como estado próprio — não depende do
+  // histórico que sofre slice(-100).
+  const nivelManualDb = comDb(BANCO, (db) => {
+    const row = db.prepare("select data from characters where id=?").get(idNpc);
+    return JSON.parse(row.data)?.__vitalidade?.nivelManual;
+  });
+  t("piso manual persistido em __vitalidade.nivelManual", nivelManualDb === 2, `nivelManual=${nivelManualDb}`);
+
+  // Evento automático ANTIGO sem snapshot → fallback conservador:
+  // remove `limiares` do evento de conversão direto no banco.
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const row = w.prepare("select data from characters where id=?").get(idNpc);
+      const dados = JSON.parse(row.data);
+      const hist = dados.__vitalidade?.historico ?? [];
+      const ultimoAuto = [...hist].reverse().find((e) => e.origem === "conversao-ferimento");
+      if (ultimoAuto) delete ultimoAuto.limiares;
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), idNpc);
+    } finally { w.close(); }
+  }
+  // novo dano cruza o limiar atual (ate:100→4) → nova conversão → 4,
+  // mas o evento ANTIGO sem snapshot não prova nada; o evento NOVO tem
+  // snapshot — para testar o fallback, removo o snapshot do NOVO evento.
+  r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 30, motivo: "Pancada" } });
+  t("nova conversão eleva p/ nível 4", r.status === 200 && r.json?.ferimento?.para === 4, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const row = w.prepare("select data from characters where id=?").get(idNpc);
+      const dados = JSON.parse(row.data);
+      const hist = dados.__vitalidade?.historico ?? [];
+      const ultimo = hist[hist.length - 1];
+      if (ultimo?.origem === "conversao-ferimento") delete ultimo.limiares;
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), idNpc);
+    } finally { w.close(); }
+  }
+  fJ6 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("evento automático sem snapshot → fallback conservador (só piso 2)",
+    fJ6.json?.ficha?.vida?.vitalidade?.nivel === 2, JSON.stringify(fJ6.json?.ficha?.vida?.vitalidade));
+
   // ---------- VTT: token de NPC oculto ----------
   sec("VTT — token de NPC oculto por padrão");
   const sess = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa NPC" } });
