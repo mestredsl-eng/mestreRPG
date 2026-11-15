@@ -19,6 +19,7 @@ const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 // Regra do Acervo: carro exige perícia conducao>=1; caça exige conducao>=5.
 const REGRA_CARRO = { kind: "item", key: "carro_popular" };
 const REGRA_F16 = { kind: "veiculo", key: "caca_f16" };
+const REGRA_ITEM_F16 = { kind: "item", key: "item_restrito_conducao" };
 const REGRA_LIVRE = { kind: "item", key: "kit_campo" };
 
 await prepararBanco(BANCO);
@@ -88,6 +89,9 @@ try {
   insRegra("pericia", "armas_de_fogo", "Armas de Fogo", []);
   insRegra("pericia", "armas_brancas", "Armas Brancas", []);
   insRegra("item", "carro_popular", "Carro Popular", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
+  // Fixture kind:item para exercitar as rotas de inventário/bypass sem
+  // classificar um veículo real como item.
+  insRegra("item", "item_restrito_conducao", "Item restrito (teste)", [{ kind: "pericia", key: "conducao", minLevel: 5 }]);
   insRegra("veiculo", "suv_blindado", "SUV reforçado", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
   insRegra("veiculo", "moto_policial", "Motocicleta de serviço", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
   insRegra("veiculo", "helicoptero_civil", "Helicóptero civil", [{ kind: "pericia", key: "conducao", minLevel: 1 }]);
@@ -191,7 +195,7 @@ try {
   t("débito aplicado", saldoFinal === saldoAntes - 10000, `${saldoAntes}→${saldoFinal}`);
 
   sec("metadados forjados não contornam");
-  r = await post(pjJ2, "/inventario", { name: "F-16 fake", regra: REGRA_F16, data: { prerequisitos: [], nivelConducao: 99 } }, ids.j2.cookie);
+  r = await post(pjSemPericias, "/inventario", { name: "Item restrito fake", regra: REGRA_ITEM_F16, data: { prerequisitos: [], nivelConducao: 99 } }, ids.j2.cookie);
   t("data forjada ignorada — segue bloqueado", r.status === 403, `status=${r.status}`);
   // regra forjada apontando elemento inexistente
   r = await post(pjJ2, "/inventario", { name: "X", regra: { kind: "item", key: "nao_existe" } }, ids.j2.cookie);
@@ -235,8 +239,8 @@ try {
   const spoofRow = comDb(BANCO, (db) => db.prepare("select name, data from inventory_entries where id=?").get(r.json?.id));
   t("nome persistido é o do elemento, não o forjado", spoofRow?.name === "Kit de Campo", spoofRow?.name);
   // spoof reverso: nome inocente + referência restrita continua exigindo requisito
-  r = await post(pjJ2, "/inventario", { name: "Item comum", regra: REGRA_F16 }, ids.j2.cookie);
-  t("F-16 por jogador com Condução 5 aceito", r.status === 201, `status=${r.status}`);
+  r = await post(pjJ2, "/inventario", { name: "Item restrito", regra: REGRA_ITEM_F16 }, ids.j2.cookie);
+  t("item restrito por Condução 5 aceito", r.status === 201, `status=${r.status}`);
 
   sec("PATCH não troca nem remove o vínculo regra");
   const itemRegra = comDb(BANCO, (db) => db.prepare("select id, data from inventory_entries where character_id=? and name='Carro Popular'").get(pjJ1));
@@ -261,7 +265,7 @@ try {
   const tplLivre = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm, body: { name: "Suprimento", data: { peso: 1 } } });
   t("template manual criado", tplLivre.status === 201, `status=${tplLivre.status}`);
 
-  r = await post(pjJ2, "/inventario", { name: "Carro", templateId: tplCarroId }, ids.j2.cookie);
+  r = await post(pjSemPericias, "/inventario", { name: "Carro", templateId: tplCarroId }, ids.j2.cookie);
   t("POST inventário por template restrito bloqueia sem Condução", r.status === 403, `status=${r.status}`);
   r = await post(pjJ2, "/inventario", { name: "Carro", templateId: tplCarroId, regra: REGRA_LIVRE }, ids.j2.cookie);
   t("regra livre do cliente não substitui vínculo restrito do template", r.status === 403, `status=${r.status}`);
@@ -301,17 +305,17 @@ try {
   // PJ do mestre com a mesma ficha e ficha vazia
   const pjMestre = crypto.randomUUID();
   mkPj(pjMestre, cenario.membMestre, {});
-  r = await post(pjMestre, "/inventario", { name: "F-16 mestre", regra: REGRA_F16 }, ids.cm);
+  r = await post(pjMestre, "/inventario", { name: "Item restrito mestre", regra: REGRA_ITEM_F16 }, ids.cm);
   t("mestre SEM flag também é bloqueado", r.status === 403, `status=${r.status}`);
-  r = await post(pjMestre, "/inventario", { name: "F-16 mestre", regra: REGRA_F16, ignorarPrerequisitos: true }, ids.cm);
+  r = await post(pjMestre, "/inventario", { name: "Item restrito mestre", regra: REGRA_ITEM_F16, ignorarPrerequisitos: true }, ids.cm);
   t("mestre COM flag explícita adquire", r.status === 201, `status=${r.status}`);
   // audit() resolve campaignId via req.params.campaignId — nas rotas de
   // personagem esse param não existe, então o escopo fica no detail.
   const auditBypass = comDb(BANCO, (db) => db.prepare("select id, detail from audit_logs where action='patrimonio.prerequisito.ignorado'").all());
-  const bypassOk = (auditBypass ?? []).some((r) => { try { return JSON.parse(r.detail ?? "{}").regra?.key === "caca_f16"; } catch { return false; } });
+  const bypassOk = (auditBypass ?? []).some((r) => { try { return JSON.parse(r.detail ?? "{}").regra?.key === "item_restrito_conducao"; } catch { return false; } });
   t("bypass auditado", bypassOk, `audits=${auditBypass?.length}`);
   // transferência: mestre sem flag deve falhar; com flag passa
-  const f16Mestre = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and data like '%caca_f16%'").get(pjMestre));
+  const f16Mestre = comDb(BANCO, (db) => db.prepare("select id from inventory_entries where character_id=? and data like '%item_restrito_conducao%'").get(pjMestre));
   r = await req(BASE, "POST", `/characters/${pjMestre}/inventario/${f16Mestre?.id}/transferir`, { cookie: ids.cm, body: { destinoCharacterId: pjJ1 } });
   t("mestre transfere sem flag → destino inelegível recusado", r.status === 403, `status=${r.status}`);
   r = await req(BASE, "POST", `/characters/${pjMestre}/inventario/${f16Mestre?.id}/transferir`, { cookie: ids.cm, body: { destinoCharacterId: pjJ1, ignorarPrerequisitos: true } });
