@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — arsenal complementar",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -27,7 +27,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 400
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 0
         },
@@ -47,7 +62,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.55,
+            "valueCents": 20000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 200,
+              "faixaPrecoBRL": {
+                "min": 90,
+                "max": 350
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 1
         },
@@ -67,7 +97,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 70,
+                "max": 350
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -87,7 +132,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.25,
+            "valueCents": 10000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 100,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 220
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 3
         },
@@ -100,7 +160,22 @@
           "definition": {
             "descricao": "Ferramenta de corte para operações de resgate e emergência.",
             "subcategoria": "Ferramentas de resgate",
-            "ordem": 4
+            "ordem": 4,
+            "weight": 0.25,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 400
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -120,7 +195,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 800
+              },
+              "unidadeCompra": "unidade de treinamento",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 5
         },
@@ -140,7 +230,22 @@
                 "key": "armas_brancas",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 16000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 160,
+              "faixaPrecoBRL": {
+                "min": 70,
+                "max": 350
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 6
         },
@@ -160,7 +265,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 8000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência ampla para arma curta legal; modelo, calibre e autorização mudam o preço."
+            }
           },
           "ordem": 7
         },
@@ -180,7 +300,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.95,
+            "valueCents": 550000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 5500,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 10000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência ampla para arma curta; características e enquadramento legal mudam a disponibilidade."
+            }
           },
           "ordem": 8
         },
@@ -200,7 +335,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 5000,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 8500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência genérica; calibre, acabamento e fabricante alteram o preço."
+            }
           },
           "ordem": 9
         },
@@ -220,7 +370,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.2,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 2200,
+                "max": 8000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Referência ampla; modelo, calibre e autorização são determinantes."
+            }
           },
           "ordem": 10
         },
@@ -240,7 +405,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.5,
+            "valueCents": 1100000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 11000,
+              "faixaPrecoBRL": {
+                "min": 6500,
+                "max": 18000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de classe; ação, calibre, fabricante e disponibilidade alteram o preço."
+            }
           },
           "ordem": 11
         },
@@ -260,7 +440,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.3,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 20000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de classe; modelo, calibre e enquadramento legal precisam ser especificados."
+            }
           },
           "ordem": 12
         },
@@ -280,7 +475,18 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": null,
+              "faixaPrecoBRL": null,
+              "unidadeCompra": "valor não definido; referência institucional sigilosa ou indisponível ao varejo civil",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Sem preço civil de prateleira confiável: classe restrita/institucional; custo depende de contrato e enquadramento legal. Valor deixado em aberto."
+            }
           },
           "ordem": 13
         },
@@ -300,7 +506,18 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.6,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": null,
+              "faixaPrecoBRL": null,
+              "unidadeCompra": "valor não definido; referência institucional ou restrita, sem preço de varejo civil aplicável",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Sem preço civil de prateleira confiável: classe restrita/institucional; custo depende de contrato e enquadramento legal. Valor deixado em aberto."
+            }
           },
           "ordem": 14
         },
@@ -320,7 +537,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 30000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 300,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 500
+              },
+              "unidadeCompra": "caixa de referência com 50 cartuchos; calibre a definir",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de calibre e tipo; caixa de 50 cartuchos é apenas unidade de referência."
+            }
           },
           "ordem": 15
         },
@@ -340,7 +572,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.5,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 550
+              },
+              "unidadeCompra": "caixa de referência com 50 cartuchos; calibre a definir",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de calibre e tipo; caixa de 50 cartuchos é apenas unidade de referência."
+            }
           },
           "ordem": 16
         },
@@ -360,7 +607,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.8,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 130,
+                "max": 400
+              },
+              "unidadeCompra": "caixa de referência com 25 cartuchos; calibre a definir",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de calibre e tipo; caixa de 25 cartuchos é apenas unidade de referência."
+            }
           },
           "ordem": 17
         },
@@ -380,7 +642,22 @@
                 "key": "armas_de_fogo",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 200,
+                "max": 650
+              },
+              "unidadeCompra": "caixa de referência com 20 cartuchos; calibre a definir",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Preço depende de calibre e tipo; caixa de 20 cartuchos é apenas unidade de referência."
+            }
           },
           "ordem": 18
         },
@@ -393,7 +670,22 @@
           "definition": {
             "descricao": "Estojo para acondicionamento e transporte de equipamento.",
             "subcategoria": "Acessórios",
-            "ordem": 19
+            "ordem": 19,
+            "weight": 2.5,
+            "valueCents": 60000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 600,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -406,7 +698,22 @@
           "definition": {
             "descricao": "Acessório de porte para arma curta compatível.",
             "subcategoria": "Acessórios",
-            "ordem": 20
+            "ordem": 20,
+            "weight": 0.3,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 650
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -419,7 +726,22 @@
           "definition": {
             "descricao": "Acessório de porte fixado à perna.",
             "subcategoria": "Acessórios",
-            "ordem": 21
+            "ordem": 21,
+            "weight": 0.5,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 900
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 21
         },
@@ -432,7 +754,22 @@
           "definition": {
             "descricao": "Suporte compatível com equipamento e modelo definidos pelo mestre.",
             "subcategoria": "Acessórios",
-            "ordem": 22
+            "ordem": 22,
+            "weight": 0.2,
+            "valueCents": 30000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 300,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -445,7 +782,22 @@
           "definition": {
             "descricao": "Acessório de observação e enquadramento para equipamento compatível.",
             "subcategoria": "Acessórios",
-            "ordem": 23
+            "ordem": 23,
+            "weight": 0.5,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 500,
+                "max": 5000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -458,7 +810,22 @@
           "definition": {
             "descricao": "Proteção corporal com componentes removíveis. O nível de proteção é definido pela campanha.",
             "subcategoria": "Proteção",
-            "ordem": 24
+            "ordem": 24,
+            "weight": 6,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 3500,
+                "max": 12000
+              },
+              "unidadeCompra": "unidade sem placas adicionais",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -471,7 +838,22 @@
           "definition": {
             "descricao": "Escudo portátil para proteção em situações específicas.",
             "subcategoria": "Proteção",
-            "ordem": 25
+            "ordem": 25,
+            "weight": 4.5,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 400,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 25
         },
@@ -484,7 +866,22 @@
           "definition": {
             "descricao": "Capacete de proteção para atividades de risco.",
             "subcategoria": "Proteção",
-            "ordem": 26
+            "ordem": 26,
+            "weight": 1.5,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 4500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 26
         },
@@ -497,7 +894,22 @@
           "definition": {
             "descricao": "Conjunto de joelheiras e cotoveleiras para atividades físicas e de campo.",
             "subcategoria": "Proteção",
-            "ordem": 27
+            "ordem": 27,
+            "weight": 0.9,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 70,
+                "max": 450
+              },
+              "unidadeCompra": "conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 27
         },
@@ -510,7 +922,22 @@
           "definition": {
             "descricao": "Luvas para proteção das mãos em tarefas e atividades de campo.",
             "subcategoria": "Proteção",
-            "ordem": 28
+            "ordem": 28,
+            "weight": 0.25,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "par",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 28
         },
@@ -523,7 +950,22 @@
           "definition": {
             "descricao": "Máscara de proteção para ambientes que exijam proteção facial específica.",
             "subcategoria": "Proteção individual",
-            "ordem": 29
+            "ordem": 29,
+            "weight": 1.1,
+            "valueCents": 60000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 600,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1500
+              },
+              "unidadeCompra": "unidade sem filtros",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo de categoria econômica/intermediária, salvo observação específica",
+              "observacao": "Estimativa de mercado; marca, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 29
         }
