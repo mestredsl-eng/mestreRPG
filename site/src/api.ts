@@ -362,14 +362,14 @@ export const api = {
     requisicao<{ id: string; saldo: number }>(`/characters/${charId}/financeiro/movimentar`, { method: "POST", body: JSON.stringify(dados) }),
   transferirFinanceiro: (charId: string, dados: { origemAccountId: string; destinoAccountId: string; valor: number; descricao?: string; requestId?: string }) =>
     requisicao<{ ok: boolean; tipo: string }>(`/characters/${charId}/financeiro/transferir`, { method: "POST", body: JSON.stringify(dados) }),
-  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId?: string; valor?: number; pagar?: boolean; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string }) =>
+  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId?: string; valor?: number; pagar?: boolean; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string; regra?: RegraRef; ignorarPrerequisitos?: boolean }) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
   estornarOperacao: (charId: string, opId: string) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacoes/${encodeURIComponent(opId)}/estornar`, { method: "POST" }),
 
   // Catálogo de itens (Etapa 6)
   listarCatalogo: (cid: string) =>
-    requisicao<{ itens: ItemCatalogo[]; categorias: string[] }>(`/campaigns/${cid}/inventario`),
+    requisicao<{ itens: ItemCatalogo[]; categorias: string[]; acervo?: AcervoCatalogoItem[] }>(`/campaigns/${cid}/inventario`),
   criarItemCatalogo: (cid: string, dados: ItemCatalogoInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/inventario`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarItemCatalogo: (cid: string, templateId: string, dados: Partial<ItemCatalogoInput>) =>
@@ -839,7 +839,21 @@ export interface ItemInventarioInput {
   valueCents?: number;
   transferable?: boolean;
   templateId?: string;
+  regra?: RegraRef;
+  ignorarPrerequisitos?: boolean;
   data?: Record<string, unknown>;
+}
+
+/** Referência a elemento do Acervo (kind:key) — validada no servidor. */
+export interface RegraRef { kind: string; key: string }
+
+/** Elemento do Acervo exposto no catálogo de patrimônio. */
+export interface AcervoCatalogoItem {
+  regra: RegraRef;
+  nome: string;
+  categoria: string | null;
+  descricao: string | null;
+  prerequisitos: { kind: string; key: string; nome: string; minLevel: number }[];
 }
 
 export interface Equipamento {
@@ -884,6 +898,8 @@ export interface VeiculoInput {
   fuel?: string;
   capacity?: string;
   ownership?: "propriedade" | "compartilhado";
+  regra?: RegraRef;
+  ignorarPrerequisitos?: boolean;
   data?: Record<string, unknown>;
 }
 

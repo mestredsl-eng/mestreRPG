@@ -11,12 +11,14 @@ import {
   moneyTransactions,
   operacaoEstornos,
   itemTemplates,
+  sheetVersions,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { somenteEnviados } from "../lib/parcial.js";
-import { carregarRegras, configRegrasSchema } from "../lib/regras.js";
+import { carregarRegras, configRegrasSchema, verificarPrerequisitosElemento } from "../lib/regras.js";
+import { estruturaFichaSchema } from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 
@@ -50,6 +52,51 @@ async function acessoOuErro(req: Request, res: import("express").Response): Prom
 async function configPatrimonio(campaignId: string) {
   const regras = await carregarRegras(campaignId);
   return regras.config;
+}
+
+// ---------- Pré-requisitos do Acervo em aquisições de patrimônio ----------
+
+const regraRefSchema = z.object({
+  kind: z.string().min(1).max(40),
+  key: z.string().min(1).max(80),
+});
+export type RegraRef = z.infer<typeof regraRefSchema>;
+
+/** Estrutura publicada da ficha do personagem (null se não houver). */
+async function estruturaDoPersonagem(p: typeof characters.$inferSelect) {
+  if (!p.templateVersionId) return null;
+  const [v] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, p.templateVersionId)).limit(1);
+  if (!v) return null;
+  const parse = estruturaFichaSchema.safeParse(v.structure);
+  return parse.success ? parse.data : null;
+}
+
+/**
+ * Valida pré-requisitos de um elemento do Acervo contra a ficha do
+ * personagem. Retorna null quando a aquisição é permitida; caso
+ * contrário {status, erro} pronto para res.json. O mestre só ignora
+ * com `ignorarPrerequisitos === true` explícito — auditado pelo caller.
+ */
+async function validarPrereqAquisicao(
+  a: Acesso,
+  regra: RegraRef | undefined,
+  ignorar: boolean | undefined,
+): Promise<{ status: number; erro: string; detalhes?: unknown } | null> {
+  if (!regra) return null;
+  const estrutura = await estruturaDoPersonagem(a.personagem);
+  if (!estrutura) {
+    return { status: 403, erro: "Personagem sem ficha publicada — impossível verificar pré-requisitos do Acervo" };
+  }
+  const regras = await carregarRegras(a.personagem.campaignId);
+  const dados = (a.personagem.data ?? {}) as Record<string, unknown>;
+  const r = verificarPrerequisitosElemento(estrutura, dados, regras, regra.kind, regra.key);
+  if (r.ok) return null;
+  if (a.ehMestre && ignorar === true) return null; // exceção explícita — caller audita
+  return {
+    status: 403,
+    erro: r.elemento ? `Pré-requisitos não atendidos para "${r.elemento.name}"` : "Elemento do Acervo não encontrado",
+    detalhes: r.erros,
+  };
 }
 
 const paraCentavos = (valor: number, casas: number) => Math.round(valor * 10 ** casas);
@@ -126,6 +173,9 @@ function limparEstadoInventario(data: Record<string, unknown> | undefined) {
   if (!data) return data;
   const limpo = { ...data };
   delete limpo.equipped;
+  // `regra` é metadado controlado pelo servidor (validado na aquisição):
+  // nunca aceito dentro de data pelo cliente.
+  delete limpo.regra;
   return limpo;
 }
 
@@ -158,6 +208,8 @@ const itemSchema = z.object({
   valueCents: z.number().int().optional(),
   transferable: z.boolean().default(true),
   templateId: z.string().optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -186,18 +238,27 @@ patrimonioRouter.post("/inventario", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorAdicionaItens) {
     res.status(403).json({ erro: "Você não pode adicionar itens nesta campanha" }); return;
   }
+  const neg = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (neg) {
+    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
+      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra });
+    }
+    res.status(neg.status).json({ erro: neg.erro, detalhes: neg.detalhes }); return;
+  }
   const agora = new Date();
   const id = crypto.randomUUID();
-  const { templateId, valueCents, transferable, data, ...resto } = body.data;
+  const { templateId, valueCents, transferable, data, regra, ignorarPrerequisitos, ...resto } = body.data;
   await db.insert(inventoryEntries).values({
-    id, characterId: a.personagem.id, ...resto, data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId }, createdAt: agora, updatedAt: agora,
+    id, characterId: a.personagem.id, ...resto,
+    data: { ...(limparEstadoInventario(data) ?? {}), valueCents, transferable, templateId, ...(regra ? { regra } : {}) },
+    createdAt: agora, updatedAt: agora,
   });
   await audit(req, "inventario.item.criado", { characterId: a.personagem.id, itemId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
 });
 
-const itemPatchSchema = itemSchema.partial().omit({ templateId: true });
+const itemPatchSchema = itemSchema.partial().omit({ templateId: true, regra: true, ignorarPrerequisitos: true });
 
 /** PATCH /api/characters/:id/inventario/:itemId */
 patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
@@ -293,6 +354,21 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
   }
   const qtdPedida = body.data.quantidade;
 
+  // Item vinculado a elemento do Acervo: o DESTINO precisa atender aos
+  // pré-requisitos (mesma regra da aquisição). Jogador nunca ignora;
+  // mestre administra conforme as permissões da campanha.
+  const regraItem = ((item.data ?? {}) as { regra?: RegraRef }).regra;
+  if (regraItem && !a.ehMestre) {
+    const estruturaDest = await estruturaDoPersonagem(destino);
+    const regras = await carregarRegras(destino.campaignId);
+    const r = estruturaDest
+      ? verificarPrerequisitosElemento(estruturaDest, (destino.data ?? {}) as Record<string, unknown>, regras, regraItem.kind, regraItem.key)
+      : null;
+    if (!r || !r.ok) {
+      res.status(403).json({ erro: "O personagem de destino não atende aos pré-requisitos do item" }); return;
+    }
+  }
+
   // Releitura do item, verificação de vínculos/equipado e mutação na
   // MESMA transação — um equipar concorrente não cria vínculo no meio
   // da transferência, e vice-versa.
@@ -358,6 +434,8 @@ const equipSchema = z.object({
   equipped: z.boolean().default(false),
   description: z.string().max(4000).optional(),
   inventoryEntryId: z.string().optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -375,6 +453,13 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
   const config = await configPatrimonio(a.personagem.campaignId);
   if (!a.ehMestre && !config.patrimonio.jogadorEditaEquipamentos) {
     res.status(403).json({ erro: "Edição de equipamentos não permitida" }); return;
+  }
+  const negEq = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (negEq) {
+    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
+      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "equipamento" });
+    }
+    res.status(negEq.status).json({ erro: negEq.erro, detalhes: negEq.detalhes }); return;
   }
   // Ocupação de slot verificada dentro da transação (consistência com
   // POST /equipar): dois cadastros simultâneos não tomam o mesmo slot.
@@ -397,7 +482,12 @@ patrimonioRouter.post("/equipamentos", async (req, res) => {
       name: body.data.name, kind: body.data.kind ?? null,
       slot: body.data.slot ?? null, equipped: body.data.equipped,
       description: body.data.description ?? null,
-      data: limparProcedencia(body.data.data) ?? {},
+      data: (() => {
+        const limpo = limparProcedencia(body.data.data) ?? {};
+        delete limpo.regra;
+        if (body.data.regra) limpo.regra = body.data.regra;
+        return limpo;
+      })(),
       createdAt: agora, updatedAt: agora,
     }).run();
   });
@@ -595,7 +685,14 @@ patrimonioRouter.patch("/equipamentos/:equipId", async (req, res) => {
     // requestId), que é mesclada preservando os valores do servidor.
     const { data: dataEnviada, ...resto } = d;
     const dataFinal = dataEnviada !== undefined
-      ? { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limparProcedencia(dataEnviada) }
+      ? (() => {
+          // `regra` é vínculo validado na aquisição — o PATCH não pode
+          // forjá-lo nem removê-lo via data.
+          const limpo = limparProcedencia(dataEnviada) ?? {};
+          delete limpo.regra;
+          const regraAtual = ((eqpTx.data ?? {}) as Record<string, unknown>).regra;
+          return { ...((eqpTx.data ?? {}) as Record<string, unknown>), ...limpo, ...(regraAtual !== undefined ? { regra: regraAtual } : {}) };
+        })()
       : eqpTx.data;
     tx.update(equipmentEntries).set({
       name: resto.name ?? eqpTx.name,
@@ -665,6 +762,8 @@ const veiculoSchema = z.object({
   fuel: z.string().max(120).optional(),
   capacity: z.string().max(120).optional(),
   ownership: z.enum(["propriedade", "compartilhado"]).default("propriedade"),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
   data: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -682,10 +781,19 @@ patrimonioRouter.post("/veiculos", async (req, res) => {
   if (!a.ehMestre && !config.patrimonio.jogadorEditaVeiculos) {
     res.status(403).json({ erro: "Edição de veículos não permitida" }); return;
   }
-  const { valueCents, data, ...resto } = body.data;
+  const negV = await validarPrereqAquisicao(a, body.data.regra, body.data.ignorarPrerequisitos);
+  if (negV) {
+    if (a.ehMestre && body.data.ignorarPrerequisitos === true && body.data.regra) {
+      await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: body.data.regra, tipo: "veiculo" });
+    }
+    res.status(negV.status).json({ erro: negV.erro, detalhes: negV.detalhes }); return;
+  }
+  const { valueCents, data, regra, ignorarPrerequisitos, ...resto } = body.data;
+  const dataSemRegra = { ...data };
+  delete dataSemRegra.regra;
   const agora = new Date();
   const id = crypto.randomUUID();
-  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, data: { ...data, valueCents }, createdAt: agora, updatedAt: agora });
+  await db.insert(vehicles).values({ id, characterId: a.personagem.id, campaignId: a.personagem.campaignId, ...resto, data: { ...dataSemRegra, valueCents, ...(regra ? { regra } : {}) }, createdAt: agora, updatedAt: agora });
   await audit(req, "veiculo.criado", { characterId: a.personagem.id, veiculoId: id, name: body.data.name });
   emitir(a.personagem);
   res.status(201).json({ id });
@@ -701,11 +809,14 @@ patrimonioRouter.patch("/veiculos/:veiculoId", async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [v] = await db.select().from(vehicles).where(and(eq(vehicles.id, req.params.veiculoId), eq(vehicles.characterId, a.personagem.id))).limit(1);
   if (!v) { res.status(404).json({ erro: "Veículo não encontrado" }); return; }
-  const { valueCents, data, ...resto } = somenteEnviados(body.data, req.body);
+  const { valueCents, data, regra: _regraPatch, ignorarPrerequisitos: _ignorarPatch, ...resto } = somenteEnviados(body.data, req.body);
   const dAtual = (v.data ?? {}) as Record<string, unknown>;
+  // `regra` é imutável após a aquisição (vínculo validado no servidor).
+  const dataSemRegra = { ...(data ?? {}) };
+  delete dataSemRegra.regra;
   await db.update(vehicles).set({
     ...resto,
-    data: { ...dAtual, ...(data ?? {}), ...(valueCents !== undefined ? { valueCents } : {}) },
+    data: { ...dAtual, ...dataSemRegra, ...(valueCents !== undefined ? { valueCents } : {}) },
     updatedAt: new Date(),
   }).where(eq(vehicles.id, v.id));
   emitir(a.personagem);
@@ -1054,6 +1165,8 @@ const operacaoSchema = z.object({
   quantidade: z.number().positive().optional(),
   contraparte: z.string().max(160).optional(),
   requestId: z.string().max(120).optional(),
+  regra: regraRefSchema.optional(),
+  ignorarPrerequisitos: z.boolean().optional(),
 });
 
 /** Metadados persistidos na movimentação para rastreio e estorno. */
@@ -1126,6 +1239,20 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
     }
   } else if (!body.data.item && !body.data.templateId) {
     res.status(400).json({ erro: "Compra requer dados do item ou templateId do catálogo" }); return;
+  }
+
+  // Pré-requisitos do Acervo: validados ANTES de qualquer débito/gravação.
+  // A referência vem do cliente apenas como kind:key — o servidor resolve
+  // o elemento e os requisitos a partir de rule_definitions da campanha.
+  const regraCompra = body.data.regra ?? body.data.item?.regra;
+  if (isCompra && regraCompra) {
+    const negOp = await validarPrereqAquisicao(a, regraCompra, body.data.ignorarPrerequisitos);
+    if (negOp) {
+      if (a.ehMestre && body.data.ignorarPrerequisitos === true) {
+        await audit(req, "patrimonio.prerequisito.ignorado", { characterId: a.personagem.id, regra: regraCompra, tipo: "compra" });
+      }
+      res.status(negOp.status).json({ erro: negOp.erro, detalhes: negOp.detalhes }); return;
+    }
   }
 
   const requestId = body.data.requestId ?? crypto.randomUUID();
@@ -1240,6 +1367,9 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             // item.data, item.templateId ou tplData — só tplTx.id
             // (template relido e validado na transação) pode persistir.
             delete mesclado.templateId;
+            // `regra` só pode vir de regraCompra (validada no servidor);
+            // nunca de templateData/item.data forjados pelo cliente.
+            delete mesclado.regra;
             if (tplTx) mesclado.templateId = tplTx.id;
             // Campos internos sempre definidos pelo servidor.
             mesclado.valueCents = unitCents ?? undefined;
@@ -1250,6 +1380,7 @@ patrimonioRouter.post("/financeiro/operacao", async (req, res) => {
             };
             mesclado.origem = "compra";
             mesclado.operacaoId = requestId;
+            if (regraCompra) mesclado.regra = regraCompra;
             return mesclado;
           })(),
           createdAt: agora, updatedAt: agora,

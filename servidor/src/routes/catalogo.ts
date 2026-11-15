@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { itemTemplates, inventoryEntries } from "../db/schema.js";
+import { carregarRegras } from "../lib/regras.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -19,13 +20,29 @@ const templateSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-/** GET /api/campaigns/:campaignId/inventario — catálogo + categorias */
+/** GET /api/campaigns/:campaignId/inventario — catálogo + categorias +
+ *  elementos do Acervo (kind item/veiculo) com pré-requisitos. */
 catalogoRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
   const itens = await db.select().from(itemTemplates)
     .where(and(eq(itemTemplates.campaignId, req.params.campaignId), eq(itemTemplates.isActive, true)))
     .orderBy(itemTemplates.category, itemTemplates.name);
   const categorias = [...new Set(itens.map((i) => i.category).filter(Boolean) as string[])].sort();
-  res.json({ itens, categorias });
+  // Acervo aplicado à campanha: elementos de aquisição com pré-requisitos.
+  const regras = await carregarRegras(req.params.campaignId);
+  const acervo = [...regras.porKind.entries()]
+    .filter(([kind]) => kind === "item" || kind === "veiculo")
+    .flatMap(([, els]) => els.filter((e) => e.definition.disponivel !== false).map((e) => ({
+      regra: { kind: e.kind, key: e.key },
+      nome: e.name,
+      categoria: e.category,
+      descricao: (e.definition as { descricao?: string }).descricao ?? null,
+      prerequisitos: (e.definition.prerequisitos ?? []).map((p) => ({
+        kind: p.kind, key: p.key,
+        nome: regras.elementos.get(`${p.kind}:${p.key}`)?.name ?? `${p.kind}:${p.key}`,
+        minLevel: p.minLevel ?? 1,
+      })),
+    })));
+  res.json({ itens, categorias, acervo });
 });
 
 /** POST /api/campaigns/:campaignId/inventario — novo item do catálogo (mestre) */

@@ -926,3 +926,60 @@ export function pontosParaFicha(estrutura: EstruturaFicha, regras: RegrasCampanh
 
 // Re-export para uso em rotas
 export { calcularPontos };
+
+// ---------- Pré-requisitos de elementos fora da ficha (patrimônio) ----------
+
+export interface ResultadoPrereq {
+  ok: boolean;
+  elemento: ElementoRegra | null;
+  erros: { codigo: string; mensagem: string }[];
+  /** nível atual de cada pré-requisito (kind:key → nível) para a UI */
+  niveis: Record<string, number>;
+}
+
+/**
+ * Verifica se a ficha do personagem atende aos `definition.prerequisitos`
+ * de um elemento do Acervo (ex.: item/veiculo do patrimônio). Reutiliza
+ * `extrairEscolhas` — a mesma fonte de verdade da validação da ficha.
+ * Nível ausente = 0; pré-requisito que não existe no catálogo NUNCA é
+ * considerado cumprido.
+ */
+export function verificarPrerequisitosElemento(
+  estrutura: EstruturaFicha,
+  dados: Record<string, unknown>,
+  regras: RegrasCampanha,
+  kind: string,
+  key: string,
+): ResultadoPrereq {
+  const elemento = regras.elementos.get(CHAVE(kind, key)) ?? null;
+  const erros: ResultadoPrereq["erros"] = [];
+  const niveis: Record<string, number> = {};
+  if (!elemento) {
+    return { ok: false, elemento, erros: [{ codigo: "elemento_inexistente", mensagem: `Elemento ${kind}:${key} não existe nas regras da campanha` }], niveis };
+  }
+  if (!elemento.definition.disponivel) {
+    erros.push({ codigo: "indisponivel", mensagem: `"${elemento.name}" está desativado nesta campanha` });
+  }
+  // Nível atual por elemento — mesmo critério de validarRegras (maior nível vence)
+  const nivelPorElemento = new Map<string, number>();
+  for (const e of extrairEscolhas(estrutura, dados, regras)) {
+    if (!e.elemento || !e.selecionado) continue;
+    const chave = CHAVE(e.elemento.kind, e.elemento.key);
+    nivelPorElemento.set(chave, Math.max(nivelPorElemento.get(chave) ?? 0, e.level));
+  }
+  for (const pre of elemento.definition.prerequisitos ?? []) {
+    const chavePre = CHAVE(pre.kind, pre.key);
+    const atual = nivelPorElemento.get(chavePre) ?? 0;
+    niveis[chavePre] = atual;
+    const alvo = regras.elementos.get(chavePre);
+    if (!alvo) {
+      erros.push({ codigo: "pre_requisito_inexistente", mensagem: `"${elemento.name}" exige ${pre.kind}:${pre.key} (elemento inexistente nas regras)` });
+      continue;
+    }
+    const exigido = pre.minLevel ?? 1;
+    if (atual < exigido) {
+      erros.push({ codigo: "pre_requisito", mensagem: `"${elemento.name}" exige ${alvo.name} nível ${exigido} (atual: ${atual})` });
+    }
+  }
+  return { ok: erros.length === 0, elemento, erros, niveis };
+}

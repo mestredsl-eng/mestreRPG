@@ -4,6 +4,7 @@ import {
   type ItemInventario, type ItemInventarioInput, type Equipamento,
   type Veiculo, type VeiculoInput, type Financeiro, type ContaFinanceira, type ContaInput,
   type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo, type TransacaoFinanceira,
+  type AcervoCatalogoItem,
 } from "../api";
 import { getSocket } from "../socket";
 import { ModalConfirmar } from "../Modal";
@@ -60,7 +61,7 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
       {erro && <p className="erro">{erro}</p>}
       {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
       {aba === "equipamentos" && <Equipamentos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "veiculos" && <Veiculos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "veiculos" && <Veiculos characterId={characterId} campaignId={campaignId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
       {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
       {aba === "catalogo" && <Catalogo campaignId={campaignId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
     </section>
@@ -79,6 +80,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   const [pesoMax, setPesoMax] = useState<number | null>(null);
   const [pesoExcedido, setPesoExcedido] = useState(false);
   const [catalogo, setCatalogo] = useState<{ id: string; name: string; category: string | null; data: Record<string, unknown> }[]>([]);
+  const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
   const [busca, setBusca] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
@@ -109,11 +111,11 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
     try {
       const [inv, cat, pers] = await Promise.all([
         api.listarInventario(characterId),
-        api.listarCatalogo(campaignId).catch(() => ({ itens: [], categorias: [] })),
+        api.listarCatalogo(campaignId).catch((): { itens: never[]; categorias: never[]; acervo: AcervoCatalogoItem[] } => ({ itens: [], categorias: [], acervo: [] })),
         api.listarPersonagens(campaignId).catch(() => ({ personagens: [] })),
       ]);
       setItens(inv.itens); setPesoTotal(inv.pesoTotal); setPesoMax(inv.pesoMaximo); setPesoExcedido(inv.pesoExcedido);
-      setCatalogo(cat.itens); setPersonagens(pers.personagens);
+      setCatalogo(cat.itens); setAcervo(cat.acervo ?? []); setPersonagens(pers.personagens);
     } catch (e) { aoErro(e); }
   }, [characterId, campaignId, aoErro]);
 
@@ -126,6 +128,11 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   useEffect(() => { api.listarEquipamentos(characterId).then((r) => setSlots(r.slots)).catch(() => undefined); }, [characterId]);
   useEffect(() => { void carregarFin(); }, [carregarFin]);
 
+  const acervoItens = acervo.filter((e) => e.regra.kind === "item");
+  const textoRequisito = (e?: AcervoCatalogoItem) =>
+    !e ? "" : e.prerequisitos.length
+      ? "Requisito: " + e.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")
+      : "Sem pré-requisitos";
   const categorias = [...new Set([...itens.map((i) => i.category).filter(Boolean) as string[], ...catalogo.map((c) => c.category).filter(Boolean) as string[]])].sort();
   const visiveis = itens.filter((i) =>
     (!filtroCat || i.category === filtroCat) &&
@@ -180,7 +187,14 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
 
       {!somenteLeitura && (
       <form className="formulario linha" onSubmit={submeterNovo}>
-        <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
+        <select aria-label="Item do Acervo" value="" onChange={(e) => {
+          const el = acervoItens.find((x) => x.regra.key === e.target.value);
+          if (el) setNovo({ name: el.nome, quantity: 1, category: el.categoria ?? undefined, regra: el.regra });
+        }}>
+          <option value="">Do Acervo…</option>
+          {acervoItens.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")}` : ""}</option>)}
+        </select>
+        <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value, regra: undefined })} required />
         <input type="number" min="0.01" step="any" placeholder="Qtd" value={novo.quantity} onChange={(e) => setNovo({ ...novo, quantity: Number(e.target.value) })} style={{ width: 80 }} />
         <input placeholder="Categoria" value={novo.category ?? ""} onChange={(e) => setNovo({ ...novo, category: e.target.value })} list="cats-inv" />
         <datalist id="cats-inv">{categorias.map((c) => <option key={c} value={c} />)}</datalist>
@@ -190,7 +204,9 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
         {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
       )}
-
+      {novo.regra && (
+        <p className="meta">{textoRequisito(acervoItens.find((x) => x.regra.key === novo.regra!.key))} — o servidor valida o nível atual da ficha na confirmação.</p>
+      )}
       <table className="tabela tabela-responsiva">
         <thead><tr><th>Item</th><th>Qtd</th><th>Categoria</th><th>Peso</th><th>Local</th><th></th></tr></thead>
         <tbody>
@@ -314,6 +330,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
         <ModalCompra
           characterId={characterId}
           catalogo={catalogo}
+          acervo={acervoItens}
           fin={fin}
           aoErro={aoErro}
           aoOk={async () => { setComprando(false); await carregar(); await carregarFin(); }}
@@ -377,15 +394,17 @@ function TransferirButton({ item, personagens, proprioId, souMestre, onTransfer,
 
 const fmtOp = (v: number, casas: number) => v.toFixed(casas);
 
-function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
+function ModalCompra({ characterId, catalogo, acervo = [], fin, aoErro, aoOk, aoFechar }: {
   characterId: string;
   catalogo: { id: string; name: string; category: string | null; data: Record<string, unknown> }[];
+  acervo?: AcervoCatalogoItem[];
   fin: Financeiro | null;
   aoErro: (e: unknown) => void;
   aoOk: () => Promise<void>;
   aoFechar: () => void;
 }) {
   const [templateId, setTemplateId] = useState("");
+  const [acervoSel, setAcervoSel] = useState<AcervoCatalogoItem | null>(null);
   const [nome, setNome] = useState("");
   const [qtd, setQtd] = useState(1);
   const [valorUnit, setValorUnit] = useState<number | "">("");
@@ -399,7 +418,7 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
   const contaSel = fin?.contas.find((c) => c.id === contaId);
   const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
-  const valido = (templateId !== "" || nome.trim().length > 0) && Number(qtd) > 0 &&
+  const valido = (templateId !== "" || acervoSel !== null || nome.trim().length > 0) && Number(qtd) > 0 &&
     (pagar ? !!contaId && Number(valorUnit) > 0 : true);
   const submeter = async (e: FormEvent) => {
     e.preventDefault();
@@ -411,7 +430,9 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
         valor: pagar ? total : (total > 0 ? total : undefined),
         pagar, quantidade: Number(qtd),
         templateId: templateId || undefined,
-        item: templateId ? undefined : { name: nome.trim(), quantity: 1 },
+        item: templateId ? undefined : acervoSel
+          ? { name: acervoSel.nome, quantity: 1, regra: acervoSel.regra }
+          : { name: nome.trim(), quantity: 1 },
         requestId: reqId,
       });
       await aoOk();
@@ -429,6 +450,25 @@ function ModalCompra({ characterId, catalogo, fin, aoErro, aoOk, aoFechar }: {
             </select>
           </label>
           {templateId === "" && (
+            <label>Item do Acervo
+              <select value={acervoSel?.regra.key ?? ""} onChange={(e) => {
+                const el = acervo.find((x) => x.regra.key === e.target.value) ?? null;
+                setAcervoSel(el);
+                if (el) setNome(el.nome);
+              }}>
+                <option value="">Item avulso…</option>
+                {acervo.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>)}
+              </select>
+            </label>
+          )}
+          {acervoSel && (
+            <p className="meta">
+              {acervoSel.prerequisitos.length
+                ? "Requisito: " + acervoSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ") + ". O servidor valida seu nível atual na confirmação."
+                : "Sem pré-requisitos."}
+            </p>
+          )}
+          {templateId === "" && acervoSel === null && (
             <label>Nome do item
               <input value={nome} onChange={(e) => setNome(e.target.value)} required />
             </label>
@@ -649,11 +689,12 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
 
 // ================= VEÍCULOS =================
 
-function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
-  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
+function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
+  const [acervo, setAcervo] = useState<AcervoCatalogoItem[]>([]);
   const [busca, setBusca] = useState("");
   const [filtroTipo, setFiltroTipo] = useState("");
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
@@ -661,8 +702,14 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
 
   const carregar = useCallback(async () => {
-    try { setLista((await api.listarVeiculos(characterId)).veiculos); } catch (e) { aoErro(e); }
-  }, [characterId, aoErro]);
+    try {
+      const [v, cat] = await Promise.all([
+        api.listarVeiculos(characterId),
+        api.listarCatalogo(campaignId).catch((): { itens: never[]; categorias: never[]; acervo: AcervoCatalogoItem[] } => ({ itens: [], categorias: [], acervo: [] })),
+      ]);
+      setLista(v.veiculos); setAcervo((cat.acervo ?? []).filter((e) => e.regra.kind === "veiculo"));
+    } catch (e) { aoErro(e); }
+  }, [characterId, campaignId, aoErro]);
   useEffect(() => { void carregar(); recarregarRef.fn = carregar; }, [carregar, recarregarRef]);
 
   const TIPOS = ["carro", "motocicleta", "caminhao", "barco", "helicoptero", "aviao", "militar", "futurista", "outro"];
@@ -689,7 +736,16 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
         catch (err) { aoErro(err); }
       }}>
         <div className="grade-2">
-          <label>Nome<input value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required /></label>
+          <label>Veículo do Acervo
+            <select value="" onChange={(e) => {
+              const el = acervo.find((x) => x.regra.key === e.target.value);
+              if (el) setNovo({ name: el.nome, kind: "carro", regra: el.regra });
+            }}>
+              <option value="">Cadastro livre…</option>
+              {acervo.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>)}
+            </select>
+          </label>
+          <label>Nome<input value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value, regra: undefined })} required /></label>
           <label>Tipo
             <select value={novo.kind} onChange={(e) => setNovo({ ...novo, kind: e.target.value })}>
               {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -707,6 +763,16 @@ function Veiculos({ characterId, somenteLeitura = false, aoErro, recarregarRef }
             </select>
           </label>
         </div>
+        {novo.regra && (
+          <p className="meta">
+            {(() => {
+              const el = acervo.find((x) => x.regra!.key === novo.regra!.key);
+              return el?.prerequisitos.length
+                ? "Requisito: " + el.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ") + ". O servidor valida seu nível atual na confirmação."
+                : "Sem pré-requisitos.";
+            })()}
+          </p>
+        )}
         <button type="submit">Adicionar veículo</button>
       </form>
       )}
