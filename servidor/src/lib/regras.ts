@@ -493,6 +493,8 @@ export interface RequisitoAquisicao {
   atendido: boolean;
   /** pré-requisito aponta para elemento que não existe nas regras */
   inexistente?: boolean;
+  /** pré-requisito existe, mas foi desativado pelo mestre */
+  indisponivel?: boolean;
 }
 
 export interface ResultadoPrerequisitosAquisicao {
@@ -541,13 +543,16 @@ export function avaliarPrerequisitosAquisicao(
     const exigido = pre.minLevel ?? 1;
     const nome = alvo?.name ?? nomeLegivel(pre.key);
     const inexistente = !alvo;
-    const atendido = !inexistente && atual >= exigido;
+    const indisponivel = !!alvo && alvo.definition.disponivel === false;
+    const atendido = !inexistente && !indisponivel && atual >= exigido;
     if (!atendido) {
       mensagens.push(inexistente
         ? `"${elemento.name}" exige ${pre.kind}:${pre.key} (elemento inexistente nas regras)`
-        : `Você precisa de ${nome} nível ${exigido}. Seu nível atual é ${atual}.`);
+        : indisponivel
+          ? `O pré-requisito ${nome} está desativado nas regras da campanha`
+          : `Você precisa de ${nome} nível ${exigido}. Seu nível atual é ${atual}.`);
     }
-    return { kind: pre.kind, key: pre.key, nome, minLevel: exigido, nivelAtual: atual, atendido, inexistente };
+    return { kind: pre.kind, key: pre.key, nome, minLevel: exigido, nivelAtual: atual, atendido, inexistente, indisponivel };
   });
 
   return { ok: mensagens.length === 0, elemento, requisitos, mensagens };
@@ -1045,7 +1050,9 @@ export function verificarPrerequisitosElemento(
   for (const q of r.requisitos.filter((x) => !x.atendido)) {
     erros.push(q.inexistente
       ? { codigo: "pre_requisito_inexistente", mensagem: `"${r.elemento!.name}" exige ${q.kind}:${q.key} (elemento inexistente nas regras)` }
-      : { codigo: "pre_requisito", mensagem: `"${r.elemento!.name}" exige ${q.nome} nível ${q.minLevel} (atual: ${q.nivelAtual})` });
+      : q.indisponivel
+        ? { codigo: "pre_requisito_indisponivel", mensagem: `"${r.elemento!.name}" exige ${q.nome}, mas esse pré-requisito está desativado` }
+        : { codigo: "pre_requisito", mensagem: `"${r.elemento!.name}" exige ${q.nome} nível ${q.minLevel} (atual: ${q.nivelAtual})` });
   }
   return { ok: erros.length === 0, elemento: r.elemento, erros, niveis };
 }
