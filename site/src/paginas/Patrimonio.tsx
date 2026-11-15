@@ -441,10 +441,31 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
   const [ocupado, setOcupado] = useState(false);
   const reqId = useRef(crypto.randomUUID()).current;
   const casas = fin?.config.casasDecimais ?? 2;
-  // A moeda do valor é a da CONTA selecionada — nunca a principal por
-  // padrão (o backend movimenta o valor nominal na moeda da conta).
-  const dispSel = acervoSel ? requisitos[`${acervoSel.regra.kind}:${acervoSel.regra.key}`] : undefined;
-  const bloqueado = !!(dispSel && !dispSel.ok);
+  // Resolve tanto a seleção avulsa quanto o vínculo salvo pelo mestre
+  // no template. A UI falha fechado quando o vínculo não pode ser resolvido
+  // ou a disponibilidade do personagem ainda não foi calculada.
+  const templateSel = templateId ? catalogo.find((item) => item.id === templateId) : undefined;
+  const regraTemplateRaw = templateSel?.data?.regra;
+  const temRegraTemplate = regraTemplateRaw !== undefined && regraTemplateRaw !== null;
+  const regraTemplate = regraTemplateRaw && typeof regraTemplateRaw === "object" &&
+    typeof (regraTemplateRaw as RegraRef).kind === "string" &&
+    typeof (regraTemplateRaw as RegraRef).key === "string"
+      ? regraTemplateRaw as RegraRef
+      : undefined;
+  const regraTemplateInvalida = temRegraTemplate && !regraTemplate;
+  const itemTemplateAcervo = regraTemplate
+    ? acervo.find((item) => item.regra.kind === regraTemplate.kind && item.regra.key === regraTemplate.key)
+    : undefined;
+  const itemAcervoSelecionado = templateId ? itemTemplateAcervo : acervoSel ?? undefined;
+  const regraSelecionada = templateId ? regraTemplate : acervoSel?.regra;
+  const dispSel = regraSelecionada
+    ? requisitos[`${regraSelecionada.kind}:${regraSelecionada.key}`]
+    : undefined;
+  const templateApontaVeiculo = !!(templateId && regraTemplate && regraTemplate.kind !== "item");
+  const templateSemElemento = !!(templateId && temRegraTemplate && regraTemplate && !itemTemplateAcervo);
+  const templateSemDisponibilidade = !!(templateId && temRegraTemplate && regraTemplate && itemTemplateAcervo && !dispSel);
+  const bloqueado = regraTemplateInvalida || templateApontaVeiculo || templateSemElemento ||
+    templateSemDisponibilidade || (!!regraSelecionada && (!dispSel || !dispSel.ok));
   const contaSel = fin?.contas.find((c) => c.id === contaId);
   const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
@@ -474,9 +495,23 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
         <h4>Comprar item</h4>
         <form className="formulario" onSubmit={submeter}>
           <label>Item do catálogo
-            <select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+            <select value={templateId} onChange={(e) => {
+              setTemplateId(e.target.value);
+              setAcervoSel(null);
+            }}>
               <option value="">Item avulso…</option>
-              {catalogo.map((c) => <option key={c.id} value={c.id}>{c.name}{c.category ? ` (${c.category})` : ""}</option>)}
+              {catalogo.map((item) => {
+                const regra = item.data?.regra as RegraRef | undefined;
+                const disponibilidade = regra ? requisitos[`${regra.kind}:${regra.key}`] : undefined;
+                const sufixo = regra
+                  ? regra.kind !== "item" ? " — veículo (use a aba Veículos)"
+                    : disponibilidade?.ok ? " — requisito atendido"
+                    : " — aquisição indisponível"
+                  : "";
+                return <option key={item.id} value={item.id}>
+                  {item.name}{item.category ? ` (${item.category})` : ""}{sufixo}
+                </option>;
+              })}
             </select>
           </label>
           {templateId === "" && (
@@ -494,15 +529,26 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
               </select>
             </label>
           )}
-          {acervoSel && (
+          {itemAcervoSelecionado && (
             <p className={`meta ${bloqueado ? "erro" : ""}`}>
               {dispSel && dispSel.prerequisitos.length
                 ? "Requisito: " + dispSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel} — personagem: ${pr.nivelAtual}`).join(" + ")
-                : acervoSel.prerequisitos.length
-                  ? "Requisito: " + acervoSel.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ")
+                : itemAcervoSelecionado.prerequisitos.length
+                  ? "Requisito: " + itemAcervoSelecionado.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ")
                   : "Sem pré-requisitos."}
-              {bloqueado && <> Aquisição indisponível. {dispSel!.mensagens.join(" ")}</>}
+              {bloqueado && <> Aquisição indisponível. {dispSel?.mensagens.join(" ") ?? (
+                templateApontaVeiculo
+                  ? "Este template está vinculado a um veículo. Faça a aquisição pela aba Veículos."
+                  : regraTemplateInvalida
+                    ? "O vínculo do Acervo no catálogo é inválido. Peça ao mestre para revisar o template."
+                    : templateSemElemento
+                      ? "O elemento vinculado não está ativo ou não existe nas regras desta campanha."
+                      : "Não foi possível verificar os pré-requisitos. Atualize o patrimônio ou peça ao mestre para revisar o vínculo."
+              )}</>}
             </p>
+          )}
+          {templateId !== "" && !temRegraTemplate && (
+            <p className="meta">Template manual — sem vínculo com pré-requisitos do Acervo.</p>
           )}
           {templateId === "" && acervoSel === null && (
             <label>Nome do item
