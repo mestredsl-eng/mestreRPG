@@ -224,7 +224,33 @@ function montarFicha(
         const hp = resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
         if (hp) hp.historico = [];
         const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
-        if (vit) vit.historico = [];
+        if (vit) {
+          vit.historico = [];
+          // A conversão automática de ferimentos calcula % sobre o HP
+          // MÁXIMO REAL (oculto do leitor): um nível de vitalidade alto
+          // demais para o HP público denunciaria o atributo privado.
+          // Se o nível atual nasceu de conversão e excede o que a
+          // porcentagem PÚBLICA de HP justificaria, o excedente é
+          // clampado — nível definido manualmente pelo mestre (último
+          // evento não foi conversão) é escolha narrativa e segue visível.
+          const cfgVit = regras.config.vitalidade;
+          const conv = regras.config.conversaoFerimento;
+          const estadoVit = lerVitalidade(dados);
+          const histVit = estadoVit.historico ?? [];
+          const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
+          const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
+          if (veioDeConversao && conv?.habilitada && cfgVit?.niveis?.length) {
+            const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
+            const tetoPublico = Math.min(nivelExigidoPorHp(conv, pctPublico) ?? 0, cfgVit.niveis.length - 1);
+            if (vit.nivel > tetoPublico) {
+              const niv = cfgVit.niveis[tetoPublico];
+              vit.nivel = tetoPublico;
+              vit.nome = niv.nome;
+              vit.penalidadeDados = niv.penalidadeDados;
+              vit.bloqueiaAcoes = niv.bloqueiaAcoes;
+            }
+          }
+        }
         return {
           hp,
           vitalidade: vit,
