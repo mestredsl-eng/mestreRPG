@@ -171,6 +171,36 @@ try {
   const fJ3 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
   t("jogador vê vitalidade manual do mestre (nível 3)", fJ3.json?.ficha?.vida?.vitalidade?.nivel === 3, JSON.stringify(fJ3.json?.ficha?.vida?.vitalidade));
 
+  // ---------- Piso narrativo: manual 3 + conversão → 4 ----------
+  // O nível real sobe para 4 por conversão (máx. real), mas o jogador
+  // não pode perder o piso manual 3 — só o incremento automático é
+  // clampado. Limiares novos: só pct ≤ 60% (do máximo REAL) exige 4.
+  sec("Privacidade — piso manual preservado sob conversão");
+  r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
+    cookie: ids.cookieMestre,
+    body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 60, nivel: 4 }] } },
+  });
+  t("mestre ajusta limiar p/ nível 4", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
+  // atual 125 − 40 = 85 → pct real 56,7% ≤ 60 → sobe p/ nível 4.
+  // Público: HP exibido 85/100 → pct 85% → nenhum limiar → teto 0.
+  r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 40, motivo: "Surra completa" } });
+  t("conversão eleva vitalidade real p/ nível 4", r.status === 200 && r.json?.ferimento?.para === 4, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
+
+  const fM4 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.cookieMestre });
+  const fJ4 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("mestre vê nível real 4", fM4.json?.ficha?.vida?.vitalidade?.nivel === 4, JSON.stringify(fM4.json?.ficha?.vida?.vitalidade));
+  t("jogador vê piso manual 3 (incremento automático oculto)", fJ4.json?.ficha?.vida?.vitalidade?.nivel === 3, JSON.stringify(fJ4.json?.ficha?.vida?.vitalidade));
+
+  // Nova decisão manual posterior redefine tudo — jogador vê o real.
+  r = await req(BASE, "POST", `/characters/${idNpc}/vitalidade`, { cookie: ids.cookieMestre, body: { nivel: 1, motivo: "Recuperou parcialmente" } });
+  t("mestre redefine vitalidade p/ nível 1", r.status === 200, `status=${r.status}`);
+  const fJ5 = await req(BASE, "GET", `/characters/${idNpc}`, { cookie: ids.j1.cookie });
+  t("jogador vê nova decisão manual (nível 1)", fJ5.json?.ficha?.vida?.vitalidade?.nivel === 1, JSON.stringify(fJ5.json?.ficha?.vida?.vitalidade));
+
+  // Personagem normal do jogador não é afetado pela regra de NPC.
+  const fPj = await req(BASE, "GET", `/characters/${idPj}`, { cookie: ids.j1.cookie });
+  t("personagem normal do jogador inalterado", fPj.status === 200 && fPj.json?.ficha != null);
+
   // ---------- VTT: token de NPC oculto ----------
   sec("VTT — token de NPC oculto por padrão");
   const sess = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa NPC" } });

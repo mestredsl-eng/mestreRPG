@@ -227,24 +227,33 @@ function montarFicha(
         if (vit) {
           vit.historico = [];
           // A conversão automática de ferimentos calcula % sobre o HP
-          // MÁXIMO REAL (oculto do leitor): um nível de vitalidade alto
-          // demais para o HP público denunciaria o atributo privado.
-          // Se o nível atual nasceu de conversão e excede o que a
-          // porcentagem PÚBLICA de HP justificaria, o excedente é
-          // clampado — nível definido manualmente pelo mestre (último
-          // evento não foi conversão) é escolha narrativa e segue visível.
+          // MÁXIMO REAL (oculto do leitor): o incremento automático além
+          // do que a porcentagem PÚBLICA de HP justificaria denunciaria
+          // o atributo privado. Piso narrativo: o ÚLTIMO nível definido
+          // manualmente pelo mestre permanece visível mesmo quando uma
+          // conversão posterior elevou o nível real — só o excedente
+          // automático é clampado. Se o último evento foi manual, a
+          // escolha do mestre é exibida integralmente.
           const cfgVit = regras.config.vitalidade;
           const conv = regras.config.conversaoFerimento;
           const estadoVit = lerVitalidade(dados);
           const histVit = estadoVit.historico ?? [];
-          const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
+          let pisoManual = 0;
+          let ultimoVit: (typeof histVit)[number] | null = null;
+          for (const ev of histVit) {
+            if (ev.origem !== "conversao-ferimento" && typeof ev.nivelNovo === "number") {
+              pisoManual = ev.nivelNovo;
+            }
+            ultimoVit = ev;
+          }
           const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
           if (veioDeConversao && conv?.habilitada && cfgVit?.niveis?.length) {
             const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
             const tetoPublico = Math.min(nivelExigidoPorHp(conv, pctPublico) ?? 0, cfgVit.niveis.length - 1);
-            if (vit.nivel > tetoPublico) {
-              const niv = cfgVit.niveis[tetoPublico];
-              vit.nivel = tetoPublico;
+            const nivelExibido = Math.max(pisoManual, Math.min(vit.nivel, tetoPublico));
+            if (nivelExibido !== vit.nivel) {
+              const niv = cfgVit.niveis[nivelExibido];
+              vit.nivel = nivelExibido;
               vit.nome = niv.nome;
               vit.penalidadeDados = niv.penalidadeDados;
               vit.bloqueiaAcoes = niv.bloqueiaAcoes;
