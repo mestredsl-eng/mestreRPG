@@ -9,7 +9,7 @@
       "sistema": "Caçadores Caçados",
       "edicao": "1ª edição — infraestrutura e tecnologia",
       "tipo": "suplemento",
-      "versao": 1,
+      "versao": 2,
       "itens": [
         {
           "kind": "item",
@@ -27,7 +27,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 25,
+            "valueCents": 1800000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 18000,
+              "faixaPrecoBRL": {
+                "min": 8000,
+                "max": 50000
+              },
+              "unidadeCompra": "servidor de entrada sem rack completo",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Configuração de entrada; CPU, RAM, discos, fontes redundantes e licenças alteram preço e peso."
+            }
           },
           "ordem": 0
         },
@@ -47,7 +62,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.5,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 4000
+              },
+              "unidadeCompra": "switch gerenciável de referência",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 1
         },
@@ -67,7 +97,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 400,
+                "max": 5000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 2
         },
@@ -87,7 +132,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.6,
+            "valueCents": 80000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 800,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 2500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 3
         },
@@ -107,7 +167,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.25,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 700
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 4
         },
@@ -127,7 +202,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.2,
+            "valueCents": 1500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 15000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 35000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende da categoria de cabeamento, acessórios, calibração e fabricante."
+            }
           },
           "ordem": 5
         },
@@ -147,7 +237,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 4,
+            "valueCents": 6000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 60000,
+              "faixaPrecoBRL": {
+                "min": 20000,
+                "max": 180000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Equipamento profissional; faixa de frequência, precisão e calibração determinam o preço."
+            }
           },
           "ordem": 6
         },
@@ -167,7 +272,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 15,
+            "valueCents": 1800000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 18000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 45000
+              },
+              "unidadeCompra": "estação de trabalho configurada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 7
         },
@@ -187,7 +307,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3.5,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2000,
+                "max": 18000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 8
         },
@@ -207,7 +342,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.5,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 2500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 9
         },
@@ -227,7 +377,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 2600
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 10
         },
@@ -247,7 +412,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.2,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 1200
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 11
         },
@@ -260,7 +440,22 @@
           "definition": {
             "descricao": "Equipamento de fabricação aditiva para protótipos e peças.",
             "subcategoria": "Fabricação digital",
-            "ordem": 12
+            "ordem": 12,
+            "weight": 10,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 1800,
+                "max": 12000
+              },
+              "unidadeCompra": "unidade de mesa",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 12
         },
@@ -280,7 +475,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 1600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 16000,
+              "faixaPrecoBRL": {
+                "min": 6000,
+                "max": 45000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende da precisão, área de captura, software e acessórios."
+            }
           },
           "ordem": 13
         },
@@ -300,7 +510,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 1.2,
+            "valueCents": 1800000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 18000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 45000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 14
         },
@@ -320,7 +545,22 @@
                 "key": "seguranca",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.7,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 6000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 15
         },
@@ -340,7 +580,22 @@
                 "key": "seguranca",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.25,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 1400
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 16
         },
@@ -360,7 +615,22 @@
                 "key": "seguranca",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 18,
+            "valueCents": 1500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 15000,
+              "faixaPrecoBRL": {
+                "min": 6000,
+                "max": 35000
+              },
+              "unidadeCompra": "estação completa com monitores",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço de estação com monitores, sem obras ou infraestrutura física da sala."
+            }
           },
           "ordem": 17
         },
@@ -380,7 +650,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 0.4,
+            "valueCents": 220000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2200,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 6500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 18
         },
@@ -400,7 +685,22 @@
                 "key": "seguranca",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 10,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 16000
+              },
+              "unidadeCompra": "kit portátil",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 19
         },
@@ -420,7 +720,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 5000,
+              "faixaPrecoBRL": {
+                "min": 1800,
+                "max": 15000
+              },
+              "unidadeCompra": "appliance de entrada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 20
         },
@@ -440,7 +755,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 3,
+            "valueCents": 450000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4500,
+              "faixaPrecoBRL": {
+                "min": 1800,
+                "max": 10000
+              },
+              "unidadeCompra": "NAS de 2 baias sem discos grandes",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "NAS de duas baias sem discos de grande capacidade; discos e capacidade final são adicionais."
+            }
           },
           "ordem": 21
         },
@@ -460,7 +790,22 @@
                 "key": "computador",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 2,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2000,
+                "max": 18000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 22
         },
@@ -473,7 +818,22 @@
           "definition": {
             "descricao": "Equipamento de conectividade via satélite.",
             "subcategoria": "Comunicação",
-            "ordem": 23
+            "ordem": 23,
+            "weight": 1.5,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1500,
+                "max": 8000
+              },
+              "unidadeCompra": "terminal sem serviço de conexão",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 23
         },
@@ -486,7 +846,22 @@
           "definition": {
             "descricao": "Equipamento para ampliar a cobertura de comunicação por rádio.",
             "subcategoria": "Comunicação",
-            "ordem": 24
+            "ordem": 24,
+            "weight": 7,
+            "valueCents": 700000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 7000,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 18000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 24
         },
@@ -499,7 +874,22 @@
           "definition": {
             "descricao": "Antena para sistemas de comunicação compatíveis.",
             "subcategoria": "Comunicação",
-            "ordem": 25
+            "ordem": 25,
+            "weight": 2,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 400,
+                "max": 3500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 25
         },
@@ -512,7 +902,22 @@
           "definition": {
             "descricao": "Estação fixa de radiocomunicação.",
             "subcategoria": "Comunicação",
-            "ordem": 26
+            "ordem": 26,
+            "weight": 5,
+            "valueCents": 250000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 2500,
+              "faixaPrecoBRL": {
+                "min": 900,
+                "max": 6000
+              },
+              "unidadeCompra": "unidade sem sistema irradiante completo",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 26
         },
@@ -525,7 +930,22 @@
           "definition": {
             "descricao": "Equipamento de comunicação interna para instalações.",
             "subcategoria": "Segurança patrimonial",
-            "ordem": 27
+            "ordem": 27,
+            "weight": 3,
+            "valueCents": 90000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 2400
+              },
+              "unidadeCompra": "kit para instalação básica",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 27
         },
@@ -545,7 +965,22 @@
                 "key": "tecnologia",
                 "minLevel": 1
               }
-            ]
+            ],
+            "weight": 6,
+            "valueCents": 65000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 650,
+              "faixaPrecoBRL": {
+                "min": 250,
+                "max": 1600
+              },
+              "unidadeCompra": "kit de ferramentas e acessórios",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
           },
           "ordem": 28
         }
