@@ -245,7 +245,7 @@ try {
   t("rota de veículos recusa elemento kind:item", r.status === 400, `status=${r.status}`);
   r = await post(pjJ1, "/inventario", { name: "F-16", regra: REGRA_F16 }, ids.j1.cookie);
   t("rota de inventário recusa elemento kind:veiculo", r.status === 400, `status=${r.status}`);
-  r = await post(pjJ1, "/equipamentos", { name: "Colete", regra: REGRA_CARRO }, ids.j1.cookie);
+  r = await post(pjJ2, "/equipamentos", { name: "Colete", regra: REGRA_CARRO }, ids.j2.cookie);
   t("equipamento com pré-req insuficiente bloqueado", r.status === 403, `status=${r.status}`);
 
   sec("mestre: bypass explícito auditado, sem flag respeita");
