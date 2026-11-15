@@ -49,6 +49,7 @@ export interface Guilda {
   description: string | null;
   status: string;
   createdBy: string;
+  responsavelId: string | null;
   meuPapel: "gm" | "membro" | "admin" | null;
   souGM: boolean;
   createdAt: string;
@@ -61,6 +62,10 @@ export interface GuildaMembro {
   displayName: string | null;
   role: "gm" | "membro";
   status: string;
+  // status da CONTA (ativo|bloqueado) — independente do vínculo;
+  // bloqueados seguem visíveis no roster mas não são elegíveis a
+  // transferência de responsabilidade
+  contaStatus: string;
   joinedAt: string | null;
   ehEu: boolean;
 }
@@ -178,6 +183,8 @@ export const api = {
     requisicao<{ guilda: Guilda; totalMembros: number; totalCampanhas: number }>(`/guildas/${id}`),
   atualizarGuilda: (id: string, dados: Partial<{ name: string; description: string; status: "ativa" | "arquivada" }>) =>
     requisicao<{ guilda: Guilda }>(`/guildas/${id}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  transferirResponsavelGuilda: (id: string, userId: string) =>
+    requisicao<{ ok: boolean; responsavelAnteriorId: string | null; responsavelId: string }>(`/guildas/${id}/responsavel`, { method: "PUT", body: JSON.stringify({ userId }) }),
   listarMembrosGuilda: (id: string) =>
     requisicao<{ membros: GuildaMembro[] }>(`/guildas/${id}/membros`),
   adicionarMembroGuilda: (id: string, dados: { username?: string; userId?: string }) =>
