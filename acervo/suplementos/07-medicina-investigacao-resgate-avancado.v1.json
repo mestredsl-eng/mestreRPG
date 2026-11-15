@@ -1,0 +1,1060 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento VII — Medicina, Investigação e Resgate Avançado",
+      "descricao": "Equipamentos complementares de atendimento médico, resgate, documentação de evidências e investigação. Os requisitos de Medicina e Investigação são baseados nas perícias e conhecimentos existentes no dump da campanha.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — atendimento e investigação",
+      "tipo": "suplemento",
+      "versao": 2,
+      "itens": [
+        {
+          "kind": "item",
+          "key": "monitor_sinais_vitais",
+          "name": "Monitor de sinais vitais",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para acompanhamento de sinais vitais em atendimento.",
+            "subcategoria": "Medicina",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 4,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 7000,
+                "max": 22000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "item",
+          "key": "ultrassom_portatil",
+          "name": "Ultrassom portátil",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de diagnóstico por imagem para uso profissional.",
+            "subcategoria": "Medicina",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 6,
+            "valueCents": 5000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 50000,
+              "faixaPrecoBRL": {
+                "min": 30000,
+                "max": 100000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Equipamento diagnóstico profissional; transdutores, software, registro e suporte alteram o custo."
+            }
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "item",
+          "key": "eletrocardiografo",
+          "name": "Eletrocardiógrafo",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registro de atividade elétrica cardíaca.",
+            "subcategoria": "Medicina",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 4,
+            "valueCents": 1200000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 12000,
+              "faixaPrecoBRL": {
+                "min": 5000,
+                "max": 25000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "item",
+          "key": "aspirador_hospitalar",
+          "name": "Aspirador hospitalar portátil",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de apoio a procedimentos de atendimento.",
+            "subcategoria": "Medicina",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 4,
+            "valueCents": 400000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 4000,
+              "faixaPrecoBRL": {
+                "min": 1500,
+                "max": 9000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "item",
+          "key": "oxigenio_portatil",
+          "name": "Unidade portátil de oxigênio",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para suporte de oxigênio em contexto assistencial.",
+            "subcategoria": "Medicina",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 5,
+            "valueCents": 150000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1500,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 3000
+              },
+              "unidadeCompra": "conjunto cilindro e regulador",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "item",
+          "key": "kit_trauma_avancado",
+          "name": "Bolsa avançada de trauma",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais para atendimento de trauma por profissional capacitado.",
+            "subcategoria": "Medicina",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 5,
+            "valueCents": 180000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1800,
+              "faixaPrecoBRL": {
+                "min": 800,
+                "max": 4000
+              },
+              "unidadeCompra": "bolsa equipada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "item",
+          "key": "tala_vacuo",
+          "name": "Conjunto de talas a vácuo",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de imobilização para resgate e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 2,
+            "valueCents": 170000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1700,
+              "faixaPrecoBRL": {
+                "min": 700,
+                "max": 3500
+              },
+              "unidadeCompra": "conjunto",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "item",
+          "key": "maca_cesto",
+          "name": "Maca tipo cesto",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Maca para remoção e transporte em áreas de acesso difícil.",
+            "subcategoria": "Resgate",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ],
+            "weight": 12,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1800,
+                "max": 7500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende de material, certificação, acessórios e sistema de içamento."
+            }
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "item",
+          "key": "maca_prancha",
+          "name": "Prancha de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento rígido para movimentação e transporte de pessoas.",
+            "subcategoria": "Resgate",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 7,
+            "valueCents": 70000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 700,
+              "faixaPrecoBRL": {
+                "min": 300,
+                "max": 1500
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "item",
+          "key": "colchao_vacuo",
+          "name": "Colchão a vácuo",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de imobilização e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 10,
+            "valueCents": 700000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 7000,
+              "faixaPrecoBRL": {
+                "min": 3500,
+                "max": 14000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "item",
+          "key": "kit_contencao_hemorragia",
+          "name": "Kit de controle de hemorragia",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de materiais de atendimento emergencial.",
+            "subcategoria": "Medicina",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.5,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 900
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "item",
+          "key": "kit_coleta_laboratorial",
+          "name": "Kit de coleta laboratorial",
+          "category": "Medicina",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para coleta e acondicionamento de amostras clínicas.",
+            "subcategoria": "Medicina",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.6,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "item",
+          "key": "swab_forense",
+          "name": "Kit de coleta por swab",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para coleta e acondicionamento de amostras para análise.",
+            "subcategoria": "Investigação",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.2,
+            "valueCents": 12000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 120,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 350
+              },
+              "unidadeCompra": "kit de coleta",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "item",
+          "key": "envelope_evidencia",
+          "name": "Envelopes para evidências",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embalagens para acondicionamento e identificação de evidências.",
+            "subcategoria": "Investigação",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.4,
+            "valueCents": 9000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 90,
+              "faixaPrecoBRL": {
+                "min": 35,
+                "max": 180
+              },
+              "unidadeCompra": "pacote com 50 envelopes",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "item",
+          "key": "lacre_evidencia",
+          "name": "Lacres de evidência",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Lacres numerados para organização e controle de materiais coletados.",
+            "subcategoria": "Investigação",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.25,
+            "valueCents": 6500,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 65,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 140
+              },
+              "unidadeCompra": "pacote com 50 lacres",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "item",
+          "key": "luvas_forenses",
+          "name": "Luvas para coleta forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de proteção utilizado em atividades de coleta.",
+            "subcategoria": "Investigação",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.5,
+            "valueCents": 6000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 60,
+              "faixaPrecoBRL": {
+                "min": 25,
+                "max": 130
+              },
+              "unidadeCompra": "caixa com 100 unidades",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "item",
+          "key": "kit_impressao_digital",
+          "name": "Kit de registro de impressões digitais",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para registro e documentação de impressões.",
+            "subcategoria": "Investigação",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.8,
+            "valueCents": 35000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 350,
+              "faixaPrecoBRL": {
+                "min": 120,
+                "max": 800
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "item",
+          "key": "iluminador_forense_uv",
+          "name": "Iluminador UV forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Fonte de iluminação especializada para inspeção e documentação.",
+            "subcategoria": "Investigação",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.7,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 3000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "item",
+          "key": "camera_forense",
+          "name": "Câmera para documentação forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Câmera destinada ao registro de locais, objetos e evidências.",
+            "subcategoria": "Investigação",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.7,
+            "valueCents": 600000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6000,
+              "faixaPrecoBRL": {
+                "min": 2500,
+                "max": 12000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "item",
+          "key": "scanner_documentos",
+          "name": "Scanner portátil de documentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para digitalização e organização de documentos.",
+            "subcategoria": "Investigação",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.7,
+            "valueCents": 120000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1200,
+              "faixaPrecoBRL": {
+                "min": 450,
+                "max": 2800
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "item",
+          "key": "lupa_forense",
+          "name": "Lupa de inspeção forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento de observação de detalhes em objetos e superfícies.",
+            "subcategoria": "Investigação",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.2,
+            "valueCents": 22000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 220,
+              "faixaPrecoBRL": {
+                "min": 80,
+                "max": 550
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "item",
+          "key": "kit_croqui_local",
+          "name": "Kit de registro de local",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para anotações, medidas e representação de um local.",
+            "subcategoria": "Investigação",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.8,
+            "valueCents": 25000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250,
+              "faixaPrecoBRL": {
+                "min": 100,
+                "max": 600
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "item",
+          "key": "medidor_distancia_local",
+          "name": "Medidor de distância para perícia",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Instrumento para registro de medidas em locais de investigação.",
+            "subcategoria": "Investigação",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.2,
+            "valueCents": 50000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500,
+              "faixaPrecoBRL": {
+                "min": 180,
+                "max": 1200
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "item",
+          "key": "gravador_depoimento",
+          "name": "Gravador de depoimentos",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento para registro de entrevistas e depoimentos.",
+            "subcategoria": "Investigação",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.2,
+            "valueCents": 45000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450,
+              "faixaPrecoBRL": {
+                "min": 150,
+                "max": 1100
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "item",
+          "key": "maleta_documentacao_forense",
+          "name": "Maleta de documentação forense",
+          "category": "Investigação",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estojo para acondicionamento de formulários e materiais de registro.",
+            "subcategoria": "Investigação",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "investigacao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.8,
+            "valueCents": 40000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 400,
+              "faixaPrecoBRL": {
+                "min": 160,
+                "max": 900
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 24
+        },
+        {
+          "kind": "item",
+          "key": "kit_resgate_altura",
+          "name": "Kit de resgate em altura",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Conjunto de equipamentos de proteção e movimentação para resgate em altura.",
+            "subcategoria": "Resgate",
+            "ordem": 25,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ],
+            "weight": 12,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 14000
+              },
+              "unidadeCompra": "kit certificado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Kit certificado; composição, cordas, ancoragens e EPIs alteram preço e peso."
+            }
+          },
+          "ordem": 25
+        },
+        {
+          "kind": "item",
+          "key": "tripode_resgate",
+          "name": "Tripé de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Estrutura de apoio para operações de resgate em locais confinados.",
+            "subcategoria": "Resgate",
+            "ordem": 26,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "sobrevivencia",
+                "minLevel": 1
+              }
+            ],
+            "weight": 18,
+            "valueCents": 650000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 6500,
+              "faixaPrecoBRL": {
+                "min": 3000,
+                "max": 14000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estrutura certificada; altura, carga de trabalho, guincho e acessórios variam."
+            }
+          },
+          "ordem": 26
+        },
+        {
+          "kind": "item",
+          "key": "detector_ambiente_resgate",
+          "name": "Detector ambiental portátil",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Equipamento de monitoramento ambiental em áreas de risco.",
+            "subcategoria": "Resgate",
+            "ordem": 27,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "ciencias",
+                "minLevel": 1
+              }
+            ],
+            "weight": 2,
+            "valueCents": 350000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 3500,
+              "faixaPrecoBRL": {
+                "min": 1200,
+                "max": 8000
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Preço depende dos agentes monitorados, sensores e calibração."
+            }
+          },
+          "ordem": 27
+        },
+        {
+          "kind": "item",
+          "key": "manta_resgate",
+          "name": "Manta de resgate",
+          "category": "Resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Manta de proteção e apoio em atendimento e transporte.",
+            "subcategoria": "Resgate",
+            "ordem": 28,
+            "weight": 1,
+            "valueCents": 12000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 120,
+              "faixaPrecoBRL": {
+                "min": 40,
+                "max": 280
+              },
+              "unidadeCompra": "unidade",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 28
+        },
+        {
+          "kind": "item",
+          "key": "kit_identificacao_vitima",
+          "name": "Kit de identificação de atendimento",
+          "category": "Medicina e resgate",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Materiais para identificação e organização de atendimentos.",
+            "subcategoria": "Medicina e resgate",
+            "ordem": 29,
+            "prerequisitos": [
+              {
+                "kind": "conhecimento",
+                "key": "medicina",
+                "minLevel": 1
+              }
+            ],
+            "weight": 0.5,
+            "valueCents": 18000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 180,
+              "faixaPrecoBRL": {
+                "min": 60,
+                "max": 450
+              },
+              "unidadeCompra": "kit",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "equipamento novo econômico/intermediário, salvo observação específica",
+              "observacao": "Estimativa de mercado; fabricante, especificação, certificação, acessórios e região alteram o valor."
+            }
+          },
+          "ordem": 29
+        }
+      ]
+    }
+  ]
+}

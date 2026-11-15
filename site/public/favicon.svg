@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="72%">
+      <stop offset="0" stop-color="#292a2d"/>
+      <stop offset=".72" stop-color="#09090b"/>
+      <stop offset="1" stop-color="#000"/>
+    </radialGradient>
+    <linearGradient id="steel" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff"/>
+      <stop offset=".38" stop-color="#9b9da2"/>
+      <stop offset=".7" stop-color="#44464c"/>
+      <stop offset="1" stop-color="#e4e5e8"/>
+    </linearGradient>
+    <filter id="glow" x="-80%" y="-80%" width="260%" height="260%">
+      <feGaussianBlur stdDeviation="1.8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="round"><circle cx="32" cy="32" r="29"/></clipPath>
+  </defs>
+  <circle cx="32" cy="32" r="30.5" fill="#050506" stroke="#aeb0b5" stroke-width="1.5"/>
+  <circle cx="32" cy="32" r="28.3" fill="url(#bg)" stroke="#8e111b" stroke-width="1.2"/>
+  <g clip-path="url(#round)">
+    <path d="M4 20 13 12 20 15 15 21 8 26 5 34 11 31 15 39 9 48 3 45Z" fill="#171719" stroke="#55565b" stroke-width="1"/>
+    <path d="M60 20 51 12 44 15 49 21 56 26 59 34 53 31 49 39 55 48 61 45Z" fill="#171719" stroke="#55565b" stroke-width="1"/>
+    <path d="M17 17 26 20 22 23 14 21Z M47 17 38 20 42 23 50 21Z" fill="#ed1726" filter="url(#glow)"/>
+    <path d="M18 18 25 20 21 21Z M46 18 39 20 43 21Z" fill="#fff1e8"/>
+    <path d="M32 12 52 25 49 45 32 56 15 45 12 25Z" fill="#08090b" stroke="url(#steel)" stroke-width="2.2" stroke-linejoin="round"/>
+    <path d="M32 12 32 31 12 25Z" fill="#25272b" stroke="#777a80" stroke-width=".8"/>
+    <path d="M32 12 52 25 32 31Z" fill="#17191d" stroke="#777a80" stroke-width=".8"/>
+    <path d="M12 25 32 31 15 45Z" fill="#111216" stroke="#777a80" stroke-width=".8"/>
+    <path d="M52 25 49 45 32 31Z" fill="#101115" stroke="#777a80" stroke-width=".8"/>
+    <path d="M15 45 32 31 32 56Z" fill="#08090b" stroke="#777a80" stroke-width=".8"/>
+    <path d="M49 45 32 31 32 56Z" fill="#121317" stroke="#777a80" stroke-width=".8"/>
+    <text x="32" y="25.8" text-anchor="middle" font-family="Georgia,serif" font-size="13" font-weight="bold" fill="#ff2635" stroke="#4a0008" stroke-width=".35">0</text>
+    <text x="20.2" y="31.5" text-anchor="middle" font-family="Georgia,serif" font-size="8.5" fill="#ed2632">9</text>
+    <text x="43.8" y="31.5" text-anchor="middle" font-family="Georgia,serif" font-size="8.5" fill="#ed2632">1</text>
+    <text x="19.8" y="42" text-anchor="middle" font-family="Georgia,serif" font-size="8.5" fill="#ed2632">8</text>
+    <text x="44.2" y="42" text-anchor="middle" font-family="Georgia,serif" font-size="8.5" fill="#ed2632">2</text>
+    <path d="M32 33.5c-2.1 0-3.4 2.1-3.2 4.4.1 1.6-1.4 3.4-1.8 5.4-.4 2.1 1.1 3.5 3 2.7l1.2-.5 1.2.5c1.9.8 3.4-.6 3-2.7-.4-2-1.9-3.8-1.8-5.4.2-2.3-1.1-4.4-3.2-4.4Z" fill="#f01c2b" stroke="#ff6b71" stroke-width=".45" filter="url(#glow)"/>
+    <path d="M29 34.5 27.2 37M31 34 29.7 37M33 34 34.3 37M35 34.5 36.8 37M28.1 43.5 29 45M30.3 44 30.8 46M33.7 44 33.2 46M35.9 43.5 35 45" stroke="#250006" stroke-width=".9" stroke-linecap="round"/>
+    <path d="M32 3 34 8 32 11 30 8Z M32 53 34 57 32 61 30 57Z" fill="#d7192b" stroke="#e3e4e7" stroke-width=".65"/>
+  </g>
+</svg>

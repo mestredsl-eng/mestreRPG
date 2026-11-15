@@ -1,0 +1,1042 @@
+{
+  "formato": "mestre-rpg-biblioteca",
+  "versao": 1,
+  "livros": [
+    {
+      "titulo": "Suplemento V — Transporte, Aviação e Veículos Especiais",
+      "descricao": "Catálogo de veículos terrestres, náuticos e aéreos. Os registros usam a perícia Condução existente na ficha: nível 1 como requisito geral de operação e nível 5 para o F-16, conforme exemplo solicitado. O livro não cria uma perícia de pilotagem nova.",
+      "autor": "Mestre RPG",
+      "sistema": "Caçadores Caçados",
+      "edicao": "1ª edição — mobilidade e veículos especiais",
+      "tipo": "suplemento",
+      "versao": 2,
+      "itens": [
+        {
+          "kind": "veiculo",
+          "key": "carro_esportivo",
+          "name": "Automóvel esportivo",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel de perfil esportivo para deslocamentos e cenas de perseguição.",
+            "subcategoria": "Automóveis",
+            "ordem": 0,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 1450,
+            "valueCents": 45000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450000,
+              "faixaPrecoBRL": {
+                "min": 250000,
+                "max": 900000
+              },
+              "unidadeCompra": "veículo usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina",
+            "capacity": "2–4 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 6–10 km/L",
+              "baseDoPeso": "peso em ordem de marcha; esportivo de produção, não supercarro de coleção"
+            }
+          },
+          "ordem": 0
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_eletrico",
+          "name": "Automóvel elétrico",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel movido a energia elétrica.",
+            "subcategoria": "Automóveis",
+            "ordem": 1,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 1700,
+            "valueCents": 23000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 230000,
+              "faixaPrecoBRL": {
+                "min": 150000,
+                "max": 450000
+              },
+              "unidadeCompra": "veículo usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "energia elétrica",
+            "capacity": "4–5 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 250–450 km",
+              "baseDoPeso": "peso em ordem de marcha; autonomia varia por bateria e condução"
+            }
+          },
+          "ordem": 1
+        },
+        {
+          "kind": "veiculo",
+          "key": "carro_hibrido",
+          "name": "Automóvel híbrido",
+          "category": "Automóveis",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Automóvel com sistema de propulsão híbrido.",
+            "subcategoria": "Automóveis",
+            "ordem": 2,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 1600,
+            "valueCents": 21000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 210000,
+              "faixaPrecoBRL": {
+                "min": 140000,
+                "max": 420000
+              },
+              "unidadeCompra": "veículo usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina/flex + elétrico",
+            "capacity": "5 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "consumo combinado típico de 14–22 km/L",
+              "baseDoPeso": "peso em ordem de marcha; depende da arquitetura híbrida"
+            }
+          },
+          "ordem": 2
+        },
+        {
+          "kind": "veiculo",
+          "key": "suv_blindado",
+          "name": "SUV reforçado",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Utilitário com proteção adicional definida pelo mestre.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 3,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 2700,
+            "valueCents": 70000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 700000,
+              "faixaPrecoBRL": {
+                "min": 450000,
+                "max": 1500000
+              },
+              "unidadeCompra": "veículo usado blindado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Blindagem, idade da proteção, documentação e manutenção influenciam muito o valor."
+            },
+            "fuel": "flex ou diesel",
+            "capacity": "5–7 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 4–8 km/L",
+              "baseDoPeso": "peso em ordem de marcha com blindagem; documentação e nível de proteção são críticos"
+            }
+          },
+          "ordem": 3
+        },
+        {
+          "kind": "veiculo",
+          "key": "picape_4x4",
+          "name": "Picape 4x4",
+          "category": "Utilitários",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Picape com tração integral para estradas e terrenos variados.",
+            "subcategoria": "Utilitários",
+            "ordem": 4,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 2200,
+            "valueCents": 24000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 240000,
+              "faixaPrecoBRL": {
+                "min": 130000,
+                "max": 500000
+              },
+              "unidadeCompra": "veículo usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "5 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 7–11 km/L",
+              "baseDoPeso": "peso em ordem de marcha; picape média 4x4"
+            }
+          },
+          "ordem": 4
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_carga",
+          "name": "Caminhão de carga",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo pesado destinado ao transporte de carga.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 5,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 9000,
+            "valueCents": 50000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500000,
+              "faixaPrecoBRL": {
+                "min": 250000,
+                "max": 1000000
+              },
+              "unidadeCompra": "caminhão usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "2–3 ocupantes; carga útil aproximada 8–15 t",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 2–5 km/L",
+              "baseDoPeso": "peso vazio aproximado; PBT e carga útil dependem do chassi"
+            }
+          },
+          "ordem": 5
+        },
+        {
+          "kind": "veiculo",
+          "key": "caminhao_guincho",
+          "name": "Caminhão-guincho",
+          "category": "Veículos pesados",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de apoio para remoção e transporte de outros veículos.",
+            "subcategoria": "Veículos pesados",
+            "ordem": 6,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 14000,
+            "valueCents": 90000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900000,
+              "faixaPrecoBRL": {
+                "min": 450000,
+                "max": 1800000
+              },
+              "unidadeCompra": "caminhão guincho usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "2–3 ocupantes; reboque conforme plataforma",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 2–4 km/L",
+              "baseDoPeso": "peso vazio aproximado; capacidade varia pelo equipamento"
+            }
+          },
+          "ordem": 6
+        },
+        {
+          "kind": "veiculo",
+          "key": "onibus_rodoviario",
+          "name": "Ônibus rodoviário",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo para transporte coletivo em trajetos rodoviários.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 7,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 12000,
+            "valueCents": 90000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 900000,
+              "faixaPrecoBRL": {
+                "min": 450000,
+                "max": 2000000
+              },
+              "unidadeCompra": "ônibus usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "44–50 passageiros",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 2–4 km/L",
+              "baseDoPeso": "peso vazio aproximado; lotação depende da configuração"
+            }
+          },
+          "ordem": 7
+        },
+        {
+          "kind": "veiculo",
+          "key": "micro_onibus",
+          "name": "Micro-ônibus",
+          "category": "Transporte coletivo",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo de transporte coletivo de menor porte.",
+            "subcategoria": "Transporte coletivo",
+            "ordem": 8,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 4500,
+            "valueCents": 50000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 500000,
+              "faixaPrecoBRL": {
+                "min": 250000,
+                "max": 900000
+              },
+              "unidadeCompra": "micro-ônibus usado em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "16–24 passageiros",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 4–8 km/L",
+              "baseDoPeso": "peso vazio aproximado; lotação depende da configuração"
+            }
+          },
+          "ordem": 8
+        },
+        {
+          "kind": "veiculo",
+          "key": "quadriciclo",
+          "name": "Quadriciclo",
+          "category": "Veículos fora de estrada",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo leve para circulação em terrenos apropriados.",
+            "subcategoria": "Veículos fora de estrada",
+            "ordem": 9,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 350,
+            "valueCents": 3500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 35000,
+              "faixaPrecoBRL": {
+                "min": 18000,
+                "max": 65000
+              },
+              "unidadeCompra": "unidade usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina",
+            "capacity": "1–2 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 15–25 km/L",
+              "baseDoPeso": "peso em ordem de marcha; classe recreativa/fora de estrada"
+            }
+          },
+          "ordem": 9
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_policial",
+          "name": "Motocicleta de serviço",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta configurada para atividade profissional.",
+            "subcategoria": "Motocicletas",
+            "ordem": 10,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 220,
+            "valueCents": 3500000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 35000,
+              "faixaPrecoBRL": {
+                "min": 22000,
+                "max": 55000
+              },
+              "unidadeCompra": "motocicleta de serviço usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina",
+            "capacity": "2 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 15–25 km/L",
+              "baseDoPeso": "peso em ordem de marcha; acessórios de serviço podem ser adicionais"
+            }
+          },
+          "ordem": 10
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_grande_porte",
+          "name": "Motocicleta de grande porte",
+          "category": "Motocicletas",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Motocicleta de maior porte para deslocamentos rodoviários.",
+            "subcategoria": "Motocicletas",
+            "ordem": 11,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 260,
+            "valueCents": 7000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 70000,
+              "faixaPrecoBRL": {
+                "min": 45000,
+                "max": 130000
+              },
+              "unidadeCompra": "motocicleta usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina",
+            "capacity": "2 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 15–22 km/L",
+              "baseDoPeso": "peso em ordem de marcha; motocicleta touring/estradeira"
+            }
+          },
+          "ordem": 11
+        },
+        {
+          "kind": "veiculo",
+          "key": "lancha_motorizada",
+          "name": "Lancha motorizada",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação motorizada para deslocamento aquático.",
+            "subcategoria": "Embarcações",
+            "ordem": 12,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 1500,
+            "valueCents": 25000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 250000,
+              "faixaPrecoBRL": {
+                "min": 100000,
+                "max": 600000
+              },
+              "unidadeCompra": "embarcação usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina ou diesel",
+            "capacity": "6–10 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia depende de casco, motor e tanque",
+              "baseDoPeso": "peso sem carga; motor e combustível variam"
+            }
+          },
+          "ordem": 12
+        },
+        {
+          "kind": "veiculo",
+          "key": "barco_pesca",
+          "name": "Barco de pesca",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação de uso pesqueiro.",
+            "subcategoria": "Embarcações",
+            "ordem": 13,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 750,
+            "valueCents": 10000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 100000,
+              "faixaPrecoBRL": {
+                "min": 30000,
+                "max": 300000
+              },
+              "unidadeCompra": "embarcação usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina ou diesel",
+            "capacity": "2–6 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia depende de casco, motor e tanque",
+              "baseDoPeso": "peso sem carga; equipamento de pesca não incluído"
+            }
+          },
+          "ordem": 13
+        },
+        {
+          "kind": "veiculo",
+          "key": "veleiro",
+          "name": "Veleiro",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Embarcação movida principalmente pela força do vento.",
+            "subcategoria": "Embarcações",
+            "ordem": 14,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 3500,
+            "valueCents": 45000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 450000,
+              "faixaPrecoBRL": {
+                "min": 150000,
+                "max": 1200000
+              },
+              "unidadeCompra": "embarcação usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "vento; motor auxiliar a diesel",
+            "capacity": "4–8 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia depende de provisões e condições de navegação",
+              "baseDoPeso": "peso sem carga; comprimento, calado e lastro variam"
+            }
+          },
+          "ordem": 14
+        },
+        {
+          "kind": "veiculo",
+          "key": "moto_aquatica",
+          "name": "Moto aquática",
+          "category": "Embarcações",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo aquático individual motorizado.",
+            "subcategoria": "Embarcações",
+            "ordem": 15,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 350,
+            "valueCents": 10000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 100000,
+              "faixaPrecoBRL": {
+                "min": 60000,
+                "max": 180000
+              },
+              "unidadeCompra": "unidade usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina",
+            "capacity": "1–3 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 1–3 h de uso",
+              "baseDoPeso": "peso em ordem de marcha; consumo depende do motor e condução"
+            }
+          },
+          "ordem": 15
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_civil",
+          "name": "Helicóptero civil",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asas rotativas para transporte.",
+            "subcategoria": "Aeronaves",
+            "ordem": 16,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 1100,
+            "valueCents": 700000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 7000000,
+              "faixaPrecoBRL": {
+                "min": 2500000,
+                "max": 15000000
+              },
+              "unidadeCompra": "aeronave usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Preço de anúncio de helicóptero leve usado; modelo, horas de célula/motor e histórico de manutenção mudam muito o valor."
+            },
+            "fuel": "querosene de aviação ou gasolina de aviação, conforme modelo",
+            "capacity": "3–5 ocupantes incluindo piloto",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 2–4 h",
+              "baseDoPeso": "peso vazio aproximado; classe de helicóptero leve civil"
+            }
+          },
+          "ordem": 16
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_resgate",
+          "name": "Helicóptero de resgate",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de apoio a operações de busca e resgate.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 17,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 3500,
+            "valueCents": 3000000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 30000000,
+              "faixaPrecoBRL": {
+                "min": 15000000,
+                "max": 60000000
+              },
+              "unidadeCompra": "aeronave institucional equipada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Valor institucional; guincho, maca, aviônicos, certificação e suporte alteram muito o custo."
+            },
+            "fuel": "querosene de aviação",
+            "capacity": "4–8 ocupantes conforme equipe e maca",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 2–4 h",
+              "baseDoPeso": "peso vazio aproximado; guincho, maca e aviônicos variam"
+            }
+          },
+          "ordem": 17
+        },
+        {
+          "kind": "veiculo",
+          "key": "helicoptero_servico",
+          "name": "Helicóptero de serviço",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de uso profissional ou institucional.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 18,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 3000,
+            "valueCents": 2200000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 22000000,
+              "faixaPrecoBRL": {
+                "min": 10000000,
+                "max": 45000000
+              },
+              "unidadeCompra": "aeronave usada ou configuração institucional",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Valor institucional ou de aeronave usada; modelo, horas e configuração são determinantes."
+            },
+            "fuel": "querosene de aviação",
+            "capacity": "4–7 ocupantes conforme modelo",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 2–4 h",
+              "baseDoPeso": "peso vazio aproximado; configuração institucional"
+            }
+          },
+          "ordem": 18
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_monomotor",
+          "name": "Avião monomotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave leve de asa fixa.",
+            "subcategoria": "Aeronaves",
+            "ordem": 19,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 900,
+            "valueCents": 150000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1500000,
+              "faixaPrecoBRL": {
+                "min": 600000,
+                "max": 4000000
+              },
+              "unidadeCompra": "aeronave usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina de aviação",
+            "capacity": "2–6 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 4–7 h",
+              "baseDoPeso": "peso vazio aproximado; aeronave leve de asa fixa"
+            }
+          },
+          "ordem": 19
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_bimotor",
+          "name": "Avião bimotor",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave de asa fixa com dois motores.",
+            "subcategoria": "Aeronaves",
+            "ordem": 20,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 2500,
+            "valueCents": 500000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 5000000,
+              "faixaPrecoBRL": {
+                "min": 2500000,
+                "max": 12000000
+              },
+              "unidadeCompra": "aeronave usada em bom estado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina de aviação ou querosene conforme modelo",
+            "capacity": "5–9 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 3–6 h",
+              "baseDoPeso": "peso vazio aproximado; configuração varia amplamente"
+            }
+          },
+          "ordem": 20
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_carga",
+          "name": "Avião de transporte",
+          "category": "Aeronaves especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada ao transporte de carga.",
+            "subcategoria": "Aeronaves especiais",
+            "ordem": 21,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 9000,
+            "valueCents": 2500000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 25000000,
+              "faixaPrecoBRL": {
+                "min": 10000000,
+                "max": 70000000
+              },
+              "unidadeCompra": "aeronave de carga usada; configuração varia",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "querosene de aviação",
+            "capacity": "tripulação e carga conforme modelo",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia depende de carga e configuração",
+              "baseDoPeso": "peso vazio aproximado; carga útil depende do modelo"
+            }
+          },
+          "ordem": 21
+        },
+        {
+          "kind": "veiculo",
+          "key": "aviao_treinamento",
+          "name": "Aeronave de treinamento",
+          "category": "Aeronaves",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave destinada a treinamento de voo.",
+            "subcategoria": "Aeronaves",
+            "ordem": 22,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 900,
+            "valueCents": 150000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 1500000,
+              "faixaPrecoBRL": {
+                "min": 600000,
+                "max": 3500000
+              },
+              "unidadeCompra": "aeronave de treinamento usada",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "gasolina de aviação",
+            "capacity": "2 ocupantes",
+            "veiculo": {
+              "consumoOuAutonomia": "autonomia típica de 3–5 h",
+              "baseDoPeso": "peso vazio aproximado; aeronave de treinamento básico"
+            }
+          },
+          "ordem": 22
+        },
+        {
+          "kind": "veiculo",
+          "key": "caca_f16",
+          "name": "Caça F-16 Fighting Falcon",
+          "category": "Aeronaves militares",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Aeronave militar de combate. No sistema atual, exige Condução nível 5, conforme orientação do mestre.",
+            "subcategoria": "Aeronaves militares",
+            "ordem": 23,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 5
+              }
+            ],
+            "weight": 8936,
+            "valueCents": 33700000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 337000000,
+              "faixaPrecoBRL": {
+                "min": 300000000,
+                "max": 450000000
+              },
+              "unidadeCompra": "aeronave militar por unidade; referência institucional ilustrativa",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "referência institucional estimada por unidade a partir de amostra didática de LOA; não representa mercado de usado/seminovo",
+              "observacao": "Exemplo unitário estimado do material didático LOA 101: US$ 59.638.951,24 para F-16C Block 70 em lote de 56 aeronaves. Conversão pela PTAX de venda de 13/11/2026 (R$ 5,6518/US$), arredondada para R$ 337 milhões. Não é contrato executado nem preço civil; não necessariamente inclui suporte, treinamento e infraestrutura."
+            },
+            "fuel": "querosene de aviação",
+            "capacity": "1 piloto (versões de treinamento podem ter 2)",
+            "veiculo": {
+              "consumoOuAutonomia": "alcance depende de carga, tanques e perfil de missão",
+              "baseDoPeso": "peso vazio oficial aproximado 8.936 kg; peso máximo de decolagem 16.875 kg"
+            }
+          },
+          "ordem": 23
+        },
+        {
+          "kind": "veiculo",
+          "key": "veiculo_blindado_transporte",
+          "name": "Veículo blindado de transporte",
+          "category": "Veículos especiais",
+          "parentKey": null,
+          "definition": {
+            "descricao": "Veículo militar ou institucional de transporte protegido.",
+            "subcategoria": "Veículos especiais",
+            "ordem": 24,
+            "prerequisitos": [
+              {
+                "kind": "pericia",
+                "key": "conducao",
+                "minLevel": 1
+              }
+            ],
+            "weight": 13000,
+            "valueCents": 1000000000,
+            "economia": {
+              "moeda": "BRL",
+              "precoReferenciaBRL": 10000000,
+              "faixaPrecoBRL": {
+                "min": 5000000,
+                "max": 30000000
+              },
+              "unidadeCompra": "veículo institucional usado ou recondicionado",
+              "mercadoReferencia": "Brasil",
+              "dataReferencia": "2026-11",
+              "base": "veículo usado/seminovo em condição boa, salvo observação específica",
+              "observacao": "Estimativa de mercado; ano/modelo, condição, região, documentação e configuração alteram o valor."
+            },
+            "fuel": "diesel",
+            "capacity": "6–12 ocupantes conforme configuração",
+            "veiculo": {
+              "consumoOuAutonomia": "aprox. 2–5 km/L",
+              "baseDoPeso": "peso vazio aproximado; proteção, motor e lotação variam"
+            }
+          },
+          "ordem": 24
+        }
+      ]
+    }
+  ]
+}

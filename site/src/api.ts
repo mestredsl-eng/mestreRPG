@@ -327,6 +327,8 @@ export const api = {
     requisicao<SimulacaoResultado>(`/campaigns/${cid}/regras/simulacao`, { method: "POST", body: JSON.stringify(dados) }),
 
   // Patrimônio (Etapa 6)
+  listarRequisitosPatrimonio: (charId: string) =>
+    requisicao<{ requisitos: Record<string, DisponibilidadeAcervo> }>(`/characters/${charId}/patrimonio/requisitos`),
   listarInventario: (charId: string) =>
     requisicao<{ itens: ItemInventario[]; pesoTotal: number | null; pesoMaximo: number | null; pesoExcedido: boolean }>(`/characters/${charId}/inventario`),
   adicionarItem: (charId: string, dados: ItemInventarioInput) =>
@@ -365,14 +367,14 @@ export const api = {
     requisicao<{ id: string; saldo: number }>(`/characters/${charId}/financeiro/movimentar`, { method: "POST", body: JSON.stringify(dados) }),
   transferirFinanceiro: (charId: string, dados: { origemAccountId: string; destinoAccountId: string; valor: number; descricao?: string; requestId?: string }) =>
     requisicao<{ ok: boolean; tipo: string }>(`/characters/${charId}/financeiro/transferir`, { method: "POST", body: JSON.stringify(dados) }),
-  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId?: string; valor?: number; pagar?: boolean; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string }) =>
+  operacaoFinanceira: (charId: string, dados: { tipo: "compra" | "venda"; accountId?: string; valor?: number; pagar?: boolean; descricao?: string; itemId?: string; item?: ItemInventarioInput; templateId?: string; quantidade?: number; contraparte?: string; requestId?: string; regra?: RegraRef; ignorarPrerequisitos?: boolean }) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
   estornarOperacao: (charId: string, opId: string) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacoes/${encodeURIComponent(opId)}/estornar`, { method: "POST" }),
 
   // Catálogo de itens (Etapa 6)
   listarCatalogo: (cid: string) =>
-    requisicao<{ itens: ItemCatalogo[]; categorias: string[] }>(`/campaigns/${cid}/inventario`),
+    requisicao<{ itens: ItemCatalogo[]; categorias: string[]; acervo?: AcervoCatalogoItem[] }>(`/campaigns/${cid}/inventario`),
   criarItemCatalogo: (cid: string, dados: ItemCatalogoInput) =>
     requisicao<{ id: string }>(`/campaigns/${cid}/inventario`, { method: "POST", body: JSON.stringify(dados) }),
   atualizarItemCatalogo: (cid: string, templateId: string, dados: Partial<ItemCatalogoInput>) =>
@@ -843,7 +845,31 @@ export interface ItemInventarioInput {
   valueCents?: number;
   transferable?: boolean;
   templateId?: string;
+  regra?: RegraRef;
+  ignorarPrerequisitos?: boolean;
   data?: Record<string, unknown>;
+}
+
+/** Referência a elemento do Acervo (kind:key) — validada no servidor. */
+export interface RegraRef { kind: string; key: string }
+
+/** Elemento do Acervo exposto no catálogo de patrimônio. */
+export interface AcervoCatalogoItem {
+  regra: RegraRef;
+  nome: string;
+  categoria: string | null;
+  descricao: string | null;
+  prerequisitos: { kind: string; key: string; nome: string; minLevel: number }[];
+}
+
+/** Disponibilidade de um elemento do Acervo para o personagem —
+ *  calculada no servidor (nível atual da ficha vs exigido). */
+export interface DisponibilidadeAcervo {
+  ok: boolean;
+  nome: string;
+  categoria: string | null;
+  prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean; inexistente?: boolean; indisponivel?: boolean }[];
+  mensagens: string[];
 }
 
 export interface Equipamento {
@@ -888,6 +914,8 @@ export interface VeiculoInput {
   fuel?: string;
   capacity?: string;
   ownership?: "propriedade" | "compartilhado";
+  regra?: RegraRef;
+  ignorarPrerequisitos?: boolean;
   data?: Record<string, unknown>;
 }
 
@@ -979,6 +1007,8 @@ export interface ItemCatalogoInput {
   name: string;
   category?: string;
   description?: string;
+  /** Vínculo opcional que o mestre escolhe no Acervo da campanha. */
+  regra?: RegraRef | null;
   data?: Record<string, unknown>;
   isActive?: boolean;
 }
