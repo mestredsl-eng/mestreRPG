@@ -201,17 +201,19 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
 
       {!somenteLeitura && (
       <form className="formulario linha" onSubmit={submeterNovo}>
-        <select aria-label="Item do Acervo" value="" onChange={(e) => {
-          const el = acervoItens.find((x) => x.regra.key === e.target.value);
+        <select aria-label="Item do Acervo" value={novo.regra?.key ?? ""} onChange={(e) => {
+          const key = e.target.value;
+          if (!key) { setNovo({ ...novo, name: "", category: undefined, regra: undefined }); return; }
+          const el = acervoItens.find((x) => x.regra.key === key);
           if (el) setNovo({ name: el.nome, quantity: 1, category: el.categoria ?? undefined, regra: el.regra });
         }}>
-          <option value="">Do Acervo…</option>
+          <option value="">Cadastro livre…</option>
           {acervoItens.map((el) => {
             const d = dispDe(el.regra);
             return <option key={el.regra.key} value={el.regra.key}>{el.nome}{d && d.prerequisitos.length ? ` — ${d.prerequisitos.map((p) => `${p.nome} ${p.nivelAtual}/${p.minLevel}`).join(" + ")}` : el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((p) => `${p.nome} ${p.minLevel}`).join(" + ")}` : ""}</option>;
           })}
         </select>
-        <input placeholder="Nome do item" value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value, regra: undefined })} required />
+        <input placeholder={novo.regra ? "Nome definido pelo Acervo" : "Nome do item"} value={novo.name} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
         <input type="number" min="0.01" step="any" placeholder="Qtd" value={novo.quantity} onChange={(e) => setNovo({ ...novo, quantity: Number(e.target.value) })} style={{ width: 80 }} />
         <input placeholder="Categoria" value={novo.category ?? ""} onChange={(e) => setNovo({ ...novo, category: e.target.value })} list="cats-inv" />
         <datalist id="cats-inv">{categorias.map((c) => <option key={c} value={c} />)}</datalist>
@@ -786,17 +788,19 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
       }}>
         <div className="grade-2">
           <label>Veículo do Acervo
-            <select value="" onChange={(e) => {
-              const el = acervo.find((x) => x.regra.key === e.target.value);
+            <select value={novo.regra?.key ?? ""} onChange={(e) => {
+              const key = e.target.value;
+              if (!key) { setNovo({ name: "", kind: "carro", regra: undefined }); return; }
+              const el = acervo.find((x) => x.regra.key === key);
               if (el) setNovo({ name: el.nome, kind: tipoVeiculoAcervo(el), regra: el.regra });
             }}>
               <option value="">Cadastro livre…</option>
               {acervo.map((el) => <option key={el.regra.key} value={el.regra.key}>{el.nome}{el.prerequisitos.length ? ` — exige ${el.prerequisitos.map((pr) => `${pr.nome} ${pr.minLevel}`).join(" + ")}` : ""}</option>)}
             </select>
           </label>
-          <label>Nome<input value={novo.name} onChange={(e) => setNovo({ ...novo, name: e.target.value, regra: undefined })} required /></label>
+          <label>Nome<input value={novo.name} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required /></label>
           <label>Tipo
-            <select value={novo.kind} onChange={(e) => setNovo({ ...novo, kind: e.target.value })}>
+            <select value={novo.kind} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, kind: e.target.value })}>
               {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
           </label>
