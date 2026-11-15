@@ -86,8 +86,11 @@ try {
   await modal.getByLabel(/Pagar agora/).uncheck();
   const msgSemPag = await modal.locator(".meta", { hasText: "sem movimentação financeira" }).count();
   t("aviso de compra sem movimentação exibido", msgSemPag > 0);
-  const visiveisSemConta = await modal.locator("select").count();
-  t("seletor de conta oculto sem pagamento", visiveisSemConta === 1, `selects=${visiveisSemConta}`);
+  // O modal tem selects de catálogo e Acervo — a conta é identificada
+  // pelo label, não por posição.
+  const selConta = modal.locator("label", { hasText: "Conta que paga" }).locator("select");
+  const visiveisSemConta = await selConta.count();
+  t("seletor de conta oculto sem pagamento", visiveisSemConta === 0, `selects=${visiveisSemConta}`);
   await shot(pg, "01-compra-sem-pagamento");
   await modal.getByRole("button", { name: /Confirmar compra sem pagamento/ }).click();
   await pg.waitForTimeout(1500);
@@ -105,7 +108,7 @@ try {
   await modal.locator('input').first().fill("Poção E2E");
   await modal.locator('input[type="number"]').nth(0).fill("2");
   await modal.locator('input[type="number"]').nth(1).fill("15");
-  await modal.locator("select").nth(1).selectOption({ index: 1 });
+  await modal.locator("label", { hasText: "Conta que paga" }).locator("select").selectOption({ index: 1 });
   const saldoExibido = await modal.locator(".meta", { hasText: "Saldo disponível" }).textContent().catch(() => "");
   t("saldo da conta exibido no modal", /100/.test(saldoExibido ?? "") && /30/.test(saldoExibido ?? ""), saldoExibido?.trim());
   await shot(pg, "03-compra-paga-saldo");
