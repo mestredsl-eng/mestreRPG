@@ -864,7 +864,7 @@ export interface DisponibilidadeAcervo {
   ok: boolean;
   nome: string;
   categoria: string | null;
-  prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean }[];
+  prerequisitos: { kind: string; key: string; nome: string; minLevel: number; nivelAtual: number; atendido: boolean; inexistente?: boolean; indisponivel?: boolean }[];
   mensagens: string[];
 }
 
