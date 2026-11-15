@@ -1301,6 +1301,13 @@ try {
   // botão próprio; o card do desafio pela ficha já vem aberto por padrão.
   // Sem catch cego: se o botão não existe (papel ainda não propagou) a
   // espera abaixo estoura com diagnóstico em vez de ler select vazio.
+  // o card inteiro só monta quando `personagens` carrega (o componente
+  // retorna null com lista vazia) — esperar o CARD antes de procurar o
+  // botão, senão count()=0 pula o clique e o form nunca abre
+  await pgJ.waitForFunction(() => {
+    return [...document.querySelectorAll("section.cartao")]
+      .some((s) => /teste manual/i.test(s.querySelector("h3")?.textContent ?? ""));
+  }, null, { timeout: 20000 });
   const btnPers = pgJ.getByRole("button", { name: "+ Personalizada" }).first();
   if (await btnPers.count()) await btnPers.click();
   // espera as OPÇÕES renderizadas de verdade — o GET /characters e o
