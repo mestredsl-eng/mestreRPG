@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgcriatura-demonio-03" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2e1620"/><stop offset="1" stop-color="#160c10"/>
+    </linearGradient>
+    <radialGradient id="hlcriatura-demonio-03" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgcriatura-demonio-03)"/>
+  <rect width="200" height="200" fill="url(#hlcriatura-demonio-03)"/>
+<path d="M40 200 Q42 158 78 150 L122 150 Q158 158 160 200 Z" fill="#33202a"/>
+    <path d="M86 150 Q100 162 114 150 L110 142 Q100 150 90 142 Z" fill="#ffffff" opacity="0.18"/><path d="M78 158 L100 172 L122 158 L122 178 L78 178 Z" fill="#1d1a24"/>
+<path d="M88 128 L88 152 Q100 160 112 152 L112 128 Z" fill="#7a3038"/>
+<path d="M64 78 L54 44 L80 62 Z M136 78 L146 44 L120 62 Z" fill="#c8b898"/>
+<ellipse cx="100" cy="96" rx="38" ry="44" fill="#7a3038"/>
+<ellipse cx="84" cy="92" rx="6.5" ry="3.8" fill="#ffd84a"/><ellipse cx="116" cy="92" rx="6.5" ry="3.8" fill="#ffd84a"/>
+<ellipse cx="84" cy="92" rx="2.2" ry="3.4" fill="#1a0c0c"/><ellipse cx="116" cy="92" rx="2.2" ry="3.4" fill="#1a0c0c"/>
+<path d="M76 80 Q84 74 92 79 M108 79 Q116 74 124 80" stroke="#3a1414" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+<path d="M88 118 L94 132 L100 120 L106 132 L112 118" fill="#efe6d4"/>
+<path d="M90 132 Q100 140 110 132" stroke="#3a1414" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>

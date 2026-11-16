@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgcriatura-orc-07" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#28322e"/><stop offset="1" stop-color="#121a10"/>
+    </linearGradient>
+    <radialGradient id="hlcriatura-orc-07" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgcriatura-orc-07)"/>
+  <rect width="200" height="200" fill="url(#hlcriatura-orc-07)"/>
+<path d="M40 200 Q42 158 78 150 L122 150 Q158 158 160 200 Z" fill="#4a3a2c"/>
+    <path d="M86 150 Q100 162 114 150 L110 142 Q100 150 90 142 Z" fill="#ffffff" opacity="0.18"/><path d="M78 158 L100 172 L122 158 L122 178 L78 178 Z" fill="#1d1a24"/>
+<path d="M88 128 L88 152 Q100 160 112 152 L112 128 Z" fill="#5a7a3a"/>
+<ellipse cx="100" cy="96" rx="38" ry="43" fill="#5a7a3a"/>
+<path d="M64 82 L50 66 L76 76 Z M136 82 L150 66 L124 76 Z" fill="#5a7a3a"/>
+<path d="M66 88 Q72 60 100 58 Q128 60 134 88 Q118 72 100 70 Q82 72 66 88 Z" fill="#4a3a24"/>
+<ellipse cx="84" cy="94" rx="6" ry="3.6" fill="#e8d84a"/><ellipse cx="116" cy="94" rx="6" ry="3.6" fill="#e8d84a"/>
+<ellipse cx="84" cy="94" rx="2.4" ry="3" fill="#1a120c"/><ellipse cx="116" cy="94" rx="2.4" ry="3" fill="#1a120c"/>
+<path d="M76 80 Q84 76 92 79 M108 79 Q116 76 124 80" stroke="#4a3a24" stroke-width="3.4" fill="none" stroke-linecap="round"/>
+<path d="M96 108 L104 108 L100 114 Z" fill="#5a7a3a"/>
+<path d="M88 122 Q100 130 112 122" stroke="#3a2c1c" stroke-width="3" fill="none" stroke-linecap="round"/>
+<path d="M82 120 L88 130 L94 120 L100 131 L106 120 L112 131 L118 120" fill="#efe6d4"/>
+</svg>
