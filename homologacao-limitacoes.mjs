@@ -5,10 +5,18 @@
 // tipos e selecao_nivel), e o editor visual (criar, editar, salvar e
 // reabrir o campo "Limitações condicionais" no formato tipo:chave@máx).
 import { chromium } from "playwright";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, abrirDb, req, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
+
+// Schema direto (unidade): JSON não transporta Infinity/NaN como números
+// — esses casos são provados aqui via safeParse, não via HTTP.
+process.env.MESTRE_BANCO = join(mkdtempSync(join(tmpdir(), "mrpg-lim-")), "banco.db");
+const { definicaoElementoSchema } = await import("./servidor/dist/lib/regras.js");
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -146,15 +154,42 @@ try {
   const listaAposInv = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
   t("entradas inválidas não persistiram nenhum elemento",
     !listaAposInv.json?.elementos?.some((e) => e.key?.startsWith("inv_")));
-  // edição com limitacao inválida também é rejeitada e preserva a definição
-  const rPatchInv = await req(BASE, "PATCH", `${API}/${sortId}`, {
-    cookie: ids.cm,
-    body: { definition: { limitacoes: [{ kind: "atributo", key: "forca", maximo: -3 }] } },
-  });
-  t("PATCH com limitacao inválida → 400", rPatchInv.status === 400, `status=${rPatchInv.status}`);
-  const listaPosInv = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
-  t("definição preservada após PATCH inválido",
-    listaPosInv.json?.elementos?.find((e) => e.key === "sorte")?.definition?.limitacoes?.[0]?.maximo === 2);
+
+  // Schema direto: Infinity/NaN não existem em JSON — a rejeição é
+  // provada aqui no safeParse do definicaoElementoSchema.
+  const parseLim = (lim) => definicaoElementoSchema.safeParse({ limitacoes: [lim] }).success;
+  t("schema rejeita maximo=Infinity", !parseLim({ kind: "atributo", key: "forca", maximo: Infinity }));
+  t("schema rejeita maximo=NaN", !parseLim({ kind: "atributo", key: "forca", maximo: NaN }));
+  t("schema rejeita maximo=-0.5", !parseLim({ kind: "atributo", key: "forca", maximo: -0.5 }));
+  t("schema aceita maximo=0", parseLim({ kind: "atributo", key: "forca", maximo: 0 }));
+  t("schema rejeita kind fora de TIPOS_REGRA", !parseLim({ kind: "inexistente", key: "forca", maximo: 1 }));
+  t("schema rejeita key fora do padrão", !parseLim({ kind: "atributo", key: "for ca", maximo: 1 }));
+
+  // PATCH inválido: para CADA caso, HTTP 400 + GET posterior prova que
+  // a definição integral do elemento continua exatamente a mesma.
+  const defOriginal = JSON.stringify(
+    listaAposInv.json?.elementos?.find((e) => e.key === "sorte")?.definition ?? null,
+  );
+  const casosPatchInvalidos = [
+    ["kind desconhecido", { kind: "kind_inexistente", key: "forca", maximo: 2 }],
+    ["kind vazio", { kind: "", key: "forca", maximo: 2 }],
+    ["key vazia", { kind: "atributo", key: "", maximo: 2 }],
+    ["key com espaços", { kind: "atributo", key: "for ca", maximo: 2 }],
+    ["key com caracteres inválidos", { kind: "atributo", key: "força!", maximo: 2 }],
+    ["máximo negativo", { kind: "atributo", key: "forca", maximo: -1 }],
+    ["máximo ausente", { kind: "atributo", key: "forca" }],
+    ["máximo não numérico", { kind: "atributo", key: "forca", maximo: "Infinity" }],
+  ];
+  for (const [rotulo, lim] of casosPatchInvalidos) {
+    const rInv = await req(BASE, "PATCH", `${API}/${sortId}`, {
+      cookie: ids.cm,
+      body: { definition: { limitacoes: [lim] } },
+    });
+    t(`PATCH rejeita ${rotulo} → 400`, rInv.status === 400, `status=${rInv.status}`);
+    const depois = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
+    const defDepois = JSON.stringify(depois.json?.elementos?.find((e) => e.key === "sorte")?.definition ?? null);
+    t(`definição integral inalterada após PATCH (${rotulo})`, defDepois === defOriginal);
+  }
 
   sec("Motor — PATCH da ficha aplica o teto condicional");
   const PATCH = (data) => req(BASE, "PATCH", `/characters/${pjId}`, { cookie: ids.j1.cookie, body: { data } });
