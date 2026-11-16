@@ -512,18 +512,56 @@ try {
     `${rotuloAntesImersao}`);
   t("abrir não gera nova rolagem", (await pgM.evaluate(() => window.scrollY)) === scrollAntesImersao,
     `antes=${scrollAntesImersao} depois=${await pgM.evaluate(() => window.scrollY)}`);
+  // bloqueio de rolagem do fundo: sem overflow:hidden o documento
+  // atrás do overlay continuaria rolando com roda/toque
+  t("documento com overflow oculto no modo imersivo",
+    await pgM.evaluate(() => document.documentElement.style.overflow) === "hidden",
+    await pgM.evaluate(() => document.documentElement.style.overflow));
+  // marcador de identidade: prova que é o MESMO nó canvas após o ciclo
+  await canvasArea.evaluate((el) => { el.dataset.marcaImersao = "1"; });
+  // roda do mouse sobre o overlay NÃO pode rolar a página de fundo
+  await pgM.mouse.move(680, 450);
+  await pgM.mouse.wheel(0, 900);
+  await pgM.waitForTimeout(300);
+  t("roda do mouse não rola a página atrás do overlay",
+    (await pgM.evaluate(() => window.scrollY)) === scrollAntesImersao,
+    `scrollY=${await pgM.evaluate(() => window.scrollY)}`);
   await shot(pgM, "06c-mesa-imersiva");
   await pgM.keyboard.press("Escape");
   await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
   t("Escape fecha o modo imersivo", await pgM.locator(".mesa-dados-area.imersivo").count() === 0);
   t("fechar não gera nova rolagem", (await pgM.evaluate(() => window.scrollY)) === scrollAntesImersao,
     `depois=${await pgM.evaluate(() => window.scrollY)}`);
-  // reabre e fecha pelo botão
+  t("overflow restaurado após Escape",
+    await pgM.evaluate(() => document.documentElement.style.overflow) === "",
+    await pgM.evaluate(() => document.documentElement.style.overflow));
+  // reabre com overflow customizado: o Recolher deve restaurar o valor
+  // ANTERIOR, não um default fixo
+  await pgM.evaluate(() => { document.documentElement.style.overflow = "scroll"; });
   await areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" }).click();
   await pgM.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
   await pgM.getByRole("button", { name: "Recolher mesa de dados" }).click();
   await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
   t("botão Recolher fecha o modo imersivo", await pgM.locator(".mesa-dados-area.imersivo").count() === 0);
+  t("overflow anterior restaurado após Recolher (não default fixo)",
+    await pgM.evaluate(() => document.documentElement.style.overflow) === "scroll",
+    await pgM.evaluate(() => document.documentElement.style.overflow));
+  await pgM.evaluate(() => { document.documentElement.style.overflow = ""; });
+  t("canvas é o mesmo nó DOM após o ciclo imersivo",
+    await canvasArea.evaluate((el) => el.dataset.marcaImersao) === "1");
+  // saída inesperada: trocar de aba desmonta o painel — o cleanup do
+  // efeito precisa restaurar o overflow mesmo sem Escape/Recolher
+  await areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" }).click();
+  await pgM.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
+  // dispatchEvent: com overflow:hidden o scrollIntoView do click travaria
+  // (o documento está propositalmente travado); o evento DOM dispara o
+  // onClick do React do mesmo jeito
+  await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" })
+    .evaluate((el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
+  t("desmonte do painel restaura overflow (sem Escape/Recolher)",
+    await pgM.evaluate(() => document.documentElement.style.overflow) === "",
+    await pgM.evaluate(() => document.documentElement.style.overflow));
   // rolagem continua autoritativa após ciclo imersivo
   await rolarLivre(pgM, 6, 1, "pos-imersivo");
   t("rolagem funciona após modo imersivo",

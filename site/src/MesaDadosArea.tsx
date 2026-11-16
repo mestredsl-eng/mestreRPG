@@ -23,11 +23,27 @@ export default function MesaDadosArea({ children, ariaLabel }: Props) {
       if (e.key === "Escape") setImersivo(false);
     };
     window.addEventListener("keydown", onKey);
+    // Bloqueio de rolagem do fundo: o overlay é position:fixed e NÃO
+    // captura wheel/touch por padrão — sem overflow:hidden o documento
+    // atrás continuaria rolando. O padding-right compensa o desaparecimento
+    // da barra de rolagem para não gerar salto visual; ambos os estilos
+    // anteriores são restaurados no cleanup (Escape, Recolher, unmount).
+    const root = document.documentElement;
+    const body = document.body;
+    const overflowAnterior = root.style.overflow;
+    const paddingAnterior = body.style.paddingRight;
+    const larguraBarra = window.innerWidth - root.clientWidth;
+    root.style.overflow = "hidden";
+    if (larguraBarra > 0) body.style.paddingRight = `${larguraBarra}px`;
     // foco no botão de recolher sem rolar a página (preventScroll:
     // focus() comum dispararia scrollIntoView e mudaria window.scrollY)
     const btn = areaRef.current?.querySelector<HTMLButtonElement>(".mesa-ampliar");
     btn?.focus({ preventScroll: true });
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      root.style.overflow = overflowAnterior;
+      body.style.paddingRight = paddingAnterior;
+    };
   }, [imersivo]);
 
   const abrir = () => {
