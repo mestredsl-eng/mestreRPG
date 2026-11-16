@@ -398,12 +398,12 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
       // Apenas mensagens novas recebidas em tempo real entram na fila;
       // o histórico HTTP nunca é narrado ao abrir/reconectar a mesa.
+      const jaRecebida = mensagensFaladasRef.current.has(m.id);
+      if (!jaRecebida) mensagensFaladasRef.current.add(m.id);
       if (
-        vozAtivaRef.current && vozAutomaticaRef.current &&
-        (m.kind === "texto" || m.kind === "acao") &&
-        !mensagensFaladasRef.current.has(m.id)
+        !jaRecebida && vozAtivaRef.current && vozAutomaticaRef.current &&
+        (m.kind === "texto" || m.kind === "acao")
       ) {
-        mensagensFaladasRef.current.add(m.id);
         filaVozRef.current?.enfileirar(m.content, m.speakerGender ?? null);
         if (mensagensFaladasRef.current.size > 800) {
           const primeiro = mensagensFaladasRef.current.values().next().value;
