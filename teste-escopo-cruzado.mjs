@@ -22,6 +22,29 @@ const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } els
 const sec = (n) => console.log("\n== " + n + " ==");
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Pipes do servidor consumidos continuamente com buffers limitados:
+// sem drenar stdout/stderr o filho pode bloquear com o pipe cheio;
+// a retenção é só a cauda para diagnóstico de falhas.
+const LOG_LIMITE = 200;
+const logsServidor = { out: [], err: [] };
+function consumirStream(stream, destino) {
+  if (!stream) return;
+  let resto = "";
+  stream.on("data", (chunk) => {
+    resto += String(chunk);
+    const linhas = resto.split("\n");
+    resto = linhas.pop() ?? "";
+    for (const l of linhas) {
+      if (l.trim()) { destino.push(l); if (destino.length > LOG_LIMITE) destino.shift(); }
+    }
+  });
+}
+function despejarLogs() {
+  const cauda = (arr) => arr.slice(-15).join("\n");
+  if (logsServidor.err.length) console.log("--- stderr do servidor (cauda) ---\n" + cauda(logsServidor.err));
+  if (logsServidor.out.length) console.log("--- stdout do servidor (cauda) ---\n" + cauda(logsServidor.out));
+}
+
 const sockets = [];
 function conectar(base, cookie) {
   const token = decodeURIComponent(cookie.split("=")[1]);
@@ -42,9 +65,13 @@ const emitirCb = (s, ev, p) => new Promise((r) => {
 const porta = await portaLivre();
 const base = `http://127.0.0.1:${porta}`;
 const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
-await esperarSaudavel(base, proc);
+consumirStream(proc.stdout, logsServidor.out);
+consumirStream(proc.stderr, logsServidor.err);
 
 try {
+  // Boot protegido: falha aqui ainda passa pelo finally — processo e
+  // diretório temporário nunca ficam abandonados.
+  await esperarSaudavel(base, proc);
   sec("Cenário — campanha, sessão, ADMIN secundário e GM de guilda");
   const C = await criarCenario(base, BANCO, { jogadores: { jogador1: "esc_j1" } });
   const { campId, cookieMestre, adminId, jogadores, personagemMestre } = C;
@@ -79,6 +106,13 @@ try {
   db.close();
   t("admin2 sem membership na campanha", membAdmin2 === 0);
   t("GM sem membership na campanha", membGm === 0);
+
+  // baseline de integridade: convites e memberships da campanha antes
+  // das negações — os asserts do fim comparam com estes valores.
+  const baseIntegridade = comDb(BANCO, (db) => ({
+    convites: db.prepare("select count(*) c from invitations where campaign_id=?").get(campId).c,
+    membros: db.prepare("select count(*) c from memberships where campaign_id=?").get(campId).c,
+  }));
 
   sec("HTTP — ADMIN global sem membership é negado na campanha");
   t("GET /campaigns/:id → 403", (await req(base, "GET", `/campaigns/${campId}`, { cookie: cookieAdmin2 })).status === 403);
@@ -137,10 +171,45 @@ try {
   // integridade: as negações não gravaram nada
   const contTestes = comDb(BANCO, (db) => db.prepare("select count(*) c from tests where session_id=?").get(sid).c);
   t("nenhum teste gravado pelas tentativas negadas", contTestes === 0, `tests=${contTestes}`);
+  const integridade = comDb(BANCO, (db) => ({
+    convites: db.prepare("select count(*) c from invitations where campaign_id=?").get(campId).c,
+    membros: db.prepare("select count(*) c from memberships where campaign_id=?").get(campId).c,
+  }));
+  t("convites inalterados após negações de invitations",
+    integridade.convites === baseIntegridade.convites,
+    `antes=${baseIntegridade.convites} depois=${integridade.convites}`);
+  t("memberships inalterados após PATCH de papel negado",
+    integridade.membros === baseIntegridade.membros,
+    `antes=${baseIntegridade.membros} depois=${integridade.membros}`);
+} catch (e) {
+  // Exceção no corpo do teste vira falha registrada — o resumo final
+  // continua sendo impresso e o erro original não é perdido.
+  fail++;
+  console.log("FALHOU exceção não tratada:", e?.stack ?? e);
 } finally {
-  for (const s of sockets) s.disconnect();
-  await encerrarServidor(proc);
-  limparDir(DIR);
+  // Teardown independente: falha em uma etapa não impede a outra e
+  // nenhuma falha de limpeza mascara o resultado dos testes.
+  let teardownFalhou = false;
+  try {
+    for (const s of sockets) s.disconnect();
+  } catch (e) {
+    teardownFalhou = true;
+    console.error("[teardown] sockets:", e?.message ?? e);
+  }
+  try {
+    await encerrarServidor(proc);
+  } catch (e) {
+    teardownFalhou = true;
+    console.error("[teardown] servidor:", e?.message ?? e);
+  }
+  try {
+    if (!limparDir(DIR)) teardownFalhou = true;
+  } catch (e) {
+    teardownFalhou = true;
+    console.error("[teardown] limpeza:", e?.message ?? e);
+  }
+  if (fail > 0) despejarLogs();
+  if (teardownFalhou) fail++;
 }
 
 console.log(`\n${pass} ok, ${fail} falhas`);
