@@ -17,6 +17,7 @@ on:
       - ready_for_review
   push:
     branches:
+      - main
       - integracao/acervo
   workflow_dispatch:
     inputs:
@@ -254,7 +255,9 @@ jobs:
             teste-vtt-nevoa.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
-            homologacao-desafio-ficha.mjs
+            homologacao-desafio-ficha.mjs \
+            homologacao-ajuda-contextual.mjs \
+            auditoria-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
