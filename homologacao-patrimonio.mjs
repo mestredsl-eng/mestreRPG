@@ -171,7 +171,7 @@ try {
   await shot(pgJ, "02-historico-saldos");
 
   sec("2.1 Histórico legado: escala configurada e sinal (desktop + mobile)");
-  const idsLegado = { campId: cenario.campId, characterId: heroinaId, createdBy: cenario.adminId };
+  const idsLegado = { campId: cenario.campId, campaignId: cenario.campId, characterId: heroinaId, createdBy: cenario.adminId };
   const casosLegado = [
     { casas: 0, positivo: 42, negativo: -3 },
     { casas: 1, positivo: 42.5, negativo: -3.5 },
