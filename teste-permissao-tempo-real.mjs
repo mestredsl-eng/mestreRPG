@@ -1313,6 +1313,16 @@ try {
   } else {
     t("AE/espectador: histórico negado — não recebe rolagens", true);
   }
+  // Detalhe do histórico (UI da sessão encerrada): cada rolagem visível
+  // carrega o autor nomeado — só nas linhas já autorizadas acima.
+  const histMFull = await hist(ids.cookieMestre);
+  const livreM = (histMFull.rolagens ?? []).find((x) => x.id === idsRolls.livre);
+  t("AE/mestre: rolagem visível traz autor nomeado", !!livreM?.autor?.username, JSON.stringify(livreM?.autor));
+  const donoAFull = await hist(jA.cookie);
+  const livreArow = (donoAFull.rolagens ?? []).find((x) => x.id === idsRolls.livre);
+  t("AE/donoA: autor da própria rolagem privada visível", !!livreArow?.autor?.username, JSON.stringify(livreArow?.autor));
+  const rollBrow = (donoAFull.rolagens ?? []).find((x) => x.id === idsRolls.b);
+  t("AE/donoA: rolagem alheia ausente — sem autor vazado", !rollBrow, rollBrow ? JSON.stringify(rollBrow.autor) : "");
 
   // ---------- AF. Mensagem secreta após rebaixamento do autor ----------
   sec("AF. mensagemVisivel: mestre/secreta só para mestres ATUAIS");

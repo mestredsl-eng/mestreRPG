@@ -250,7 +250,7 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
 
   // participantes: autores de mensagens + donos de testes + quem estava online não é persistido;
   // usamos membros ativos da campanha + autores presentes no chat
-  const autorIds = [...new Set([...eventos.map((m) => m.authorId), ...testesVisiveis.map((t) => t.requestedBy)].filter(Boolean) as string[])];
+  const autorIds = [...new Set([...eventos.map((m) => m.authorId), ...testesVisiveis.map((t) => t.requestedBy), ...rolagensVisiveis.map((r) => r.userId)].filter(Boolean) as string[])];
   const autores = autorIds.length
     ? await db.select({ id: users.id, username: users.username, displayName: users.displayName }).from(users).where(inArray(users.id, autorIds))
     : [];
@@ -279,7 +279,7 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
     participantes: autores,
     eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
     testes: ehMestre ? testesVisiveis : testesVisiveis.map(testeSemDificuldade),
-    rolagens: rolagensVisiveis,
+    rolagens: rolagensVisiveis.map((r) => ({ ...r, autor: autores.find((a) => a.id === r.userId) ?? null })),
     alteracoes: alteracoes.map((a) => ({
       id: a.id, action: a.action, createdAt: a.createdAt,
       autor: a.actorId ? atores.find((u) => u.id === a.actorId) ?? null : null,
