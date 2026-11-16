@@ -144,7 +144,8 @@ jobs:
             teste-convites-guilda.mjs \
             teste-responsavel-guilda.mjs \
             teste-sessoes-conta.mjs \
-            teste-prerequisitos-patrimonio.mjs
+            teste-prerequisitos-patrimonio.mjs \
+            teste-ponte-economica-acervo.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"

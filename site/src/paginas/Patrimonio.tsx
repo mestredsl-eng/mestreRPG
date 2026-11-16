@@ -4,7 +4,7 @@ import {
   type ItemInventario, type ItemInventarioInput, type Equipamento,
   type Veiculo, type VeiculoInput, type Financeiro, type ContaFinanceira, type ContaInput,
   type ItemCatalogo, type ItemCatalogoInput, type PersonagemResumo, type TransacaoFinanceira,
-  type AcervoCatalogoItem, type DisponibilidadeAcervo, type RegraRef,
+  type AcervoCatalogoItem, type DisponibilidadeAcervo, type RegraRef, type EconomiaAcervo,
 } from "../api";
 import { getSocket } from "../socket";
 import { ModalConfirmar } from "../Modal";
@@ -468,6 +468,20 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
     templateSemDisponibilidade || (!!regraSelecionada && (!dispSel || !dispSel.ok));
   const contaSel = fin?.contas.find((c) => c.id === contaId);
   const moeda = contaSel?.currency ?? fin?.config.moedaPrincipal ?? "";
+  // Ponte econômica (Issue #103): preço/peso de referência do Acervo
+  // (template vinculado ou elemento direto) é SUGESTÃO — o valor
+  // debitado é sempre o confirmado pelo mestre neste formulário.
+  const econRef: EconomiaAcervo | undefined = templateId
+    ? (templateSel?.data as (EconomiaAcervo & Record<string, unknown>) | undefined)
+    : itemAcervoSelecionado ?? undefined;
+  const refBRL = (() => {
+    const p = econRef?.economia?.precoReferenciaBRL;
+    if (typeof p === "number" && Number.isFinite(p)) return p;
+    const vc = Number(econRef?.valueCents);
+    return Number.isFinite(vc) && vc > 0 ? vc / 100 : undefined;
+  })();
+  const refFaixa = econRef?.economia?.faixaPrecoBRL ?? undefined;
+  const refPeso = typeof econRef?.weight === "number" ? econRef.weight : undefined;
   const total = (Number(qtd) || 0) * (Number(valorUnit) || 0);
   const valido = !bloqueado && (templateId !== "" || acervoSel !== null || nome.trim().length > 0) && Number(qtd) > 0 &&
     (pagar ? !!contaId && Number(valorUnit) > 0 : true);
@@ -570,6 +584,19 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
           <label>Valor unitário ({moeda}){pagar ? "" : " (referência, opcional)"}
             <input type="number" min="0" step="any" placeholder="0,00" value={valorUnit} onChange={(e) => setValorUnit(e.target.value === "" ? "" : Number(e.target.value))} required={pagar} />
           </label>
+          {refBRL !== undefined && (
+            <p className="meta">
+              Referência do Acervo: R$ {refBRL.toFixed(2)} (BRL)
+              {refFaixa ? ` — faixa R$ ${refFaixa.min.toFixed(2)}–${refFaixa.max.toFixed(2)}` : ""}.
+              {" "}{moeda === "BRL"
+                ? "É apenas sugestão — confirme o valor efetivamente pago."
+                : `Referência em BRL é apenas informativa — a cobrança segue a moeda da conta (${moeda}), sem conversão automática.`}
+            </p>
+          )}
+          {refBRL !== undefined && moeda === "BRL" && valorUnit === "" && (
+            <button type="button" className="secundario" onClick={() => setValorUnit(refBRL)}>Usar valor de referência</button>
+          )}
+          {refPeso !== undefined && <p className="meta">Peso de referência do Acervo: {refPeso} kg.</p>}
           <label className="check">
             <input type="checkbox" checked={pagar} onChange={(e) => setPagar(e.target.checked)} />
             {" "}Pagar agora — debitar conta financeira
@@ -882,6 +909,12 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
                 : el?.prerequisitos.length
                   ? "Requisito: " + el.prerequisitos.map((pr) => `${pr.nome} nível ${pr.minLevel}`).join(" + ")
                   : "Sem pré-requisitos."}
+              {el && (el.fuel || el.capacity || el.veiculo) && (
+                <span className="meta">
+                  {" "}Referência do Acervo: {[el.fuel && `combustível ${el.fuel}`, el.capacity && `lotação ${el.capacity}`, el.veiculo?.consumoOuAutonomia].filter(Boolean).join(" · ")}
+                  {el.veiculo?.baseDoPeso ? ` (${el.veiculo.baseDoPeso})` : ""}.
+                </span>
+              )}
               {bloqueado && <> Aquisição indisponível. {d!.mensagens.join(" ")}</>}
             </p>
           );
@@ -1271,6 +1304,50 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
         <input placeholder="Nome do item" value={novo.name} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, name: e.target.value })} required />
         <input placeholder="Categoria" value={novo.category ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, category: e.target.value })} />
         <input placeholder="Descrição" value={novo.description ?? ""} disabled={!!novo.regra} onChange={(e) => setNovo({ ...novo, description: e.target.value })} />
+        {novo.regra && (() => {
+          // Ponte econômica (Issue #103): o Acervo fornece a referência;
+          // estes campos são override local do template (cópia de
+          // trabalho) — nunca alteram rule_definitions.
+          const el = acervo.find((x) => x.regra.kind === novo.regra!.kind && x.regra.key === novo.regra!.key);
+          if (!el) return null;
+          const d = (novo.data ?? {}) as Record<string, unknown>;
+          const pesoRef = typeof d.weight === "number" ? d.weight : el.weight;
+          const econData = d.economia as EconomiaAcervo["economia"] | undefined;
+          const precoDataReais = typeof d.valueCents === "number" ? d.valueCents / 100
+            : typeof econData?.precoReferenciaBRL === "number" ? econData.precoReferenciaBRL : undefined;
+          const precoRef = precoDataReais ?? el.economia?.precoReferenciaBRL ?? (el.valueCents !== undefined ? el.valueCents / 100 : undefined);
+          const definirPeso = (v: number | undefined) => {
+            const dataNovo = { ...(novo.data ?? {}) };
+            if (v === undefined) delete dataNovo.weight; else dataNovo.weight = v;
+            setNovo({ ...novo, data: dataNovo });
+          };
+          const definirPreco = (v: number | undefined) => {
+            const dataNovo = { ...(novo.data ?? {}) };
+            if (v === undefined) {
+              delete dataNovo.valueCents;
+            } else {
+              dataNovo.valueCents = Math.round(v * 100);
+              const econAtual = (dataNovo.economia ?? el.economia) as Record<string, unknown> | undefined;
+              if (econAtual && typeof econAtual === "object") {
+                dataNovo.economia = { ...econAtual, precoReferenciaBRL: v };
+              }
+            }
+            setNovo({ ...novo, data: dataNovo });
+          };
+          return (
+            <span className="linha">
+              <span className="meta">
+                Ref. Acervo{pesoRef !== undefined ? `: ${pesoRef} kg` : ""}{precoRef !== undefined ? ` · ~R$ ${precoRef.toFixed(2)}` : ""}
+              </span>
+              <input placeholder="Peso override (kg)" type="number" min="0" step="any" style={{ width: 120 }}
+                value={typeof d.weight === "number" ? d.weight : ""}
+                onChange={(e) => definirPeso(e.target.value === "" ? undefined : Number(e.target.value))} />
+              <input placeholder="Preço override (R$)" type="number" min="0" step="0.01" style={{ width: 120 }}
+                value={precoDataReais !== undefined ? precoDataReais : ""}
+                onChange={(e) => definirPreco(e.target.value === "" ? undefined : Number(e.target.value))} />
+            </span>
+          );
+        })()}
         <button type="submit">{editandoId ? "Salvar alterações" : "Adicionar ao catálogo"}</button>
         {editandoId && <button type="button" className="secundario" onClick={cancelarEdicaoCatalogo}>Cancelar edição</button>}
       </form>
