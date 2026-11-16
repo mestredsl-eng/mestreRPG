@@ -109,7 +109,7 @@ const guildaDb = (id) => {
 };
 const membroDb = (guildId, userId) => {
   const db = abrirDb(BANCO);
-  const m = db.prepare("select role,status from guild_members where guild_id=? and user_id=?").get(guildId, userId);
+  const m = db.prepare("select id,role,status from guild_members where guild_id=? and user_id=?").get(guildId, userId);
   db.close();
   return m;
 };
@@ -310,6 +310,93 @@ try {
   t("responsável inalterado após tentativa", guildaDb(guildA).responsible_user_id === idDave);
   // desbloqueia para não contaminar estado final
   await req(base, "PATCH", `/admin/users/${idErin}`, { cookie: cookieRoot, body: { status: "ativo" } });
+
+  sec("Proteção do responsável — vínculo GM não pode ser perdido sem transferência");
+  // estado: responsável=dave; GMs ativos alice/dave/erin; bob membro.
+  const patchM = (ck, uid, body) => req(base, "PATCH", `/guildas/${guildA}/membros/${uid}`, { cookie: ck, body });
+  const delM = (ck, uid) => req(base, "DELETE", `/guildas/${guildA}/membros/${uid}`, { cookie: ck });
+  t("estado inicial: dave é o responsável", guildaDb(guildA).responsible_user_id === idDave);
+  t("responsável rebaixa a si mesmo → 409", (await patchM(cookieDave, idDave, { role: "membro" })).status === 409);
+  t("responsável remove a si mesmo via PATCH → 409", (await patchM(cookieDave, idDave, { status: "removido" })).status === 409);
+  t("GM comum rebaixa o responsável → 409", (await patchM(cookieAlice, idDave, { role: "membro" })).status === 409);
+  t("GM comum remove o responsável → 409", (await delM(cookieAlice, idDave)).status === 409);
+  t("ADMIN remove o responsável atual → 409", (await delM(cookieRoot, idDave)).status === 409);
+  t("responsável exclui o próprio vínculo → 409", (await delM(cookieDave, idDave)).status === 409);
+  t("vínculo do responsável intacto após tentativas", membroDb(guildA, idDave)?.role === "gm" && membroDb(guildA, idDave)?.status === "ativo");
+  t("responsible_user_id continua dave", guildaDb(guildA).responsible_user_id === idDave);
+
+  const tr2 = await put(cookieDave, guildA, idAlice);
+  t("transferência prévia → 200", tr2.status === 200, `status=${tr2.status}`);
+  t("responsável agora é alice", guildaDb(guildA).responsible_user_id === idAlice);
+  t("antigo responsável rebaixado após transferência → 200",
+    (await patchM(cookieAlice, idDave, { role: "membro" })).status === 200);
+  t("antigo responsável removido após transferência → 200",
+    (await delM(cookieAlice, idDave)).status === 200);
+  const vincResp = membroDb(guildA, idAlice);
+  t("responsável final é GM ativo", vincResp?.role === "gm" && vincResp?.status === "ativo");
+
+  sec("Corrida — transferência × remoção do alvo: invariante preservada");
+  // estado: responsável=alice; GMs ativos alice/erin (dave removido).
+  // PUT alice→erin corre em paralelo com PATCH que rebaixaria erin.
+  // Vencer o PATCH primeiro → erin deixa de ser GM → CAS do PUT falha (409).
+  // Vencer o PUT primeiro → erin vira responsável → PATCH é bloqueado (409).
+  const [cPut, cPatch] = await Promise.all([
+    put(cookieAlice, guildA, idErin),
+    patchM(cookieAlice, idErin, { role: "membro" }),
+  ]);
+  const exatamenteUma = (cPut.status === 200 && cPatch.status === 409) || (cPut.status === 409 && cPatch.status === 200);
+  t("exatamente uma operação vence a corrida", exatamenteUma, `put=${cPut.status} patch=${cPatch.status}`);
+  const respFinal = guildaDb(guildA).responsible_user_id;
+  const vincFinal = membroDb(guildA, respFinal);
+  t("responsável final é GM ativo (invariante)", vincFinal?.role === "gm" && vincFinal?.status === "ativo",
+    `resp=${respFinal} vinc=${JSON.stringify(vincFinal)}`);
+
+  sec("Guarda de escrita — ordenamentos determinísticos");
+  // O Promise.all acima não força os dois ordenamentos. Aqui provamos a
+  // proteção NO INSTANTE DA ESCRITA chamando os mesmos primitivos
+  // atômicos que as rotas usam (exportados de routes/guildas.js): a
+  // condição vive no próprio UPDATE, então uma leitura velha de
+  // responsible_user_id não importa — o que conta é o estado no commit.
+  // conexão drizzle própria sobre o banco temporário — a trava de
+  // instância do getDb impede abrir uma segunda conexão "oficial", mas
+  // os primitivos de escrita recebem o executor por parâmetro.
+  const { drizzle } = await import("drizzle-orm/better-sqlite3");
+  const { gravarPapelStatusMembro, gravarResponsavelGuilda } = await import("./servidor/dist/lib/guildas-guarda.js");
+  const sqliteGuarda = new Database(BANCO);
+  const dbGuarda = drizzle(sqliteGuarda);
+  // normaliza: alice e erin GM ativos; responsável = alice (via ADMIN)
+  await req(base, "PATCH", `/guildas/${guildA}/membros/${idAlice}`, { cookie: cookieRoot, body: { role: "gm" } });
+  await req(base, "PATCH", `/guildas/${guildA}/membros/${idErin}`, { cookie: cookieRoot, body: { role: "gm" } });
+  await put(cookieRoot, guildA, idAlice);
+  t("setup: responsável normalizado para alice", guildaDb(guildA).responsible_user_id === idAlice);
+
+  // Ordenamento A — a transferência commita ANTES da escrita do
+  // PATCH/DELETE (o handler teria lido responsible_user_id=alice, velho)
+  await put(cookieRoot, guildA, idErin);
+  t("transferência para erin commita", guildaDb(guildA).responsible_user_id === idErin);
+  const mErin = membroDb(guildA, idErin);
+  const chPatchTardio = await gravarPapelStatusMembro(dbGuarda, mErin.id, guildA, "membro", "ativo");
+  t("escrita atrasada de PATCH não rebaixa o novo responsável", chPatchTardio === 0);
+  const chDelTardio = await gravarPapelStatusMembro(dbGuarda, mErin.id, guildA, "gm", "removido");
+  t("escrita atrasada de DELETE não remove o novo responsável", chDelTardio === 0);
+  const vincErinA = membroDb(guildA, idErin);
+  t("erin permanece GM ativo após escritas tardias", vincErinA?.role === "gm" && vincErinA?.status === "ativo");
+
+  // Ordenamento B — o rebaixamento commita ANTES da transferência:
+  // o CAS+EXISTS não pode escolher quem deixou de ser GM ativo
+  const rebAlice = await patchM(cookieRoot, idAlice, { role: "membro" });
+  t("rebaixamento de GM não-responsável commita", rebAlice.status === 200, `status=${rebAlice.status}`);
+  const trParaExGM = await put(cookieRoot, guildA, idAlice);
+  t("API recusa transferência para ex-GM", trParaExGM.status === 409, `status=${trParaExGM.status}`);
+  const chCas = await gravarResponsavelGuilda(dbGuarda, guildA, idErin, idAlice);
+  t("CAS+EXISTS recusa no instante da escrita (changes=0)", chCas === 0);
+  t("responsável continua erin", guildaDb(guildA).responsible_user_id === idErin);
+  // caminho feliz do mesmo primitivo de escrita
+  await patchM(cookieRoot, idAlice, { role: "gm" });
+  const chCasOk = await gravarResponsavelGuilda(dbGuarda, guildA, idErin, idAlice);
+  t("CAS+EXISTS permite transferência válida (changes=1)", chCasOk === 1);
+  t("responsável final alice via escrita guardada", guildaDb(guildA).responsible_user_id === idAlice);
+  sqliteGuarda.close();
 
   console.log(`\n==== ${pass} ok, ${fail} falhas ====`);
 } finally {
