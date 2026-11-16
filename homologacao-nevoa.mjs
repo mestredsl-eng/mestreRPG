@@ -338,8 +338,20 @@ try {
         await page.locator(".vtt-nevoa-canvas-pincel").waitFor({ timeout: 5000 }).catch(() => {});
       }
       const n0 = nevoaEmitidos;
-      await garantirPincel(page);
-      await desenhar(page, pontos);
+      try {
+        await garantirPincel(page);
+        await desenhar(page, pontos);
+      } catch {
+        // o cliente reseta o modo pincel quando o estado do tabuleiro muda
+        // (Mesa.tsx: conteúdo novo de `inicial` → setPincel(false)) — uma
+        // atualização legítima pode chegar entre garantirPincel e o
+        // boundingBox e remover .vtt-nevoa-canvas-pincel por ~segundos.
+        // boundingBox é a 1ª ação de desenhar (antes de qualquer mouse.*),
+        // então a tentativa não deixou gesto pela metade; mouse.up é
+        // seguro caso uma falha futura ocorra depois do down.
+        await page.mouse.up().catch(() => {});
+        continue;
+      }
       const limite = Date.now() + 6000;
       while (Date.now() < limite && nevoaEmitidos === n0) await page.waitForTimeout(100);
       if (nevoaEmitidos > n0) return;
