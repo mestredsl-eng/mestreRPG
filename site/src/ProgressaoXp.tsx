@@ -119,7 +119,9 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
   };
 
   return (
-    <div className="cartao progressao-xp">
+    // minWidth:0 — o painel é item do grid .ficha; sem isso o min-content
+    // da tabela de elementos alarga o grid e estoura a viewport mobile.
+    <div className="cartao progressao-xp" style={{ minWidth: 0 }}>
       <h3>Progressão — XP</h3>
       <div className="grade-2">
         <div>
@@ -127,7 +129,7 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
           <p className="progresso-saldo"><strong>{prog.xp.saldo}</strong> XP</p>
         </div>
         {ehMestre && (
-          <div className="linha" role="group" aria-label="Conceder ou remover XP">
+          <div className="linha" role="group" aria-label="Conceder ou remover XP" style={{ flexWrap: "wrap" }}>
             <select value={acaoXp} onChange={(e) => setAcaoXp(e.target.value as "conceder" | "remover")} aria-label="Operação de XP">
               <option value="conceder">Conceder</option>
               <option value="remover">Remover</option>
@@ -140,7 +142,7 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
             <input
               type="text" placeholder="Motivo" value={motivoXp}
               onChange={(e) => setMotivoXp(e.target.value)} aria-label="Motivo do ajuste de XP"
-              style={{ flex: 1, minWidth: "10em" }}
+              style={{ flex: "1 1 10em", minWidth: "8em" }}
             />
             <button type="button" className="mini" disabled={ocupado} onClick={() => void operarXp()}>
               Aplicar
