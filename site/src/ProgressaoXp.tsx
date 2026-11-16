@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getSocket } from "./socket";
+import { api } from "./api";
 import {
   apiProgressao,
   ApiErrorProgresso,
@@ -29,12 +30,23 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
 
   const carregar = useCallback(async () => {
     try {
+      // Quem não é mestre nem dono (ex.: jogador lendo ficha de NPC
+      // revelado) receberia 403 em /progressao — evitamos a consulta
+      // desperdiçada e o erro, mesmo padrão do painel de Patrimônio.
+      if (!ehMestre) {
+        const det = await api.obterPersonagem(characterId);
+        if (det?.personagem?.ehEu !== true) {
+          setProg(null);
+          setErro(null);
+          return;
+        }
+      }
       setProg(await apiProgressao.obter(characterId));
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar progressão");
     }
-  }, [characterId]);
+  }, [characterId, ehMestre]);
 
   useEffect(() => { void carregar(); }, [carregar]);
 
