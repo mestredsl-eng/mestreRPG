@@ -40,6 +40,37 @@ interface FaceVisivel {
   dado: DadoMesa;
 }
 
+// Textura de feltro cacheada por combinação de cores do tema — gerada
+// uma única vez (ruído determinístico) e reutilizada como pattern.
+let padraoFeltro: { chave: string; padrao: CanvasPattern | null } | null = null;
+function feltroPadrao(ctx: CanvasRenderingContext2D, chave: string): CanvasPattern | null {
+  if (padraoFeltro?.chave === chave) return padraoFeltro.padrao;
+  const s = document.createElement("canvas");
+  s.width = s.height = 96;
+  const g = s.getContext("2d");
+  let padrao: CanvasPattern | null = null;
+  if (g) {
+    let seed = 987654321;
+    const rnd = () => (seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296;
+    // motas claras/escuras: a feltragem do pano
+    for (let i = 0; i < 1100; i++) {
+      g.fillStyle = rnd() > 0.5 ? "rgba(255,255,255,.055)" : "rgba(0,0,0,.08)";
+      g.beginPath();
+      g.arc(rnd() * 96, rnd() * 96, rnd() * 1.15 + 0.25, 0, Math.PI * 2);
+      g.fill();
+    }
+    // trama sutil de linhas
+    g.strokeStyle = "rgba(255,255,255,.025)";
+    g.lineWidth = 0.6;
+    for (let y = 0; y < 96; y += 3) {
+      g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(96, y + 0.5); g.stroke();
+    }
+    padrao = ctx.createPattern(s, "repeat");
+  }
+  padraoFeltro = { chave, padrao };
+  return padrao;
+}
+
 /**
  * Mesa compartilhada de dados 3D: uma única cena/canvas para todos os
  * dados do lançamento — mesma superfície, bordas visíveis e colisões
@@ -108,11 +139,22 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     let finalizado = reduced || cenaRepousada(cena);
     let fill = "#2b3350";
     let textColor = "#e8ecf7";
+    // Cores da bandeja: tema do usuário via variáveis CSS --mesa-*
+    // (aplicadas por aplicarTemaMesa); fallbacks = tema azul original.
+    let mesaFeltro = "#263456", mesaFeltroEscuro = "#121828";
+    let mesaBorda = "rgba(130,144,189,.55)", mesaAcabamento = "rgba(255,255,255,.14)";
+    let mesaLuz = "rgba(255,255,255,.16)", mesaSombra = "rgba(0,0,0,.22)";
     const lerCores = () => {
       const colors = getComputedStyle(canvas);
       fill = colors.getPropertyValue("--dado-fundo").trim() || "#2b3350";
       const text = colors.getPropertyValue("--dado-texto").trim() || "#e8ecf7";
       textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
+      mesaFeltro = colors.getPropertyValue("--mesa-feltro").trim() || mesaFeltro;
+      mesaFeltroEscuro = colors.getPropertyValue("--mesa-feltro-escuro").trim() || mesaFeltroEscuro;
+      mesaBorda = colors.getPropertyValue("--mesa-borda").trim() || mesaBorda;
+      mesaAcabamento = colors.getPropertyValue("--mesa-acabamento").trim() || mesaAcabamento;
+      mesaLuz = colors.getPropertyValue("--mesa-luz").trim() || mesaLuz;
+      mesaSombra = colors.getPropertyValue("--mesa-sombra").trim() || mesaSombra;
     };
     lerCores();
     const border = estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#8290bd";
@@ -132,13 +174,42 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(rx, ry, rw, rh, k * 0.35);
       else ctx.rect(rx, ry, rw, rh);
-      const feltro = ctx.createRadialGradient(cx, cy - rh * 0.2, k, cx, cy, Math.max(rw, rh) * 0.7);
-      feltro.addColorStop(0, "rgba(38,52,86,.55)");
-      feltro.addColorStop(1, "rgba(18,24,40,.75)");
-      ctx.fillStyle = feltro;
+      // Sombra projetada da bandeja — profundidade sob o tampo.
+      ctx.shadowColor = mesaSombra;
+      ctx.shadowBlur = k * 0.5;
+      ctx.shadowOffsetY = k * 0.12;
+      const fundoTray = ctx.createLinearGradient(rx, ry, rx + rw * 0.25, ry + rh);
+      fundoTray.addColorStop(0, mesaFeltro);
+      fundoTray.addColorStop(1, mesaFeltroEscuro);
+      ctx.fillStyle = fundoTray;
       ctx.fill();
-      ctx.strokeStyle = "rgba(130,144,189,.55)";
-      ctx.lineWidth = Math.max(1, k * 0.06);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetY = 0;
+      // Textura de feltro (pattern cacheado por tema).
+      const feltroTex = feltroPadrao(ctx, `${mesaFeltro}|${mesaFeltroEscuro}`);
+      if (feltroTex) {
+        ctx.fillStyle = feltroTex;
+        ctx.globalAlpha = 0.85;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      // Luz ambiente do tema: brilho suave no topo do tampo.
+      const luzTray = ctx.createRadialGradient(cx, cy - rh * 0.28, k * 0.2, cx, cy, Math.max(rw, rh) * 0.75);
+      luzTray.addColorStop(0, mesaLuz);
+      luzTray.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = luzTray;
+      ctx.fill();
+      // Borda externa do tema + filete de acabamento interno (recuo).
+      ctx.strokeStyle = mesaBorda;
+      ctx.lineWidth = Math.max(1.5, k * 0.07);
+      ctx.stroke();
+      const recuo = k * 0.11;
+      ctx.beginPath();
+      if (ctx.roundRect) ctx.roundRect(rx + recuo, ry + recuo, rw - recuo * 2, rh - recuo * 2, k * 0.26);
+      else ctx.rect(rx + recuo, ry + recuo, rw - recuo * 2, rh - recuo * 2);
+      ctx.strokeStyle = mesaAcabamento;
+      ctx.lineWidth = Math.max(1, k * 0.028);
       ctx.stroke();
       ctx.restore();
 
@@ -188,8 +259,8 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       facesVisiveis.sort((a, b) => a.profundidade - b.profundidade);
 
       const gradient = ctx.createRadialGradient(cx - k, cy - k, k * 0.2, cx, cy, k * limite);
-      gradient.addColorStop(0, "rgba(255,255,255,.16)");
-      gradient.addColorStop(1, "rgba(0,0,0,.22)");
+      gradient.addColorStop(0, mesaLuz);
+      gradient.addColorStop(1, mesaSombra);
       for (const f of facesVisiveis) {
         const pts = f.pts;
         ctx.beginPath();

@@ -280,12 +280,18 @@ authRouter.delete("/sessions/:id", requireAuth, async (req, res) => {
 });
 
 const corHex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor deve estar no formato #RRGGBB");
-const preferenciasSchema = z.object({
-  dados: z
-    .object({ corExterna: corHex, corInterna: corHex })
-    .strict()
-    .optional(),
-});
+// Temas da bandeja 3D (Mesa de Dados). Lista fechada: o cliente não pode
+// injetar CSS/cores arbitrárias — só um dos identificadores conhecidos.
+export const TEMAS_MESA = ["azul", "verde", "vinho", "madeira", "obsidiana"] as const;
+const preferenciasSchema = z
+  .object({
+    dados: z
+      .object({ corExterna: corHex, corInterna: corHex })
+      .strict()
+      .optional(),
+    temaMesa: z.enum(TEMAS_MESA).optional(),
+  })
+  .strict();
 
 /** PATCH /api/auth/preferences — mescla preferências do usuário autenticado (por usuário, não global). */
 authRouter.patch("/preferences", requireAuth, async (req, res) => {

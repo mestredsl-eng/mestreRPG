@@ -4,6 +4,8 @@ import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
 import Dado3D from "./Dado3D";
 import MesaDados3D, { seedDeId } from "./MesaDados3D";
+import MesaDadosArea from "./MesaDadosArea";
+import { TEMAS_MESA, TEMAS_MESA_IDS, TEMA_MESA_PADRAO, aplicarTemaMesa, ehTemaMesa, type TemaMesaId } from "./temasMesa";
 
 // ---------- Preferências visuais de dados (por usuário, persistidas no servidor) ----------
 
@@ -20,17 +22,23 @@ export function aplicarPrefsDados(prefs: { corExterna: string; corInterna: strin
 
 export function usePreferenciasDados() {
   const [prefs, setPrefs] = useState(DADOS_PADRAO);
+  const [temaMesa, setTemaMesa] = useState<TemaMesaId>(TEMA_MESA_PADRAO);
   const [pronto, setPronto] = useState(false);
   useEffect(() => {
     let vivo = true;
     api.me()
       .then((r) => {
-        const d = r.usuario.preferences?.dados;
+        const p = r.usuario.preferences;
+        const d = p?.dados;
         if (vivo && d?.corExterna && d?.corInterna) {
-          const p = { corExterna: d.corExterna, corInterna: d.corInterna };
-          setPrefs(p);
-          aplicarPrefsDados(p);
+          const cores = { corExterna: d.corExterna, corInterna: d.corInterna };
+          setPrefs(cores);
+          aplicarPrefsDados(cores);
         }
+        // Contas antigas sem temaMesa (ou com valor inválido) caem no
+        // tema padrão — o JSON de preferências não exige migration.
+        const tema = ehTemaMesa(p?.temaMesa) ? p.temaMesa : TEMA_MESA_PADRAO;
+        if (vivo) { setTemaMesa(tema); aplicarTemaMesa(tema); }
       })
       .catch(() => undefined)
       .finally(() => { if (vivo) setPronto(true); });
@@ -42,7 +50,12 @@ export function usePreferenciasDados() {
     aplicarPrefsDados(p);
     try { await api.atualizarPreferenciasDados(corExterna, corInterna); } catch { /* mantém local */ }
   };
-  return { prefs, pronto, salvar };
+  const salvarTema = async (tema: TemaMesaId) => {
+    setTemaMesa(tema);
+    aplicarTemaMesa(tema);
+    try { await api.atualizarTemaMesa(tema); } catch { /* mantém local */ }
+  };
+  return { prefs, temaMesa, pronto, salvar, salvarTema };
 }
 
 // ---------- Tipos de dados disponíveis ----------
@@ -109,6 +122,39 @@ function SeletorCores({ prefs, salvar }: {
       <p className={`meta ${contrasteBaixo ? "cores-contraste-aviso" : ""}`}>
         Contraste: {contraste.toFixed(1)}:1{contrasteBaixo ? " — contraste baixo, os números podem ficar difíceis de ler" : ""}
       </p>
+    </div>
+  );
+}
+
+// ---------- Seletor de tema da bandeja (independente das cores dos dados) ----------
+
+function SeletorTemaMesa({ tema, salvar }: { tema: TemaMesaId; salvar: (t: TemaMesaId) => void }) {
+  return (
+    <div className="temas-mesa">
+      {TEMAS_MESA_IDS.map((id) => {
+        const t = TEMAS_MESA[id];
+        const selecionado = tema === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            className={`tema-mesa-card${selecionado ? " selecionado" : ""}`}
+            aria-pressed={selecionado}
+            onClick={() => salvar(id)}
+          >
+            <span
+              className="tema-mesa-previa"
+              style={{
+                background: `linear-gradient(135deg, ${t.previa.claro}, ${t.previa.escuro})`,
+                borderColor: t.previa.borda,
+              }}
+              aria-hidden="true"
+            />
+            <span className="tema-mesa-nome">{t.nome}</span>
+            <span className="tema-mesa-desc">{t.descricao}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -215,7 +261,7 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       {/* Mesa de dados sempre visível: bandeja vazia antes da primeira
           rolagem, tumble real durante o ACK e assentamento na face
           oficial do servidor. Nenhum valor é sorteado no cliente. */}
-      <div className="mesa-dados-area" aria-label="Mesa de dados 3D">
+      <MesaDadosArea ariaLabel="Mesa de dados 3D">
         <MesaDados3D
           dados={rolando
             ? Array.from({ length: count0(qtd) }, () => ({ lados, valor: null }))
@@ -224,7 +270,7 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
               : []}
           semente={seedDeId(`${sessionId}-rol-${rodada}`)}
         />
-      </div>
+      </MesaDadosArea>
 
       {resultado && (
         <div className="rolagem-resultado">
@@ -245,7 +291,7 @@ export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre
   sessionId: string; aoErro: (e: string | null) => void; minimoPadrao: number; souMestre: boolean;
 }) {
   const [aba, setAba] = useState<"d10" | "livre">("d10");
-  const { prefs, salvar } = usePreferenciasDados();
+  const { prefs, temaMesa, salvar, salvarTema } = usePreferenciasDados();
   return (
     <div className="painel-dados">
       <div className="abas-dados" role="tablist">
@@ -258,6 +304,10 @@ export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre
       <section className="cartao cores-cartao">
         <h3>Aparência dos dados</h3>
         <SeletorCores prefs={prefs} salvar={salvar} />
+      </section>
+      <section className="cartao cores-cartao">
+        <h3>Bandeja da mesa</h3>
+        <SeletorTemaMesa tema={temaMesa} salvar={salvarTema} />
       </section>
     </div>
   );

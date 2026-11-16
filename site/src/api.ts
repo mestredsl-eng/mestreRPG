@@ -23,7 +23,10 @@ export interface Usuario {
   adminPrincipal?: boolean;
   /** Guildas ativas do usuário com o papel efetivo (gm|membro). */
   guildas?: GuildaResumo[];
-  preferences?: { dados?: { corExterna: string; corInterna: string } } & Record<string, unknown>;
+  preferences?: {
+    dados?: { corExterna: string; corInterna: string };
+    temaMesa?: string;
+  } & Record<string, unknown>;
 }
 
 export interface SessaoConta {
@@ -158,6 +161,12 @@ export const api = {
     requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
       method: "PATCH",
       body: JSON.stringify({ dados: { corExterna, corInterna } }),
+    }),
+
+  atualizarTemaMesa: (temaMesa: string) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ temaMesa }),
     }),
 
   // Administração (somente admin)
