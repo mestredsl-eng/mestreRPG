@@ -666,7 +666,10 @@ try {
     const ctx = c.getContext("2d");
     const d = ctx.getImageData(0, 0, c.width, c.height).data;
     let h = 0;
-    for (let i = 0; i < d.length; i += 4096) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0;
+    // Amostra 1 em cada 16 pixels (stride de 64 bytes RGBA). A amostragem
+    // anterior (1 em 1024 pixels) podia passar entre os dados em canvases
+    // largos/baixos e produzir hash idêntico mesmo com rotação real.
+    for (let i = 0; i < d.length; i += 64) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0;
     return String(h);
   });
   // socket precisa estar conectado no instante do clique: lancar()
