@@ -49,6 +49,8 @@ export default function Mesa({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
   const seqSessoesRef = useRef(0);
+  const ativaRef = useRef<Sessao | null>(null);
+  useEffect(() => { ativaRef.current = ativa; }, [ativa]);
 
   const carregar = useCallback(async () => {
     const seq = ++seqSessoesRef.current;
@@ -88,6 +90,20 @@ export default function Mesa({ campaignId, campanha }: Props) {
     socket.on("campanha:restaurada", aoRestaurada);
     return () => { socket.off("campanha:restaurada", aoRestaurada); };
   }, [campaignId, carregar]);
+
+  // Reconexão com a lista de sessões aberta (MesaView desmontada):
+  // Campanha.tsx pula o entrar-campanha no connect quando a aba é Mesa
+  // (a MesaView cobriria o caso montada) — sem sessão aberta ninguém
+  // reingressa na room campanha:* e o cliente perde campanha:restaurada
+  // para sempre (lista congelada após restore/import).
+  useEffect(() => {
+    const socket = getSocket();
+    const aoConnect = () => {
+      if (!ativaRef.current) socket.emit("entrar-campanha", campaignId, () => undefined);
+    };
+    socket.on("connect", aoConnect);
+    return () => { socket.off("connect", aoConnect); };
+  }, [campaignId]);
 
   if (ativa) {
     return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
@@ -455,10 +471,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       }
       if (revogadoRef.current) {
         // reativação: só um caminho de autorização novo restaura o acesso
-        revogadoRef.current = false;
-        setEntradaFalhou(false);
-        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
-        entrar();
+        // — e somente com status "ativo" explícito. O emissor do servidor
+        // (notificarPermissaoAtualizada) sempre envia status; evento sem
+        // status ou com qualquer outro estado NÃO limpa o bloqueio.
+        if (d.status === "ativo") {
+          revogadoRef.current = false;
+          setEntradaFalhou(false);
+          setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
+          entrar();
+        }
       }
       if (d.papel) {
         // compara o privilégio ANTES de aplicar: queda exige proteção

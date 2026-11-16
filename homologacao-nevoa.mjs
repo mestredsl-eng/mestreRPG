@@ -220,6 +220,23 @@ try {
     tentar();
   })).catch(() => false);
 
+  // Diagnóstico da revogação: em falha, o assert precisa mostrar o que a
+  // UI realmente exibia — texto do DOM, .mesa-vtt, sinais de desmonte
+  // (lista de sessões = tr.clicavel) e os últimos eventos privados
+  // recebidos no transporte. Nunca descarta a causa silenciosamente.
+  const diagRevE = (page) => page.evaluate(() => ({
+    texto: (document.body?.innerText ?? "").replace(/\s+/g, " ").slice(0, 300),
+    sessaoMesa: (document.body?.innerText ?? "").match(/Mesa — ([^\n]+)/)?.[1]?.trim() ?? null,
+    mesaVtt: document.querySelectorAll(".mesa-vtt").length,
+    tabela: (document.querySelector(".tabela")?.innerText ?? "").replace(/\s+/g, " ").slice(0, 400),
+    clicaveis: document.querySelectorAll("tr.clicavel").length,
+    eventos: (window.__eventosRevogacaoTeste ?? []).slice(-5)
+      .map((d) => ({ campaignId: d?.campaignId, status: d?.status, papel: d?.papel })),
+    socket: window.__mesaSocket
+      ? { conectado: window.__mesaSocket.connected, id: window.__mesaSocket.id }
+      : null,
+  })).catch((e) => ({ erroDiag: String(e) }));
+
   const sessA = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Alfa" } });
   const sessB = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Beta" } });
   const sidA = sessA.json?.sessao?.id ?? sessA.json?.id;
@@ -1608,7 +1625,7 @@ try {
   await pgE.evaluate((campaignId) => {
     window.__eventosRevogacaoTeste = [];
     window.__mesaSocket?.on("mesa:permissao:atualizada", (d) => {
-      if (d?.campaignId === campaignId) window.__eventosRevogacaoTeste.push(d);
+      if (d?.campaignId === campaignId) window.__eventosRevogacaoTeste.push({ ...d, em: Date.now() });
     });
   }, campId);
   const expRT = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
@@ -1626,18 +1643,22 @@ try {
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
   });
   t("import substituir aceito", rImpRT.status === 200, JSON.stringify(rImpRT.json).slice(0, 140));
-  await pgE.waitForFunction((campaignId) =>
+  const esperaEvtRevE = await pgE.waitForFunction((campaignId) =>
     (window.__eventosRevogacaoTeste ?? []).some((d) => d.campaignId === campaignId && d.status === "removido"),
     campId, { timeout: 10000 },
-  ).catch(() => {});
+  ).then(() => null).catch((e) => e);
   const revogacaoNoTransporte = await pgE.evaluate((campaignId) =>
     (window.__eventosRevogacaoTeste ?? []).some((d) => d.campaignId === campaignId && d.status === "removido"),
     campId,
   );
-  t("import: evento privado de revogação chegou pelo Socket.IO", revogacaoNoTransporte);
-  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).catch(() => {});
+  t("import: evento privado de revogação chegou pelo Socket.IO", revogacaoNoTransporte,
+    JSON.stringify({ esperaErro: esperaEvtRevE?.message ?? null, diag: await diagRevE(pgE) }));
+  const esperaUiRevE = await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).then(() => null).catch((e) => e);
+  const corpoImpE = await pgE.locator("body").innerText();
+  const nVttImpE = await pgE.locator(".mesa-vtt").count();
   t("espectador revogado pela importação: acesso revogado sem reload",
-    /revogad/i.test(await pgE.locator("body").innerText()) && (await pgE.locator(".mesa-vtt").count()) === 0);
+    /revogad/i.test(corpoImpE) && nVttImpE === 0,
+    JSON.stringify({ esperaErro: esperaUiRevE?.message ?? null, diag: await diagRevE(pgE), corpo: corpoImpE.slice(0, 300), mesaVtt: nVttImpE }));
 
   sec("Convite reativa permissões preservadas — UI reflete estado real");
   // garante UMA membership do espectador marcada como removida com
@@ -1660,6 +1681,238 @@ try {
     && document.querySelectorAll(".chat-form").length > 0, null, { timeout: 40000 }).catch(() => {});
   t("espectador reativado COM permissão: mesa e chat voltam sem reload",
     (await pgE.locator(".mesa-vtt").count()) > 0 && (await pgE.locator(".chat-form").count()) > 0);
+
+  sec("Revogação × mesa:entrar retido — ACK negativo tardio não desmonta a view");
+  // Reprodução determinística da corrida da #112: o emit "mesa:entrar" do
+  // espectador é RETIDO no cliente — o pacote simplesmente ainda não foi
+  // enviado ao servidor (nada é falsificado, reordenado ou simulado).
+  // A importação substitui a sessão e revoga o membro; o evento privado
+  // chega e a UI entra em revogação. Só então o emit é liberado: o
+  // servidor processa a entrada de forma natural e emite o ACK negativo
+  // REAL ("Sessão não encontrada") DEPOIS da revogação.
+  await pgE.evaluate(() => {
+    const s = window.__mesaSocket;
+    if (!s) throw new Error("socket do espectador indisponível para retenção");
+    if (!s.__emitOriginalE) {
+      s.__emitOriginalE = s.emit.bind(s);
+      window.__entrarRetidosE = [];
+      window.__armarEntrarE = false;
+      s.emit = function (ev, ...args) {
+        if (window.__armarEntrarE && ev === "mesa:entrar") {
+          window.__entrarRetidosE.push(args);
+          return this;
+        }
+        return s.__emitOriginalE(ev, ...args);
+      };
+    }
+    window.__armarEntrarE = true;
+    // disconnect() manual NÃO agenda reconexão no socket.io — o connect()
+    // explícito simula a volta do transporte e dispara o handler 'connect'
+    // que chama entrar() (mesmo caminho de uma reconexão real).
+    s.disconnect();
+    setTimeout(() => { try { s.connect(); } catch { /* já conectado */ } }, 100);
+  });
+  const esperaReconE = await pgE.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 }).then(() => null).catch((e) => e);
+  t("socket do espectador reconectou para a corrida", !esperaReconE, JSON.stringify({ esperaErro: esperaReconE?.message ?? null, diag: await diagRevE(pgE) }));
+  const esperaRetE = await pgE.waitForFunction(() => (window.__entrarRetidosE ?? []).length > 0, null, { timeout: 15000 }).then(() => null).catch((e) => e);
+  const entrarRetidoE = await pgE.evaluate(() => window.__entrarRetidosE?.[0]?.[0]?.sessionId ?? null);
+  t("mesa:entrar do espectador retido no cliente antes do import", !!entrarRetidoE,
+    JSON.stringify({ esperaErro: esperaRetE?.message ?? null, sessionId: entrarRetidoE, diag: await diagRevE(pgE) }));
+
+  // Pacote com DUAS alterações: membership do espectador removida (como
+  // na seção anterior) e a sessão que ele está vendo recebe ID novo —
+  // após o commit, o mesa:entrar retido não encontra a sessão antiga e
+  // o servidor responde "Sessão não encontrada" de forma natural.
+  // Referências filhas (turnos/chat/rolagens/testes) acompanham o ID.
+  const expRT2 = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
+  const pacoteRT2 = expRT2.json;
+  pacoteRT2.estado.memberships = (pacoteRT2.estado.memberships ?? []).filter((m) => m.userId !== espId);
+  // pacote intacto (IDs de sessão originais, espectador fora) — usado
+  // pelo import restaurador depois da prova da corrida
+  const pacoteRT3 = JSON.parse(JSON.stringify(pacoteRT2));
+  const sidE = entrarRetidoE;
+  const sessaoPacoteE = (pacoteRT2.estado.sessions ?? []).find((s) => s.id === sidE);
+  const sidENovo = crypto.randomUUID();
+  const nomeSE = sessaoPacoteE?.name ?? `#${sessaoPacoteE?.number ?? "?"}`;
+  t("sessão do espectador presente no pacote exportado", !!sessaoPacoteE, `sessionId=${sidE}`);
+  // A sessão substituída recebe nome distinto: entre o import da corrida e
+  // o import restaurador a lista do mestre fica stale com a row de sidENovo.
+  // Sem o rename, hasText:nomeSE casaria com a row morta e o clique abriria
+  // uma sessão inexistente (ACK "Sessão não encontrada" → aoSair → lista).
+  // hasText é substring: o nome substituto não pode conter nomeSE.
+  pacoteRT2.estado.sessions = (pacoteRT2.estado.sessions ?? []).map((s) =>
+    (s.id === sidE ? { ...s, id: sidENovo, name: "ZZZ sessão substituída da corrida" } : s));
+  for (const k of ["turns", "chatMessages", "rolls", "tests"]) {
+    pacoteRT2.estado[k] = (pacoteRT2.estado[k] ?? []).map((r) => (r.sessionId === sidE ? { ...r, sessionId: sidENovo } : r));
+  }
+  const vivoE2 = await socketVivo(pgE);
+  if (!vivoE2) throw new Error("socketVivo(pgE)=false — corrida de revogação abortada: a notificação única não pode ser comprovada");
+  const rImpRT2 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteRT2, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("import da corrida aceito", rImpRT2.status === 200, JSON.stringify(rImpRT2.json).slice(0, 140));
+  await pgE.waitForFunction((campaignId) =>
+    (window.__eventosRevogacaoTeste ?? []).some((d) => d.campaignId === campaignId && d.status === "removido"),
+    campId, { timeout: 10000 },
+  ).catch(() => {});
+  const revogadoAntesAck = /revogad/i.test(await pgE.locator("body").innerText())
+    && (await pgE.locator(".mesa-vtt").count()) === 0;
+  t("revogação exibida ANTES de liberar o mesa:entrar", revogadoAntesAck, JSON.stringify(await diagRevE(pgE)));
+
+  // Eventos de permissão SEM status e com estados não-ativos NÃO podem
+  // reativar o acesso — a defesa exige status "ativo" explícito.
+  const sintéticos = await pgE.evaluate((campaignId) => {
+    const s = window.__mesaSocket;
+    const hs = typeof s?.listeners === "function" ? s.listeners("mesa:permissao:atualizada") : [];
+    const chamar = (d) => hs.forEach((h) => { try { h(d); } catch { /* handler isolado */ } });
+    chamar({ campaignId });                                  // sem status
+    chamar({ campaignId, status: "pendente", papel: "espectador" });
+    chamar({ campaignId, status: "removido", papel: "espectador" });
+    return hs.length;
+  }, campId);
+  await pgE.waitForTimeout(300);
+  t("eventos sem status / não-ativos não reativam o revogado",
+    sintéticos > 0 && /revogad/i.test(await pgE.locator("body").innerText())
+      && (await pgE.locator(".mesa-vtt").count()) === 0,
+    JSON.stringify({ handlers: sintéticos, diag: await diagRevE(pgE) }));
+
+  // Libera o(s) emit(s) retido(s): o servidor processa o mesa:entrar
+  // com a sessão já substituída → ACK negativo REAL após a revogação.
+  // O callback de ACK é envolvido apenas para REGISTRAR a resposta do
+  // servidor — ele é repassado intacto ao handler original do app.
+  const liberadosE = await pgE.evaluate(() => {
+    const s = window.__mesaSocket;
+    const retidos = window.__entrarRetidosE ?? [];
+    window.__entrarRetidosE = [];
+    window.__armarEntrarE = false;
+    window.__ackEntrarRetidoE = null;
+    for (const args of retidos) {
+      const copia = args.slice();
+      const ultimo = copia.length - 1;
+      if (typeof copia[ultimo] === "function") {
+        const cbApp = copia[ultimo];
+        copia[ultimo] = (r) => {
+          window.__ackEntrarRetidoE = { r, em: Date.now() };
+          try { cbApp(r); } catch { /* erro do app não altera o ACK gravado */ }
+        };
+      }
+      s.__emitOriginalE("mesa:entrar", ...copia);
+    }
+    return retidos.length;
+  });
+  t("emit(s) mesa:entrar retido(s) liberado(s) ao servidor", liberadosE > 0, `n=${liberadosE}`);
+  // pré-condição do ACK negativo: a sessão antiga não existe mais e a
+  // nova existe — comprovado pela API, não por inferência
+  const sessoesAposImp = await req(BASE, "GET", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre });
+  const idsAposImp = new Set((sessoesAposImp.json?.sessoes ?? []).map((s) => s.id));
+  t("sessão antiga ausente e substituída no servidor",
+    !idsAposImp.has(sidE) && idsAposImp.has(sidENovo),
+    JSON.stringify({ sidE, sidENovo, status: sessoesAposImp.status }));
+
+  // ACK negativo REAL: o callback envolvido gravou a resposta do
+  // servidor — prova de que o "Sessão não encontrada" veio do backend
+  // depois do commit da importação, não de simulação do teste.
+  const esperaAckE = await pgE.waitForFunction(() => window.__ackEntrarRetidoE != null, null, { timeout: 15000 }).then(() => null).catch((e) => e);
+  const ackE = await pgE.evaluate(() => window.__ackEntrarRetidoE ?? null);
+  const evtRevE = await pgE.evaluate(() => (window.__eventosRevogacaoTeste ?? []).filter((d) => d.status === "removido").pop() ?? null);
+  t("ACK negativo real do servidor após a importação (ok:false, sessão não encontrada, posterior à revogação)",
+    !!ackE && ackE.r?.ok === false && /não encontrada/i.test(String(ackE.r?.erro ?? ""))
+      && !!evtRevE && typeof evtRevE.em === "number" && ackE.em > evtRevE.em,
+    JSON.stringify({ esperaErro: esperaAckE?.message ?? null, ack: ackE, revogadoEm: evtRevE?.em ?? null, diag: await diagRevE(pgE) }));
+  // desarma a instrumentação: emits voltam ao caminho original
+  await pgE.evaluate(() => {
+    const s = window.__mesaSocket;
+    if (s?.__emitOriginalE) { s.emit = s.__emitOriginalE; s.__emitOriginalE = null; }
+    window.__armarEntrarE = false;
+  }).catch(() => {});
+
+  // Estabilidade por 2s: mensagem de revogação visível, .mesa-vtt
+  // ausente e view NÃO desmontada (lista de sessões = tr.clicavel
+  // voltaria se o ACK derrubasse a MesaView).
+  let estavelE = true;
+  const amostrasE = [];
+  for (let i = 0; i < 20; i++) {
+    const est = await pgE.evaluate(() => ({
+      revogado: /revogad/i.test(document.body.innerText),
+      mesaVtt: document.querySelectorAll(".mesa-vtt").length,
+      clicaveis: document.querySelectorAll("tr.clicavel").length,
+    })).catch(() => null);
+    amostrasE.push(est);
+    if (!est || !est.revogado || est.mesaVtt !== 0) { estavelE = false; break; }
+    await pgE.waitForTimeout(100);
+  }
+  t("ACK negativo tardio: revogação estável por 2s sem remontar mesa",
+    estavelE, JSON.stringify({ liberados: liberadosE, ultimas: amostrasE.slice(-3), diag: await diagRevE(pgE) }));
+
+  // Restaura o pacote ORIGINAL (IDs de sessão originais, espectador
+  // continua fora) para as seções seguintes — mestre/jogador foram
+  // desmontados pelo campanha:restaurada e re-entram manualmente.
+  // instrumenta o socket do mestre ANTES do import restaurador: registra
+  // cada campanha:restaurada recebida — se a lista não atualizar, o diag
+  // mostra se o evento chegou ou se o carregar falhou.
+  await pgM.evaluate(() => {
+    const s = window.__mesaSocket;
+    if (!s || s.__restauradasM) return;
+    s.__restauradasM = [];
+    s.on("campanha:restaurada", (d) => s.__restauradasM.push({ campaignId: d?.campaignId ?? null, em: Date.now() }));
+  }).catch(() => {});
+  const rImpRT3 = await req(BASE, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteRT3, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  t("import restaurador dos IDs originais aceito", rImpRT3.status === 200, JSON.stringify(rImpRT3.json).slice(0, 140));
+  // quem estava na sessão substituída foi desmontado pelo
+  // campanha:restaurada e re-entra manualmente. O jogador1 NÃO re-entra
+  // aqui: ele segue revogado desde a seção de snapshot e só é reativado
+  // na seção Privacidade seguinte.
+  if ((await pgM.locator(".mesa-vtt").count()) === 0) {
+    // Espera a lista FRESCA (pós-import restaurador) renderizar a row de
+    // sidE: a row de sidENovo foi renomeada no pacote da corrida, então
+    // hasText:nomeSE só casa depois que o carregar pós-restaurada
+    // resolver — sem isso o clique poderia abrir sessão morta.
+    const esperaListaFresca = await pgM.waitForFunction((nome) =>
+      (document.body?.innerText ?? "").includes(nome)
+        && document.querySelectorAll("tr.clicavel").length > 0,
+      nomeSE, { timeout: 20000 }).then(() => null).catch((e) => e);
+    await pgM.locator("tr.clicavel", { hasText: nomeSE }).first().click({ timeout: 10000 }).catch(() => {});
+    await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+    // .mesa-vtt monta antes do ACK de mesa:entrar — um ACK negativo
+    // tardio ("Sessão não encontrada") chamaria aoSair e esvaziaria a
+    // mesa logo depois. Exige estabilidade para não aprovar mount morto.
+    await pgM.waitForTimeout(800);
+    var diagEsperaLista = esperaListaFresca?.message ?? null;
+  } else {
+    var diagEsperaLista = null;
+  }
+  const diagMRT = await diagRevE(pgM);
+  diagMRT.esperaListaErro = diagEsperaLista;
+  diagMRT.restauradasM = await pgM.evaluate(() => window.__mesaSocket?.__restauradasM ?? null).catch(() => null);
+  t("mestre re-entrou na sessão restaurada após a corrida",
+    (await pgM.locator(".mesa-vtt").count()) === 1
+      && diagMRT.sessaoMesa != null
+      && !/não encontrada/i.test(diagMRT.texto),
+    JSON.stringify(diagMRT));
+
+  // Reentrada legítima do espectador: nova autorização (convite) →
+  // evento ativo → o bloqueio de revogação é liberado e a mesa volta.
+  const dbEspRT2 = abrirDb(BANCO);
+  dbEspRT2.prepare("delete from memberships where campaign_id=? and user_id=?").run(campId, espId);
+  dbEspRT2.prepare("insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(crypto.randomUUID(), campId, espId, "espectador", "removido",
+      JSON.stringify({ enviarMensagens: true }), Date.now(), Date.now(), Date.now());
+  dbEspRT2.close();
+  const convRT2 = await req(BASE, "POST", `/campaigns/${campId}/invitations`, { cookie: cookieMestre, body: { role: "espectador", requiresApproval: false } });
+  const codigoRT2 = convRT2.json?.convite?.code;
+  t("convite de reentrada criado", convRT2.status === 201 && !!codigoRT2, JSON.stringify(convRT2.json).slice(0, 120));
+  const rAceiteRT2 = await req(BASE, "POST", `/convites/${codigoRT2}/aceitar`, { cookie: cookieEspRT, body: {} });
+  t("convite de reentrada aceito", rAceiteRT2.status === 200 || rAceiteRT2.status === 201, JSON.stringify(rAceiteRT2.json).slice(0, 120));
+  const esperaReE = await pgE.waitForFunction(() => document.querySelectorAll(".mesa-vtt").length > 0
+    && document.querySelectorAll(".chat-form").length > 0, null, { timeout: 40000 }).then(() => null).catch((e) => e);
+  t("reentrada legítima do espectador após nova autorização",
+    (await pgE.locator(".mesa-vtt").count()) > 0 && (await pgE.locator(".chat-form").count()) > 0
+      && !/revogad/i.test(await pgE.locator("body").innerText()),
+    JSON.stringify({ esperaErro: esperaReE?.message ?? null, diag: await diagRevE(pgE) }));
 
   sec("Privacidade — dados privilegiados invalidados sem reconexão");
   // a seção de snapshot revogou o j1 — recria a membership como jogador
@@ -1723,7 +1976,9 @@ try {
     (await pgJ.locator(".vtt-tabuleiro").count()) === 1 && !corpoPos.includes("SEGREDO-X9"));
   t("pós-sync: controles administrativos ausentes", (await pgJ.locator(".vtt-nevoa-controles").count()) === 0);
   // controle: o mestre titular continua vendo o segredo (estava autorizado)
-  t("controle: mestre titular mantém o segredo", (await pgM.locator("body").innerText()).includes("SEGREDO-X9"));
+  const corpoMSeg = await pgM.locator("body").innerText();
+  t("controle: mestre titular mantém o segredo", corpoMSeg.includes("SEGREDO-X9"),
+    JSON.stringify(await diagRevE(pgM)));
   try { sPriv.close(); } catch {}
 
   sec("Restauração substitui ID da sessão — UI volta à lista sem abrir a nova");
@@ -1764,7 +2019,8 @@ try {
   const rKeep = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapKeep.json?.id}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore com ID preservado", rKeep.status === 200, JSON.stringify(rKeep.json).slice(0, 120));
   await new Promise((r) => setTimeout(r, 1000));
-  t("ID preservado: mesa do mestre permanece aberta", (await pgM.locator(".mesa-vtt").count()) === 1);
+  t("ID preservado: mesa do mestre permanece aberta", (await pgM.locator(".mesa-vtt").count()) === 1,
+    JSON.stringify(await diagRevE(pgM)));
   // jogador volta a entrar na sessão para as provas de evento atrasado
   await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
   await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
