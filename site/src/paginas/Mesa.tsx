@@ -441,6 +441,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         // reativação: só um caminho de autorização novo restaura o acesso
         revogadoRef.current = false;
         setEntradaFalhou(false);
+        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
         entrar();
       }
       if (d.papel) {

@@ -1447,7 +1447,7 @@ try {
   const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
   rRT = await req(BASE, "DELETE", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre });
   t("DELETE membership do espectador", rRT.status === 200);
-  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 20000 }).catch(() => {});
   const corpoE = await pgE.locator("body").innerText();
   t("revogação ao vivo: mensagem de acesso revogado sem reload",
     /revogad/i.test(corpoE) && (await pgE.locator(".mesa-vtt").count()) === 0,
@@ -1591,7 +1591,7 @@ try {
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
-  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).catch(() => {});
   t("jogador revogado pelo snapshot: acesso revogado sem reload",
     /revogad/i.test(await pgJ.locator("body").innerText()) && (await pgJ.locator(".mesa-vtt").count()) === 0);
   // mestre segue operando normalmente
@@ -1614,7 +1614,7 @@ try {
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
   });
   t("import substituir aceito", rImpRT.status === 200, JSON.stringify(rImpRT.json).slice(0, 140));
-  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).catch(() => {});
   t("espectador revogado pela importação: acesso revogado sem reload",
     /revogad/i.test(await pgE.locator("body").innerText()) && (await pgE.locator(".mesa-vtt").count()) === 0);
 
