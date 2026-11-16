@@ -103,6 +103,35 @@ try {
   }
   ids.pj = pjId;
 
+  // segundo personagem (jogador2) cuja ficha NÃO tem nenhum campo elegível:
+  // só texto e moeda — serve para provar a mensagem explicativa na UI e a
+  // rejeição de qualquer campo no socket.
+  const ESTRUTURA_SEM_ELEGIVEIS = {
+    versao: 1,
+    secoes: [
+      { id: "s-liv", titulo: "Anotações", ordem: 0, campos: [
+        { id: "diario", label: "Diário", tipo: "texto", semantico: "livre" },
+        { id: "cofre", label: "Cofre", tipo: "decimal", semantico: "moeda" },
+      ]},
+    ],
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+  };
+  const tpl2Id = crypto.randomUUID(), ver2Id = crypto.randomUUID(), pj2Id = crypto.randomUUID();
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+        .run(tpl2Id, ids.camp, "Ficha Anotações", null, ids.admin, agora, agora);
+      w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+        .run(ver2Id, tpl2Id, JSON.stringify(ESTRUTURA_SEM_ELEGIVEIS), agora, agora);
+      w.prepare("update sheet_templates set current_version_id=? where id=?").run(ver2Id, tpl2Id);
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pj2Id, ids.camp, ids.j2.membershipId, ver2Id, "PJ Sem Teste",
+          JSON.stringify({ diario: "texto", cofre: 10 }), "{}", "aprovada", 0, agora, agora);
+    } finally { w.close(); }
+  }
+  ids.pj2 = pj2Id;
+
   // mínimo de sucesso D10 conhecido
   await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, { cookie: ids.cm, body: { dados: { d10SucessoMinimo: 6 } } });
 
@@ -162,6 +191,86 @@ try {
   });
   const evL = evJ1.teste.filter((x) => x.id === rLivre?.id).pop();
   t("campo livre com usadoEmTestes elegível (carisma=2)", rLivre?.ok === true && evL?.pool?.positivos === 2, JSON.stringify(evL?.pool));
+
+  sec("campoId forjado/inexistente e rótulo adulterado");
+  const rInexistente = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "campo_que_nao_existe",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("campoId inexistente rejeitado", rInexistente?.ok === false, JSON.stringify(rInexistente));
+  const rCofre = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj2Id, campoId: "cofre",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("campo inelegível de outra ficha rejeitado", rCofre?.ok === false, JSON.stringify(rCofre));
+  const rForjado = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "medicina", rotulo: "RÓTULO FORJADO PELO CLIENTE",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("desafio com rótulo forjado aceito (campo válido)", rForjado?.ok === true, JSON.stringify(rForjado));
+  const evF = evJ1.teste.find((x) => x.id === rForjado?.id);
+  t("rótulo exibido = label real do campo, não o forjado",
+    evF?.rotulo === "Medicina", `rotulo=${JSON.stringify(evF?.rotulo)}`);
+  const rowF = rForjado?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rForjado.id)) : null;
+  const skillF = JSON.parse(rowF?.skill_ref ?? "{}");
+  t("skill_ref persistido usa label real", skillF?.rotulo === "Medicina" && skillF?.campoId === "medicina", JSON.stringify(skillF));
+
+  sec("skillRef forjado — referência autoritativa única");
+  // campoId válido + rótulo forjado + skillRef objeto forjado: nada do
+  // payload substitui a referência construída da estrutura validada
+  const rSk = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "medicina", rotulo: "FORJADO-1",
+    skillRef: { campoId: "outro", rotulo: "FORJADO-2", nome: "X", extra: "Y" },
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("desafio criado com campo válido apesar de skillRef forjado", rSk?.ok === true, JSON.stringify(rSk));
+  const rowSk = rSk?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rSk.id)) : null;
+  const skillSk = JSON.parse(rowSk?.skill_ref ?? "null");
+  t("skill_ref persistido = campoId e label reais",
+    skillSk?.campoId === "medicina" && skillSk?.rotulo === "Medicina", JSON.stringify(skillSk));
+  t("nenhuma propriedade forjada persistida",
+    skillSk && Object.keys(skillSk).sort().join(",") === "campoId,rotulo", JSON.stringify(skillSk));
+  const evSkJ = evJ1.teste.find((x) => x.id === rSk?.id);
+  const evSkM = evM.teste.find((x) => x.id === rSk?.id);
+  const evSkJ2 = evJ2.teste.find((x) => x.id === rSk?.id);
+  t("evento do jogador traz skillRef autoritativo",
+    evSkJ?.skillRef?.campoId === "medicina" && evSkJ?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkJ?.skillRef));
+  t("evento do mestre traz a mesma referência",
+    evSkM?.skillRef?.campoId === "medicina" && evSkM?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkM?.skillRef));
+  t("evento de participante autorizado (jogador2) idem",
+    evSkJ2?.skillRef?.campoId === "medicina" && evSkJ2?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkJ2?.skillRef));
+  const hist = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: ids.j1.cookie });
+  const histSk = (hist.json?.testes ?? []).find((x) => x.id === rSk?.id);
+  const histSkill = typeof histSk?.skillRef === "string" ? JSON.parse(histSk.skillRef) : histSk?.skillRef;
+  t("histórico GET devolve skill_ref autoritativo",
+    histSkill?.campoId === "medicina" && histSkill?.rotulo === "Medicina", JSON.stringify(histSkill));
+  const chatSkill = comDb(BANCO, (db) => db.prepare(
+    "select content from chat_messages where session_id=? and kind='teste' order by created_at desc limit 1",
+  ).get(sid));
+  t("chat do desafio usa rótulo validado da ficha",
+    typeof chatSkill?.content === "string" && chatSkill.content.includes("Medicina")
+      && !chatSkill.content.includes("FORJADO"), JSON.stringify(chatSkill?.content));
+
+  sec("skillRef manual — contrato mínimo sem campoId");
+  const rManOk = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, rotulo: "Vigor",
+    skillRef: { rotulo: "Percepção", nome: "Vigia", campoId: "forjado", extra: 1 },
+    dadosLados: 20, dadosCount: 2, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("teste manual sem campoId funciona", rManOk?.ok === true, JSON.stringify(rManOk));
+  const rowMan = rManOk?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rManOk.id)) : null;
+  const skillMan = JSON.parse(rowMan?.skill_ref ?? "null");
+  t("skillRef manual sanitizado: só rotulo/nome permitidos",
+    skillMan && skillMan.rotulo === "Percepção" && skillMan.nome === "Vigia"
+      && !("campoId" in skillMan) && !("extra" in skillMan), JSON.stringify(skillMan));
+  const rManLixo = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, rotulo: "Teste",
+    skillRef: "string-forjada", dadosLados: 20, dadosCount: 1,
+    requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("skillRef de tipo inválido não quebra o pedido", rManLixo?.ok === true, JSON.stringify(rManLixo));
+  const rowLixo = rManLixo?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rManLixo.id)) : null;
+  t("skillRef inválido persistido como null", rowLixo?.skill_ref === null, JSON.stringify(rowLixo?.skill_ref));
 
   sec("jogador recebe, identifica e rola; resultado para todos");
   const roll = await emitirCb(sockJ1, "mesa:teste:rolar", { testId: id1, requestId: "df-r-" + crypto.randomUUID().slice(0, 8) });
@@ -269,6 +378,28 @@ try {
   t("UI. mestre vê o mesmo resultado", /sucesso/.test(txtResM ?? "") && /falha/.test(txtResM ?? ""), txtResM?.slice(0, 160));
   const dados3d = await pM.locator(".rolagem-item canvas, .rolagem-item svg").count();
   t("UI. dados visuais renderizados", dados3d > 0, `n=${dados3d}`);
+
+  // ficha sem nenhum campo elegível: a UI explica o motivo em vez de
+  // mostrar um seletor vazio sem contexto — o envio anterior fechou o
+  // formulário (fluxo fecha após sucesso), reabrir antes de continuar
+  if (!(await form.isVisible().catch(() => false))) {
+    await tituloFicha.locator("button", { hasText: "+ Desafio" }).click();
+    await pM.waitForTimeout(300);
+  }
+  await selPers.selectOption({ index: opsPers.findIndex((o) => o.includes("PJ Sem Teste")) });
+  await pM.waitForTimeout(1200);
+  const msgsVazio = await form.locator(".meta").allTextContents();
+  t("UI. ficha sem elegíveis mostra explicação",
+    msgsVazio.some((m) => /Nenhum campo elegível/.test(m) && /Usado em testes/.test(m)), msgsVazio.join(" | "));
+  const opcoesVazio = await selCampo.locator("option").allTextContents();
+  t("UI. seletor sem opções de campo", opcoesVazio.every((o) => /Escolher|Carregando/.test(o)), opcoesVazio.join("|"));
+
+  // o desafio criado com skillRef forjado aparece com o label REAL da ficha
+  const cardSk = pJ.locator(".teste-card", { hasText: "Medicina" }).last();
+  await cardSk.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  const txtSk = await cardSk.textContent().catch(() => "");
+  t("UI. jogador vê label real do campo (skillRef forjado neutralizado)",
+    /Medicina/.test(txtSk ?? "") && !/FORJADO/.test(txtSk ?? ""), txtSk?.slice(0, 160));
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));

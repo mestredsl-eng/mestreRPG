@@ -781,6 +781,18 @@ function socket_handlers(
     });
 
     // ---------- solicitações de teste (mestre) ----------
+    // Contrato mínimo de skillRef para testes SEM campoId: apenas
+    // {rotulo?, nome?} string curtas — qualquer outra forma é descartada
+    // (null). Com campoId, a referência vem da estrutura validada e o
+    // objeto do cliente nunca é aceito como substituto.
+    const skillRefManual = (v: unknown): { rotulo?: string; nome?: string } | null => {
+      if (v == null || typeof v !== "object" || Array.isArray(v)) return null;
+      const o = v as Record<string, unknown>;
+      const out: { rotulo?: string; nome?: string } = {};
+      if (typeof o.rotulo === "string" && o.rotulo.length <= 160) out.rotulo = o.rotulo;
+      if (typeof o.nome === "string" && o.nome.length <= 160) out.nome = o.nome;
+      return Object.keys(out).length ? out : null;
+    };
     on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
       campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
@@ -823,6 +835,10 @@ function socket_handlers(
           })()
         : null;
       if (payload.campoId) valorCampo = base;
+      // Rótulo de exibição autoritativo: com campoId válido, o nome do
+      // campo vem da ESTRUTURA persistida — um rótulo forjado no payload
+      // não pode renomear o campo que o jogador vai ver no desafio.
+      let rotuloExibicao: string | null = null;
       // Elegibilidade do campo de teste: com campoId, a estrutura publicada
       // da ficha é obrigatória e precisa passar no parse — sem ela não há
       // como provar elegibilidade, então a solicitação é rejeitada (o
@@ -850,7 +866,15 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Campo não é elegível para teste" });
           return;
         }
+        rotuloExibicao = campo.label;
       }
+      // Referência autoritativa ÚNICA do desafio: com campoId validado,
+      // campoId + label reais da estrutura persistida; sem campoId, só o
+      // contrato mínimo — objetos arbitrários do cliente nunca chegam à
+      // persistência, ao evento nem ao chat.
+      const skillRefFinal: unknown = payload.campoId
+        ? { campoId: payload.campoId, rotulo: rotuloExibicao }
+        : skillRefManual(payload.skillRef);
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
       const negativos = Math.max(0, Math.round(payload.malus ?? 0));
@@ -865,7 +889,7 @@ function socket_handlers(
         await db.insert(tests).values({
           id, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: char.id, requestedBy: u.id,
-          skillRef: (payload.skillRef ?? (payload.campoId ? { campoId: payload.campoId, rotulo: payload.rotulo } : null)) as never,
+          skillRef: skillRefFinal as never,
           modifiers: { bonus: payload.bonus ?? 0, malus: negativos, valorCampo, positivos } as never,
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
@@ -893,8 +917,8 @@ function socket_handlers(
       const pool = { positivos, negativos, dadosLados };
       const publico = {
         id, sessionId: ctx.sessao.id, characterId: char.id, characterName: nomeChar,
-        requestedByName: nomeAutor, rotulo: payload.rotulo ?? null,
-        skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
+        requestedByName: nomeAutor, rotulo: rotuloExibicao ?? payload.rotulo ?? null,
+        skillRef: skillRefFinal, // referência autoritativa; mínimo NÃO vai
         status: "pendente", createdAt: agora,
         // visibilidade explícita e coerente em TODOS os payloads —
         // o cliente nunca precisa adivinhar o contrato
@@ -936,7 +960,7 @@ function socket_handlers(
 
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
-        kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${payload.rotulo ? ` (${payload.rotulo})` : ""}`,
+        kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${(rotuloExibicao ?? payload.rotulo) ? ` (${rotuloExibicao ?? payload.rotulo})` : ""}`,
         visibility: visReq,
         recipients: visReq === "privada" ? [membroDono.userId] : undefined,
       });
