@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir,
+  criarCenario, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -167,6 +167,94 @@ try {
   t("mobile mostra mesmo saldo", /120/.test(saldoMob ?? ""), saldoMob?.trim());
   await shot(pgMob, "05-mobile-dinheiro");
   await ctxMob.close();
+
+  // ===== 6. Restaurar referência do Acervo (Issue #119) =====
+  sec("6. Catálogo — override econômico e restaurar referência do Acervo");
+  // Elemento do Acervo com referência econômica, inserido como as
+  // regras reais fazem (rule_definitions do rule_set ativo).
+  const rsPat = abrirDb(BANCO).prepare("select id from rule_sets where campaign_id=? and is_active=1").get(cenario.campId).id;
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run(crypto.randomUUID(), rsPat, "item", "pistola_ui_teste", "Pistola UI Teste", null, null,
+          JSON.stringify({
+            descricao: "", prerequisitos: [],
+            weight: 0.9, valueCents: 25000,
+            economia: { moeda: "BRL", precoReferenciaBRL: 250, faixaPrecoBRL: { min: 200, max: 300 } },
+          }), Date.now(), Date.now());
+    } finally { w.close(); }
+  }
+  const ctxCat = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgCat = await ctxCat.newPage();
+  await login(pgCat, "mestre_teste", "senha-forte-123");
+  await irCampanha(pgCat);
+  await abrirPersonagem(pgCat, "Mestre Herói");
+  await abaPatrimonio(pgCat, "Catálogo");
+  await pgCat.waitForTimeout(800);
+  // Cria template vinculado com overrides de peso e preço.
+  await pgCat.getByLabel("Vínculo do Acervo").selectOption({ label: "Pistola UI Teste" });
+  await pgCat.waitForTimeout(400);
+  await pgCat.getByPlaceholder("Peso override (kg)").fill("1.5");
+  await pgCat.getByPlaceholder("Preço override (R$)").fill("300");
+  await pgCat.getByRole("button", { name: "Adicionar ao catálogo" }).click();
+  await pgCat.waitForTimeout(1200);
+  const linhaTpl = pgCat.locator("table.tabela tbody tr", { hasText: "Pistola UI Teste" });
+  t("template com overrides aparece no catálogo", await linhaTpl.count() === 1);
+  // Reabre a edição: overrides persistem nos campos.
+  await linhaTpl.getByRole("button", { name: "Editar" }).click();
+  await pgCat.waitForTimeout(500);
+  const pesoEdit = await pgCat.getByPlaceholder("Peso override (kg)").inputValue();
+  const precoEdit = await pgCat.getByPlaceholder("Preço override (R$)").inputValue();
+  t("reabrir mostra overrides persistidos (1.5 / 300)", pesoEdit === "1.5" && precoEdit === "300", `${pesoEdit}/${precoEdit}`);
+  // Modal de compra sugere o OVERRIDE vigente (R$ 300), não a referência.
+  await pgCat.getByRole("button", { name: "Cancelar edição" }).click();
+  await pgCat.waitForTimeout(400);
+  await abaPatrimonio(pgCat, "Inventário");
+  await pgCat.getByRole("button", { name: "Comprar…" }).click();
+  await pgCat.locator(".modal").waitFor({ timeout: 8000 });
+  const selCat1 = pgCat.locator(".modal select").first();
+  const valTpl = await selCat1.locator("option", { hasText: "Pistola UI Teste" }).getAttribute("value");
+  await selCat1.selectOption(valTpl);
+  await pgCat.waitForTimeout(500);
+  const modalTxt1 = await pgCat.locator(".modal").innerText();
+  t("modal sugere override vigente R$ 300.00", /Referência do Acervo: R\$ 300\.00/.test(modalTxt1), modalTxt1.slice(0, 200));
+  await pgCat.locator(".modal").getByRole("button", { name: /Fechar|Cancelar|×/ }).first().click().catch(async () => {
+    await pgCat.keyboard.press("Escape");
+  });
+  await pgCat.waitForTimeout(400);
+  // Restaura a referência do Acervo e salva.
+  await abaPatrimonio(pgCat, "Catálogo");
+  await pgCat.locator("table.tabela tbody tr", { hasText: "Pistola UI Teste" }).getByRole("button", { name: "Editar" }).click();
+  await pgCat.waitForTimeout(500);
+  await pgCat.getByRole("button", { name: "Restaurar referência do Acervo" }).click();
+  await pgCat.waitForTimeout(300);
+  const pesoRest = await pgCat.getByPlaceholder("Peso override (kg)").inputValue();
+  const precoRest = await pgCat.getByPlaceholder("Preço override (R$)").inputValue();
+  t("restaurar limpa os campos de override", pesoRest === "" && precoRest === "", `${pesoRest}/${precoRest}`);
+  const metaRef = await pgCat.locator("span.meta", { hasText: "Ref. Acervo" }).first().innerText().catch(() => "");
+  t("referência do Acervo exibida após restaurar", /0\.9|R\$ 250/.test(metaRef), metaRef);
+  await pgCat.getByRole("button", { name: "Salvar alterações" }).click();
+  await pgCat.waitForTimeout(1200);
+  // Prova pela API real: template.data voltou aos valores do Acervo.
+  const catApi = await fetch(`${BASE}/api/campaigns/${cenario.campId}/inventario`, { headers: { cookie: cenario.cookieMestre } }).then((r) => r.json());
+  const tplUi = (catApi.itens ?? []).find((i) => i.name === "Pistola UI Teste");
+  t("API: peso/preço restaurados ao Acervo",
+    tplUi?.data?.weight === 0.9 && tplUi?.data?.valueCents === 25000 && tplUi?.data?.economia?.precoReferenciaBRL === 250,
+    JSON.stringify({ w: tplUi?.data?.weight, v: tplUi?.data?.valueCents, e: tplUi?.data?.economia?.precoReferenciaBRL }));
+  // Modal agora sugere a REFERÊNCIA original (R$ 250).
+  await abaPatrimonio(pgCat, "Inventário");
+  await pgCat.getByRole("button", { name: "Comprar…" }).click();
+  await pgCat.locator(".modal").waitFor({ timeout: 8000 });
+  const selCat2 = pgCat.locator(".modal select").first();
+  const valTpl2 = await selCat2.locator("option", { hasText: "Pistola UI Teste" }).getAttribute("value");
+  await selCat2.selectOption(valTpl2);
+  await pgCat.waitForTimeout(500);
+  const modalTxt2 = await pgCat.locator(".modal").innerText();
+  t("modal sugere referência original R$ 250.00 após restaurar", /Referência do Acervo: R\$ 250\.00/.test(modalTxt2), modalTxt2.slice(0, 200));
+  t("sugestão continua sem débito automático (texto informativo)", /apenas sugestão|sem conversão/i.test(modalTxt2));
+  await shot(pgCat, "06-catalogo-restaurar-referencia");
+  await ctxCat.close();
 
 } catch (e) {
   fail++;
