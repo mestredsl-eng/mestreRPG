@@ -60,12 +60,80 @@ async function registrarMov(page, conta, tipo, valor, desc) {
 }
 const saldoTag = (page) => page.locator(".tag", { hasText: "Carteira" }).first().textContent().catch(() => "");
 
+function configurarCasasDecimais(campId, casas) {
+  const db = abrirDb(BANCO);
+  try {
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+    if (!rs) throw new Error("rule_set ativo não encontrado para configurar casas decimais");
+    const cfg = JSON.parse(rs.config || "{}");
+    cfg.financeiro = { ...(cfg.financeiro ?? {}), casasDecimais: casas };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+  } finally { db.close(); }
+}
+
+function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, description) {
+  const db = abrirDb(BANCO);
+  try {
+    db.prepare(`
+      insert into money_transactions
+        (id, character_id, campaign_id, kind, amount, currency, account, description,
+         amount_cents, balance_before_cents, balance_after_cents, created_by, created_at)
+      values (?, ?, ?, 'entrada', ?, 'BRL', 'especie', ?, null, null, null, ?, ?)
+    `).run(crypto.randomUUID(), characterId, campaignId, amount, description, createdBy, Date.now());
+  } finally { db.close(); }
+}
+
+async function testarHistoricoLegado(ids, caso, modo) {
+  const prefixo = `Legado ${modo} ${caso.casas} casas`;
+  const descricaoPositiva = `${prefixo} positivo`;
+  const descricaoNegativa = `${prefixo} negativo`;
+  configurarCasasDecimais(ids.campId, caso.casas);
+  inserirTransacaoLegada(ids, caso.positivo, descricaoPositiva);
+  inserirTransacaoLegada(ids, caso.negativo, descricaoNegativa);
+
+  const viewport = modo === "desktop" ? { width: 1366, height: 900 } : { width: 390, height: 844 };
+  const contexto = await browser.newContext({ viewport });
+  const page = await contexto.newPage();
+  try {
+    await login(page, "jogador_um", "senha-jogador-123");
+    await irCampanha(page);
+    await abrirPersonagem(page, "Heroína Um");
+    await abaPatrimonio(page, "Dinheiro");
+
+    const esperadoPositivo = caso.positivo.toFixed(caso.casas);
+    const esperadoNegativo = caso.negativo.toFixed(caso.casas);
+    if (modo === "desktop") {
+      const linhaPositiva = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoPositiva }).first();
+      const linhaNegativa = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoNegativa }).first();
+      await linhaPositiva.waitFor({ state: "visible", timeout: 8000 });
+      await linhaNegativa.waitFor({ state: "visible", timeout: 8000 });
+      const valorPositivo = linhaPositiva.locator("td").nth(5);
+      const valorNegativo = linhaNegativa.locator("td").nth(5);
+      t(`${prefixo}: valor positivo correto no desktop`, (await valorPositivo.innerText()).trim() === esperadoPositivo, await valorPositivo.innerText());
+      t(`${prefixo}: valor negativo correto no desktop`, (await valorNegativo.innerText()).trim() === esperadoNegativo, await valorNegativo.innerText());
+      t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+    } else {
+      const cartaoPositivo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoPositiva }).first();
+      const cartaoNegativo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoNegativa }).first();
+      await cartaoPositivo.waitFor({ state: "visible", timeout: 8000 });
+      await cartaoNegativo.waitFor({ state: "visible", timeout: 8000 });
+      const campoPositivo = cartaoPositivo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+      const campoNegativo = cartaoNegativo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+      t(`${prefixo}: valor positivo correto no mobile`, (await campoPositivo.innerText()).trim() === esperadoPositivo, await campoPositivo.innerText());
+      t(`${prefixo}: valor negativo correto no mobile`, (await campoNegativo.innerText()).trim() === esperadoNegativo, await campoNegativo.innerText());
+      t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+    }
+  } finally {
+    await contexto.close();
+  }
+}
+
 try {
   await prepararBanco(BANCO);
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO);
-  cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
+  const heroinaId = cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
   browser = await chromium.launch();
 
   const ctxJ = await browser.newContext({ viewport: { width: 1366, height: 900 } });
@@ -101,6 +169,19 @@ try {
   t("histórico mostra Bônus e Compra", histTxt.includes("Bônus da sessão") && histTxt.includes("Compra de suprimentos"));
   t("histórico mostra saldo após (120)", /120/.test(histTxt));
   await shot(pgJ, "02-historico-saldos");
+
+  sec("2.1 Histórico legado: escala configurada e sinal (desktop + mobile)");
+  const idsLegado = { campId: cenario.campId, characterId: heroinaId, createdBy: cenario.adminId };
+  const casosLegado = [
+    { casas: 0, positivo: 42, negativo: -3 },
+    { casas: 1, positivo: 42.5, negativo: -3.5 },
+    { casas: 2, positivo: 42.25, negativo: -3.75 },
+    { casas: 3, positivo: 42.125, negativo: -3.875 },
+    { casas: 4, positivo: 42.0625, negativo: -3.9375 },
+  ];
+  for (const caso of casosLegado) await testarHistoricoLegado(idsLegado, caso, "desktop");
+  for (const caso of casosLegado) await testarHistoricoLegado(idsLegado, caso, "mobile");
+  configurarCasasDecimais(cenario.campId, 2);
 
   sec("3. Transferência de item entre personagens (UI, mestre)");
   // Jogador só enxerga o próprio personagem — transferência é visão do mestre.
