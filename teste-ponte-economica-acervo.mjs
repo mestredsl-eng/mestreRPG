@@ -622,6 +622,20 @@ try {
   t("19q. desvinculado: campos econômicos ficam ausentes",
     tplBuggyLimpo?.data?.weight === undefined && tplBuggyLimpo?.data?.valueCents === undefined && tplBuggyLimpo?.data?.economia === undefined,
     JSON.stringify(tplBuggyLimpo?.data));
+  // valueCents: 0 é override explícito (item sem custo), não "ausente" —
+  // o PATCH parcial não pode derrubá-lo nem cair na referência do
+  // Acervo. Estado divergente proposital: valueCents=0 com
+  // economia.precoReferenciaBRL=250 preservada — o modal deve exibir
+  // R$ 0,00 (valueCents tem precedência), coberto na homologação.
+  const patchZero = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplId}`, {
+    cookie: ids.cm, body: { data: { valueCents: 0 } },
+  });
+  t("19r. PATCH parcial com valueCents:0 aceito", patchZero.status === 200, `status=${patchZero.status}`);
+  const cat19g = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tpl19e = (cat19g.json?.itens ?? []).find((i) => i.id === tplId);
+  t("19s. valueCents:0 persistido como override explícito",
+    tpl19e?.data?.valueCents === 0 && tpl19e?.data?.economia?.precoReferenciaBRL === 250,
+    JSON.stringify({ v: tpl19e?.data?.valueCents, e: tpl19e?.data?.economia?.precoReferenciaBRL }));
   // Regra do Acervo permanece intocada (imutabilidade já verificada abaixo).
 
   // Imutabilidade final do Acervo (após TODAS as operações).

@@ -478,8 +478,11 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
     // Mesma precedência do editor: valueCents (override local efetivo)
     // primeiro; economia.precoReferenciaBRL é fallback — uma atualização
     // parcial que mude só um dos campos não pode exibir o valor antigo.
-    const vc = Number(econRef?.valueCents);
-    if (Number.isFinite(vc) && vc > 0) return vc / 100;
+    // valueCents: 0 é override explícito (item sem custo) — não pode
+    // cair para a referência antiga do Acervo. Number(null) seria 0,
+    // por isso o teste é typeof, não coerção.
+    const vc = econRef?.valueCents;
+    if (typeof vc === "number" && Number.isFinite(vc) && vc >= 0) return vc / 100;
     const p = econRef?.economia?.precoReferenciaBRL;
     return typeof p === "number" && Number.isFinite(p) ? p : undefined;
   })();

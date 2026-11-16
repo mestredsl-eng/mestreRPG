@@ -6,7 +6,7 @@ import { chromium } from "playwright";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, abrirDb, encerrarServidor, limparDir,
+  criarCenario, comDb, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -172,7 +172,7 @@ try {
   sec("6. Catálogo — override econômico e restaurar referência do Acervo");
   // Elemento do Acervo com referência econômica, inserido como as
   // regras reais fazem (rule_definitions do rule_set ativo).
-  const rsPat = abrirDb(BANCO).prepare("select id from rule_sets where campaign_id=? and is_active=1").get(cenario.campId).id;
+  const rsPat = comDb(BANCO, (db) => db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(cenario.campId).id);
   {
     const w = abrirDb(BANCO);
     try {
@@ -253,6 +253,28 @@ try {
   const modalTxt2 = await pgCat.locator(".modal").innerText();
   t("modal sugere referência original R$ 250.00 após restaurar", /Referência do Acervo: R\$ 250\.00/.test(modalTxt2), modalTxt2.slice(0, 200));
   t("sugestão continua sem débito automático (texto informativo)", /apenas sugestão|sem conversão/i.test(modalTxt2));
+  await pgCat.locator(".modal").getByRole("button", { name: "Cancelar" }).click();
+  await pgCat.waitForTimeout(400);
+  // Regressão: valueCents: 0 é override explícito (item sem custo) —
+  // o modal deve exibir R$ 0,00, não cair na referência do Acervo
+  // (economia.precoReferenciaBRL=250 permanece no snapshot).
+  const tplIdUi = tplUi?.id;
+  const patchZero = await fetch(`${BASE}/api/campaigns/${cenario.campId}/inventario/${tplIdUi}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json", cookie: cenario.cookieMestre },
+    body: JSON.stringify({ data: { valueCents: 0 } }),
+  });
+  t("PATCH valueCents:0 aceito", patchZero.status === 200, `status=${patchZero.status}`);
+  await abaPatrimonio(pgCat, "Inventário");
+  await pgCat.getByRole("button", { name: "Comprar…" }).click();
+  await pgCat.locator(".modal").waitFor({ timeout: 8000 });
+  const selCat3 = pgCat.locator(".modal select").first();
+  const valTpl3 = await selCat3.locator("option", { hasText: "Pistola UI Teste" }).getAttribute("value");
+  await selCat3.selectOption(valTpl3);
+  await pgCat.waitForTimeout(500);
+  const modalTxt3 = await pgCat.locator(".modal").innerText();
+  t("modal exibe R$ 0,00 para override valueCents:0", /Referência do Acervo: R\$ 0\.00/.test(modalTxt3), modalTxt3.slice(0, 200));
+  t("modal não cai na referência antiga R$ 250 com valueCents:0", !/Referência do Acervo: R\$ 250\.00/.test(modalTxt3));
   await shot(pgCat, "06-catalogo-restaurar-referencia");
   await ctxCat.close();
 
