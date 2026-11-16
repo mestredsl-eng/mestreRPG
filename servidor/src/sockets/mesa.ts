@@ -781,6 +781,18 @@ function socket_handlers(
     });
 
     // ---------- solicitações de teste (mestre) ----------
+    // Contrato mínimo de skillRef para testes SEM campoId: apenas
+    // {rotulo?, nome?} string curtas — qualquer outra forma é descartada
+    // (null). Com campoId, a referência vem da estrutura validada e o
+    // objeto do cliente nunca é aceito como substituto.
+    const skillRefManual = (v: unknown): { rotulo?: string; nome?: string } | null => {
+      if (v == null || typeof v !== "object" || Array.isArray(v)) return null;
+      const o = v as Record<string, unknown>;
+      const out: { rotulo?: string; nome?: string } = {};
+      if (typeof o.rotulo === "string" && o.rotulo.length <= 160) out.rotulo = o.rotulo;
+      if (typeof o.nome === "string" && o.nome.length <= 160) out.nome = o.nome;
+      return Object.keys(out).length ? out : null;
+    };
     on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
       campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
@@ -856,6 +868,13 @@ function socket_handlers(
         }
         rotuloExibicao = campo.label;
       }
+      // Referência autoritativa ÚNICA do desafio: com campoId validado,
+      // campoId + label reais da estrutura persistida; sem campoId, só o
+      // contrato mínimo — objetos arbitrários do cliente nunca chegam à
+      // persistência, ao evento nem ao chat.
+      const skillRefFinal: unknown = payload.campoId
+        ? { campoId: payload.campoId, rotulo: rotuloExibicao }
+        : skillRefManual(payload.skillRef);
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
       const negativos = Math.max(0, Math.round(payload.malus ?? 0));
@@ -870,7 +889,7 @@ function socket_handlers(
         await db.insert(tests).values({
           id, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: char.id, requestedBy: u.id,
-          skillRef: (payload.skillRef ?? (payload.campoId ? { campoId: payload.campoId, rotulo: rotuloExibicao ?? payload.rotulo } : null)) as never,
+          skillRef: skillRefFinal as never,
           modifiers: { bonus: payload.bonus ?? 0, malus: negativos, valorCampo, positivos } as never,
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
@@ -899,7 +918,7 @@ function socket_handlers(
       const publico = {
         id, sessionId: ctx.sessao.id, characterId: char.id, characterName: nomeChar,
         requestedByName: nomeAutor, rotulo: rotuloExibicao ?? payload.rotulo ?? null,
-        skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
+        skillRef: skillRefFinal, // referência autoritativa; mínimo NÃO vai
         status: "pendente", createdAt: agora,
         // visibilidade explícita e coerente em TODOS os payloads —
         // o cliente nunca precisa adivinhar o contrato

@@ -215,6 +215,57 @@ try {
   const skillF = JSON.parse(rowF?.skill_ref ?? "{}");
   t("skill_ref persistido usa label real", skillF?.rotulo === "Medicina" && skillF?.campoId === "medicina", JSON.stringify(skillF));
 
+  sec("skillRef forjado — referência autoritativa única");
+  // campoId válido + rótulo forjado + skillRef objeto forjado: nada do
+  // payload substitui a referência construída da estrutura validada
+  const rSk = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "medicina", rotulo: "FORJADO-1",
+    skillRef: { campoId: "outro", rotulo: "FORJADO-2", nome: "X", extra: "Y" },
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("desafio criado com campo válido apesar de skillRef forjado", rSk?.ok === true, JSON.stringify(rSk));
+  const rowSk = rSk?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rSk.id)) : null;
+  const skillSk = JSON.parse(rowSk?.skill_ref ?? "null");
+  t("skill_ref persistido = campoId e label reais",
+    skillSk?.campoId === "medicina" && skillSk?.rotulo === "Medicina", JSON.stringify(skillSk));
+  t("nenhuma propriedade forjada persistida",
+    skillSk && Object.keys(skillSk).sort().join(",") === "campoId,rotulo", JSON.stringify(skillSk));
+  const evSkJ = evJ1.teste.find((x) => x.id === rSk?.id);
+  const evSkM = evM.teste.find((x) => x.id === rSk?.id);
+  const evSkJ2 = evJ2.teste.find((x) => x.id === rSk?.id);
+  t("evento do jogador traz skillRef autoritativo",
+    evSkJ?.skillRef?.campoId === "medicina" && evSkJ?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkJ?.skillRef));
+  t("evento do mestre traz a mesma referência",
+    evSkM?.skillRef?.campoId === "medicina" && evSkM?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkM?.skillRef));
+  t("evento de participante autorizado (jogador2) idem",
+    evSkJ2?.skillRef?.campoId === "medicina" && evSkJ2?.skillRef?.rotulo === "Medicina", JSON.stringify(evSkJ2?.skillRef));
+  const hist = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: ids.j1.cookie });
+  const histSk = (hist.json?.testes ?? []).find((x) => x.id === rSk?.id);
+  const histSkill = typeof histSk?.skillRef === "string" ? JSON.parse(histSk.skillRef) : histSk?.skillRef;
+  t("histórico GET devolve skill_ref autoritativo",
+    histSkill?.campoId === "medicina" && histSkill?.rotulo === "Medicina", JSON.stringify(histSkill));
+
+  sec("skillRef manual — contrato mínimo sem campoId");
+  const rManOk = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, rotulo: "Vigor",
+    skillRef: { rotulo: "Percepção", nome: "Vigia", campoId: "forjado", extra: 1 },
+    dadosLados: 20, dadosCount: 2, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("teste manual sem campoId funciona", rManOk?.ok === true, JSON.stringify(rManOk));
+  const rowMan = rManOk?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rManOk.id)) : null;
+  const skillMan = JSON.parse(rowMan?.skill_ref ?? "null");
+  t("skillRef manual sanitizado: só rotulo/nome permitidos",
+    skillMan && skillMan.rotulo === "Percepção" && skillMan.nome === "Vigia"
+      && !("campoId" in skillMan) && !("extra" in skillMan), JSON.stringify(skillMan));
+  const rManLixo = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, rotulo: "Teste",
+    skillRef: "string-forjada", dadosLados: 20, dadosCount: 1,
+    requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("skillRef de tipo inválido não quebra o pedido", rManLixo?.ok === true, JSON.stringify(rManLixo));
+  const rowLixo = rManLixo?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rManLixo.id)) : null;
+  t("skillRef inválido persistido como null", rowLixo?.skill_ref === null, JSON.stringify(rowLixo?.skill_ref));
+
   sec("jogador recebe, identifica e rola; resultado para todos");
   const roll = await emitirCb(sockJ1, "mesa:teste:rolar", { testId: id1, requestId: "df-r-" + crypto.randomUUID().slice(0, 8) });
   t("dono rola o desafio", roll?.ok === true, JSON.stringify(roll).slice(0, 160));
@@ -336,6 +387,13 @@ try {
     msgsVazio.some((m) => /Nenhum campo elegível/.test(m) && /Usado em testes/.test(m)), msgsVazio.join(" | "));
   const opcoesVazio = await selCampo.locator("option").allTextContents();
   t("UI. seletor sem opções de campo", opcoesVazio.every((o) => /Escolher|Carregando/.test(o)), opcoesVazio.join("|"));
+
+  // o desafio criado com skillRef forjado aparece com o label REAL da ficha
+  const cardSk = pJ.locator(".teste-card", { hasText: "Medicina" }).last();
+  await cardSk.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  const txtSk = await cardSk.textContent().catch(() => "");
+  t("UI. jogador vê label real do campo (skillRef forjado neutralizado)",
+    /Medicina/.test(txtSk ?? "") && !/FORJADO/.test(txtSk ?? ""), txtSk?.slice(0, 160));
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));
