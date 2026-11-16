@@ -113,10 +113,57 @@ try {
   const gA = await req(base, "POST", "/guildas", { cookie: cookieAlice, body: { name: "Guilda A", description: "teste" } });
   t("alice cria Guilda A", gA.status === 201 && gA.json?.guilda?.souGM === true, JSON.stringify(gA.json));
   const guildA = gA.json.guilda.id;
+  const dbFundador = abrirDb(BANCO);
+  const vinculoFundador = dbFundador.prepare(
+    "select role,status from guild_members where guild_id=? and user_id=?"
+  ).get(guildA, idDe("alice"));
+  dbFundador.close();
+  t("criador recebe vínculo GM ativo na mesma criação",
+    vinculoFundador?.role === "gm" && vinculoFundador?.status === "ativo");
+
   const gB = await req(base, "POST", "/guildas", { cookie: cookieCarol, body: { name: "Guilda B" } });
   t("carol cria Guilda B", gB.status === 201);
   const guildB = gB.json.guilda.id;
   t("nome duplicado recusado", (await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda A" } })).status === 409);
+
+  sec("Atomicidade — guilda e GM fundador");
+  const dbTrigger = abrirDb(BANCO);
+  dbTrigger.exec(`
+    CREATE TRIGGER teste_falha_gm_fundador
+    BEFORE INSERT ON guild_members
+    WHEN NEW.role = 'gm'
+      AND (SELECT name FROM guilds WHERE id = NEW.guild_id) = 'Guilda Atomicidade'
+    BEGIN
+      SELECT RAISE(ABORT, 'falha simulada do GM fundador');
+    END;
+  `);
+  dbTrigger.close();
+
+  let respostaFalha;
+  let guildaParcial = false;
+  let membroParcial = false;
+  try {
+    respostaFalha = await req(base, "POST", "/guildas", {
+      cookie: cookieAlice,
+      body: { name: "Guilda Atomicidade" },
+    });
+  } finally {
+    const dbVerificacao = abrirDb(BANCO);
+    guildaParcial = !!dbVerificacao.prepare(
+      "select id from guilds where name='Guilda Atomicidade'"
+    ).get();
+    membroParcial = !!dbVerificacao.prepare(`
+      select gm.id
+      from guild_members gm
+      join guilds g on g.id = gm.guild_id
+      where g.name='Guilda Atomicidade' and gm.user_id=?
+    `).get(idDe("alice"));
+    dbVerificacao.exec("DROP TRIGGER IF EXISTS teste_falha_gm_fundador");
+    dbVerificacao.close();
+  }
+  t("falha ao inserir GM fundador reverte a guilda inteira",
+    respostaFalha?.status >= 500 && !guildaParcial && !membroParcial,
+    JSON.stringify({ status: respostaFalha?.status, guildaParcial, membroParcial }));
 
   const addBob = await req(base, "POST", `/guildas/${guildA}/membros`, { cookie: cookieAlice, body: { username: "bob" } });
   t("GM adiciona bob como membro", addBob.status === 201, JSON.stringify(addBob.json));

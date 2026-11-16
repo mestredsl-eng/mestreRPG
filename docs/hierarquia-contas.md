@@ -17,8 +17,11 @@ C, GM da Guilda X e ADMIN global — simultaneamente, sem conflito.
   acessam dados privados nem executam ações de mesa. `requirePapel()` exige
   membership ativo — não há bypass por privilégio.
 - **GM não vira mestre.** Ser GM de uma guilda não concede papel de campanha;
-  designar mestres continua sendo ato do mestre da campanha (ou do ADMIN em
-  operações administrativas auditadas).
+  designar nem remover mestres é ato exclusivo do escopo da campanha
+  (mestre da campanha ou ADMIN em operação administrativa auditada).
+  **Decisão de produto aprovada na Issue #65:** não haverá configuração
+  "GM designa mestres" — a autoridade permanece nas regras atuais de
+  `memberships`.
 - **Papel de campanha não escala para guilda.** MESTRE de campanha não ganha
   gestão de guilda; só `guild_members.role = 'gm'` (ou ADMIN) gerencia.
 - **Nunca aceitar privilégio de payload público.** Convites e cadastro só
