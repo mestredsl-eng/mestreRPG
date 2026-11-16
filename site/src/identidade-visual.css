@@ -189,7 +189,8 @@ body {
 
 /* Acento de ações: troca o azul genérico por vinho escuro e mantém
    botões secundários/perigo com suas próprias classes semânticas. */
-button:not(.secundario):not(.mini):not(.link):not(.sair) {
+button:not([class]),
+button.primario {
   border: 1px solid rgba(203, 112, 124, .32);
   background: linear-gradient(145deg, #783744, #542632);
   box-shadow: 0 3px 10px rgba(0, 0, 0, .18), 0 1px 0 rgba(255, 230, 232, .08) inset;
@@ -200,7 +201,8 @@ button:not(.secundario):not(.mini):not(.link):not(.sair) {
     transform .16s ease;
 }
 
-button:not(.secundario):not(.mini):not(.link):not(.sair):hover:not(:disabled) {
+button:not([class]):hover:not(:disabled),
+button.primario:hover:not(:disabled) {
   filter: brightness(1.14);
   border-color: rgba(222, 137, 147, .6);
   box-shadow: 0 5px 16px rgba(90, 34, 48, .28), 0 1px 0 rgba(255, 230, 232, .1) inset;
