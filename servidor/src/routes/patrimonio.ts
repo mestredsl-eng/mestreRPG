@@ -495,15 +495,22 @@ patrimonioRouter.patch("/inventario/:itemId", async (req, res) => {
     }
     const dataAtual = (itemTx.data ?? {}) as Record<string, unknown>;
     const dadosPatch = limparEstadoInventario(data) ?? {};
+    const vinculado = !!dataAtual.regra;
     // Item vinculado ao Acervo: campos econômicos são autoridade do
-    // template/elemento — PATCH não pode forjá-los via data (Issue #103).
-    if (dataAtual.regra) {
+    // template/elemento — PATCH não pode forjá-los via data, nem pelas
+    // colunas/campos de primeiro nível (weight, valueCents) (Issue #103).
+    let restoFinal = resto;
+    let valueCentsFinal = valueCents;
+    if (vinculado) {
       for (const k of CAMPOS_ECONOMICOS_ACERVO) delete dadosPatch[k];
+      const { weight: _pesoCliente, ...restoSemPeso } = resto as Record<string, unknown>;
+      restoFinal = restoSemPeso as typeof resto;
+      valueCentsFinal = undefined;
     }
     tx.update(inventoryEntries).set({
-      ...resto,
+      ...restoFinal,
       quantity: d.quantity ?? itemTx.quantity,
-      data: { ...dataAtual, ...dadosPatch, ...(valueCents !== undefined ? { valueCents } : {}), ...(transferable !== undefined ? { transferable } : {}) },
+      data: { ...dataAtual, ...dadosPatch, ...(valueCentsFinal !== undefined ? { valueCents: valueCentsFinal } : {}), ...(transferable !== undefined ? { transferable } : {}) },
       updatedAt: new Date(),
     }).where(eq(inventoryEntries.id, itemTx.id)).run();
   });

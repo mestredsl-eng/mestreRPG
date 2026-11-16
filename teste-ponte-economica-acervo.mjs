@@ -491,6 +491,61 @@ try {
   });
   t("17k. PATCH valueCents negativo rejeitado", negPatch.status === 400, `status=${negPatch.status}`);
 
+  // ================= 18. PATCH inventário vinculado: colunas e valueCents =================
+  sec("18. PATCH inventário — peso/valor de primeiro nível não são forjáveis");
+  // A. Item vinculado COM referência (override do mestre: peso 1.5, valor 99900).
+  const patchInvForja = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${addPosOverride.json?.id}`, {
+    cookie: ids.j1.cookie,
+    body: {
+      weight: 99, valueCents: 1,
+      data: { weight: 50, valueCents: 1, economia: { moeda: "XXX", precoReferenciaBRL: 1 }, obs: "nota" },
+    },
+  });
+  t("18a. PATCH forjado aceito", patchInvForja.status === 200, `status=${patchInvForja.status}`);
+  const invA = await req(BASE, "GET", `/characters/${pjJ1}/inventario`, { cookie: ids.j1.cookie });
+  const itemA = (invA.json?.itens ?? []).find((i) => i.id === addPosOverride.json?.id);
+  t("18b. coluna weight preserva autoridade do template",
+    itemA?.weight === 1.5, JSON.stringify(itemA?.weight));
+  t("18c. data.weight/data.valueCents snapshot autoritativo",
+    itemA?.data?.weight === 1.5 && itemA?.data?.valueCents === 99900, JSON.stringify(itemA?.data));
+  t("18d. data.economia não contaminada e campo livre editável",
+    itemA?.data?.economia?.precoReferenciaBRL === 250 && itemA?.data?.obs === "nota", JSON.stringify(itemA?.data?.economia));
+  t("18e. vínculo regra intacto",
+    itemA?.data?.regra?.kind === "item" && itemA?.data?.regra?.key === "pistola_teste", JSON.stringify(itemA?.data?.regra));
+
+  // B. Item vinculado SEM referência de peso/valor (item_sem_referencia).
+  const tplSemRef = await req(BASE, "POST", `/campaigns/${ids.camp}/inventario`, {
+    cookie: ids.cm, body: { name: "Template Sem Ref", regra: { kind: "item", key: "item_sem_referencia" } },
+  });
+  t("18f. template sem referência criado", tplSemRef.status === 201, JSON.stringify(tplSemRef.json));
+  const addSemRef = await req(BASE, "POST", `/characters/${pjJ1}/inventario`, {
+    cookie: ids.j1.cookie, body: { name: "x", templateId: tplSemRef.json?.id, quantity: 1 },
+  });
+  t("18g. item sem referência adquirido", addSemRef.status === 201, JSON.stringify(addSemRef.json));
+  const patchSemRef = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${addSemRef.json?.id}`, {
+    cookie: ids.j1.cookie,
+    body: { weight: 7, valueCents: 4242, data: { weight: 8, valueCents: 9, economia: { moeda: "XXX" } } },
+  });
+  t("18h. PATCH forjado em item sem referência aceito", patchSemRef.status === 200, `status=${patchSemRef.status}`);
+  const invB = await req(BASE, "GET", `/characters/${pjJ1}/inventario`, { cookie: ids.j1.cookie });
+  const itemB = (invB.json?.itens ?? []).find((i) => i.id === addSemRef.json?.id);
+  t("18i. peso não inventado: coluna e data ausentes",
+    (itemB?.weight ?? null) === null && itemB?.data?.weight === undefined, JSON.stringify({ w: itemB?.weight, dw: itemB?.data?.weight }));
+  t("18j. valor não inventado: data.valueCents ausente",
+    itemB?.data?.valueCents === undefined, JSON.stringify(itemB?.data?.valueCents));
+  t("18k. nenhuma economia inventada, vínculo válido",
+    itemB?.data?.economia === undefined && itemB?.data?.regra?.key === "item_sem_referencia", JSON.stringify(itemB?.data));
+
+  // C. Item manual sem vínculo: edição legítima de peso/valor preservada.
+  const patchLegado = await req(BASE, "PATCH", `/characters/${pjJ1}/inventario/${addLegado.json?.id}`, {
+    cookie: ids.j1.cookie, body: { weight: 0.8, valueCents: 500 },
+  });
+  t("18l. PATCH manual aceito", patchLegado.status === 200, `status=${patchLegado.status}`);
+  const invC = await req(BASE, "GET", `/characters/${pjJ1}/inventario`, { cookie: ids.j1.cookie });
+  const itemC = (invC.json?.itens ?? []).find((i) => i.id === addLegado.json?.id);
+  t("18m. peso/valor manuais editáveis sem vínculo",
+    itemC?.weight === 0.8 && itemC?.data?.valueCents === 500, JSON.stringify({ w: itemC?.weight, vc: itemC?.data?.valueCents }));
+
   // Imutabilidade final do Acervo (após TODAS as operações).
   {
     const w = abrirDb(BANCO);
