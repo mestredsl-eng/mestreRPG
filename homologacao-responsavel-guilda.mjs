@@ -217,6 +217,9 @@ try {
   await abrirGuilda(pgMob, "Guilda Responsável");
   await pgMob.getByText(/Responsável:/).waitFor({ timeout: 15000 });
   const respMob = await pgMob.locator("p.dica", { hasText: "Responsável:" }).first().isVisible().catch(() => false);
+  // isVisible() não espera: a seção pode renderizar um tick após o texto
+  // "Responsável:" — aguarda o estado visível antes de amostrar (flake de CI).
+  await secaoResp(pgMob).first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
   const secaoMob = await secaoResp(pgMob).first().isVisible().catch(() => false);
   t("responsável e seção visíveis no mobile", respMob && secaoMob, `resp=${respMob} secao=${secaoMob}`);
   await ctxMob.close();

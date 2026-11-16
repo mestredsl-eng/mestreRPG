@@ -198,6 +198,28 @@ try {
     .run(crypto.randomUUID(), campId, espId, agoraE, agoraE, agoraE);
   dbE.close();
 
+  // Garante socket com transporte VIVO antes de mutações que emitem
+  // notificação única sem fila (revogação via room usuario:*): a flag
+  // `connected` pode estar obsoleta num socket meio-aberto — o emit se
+  // perderia e a UI nunca exibiria "revogado" (flake observado no CI).
+  // Roundtrip ping/pong prova que o servidor recebe e responde NESTE
+  // socket; se o transporte estiver morto, aguarda a reconexão.
+  const socketVivo = (page) => page.evaluate(() => new Promise((res) => {
+    const s = window.__mesaSocket;
+    if (!s) return res(false);
+    const limite = Date.now() + 40000;
+    const tentar = () => {
+      if (Date.now() >= limite) return res(false);
+      if (!s.connected) return setTimeout(tentar, 250);
+      let done = false;
+      const t = setTimeout(() => { if (!done) { done = true; tentar(); } }, 4000);
+      try {
+        s.emit("ping", (v) => { if (!done) { done = true; clearTimeout(t); res(v === "pong"); } });
+      } catch { if (!done) { done = true; clearTimeout(t); tentar(); } }
+    };
+    tentar();
+  })).catch(() => false);
+
   const sessA = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Alfa" } });
   const sessB = await req(BASE, "POST", `/campaigns/${campId}/sessoes`, { cookie: cookieMestre, body: { name: "Mesa Névoa Beta" } });
   const sidA = sessA.json?.sessao?.id ?? sessA.json?.id;
@@ -205,10 +227,30 @@ try {
   t("sessões criadas", !!sidA && !!sidB);
 
   browser = await chromium.launch();
-  const ctxM = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const ctxJ = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const ctxE = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
-  const ctxM2 = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  // routeWebSocket(connectToServer) mantém um WebSocket NATIVO interno
+  // (_ws) como transporte real e o escreve via _ws.send() sem checar
+  // readyState — se o socket já estiver CLOSING/CLOSED (corrida com
+  // reconexões, keepalive ou fechamento propagado), o Chromium registra
+  // "WebSocket is already in CLOSING or CLOSED state." como erro de
+  // console. O app só enxerga o mock; este init script blinda APENAS o
+  // protótipo nativo (transporte interno do Playwright), descartando
+  // envios fora de OPEN — mesmo critério que o engine.io aplica ao mock.
+  // Registrado antes do routeWebSocket para rodar antes do inject.
+  const novoCtx = async (opts) => {
+    const ctx = await browser.newContext(opts);
+    await ctx.addInitScript(() => {
+      const Nativo = WebSocket;
+      const send = Nativo.prototype.send;
+      Nativo.prototype.send = function (...args) {
+        if (this.readyState === Nativo.OPEN) return send.apply(this, args);
+      };
+    });
+    return ctx;
+  };
+  const ctxM = await novoCtx({ viewport: { width: 1920, height: 1080 } });
+  const ctxJ = await novoCtx({ viewport: { width: 1920, height: 1080 } });
+  const ctxE = await novoCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
+  const ctxM2 = await novoCtx({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 });
   const pgM = await ctxM.newPage(), pgJ = await ctxJ.newPage(), pgE = await ctxE.newPage(), pgM2 = await ctxM2.newPage();
   vigiar(pgM, "mestre"); vigiar(pgJ, "jogador"); vigiar(pgE, "espectador-mobile"); vigiar(pgM2, "mestre-mobile");
   // prova de "mesma página": reload zeraria o estado React e não pode
@@ -1021,7 +1063,7 @@ try {
   t("reconexão sem reload: propagação de névoa segue funcionando", ehTransparente(pxJTransp), JSON.stringify(pxJTransp));
 
   sec("Página aberta com servidor fora + rejeição por membership");
-  const ctxX = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const ctxX = await novoCtx({ viewport: { width: 1920, height: 1080 } });
   const pgX = await ctxX.newPage();
   vigiar(pgX, "j2-offline");
   // ACK drop controlado + contagem de mesa:entrar (prova de reentrada
@@ -1078,6 +1120,12 @@ try {
   const recebeuAck = await pgX.getByText("ping-ack-perdido").count();
   t("ACK de entrada perdido: reconexão re-entra e sala funciona sem reload",
     recebeuAck > 0, `mensagens=${recebeuAck} entrarCount=${entrarCountX}`);
+  // O drop armado (derrubarAckX) só intercepta pacotes "43" via WebSocket —
+  // ACKs que chegam por polling não o consomem. Se ainda estiver armado
+  // aqui, ele pode engolir o ACK de REJEIÇÃO do próximo cenário e o texto
+  // "não foi possível entrar" nunca aparece (flake de CI). A prova de ACK
+  // perdido já foi feita acima — desarma antes de remover a membership.
+  derrubarAckX = 0;
   // remove o vínculo de nv_j2 e derruba de novo: na reconexão o
   // mesa:entrar é rejeitado — sem reutilizar estado antigo
   const dbRem = abrirDb(BANCO);
@@ -1085,7 +1133,9 @@ try {
     .run(Date.now(), campId, c.jogadores.jogador2.id);
   dbRem.close();
   await reiniciarServidor();
-  await pgX.getByText(/não foi possível entrar/i).waitFor({ timeout: 30000 });
+  // reconexão + mesa:entrar rejeitado + render: margem para backoff do
+  // socket.io e subida do servidor (mesmo padrão das esperas de 60s+)
+  await pgX.getByText(/não foi possível entrar/i).waitFor({ timeout: 60000 });
   // isolada da sala: mensagem posterior do mestre não chega ao removido
   await pgM.waitForTimeout(3000); // mestre re-entra também
   await pgM.locator(".chat-form").getByRole("textbox").fill("ping-removido");
@@ -1486,6 +1536,9 @@ try {
   // se o socket estiver reconectando no instante do emit, o evento se
   // perde e a UI nunca mostra "revogado" (flake observado no CI).
   await pgJ.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
+  const vivoJ = await socketVivo(pgJ);
+  t("socket do jogador respondeu ping/pong antes do restore", vivoJ === true);
+  if (!vivoJ) throw new Error("socketVivo(pgJ)=false — restore de revogação abortado: a notificação única não pode ser comprovada");
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
@@ -1504,6 +1557,9 @@ try {
   // revogação vai para a room usuario:* sem fila — emitida com o socket
   // reconectando, ela se perde e a UI nunca exibe "revogado" (flake CI).
   await pgE.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 });
+  const vivoE = await socketVivo(pgE);
+  t("socket do espectador respondeu ping/pong antes do import", vivoE === true);
+  if (!vivoE) throw new Error("socketVivo(pgE)=false — import de revogação abortado: a notificação única não pode ser comprovada");
   const rImpRT = await req(BASE, "POST", "/campaigns/importar", {
     cookie: cookieMestre,
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },

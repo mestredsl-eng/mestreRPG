@@ -1,6 +1,6 @@
 # Changelog - Mestre RPG
 
-## [1.0.0] - Data de lançamento a definir
+## [1.0.0] - 2026-11-11
 
 ### Novidades
 

@@ -143,6 +143,9 @@ try {
   t("rebaixar único GM recusado", selfRebaixa.status === 409);
   await req(base, "POST", `/guildas/${guildSolo}/membros`, { cookie: cookieBob, body: { username: "carol" } });
   await req(base, "PATCH", `/guildas/${guildSolo}/membros/${idDe("carol")}`, { cookie: cookieBob, body: { role: "gm" } });
+  // bob é o responsável: precisa transferir antes de remover o próprio vínculo
+  const transfSolo = await req(base, "PUT", `/guildas/${guildSolo}/responsavel`, { cookie: cookieBob, body: { userId: idDe("carol") } });
+  t("responsável transfere antes de sair da guilda", transfSolo.status === 200, JSON.stringify(transfSolo.json));
   const selfRem2 = await req(base, "DELETE", `/guildas/${guildSolo}/membros/${idDe("bob")}`, { cookie: cookieBob });
   t("remoção do GM ok após sucessão", selfRem2.status === 200, JSON.stringify(selfRem2.json));
 
@@ -247,6 +250,8 @@ try {
   const bobSome = await req(base, "DELETE", `/guildas/${guildBloq}/membros/${idDe("bob")}`, { cookie: cookieBob });
   t("GM bloqueado não conta — remoção do último capaz recusada", bobSome.status === 409, JSON.stringify(bobSome.json));
   await req(base, "PATCH", `/admin/users/${idDe("alice")}`, { cookie: cookieRoot, body: { status: "ativo" } });
+  // bob é o responsável: transfere para alice (GM capaz) antes de sair
+  await req(base, "PUT", `/guildas/${guildBloq}/responsavel`, { cookie: cookieBob, body: { userId: idDe("alice") } });
   const bobSome2 = await req(base, "DELETE", `/guildas/${guildBloq}/membros/${idDe("bob")}`, { cookie: cookieBob });
   t("com GM capaz, a remoção passa", bobSome2.status === 200, JSON.stringify(bobSome2.json));
 
