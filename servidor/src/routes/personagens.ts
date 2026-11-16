@@ -1,12 +1,12 @@
 import express, { Router, type Request } from "express";
 import { and, eq, desc, ne, inArray } from "drizzle-orm";
-import { createReadStream, existsSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel, requireLeasePersonagem, getMembership } from "../lib/permissoes.js";
+import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
 import {
   estruturaFichaSchema,
   validarFicha,
@@ -35,7 +35,7 @@ import { emitirCampanha } from "../lib/io.js";
 import { audit } from "../lib/audit.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import { retratoGaleriaPorId, urlRetratoGaleria } from "../lib/retratos.js";
-import { assinaturaImagemOk, caminhoFisico, caminhoLixeira, garantirDir } from "./arquivos.js";
+import { arquivoVisivel, assinaturaImagemOk, caminhoFisico, caminhoLixeira, garantirDir } from "./arquivos.js";
 
 const db = getDb();
 export const personagensRouter = Router({ mergeParams: true });
@@ -1513,6 +1513,35 @@ function dimensoesImagem(ext: string, buf: Buffer): { w: number; h: number } | n
   return null;
 }
 
+const MIME_RETRATO_OK = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+/** Lê e valida um arquivo da biblioteca para uso como retrato: somente
+ *  raster da allowlist (PNG/JPEG/WebP), MIME coerente, magic bytes reais
+ *  e dimensões 16–4096px. SVG e qualquer conteúdo ativo retornam null —
+ *  vale para o PUT (escolha) e para o GET (defesa contra referências
+ *  gravadas antes da validação existir). */
+async function imagemRetratoValida(f: typeof files.$inferSelect, cid: string): Promise<Buffer | null> {
+  const ext = (f.storageName ?? "").split(".").pop()?.toLowerCase() ?? "";
+  if (!EXT_IMAGEM_RETRATO.has(ext)) return null;
+  if (!MIME_RETRATO_OK.has((f.mimeType ?? "").toLowerCase())) return null;
+  if (!f.storageName || !f.sizeBytes || f.sizeBytes > RETRATO_MAX_BYTES) return null;
+  let caminho = caminhoFisico(cid, f.storageName);
+  if (!caminho || !existsSync(caminho)) {
+    const lix = caminhoLixeira(cid, f.storageName);
+    if (existsSync(lix)) {
+      try { renameSync(lix, caminho!); } catch { return null; }
+    } else { return null; }
+  }
+  if (!caminho) return null;
+  let buf: Buffer;
+  try { buf = readFileSync(caminho); } catch { return null; }
+  if (buf.length === 0 || buf.length > RETRATO_MAX_BYTES) return null;
+  if (!assinaturaImagemOk(ext, buf)) return null;
+  const dim = dimensoesImagem(ext, buf);
+  if (!dim || dim.w < 16 || dim.h < 16 || dim.w > RETRATO_MAX_DIM || dim.h > RETRATO_MAX_DIM) return null;
+  return buf;
+}
+
 /** Acesso para LEITURA do retrato: mesma regra do GET da ficha —
  *  dono/mestre ou NPC com ficha revelada pelo mestre. */
 async function acessoLeituraRetrato(req: Request) {
@@ -1583,8 +1612,31 @@ personagensRouter.put("/:characterId/retrato", requireLeasePersonagem(), async (
     } else {
       const [f] = await db.select().from(files)
         .where(and(eq(files.id, entrada.arquivoId), eq(files.campaignId, p.campaignId))).limit(1);
-      if (!f || !f.storageName || !(f.mimeType ?? "").startsWith("image/")) {
+      if (!f) {
         res.status(400).json({ erro: "Imagem da biblioteca não encontrada nesta campanha" });
+        return;
+      }
+      // Mesma autorização do download da biblioteca: visibilidade,
+      // destinatários e estado de moderação — não basta ser da campanha.
+      const memReq = acesso.membership;
+      if (memReq?.role === "espectador") {
+        const regras = await carregarRegras(p.campaignId);
+        if (!regras.config.arquivos?.espectadorVe || permissoesDe(memReq).verBiblioteca === false) {
+          res.status(403).json({ erro: "Sem acesso à biblioteca" });
+          return;
+        }
+      }
+      const membershipIds = new Set([req.usuario!.id, memReq?.id].filter((x): x is string => !!x));
+      if (!arquivoVisivel(f, req.usuario!.id, acesso.ehMestre, membershipIds)) {
+        res.status(403).json({ erro: "Sem permissão para usar este arquivo" });
+        return;
+      }
+      if (f.status !== "aprovado") {
+        res.status(403).json({ erro: "Arquivo ainda não foi aprovado na biblioteca" });
+        return;
+      }
+      if (!(await imagemRetratoValida(f, p.campaignId))) {
+        res.status(415).json({ erro: "Arquivo não é uma imagem raster válida (PNG, JPG ou WebP)" });
         return;
       }
       ref = { tipo: "arquivo", arquivoId: f.id };
@@ -1691,16 +1743,13 @@ personagensRouter.get("/:characterId/retrato/imagem", async (req, res) => {
   }
   const [f] = await db.select().from(files)
     .where(and(eq(files.id, r.arquivoId), eq(files.campaignId, p.campaignId))).limit(1);
-  if (!f?.storageName) { res.status(404).json({ erro: "Imagem indisponível" }); return; }
-  let caminho = caminhoFisico(p.campaignId, f.storageName);
-  if (!caminho || !existsSync(caminho)) {
-    const lix = caminhoLixeira(p.campaignId, f.storageName);
-    if (existsSync(lix)) {
-      try { renameSync(lix, caminho!); } catch { res.status(404).json({ erro: "Imagem indisponível" }); return; }
-    } else { res.status(404).json({ erro: "Imagem indisponível" }); return; }
-  }
+  if (!f) { res.status(404).json({ erro: "Imagem indisponível" }); return; }
+  // Revalida raster real no GET: referências gravadas antes da
+  // validação (ou arquivos alterados depois) não servem SVG/ativo.
+  const buf = await imagemRetratoValida(f, p.campaignId);
+  if (!buf) { res.status(404).json({ erro: "Imagem indisponível" }); return; }
   res.setHeader("Content-Type", f.mimeType ?? "application/octet-stream");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Cache-Control", "private, max-age=300");
-  createReadStream(caminho!).pipe(res);
+  res.send(buf);
 });

@@ -7,6 +7,8 @@ import {
   criarCenario, abrirDb, comDb, encerrarServidor, limparDir, req,
 } from "./teste-base.mjs";
 import { deflateSync } from "node:zlib";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -168,6 +170,70 @@ try {
   { const w = abrirDb(BANCO); try { w.prepare("update characters set status='arquivado' where id=?").run(pjDono2); } finally { w.close(); } }
   const putArq = await req(BASE, "PUT", `/characters/${pjDono2}/retrato`, { cookie: cj2, body: { retrato: { tipo: "galeria", id: "homem-04" } } });
   t("7a. retrato em arquivado → 403", putArq.status === 403, `status=${putArq.status}`);
+  { const w = abrirDb(BANCO); try { w.prepare("update characters set status='aprovada' where id=?").run(pjDono2); } finally { w.close(); } }
+
+  sec("8. Biblioteca — autorização e conteúdo raster");
+  const SVG_ATIVO = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>alert(1)</script></svg>");
+  const inserirArquivo = ({ nome, ext, mime, conteudo, status = "aprovado", visibility = "publica", recipients = null, uploadedBy }) => {
+    const id = crypto.randomUUID();
+    const storageName = `${id}.${ext}`;
+    const dir = join(ARQ, c.campId);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, storageName), conteudo);
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into files (id,campaign_id,folder_path,file_name,display_name,category,status,storage_name,mime_type,size_bytes,uploaded_by,visibility,recipients,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, c.campId, "/", nome, nome, "biblioteca", status, storageName, mime, conteudo.length, uploadedBy, visibility, recipients ? JSON.stringify(recipients) : null, Date.now(), Date.now());
+    } finally { w.close(); }
+    return id;
+  };
+  const pngBib = png64(10, 200, 10);
+  const idPngOk = inserirArquivo({ nome: "arte.png", ext: "png", mime: "image/png", conteudo: pngBib, uploadedBy: c.jogadores.j1.id });
+  const putBibOk = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idPngOk } } });
+  t("8a. PNG aprovado+público da biblioteca → aceito", putBibOk.status === 200, `status=${putBibOk.status} ${JSON.stringify(putBibOk.json).slice(0, 120)}`);
+
+  const idPrivado = inserirArquivo({ nome: "secreta.png", ext: "png", mime: "image/png", conteudo: png64(1, 2, 3), visibility: "mestre", uploadedBy: c.adminId });
+  const putPrivJ = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idPrivado } } });
+  t("8b. arquivo visibility=mestre → jogador recebe 403", putPrivJ.status === 403, `status=${putPrivJ.status}`);
+  const pjMestre2 = c.novoPersonagem(c.membMestre, "PJ Mestre Dois");
+  const putPrivM = await req(BASE, "PUT", `/characters/${pjMestre2}/retrato`, { cookie: cm, body: { retrato: { tipo: "arquivo", arquivoId: idPrivado } } });
+  t("8c. mesmo arquivo → mestre consegue usar", putPrivM.status === 200, `status=${putPrivM.status}`);
+
+  const idSel = inserirArquivo({ nome: "só-j2.png", ext: "png", mime: "image/png", conteudo: png64(4, 5, 6), visibility: "selecionada", recipients: [c.jogadores.j2.id], uploadedBy: c.adminId });
+  const putSelJ1 = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idSel } } });
+  t("8d. selecionada sem o usuário nos recipients → 403", putSelJ1.status === 403, `status=${putSelJ1.status}`);
+  const putSelJ2 = await req(BASE, "PUT", `/characters/${pjDono2}/retrato`, { cookie: cj2, body: { retrato: { tipo: "arquivo", arquivoId: idSel } } });
+  t("8e. destinatário consegue usar → 200", putSelJ2.status === 200, `status=${putSelJ2.status}`);
+
+  const idPendente = inserirArquivo({ nome: "pendente.png", ext: "png", mime: "image/png", conteudo: png64(7, 8, 9), status: "pendente", uploadedBy: c.jogadores.j1.id });
+  const putPend = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idPendente } } });
+  t("8f. arquivo pendente de moderação → 403 mesmo para o uploader", putPend.status === 403, `status=${putPend.status}`);
+  const idRejeitado = inserirArquivo({ nome: "rejeitado.png", ext: "png", mime: "image/png", conteudo: png64(7, 8, 9), status: "rejeitado", uploadedBy: c.jogadores.j1.id });
+  const putRej = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idRejeitado } } });
+  t("8g. arquivo rejeitado → 403", putRej.status === 403, `status=${putRej.status}`);
+
+  const idSvgTxt = inserirArquivo({ nome: "notas.txt", ext: "txt", mime: "image/svg+xml", conteudo: SVG_ATIVO, uploadedBy: c.jogadores.j1.id });
+  const putSvgTxt = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idSvgTxt } } });
+  t("8h. SVG disfarçado de TXT (mime image/svg+xml) → 415", putSvgTxt.status === 415, `status=${putSvgTxt.status}`);
+  const idSvg = inserirArquivo({ nome: "vetor.svg", ext: "svg", mime: "image/svg+xml", conteudo: SVG_ATIVO, uploadedBy: c.jogadores.j1.id });
+  const putSvg = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idSvg } } });
+  t("8i. SVG .svg na biblioteca → 415", putSvg.status === 415, `status=${putSvg.status}`);
+  const pngComSvg = Buffer.concat([Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'></svg>")]);
+  const idPngSvg = inserirArquivo({ nome: "fake.png", ext: "png", mime: "image/png", conteudo: pngComSvg, uploadedBy: c.jogadores.j1.id });
+  const putPngSvg = await req(BASE, "PUT", `/characters/${pjDono}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idPngSvg } } });
+  t("8j. conteúdo SVG com extensão/MIME png → 415", putPngSvg.status === 415, `status=${putPngSvg.status}`);
+
+  sec("9. GET imagem rejeita referência legada não-raster");
+  // referência gravada direto no banco (estado "legado" anterior à validação)
+  { const w = abrirDb(BANCO); try {
+    const dados = JSON.parse((w.prepare("select data from characters where id=?").get(pjDono2).data) || "{}");
+    dados.__retrato = { tipo: "arquivo", arquivoId: idSvg };
+    w.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), pjDono2);
+  } finally { w.close(); } }
+  const imgLegado = await raw(BASE, "GET", `/characters/${pjDono2}/retrato/imagem`, { cookie: cj2 });
+  t("9a. GET não serve SVG mesmo com referência gravada → 404", imgLegado.status === 404, `status=${imgLegado.status}`);
+  const imgLegadoM = await raw(BASE, "GET", `/characters/${pjDono2}/retrato/imagem`, { cookie: cm });
+  t("9b. mestre também recebe 404 (não há bypass)", imgLegadoM.status === 404, `status=${imgLegadoM.status}`);
 
   console.log(`\n==== retratos: ${pass} ok, ${fail} falhas ====`);
 } catch (e) {
