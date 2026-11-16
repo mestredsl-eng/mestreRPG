@@ -457,6 +457,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         // reativação: só um caminho de autorização novo restaura o acesso
         revogadoRef.current = false;
         setEntradaFalhou(false);
+        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
         entrar();
       }
       if (d.papel) {
@@ -550,6 +551,20 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             setEntradaFalhou(true);
             setPapel("espectador");
             window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
+            return;
+          }
+          // Uma revogação já recebida é mais específica que QUALQUER ACK
+          // posterior — inclusive "Sessão não encontrada" de um ID
+          // substituído por restauração/importação: sem esta guarda o
+          // aoSair() abaixo desmontaria a view e apagaria a mensagem de
+          // revogação, devolvendo o usuário à lista como se nada tivesse
+          // acontecido. O ACK não pode apagar a causa nem fazer parecer
+          // que a mesa ainda está autorizada.
+          if (revogadoRef.current) {
+            setEntradaFalhou(true);
+            setPapel("espectador");
+            papelRef.current = "espectador";
+            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
             return;
           }
           // sessão substituída por restauração/importação: o ID não
