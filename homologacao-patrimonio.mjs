@@ -83,45 +83,52 @@ function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, 
   } finally { db.close(); }
 }
 
-async function testarHistoricoLegado(ids, caso, modo) {
-  const prefixo = `Legado ${modo} ${caso.casas} casas`;
-  const descricaoPositiva = `${prefixo} positivo`;
-  const descricaoNegativa = `${prefixo} negativo`;
-  configurarCasasDecimais(ids.campId, caso.casas);
-  inserirTransacaoLegada(ids, caso.positivo, descricaoPositiva);
-  inserirTransacaoLegada(ids, caso.negativo, descricaoNegativa);
-
+async function testarHistoricoLegado(ids, casos, modo) {
   const viewport = modo === "desktop" ? { width: 1366, height: 900 } : { width: 390, height: 844 };
   const contexto = await browser.newContext({ viewport });
   const page = await contexto.newPage();
   try {
+    // Uma sessão por viewport evita que a própria homologação dispare
+    // dezenas de logins e acione limitadores de autenticação.
     await login(page, "jogador_um", "senha-jogador-123");
-    await irCampanha(page);
-    await abrirPersonagem(page, "Heroína Um");
-    await abaPatrimonio(page, "Dinheiro");
+    for (const caso of casos) {
+      const prefixo = `Legado ${modo} ${caso.casas} casas`;
+      const descricaoPositiva = `${prefixo} positivo`;
+      const descricaoNegativa = `${prefixo} negativo`;
+      configurarCasasDecimais(ids.campId, caso.casas);
+      inserirTransacaoLegada(ids, caso.positivo, descricaoPositiva);
+      inserirTransacaoLegada(ids, caso.negativo, descricaoNegativa);
 
-    const esperadoPositivo = caso.positivo.toFixed(caso.casas);
-    const esperadoNegativo = caso.negativo.toFixed(caso.casas);
-    if (modo === "desktop") {
-      const linhaPositiva = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoPositiva }).first();
-      const linhaNegativa = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoNegativa }).first();
-      await linhaPositiva.waitFor({ state: "visible", timeout: 8000 });
-      await linhaNegativa.waitFor({ state: "visible", timeout: 8000 });
-      const valorPositivo = linhaPositiva.locator("td").nth(5);
-      const valorNegativo = linhaNegativa.locator("td").nth(5);
-      t(`${prefixo}: valor positivo correto no desktop`, (await valorPositivo.innerText()).trim() === esperadoPositivo, await valorPositivo.innerText());
-      t(`${prefixo}: valor negativo correto no desktop`, (await valorNegativo.innerText()).trim() === esperadoNegativo, await valorNegativo.innerText());
-      t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
-    } else {
-      const cartaoPositivo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoPositiva }).first();
-      const cartaoNegativo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoNegativa }).first();
-      await cartaoPositivo.waitFor({ state: "visible", timeout: 8000 });
-      await cartaoNegativo.waitFor({ state: "visible", timeout: 8000 });
-      const campoPositivo = cartaoPositivo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
-      const campoNegativo = cartaoNegativo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
-      t(`${prefixo}: valor positivo correto no mobile`, (await campoPositivo.innerText()).trim() === esperadoPositivo, await campoPositivo.innerText());
-      t(`${prefixo}: valor negativo correto no mobile`, (await campoNegativo.innerText()).trim() === esperadoNegativo, await campoNegativo.innerText());
-      t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
+      // Remonta a página para buscar novamente a configuração e o histórico.
+      await page.goto(BASE);
+      await page.getByText("Servidor online").waitFor({ timeout: 15000 });
+      await irCampanha(page);
+      await abrirPersonagem(page, "Heroína Um");
+      await abaPatrimonio(page, "Dinheiro");
+
+      const esperadoPositivo = caso.positivo.toFixed(caso.casas);
+      const esperadoNegativo = caso.negativo.toFixed(caso.casas);
+      if (modo === "desktop") {
+        const linhaPositiva = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoPositiva }).first();
+        const linhaNegativa = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoNegativa }).first();
+        await linhaPositiva.waitFor({ state: "visible", timeout: 8000 });
+        await linhaNegativa.waitFor({ state: "visible", timeout: 8000 });
+        const valorPositivo = linhaPositiva.locator("td").nth(5);
+        const valorNegativo = linhaNegativa.locator("td").nth(5);
+        t(`${prefixo}: valor positivo correto no desktop`, (await valorPositivo.innerText()).trim() === esperadoPositivo, await valorPositivo.innerText());
+        t(`${prefixo}: valor negativo correto no desktop`, (await valorNegativo.innerText()).trim() === esperadoNegativo, await valorNegativo.innerText());
+        t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+      } else {
+        const cartaoPositivo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoPositiva }).first();
+        const cartaoNegativo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoNegativa }).first();
+        await cartaoPositivo.waitFor({ state: "visible", timeout: 8000 });
+        await cartaoNegativo.waitFor({ state: "visible", timeout: 8000 });
+        const campoPositivo = cartaoPositivo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+        const campoNegativo = cartaoNegativo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+        t(`${prefixo}: valor positivo correto no mobile`, (await campoPositivo.innerText()).trim() === esperadoPositivo, await campoPositivo.innerText());
+        t(`${prefixo}: valor negativo correto no mobile`, (await campoNegativo.innerText()).trim() === esperadoNegativo, await campoNegativo.innerText());
+        t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+      }
     }
   } finally {
     await contexto.close();
@@ -179,8 +186,8 @@ try {
     { casas: 3, positivo: 42.125, negativo: -3.875 },
     { casas: 4, positivo: 42.0625, negativo: -3.9375 },
   ];
-  for (const caso of casosLegado) await testarHistoricoLegado(idsLegado, caso, "desktop");
-  for (const caso of casosLegado) await testarHistoricoLegado(idsLegado, caso, "mobile");
+  await testarHistoricoLegado(idsLegado, casosLegado, "desktop");
+  await testarHistoricoLegado(idsLegado, casosLegado, "mobile");
   configurarCasasDecimais(cenario.campId, 2);
 
   sec("3. Transferência de item entre personagens (UI, mestre)");
