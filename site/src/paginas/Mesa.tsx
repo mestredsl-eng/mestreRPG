@@ -553,6 +553,20 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
             return;
           }
+          // Uma revogação já recebida é mais específica que QUALQUER ACK
+          // posterior — inclusive "Sessão não encontrada" de um ID
+          // substituído por restauração/importação: sem esta guarda o
+          // aoSair() abaixo desmontaria a view e apagaria a mensagem de
+          // revogação, devolvendo o usuário à lista como se nada tivesse
+          // acontecido. O ACK não pode apagar a causa nem fazer parecer
+          // que a mesa ainda está autorizada.
+          if (revogadoRef.current) {
+            setEntradaFalhou(true);
+            setPapel("espectador");
+            papelRef.current = "espectador";
+            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+            return;
+          }
           // sessão substituída por restauração/importação: o ID não
           // existe mais — desmonta a view e volta à lista real em vez
           // de manter mapa/tokens/mensagens de uma sessão morta
@@ -562,16 +576,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // chegará; controles e painel saem de cena até nova entrada
           setEntradaFalhou(true);
           setPapel("espectador");
-          // Uma revogação já recebida é mais específica que um ACK de
-          // reentrada atrasado. O ACK não pode apagar a causa nem fazer
-          // parecer que a mesa ainda está autorizada.
-          if (revogadoRef.current) {
-            setEntradaFalhou(true);
-            setPapel("espectador");
-            papelRef.current = "espectador";
-            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
-            return;
-          }
           setErro("Não foi possível entrar na mesa — acesso não autorizado");
         }
       });
