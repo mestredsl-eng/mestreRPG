@@ -120,33 +120,39 @@ guildasRouter.post("/", async (req, res) => {
   const agora = new Date();
   const id = crypto.randomUUID();
   try {
-    await db.insert(guilds).values({
-      id,
-      name: body.data.name,
-      description: body.data.description ?? null,
-      status: "ativa",
-      createdBy: req.usuario!.id,
-      responsibleUserId: req.usuario!.id,
-      createdAt: agora,
-      updatedAt: agora,
+    // A guilda e o vínculo GM do fundador são uma única unidade:
+    // nunca pode existir guilda recém-criada sem seu primeiro GM.
+    db.transaction((tx) => {
+      tx.insert(guilds).values({
+        id,
+        name: body.data.name,
+        description: body.data.description ?? null,
+        status: "ativa",
+        createdBy: req.usuario!.id,
+        responsibleUserId: req.usuario!.id,
+        createdAt: agora,
+        updatedAt: agora,
+      }).run();
+      tx.insert(guildMembers).values({
+        id: crypto.randomUUID(),
+        guildId: id,
+        userId: req.usuario!.id,
+        role: "gm",
+        status: "ativo",
+        joinedAt: agora,
+        createdAt: agora,
+        updatedAt: agora,
+      }).run();
     });
   } catch (e) {
-    if (String(e).includes("UNIQUE")) {
+    // A transação também cobre o INSERT do membro. Mapeia somente a
+    // unicidade do nome; outros conflitos devem seguir como erro real.
+    if (/UNIQUE constraint failed:\s*guilds\.name/i.test(String(e))) {
       res.status(409).json({ erro: "Já existe uma guilda com este nome" });
       return;
     }
     throw e;
   }
-  await db.insert(guildMembers).values({
-    id: crypto.randomUUID(),
-    guildId: id,
-    userId: req.usuario!.id,
-    role: "gm",
-    status: "ativo",
-    joinedAt: agora,
-    createdAt: agora,
-    updatedAt: agora,
-  });
   // a guilda nasce aqui — req.params.guildId ainda não existe; passa o
   // escopo explicitamente para a coluna guild_id ficar preenchida
   await audit(req, "guilda.criar", { guildId: id, nome: body.data.name }, { guildId: id });
