@@ -165,13 +165,16 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
                             const positivos = t.pool?.positivos ?? t.diceCount;
                             const negativos = t.pool?.negativos ?? 0;
                             const pedidoPor = h.participantes.find((p) => p.id === t.requestedBy);
+                            // Sucessos D10 vivem no roll vinculado (results.d10) —
+                            // o registro do teste não carrega esse campo.
+                            const d10Teste = t.d10 ?? (t.rollId ? h.rolagens.find((r) => r.id === t.rollId)?.results?.d10 : null) ?? null;
                             return (
                               <li key={t.id}>
                                 <span className="dica">{new Date(t.createdAt).toLocaleTimeString("pt-BR")}</span>{" "}
                                 <strong>{rotulo}</strong>
                                 {lados === 10 && <span className="tag">D10</span>}{" "}
                                 {positivos}d{lados}{negativos > 0 ? ` (−${negativos})` : ""}
-                                {t.d10 ? ` · ${t.d10.sucessos}/${t.d10.lancados} sucessos` : ""}
+                                {d10Teste ? ` · ${d10Teste.sucessos}/${d10Teste.lancados} sucessos` : ""}
                                 {" · "}
                                 {t.outcome
                                   ? <>{OUTCOME_LABEL[t.outcome] ?? t.outcome}{t.outcomeNote ? ` — ${t.outcomeNote}` : ""}</>
