@@ -1078,6 +1078,12 @@ try {
   const recebeuAck = await pgX.getByText("ping-ack-perdido").count();
   t("ACK de entrada perdido: reconexão re-entra e sala funciona sem reload",
     recebeuAck > 0, `mensagens=${recebeuAck} entrarCount=${entrarCountX}`);
+  // O drop armado (derrubarAckX) só intercepta pacotes "43" via WebSocket —
+  // ACKs que chegam por polling não o consomem. Se ainda estiver armado
+  // aqui, ele pode engolir o ACK de REJEIÇÃO do próximo cenário e o texto
+  // "não foi possível entrar" nunca aparece (flake de CI). A prova de ACK
+  // perdido já foi feita acima — desarma antes de remover a membership.
+  derrubarAckX = 0;
   // remove o vínculo de nv_j2 e derruba de novo: na reconexão o
   // mesa:entrar é rejeitado — sem reutilizar estado antigo
   const dbRem = abrirDb(BANCO);

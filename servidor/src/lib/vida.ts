@@ -42,6 +42,10 @@ export interface EventoVitalidade {
   // "conversao-ferimento" (subida automática por dano de HP).
   // Ausente em eventos antigos = tratado como manual.
   origem?: "manual" | "conversao-ferimento";
+  // Snapshot dos limiares de conversão usados NESTE evento — a leitura
+  // pública de NPC avalia privacidade pela regra que produziu o evento,
+  // não pela configuração atual (que o mestre pode mudar depois).
+  limiares?: { ate: number; nivel: number }[];
 }
 
 export interface EstadoVitalidade {
@@ -49,6 +53,10 @@ export interface EstadoVitalidade {
   alteradoEm?: string;
   alteradoPor?: string | null;
   historico?: EventoVitalidade[];
+  // Último nível definido MANUALMENTE pelo mestre — piso narrativo
+  // persistido fora do histórico (que sofre slice(-100)): conversões
+  // automáticas nunca o sobrescrevem.
+  nivelManual?: number;
 }
 
 const num = (v: unknown): number | null =>
@@ -124,9 +132,14 @@ export function aplicarHp(
 export function lerVitalidade(dados: Record<string, unknown>): EstadoVitalidade {
   const bruto = dados[CHAVE_VITALIDADE] as EstadoVitalidade | undefined;
   const nivel = bruto && typeof bruto === "object" ? num(bruto.nivel) : null;
+  const nivelManual = bruto && typeof bruto === "object" ? num(bruto.nivelManual) : null;
   const historico = bruto && typeof bruto === "object" && Array.isArray(bruto.historico) ? bruto.historico : undefined;
   return {
     nivel: nivel !== null && nivel >= 0 ? Math.floor(nivel) : 0,
+    // nivelManual precisa voltar na leitura: a conversão automática
+    // regrava o estado com {...vitAnt} — sem este campo, o piso
+    // narrativo seria apagado a cada ferimento automático.
+    ...(nivelManual !== null && nivelManual >= 0 ? { nivelManual: Math.floor(nivelManual) } : {}),
     alteradoEm: bruto?.alteradoEm,
     alteradoPor: bruto?.alteradoPor ?? null,
     historico,
