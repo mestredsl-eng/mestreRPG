@@ -287,6 +287,138 @@ const listaNumeros = z.preprocess((v) => {
 const listaOuVazia = <T extends z.ZodType>(schema: T) =>
   z.preprocess((v) => (v === null ? undefined : v), schema);
 
+// Referência econômica do Acervo (Issue #103): peso e preço de
+// referência em BRL — informação de catálogo, nunca valor pago nem
+// gatilho de débito. Campos ausentes permanecem ausentes.
+//
+// Tolerância granular (auditoria PR #108): os metadados econômicos são
+// OPCIONAIS — um campo ausente/inválido é sanitizado individualmente
+// (descartado) sem invalidar o elemento inteiro nem os demais campos
+// econômicos válidos. A validação estrita continua valendo para os
+// campos estruturais das regras (custoPontos, prerequisitos etc.).
+
+const numeroEconomicoValido = (v: unknown, inteiro: boolean): number | undefined => {
+  let n = v;
+  if (typeof n === "string") {
+    const t = n.trim().replace(",", ".");
+    n = t === "" ? NaN : Number(t);
+  }
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return undefined;
+  if (inteiro && !Number.isInteger(n)) return undefined;
+  return n;
+};
+
+// número ≥0 (ou inteiro ≥0) — inválido vira "ausente", nunca erro.
+const econNumero = (inteiro: boolean) =>
+  z.preprocess((v) => {
+    if (v === null || v === undefined) return undefined;
+    return numeroEconomicoValido(v, inteiro);
+  }, (inteiro ? z.number().int() : z.number()).nonnegative().optional());
+
+// string dentro do limite — inválida/não-string vira "ausente".
+const econString = (max: number) =>
+  z.preprocess((v) => {
+    if (typeof v !== "string" || v.length > max) return undefined;
+    return v;
+  }, z.string().max(max).optional());
+
+// `precoReferenciaBRL`/`faixaPrecoBRL` aceitam null explícito: o Acervo
+// distingue "sem referência" (null) de "campo ausente" e ambos devem
+// sobreviver ao round-trip sem invenção de valores.
+const PRECO_NULL = z.union([z.number().nonnegative(), z.null()]);
+const FAIXA_NULL = z.union([
+  z.object({ min: z.number().nonnegative(), max: z.number().nonnegative() }),
+  z.null(),
+]);
+
+const ECONOMIA_STR_MAX = {
+  moeda: 10,
+  unidadeCompra: 160,
+  mercadoReferencia: 160,
+  dataReferencia: 40,
+  base: 600,
+  observacao: 1200,
+} as const;
+
+/** Sanitiza `economia` campo a campo: cada propriedade inválida é
+ *  descartada individualmente; null explícito é preservado nos dois
+ *  campos de preço; se nada válido restar, o objeto inteiro vira
+ *  "ausente" — nunca derruba o parse do elemento. */
+function sanitizarEconomia(v: unknown): Record<string, unknown> | undefined {
+  if (v === null || v === undefined || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const e = v as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, max] of Object.entries(ECONOMIA_STR_MAX)) {
+    const s = e[k];
+    if (typeof s === "string" && s.length <= max) out[k] = s;
+  }
+  const p = e.precoReferenciaBRL;
+  if (p === null) out.precoReferenciaBRL = null;
+  else {
+    const n = numeroEconomicoValido(p, false);
+    if (n !== undefined) out.precoReferenciaBRL = n;
+  }
+  const f = e.faixaPrecoBRL;
+  if (f === null) out.faixaPrecoBRL = null;
+  else if (f && typeof f === "object" && !Array.isArray(f)) {
+    const { min, max } = f as Record<string, unknown>;
+    const nMin = numeroEconomicoValido(min, false);
+    const nMax = numeroEconomicoValido(max, false);
+    if (nMin !== undefined && nMax !== undefined) out.faixaPrecoBRL = { min: nMin, max: nMax };
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Objeto `economia` já sanitizado — todas as propriedades opcionais. */
+const economiaSchema = z.object({
+  moeda: z.string().max(10).optional(),
+  precoReferenciaBRL: PRECO_NULL.optional(),
+  faixaPrecoBRL: FAIXA_NULL.optional(),
+  unidadeCompra: z.string().max(160).optional(),
+  mercadoReferencia: z.string().max(160).optional(),
+  dataReferencia: z.string().max(40).optional(),
+  base: z.string().max(600).optional(),
+  observacao: z.string().max(1200).optional(),
+});
+
+/** Sanitiza `veiculo`: só strings válidas entram; objeto sem nenhum
+ *  campo válido vira "ausente". */
+function sanitizarVeiculo(v: unknown): Record<string, unknown> | undefined {
+  if (v === null || v === undefined || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const out: Record<string, unknown> = {};
+  for (const [k, max] of [["consumoOuAutonomia", 300], ["baseDoPeso", 600]] as const) {
+    const s = o[k];
+    if (typeof s === "string" && s.length <= max) out[k] = s;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+const veiculoSchema = z.object({
+  consumoOuAutonomia: z.string().max(300).optional(),
+  baseDoPeso: z.string().max(600).optional(),
+});
+
+/** Campos econômicos/de referência copiados do Acervo para o template. */
+export const CAMPOS_ECONOMICOS_ACERVO = ["weight", "valueCents", "economia", "fuel", "capacity", "veiculo"] as const;
+export type CampoEconomicoAcervo = (typeof CAMPOS_ECONOMICOS_ACERVO)[number];
+
+/** Extrai os campos econômicos presentes numa definição de elemento. */
+export function dadosEconomicosDefinicao(def: unknown): Partial<Record<CampoEconomicoAcervo, unknown>> {
+  const d = (def && typeof def === "object" ? def : {}) as Record<string, unknown>;
+  const out: Partial<Record<CampoEconomicoAcervo, unknown>> = {};
+  for (const k of CAMPOS_ECONOMICOS_ACERVO) {
+    if (d[k] !== undefined) out[k] = d[k];
+  }
+  return out;
+}
+
+/** Extrai os campos econômicos presentes num registro `data` genérico
+ *  (template.data, item.data etc.) — mesma lista do Acervo. */
+export function dadosEconomicosRegistro(data: unknown): Partial<Record<CampoEconomicoAcervo, unknown>> {
+  return dadosEconomicosDefinicao(data);
+}
+
 export const definicaoElementoSchema = z.object({
   descricao: nuloComoAusente(z.string().max(4000).optional()),
   subcategoria: nuloComoAusente(z.string().max(120).optional()),
@@ -326,6 +458,16 @@ export const definicaoElementoSchema = z.object({
   // há dependências circulares.
   formulas: listaOuVazia(z.record(z.string().max(60), z.string().max(500)).default({})),
   reservaPontos: nuloComoAusente(z.string().max(80).optional()),
+  // Ponte econômica Acervo → Patrimônio (Issue #103): referência de
+  // catálogo — nunca débito automático nem valor efetivamente pago.
+  // Cada campo é sanitizado isoladamente: metadado inválido vira
+  // "ausente" sem invalidar o elemento.
+  weight: econNumero(false),
+  valueCents: econNumero(true),
+  economia: z.preprocess(sanitizarEconomia, economiaSchema.optional()),
+  fuel: econString(160),
+  capacity: econString(160),
+  veiculo: z.preprocess(sanitizarVeiculo, veiculoSchema.optional()),
   disponivel: z.boolean().default(true),
   ordem: z.preprocess((v) => (v === null ? undefined : v), z.number().default(0)),
 });

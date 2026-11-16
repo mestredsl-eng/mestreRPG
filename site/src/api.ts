@@ -853,8 +853,31 @@ export interface ItemInventarioInput {
 /** Referência a elemento do Acervo (kind:key) — validada no servidor. */
 export interface RegraRef { kind: string; key: string }
 
+/** Referência econômica do Acervo (Issue #103): preço de referência
+ *  em BRL — sugestão de catálogo, nunca valor efetivamente pago. */
+export interface EconomiaReferencia {
+  moeda: string;
+  precoReferenciaBRL: number | null;
+  faixaPrecoBRL: { min: number; max: number } | null;
+  unidadeCompra: string;
+  mercadoReferencia: string;
+  dataReferencia: string;
+  base: string;
+  observacao: string;
+}
+
+/** Campos econômicos de referência presentes na definição do Acervo. */
+export interface EconomiaAcervo {
+  weight?: number;
+  valueCents?: number;
+  economia?: EconomiaReferencia;
+  fuel?: string;
+  capacity?: string;
+  veiculo?: { consumoOuAutonomia?: string; baseDoPeso?: string };
+}
+
 /** Elemento do Acervo exposto no catálogo de patrimônio. */
-export interface AcervoCatalogoItem {
+export interface AcervoCatalogoItem extends EconomiaAcervo {
   regra: RegraRef;
   nome: string;
   categoria: string | null;

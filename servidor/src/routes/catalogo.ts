@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { itemTemplates, inventoryEntries } from "../db/schema.js";
-import { carregarRegras } from "../lib/regras.js";
+import { carregarRegras, dadosEconomicosDefinicao, type ElementoRegra } from "../lib/regras.js";
 import { requirePapel } from "../lib/permissoes.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -36,6 +36,25 @@ function dataTemplateSemRegra(data: Record<string, unknown>) {
   return limpo;
 }
 
+/**
+ * Mescla os campos econômicos do elemento do Acervo com o `data` do
+ * template: o Acervo é a base de referência e valores explícitos do
+ * mestre no `data` têm precedência (override local — o template é a
+ * cópia de trabalho; rule_definitions nunca é mutado). Campos ausentes
+ * no Acervo permanecem ausentes — nada é inventado.
+ */
+function mesclarEconomiaAcervo(
+  data: Record<string, unknown>,
+  elemento: ElementoRegra | null,
+): Record<string, unknown> {
+  if (!elemento) return data;
+  return { ...dadosEconomicosDefinicao(elemento.definition), ...data };
+}
+
+/** Campos econômicos preservados num PATCH de `data` que não os envia
+ *  explicitamente — evita remoção inadvertida pelo cliente. */
+const CAMPOS_ECON_TEMPLATE = ["weight", "valueCents", "economia", "fuel", "capacity", "veiculo"] as const;
+
 /** GET /api/campaigns/:campaignId/inventario — catálogo + categorias +
  *  elementos do Acervo (kind item/veiculo) com pré-requisitos. */
 catalogoRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
@@ -52,6 +71,9 @@ catalogoRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (
       nome: e.name,
       categoria: e.category,
       descricao: (e.definition as { descricao?: string }).descricao ?? null,
+      // Referência econômica do Acervo (Issue #103): sugestão para a UI —
+      // nunca valor efetivamente pago.
+      ...dadosEconomicosDefinicao(e.definition),
       prerequisitos: (e.definition.prerequisitos ?? []).map((p) => ({
         kind: p.kind, key: p.key,
         nome: regras.elementos.get(`${p.kind}:${p.key}`)?.name ?? `${p.kind}:${p.key}`,
@@ -67,7 +89,15 @@ catalogoRouter.post("/", requirePapel("mestre"), async (req, res) => {
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
   const agora = new Date();
   const id = crypto.randomUUID();
-  const dataTpl = dataTemplateSemRegra(body.data.data);
+  // Vínculo com o Acervo copia os campos econômicos de referência para
+  // template.data (o template é a cópia de trabalho — rule_definitions
+  // permanece imutável). Valores explícitos do mestre no data prevalecem.
+  let elementoVinculo: ElementoRegra | null = null;
+  if (body.data.regra) {
+    const regras = await carregarRegras(req.params.campaignId);
+    elementoVinculo = regras.elementos.get(`${body.data.regra.kind}:${body.data.regra.key}`) ?? null;
+  }
+  const dataTpl = mesclarEconomiaAcervo(dataTemplateSemRegra(body.data.data), elementoVinculo);
   if (body.data.regra) dataTpl.regra = body.data.regra;
   await db.insert(itemTemplates).values({
     id, campaignId: req.params.campaignId, name: body.data.name, category: body.data.category ?? null,
@@ -87,19 +117,43 @@ catalogoRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) =>
   if (!tpl) { res.status(404).json({ erro: "Item não encontrado" }); return; }
   const d = somenteEnviados(body.data, req.body);
   const dataAtual = (tpl.data ?? {}) as Record<string, unknown>;
-  const dataNova = d.data !== undefined ? dataTemplateSemRegra(d.data) : { ...dataAtual };
-  delete dataNova.regra;
+  const dataEnviada = d.data !== undefined ? dataTemplateSemRegra(d.data) : undefined;
   // Preserva a semântica tri-state do PATCH com base no body original:
   // ausente = manter; null = remover; objeto validado = substituir.
   const regraEnviada = Object.prototype.hasOwnProperty.call(req.body ?? {}, "regra");
+  let regraFinal: { kind: string; key: string } | null = null;
   if (regraEnviada) {
     if (req.body.regra === null) {
-      delete dataNova.regra;
+      regraFinal = null;
     } else if (d.regra) {
-      dataNova.regra = d.regra;
+      regraFinal = d.regra;
     }
-  } else if (dataAtual.regra !== undefined) {
-    dataNova.regra = dataAtual.regra;
+  } else if (dataAtual.regra && typeof dataAtual.regra === "object") {
+    regraFinal = dataAtual.regra as { kind: string; key: string };
+  }
+  let dataNova: Record<string, unknown>;
+  if (dataEnviada !== undefined) {
+    dataNova = { ...dataEnviada };
+    // Campos econômicos não enviados explicitamente são preservados —
+    // um PATCH de dados não pode removê-los inadvertidamente (Issue #103).
+    // Isso inclui a desvinculação (regra:null): os dados já copiados do
+    // Acervo permanecem como valores locais do template — o mestre pode
+    // limpá-los explicitamente se quiser.
+    const enviadasKeys = new Set(Object.keys(d.data ?? {}));
+    for (const k of CAMPOS_ECON_TEMPLATE) {
+      if (!enviadasKeys.has(k) && dataAtual[k] !== undefined) dataNova[k] = dataAtual[k];
+    }
+  } else {
+    dataNova = { ...dataAtual };
+  }
+  delete dataNova.regra;
+  if (regraFinal) {
+    dataNova.regra = regraFinal;
+    // Vínculo (novo ou mantido): completa campos econômicos ausentes a
+    // partir do elemento do Acervo — override local do mestre prevalece.
+    const regras = await carregarRegras(req.params.campaignId);
+    const elemento = regras.elementos.get(`${regraFinal.kind}:${regraFinal.key}`) ?? null;
+    dataNova = mesclarEconomiaAcervo(dataNova, elemento);
   }
   await db.update(itemTemplates).set({
     name: d.name ?? tpl.name,
