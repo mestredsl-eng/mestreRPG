@@ -11,6 +11,7 @@ on:
       - "servidor/migrations/**"
       - "site/src/api.ts"
       - "site/src/lib/mestreVoice.ts"
+      - "site/testes/mestre-voice.test.ts"
       - "site/src/paginas/Mesa.tsx"
       - "site/src/estilos.css"
   workflow_dispatch:
@@ -32,3 +33,5 @@ jobs:
         run: npm run build
       - name: Testes de inferência de gênero vocal
         run: npx tsx servidor/testes/mestre-voice.test.ts
+      - name: Testes da fila local e seleção de voz
+        run: npx tsx site/testes/mestre-voice.test.ts

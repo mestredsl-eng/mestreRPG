@@ -148,7 +148,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const mensagensFaladasRef = useRef(new Set<string>());
   const filaVozRef = useRef<ReturnType<typeof criarFilaMestreVoice> | null>(null);
   if (!filaVozRef.current) filaVozRef.current = criarFilaMestreVoice();
-  useEffect(() => { vozAutomaticaRef.current = vozAutomatica; }, [vozAutomatica]);
   useEffect(() => { vozAtivaRef.current = vozAtiva; }, [vozAtiva]);
   useEffect(() => () => { filaVozRef.current?.destruir(); }, []);
   const [papel, setPapel] = useState<string>(souMestre ? "mestre" : "jogador");
@@ -163,6 +162,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     const proprios = personagens.filter((p) => p.ehEu && !p.isNpc && p.status !== "arquivado");
     if (proprios.length === 1) setFalaComo((atual) => atual || proprios[0].id);
   }, [personagens]);
+  const avisoAoAtivarVoz = (fila: ReturnType<typeof criarFilaMestreVoice>) => {
+    if (fila.temVozEmPortugues === false) {
+      return "Nenhuma voz em português foi encontrada neste dispositivo. O navegador tentará usar a voz padrão; instale uma voz pt-BR nas configurações do sistema para melhor resultado.";
+    }
+    if (fila.temVozEmPortugues === null) {
+      return "Voz ativada. O navegador ainda não listou as vozes instaladas; a seleção pode usar a voz padrão até elas carregarem.";
+    }
+    return "Voz ativada neste dispositivo. As vozes disponíveis dependem do navegador e do sistema.";
+  };
   const falarMensagem = (mensagem: MensagemMesa) => {
     const fila = filaVozRef.current;
     if (!fila?.disponivel) { setAvisoVoz("Este navegador não oferece leitura de voz. O chat continua funcionando normalmente."); return; }
@@ -170,6 +178,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       if (!fila.ativar()) return;
       vozAtivaRef.current = true;
       setVozAtiva(true);
+      setAvisoVoz(avisoAoAtivarVoz(fila));
     }
     fila.enfileirar(mensagem.content, mensagem.speakerGender ?? null);
   };
@@ -178,7 +187,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     if (!fila?.ativar()) { setAvisoVoz("Este navegador não oferece leitura de voz."); return; }
     vozAtivaRef.current = true;
     setVozAtiva(true);
-    setAvisoVoz("Voz ativada neste dispositivo. As vozes disponíveis dependem do navegador e do sistema.");
+    setAvisoVoz(avisoAoAtivarVoz(fila));
   };
   const pararVoz = () => filaVozRef.current?.parar();
   const [entradaFalhou, setEntradaFalhou] = useState(false);
@@ -780,7 +789,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             <h3>Chat</h3>
             <div className="chat-voz-controles">
               <label className="check">
-                <input type="checkbox" checked={vozAutomatica} onChange={(e) => setVozAutomatica(e.target.checked)} />
+                <input type="checkbox" checked={vozAutomatica} onChange={(e) => {
+                  const ativa = e.target.checked;
+                  vozAutomaticaRef.current = ativa;
+                  setVozAutomatica(ativa);
+                }} />
                 Ler novas mensagens
               </label>
               <button type="button" className="secundario" onClick={ativarVoz} disabled={!filaVozRef.current?.disponivel}>

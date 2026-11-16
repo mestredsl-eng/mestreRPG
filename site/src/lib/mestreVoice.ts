@@ -5,18 +5,30 @@ interface FalaPendente {
   genero: GeneroVoz;
 }
 
-const FEMININAS = /female|femin|woman|mulher|maria|luciana|francisca|camila|helena|fernanda|julia/i;
-const MASCULINAS = /\bmale\b|mascul|\bman\b|homem|antonio|felipe|daniel|ricardo|thiago|joao|pedro|bruno|gustavo/i;
+const FEMININAS = /\b(female|femin|woman|mulher|maria|luciana|francisca|camila|helena|fernanda|julia)\b/i;
+const MASCULINAS = /\b(male|mascul|man|homem|antonio|felipe|daniel|ricardo|thiago|joao|pedro|bruno|gustavo)\b/i;
+
+function normalizarNomeVoz(nome: string): string {
+  return nome.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+function idiomaPortugues(lang: string): boolean {
+  return /^pt(?:[-_]|$)/i.test(lang);
+}
+
+function obterVozes(sintetizador: SpeechSynthesis | null): SpeechSynthesisVoice[] {
+  try { return sintetizador?.getVoices() ?? []; } catch { return []; }
+}
 
 function escolherVoz(voices: SpeechSynthesisVoice[], genero: GeneroVoz): SpeechSynthesisVoice | undefined {
-  const portugues = voices.filter((voice) => /^pt(?:-|$)/i.test(voice.lang));
-  const brasileiras = portugues.filter((voice) => /^pt-BR$/i.test(voice.lang));
+  const portugues = voices.filter((voice) => idiomaPortugues(voice.lang));
+  const brasileiras = portugues.filter((voice) => /^pt[-_]BR$/i.test(voice.lang));
   const candidatas = brasileiras.length ? brasileiras : portugues;
   if (genero === "feminina") {
-    const marcada = candidatas.find((voice) => FEMININAS.test(voice.name));
+    const marcada = candidatas.find((voice) => FEMININAS.test(normalizarNomeVoz(voice.name)));
     if (marcada) return marcada;
   } else if (genero === "masculina") {
-    const marcada = candidatas.find((voice) => MASCULINAS.test(voice.name));
+    const marcada = candidatas.find((voice) => MASCULINAS.test(normalizarNomeVoz(voice.name)));
     if (marcada) return marcada;
   }
   return candidatas.find((voice) => voice.default) ?? candidatas[0] ?? voices.find((voice) => voice.default) ?? voices[0];
@@ -40,23 +52,40 @@ export function criarFilaMestreVoice() {
     const fala = fila.shift()!;
     const texto = limparTexto(fala.texto);
     if (!texto) { proxima(); return; }
-    const utterance = new SpeechSynthesisUtterance(texto);
-    const vozes = sintetizador.getVoices();
+
+    let utterance: SpeechSynthesisUtterance;
+    try {
+      utterance = new SpeechSynthesisUtterance(texto);
+    } catch {
+      proxima();
+      return;
+    }
+
+    const vozes = obterVozes(sintetizador);
     utterance.lang = "pt-BR";
     utterance.rate = 1;
     utterance.pitch = 1;
     const voz = escolherVoz(vozes, fala.genero);
     if (voz) { utterance.voice = voz; utterance.lang = voz.lang || "pt-BR"; }
+
     const minhaGeracao = geracao;
+    let concluida = false;
     ocupada = true;
     const concluir = () => {
+      if (concluida) return;
+      concluida = true;
       if (minhaGeracao !== geracao || destruida) return;
       ocupada = false;
       proxima();
     };
     utterance.onend = concluir;
     utterance.onerror = concluir;
-    sintetizador.speak(utterance);
+    try {
+      sintetizador.speak(utterance);
+    } catch {
+      // Uma falha síncrona não pode deixar a fila permanentemente ocupada.
+      concluir();
+    }
   };
 
   const parar = () => {
@@ -68,6 +97,13 @@ export function criarFilaMestreVoice() {
 
   return {
     get disponivel() { return !!sintetizador; },
+    /** null significa que o navegador ainda não carregou/listou as vozes. */
+    get temVozEmPortugues(): boolean | null {
+      if (!sintetizador) return false;
+      const vozes = obterVozes(sintetizador);
+      if (vozes.length === 0) return null;
+      return vozes.some((voz) => idiomaPortugues(voz.lang));
+    },
     get ativa() { return ativada && !destruida; },
     ativar(): boolean {
       if (!sintetizador || destruida) return false;
