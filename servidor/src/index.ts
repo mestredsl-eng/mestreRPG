@@ -9,6 +9,7 @@ import { campanhasRouter } from "./routes/campanhas.js";
 import { convitesRouter, convitesPublicoRouter } from "./routes/convites.js";
 import { modelosRouter } from "./routes/modelos.js";
 import { personagensRouter } from "./routes/personagens.js";
+import { progressaoRouter } from "./routes/progressao.js";
 import { regrasRouter } from "./routes/regras.js";
 import { patrimonioRouter } from "./routes/patrimonio.js";
 import { catalogoRouter } from "./routes/catalogo.js";
@@ -86,7 +87,7 @@ app.use(express.json({ limit: "2mb" }));
 const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
-  personagensRouter, regrasRouter, patrimonioRouter, catalogoRouter,
+  personagensRouter, progressaoRouter, regrasRouter, patrimonioRouter, catalogoRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
   convitesGuildaAdminRouter, convitesGuildaRouter,
@@ -118,6 +119,7 @@ app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
 app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/campaigns/:campaignId/arquivos", arquivosRouter);
 app.use("/api/characters", personagensRouter);
+app.use("/api/characters", progressaoRouter);
 app.use("/api/biblioteca", bibliotecaRouter);
 app.use("/api/novidades", novidadesRouter);
 app.use("/api/admin/novidades", novidadesAdminRouter);
