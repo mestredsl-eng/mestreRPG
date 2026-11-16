@@ -6,7 +6,7 @@ interface FalaPendente {
 }
 
 const FEMININAS = /female|femin|woman|mulher|maria|luciana|francisca|camila|helena|fernanda|julia/i;
-const MASCULINAS = /\\bmale\\b|mascul|\\bman\\b|homem|antonio|felipe|daniel|ricardo|thiago|joao|pedro|bruno|gustavo/i;
+const MASCULINAS = /\bmale\b|mascul|\bman\b|homem|antonio|felipe|daniel|ricardo|thiago|joao|pedro|bruno|gustavo/i;
 
 function escolherVoz(voices: SpeechSynthesisVoice[], genero: GeneroVoz): SpeechSynthesisVoice | undefined {
   const portugues = voices.filter((voice) => /^pt(?:-|$)/i.test(voice.lang));

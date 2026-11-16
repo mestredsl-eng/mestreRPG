@@ -400,15 +400,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       // o histórico HTTP nunca é narrado ao abrir/reconectar a mesa.
       const jaRecebida = mensagensFaladasRef.current.has(m.id);
       if (!jaRecebida) mensagensFaladasRef.current.add(m.id);
+      if (mensagensFaladasRef.current.size > 800) {
+        const primeiro = mensagensFaladasRef.current.values().next().value;
+        if (primeiro) mensagensFaladasRef.current.delete(primeiro);
+      }
       if (
         !jaRecebida && vozAtivaRef.current && vozAutomaticaRef.current &&
         (m.kind === "texto" || m.kind === "acao")
       ) {
         filaVozRef.current?.enfileirar(m.content, m.speakerGender ?? null);
-        if (mensagensFaladasRef.current.size > 800) {
-          const primeiro = mensagensFaladasRef.current.values().next().value;
-          if (primeiro) mensagensFaladasRef.current.delete(primeiro);
-        }
       }
     };
     const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
