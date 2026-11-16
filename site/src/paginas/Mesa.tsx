@@ -1446,6 +1446,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // antiga NUNCA controlam trava, erro ou pendência de uma sync mais
   // recente — cada requisição só pode ser encerrada por ela mesma
   const syncReqRef = useRef(0);
+  // reenvios após timeout: o emit é volátil — um flap de transporte pode
+  // perdê-lo sem desconectar o socket; sem retry a visão fica bloqueada
+  // para sempre (placeholder sem nenhum caminho de recuperação)
+  const syncRetryRef = useRef(0);
+  const SYNC_MAX_RETRIES = 3;
   const sincronizarNevoa = () => {
     const sock = getSocket();
     if (!sock.connected) {
@@ -1470,9 +1475,19 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       // nunca libera por decurso de tempo: estado incerto permanece.
       // Se a geração de permissões avançou enquanto esta sync estava
       // pendente, a resposta futura (se chegar) será obsoleta — dispara
-      // já a sincronização da geração vigente.
-      setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tente 'Sincronizar névoa' novamente");
-      if (seqPerm !== geracaoRef.current) sincronizarNevoa();
+      // já a sincronização da geração vigente. Geração inalterada também
+      // reagenda (limite de tentativas): o emit volátil pode ter se
+      // perdido num flap de transporte e nada mais limparia o bloqueio.
+      setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; tentando novamente");
+      if (seqPerm !== geracaoRef.current) {
+        syncRetryRef.current = 0;
+        sincronizarNevoa();
+      } else if (syncRetryRef.current < SYNC_MAX_RETRIES) {
+        syncRetryRef.current += 1;
+        sincronizarNevoa();
+      } else {
+        setErroVtt("Sincronização sem resposta — ações continuam bloqueadas; recarregue a página para tentar novamente");
+      }
     }, 8000);
     sock.volatile.emit("mesa:vtt:nevoa:sincronizar", { sessionId }, (r: { ok?: boolean; erro?: string; papel?: string; vtt?: VttState }) => {
       if (respondido || reqId !== syncReqRef.current) return; // tardia ou de requisição superada
@@ -1486,10 +1501,12 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       // não libera nevoaIncerta, não limpa erro. O estado pendente já
       // foi liberado acima para a geração vigente poder sincronizar.
       if (seqPerm !== geracaoRef.current) {
+        syncRetryRef.current = 0; // geração nova = orçamento novo de retries
         sincronizarNevoa(); // dispara sync da geração atual
         return;
       }
       if (r?.ok && r.vtt) {
+        syncRetryRef.current = 0;
         sincronizarAutoritativo(r.vtt);
         setVtt(r.vtt);
         nivelAutorizadoRef.current = nivelAtual; // visão agora autorizada p/ papel atual
