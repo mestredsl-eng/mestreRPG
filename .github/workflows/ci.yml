@@ -147,6 +147,7 @@ jobs:
             teste-prerequisitos-patrimonio.mjs \
             teste-escopo-cruzado.mjs \
             teste-ponte-economica-acervo.mjs \
+            teste-diario.mjs \
             teste-regras.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
