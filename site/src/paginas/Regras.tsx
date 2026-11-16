@@ -1068,6 +1068,7 @@ function ModalElemento({
     formulasTxt: Object.entries(def.formulas ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n"),
     reservaPontos: def.reservaPontos ?? "",
     prerequisitos: (def.prerequisitos ?? []).map((p) => `${p.kind}:${p.key}${p.minLevel ? `@${p.minLevel}` : ""}`).join(", "),
+    limitacoes: (def.limitacoes ?? []).map((l) => `${l.kind}:${l.key}@${l.maximo ?? ""}`).join(", "),
     obrigatorios: (def.obrigatorios ?? []).join(", "),
     niveis: (def.niveis ?? []).map((n) => ({ descricao: n.descricao ?? "", custo: n.custo?.toString() ?? "" })),
     disponivel: def.disponivel !== false,
@@ -1105,6 +1106,29 @@ function ModalElemento({
       }
       return out;
     };
+    // Limitações condicionais: "tipo:chave@máx" — exatamente um @,
+    // máximo não vazio, finito e ≥ 0 (zero é teto válido). Nada de
+    // "@", "@ ", "@Infinity", "@-1" ou "@2@3" passando como 0/solto.
+    const listaLimitacoes = (s: string) => {
+      const out: { kind: string; key: string; maximo?: number }[] = [];
+      for (const bruto of s.split(",")) {
+        const x = bruto.trim();
+        if (!x) continue;
+        const partes = x.split("@");
+        const [ref, max] = partes;
+        const [kind, ...rest] = (ref ?? "").split(":");
+        const key = rest.join(":").trim();
+        const maxTxt = (max ?? "").trim();
+        const invalido = partes.length !== 2 || !kind?.trim() || !key || maxTxt === "";
+        const n = invalido ? NaN : Number(maxTxt.replace(",", "."));
+        if (invalido || !Number.isFinite(n) || n < 0) {
+          erros.push(`Limitações: "${x}" deve estar no formato tipo:chave@máx (máximo finito ≥ 0)`);
+          continue;
+        }
+        out.push({ kind: kind.trim(), key, maximo: n });
+      }
+      return out;
+    };
     const listaKeys = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
     const formulas: Record<string, string> = {};
     for (const linha of form.formulasTxt.split("\n")) {
@@ -1129,6 +1153,7 @@ function ModalElemento({
     const minimo = num(form.minimo, "Mínimo");
     const maximo = num(form.maximo, "Máximo");
     const prerequisitos = listaRefs(form.prerequisitos);
+    const limitacoes = listaLimitacoes(form.limitacoes);
     if (erros.length) { setErroForm(erros.join(" · ")); return; }
     await onSalvar({
       kind: form.kind,
@@ -1146,6 +1171,7 @@ function ModalElemento({
         formulas: Object.keys(formulas).length ? formulas : undefined,
         reservaPontos: form.reservaPontos.trim() || undefined,
         prerequisitos,
+        limitacoes,
         obrigatorios: listaKeys(form.obrigatorios),
         niveis: niveis.length ? niveis : undefined,
         disponivel: form.disponivel,
@@ -1191,6 +1217,7 @@ function ModalElemento({
             <small className="meta">Use {"{campo}"} para referenciar campos da ficha. Chaves especiais: custo, requisito, minimo, maximo. Sem código arbitrário.</small>
           </label>
           <label>Pré-requisitos<input value={form.prerequisitos} onChange={(e) => setForm({ ...form, prerequisitos: e.target.value })} placeholder="tipo:chave@nível, separados por vírgula" /></label>
+          <label>Limitações condicionais<input value={form.limitacoes} onChange={(e) => setForm({ ...form, limitacoes: e.target.value })} placeholder="tipo:chave@máx, separados por vírgula" /><small className="meta">Enquanto este elemento estiver selecionado, o elemento alvo fica limitado ao nível máximo indicado (ex.: atributo:manipulacao@2).</small></label>
           <label>Elementos obrigatórios<input value={form.obrigatorios} onChange={(e) => setForm({ ...form, obrigatorios: e.target.value })} placeholder="tipo:chave, separados por vírgula" /></label>
           <div>
             <strong>Níveis graduados (1–5)</strong>

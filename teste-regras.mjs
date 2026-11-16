@@ -73,8 +73,10 @@ try {
       id: "s", titulo: "S", ordem: 0,
       campos: [
         { id: "forca", label: "Força", tipo: "inteiro", semantico: "atributo", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false, regra: { kind: "atributo", key: "forca" } },
+        { id: "manipulacao", label: "Manipulação", tipo: "inteiro", semantico: "atributo", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false, regra: { kind: "atributo", key: "manipulacao" } },
         { id: "vantagens", label: "Vantagens", tipo: "selecao_multipla", semantico: "vantagem", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false, regraKind: "vantagem" },
         { id: "poderes", label: "Poderes", tipo: "selecao_multipla", semantico: "poder", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false, regraKind: "poder" },
+        { id: "defeitos", label: "Defeitos", tipo: "selecao_nivel", semantico: "defeito", obrigatorio: false, repetivel: false, visibilidade: "todos", editavelPor: "ambos", usadoEmTestes: false, regraKind: "defeito" },
       ],
     }],
   };
@@ -174,6 +176,58 @@ try {
   t("requisito fórmula falha com forca 0", r.erros.some((e) => e.codigo === "requisito_formula"), JSON.stringify(r.erros.map(e=>e.mensagem)));
   r = validarRegras(est, { forca: 2, vantagens: ["req"] }, regras);
   t("requisito fórmula passa com forca 2", !r.erros.some((e) => e.codigo === "requisito_formula"), JSON.stringify(r.erros.map(e=>e.mensagem)));
+
+  console.log("== Limitações condicionais de teto (Issue #122) ==");
+  // Sorte (vantagem, seleção múltipla) limita Manipulação (atributo) a 2;
+  // Azar limita a 1; Praga (defeito graduado) limita uma VANTAGEM a 0;
+  // Maldito (defeito nv3) limita Força a 1 — referência entre tipos.
+  regras.elementos.set("atributo:manipulacao", mkEl("atributo", "manipulacao", "Manipulação", { custoPontos: 1, minimo: 0, maximo: 5 }));
+  regras.elementos.set("vantagem:sorte", mkEl("vantagem", "sorte", "Sorte", { custoPontos: 1, reservaPontos: "vantagens", limitacoes: [{ kind: "atributo", key: "manipulacao", maximo: 2 }] }));
+  regras.elementos.set("vantagem:azar", mkEl("vantagem", "azar", "Azar", { custoPontos: 1, reservaPontos: "vantagens", limitacoes: [{ kind: "atributo", key: "manipulacao", maximo: 1 }] }));
+  regras.elementos.set("defeito:praga", mkEl("defeito", "praga", "Praga", { limitacoes: [{ kind: "vantagem", key: "memoria_excepcional", maximo: 0 }] }));
+  regras.elementos.set("defeito:maldito", mkEl("defeito", "maldito", "Maldito", { limitacoes: [{ kind: "atributo", key: "forca", maximo: 1 }] }));
+  // entrada com máximo ausente/inválido é inócua — nunca derruba a validação
+  regras.elementos.set("vantagem:quebrada", mkEl("vantagem", "quebrada", "Quebrada", { limitacoes: [{ kind: "atributo", key: "forca" }, { kind: "atributo", key: "manipulacao", maximo: "x" }] }));
+  for (const k of ["atributo", "vantagem", "defeito"]) {
+    regras.porKind.set(k, [...(regras.porKind.get(k) ?? []), ...[...regras.elementos.values()].filter((e) => e.kind === k && !regras.porKind.get(k)?.includes(e))]);
+  }
+
+  const erroLimitacao = (r) => r.erros.filter((e) => e.codigo === "limitacao");
+
+  // Sorte ativa + Manipulação 3 → rejeitado com erro específico
+  r = validarRegras(est, { manipulacao: 3, vantagens: ["sorte"] }, regras);
+  t("sorte ativa + manipulação 3: rejeitado", !r.ok && erroLimitacao(r).length === 1, JSON.stringify(r.erros.map(e=>e.mensagem)));
+  t("erro aponta Manipulação limitada a 2 por Sorte",
+    erroLimitacao(r)[0]?.mensagem === '"Manipulação" está limitada a nível 2 por "Sorte"', erroLimitacao(r)[0]?.mensagem);
+
+  // Sorte ativa + Manipulação 2 → aceito
+  r = validarRegras(est, { manipulacao: 2, vantagens: ["sorte"] }, regras);
+  t("sorte ativa + manipulação 2: aceito", r.ok && erroLimitacao(r).length === 0, JSON.stringify(r.erros.map(e=>e.mensagem)));
+
+  // Sorte removida → limitação retirada automaticamente
+  r = validarRegras(est, { manipulacao: 3 }, regras);
+  t("sorte removida: manipulação 3 volta a ser válida", r.ok && erroLimitacao(r).length === 0, JSON.stringify(r.erros.map(e=>e.mensagem)));
+
+  // Múltiplos limitadores → menor teto vence (Azar@1 < Sorte@2)
+  r = validarRegras(est, { manipulacao: 2, vantagens: ["sorte", "azar"] }, regras);
+  t("dois limitadores: menor teto (1) rejeita nível 2",
+    erroLimitacao(r).some((e) => e.mensagem.includes("nível 1") && e.mensagem.includes("Azar")), JSON.stringify(erroLimitacao(r).map(e=>e.mensagem)));
+
+  // Referência entre tipos diferentes: defeito graduado limita vantagem
+  r = validarRegras(est, { vantagens: ["memoria_excepcional"], defeitos: [{ key: "praga", nivel: 1 }] }, regras);
+  t("tipos diferentes: defeito limita vantagem a 0",
+    erroLimitacao(r).some((e) => e.mensagem.includes("Memória Excepcional") && e.mensagem.includes("Praga")), JSON.stringify(erroLimitacao(r).map(e=>e.mensagem)));
+
+  // Limitador via selecao_nivel (graduado): Maldito nv3 limita Força a 1
+  r = validarRegras(est, { forca: 4, defeitos: [{ key: "maldito", nivel: 3 }] }, regras);
+  t("selecao_nivel limita atributo: força 4 rejeitada",
+    erroLimitacao(r).some((e) => e.mensagem.includes("Força") && e.mensagem.includes("nível 1") && e.mensagem.includes("Maldito")), JSON.stringify(erroLimitacao(r).map(e=>e.mensagem)));
+  r = validarRegras(est, { forca: 1, defeitos: [{ key: "maldito", nivel: 3 }] }, regras);
+  t("selecao_nivel: força 1 dentro do teto", !erroLimitacao(r).length, JSON.stringify(erroLimitacao(r).map(e=>e.mensagem)));
+
+  // Limitação com máximo inválido é ignorada (tolerância de metadado)
+  r = validarRegras(est, { forca: 5, manipulacao: 5, vantagens: ["quebrada"] }, regras);
+  t("limitacao sem máximo válido: ignorada", !erroLimitacao(r).length, JSON.stringify(erroLimitacao(r).map(e=>e.mensagem)));
 
   console.log(`\n${pass} passaram, ${fail} falharam`);
 } finally {

@@ -720,6 +720,7 @@ export interface DefinicaoElemento {
   maximo?: number;
   prerequisitos?: { kind: string; key: string; minLevel?: number }[];
   dependencias?: { kind: string; key: string }[];
+  limitacoes?: { kind: string; key: string; maximo?: number }[];
   grupoExclusividade?: string;
   gruposExclusividade?: string[];
   exclusivos?: string[];

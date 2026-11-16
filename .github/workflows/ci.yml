@@ -262,6 +262,7 @@ jobs:
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \
+            homologacao-limitacoes.mjs \
             homologacao-ajuda-contextual.mjs \
             auditoria-visual.mjs
           do
