@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
 import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessao, type Restauracao, type Sessao, type Snapshot } from "../api";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { resumirRolagemHistorico } from "../lib/rolagensHistorico";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
 const OUTCOME_LABEL: Record<string, string> = { sucesso: "Sucesso", parcial: "Parcial", falha: "Falha", falha_critica: "Falha crítica" };
@@ -196,12 +197,12 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
                           <p className="dica">{rolagens.length} rolagem(ns) registrada(s):</p>
                           <ul>
                             {rolagens.map((r) => {
-                              const grupos = r.results?.grupos?.length
-                                ? r.results.grupos
-                                : (r.dice ?? []).map((d) => ({ lados: d.sides, resultados: [] as number[] }));
-                              const qtdDe = (g: { lados: number; resultados: number[] }) => g.resultados.length || (r.dice?.find((d) => d.sides === g.lados)?.count ?? 0);
-                              const descDados = grupos.map((g) => `${qtdDe(g)}d${g.lados}`).join(" + ");
-                              const valores = grupos.flatMap((g) => g.resultados);
+                              // O HTTP devolve o formato persistido ({ sides, count }); o
+                              // Socket.IO legado usa { lados, resultados }. O normalizador
+                              // aceita ambos e mantém fallback para registros antigos.
+                              const { descricao: descDados, valores } = resumirRolagemHistorico(
+                                r.dice ?? [], r.results?.grupos ?? [],
+                              );
                               const total = r.results?.total;
                               return (
                                 <li key={r.id}>

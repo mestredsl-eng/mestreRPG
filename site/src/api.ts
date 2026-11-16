@@ -1278,7 +1278,7 @@ export interface RolagemHistorico {
   userId: string;
   dice: { sides: number; count: number }[];
   results: {
-    grupos?: { lados: number; resultados: number[] }[];
+    grupos?: { sides?: number; lados?: number; count?: number; resultados?: number[] }[];
     total?: number;
     d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null;
     modo?: string | null;
