@@ -8,7 +8,7 @@ import { chromium } from "playwright";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir,
+  criarCenario, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -126,6 +126,74 @@ try {
   await pgM.getByText("Antes da sessão 2").first().waitFor({ timeout: 15000 });
   t("snapshot criado e listado", true);
   await shot(pgM, "05-snapshot");
+
+  // ===== 5b. HISTÓRICO DE ROLAGENS — contrato HTTP real =====
+  sec("5b. Histórico da sessão — D20, D10 e dano pelo HTTP");
+  const sessaoRoll = await apiFetch(pgM, "POST", `/campaigns/${cenario.campId}/sessoes`, { name: "Sessão HTTP — rolagens" });
+  const sidRoll = sessaoRoll.json?.sessao?.id;
+  t("sessão de homologação criada", sessaoRoll.status === 201 && !!sidRoll, JSON.stringify(sessaoRoll.json).slice(0, 160));
+  if (!sidRoll) throw new Error("Não foi possível criar a sessão de homologação do histórico");
+
+  const agoraRoll = Date.now();
+  const rollsHistorico = [
+    {
+      id: `hist-d20-${agoraRoll}`, dice: [{ sides: 20, count: 2 }],
+      results: { grupos: [{ sides: 20, count: 2, resultados: [13, 18] }], total: 31, d10: null, modo: null },
+      reason: "Homologação HTTP D20",
+    },
+    {
+      id: `hist-d10-${agoraRoll}`, dice: [{ sides: 10, count: 3 }],
+      results: {
+        grupos: [{ sides: 10, count: 3, resultados: [6, 2, 9] }],
+        total: 17, d10: { positivos: 3, negativos: 0, minimo: 6, lancados: 3, sucessos: 2, falhas: 1 }, modo: null,
+      },
+      reason: "Homologação HTTP D10",
+    },
+    {
+      id: `hist-dano-${agoraRoll}`, dice: [{ sides: 6, count: 2 }, { sides: 8, count: 1 }],
+      results: { grupos: [
+        { sides: 6, count: 2, resultados: [4, 5] },
+        { sides: 8, count: 1, resultados: [7] },
+      ], total: 16, d10: null, modo: "dano" },
+      reason: "Homologação HTTP dano",
+    },
+  ];
+  const dbRoll = abrirDb(BANCO);
+  try {
+    const inserirRoll = dbRoll.prepare(`INSERT INTO rolls
+      (id,campaign_id,session_id,character_id,user_id,dice,results,reason,visibility,request_id,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+    for (const roll of rollsHistorico) {
+      inserirRoll.run(
+        roll.id, cenario.campId, sidRoll, null, cenario.adminId,
+        JSON.stringify(roll.dice), JSON.stringify(roll.results), roll.reason,
+        "publica", null, agoraRoll,
+      );
+    }
+  } finally { dbRoll.close(); }
+  const encerraRoll = await apiFetch(pgM, "PATCH", `/campaigns/${cenario.campId}/sessoes/${sidRoll}`, { status: "encerrada" });
+  t("sessão de rolagens encerrada", encerraRoll.status === 200, JSON.stringify(encerraRoll.json));
+
+  // Remonta a aba para buscar a sessão encerrada pela API e abre seu histórico
+  await aba(pgM, "Diário");
+  await aba(pgM, "Histórico");
+  const itemSessaoRoll = pgM.locator("section.cartao")
+    .filter({ hasText: "Histórico de sessões" })
+    .locator(".lista-anotacoes li")
+    .filter({ hasText: "Sessão HTTP — rolagens" }).first();
+  await itemSessaoRoll.waitFor({ timeout: 15000 });
+  await itemSessaoRoll.getByRole("button", { name: "Histórico" }).click();
+  const painelRoll = itemSessaoRoll.locator(".historico-sessao");
+  await painelRoll.waitFor({ timeout: 15000 });
+  const textoRoll = await painelRoll.innerText();
+  t("UI do histórico HTTP renderiza 2d20 sem lados indefinidos",
+    /2d20 → 31/.test(textoRoll) && !/2dundefined/.test(textoRoll), textoRoll);
+  t("UI do histórico HTTP renderiza 3d10 e 2/3 sucessos",
+    /3d10 → 17/.test(textoRoll) && /D10: 2\/3 sucessos/.test(textoRoll), textoRoll);
+  t("UI do histórico HTTP renderiza dano 2d6 + 1d8",
+    /2d6 \+ 1d8 → 16/.test(textoRoll) && /dano/.test(textoRoll), textoRoll);
+  t("UI do histórico HTTP não exibe undefined", !/undefined/.test(textoRoll), textoRoll);
+
 
   // ===== 6. ACERVO GLOBAL: livro + item =====
   sec("6. Acervo global — livro e item");
