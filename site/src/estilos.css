@@ -2239,3 +2239,22 @@ textarea:focus-visible,
   .vtt-tabuleiro { aspect-ratio: 4 / 3; max-height: 50vh; }
   .vtt-token { width: 36px; height: 36px; font-size: 12px; }
 }
+
+
+/* Mestre Voice — controles locais de leitura do chat */
+.chat-cabecalho { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.chat-cabecalho h3 { margin: 0; }
+.chat-voz-controles { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.chat-voz-nota { margin: 5px 0; font-size: 12px; }
+.chat-msg-topo { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.chat-msg-topo > div { min-width: 0; }
+.chat-voz-identidade { display: inline-block; margin-left: 7px; color: var(--texto-fraco, #8b93a7); font-size: 11px; }
+.chat-ler { padding: 3px 8px; font-size: 11px; flex: 0 0 auto; }
+.chat-falar-como { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+.chat-falar-como select { min-width: 180px; max-width: 100%; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--borda, #2a2f3f); background: var(--fundo-input, #0f1219); color: inherit; }
+@media (max-width: 640px) {
+  .chat-cabecalho { align-items: flex-start; }
+  .chat-voz-controles { width: 100%; }
+  .chat-falar-como { align-items: stretch; flex-direction: column; }
+  .chat-falar-como select { width: 100%; }
+}

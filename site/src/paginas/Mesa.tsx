@@ -11,6 +11,7 @@ import PainelDados from "../Dados";
 import MesaDados3D, { seedDeId } from "../MesaDados3D";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
+import { criarFilaMestreVoice } from "../lib/mestreVoice";
 
 interface Props {
   campaignId: string;
@@ -137,11 +138,49 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const [online, setOnline] = useState<string[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
+  const [falaComo, setFalaComo] = useState("");
+  const [generoNarrador, setGeneroNarrador] = useState<"feminina" | "masculina">("feminina");
+  const [vozAutomatica, setVozAutomatica] = useState(true);
+  const [vozAtiva, setVozAtiva] = useState(false);
+  const [avisoVoz, setAvisoVoz] = useState<string | null>(null);
+  const vozAutomaticaRef = useRef(true);
+  const vozAtivaRef = useRef(false);
+  const mensagensFaladasRef = useRef(new Set<string>());
+  const filaVozRef = useRef<ReturnType<typeof criarFilaMestreVoice> | null>(null);
+  if (!filaVozRef.current) filaVozRef.current = criarFilaMestreVoice();
+  useEffect(() => { vozAutomaticaRef.current = vozAutomatica; }, [vozAutomatica]);
+  useEffect(() => { vozAtivaRef.current = vozAtiva; }, [vozAtiva]);
+  useEffect(() => () => { filaVozRef.current?.destruir(); }, []);
   const [papel, setPapel] = useState<string>(souMestre ? "mestre" : "jogador");
   // papel ATUAL vem do ACK de mesa:entrar — a prop inicial só serve
   // para o primeiro render; após cada entrada/reentrada o servidor é
   // a fonte de verdade para todos os controles administrativos.
   const ehMestreAtual = papel === "mestre";
+  const personagensFalantes = personagens.filter((p) =>
+    p.status !== "arquivado" && (ehMestreAtual || (p.ehEu && !p.isNpc))
+  );
+  useEffect(() => {
+    const proprios = personagens.filter((p) => p.ehEu && !p.isNpc && p.status !== "arquivado");
+    if (proprios.length === 1) setFalaComo((atual) => atual || proprios[0].id);
+  }, [personagens]);
+  const falarMensagem = (mensagem: MensagemMesa) => {
+    const fila = filaVozRef.current;
+    if (!fila?.disponivel) { setAvisoVoz("Este navegador não oferece leitura de voz. O chat continua funcionando normalmente."); return; }
+    if (!fila.ativa) {
+      if (!fila.ativar()) return;
+      vozAtivaRef.current = true;
+      setVozAtiva(true);
+    }
+    fila.enfileirar(mensagem.content, mensagem.speakerGender ?? null);
+  };
+  const ativarVoz = () => {
+    const fila = filaVozRef.current;
+    if (!fila?.ativar()) { setAvisoVoz("Este navegador não oferece leitura de voz."); return; }
+    vozAtivaRef.current = true;
+    setVozAtiva(true);
+    setAvisoVoz("Voz ativada neste dispositivo. As vozes disponíveis dependem do navegador e do sistema.");
+  };
+  const pararVoz = () => filaVozRef.current?.parar();
   const [entradaFalhou, setEntradaFalhou] = useState(false);
   const [podeEnviar, setPodeEnviar] = useState(true);
   // geração de permissões: incrementa a cada mesa:permissao:atualizada —
@@ -355,8 +394,22 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       return flagPrivado(flagPriv) ? "privada" : "publica";
     };
     const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
-      if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
+      if (!autorizaMensagem(m)) return; // autorização antes de armazenar ou narrar
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
+      // Apenas mensagens novas recebidas em tempo real entram na fila;
+      // o histórico HTTP nunca é narrado ao abrir/reconectar a mesa.
+      if (
+        vozAtivaRef.current && vozAutomaticaRef.current &&
+        (m.kind === "texto" || m.kind === "acao") &&
+        !mensagensFaladasRef.current.has(m.id)
+      ) {
+        mensagensFaladasRef.current.add(m.id);
+        filaVozRef.current?.enfileirar(m.content, m.speakerGender ?? null);
+        if (mensagensFaladasRef.current.size > 800) {
+          const primeiro = mensagensFaladasRef.current.values().next().value;
+          if (primeiro) mensagensFaladasRef.current.delete(primeiro);
+        }
+      }
     };
     const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
       // teste: só "publica" é pública e só "privada" chega ao dono;
@@ -626,6 +679,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       tipo: comoAcao ? "acao" : "texto",
       visibilidade: secreto ? "secreta" : privado ? "privada" : "publica",
       destinatarioUserId: privado ? destinoPriv || undefined : undefined,
+      speakerCharacterId: falaComo && falaComo !== "__narrador__" ? falaComo : undefined,
+      speakerNarrator: falaComo === "__narrador__",
+      speakerNarratorGender: falaComo === "__narrador__" ? generoNarrador : undefined,
     }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       const espera = retryAfterDoAck(r);
       if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
@@ -720,14 +776,34 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       <div className="mesa-grade">
         {/* coluna esquerda: chat */}
         <section className="cartao mesa-chat">
-          <h3>Chat</h3>
+          <div className="chat-cabecalho">
+            <h3>Chat</h3>
+            <div className="chat-voz-controles">
+              <label className="check">
+                <input type="checkbox" checked={vozAutomatica} onChange={(e) => setVozAutomatica(e.target.checked)} />
+                Ler novas mensagens
+              </label>
+              <button type="button" className="secundario" onClick={ativarVoz} disabled={!filaVozRef.current?.disponivel}>
+                {vozAtiva ? "Voz ativada" : "Ativar voz"}
+              </button>
+              <button type="button" className="secundario" onClick={pararVoz}>Parar</button>
+            </div>
+          </div>
+          {avisoVoz && <p className="meta chat-voz-nota">{avisoVoz}</p>}
+          <p className="meta chat-voz-nota">A voz é gerada neste dispositivo. O timbre depende das vozes disponíveis no navegador; alguns navegadores exigem o primeiro clique em “Ativar voz”.</p>
           <div className="chat-lista" ref={chatRef}>
             {mensagens.map((m) => (
               <div key={m.id} className={`chat-msg chat-${m.kind} ${m.visibility === "privada" ? "privada" : m.visibility === "mestre" ? "secreta" : ""}`}>
-                <span className="chat-autor">{m.autorNome ?? m.autor?.displayName ?? m.autor?.username ?? "Sistema"}</span>
-                <span className="chat-hora">{new Date(m.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
-                {m.visibility === "privada" && <span className="tag">privada</span>}
-                {m.visibility === "mestre" && ehMestreAtual && <span className="tag">secreta</span>}
+                <div className="chat-msg-topo">
+                  <div>
+                    <span className="chat-autor">{m.speakerName ?? m.autorNome ?? m.autor?.displayName ?? m.autor?.username ?? "Sistema"}</span>
+                    {m.speakerName && <span className="chat-voz-identidade">por {m.autorNome ?? m.autor?.displayName ?? m.autor?.username ?? "membro da mesa"}</span>}
+                    <span className="chat-hora">{new Date(m.createdAt).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}</span>
+                    {m.visibility === "privada" && <span className="tag">privada</span>}
+                    {m.visibility === "mestre" && ehMestreAtual && <span className="tag">secreta</span>}
+                  </div>
+                  <button type="button" className="chat-ler" title="Ler mensagem em voz alta" onClick={() => falarMensagem(m)} disabled={!filaVozRef.current?.disponivel}>Ler</button>
+                </div>
                 <div className="chat-conteudo">{m.content}</div>
               </div>
             ))}
@@ -747,6 +823,23 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                   <option value="">Destinatário…</option>
                   {membros.filter((m) => m.userId !== meuUserId).map((m) => <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>)}
                 </select>
+              )}
+              <label className="chat-falar-como">
+                <span>Falar como</span>
+                <select value={falaComo} onChange={(e) => setFalaComo(e.target.value)}>
+                  <option value="">Minha conta (sem personagem)</option>
+                  {personagensFalantes.map((p) => <option key={p.id} value={p.id}>{p.name}{p.isNpc ? " · NPC" : ""}</option>)}
+                  {ehMestreAtual && <option value="__narrador__">Narrador</option>}
+                </select>
+              </label>
+              {falaComo === "__narrador__" && (
+                <label className="chat-falar-como">
+                  <span>Voz do narrador</span>
+                  <select value={generoNarrador} onChange={(e) => setGeneroNarrador(e.target.value as "feminina" | "masculina")}>
+                    <option value="feminina">Feminina</option>
+                    <option value="masculina">Masculina</option>
+                  </select>
+                </label>
               )}
               <div className="linha">
                 <input value={texto} onChange={(e) => setTexto(e.target.value)} placeholder={comoAcao ? "Declare sua ação…" : "Mensagem…"} required />

@@ -1099,6 +1099,9 @@ export interface MensagemMesa {
   content: string;
   visibility: string;
   recipients: string[] | null;
+  speakerCharacterId?: string | null;
+  speakerName?: string | null;
+  speakerGender?: "feminina" | "masculina" | null;
   createdAt: string;
   autorNome?: string;
   autor?: { id: string; username: string; displayName: string | null } | null;
