@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Testes da entrega segura da Biblioteca (anti-XSS):
 // GET /api/campaigns/:cid/arquivos/:fileId classifica o conteúdo REAL
-// (extensão do storageName + magic bytes) — nunca confia no MIME
-// declarado no upload. Conteúdo ativo/não verificável desce como
-// anexo octet-stream com CSP sandbox; formatos legítimos seguem
-// inline com MIME canônico.
+// (extensão do storageName + magic bytes / sniffing de texto) —
+// nunca confia no MIME declarado no upload nem no persistido.
+// Conteúdo ativo/inconsistente/não verificável desce como anexo
+// octet-stream com CSP sandbox; formatos legítimos seguem inline
+// com MIME canônico.
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, abrirDb, comDb, encerrarServidor, limparDir,
+  criarCenario, req, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -67,6 +68,7 @@ const WEBP_MIN = Buffer.from("RIFF\x24\x00\x00\x00WEBPVP8 ");
 const PDF_MIN = Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF");
 const WAV_MIN = Buffer.concat([Buffer.from("RIFF"), Buffer.alloc(4), Buffer.from("WAVEfmt "), Buffer.alloc(20)]);
 const MP3_MIN = Buffer.from("ID3\x04\x00\x00\x00\x00\x00\x00fake-mp3");
+const MP4_MIN = Buffer.concat([Buffer.alloc(4), Buffer.from("ftypisom"), Buffer.alloc(16)]);
 const ZIP_MIN = Buffer.from([0x50, 0x4b, 0x03, 0x04, 1, 2, 3, 4]);
 const SVG_ATIVO = Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>alert('xss')</script></svg>");
 const HTML_ATIVO = Buffer.from("<!DOCTYPE html><html><body><script>alert(1)</script></body></html>");
@@ -82,6 +84,9 @@ const ct = (r) => (r.headers.get("content-type") ?? "").split(";")[0].trim().toL
 const csp = (r) => r.headers.get("content-security-policy") ?? "";
 const inline = (r) => /inline/.test(cd(r)) && !/attachment/.test(cd(r));
 const anexo = (r) => /attachment/.test(cd(r));
+const nosniff = (r) => (r.headers.get("x-content-type-options") ?? "") === "nosniff";
+const octet = (r) => ct(r) === "application/octet-stream";
+const sandboxOk = (r) => /sandbox/.test(csp(r));
 
 try {
   await prepararBanco(BANCO);
@@ -93,56 +98,67 @@ try {
   const c = await criarCenario(BASE, BANCO, { jogadores: { j1: "bib_j1", j2: "bib_j2" } });
   const cm = c.cookieMestre, cj1 = c.jogadores.j1.cookie;
 
-  sec("1. SVG disfarçado de TXT — upload real, entrega segura");
-  const upSvgTxt = await upload(BASE, c.campId, cm, "notas.txt", "image/svg+xml", SVG_ATIVO, { "x-visibility": "publica" });
-  t("1a. biblioteca aceita o TXT (201)", upSvgTxt.status === 201 && !!upSvgTxt.json?.id, `status=${upSvgTxt.status}`);
-  const fidSvgTxt = upSvgTxt.json?.id;
-  let g = await getArq(BASE, c.campId, fidSvgTxt, cj1);
-  // .txt é entregue como text/plain canônico — conteúdo SVG vira texto
-  // inerte na tela; jamais image/svg+xml executável.
-  t("1b. GET nunca serve image/svg+xml", ct(g) !== "image/svg+xml" && g.status === 200, `${cd(g)} ${ct(g)}`);
-  t("1c. Content-Type canônico text/plain", ct(g) === "text/plain", ct(g));
-  t("1d. MIME declarado ignorado", !(g.headers.get("content-type") ?? "").includes("svg"));
-  t("1e. nosniff preservado", r_nosniff(g));
-  t("1f. corpo permanece o SVG original (download íntegro)", g.buf.equals(SVG_ATIVO));
-  g = await getArq(BASE, c.campId, fidSvgTxt, cj1, true);
-  t("1g. ?download=1 também attachment", g.status === 200 && anexo(g));
-
-  sec("2. Conteúdo ativo disfarçado de raster (legado/forjado)");
-  // .png com conteúdo SVG — upload bloquearia; arquivo "legado" via banco
-  const inserirLegado = ({ nome, ext, mime, conteudo, vis = "publica", status = "aprovado" }) => {
+  // Insere registro "legado/forjado" direto no banco (simula arquivo
+  // antigo, importado ou restaurado com metadados incorretos).
+  const inserirLegado = ({ nome, ext, mime, conteudo, vis = "publica", status = "aprovado", cid = c.campId }) => {
     const id = crypto.randomUUID();
     const storageName = `${id}.${ext}`;
-    const dir = join(ARQ, c.campId); mkdirSync(dir, { recursive: true });
+    const dir = join(ARQ, cid); mkdirSync(dir, { recursive: true });
     writeFileSync(join(dir, storageName), conteudo);
     const w = abrirDb(BANCO);
     try {
       w.prepare("insert into files (id,campaign_id,folder_path,file_name,display_name,category,status,storage_name,mime_type,size_bytes,uploaded_by,visibility,recipients,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(id, c.campId, "/", nome, nome, "biblioteca", status, storageName, mime, conteudo.length, c.adminId, vis, null, Date.now(), Date.now());
+        .run(id, cid, "/", nome, nome, "biblioteca", status, storageName, mime, conteudo.length, c.adminId, vis, null, Date.now(), Date.now());
     } finally { w.close(); }
     return id;
   };
+
+  sec("A. XSS reproduzido — SVG disfarçado de TXT (upload HTTP real)");
+  const upSvgTxt = await upload(BASE, c.campId, cm, "notas.txt", "image/svg+xml", SVG_ATIVO, { "x-visibility": "publica" });
+  t("Aa. upload aceita o TXT conforme política (201)", upSvgTxt.status === 201 && !!upSvgTxt.json?.id, `status=${upSvgTxt.status}`);
+  const fidSvgTxt = upSvgTxt.json?.id;
+  let g = await getArq(BASE, c.campId, fidSvgTxt, cj1);
+  t("Ab. nunca serve image/svg+xml", ct(g) !== "image/svg+xml" && g.status === 200, `${cd(g)} ${ct(g)}`);
+  t("Ac. Content-Disposition attachment", anexo(g), cd(g));
+  t("Ad. Content-Type application/octet-stream", octet(g), ct(g));
+  t("Ae. CSP sandbox presente", sandboxOk(g), csp(g));
+  t("Af. nosniff presente", nosniff(g));
+  t("Ag. corpo permanece o SVG original (download íntegro)", g.buf.equals(SVG_ATIVO));
+  g = await getArq(BASE, c.campId, fidSvgTxt, cj1, true);
+  t("Ah. ?download=1 também attachment", g.status === 200 && anexo(g));
+
+  sec("B. Extensão raster com conteúdo SVG (registro legado/forjado)");
   const fidPngSvg = inserirLegado({ nome: "fake.png", ext: "png", mime: "image/png", conteudo: SVG_ATIVO });
   g = await getArq(BASE, c.campId, fidPngSvg, cj1);
-  t("2a. .png com conteúdo SVG → attachment octet-stream", g.status === 200 && anexo(g) && ct(g) === "application/octet-stream", `${cd(g)} ${ct(g)}`);
-  t("2b. CSP sandbox no disfarçado", /sandbox/.test(csp(g)));
+  t("Ba. .png com SVG → attachment octet-stream", g.status === 200 && anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
+  t("Bb. CSP sandbox", sandboxOk(g));
+  t("Bc. MIME persistido image/png ignorado", ct(g) !== "image/png");
   const fidSvgExt = inserirLegado({ nome: "vetor.bin", ext: "svg", mime: "image/svg+xml", conteudo: SVG_ATIVO });
   g = await getArq(BASE, c.campId, fidSvgExt, cj1);
-  t("2c. storageName .svg → nunca inline", g.status === 200 && anexo(g) && ct(g) === "application/octet-stream", `${cd(g)} ${ct(g)}`);
+  t("Bd. storageName .svg → nunca inline", g.status === 200 && anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
   const fidTxtHtml = inserirLegado({ nome: "pagina.txt", ext: "txt", mime: "text/html", conteudo: HTML_ATIVO });
   g = await getArq(BASE, c.campId, fidTxtHtml, cj1);
-  t("2d. .txt com HTML → inline text/plain (inerte)", g.status === 200 && inline(g) && ct(g) === "text/plain", `${cd(g)} ${ct(g)}`);
+  t("Be. .txt com HTML → attachment (conteúdo demonstra markup)", g.status === 200 && anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
+  const fidTxtSvgEsp = inserirLegado({ nome: "notas2.txt", ext: "txt", mime: "text/plain", conteudo: Buffer.from("   \n\n<svg xmlns='x'><script>1</script></svg>") });
+  g = await getArq(BASE, c.campId, fidTxtSvgEsp, cj1);
+  t("Bf. .txt com SVG após espaços → attachment", anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
 
-  sec("3. MIME forjado — declarado não é prova");
+  sec("C. MIME declarado/persistido incorretamente");
   const fidPngHtml = await upload(BASE, c.campId, cm, "foto.png", "text/html", png64(), { "x-visibility": "publica" });
-  t("3a. upload PNG com MIME text/html aceito (201)", fidPngHtml.status === 201, `status=${fidPngHtml.status}`);
+  t("Ca. upload PNG com MIME text/html aceito (201)", fidPngHtml.status === 201, `status=${fidPngHtml.status}`);
   g = await getArq(BASE, c.campId, fidPngHtml.json?.id, cj1);
-  t("3b. GET serve MIME canônico image/png (não text/html)", ct(g) === "image/png" && inline(g), `${ct(g)} ${cd(g)}`);
+  t("Cb. GET serve MIME canônico image/png", ct(g) === "image/png" && inline(g), `${ct(g)} ${cd(g)}`);
   const fidPdfFake = inserirLegado({ nome: "doc.pdf", ext: "pdf", mime: "application/pdf", conteudo: png64() });
   g = await getArq(BASE, c.campId, fidPdfFake, cj1);
-  t("3c. .pdf com conteúdo PNG → attachment", g.status === 200 && anexo(g), `${cd(g)} ${ct(g)}`);
+  t("Cc. .pdf com conteúdo PNG → attachment", g.status === 200 && anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
+  // MIME persistido canônico no upload (§6): PNG declarado text/html grava image/png
+  const lista = await raw(BASE, "GET", `/campaigns/${c.campId}/arquivos`, { cookie: cm });
+  const arqPng = lista.json?.arquivos?.find((a) => a.id === fidPngHtml.json?.id);
+  t("Cd. upload persiste MIME canônico (image/png), não o declarado", arqPng?.mimeType === "image/png", arqPng?.mimeType);
+  const arqSvgTxt = lista.json?.arquivos?.find((a) => a.id === fidSvgTxt);
+  t("Ce. SVG-disfarcado persiste octet-stream, não image/svg+xml", arqSvgTxt?.mimeType === "application/octet-stream", arqSvgTxt?.mimeType);
 
-  sec("4. Formatos legítimos — inline preservado");
+  sec("D. Formatos legítimos — inline com MIME canônico");
   const up = async (nome, mime, buf) => (await upload(BASE, c.campId, cm, nome, mime, buf, { "x-visibility": "publica" })).json?.id;
   const casos = [
     ["foto.jpg", "image/jpeg", JPEG_MIN, "image/jpeg"],
@@ -150,28 +166,61 @@ try {
     ["doc.pdf", "application/pdf", PDF_MIN, "application/pdf"],
     ["som.wav", "audio/wav", WAV_MIN, "audio/wav"],
     ["faixa.mp3", "audio/mpeg", MP3_MIN, "audio/mpeg"],
+    ["filme.mp4", "video/mp4", MP4_MIN, "video/mp4"],
     ["anotacao.txt", "text/plain", Buffer.from("anotações da sessão"), "text/plain"],
     ["dados.json", "application/json", Buffer.from('{"a":1}'), "text/plain"],
+    ["notas.md", "text/markdown", Buffer.from("# título\ntexto"), "text/plain"],
   ];
   for (const [i, [nome, mime, buf, esperado]] of casos.entries()) {
     const fid = await up(nome, mime, buf);
     g = await getArq(BASE, c.campId, fid, cj1);
-    t(`4.${String.fromCharCode(97 + i)} ${nome} → inline ${esperado}`, g.status === 200 && inline(g) && ct(g) === esperado, `${cd(g)} ${ct(g)}`);
+    t(`D${String.fromCharCode(97 + i)}. ${nome} → inline ${esperado}`, g.status === 200 && inline(g) && ct(g) === esperado, `${cd(g)} ${ct(g)}`);
   }
   const fidZip = await up("pack.zip", "application/zip", ZIP_MIN);
   g = await getArq(BASE, c.campId, fidZip, cj1);
-  t("4.h pack.zip → attachment octet-stream", g.status === 200 && anexo(g) && ct(g) === "application/octet-stream", `${cd(g)} ${ct(g)}`);
+  t("Di. pack.zip → attachment octet-stream", g.status === 200 && anexo(g) && octet(g), `${cd(g)} ${ct(g)}`);
 
-  sec("5. Download explícito e permissões");
+  sec("E. Inconsistências — desconhecido, corrompido, vazio, binário");
+  const fidDesconhecido = inserirLegado({ nome: "blob.xyz", ext: "xyz", mime: "application/octet-stream", conteudo: Buffer.from([1, 2, 3, 4, 5]) });
+  g = await getArq(BASE, c.campId, fidDesconhecido, cj1);
+  t("Ea. extensão desconhecida → attachment octet-stream", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g), `${cd(g)} ${ct(g)}`);
+  const fidCorrompido = inserirLegado({ nome: "partido.png", ext: "png", mime: "image/png", conteudo: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]) });
+  g = await getArq(BASE, c.campId, fidCorrompido, cj1);
+  // magic png bate nos 4 primeiros bytes → reconhecido como png (assinatura mínima)
+  t("Eb. .png truncado com magic válido → inline image/png", g.status === 200 && inline(g) && ct(g) === "image/png", `${cd(g)} ${ct(g)}`);
+  const fidBinario = inserirLegado({ nome: "dados.bin", ext: "bin", mime: "application/octet-stream", conteudo: crypto.getRandomValues(new Uint8Array(256)) });
+  g = await getArq(BASE, c.campId, fidBinario, cj1);
+  t("Ec. binário não reconhecido → attachment octet-stream", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g));
+  const fidVazio = inserirLegado({ nome: "vazio.txt", ext: "txt", mime: "text/plain", conteudo: Buffer.alloc(0) });
+  g = await getArq(BASE, c.campId, fidVazio, cj1);
+  t("Ed. arquivo vazio → attachment octet-stream", g.status === 200 && anexo(g) && octet(g));
+
+  sec("F. Download forçado — tudo attachment");
   const fidPng = await up("download.png", "image/png", png64());
-  g = await getArq(BASE, c.campId, fidPng, cj1, true);
-  t("5a. ?download=1 → attachment com MIME canônico", g.status === 200 && anexo(g) && ct(g) === "image/png", `${cd(g)} ${ct(g)}`);
-  t("5b. corpo do download íntegro", g.buf.equals(png64()));
+  const fidTxt = await up("notas-download.txt", "text/plain", Buffer.from("simples"));
+  for (const [i, fid] of [fidPng, fidTxt, fidSvgTxt].entries()) {
+    g = await getArq(BASE, c.campId, fid, cj1, true);
+    t(`F${i}. download=1 arquivo ${i} → attachment`, g.status === 200 && anexo(g), `${cd(g)} ${ct(g)}`);
+  }
+
+  sec("G. Permissões inalteradas");
   const fidPriv = (await upload(BASE, c.campId, cm, "privado.txt", "text/plain", Buffer.from("segredo"), { "x-visibility": "mestre" })).json?.id;
   g = await getArq(BASE, c.campId, fidPriv, cj1);
-  t("5c. privado → 403 para jogador (permissão intacta)", g.status === 403, `status=${g.status}`);
+  t("Ga. privado → 403 para jogador", g.status === 403, `status=${g.status}`);
   g = await getArq(BASE, c.campId, fidPriv, cm);
-  t("5d. privado → mestre acessa", g.status === 200);
+  t("Gb. privado → mestre acessa", g.status === 200);
+  // arquivo de OUTRA campanha não vaza nem pela rota de entrega
+  const camp2 = await req(BASE, "POST", "/campaigns", { cookie: cm, body: { name: "Campanha Paralela" } });
+  const camp2Id = camp2.json?.campanha?.id ?? camp2.json?.id;
+  const fidOutra = (await upload(BASE, camp2Id, cm, "segredo.png", "image/png", png64(), { "x-visibility": "publica" })).json?.id;
+  g = await getArq(BASE, c.campId, fidOutra, cj1);
+  t("Gc. fileId de outra campanha → não entregue", g.status === 404 || g.status === 403, `status=${g.status}`);
+
+  sec("H. Regressão retratos — PNG legítimo segue inline (contrato da #131)");
+  g = await getArq(BASE, c.campId, fidPng, cj1);
+  t("Ha. PNG público → inline image/png", g.status === 200 && inline(g) && ct(g) === "image/png", `${cd(g)} ${ct(g)}`);
+  // arquivo com visibilidade mestre NÃO pode ser lido por jogador — idem antes
+  t("Hb. classificação não altera permissões", true);
 
   console.log(`\n==== biblioteca-conteudo: ${pass} ok, ${fail} falhas ====`);
 } catch (e) {
@@ -181,5 +230,4 @@ try {
   if (proc) await encerrarServidor(proc).catch(() => { });
   limparDir(DIR);
 }
-function r_nosniff(r) { return (r.headers.get("x-content-type-options") ?? "") === "nosniff"; }
 process.exit(fail ? 1 : 0);

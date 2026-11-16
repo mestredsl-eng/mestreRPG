@@ -1,5 +1,5 @@
 import express, { Router } from "express";
-import { createReadStream, existsSync, mkdirSync, openSync, closeSync, readSync, renameSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { resolve, extname, sep } from "node:path";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -12,6 +12,7 @@ import { limiteUsuario } from "../lib/ratelimit.js";
 import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { classificarConteudoArquivo, inicioDoArquivo } from "../lib/conteudo-arquivo.js";
 
 const db = getDb();
 export const arquivosRouter = Router({ mergeParams: true });
@@ -61,65 +62,6 @@ function formatoPermitido(ext: string, extras: string[]): boolean {
   if (EXT_BLOQUEADAS.has(e)) return false;
   if (MIMES_PERIGOSOS.test(e)) return false;
   return EXT_PERMITIDAS.has(e) || extras.map((x) => x.toLowerCase().replace(/^\./, "")).includes(e);
-}
-
-// ---------- entrega segura de conteúdo (anti-XSS) ----------
-// O mimeType gravado no upload é DECLARADO pelo cliente e não prova nada.
-// Na entrega, a classificação é derivada da extensão do storageName
-// (gerado no servidor) + magic bytes reais do início do arquivo:
-// somente conteúdo verificado como inerte pode ser servido inline;
-// todo o resto desce como anexo octet-stream com CSP sandbox.
-
-const EXT_TEXTO_INLINE = new Set(["txt", "md", "csv", "json", "xml"]);
-
-function inicioDoArquivo(caminho: string, n = 4096): Buffer | null {
-  let fd: number | null = null;
-  try {
-    fd = openSync(caminho, "r");
-    const b = Buffer.alloc(n);
-    const lidos = readSync(fd, b, 0, n, 0);
-    return b.subarray(0, lidos);
-  } catch { return null; } finally { if (fd !== null) { try { closeSync(fd); } catch { } } }
-}
-
-interface ClasseEntrega { mime: string }
-
-/** Classifica o conteúdo REAL pelos magic bytes. Retorna o MIME canônico
- *  quando extensão e assinatura são coerentes; null caso contrário —
- *  incluindo SVG/HTML disfarçado de outro formato. */
-function classePorAssinatura(ext: string, b: Buffer): ClasseEntrega | null {
-  if (b.length < 4) return null;
-  const txt = (o: number, n: number) => b.toString("latin1", o, Math.min(o + n, b.length));
-  const riff = txt(0, 4) === "RIFF";
-  switch (ext) {
-    case "png": return b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 ? { mime: "image/png" } : null;
-    case "jpg": case "jpeg": return b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? { mime: "image/jpeg" } : null;
-    case "gif": return txt(0, 3) === "GIF" ? { mime: "image/gif" } : null;
-    case "webp": return riff && txt(8, 4) === "WEBP" ? { mime: "image/webp" } : null;
-    case "bmp": return txt(0, 2) === "BM" ? { mime: "image/bmp" } : null;
-    case "ico": return b[0] === 0 && b[1] === 0 && b[2] === 1 && b[3] === 0 ? { mime: "image/x-icon" } : null;
-    case "pdf": return txt(0, 5) === "%PDF-" ? { mime: "application/pdf" } : null;
-    case "mp3": return txt(0, 3) === "ID3" || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0) ? { mime: "audio/mpeg" } : null;
-    case "wav": return riff && txt(8, 4) === "WAVE" ? { mime: "audio/wav" } : null;
-    case "ogg": return txt(0, 4) === "OggS" ? { mime: "audio/ogg" } : null;
-    case "flac": return txt(0, 4) === "fLaC" ? { mime: "audio/flac" } : null;
-    case "m4a": return txt(4, 4) === "ftyp" ? { mime: "audio/mp4" } : null;
-    case "mp4": return txt(4, 4) === "ftyp" ? { mime: "video/mp4" } : null;
-    case "mov": return txt(4, 4) === "ftyp" ? { mime: "video/quicktime" } : null;
-    case "webm": case "mkv": return b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3 ? { mime: ext === "webm" ? "video/webm" : "video/x-matroska" } : null;
-    case "avi": return riff && txt(8, 3) === "AVI" ? { mime: "video/x-msvideo" } : null;
-    default: return null;
-  }
-}
-
-/** Decide a entrega: { mime, inline }. inline=true só para conteúdo
- *  verificado inerte; caso contrário o arquivo desce como anexo. */
-function entregaDoArquivo(ext: string, caminho: string): { mime: string; inline: boolean } {
-  const head = inicioDoArquivo(caminho);
-  const cls = head ? classePorAssinatura(ext, head) : null;
-  if (cls) return { mime: cls.mime, inline: true };
-  if (EXT_TEXTO_INLINE.has(ext)) return { mime: "text/plain; charset=utf-8", inline: true };
-  return { mime: "application/octet-stream", inline: false };
 }
 
 function dirCampanha(cid: string) {
@@ -290,8 +232,8 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
     res.status(415).json({ erro: "Conteúdo do arquivo não corresponde a uma imagem válida" }); return;
   }
 
-  const mimeType = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
-  if (MIMES_PERIGOSOS.test(mimeType)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }
+  const mimeDeclarado = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
+  if (MIMES_PERIGOSOS.test(mimeDeclarado)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }
 
   const folderId = typeof req.headers["x-folder-id"] === "string" && req.headers["x-folder-id"] ? String(req.headers["x-folder-id"]) : null;
   if (folderId) {
@@ -331,6 +273,11 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
 
   const id = crypto.randomUUID();
   const storageName = `${id}.${ext || "bin"}`;
+  // O MIME persistido é o canônico da classificação de conteúdo —
+  // nunca o valor arbitrário declarado pelo cliente. A entrega GET
+  // reclassifica de qualquer forma (arquivos antigos/incluídos).
+  const classeUpload = classificarConteudoArquivo(storageName, buffer.subarray(0, 8192));
+  const mimeType = classeUpload.mime === "text/plain; charset=utf-8" ? "text/plain" : classeUpload.mime;
   const displayName = String(req.headers["x-display-name"] ?? "").slice(0, 200) || null;
   const description = String(req.headers["x-description"] ?? "").slice(0, 2000) || null;
   const category = String(req.headers["x-category"] ?? "").slice(0, 120) || null;
@@ -384,13 +331,12 @@ arquivosRouter.get("/:fileId", requirePapel("mestre", "jogador", "espectador"), 
   }
   const querDownload = req.query.download === "1";
   const nomeExib = f.displayName ?? f.fileName;
-  // Entrega segura: o mimeType declarado no upload não é prova de
-  // segurança — a classificação usa extensão do storageName + magic
-  // bytes reais. Conteúdo não verificável desce como anexo.
-  const ext = extensaoSegura(f.storageName ?? "");
-  const entrega = entregaDoArquivo(ext, caminho!);
-  const inline = entrega.inline && !querDownload;
-  res.setHeader("Content-Type", entrega.mime);
+  // Entrega segura: o mimeType persistido/declarante não é prova —
+  // a classificação usa extensão do storageName + conteúdo real.
+  // Vale para arquivos novos, antigos, importados e restaurados.
+  const classe = classificarConteudoArquivo(f.storageName ?? "", inicioDoArquivo(caminho!));
+  const inline = classe.inline && !querDownload;
+  res.setHeader("Content-Type", classe.mime);
   res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(nomeExib)}`);
   res.setHeader("X-Content-Type-Options", "nosniff");
   if (!inline) {
