@@ -117,7 +117,7 @@ async function testarHistoricoLegado(ids, casos, modo) {
         const valorNegativo = linhaNegativa.locator("td").nth(5);
         t(`${prefixo}: valor positivo correto no desktop`, (await valorPositivo.innerText()).trim() === esperadoPositivo, await valorPositivo.innerText());
         t(`${prefixo}: valor negativo correto no desktop`, (await valorNegativo.innerText()).trim() === esperadoNegativo, await valorNegativo.innerText());
-        t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+        t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
       } else {
         const cartaoPositivo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoPositiva }).first();
         const cartaoNegativo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoNegativa }).first();
@@ -127,7 +127,7 @@ async function testarHistoricoLegado(ids, casos, modo) {
         const campoNegativo = cartaoNegativo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
         t(`${prefixo}: valor positivo correto no mobile`, (await campoPositivo.innerText()).trim() === esperadoPositivo, await campoPositivo.innerText());
         t(`${prefixo}: valor negativo correto no mobile`, (await campoNegativo.innerText()).trim() === esperadoNegativo, await campoNegativo.innerText());
-        t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\\s+/).includes("erro"));
+        t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
       }
     }
   } finally {
