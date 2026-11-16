@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgcriatura-esqueleto-06" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#33272a"/><stop offset="1" stop-color="#14100c"/>
+    </linearGradient>
+    <radialGradient id="hlcriatura-esqueleto-06" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgcriatura-esqueleto-06)"/>
+  <rect width="200" height="200" fill="url(#hlcriatura-esqueleto-06)"/>
+
+<path d="M62 200 Q60 160 78 152 L122 152 Q140 160 138 200 Z" fill="#2c2620"/>
+<path d="M74 152 L126 152 L120 200 L80 200 Z" fill="#241f1a"/>
+<ellipse cx="100" cy="98" rx="34" ry="38" fill="#ddd5c0"/>
+<ellipse cx="86" cy="92" rx="9" ry="11" fill="#14100c"/><ellipse cx="114" cy="92" rx="9" ry="11" fill="#14100c"/>
+<path d="M92 112 L108 112 L100 122 Z" fill="#14100c"/>
+<path d="M88 130 Q100 136 112 130" stroke="#14100c" stroke-width="3" fill="none" stroke-linecap="round"/>
+<path d="M62 84 Q54 96 60 106 M138 84 Q146 96 140 106" stroke="#ddd5c0" stroke-width="4" fill="none"/>
+</svg>

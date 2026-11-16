@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgmulher-02" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#274a44"/><stop offset="1" stop-color="#171a26"/>
+    </linearGradient>
+    <radialGradient id="hlmulher-02" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgmulher-02)"/>
+  <rect width="200" height="200" fill="url(#hlmulher-02)"/>
+<path d="M40 200 Q42 158 78 150 L122 150 Q158 158 160 200 Z" fill="#6a3f3f"/>
+    <path d="M86 150 Q100 162 114 150 L110 142 Q100 150 90 142 Z" fill="#ffffff" opacity="0.18"/>
+<path d="M88 128 L88 152 Q100 160 112 152 L112 128 Z" fill="#6b4226"/>
+<ellipse cx="100" cy="94" rx="37" ry="43" fill="#6b4226"/>
+    <path d="M60 94 Q52 96 54 106 Q56 114 64 112 L66 100 Z M140 94 Q148 96 146 106 Q144 114 136 112 L134 100 Z" fill="#6b4226"/>
+    <ellipse cx="84" cy="92" rx="6.5" ry="4.2" fill="#ffffff"/>
+    <ellipse cx="116" cy="92" rx="6.5" ry="4.2" fill="#ffffff"/>
+    <circle cx="85" cy="93" r="3.1" fill="#6a4a8a"/><circle cx="115" cy="93" r="3.1" fill="#6a4a8a"/>
+    <circle cx="85" cy="93" r="1.4" fill="#1c1a22"/><circle cx="115" cy="93" r="1.4" fill="#1c1a22"/>
+    <path d="M78 82 Q84 79 90 81 M110 81 Q116 79 122 82" stroke="#3a2c20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    <path d="M99 96 Q97 104 100 107 Q103 104 101 96" fill="none" stroke="#00000022" stroke-width="1.6"/>
+    <path d="M93 124 L107 124" stroke="#7a4038" stroke-width="2.4" stroke-linecap="round"/>
+<path d="M60 96 L64 58 L76 66 L72 52 L88 58 L86 46 L100 54 L114 46 L112 58 L128 52 L124 66 L136 58 L140 96 Q120 70 100 68 Q80 70 60 96 Z" fill="#c9a227"/>
+
+</svg>
