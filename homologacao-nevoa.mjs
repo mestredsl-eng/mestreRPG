@@ -1814,9 +1814,11 @@ try {
       return;
     }
     reterHistoricoTitular = false;
+    // Busca primeiro a resposta antiga; só a entrega ao navegador fica retida.
+    const respostaHistoricoAntiga = await route.fetch();
     sinalizarHistoricoTitularRetido();
     await aguardarLiberacaoHistoricoTitular;
-    await route.continue();
+    await route.fulfill({ response: respostaHistoricoAntiga });
   });
   // mestre também precisa reentrar — o restore B desmontou a MesaView dele
   await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
@@ -1885,7 +1887,6 @@ try {
   }
   t("mestre titular recebeu evento secreto no transporte", eventoSecretoTitularRecebido);
   liberarHistoricoTitular?.();
-  await pgM.unroute("**/mensagens*").catch(() => {});
   await pgM.waitForFunction(() => document.body.innerText.includes("EVT-SEGREDO-77"), null, { timeout: 5000 }).catch(() => {});
   const corpoAtraso = await pgJ.locator("body").innerText();
   t("msg secreta atrasada NÃO reaparece", !corpoAtraso.includes("EVT-SEGREDO-77"));
