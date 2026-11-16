@@ -151,6 +151,7 @@ jobs:
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
             teste-regras.mjs \
+            teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
@@ -265,6 +266,7 @@ jobs:
             homologacao-desafio-ficha.mjs \
             homologacao-limitacoes.mjs \
             homologacao-ajuda-contextual.mjs \
+            homologacao-retratos.mjs \
             auditoria-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi

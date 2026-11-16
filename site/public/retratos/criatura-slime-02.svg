@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgcriatura-slime-02" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2438"/><stop offset="1" stop-color="#10141f"/>
+    </linearGradient>
+    <radialGradient id="hlcriatura-slime-02" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgcriatura-slime-02)"/>
+  <rect width="200" height="200" fill="url(#hlcriatura-slime-02)"/>
+<path d="M48 170 Q40 96 100 88 Q160 96 152 170 Q146 178 140 170 Q136 180 130 170 Q124 180 118 170 Q112 180 106 170 Q100 180 94 170 Q88 180 82 170 Q76 180 70 170 Q64 180 58 170 Q52 178 48 170 Z" fill="#4ab8d8"/>
+<ellipse cx="72" cy="130" rx="10" ry="6" fill="#00000033"/><ellipse cx="130" cy="146" rx="8" ry="5" fill="#00000033"/>
+<ellipse cx="80" cy="100" rx="8" ry="11" fill="#ffffff"/><ellipse cx="120" cy="100" rx="8" ry="11" fill="#ffffff"/>
+       <circle cx="81" cy="102" r="3.4" fill="#1a2430"/><circle cx="121" cy="102" r="3.4" fill="#1a2430"/>
+<path d="M90 122 Q100 128 110 122" stroke="#1a2430" stroke-width="3" fill="none" stroke-linecap="round"/>
+</svg>

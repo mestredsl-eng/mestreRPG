@@ -42,7 +42,7 @@ function extensaoSegura(nome: string): string {
 }
 
 /** Valida assinatura real (magic bytes) dos formatos de imagem aceitos. */
-function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
+export function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
   const b = buf;
   switch (ext) {
     case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
@@ -125,15 +125,15 @@ function entregaDoArquivo(ext: string, caminho: string): { mime: string; inline:
 function dirCampanha(cid: string) {
   return resolve(CAMINHOS.arquivos, cid);
 }
-function caminhoFisico(cid: string, storageName: string) {
+export function caminhoFisico(cid: string, storageName: string) {
   const base = dirCampanha(cid);
   const p = resolve(base, storageName);
   return p.startsWith(base + sep) || p === base ? p : null;
 }
-function caminhoLixeira(cid: string, storageName: string) {
+export function caminhoLixeira(cid: string, storageName: string) {
   return resolve(dirCampanha(cid), ".lixeira", storageName);
 }
-function garantirDir(cid: string) {
+export function garantirDir(cid: string) {
   mkdirSync(dirCampanha(cid), { recursive: true });
   mkdirSync(resolve(dirCampanha(cid), ".lixeira"), { recursive: true });
 }

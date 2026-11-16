@@ -4,6 +4,8 @@ import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import AvatarRetrato from "../AvatarRetrato";
+import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -174,7 +176,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             <tbody>
               {visiveis.map((p) => (
                 <tr key={p.id} className={`clicavel${p.status === "arquivado" ? " arquivado" : ""}`} onClick={() => void abrir(p.id)}>
-                  <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
+                  <td><span className="linha"><AvatarRetrato retrato={p.retrato} nome={p.name} tamanho={30} />{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</span></td>
                   <td>{p.displayName ?? p.dono}</td>
                   <td>
                     <span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span>
@@ -302,6 +304,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [msg, setMsg] = useState<string | null>(null);
   const [errosValidacao, setErrosValidacao] = useState<ErroValidacao[] | null>(null);
   const [confirmando, setConfirmando] = useState<"excluir" | "arquivar" | "restaurar" | null>(null);
+  const [retratoModal, setRetratoModal] = useState(false);
   const [operando, setOperando] = useState(false);
 
   const arquivado = personagem.status === "arquivado";
@@ -315,6 +318,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
   // Exclusão: mestre sempre; jogador só o próprio personagem em status editável.
   const podeExcluir = souMestre || (personagem.ehEu === true && STATUS_EXCLUIVEIS.has(personagem.status));
+  // Retrato: metadado do personagem — mestre sempre; dono do próprio
+  // personagem (NPC só pelo mestre); arquivado é somente leitura.
+  const podeMudarRetrato = !arquivado && (souMestre || (personagem.ehEu === true && personagem.isNpc !== true));
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
 
   const executarOperacao = async () => {
@@ -391,7 +397,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
     <>
       <section className="cartao">
         <div className="linha-entre">
-          <div>
+          <div className="linha">
+            <AvatarRetrato retrato={personagem.retrato} nome={personagem.name} tamanho={64} />
+            <div>
             <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}{personagem.isNpc && <span className={`badge ${personagem.npcRevelado ? "badge-aprovada" : "badge-bloqueada"}`}>{personagem.npcRevelado ? " ficha visível" : " ficha oculta"}</span>}</h2>
             <p className="meta ficha-dono">
               Jogador: <strong>{personagem.isNpc ? "Mestre (NPC)" : (personagem.donoNome ?? "—")}</strong>
@@ -399,8 +407,14 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
               <span className={`badge badge-${personagem.status}`}>{STATUS_LABEL[personagem.status] ?? personagem.status}</span>
               {ficha?.pontosBonus?.selado && <span className="badge badge-selo" title="Os pontos desta ficha estão selados — só o mestre pode alterá-los"> pontos selados</span>}
             </p>
+            </div>
           </div>
-          <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
+          <div className="linha">
+            {podeMudarRetrato && !editando && (
+              <button className="secundario" onClick={() => setRetratoModal(true)}>Alterar retrato</button>
+            )}
+            <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
+          </div>
         </div>
         {souMestre && editando && (
           <label>Nome do personagem<input value={nome} onChange={(e) => setNome(e.target.value)} /></label>
@@ -489,6 +503,16 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           ocupado={operando}
           aoConfirmar={() => void executarOperacao()}
           aoCancelar={() => setConfirmando(null)}
+        />
+      )}
+      {retratoModal && (
+        <ModalRetrato
+          characterId={personagem.id}
+          campaignId={campaignId}
+          retratoAtual={personagem.retrato}
+          nome={personagem.name}
+          aoMudar={() => void aoRecarregar()}
+          aoFechar={() => setRetratoModal(false)}
         />
       )}
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ModalConfirmar } from "../Modal";
+import AvatarRetrato from "../AvatarRetrato";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
 
@@ -145,10 +146,16 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
               {CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
             {aba === "diario" && (
-              <select value={form.characterId} onChange={(e) => setForm({ ...form, characterId: e.target.value })}>
-                <option value="">Sem personagem vinculado</option>
-                {personagens.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <span className="linha">
+                {(() => {
+                  const sel = personagens.find((p) => p.id === form.characterId);
+                  return sel ? <AvatarRetrato retrato={sel.retrato} nome={sel.name} tamanho={28} /> : null;
+                })()}
+                <select value={form.characterId} onChange={(e) => setForm({ ...form, characterId: e.target.value })}>
+                  <option value="">Sem personagem vinculado</option>
+                  {personagens.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              </span>
             )}
             <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value as Anotacao["visibility"] })}>
               {VISIBILIDADES.map((v) => <option key={v.v} value={v.v}>{v.l}</option>)}

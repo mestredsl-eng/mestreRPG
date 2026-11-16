@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgvampira-07" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2038"/><stop offset="1" stop-color="#140f1c"/>
+    </linearGradient>
+    <radialGradient id="hlvampira-07" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgvampira-07)"/>
+  <rect width="200" height="200" fill="url(#hlvampira-07)"/>
+<path d="M40 200 Q42 158 78 150 L122 150 Q158 158 160 200 Z" fill="#1a1f2e"/>
+    <path d="M86 150 Q100 162 114 150 L110 142 Q100 150 90 142 Z" fill="#ffffff" opacity="0.18"/><path d="M78 158 L100 172 L122 158 L122 178 L78 178 Z" fill="#1d1a24"/>
+<path d="M88 128 L88 152 Q100 160 112 152 L112 128 Z" fill="#e8e4f2"/>
+<ellipse cx="100" cy="94" rx="37" ry="43" fill="#e8e4f2"/>
+    <path d="M60 94 Q52 96 54 106 Q56 114 64 112 L66 100 Z M140 94 Q148 96 146 106 Q144 114 136 112 L134 100 Z" fill="#e8e4f2"/>
+    <ellipse cx="84" cy="92" rx="6.5" ry="4.2" fill="#ffffff"/>
+    <ellipse cx="116" cy="92" rx="6.5" ry="4.2" fill="#ffffff"/>
+    <circle cx="85" cy="93" r="3.1" fill="#8a1f2d"/><circle cx="115" cy="93" r="3.1" fill="#8a1f2d"/>
+    <circle cx="85" cy="93" r="1.4" fill="#1c1a22"/><circle cx="115" cy="93" r="1.4" fill="#1c1a22"/>
+    <path d="M78 82 Q84 79 90 81 M110 81 Q116 79 122 82" stroke="#3a2c20" stroke-width="2.2" fill="none" stroke-linecap="round"/>
+    <path d="M99 96 Q97 104 100 107 Q103 104 101 96" fill="none" stroke="#00000022" stroke-width="1.6"/>
+    
+<path d="M64 88 Q66 52 100 50 Q134 52 136 88 L128 76 Q124 62 100 60 Q76 62 72 76 Z" fill="#1a1626"/>
+    <path d="M92 56 L100 66 L108 56 L104 50 L96 50 Z" fill="#e8e4f2"/><path d="M60 96 Q54 160 64 200 L72 200 Q64 150 68 104 Z M140 96 Q146 160 136 200 L128 200 Q136 150 132 104 Z" fill="#1a1626"/><path d="M60 94 Q54 160 66 200 L134 200 Q146 160 140 94 Q142 140 132 100 Q120 66 100 62 Q80 66 68 100 Q58 140 60 94 Z" fill="#1a1626"/><path d="M62 92 Q60 50 100 48 Q140 50 138 92 Q134 62 100 58 Q66 62 62 92 Z" fill="#1a1626"/>
+</svg>
