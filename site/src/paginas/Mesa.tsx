@@ -27,6 +27,22 @@ function fmtTempo(ms: number) {
   return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/**
+ * Mescla o histórico HTTP com mensagens já recebidas pelo Socket.IO.
+ * A consulta pode ter começado antes de um evento em tempo real e terminar
+ * depois dele; substituir a lista nesse caso apagaria uma mensagem legítima.
+ */
+function mesclarMensagens(historico: MensagemMesa[], atuais: MensagemMesa[]): MensagemMesa[] {
+  const porId = new Map<string, MensagemMesa>();
+  for (const mensagem of historico) porId.set(mensagem.id, mensagem);
+  for (const mensagem of atuais) {
+    if (!porId.has(mensagem.id)) porId.set(mensagem.id, mensagem);
+  }
+  return [...porId.values()]
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .slice(-400);
+}
+
 export default function Mesa({ campaignId, campanha }: Props) {
   const [sessoes, setSessoes] = useState<Sessao[]>([]);
   const [ativa, setAtiva] = useState<Sessao | null>(null);
@@ -158,7 +174,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       // permissão (sem troca de papel) pode não disparar novo reload e
       // a lista ficaria vazia/obsoleta até a próxima mudança de papel
       if (seq !== permSeqRef.current) { recarregarFiltrado(); return; }
-      setMensagens(msgs.mensagens);
+      setMensagens((atuais) => mesclarMensagens(msgs.mensagens, atuais));
       setTestes(tes.testes);
       setTurnos(est.turnos);
       setTimer(est.sessao.timerState ?? null);
@@ -237,7 +253,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         // geração superada → rebusca com a seq vigente (mesmo motivo de
         // recarregarFiltrado/recarregarPersonagens)
         if (seq !== permSeqRef.current) { recarregarCompleta(); return; }
-        setMensagens(msgs.mensagens);
+        setMensagens((atuais) => mesclarMensagens(msgs.mensagens, atuais));
         setTestes(tes.testes);
         setTurnos(est.turnos);
         setTimer(est.sessao.timerState ?? null);

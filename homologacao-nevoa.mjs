@@ -359,6 +359,7 @@ try {
     })).catch(() => null);
     throw new Error(`desenho de névoa não gerou emit após 4 tentativas — ${JSON.stringify(diag)}`);
   };
+  let eventoSecretoTitularRecebido = false;
   await pgM.routeWebSocket(/\/socket\.io/, (ws) => {
     const srv = ws.connectToServer();
     wsSrvM = srv;
@@ -369,6 +370,9 @@ try {
       srv.send(msg);
     });
     srv.onMessage((m) => {
+      if (typeof m === "string" && m.includes('"mesa:mensagem"') && m.includes("EVT-SEGREDO-77")) {
+        eventoSecretoTitularRecebido = true;
+      }
       if (derrubarAckM > 0 && ehAckVttNevoa(m)) { derrubarAckM--; return; }
       ws.send(m);
     });
@@ -1794,9 +1798,37 @@ try {
   await pgJ.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
   await pgJ.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
   t("jogador re-entrou manualmente na sessão nova", (await pgJ.locator(".mesa-vtt").count()) === 1);
+  // Reproduz deterministicamente a corrida: a carga HTTP do histórico começa
+  // na reentrada, mas sua resposta só chega DEPOIS de uma mensagem Socket.IO.
+  // A resposta foi consultada antes da mensagem e não pode apagá-la da UI.
+  let liberarHistoricoTitular;
+  const aguardarLiberacaoHistoricoTitular = new Promise((resolve) => { liberarHistoricoTitular = resolve; });
+  let sinalizarHistoricoTitularRetido;
+  const historicoTitularRetido = new Promise((resolve) => { sinalizarHistoricoTitularRetido = resolve; });
+  let reterHistoricoTitular = true;
+  await pgM.route("**/mensagens*", async (route) => {
+    const url = new URL(route.request().url());
+    const alvo = url.pathname.endsWith(`/campaigns/${campId}/sessoes/${sidC}/mensagens`);
+    if (route.request().method() !== "GET" || !alvo || !reterHistoricoTitular) {
+      await route.continue();
+      return;
+    }
+    reterHistoricoTitular = false;
+    // Busca primeiro a resposta antiga; só a entrega ao navegador fica retida.
+    const respostaHistoricoAntiga = await route.fetch();
+    sinalizarHistoricoTitularRetido();
+    await aguardarLiberacaoHistoricoTitular;
+    await route.fulfill({ response: respostaHistoricoAntiga });
+  });
   // mestre também precisa reentrar — o restore B desmontou a MesaView dele
   await pgM.locator("tr.clicavel", { hasText: "Mesa Névoa Alfa" }).first().click();
   await pgM.locator(".mesa-vtt").waitFor({ timeout: 20000 }).catch(() => {});
+  let historicoMestreFoiRetido = false;
+  await Promise.race([
+    historicoTitularRetido.then(() => { historicoMestreFoiRetido = true; }),
+    new Promise((resolve) => setTimeout(resolve, 10000)),
+  ]);
+  t("histórico HTTP do mestre retido durante a reentrada", historicoMestreFoiRetido);
   t("mestre re-entrou manualmente na sessão nova", (await pgM.locator(".mesa-vtt").count()) === 1);
   novoSid = sidC; // sessão corrente passa a ser sidC nas seções seguintes
 
@@ -1848,6 +1880,14 @@ try {
   liberarEvtJ();
   reterEvtJ = null;
   await new Promise((r) => setTimeout(r, 1000)); // eventos atrasados entregues
+  // Confirma primeiro a entrega no transporte do mestre titular; depois libera
+  // a resposta HTTP antiga, que não contém a mensagem recém-emitida.
+  for (let i = 0; i < 100 && !eventoSecretoTitularRecebido; i++) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  t("mestre titular recebeu evento secreto no transporte", eventoSecretoTitularRecebido);
+  liberarHistoricoTitular?.();
+  await pgM.waitForFunction(() => document.body.innerText.includes("EVT-SEGREDO-77"), null, { timeout: 5000 }).catch(() => {});
   const corpoAtraso = await pgJ.locator("body").innerText();
   t("msg secreta atrasada NÃO reaparece", !corpoAtraso.includes("EVT-SEGREDO-77"));
   t("teste privado atrasado não repovoa (rótulo)", !corpoAtraso.includes("PRIV-ROT-99"));
