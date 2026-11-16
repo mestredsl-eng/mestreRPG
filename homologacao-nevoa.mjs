@@ -1981,11 +1981,17 @@ try {
   t("import da prova de reconexão na lista aceito", rImpB.status === 200, JSON.stringify(rImpB.json).slice(0, 120));
   const esperaRestB = await pgB.waitForFunction((n) => (window.__restauradasB ?? []).length > n,
     nRestAntesA, { timeout: 15000 }).then(() => null).catch((e) => e);
+  // o evento dispara carregar() assíncrono — a row renomeada só aparece
+  // depois do fetch+render; leitura única corre com a atualização
+  const esperaListaBetaR = await pgB.waitForFunction(() =>
+    (document.body?.innerText ?? "").includes("Mesa Névoa Beta R"),
+    null, { timeout: 15000 }).then(() => null).catch((e) => e);
   const corpoListaB = await pgB.locator("body").innerText();
   t("reconexão na lista: campanha:restaurada recebida e lista atualizada sem reload",
-    !esperaRestB && corpoListaB.includes("Mesa Névoa Beta R")
+    !esperaRestB && !esperaListaBetaR && corpoListaB.includes("Mesa Névoa Beta R")
       && await pgB.evaluate(() => window.__semReloadB === true),
-    JSON.stringify({ esperaErro: esperaRestB?.message ?? null, restauradas: await pgB.evaluate(() => window.__restauradasB?.length ?? null) }));
+    JSON.stringify({ esperaErro: esperaRestB?.message ?? esperaListaBetaR?.message ?? null,
+      restauradas: await pgB.evaluate(() => window.__restauradasB?.length ?? null) }));
   // reverte o nome da Beta para não afetar as seções seguintes
   const expB2 = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
   const pacoteB2 = expB2.json;
