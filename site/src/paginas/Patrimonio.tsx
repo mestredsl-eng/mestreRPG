@@ -1021,10 +1021,14 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
     unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
   // Transações antigas guardam amount em unidades monetárias (REAL), enquanto
-  // amountCents guarda o inteiro escalado da configuração atual. Não assumir
-  // duas casas decimais ao projetar registros legados.
-  const unidadesTransacao = (t: TransacaoFinanceira) =>
-    t.amountCents ?? Math.round(t.amount * 10 ** cfg.casasDecimais);
+  // amountCents guarda o inteiro escalado da configuração atual. Formatar o
+  // legado diretamente com a escala vigente evita assumir sempre duas casas.
+  const valorTransacao = (t: TransacaoFinanceira) =>
+    t.amountCents === null || t.amountCents === undefined
+      ? t.amount.toFixed(cfg.casasDecimais)
+      : fmt(t.amountCents);
+  const transacaoNegativa = (t: TransacaoFinanceira) =>
+    t.amountCents === null || t.amountCents === undefined ? t.amount < 0 : t.amountCents < 0;
 
   // Rótulos amigáveis dos tipos de movimentação.
   const ROTULO_KIND: Record<string, string> = {
@@ -1078,7 +1082,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
               <td>{t.description ?? "—"}</td>
               <td>{t.account ?? "—"}</td>
               <td>{t.counterparty ?? "—"}</td>
-              <td className={unidadesTransacao(t) < 0 ? "erro" : "online"}>{fmt(unidadesTransacao(t))}</td>
+              <td className={transacaoNegativa(t) ? "erro" : "online"}>{valorTransacao(t)}</td>
               <td>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</td>
               {!somenteLeitura && (
                 <td>{podeEstornar(t) && <button type="button" className="secundario" onClick={() => setEstornando(t)}>Estornar</button>}</td>
@@ -1098,7 +1102,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
             {t.counterparty && <div className="registro-campo"><span className="registro-rotulo">Contraparte</span><span>{t.counterparty}</span></div>}
             <div className="registro-campo">
               <span className="registro-rotulo">Valor</span>
-              <span className={unidadesTransacao(t) < 0 ? "erro" : "online"}>{fmt(unidadesTransacao(t))}</span>
+              <span className={transacaoNegativa(t) ? "erro" : "online"}>{valorTransacao(t)}</span>
             </div>
             <div className="registro-campo"><span className="registro-rotulo">Saldo após</span><span>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</span></div>
             {podeEstornar(t) && (
