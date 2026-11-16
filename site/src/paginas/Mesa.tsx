@@ -441,6 +441,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         // reativação: só um caminho de autorização novo restaura o acesso
         revogadoRef.current = false;
         setEntradaFalhou(false);
+        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
         entrar();
       }
       if (d.papel) {
@@ -545,6 +546,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // chegará; controles e painel saem de cena até nova entrada
           setEntradaFalhou(true);
           setPapel("espectador");
+          // Uma revogação já recebida é mais específica que um ACK de
+          // reentrada atrasado. O ACK não pode apagar a causa nem fazer
+          // parecer que a mesa ainda está autorizada.
+          if (revogadoRef.current) {
+            setEntradaFalhou(true);
+            setPapel("espectador");
+            papelRef.current = "espectador";
+            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+            return;
+          }
           setErro("Não foi possível entrar na mesa — acesso não autorizado");
         }
       });

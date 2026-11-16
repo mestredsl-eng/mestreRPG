@@ -338,8 +338,20 @@ try {
         await page.locator(".vtt-nevoa-canvas-pincel").waitFor({ timeout: 5000 }).catch(() => {});
       }
       const n0 = nevoaEmitidos;
-      await garantirPincel(page);
-      await desenhar(page, pontos);
+      try {
+        await garantirPincel(page);
+        await desenhar(page, pontos);
+      } catch {
+        // o cliente reseta o modo pincel quando o estado do tabuleiro muda
+        // (Mesa.tsx: conteúdo novo de `inicial` → setPincel(false)) — uma
+        // atualização legítima pode chegar entre garantirPincel e o
+        // boundingBox e remover .vtt-nevoa-canvas-pincel por ~segundos.
+        // boundingBox é a 1ª ação de desenhar (antes de qualquer mouse.*),
+        // então a tentativa não deixou gesto pela metade; mouse.up é
+        // seguro caso uma falha futura ocorra depois do down.
+        await page.mouse.up().catch(() => {});
+        continue;
+      }
       const limite = Date.now() + 6000;
       while (Date.now() < limite && nevoaEmitidos === n0) await page.waitForTimeout(100);
       if (nevoaEmitidos > n0) return;
@@ -1435,7 +1447,7 @@ try {
   const wsAntesRev = wsCountJ, entrarAntesRev = entrarCountJ;
   rRT = await req(BASE, "DELETE", `/campaigns/${campId}/members/${midEsp}`, { cookie: cookieMestre });
   t("DELETE membership do espectador", rRT.status === 200);
-  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 20000 }).catch(() => {});
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 20000 }).catch(() => {});
   const corpoE = await pgE.locator("body").innerText();
   t("revogação ao vivo: mensagem de acesso revogado sem reload",
     /revogad/i.test(corpoE) && (await pgE.locator(".mesa-vtt").count()) === 0,
@@ -1579,7 +1591,7 @@ try {
   const wsAntesSnap = wsCountJ;
   const rRestRT = await req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapIdRT}/restaurar`, { cookie: cookieMestre, body: { confirmacao: "RESTAURAR" } });
   t("restore executado", rRestRT.status === 200, JSON.stringify(rRestRT.json).slice(0, 120));
-  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  await pgJ.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).catch(() => {});
   t("jogador revogado pelo snapshot: acesso revogado sem reload",
     /revogad/i.test(await pgJ.locator("body").innerText()) && (await pgJ.locator(".mesa-vtt").count()) === 0);
   // mestre segue operando normalmente
@@ -1587,6 +1599,14 @@ try {
   t("mestre mantém a mesa após restore", (await pgM.locator(".mesa-vtt").count()) > 0);
 
   sec("Importação substituir revoga membro — UI sem reload");
+  // Observa o evento privado de revogação no transporte; ping/pong antes
+  // do POST comprova apenas que o socket estava vivo, não a entrega do evento.
+  await pgE.evaluate((campaignId) => {
+    window.__eventosRevogacaoTeste = [];
+    window.__mesaSocket?.on("mesa:permissao:atualizada", (d) => {
+      if (d?.campaignId === campaignId) window.__eventosRevogacaoTeste.push(d);
+    });
+  }, campId);
   const expRT = await req(BASE, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
   const pacoteRT = expRT.json;
   pacoteRT.estado.memberships = (pacoteRT.estado.memberships ?? []).filter((m) => m.userId !== espId);
@@ -1602,7 +1622,16 @@ try {
     body: { pacote: pacoteRT, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
   });
   t("import substituir aceito", rImpRT.status === 200, JSON.stringify(rImpRT.json).slice(0, 140));
-  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  await pgE.waitForFunction((campaignId) =>
+    (window.__eventosRevogacaoTeste ?? []).some((d) => d.campaignId === campaignId && d.status === "removido"),
+    campId, { timeout: 10000 },
+  ).catch(() => {});
+  const revogacaoNoTransporte = await pgE.evaluate((campaignId) =>
+    (window.__eventosRevogacaoTeste ?? []).some((d) => d.campaignId === campaignId && d.status === "removido"),
+    campId,
+  );
+  t("import: evento privado de revogação chegou pelo Socket.IO", revogacaoNoTransporte);
+  await pgE.waitForFunction(() => /revogad/i.test(document.body.innerText) && !document.querySelector(".mesa-vtt"), null, { timeout: 30000 }).catch(() => {});
   t("espectador revogado pela importação: acesso revogado sem reload",
     /revogad/i.test(await pgE.locator("body").innerText()) && (await pgE.locator(".mesa-vtt").count()) === 0);
 
