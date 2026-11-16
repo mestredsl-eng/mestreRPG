@@ -4,6 +4,7 @@ import { api, type CampanhaResumo, type EstadoAtualCampanha, type HistoricoSessa
 import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const KIND_SNAPSHOT: Record<string, string> = { manual: "Manual", automatico: "Automático", pre_restauracao: "Pré-restauração" };
+const OUTCOME_LABEL: Record<string, string> = { sucesso: "Sucesso", parcial: "Parcial", falha: "Falha", falha_critica: "Falha crítica" };
 
 function fmtDuracao(ms: number | null) {
   if (ms == null) return "—";
@@ -154,8 +155,69 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
                         ))}
                       </ul>
                     )}
-                    {h.testes.length > 0 && <p className="dica">{h.testes.length} teste(s) realizado(s).</p>}
-                    {h.rolagens.length > 0 && <p className="dica">{h.rolagens.length} rolagem(ns) registrada(s).</p>}
+                    {h.testes.length > 0 && (
+                      <div>
+                        <p className="dica">{h.testes.length} teste(s) realizado(s):</p>
+                        <ul>
+                          {h.testes.map((t) => {
+                            const rotulo = (t.skillRef as { rotulo?: string } | null)?.rotulo ?? t.rotulo ?? "teste";
+                            const lados = t.pool?.dadosLados ?? t.diceSides;
+                            const positivos = t.pool?.positivos ?? t.diceCount;
+                            const negativos = t.pool?.negativos ?? 0;
+                            const pedidoPor = h.participantes.find((p) => p.id === t.requestedBy);
+                            return (
+                              <li key={t.id}>
+                                <span className="dica">{new Date(t.createdAt).toLocaleTimeString("pt-BR")}</span>{" "}
+                                <strong>{rotulo}</strong>
+                                {lados === 10 && <span className="tag">D10</span>}{" "}
+                                {positivos}d{lados}{negativos > 0 ? ` (−${negativos})` : ""}
+                                {t.d10 ? ` · ${t.d10.sucessos}/${t.d10.lancados} sucessos` : ""}
+                                {" · "}
+                                {t.outcome
+                                  ? <>{OUTCOME_LABEL[t.outcome] ?? t.outcome}{t.outcomeNote ? ` — ${t.outcomeNote}` : ""}</>
+                                  : t.status === "pendente" ? "pendente" : t.status}
+                                {pedidoPor ? <span className="dica"> · {pedidoPor.displayName ?? pedidoPor.username}</span> : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    )}
+                    {(() => {
+                      // Rolagens já exibidas como teste (rollId) não se repetem aqui.
+                      const rollIdsTestes = new Set(h.testes.map((t) => t.rollId).filter(Boolean) as string[]);
+                      const rolagens = h.rolagens.filter((r) => !rollIdsTestes.has(r.id));
+                      if (!rolagens.length) return h.rolagens.length > 0 ? null : <p className="dica">Nenhuma rolagem registrada.</p>;
+                      return (
+                        <div>
+                          <p className="dica">{rolagens.length} rolagem(ns) registrada(s):</p>
+                          <ul>
+                            {rolagens.map((r) => {
+                              const grupos = r.results?.grupos?.length
+                                ? r.results.grupos
+                                : (r.dice ?? []).map((d) => ({ lados: d.sides, resultados: [] as number[] }));
+                              const qtdDe = (g: { lados: number; resultados: number[] }) => g.resultados.length || (r.dice?.find((d) => d.sides === g.lados)?.count ?? 0);
+                              const descDados = grupos.map((g) => `${qtdDe(g)}d${g.lados}`).join(" + ");
+                              const valores = grupos.flatMap((g) => g.resultados);
+                              const total = r.results?.total;
+                              return (
+                                <li key={r.id}>
+                                  <span className="dica">{new Date(r.createdAt).toLocaleTimeString("pt-BR")}</span>{" "}
+                                  <strong>{r.autor ? (r.autor.displayName ?? r.autor.username) : "—"}</strong>{" "}
+                                  rolou {descDados}
+                                  {total !== undefined ? ` → ${total}` : ""}
+                                  {valores.length > 0 && valores.length <= 15 ? <span className="dica"> ({valores.join(", ")})</span> : null}
+                                  {r.results?.d10 ? ` · D10: ${r.results.d10.sucessos}/${r.results.d10.lancados} sucessos` : ""}
+                                  {r.results?.modo === "dano" ? " · dano" : ""}
+                                  {r.visibility === "privada" ? " · privada" : ""}
+                                  {r.reason ? <span className="dica"> · {r.reason}</span> : null}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </div>
+                      );
+                    })()}
                     {(h.alteracoes?.length ?? 0) > 0 && (
                       <p className="dica">{h.alteracoes!.length} alteração(ões) relevante(is): {h.alteracoes!.map((a) => a.action).join(", ")}</p>
                     )}

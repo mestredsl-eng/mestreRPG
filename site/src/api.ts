@@ -1271,13 +1271,31 @@ export interface PacoteCampanha {
   arquivos: Record<string, { conteudo: string; mimeType: string | null }>;
 }
 
+export interface RolagemHistorico {
+  id: string;
+  sessionId: string | null;
+  characterId: string | null;
+  userId: string;
+  dice: { sides: number; count: number }[];
+  results: {
+    grupos?: { lados: number; resultados: number[] }[];
+    total?: number;
+    d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null;
+    modo?: string | null;
+  } | null;
+  reason: string | null;
+  visibility: string;
+  createdAt: string;
+  autor: { id: string; username: string; displayName: string | null } | null;
+}
+
 export interface HistoricoSessao {
   sessao: Sessao;
   duracaoMs: number | null;
   participantes: { id: string; username: string; displayName: string | null }[];
   eventos: { id: string; kind: string; content: string; createdAt: string; autor: { id: string; username: string; displayName: string | null } | null }[];
   testes: TesteMesa[];
-  rolagens: Record<string, unknown>[];
+  rolagens: RolagemHistorico[];
   alteracoes?: { id: string; action: string; createdAt: string; autor: { id: string; username: string; displayName: string | null } | null; detalhe?: unknown }[];
   resumo: string | null;
 }
