@@ -235,6 +235,32 @@ try {
   const imgLegadoM = await raw(BASE, "GET", `/characters/${pjDono2}/retrato/imagem`, { cookie: cm });
   t("9b. mestre também recebe 404 (não há bypass)", imgLegadoM.status === 404, `status=${imgLegadoM.status}`);
 
+  sec("10. SVG disfarçado de TXT — upload HTTP real da Biblioteca");
+  const pjNovo = c.novoPersonagem(c.jogadores.j1.membershipId, "PJ Upload Real");
+  // caminho real do usuário: POST genérico /arquivos/upload como mestre
+  // (jogador teria status=pendente e cairia na regra de moderação antes
+  // da validação raster — o cenário exige arquivo aprovado+público).
+  const upReal = await raw(BASE, "POST", `/campaigns/${c.campId}/arquivos/upload`, {
+    cookie: cm, body: SVG_ATIVO,
+    headers: {
+      "x-file-name": encodeURIComponent("notas.txt"),
+      "x-file-mime": "image/svg+xml",
+      "x-visibility": "publica",
+      "content-type": "application/octet-stream",
+    },
+  });
+  t("10a. upload genérico aceita o TXT (201) — biblioteca inalterada", upReal.status === 201 && !!upReal.json?.id, `status=${upReal.status} ${JSON.stringify(upReal.json).slice(0, 120)}`);
+  const idUploadReal = upReal.json?.id;
+  const putReal = await req(BASE, "PUT", `/characters/${pjNovo}/retrato`, { cookie: cj1, body: { retrato: { tipo: "arquivo", arquivoId: idUploadReal } } });
+  t("10b. PUT retrato rejeita o arquivo → 415", putReal.status === 415, `status=${putReal.status}`);
+  const imgReal = await raw(BASE, "GET", `/characters/${pjNovo}/retrato/imagem`, { cookie: cj1 });
+  t("10c. GET imagem → 404 (personagem continua sem retrato)", imgReal.status === 404, `status=${imgReal.status}`);
+  const gravado = comDb(BANCO, (db) => {
+    const d = JSON.parse(db.prepare("select data from characters where id=?").get(pjNovo).data || "{}");
+    return d.__retrato ?? null;
+  });
+  t("10d. nenhum retrato gravado em characters.data", gravado === null, JSON.stringify(gravado));
+
   console.log(`\n==== retratos: ${pass} ok, ${fail} falhas ====`);
 } catch (e) {
   fail++;

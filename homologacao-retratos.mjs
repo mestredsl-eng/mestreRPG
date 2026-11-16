@@ -7,8 +7,9 @@ import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir,
+  criarCenario, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
+import { mkdirSync, writeFileSync } from "node:fs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -157,6 +158,46 @@ try {
   t("5a. galeria renderiza em viewport mobile", await gradeM.count() >= 100);
   const box = await pgM.locator(".modal-retrato").boundingBox();
   t("5b. modal cabe na tela (390px)", !!box && box.width <= 390, box ? `w=${Math.round(box.width)}` : "sem box");
+
+  sec("6. Biblioteca — só raster aceito aparece como opção");
+  // fixture: 3 raster válidos + SVG/GIF/BMP que o servidor rejeitaria
+  const fixtures = [
+    ["ok-png", "png", "image/png", png64()],
+    ["ok-jpg", "jpg", "image/jpeg", Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3])],
+    ["ok-webp", "webp", "image/webp", Buffer.from("RIFF0000WEBPVP8 ")],
+    ["vetor-svg", "svg", "image/svg+xml", Buffer.from("<svg xmlns='http://www.w3.org/2000/svg'><script>x</script></svg>")],
+    ["animado-gif", "gif", "image/gif", Buffer.from("GIF89a....")],
+    ["arte-bmp", "bmp", "image/bmp", Buffer.from([0x42, 0x4d, 1, 2, 3])],
+  ];
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const dir = join(ARQ, c.campId);
+      mkdirSync(dir, { recursive: true });
+      const agora = Date.now();
+      for (const [nome, ext, mime, buf] of fixtures) {
+        const id = crypto.randomUUID();
+        writeFileSync(join(dir, `${id}.${ext}`), buf);
+        w.prepare("insert into files (id,campaign_id,folder_path,file_name,display_name,category,status,storage_name,mime_type,size_bytes,uploaded_by,visibility,recipients,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+          .run(id, c.campId, "/", `${nome}.${ext}`, `${nome}.${ext}`, "biblioteca", "aprovado", `${id}.${ext}`, mime, buf.length, c.adminId, "publica", null, agora, agora);
+      }
+    } finally { w.close(); }
+  }
+  // volta à lista (a ficha estava aberta desde a seção 4) e abre o modal
+  await pg.locator("section.cartao", { has: pg.getByRole("button", { name: "Alterar retrato" }) })
+    .getByRole("button", { name: "Voltar", exact: true }).click();
+  await pg.locator(".abas button", { hasText: "Personagens" }).first().click();
+  await abrirPersonagem(pg, "Heroína Retrato");
+  await abrirModalRetrato(pg);
+  await pg.getByRole("button", { name: "Biblioteca", exact: true }).click();
+  await pg.waitForTimeout(800);
+  for (const [nome] of fixtures.slice(0, 3)) {
+    t(`6.${nome}: raster aparece na Biblioteca`, await pg.locator(".retrato-opcao", { hasText: nome }).count() > 0);
+  }
+  for (const [nome] of fixtures.slice(3)) {
+    t(`6.${nome}: formato não-raster NÃO aparece`, await pg.locator(".retrato-opcao", { hasText: nome }).count() === 0);
+  }
+  await pg.getByRole("button", { name: "Fechar" }).click();
 
   console.log(`\n==== retratos-ui: ${pass} ok, ${fail} falhas ====`);
 } catch (e) {

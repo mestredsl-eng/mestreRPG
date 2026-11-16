@@ -52,8 +52,12 @@ export default function ModalRetrato({ characterId, campaignId, retratoAtual, no
   }, []);
   useEffect(() => {
     if (aba !== "biblioteca" || biblioteca !== null) return;
+    // Somente raster aceito pelo servidor como retrato — SVG, GIF, BMP
+    // etc. não aparecem como opção (a validação definitiva continua no
+    // PUT/GET do servidor: extensão, MIME, assinatura, tamanho, dimensões).
     api.listarArquivos(campaignId)
-      .then((r) => setBiblioteca(r.arquivos.filter((a) => (a.mimeType ?? "").startsWith("image/"))))
+      .then((r) => setBiblioteca(r.arquivos.filter((a) =>
+        a.mimeType === "image/png" || a.mimeType === "image/jpeg" || a.mimeType === "image/webp")))
       .catch(() => setBiblioteca([]));
   }, [aba, campaignId, biblioteca]);
 
