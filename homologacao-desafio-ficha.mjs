@@ -103,6 +103,35 @@ try {
   }
   ids.pj = pjId;
 
+  // segundo personagem (jogador2) cuja ficha NÃO tem nenhum campo elegível:
+  // só texto e moeda — serve para provar a mensagem explicativa na UI e a
+  // rejeição de qualquer campo no socket.
+  const ESTRUTURA_SEM_ELEGIVEIS = {
+    versao: 1,
+    secoes: [
+      { id: "s-liv", titulo: "Anotações", ordem: 0, campos: [
+        { id: "diario", label: "Diário", tipo: "texto", semantico: "livre" },
+        { id: "cofre", label: "Cofre", tipo: "decimal", semantico: "moeda" },
+      ]},
+    ],
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+  };
+  const tpl2Id = crypto.randomUUID(), ver2Id = crypto.randomUUID(), pj2Id = crypto.randomUUID();
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+        .run(tpl2Id, ids.camp, "Ficha Anotações", null, ids.admin, agora, agora);
+      w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+        .run(ver2Id, tpl2Id, JSON.stringify(ESTRUTURA_SEM_ELEGIVEIS), agora, agora);
+      w.prepare("update sheet_templates set current_version_id=? where id=?").run(ver2Id, tpl2Id);
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pj2Id, ids.camp, ids.j2.membershipId, ver2Id, "PJ Sem Teste",
+          JSON.stringify({ diario: "texto", cofre: 10 }), "{}", "aprovada", 0, agora, agora);
+    } finally { w.close(); }
+  }
+  ids.pj2 = pj2Id;
+
   // mínimo de sucesso D10 conhecido
   await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, { cookie: ids.cm, body: { dados: { d10SucessoMinimo: 6 } } });
 
@@ -162,6 +191,29 @@ try {
   });
   const evL = evJ1.teste.filter((x) => x.id === rLivre?.id).pop();
   t("campo livre com usadoEmTestes elegível (carisma=2)", rLivre?.ok === true && evL?.pool?.positivos === 2, JSON.stringify(evL?.pool));
+
+  sec("campoId forjado/inexistente e rótulo adulterado");
+  const rInexistente = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "campo_que_nao_existe",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("campoId inexistente rejeitado", rInexistente?.ok === false, JSON.stringify(rInexistente));
+  const rCofre = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj2Id, campoId: "cofre",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("campo inelegível de outra ficha rejeitado", rCofre?.ok === false, JSON.stringify(rCofre));
+  const rForjado = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pjId, campoId: "medicina", rotulo: "RÓTULO FORJADO PELO CLIENTE",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("desafio com rótulo forjado aceito (campo válido)", rForjado?.ok === true, JSON.stringify(rForjado));
+  const evF = evJ1.teste.find((x) => x.id === rForjado?.id);
+  t("rótulo exibido = label real do campo, não o forjado",
+    evF?.rotulo === "Medicina", `rotulo=${JSON.stringify(evF?.rotulo)}`);
+  const rowF = rForjado?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rForjado.id)) : null;
+  const skillF = JSON.parse(rowF?.skill_ref ?? "{}");
+  t("skill_ref persistido usa label real", skillF?.rotulo === "Medicina" && skillF?.campoId === "medicina", JSON.stringify(skillF));
 
   sec("jogador recebe, identifica e rola; resultado para todos");
   const roll = await emitirCb(sockJ1, "mesa:teste:rolar", { testId: id1, requestId: "df-r-" + crypto.randomUUID().slice(0, 8) });
@@ -269,6 +321,21 @@ try {
   t("UI. mestre vê o mesmo resultado", /sucesso/.test(txtResM ?? "") && /falha/.test(txtResM ?? ""), txtResM?.slice(0, 160));
   const dados3d = await pM.locator(".rolagem-item canvas, .rolagem-item svg").count();
   t("UI. dados visuais renderizados", dados3d > 0, `n=${dados3d}`);
+
+  // ficha sem nenhum campo elegível: a UI explica o motivo em vez de
+  // mostrar um seletor vazio sem contexto — o envio anterior fechou o
+  // formulário (fluxo fecha após sucesso), reabrir antes de continuar
+  if (!(await form.isVisible().catch(() => false))) {
+    await tituloFicha.locator("button", { hasText: "+ Desafio" }).click();
+    await pM.waitForTimeout(300);
+  }
+  await selPers.selectOption({ index: opsPers.findIndex((o) => o.includes("PJ Sem Teste")) });
+  await pM.waitForTimeout(1200);
+  const msgsVazio = await form.locator(".meta").allTextContents();
+  t("UI. ficha sem elegíveis mostra explicação",
+    msgsVazio.some((m) => /Nenhum campo elegível/.test(m) && /Usado em testes/.test(m)), msgsVazio.join(" | "));
+  const opcoesVazio = await selCampo.locator("option").allTextContents();
+  t("UI. seletor sem opções de campo", opcoesVazio.every((o) => /Escolher|Carregando/.test(o)), opcoesVazio.join("|"));
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));

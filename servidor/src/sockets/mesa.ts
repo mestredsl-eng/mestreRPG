@@ -823,6 +823,10 @@ function socket_handlers(
           })()
         : null;
       if (payload.campoId) valorCampo = base;
+      // Rótulo de exibição autoritativo: com campoId válido, o nome do
+      // campo vem da ESTRUTURA persistida — um rótulo forjado no payload
+      // não pode renomear o campo que o jogador vai ver no desafio.
+      let rotuloExibicao: string | null = null;
       // Elegibilidade do campo de teste: com campoId, a estrutura publicada
       // da ficha é obrigatória e precisa passar no parse — sem ela não há
       // como provar elegibilidade, então a solicitação é rejeitada (o
@@ -850,6 +854,7 @@ function socket_handlers(
           cb?.({ ok: false, erro: "Campo não é elegível para teste" });
           return;
         }
+        rotuloExibicao = campo.label;
       }
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
@@ -865,7 +870,7 @@ function socket_handlers(
         await db.insert(tests).values({
           id, campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id,
           characterId: char.id, requestedBy: u.id,
-          skillRef: (payload.skillRef ?? (payload.campoId ? { campoId: payload.campoId, rotulo: payload.rotulo } : null)) as never,
+          skillRef: (payload.skillRef ?? (payload.campoId ? { campoId: payload.campoId, rotulo: rotuloExibicao ?? payload.rotulo } : null)) as never,
           modifiers: { bonus: payload.bonus ?? 0, malus: negativos, valorCampo, positivos } as never,
           diceCount: count, diceSides: dadosLados,
           target: payload.minimo ?? null,
@@ -893,7 +898,7 @@ function socket_handlers(
       const pool = { positivos, negativos, dadosLados };
       const publico = {
         id, sessionId: ctx.sessao.id, characterId: char.id, characterName: nomeChar,
-        requestedByName: nomeAutor, rotulo: payload.rotulo ?? null,
+        requestedByName: nomeAutor, rotulo: rotuloExibicao ?? payload.rotulo ?? null,
         skillRef: payload.skillRef ?? null, // skillRef pode ter nome; mínimo NÃO vai
         status: "pendente", createdAt: agora,
         // visibilidade explícita e coerente em TODOS os payloads —
@@ -936,7 +941,7 @@ function socket_handlers(
 
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
-        kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${payload.rotulo ? ` (${payload.rotulo})` : ""}`,
+        kind: "teste", content: `${nomeAutor} solicitou teste para ${nomeChar}${(rotuloExibicao ?? payload.rotulo) ? ` (${rotuloExibicao ?? payload.rotulo})` : ""}`,
         visibility: visReq,
         recipients: visReq === "privada" ? [membroDono.userId] : undefined,
       });
