@@ -450,6 +450,19 @@ export const definicaoElementoSchema = z.object({
   gruposExclusividade: listaOuVazia(z.array(z.string().max(80)).max(20).default([])), // spec: vários grupos por elemento
   exclusivos: listaOuVazia(z.array(z.string().max(80)).max(50).default([])), // keys de elementos incompatíveis
   obrigatorios: listaOuVazia(z.array(z.string().max(80)).max(50).default([])), // defeitos/itens exigidos
+  // Limitação condicional de teto (Issue #122): enquanto este elemento
+  // estiver selecionado (nível > 0 em QUALQUER campo da ficha, resolvido
+  // por extrairEscolhas), o elemento alvo kind:key passa a ter teto
+  // efetivo min(maximo declarado, fórmula, limitacao.maximo). Genérico
+  // entre tipos — ex.: vantagem "Sorte" limita atributo "Manipulação".
+  // Schema ESTRITO na entrada: kind ∈ TIPOS_REGRA, key no padrão das
+  // chaves de elemento e maximo finito ≥ 0 (zero permitido) — estrutura
+  // inválida é rejeitada com 400, nunca ignorada silenciosamente.
+  limitacoes: listaOuVazia(z.array(z.object({
+    kind: z.enum(TIPOS_REGRA),
+    key: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/, "Use letras minúsculas, números e _"),
+    maximo: z.number().nonnegative().refine((n) => Number.isFinite(n), "máximo deve ser finito"),
+  })).max(50).default([])),
   // Fórmulas personalizadas (parser seguro de ficha.ts — sem eval).
   // Chaves especiais: "custo" (custo em pontos p/ escolhas por seleção),
   // "requisito" (deve ser ≠0), "minimo"/"maximo" (limites calculados).
@@ -978,6 +991,25 @@ export function validarRegras(
     if (lim.minimo !== undefined || lim.maximo !== undefined) limitesFormula.set(chave, lim);
   }
 
+  // 0b) Limitações condicionais de teto (Issue #122): cada elemento
+  // SELECIONADO impõe `maximo` ao elemento alvo kind:key — vale entre
+  // tipos diferentes e independe do campo onde a escolha foi gravada
+  // (nível vem de nivelPorElemento, alimentado por extrairEscolhas).
+  // Múltiplos limitadores sobre o mesmo alvo: fica o MENOR teto e o
+  // nome do limitador que o impõe (para a mensagem de erro).
+  const tetoLimitacao = new Map<string, { maximo: number; limitador: string }>();
+  for (const chave of nivelPorElemento.keys()) {
+    const el = regras.elementos.get(chave)!;
+    for (const lim of el.definition.limitacoes ?? []) {
+      if (typeof lim.maximo !== "number" || !Number.isFinite(lim.maximo)) continue;
+      const alvo = CHAVE(lim.kind, lim.key);
+      const atual = tetoLimitacao.get(alvo);
+      if (!atual || lim.maximo < atual.maximo) {
+        tetoLimitacao.set(alvo, { maximo: lim.maximo, limitador: el.name });
+      }
+    }
+  }
+
   // 1) Elementos indisponíveis ou fora dos limites
   for (const e of escolhas) {
     if (!e.selecionado || !e.elemento) {
@@ -990,10 +1022,16 @@ export function validarRegras(
     const chaveEl = CHAVE(e.elemento.kind, e.elemento.key);
     const lim = limitesFormula.get(chaveEl);
     const minimo = lim?.minimo ?? def.minimo;
-    // Teto efetivo: menor entre máximo declarado, fórmula e nº de níveis.
+    // Teto base: menor entre máximo declarado, fórmula e nº de níveis.
     const tetos = [lim?.maximo, def.maximo, def.niveis?.length ? def.niveis.length : undefined]
       .filter((v): v is number => v !== undefined);
-    const maximo = tetos.length ? Math.min(...tetos) : undefined;
+    const maximoBase = tetos.length ? Math.min(...tetos) : undefined;
+    // Limitação condicional ativa: teto efetivo é o menor entre o teto
+    // base e o `maximo` imposto por elemento(s) selecionado(s).
+    const limCond = tetoLimitacao.get(chaveEl);
+    const maximo = [maximoBase, limCond?.maximo]
+      .filter((v): v is number => v !== undefined)
+      .reduce<number | undefined>((acc, v) => (acc === undefined ? v : Math.min(acc, v)), undefined);
     if (!def.disponivel) {
       erros.push({ campoId: e.campoId, codigo: "indisponivel", mensagem: `"${e.elemento.name}" está desativado nesta campanha` });
     }
@@ -1001,7 +1039,18 @@ export function validarRegras(
       erros.push({ campoId: e.campoId, codigo: "abaixo_minimo", mensagem: `"${e.elemento.name}" exige nível mínimo ${minimo}` });
     }
     if (maximo !== undefined && e.level > maximo) {
-      erros.push({ campoId: e.campoId, codigo: "acima_maximo", mensagem: `"${e.elemento.name}" permite no máximo nível ${maximo}` });
+      // Se a limitação condicional é o teto que está sendo violado
+      // (menor ou empatado com o teto base), a mensagem aponta o
+      // limitador — ex.: "Manipulação" está limitada a nível 2 por "Sorte".
+      if (limCond && limCond.maximo <= (maximoBase ?? Infinity)) {
+        erros.push({
+          campoId: e.campoId,
+          codigo: "limitacao",
+          mensagem: `"${e.elemento.name}" está limitada a nível ${limCond.maximo} por "${limCond.limitador}"`,
+        });
+      } else {
+        erros.push({ campoId: e.campoId, codigo: "acima_maximo", mensagem: `"${e.elemento.name}" permite no máximo nível ${maximo}` });
+      }
     }
   }
 
