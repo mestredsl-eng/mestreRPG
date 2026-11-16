@@ -14,6 +14,7 @@ import {
   ehAdmin,
 } from "../lib/guildas.js";
 import { getMembership } from "../lib/permissoes.js";
+import { gravarPapelStatusMembro, gravarResponsavelGuilda } from "../lib/guildas-guarda.js";
 
 const db = getDb();
 
@@ -269,19 +270,14 @@ guildasRouter.put("/:guildId/responsavel", async (req, res) => {
     res.status(409).json({ erro: "O novo responsável precisa ser GM ativo desta guilda" });
     return;
   }
-  const agora = new Date();
   // Compare-and-swap atômico: a gravação só acontece se o responsável
   // lido na autorização AINDA for o atual (IS = igualdade null-safe no
-  // SQLite). Se outra transferência commitar primeiro, changes=0 e esta
-  // requisição perde com 409 — auditoria e evento só ocorrem para a
-  // transferência efetivamente confirmada.
-  const gravacao = await db.run(sql`
-    UPDATE guilds
-    SET responsible_user_id = ${novoId}, updated_at = ${agora.getTime()}
-    WHERE id = ${g.id}
-      AND responsible_user_id IS ${g.responsibleUserId}
-  `);
-  if (gravacao.changes === 0) {
+  // SQLite) E se o alvo continuar GM ativo com conta ativa NO INSTANTE
+  // da escrita — o EXISTS fecha a corrida com PATCH/DELETE de membros:
+  // se um rebaixamento/remoção do alvo commitar entre a validação e
+  // este UPDATE, changes=0 e a transferência perde com 409.
+  const gravacao = await gravarResponsavelGuilda(db, g.id, g.responsibleUserId, novoId);
+  if (gravacao === 0) {
     res.status(409).json({ erro: "A responsabilidade já foi transferida por outra operação" });
     return;
   }
@@ -411,10 +407,25 @@ guildasRouter.patch("/:guildId/membros/:userId", requireGuildGestao(), async (re
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
     return;
   }
-  const dados: Partial<typeof guildMembers.$inferInsert> = { updatedAt: new Date() };
-  if (body.data.role !== undefined) dados.role = body.data.role;
-  if (body.data.status !== undefined) dados.status = body.data.status;
-  await db.update(guildMembers).set(dados).where(eq(guildMembers.id, m.id));
+  // O responsável atual não pode perder o vínculo GM ativo sem
+  // transferência prévia (PUT /:guildId/responsavel) — do contrário
+  // responsible_user_id apontaria para quem já não pode exercer a
+  // função e a recuperação dependeria do ADMIN.
+  if (g.responsibleUserId === alvoId && (novoRole !== "gm" || novoStatus !== "ativo")) {
+    res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser rebaixado ou removido" });
+    return;
+  }
+  if (novoRole !== "gm" || novoStatus !== "ativo") {
+    // Escrita atômica: o UPDATE revalida NO INSTANTE da gravação que o
+    // alvo não é o responsável atual — cobre o caso de `g` ter sido lido
+    // antes de uma transferência concorrente commitar.
+    if ((await gravarPapelStatusMembro(db, m.id, g.id, novoRole, novoStatus)) === 0) {
+      res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser rebaixado ou removido" });
+      return;
+    }
+  } else {
+    await db.update(guildMembers).set({ role: novoRole, status: novoStatus, updatedAt: new Date() }).where(eq(guildMembers.id, m.id));
+  }
   await audit(req, "guilda.membro.atualizar", {
     guildId: g.id,
     userId: alvoId,
@@ -438,15 +449,30 @@ guildasRouter.delete("/:guildId/membros/:userId", requireGuildGestao(), async (r
     res.status(404).json({ erro: "Membro não encontrado" });
     return;
   }
+  const [g] = await db
+    .select({ responsibleUserId: guilds.responsibleUserId })
+    .from(guilds)
+    .where(eq(guilds.id, req.params.guildId))
+    .limit(1);
   const [alvoDel] = await db.select({ status: users.status }).from(users).where(eq(users.id, alvoId)).limit(1);
   if (m.role === "gm" && m.status === "ativo" && alvoDel?.status === "ativo" && (await contarGMs(req.params.guildId)) <= 1) {
     res.status(409).json({ erro: "A guilda precisa de ao menos um GM ativo — promova outro membro antes" });
     return;
   }
-  await db
-    .update(guildMembers)
-    .set({ status: "removido", updatedAt: new Date() })
-    .where(eq(guildMembers.id, m.id));
+  // Mesma proteção do PATCH: remover o vínculo do responsável atual
+  // sem transferência prévia deixaria responsible_user_id órfão.
+  if (g?.responsibleUserId === alvoId) {
+    res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser removido" });
+    return;
+  }
+  // Escrita atômica: mesma revalidação do PATCH — se uma transferência
+  // commitar entre a leitura de `g` e este UPDATE, changes=0 e o novo
+  // responsável não pode ser removido.
+  const alterou = await gravarPapelStatusMembro(db, m.id, req.params.guildId, m.role, "removido");
+  if (alterou === 0) {
+    res.status(409).json({ erro: "O responsável atual precisa transferir a responsabilidade antes de ser removido" });
+    return;
+  }
   await audit(req, "guilda.membro.remover", { guildId: req.params.guildId, userId: alvoId });
   await notificarGuildaAtualizada(req.params.guildId, "membro_removido", [alvoId]);
   res.json({ ok: true });

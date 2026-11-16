@@ -224,7 +224,59 @@ function montarFicha(
         const hp = resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
         if (hp) hp.historico = [];
         const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
-        if (vit) vit.historico = [];
+        if (vit) {
+          vit.historico = [];
+          // A conversão automática de ferimentos calcula % sobre o HP
+          // MÁXIMO REAL (oculto do leitor): o incremento automático além
+          // do que a porcentagem PÚBLICA de HP justificaria denunciaria
+          // o atributo privado. A avaliação NÃO depende da config atual:
+          // usa o SNAPSHOT de limiares gravado no evento que produziu o
+          // nível (o mestre pode desabilitar/alterar a regra depois) e
+          // funciona mesmo com a conversão hoje desabilitada. Evento
+          // antigo sem snapshot → fallback conservador: nenhum incremento
+          // automático é publicamente justificável (exibe só o piso).
+          // Piso narrativo: último nível MANUAL persistido em
+          // estadoVit.nivelManual (sobrevive ao slice do histórico);
+          // fallback para o histórico em estados antigos sem o campo.
+          const cfgVit = regras.config.vitalidade;
+          const estadoVit = lerVitalidade(dados);
+          const histVit = estadoVit.historico ?? [];
+          let pisoManual = typeof estadoVit.nivelManual === "number" ? estadoVit.nivelManual : 0;
+          if (typeof estadoVit.nivelManual !== "number") {
+            for (const ev of histVit) {
+              if (ev.origem !== "conversao-ferimento" && typeof ev.nivelNovo === "number") {
+                pisoManual = ev.nivelNovo;
+              }
+            }
+          }
+          const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
+          const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
+          if (veioDeConversao && cfgVit?.niveis?.length) {
+            const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
+            const limiaresEv = Array.isArray(ultimoVit?.limiares) ? ultimoVit.limiares : null;
+            const tetoPublico = limiaresEv
+              ? Math.min(
+                  nivelExigidoPorHp({ habilitada: true, limiares: limiaresEv }, pctPublico) ?? 0,
+                  cfgVit.niveis.length - 1
+                )
+              : 0; // sem snapshot: conservador — só o piso manual é visível
+            // O piso manual pode apontar para um índice que não existe
+            // mais na escala ATUAL (o mestre pode reduzi-la depois da
+            // definição manual). Normaliza para o topo da escala —
+            // "no mínimo este estado" tem como teto o último nível
+            // vigente; sem o clamp, niveis[nivelExibido] seria
+            // undefined e a leitura da ficha quebraria.
+            const pisoNaEscala = Math.min(pisoManual, cfgVit.niveis.length - 1);
+            const nivelExibido = Math.max(pisoNaEscala, Math.min(vit.nivel, tetoPublico));
+            if (nivelExibido !== vit.nivel) {
+              const niv = cfgVit.niveis[nivelExibido];
+              vit.nivel = nivelExibido;
+              vit.nome = niv.nome;
+              vit.penalidadeDados = niv.penalidadeDados;
+              vit.bloqueiaAcoes = niv.bloqueiaAcoes;
+            }
+          }
+        }
         return {
           hp,
           vitalidade: vit,
@@ -992,6 +1044,11 @@ personagensRouter.post("/:characterId/hp", requireLeasePersonagem(), async (req,
                   autorId: req.usuario!.id,
                   autorNome,
                   origem: "conversao-ferimento" as const,
+                  // snapshot dos limiares que produziram este evento:
+                  // a leitura pública de NPC usa ESTA regra (e não a
+                  // config atual, mutável) para decidir o que é
+                  // justificável pelo HP público
+                  limiares: conv.limiares,
                 },
               ].slice(-100),
             };
@@ -1059,6 +1116,9 @@ personagensRouter.post("/:characterId/vitalidade", requireLeasePersonagem(), asy
     const estado = {
       ...anterior,
       nivel: body.data.nivel,
+      // piso narrativo persistido: sobrevive ao slice(-100) do histórico
+      // e nunca é sobrescrito por conversões automáticas
+      nivelManual: body.data.nivel,
       alteradoEm: agora.toISOString(),
       alteradoPor: req.usuario!.id,
       historico: [

@@ -183,7 +183,7 @@ try {
   const page = await ctx.newPage();
   page.on("pageerror", (e) => console.log("  [pageerror]", e.message));
 
-  await page.goto(UI, { waitUntil: "networkidle" });
+  await page.goto(UI, { waitUntil: "domcontentloaded" });
   // Campanhas → campanha → Personagens → Novo personagem
   await page.getByRole("button", { name: "Campanhas" }).click();
   await page.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
@@ -388,7 +388,7 @@ try {
     t("profissão persistida", campos.prof === "medico", String(campos.prof));
 
     // Reabre a ficha (modo leitura) — seleções aparecem
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "Campanhas" }).click();
     await page.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
     await page.getByRole("button", { name: "Personagens" }).click();
@@ -414,7 +414,7 @@ try {
     const ctxV = await browser.newContext({ viewport: { width: w, height: h } });
     await ctxV.addCookies([{ name: "mestre_rpg_session", value: cookieToken, url: UI }]);
     const pv = await ctxV.newPage();
-    await pv.goto(UI, { waitUntil: "networkidle" });
+    await pv.goto(UI, { waitUntil: "domcontentloaded" });
     await pv.getByRole("button", { name: "Campanhas" }).click();
     await pv.locator(".cartao-campanha", { hasText: "Campanha Teste" }).click();
     await pv.getByRole("button", { name: "Personagens" }).click();

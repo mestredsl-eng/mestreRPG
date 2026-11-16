@@ -520,16 +520,30 @@ try {
     for (let i = 0; i < d.length; i += 4096) h = (h * 31 + d[i] + d[i + 1] * 3 + d[i + 2] * 7) >>> 0;
     return String(h);
   });
-  await pgM.getByRole("button", { name: /Lançar/ }).click();
-  // polling dentro da janela de animação (~2-3s): o tumble começa no
-  // clique (antes do ACK) e o assentamento continua depois — qualquer
-  // mudança de pixel prova lançamento/giro/colisão em andamento
+  // socket precisa estar conectado no instante do clique: lancar()
+  // aborta sem animar quando connected===false (transporte em
+  // reconexão) — flake observado no CI (pixels idênticos por ~3s).
+  await pgM.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 15000 });
   let pix1 = "", pix2 = "", animou = false;
-  for (let i = 0; i < 9 && !animou; i++) {
-    pix1 = await amostraPixels();
-    await pgM.waitForTimeout(300);
-    pix2 = await amostraPixels();
-    animou = pix1 !== "" && pix1 !== pix2;
+  // até 2 tentativas: se o 1º clique caiu num instante de desconexão,
+  // nenhuma animação ocorre e a 2ª tentativa prova o comportamento;
+  // animação genuinamente quebrada falha nas duas e o assert reprova
+  for (let tent = 0; tent < 2 && !animou; tent++) {
+    if (tent > 0) {
+      await pgM.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 15000 });
+      await pgM.getByRole("button", { name: /Lançar/ }).click();
+    } else {
+      await pgM.getByRole("button", { name: /Lançar/ }).click();
+    }
+    // polling dentro da janela de animação (~2-3s): o tumble começa no
+    // clique (antes do ACK) e o assentamento continua depois — qualquer
+    // mudança de pixel prova lançamento/giro/colisão em andamento
+    for (let i = 0; i < 9 && !animou; i++) {
+      pix1 = await amostraPixels();
+      await pgM.waitForTimeout(300);
+      pix2 = await amostraPixels();
+      animou = pix1 !== "" && pix1 !== pix2;
+    }
   }
   t("animação 3D em andamento durante a rolagem", animou, `${pix1}→${pix2}`);
   // aguarda o ACK da rolagem de amostragem terminar antes de desconectar

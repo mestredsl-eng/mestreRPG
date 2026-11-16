@@ -48,13 +48,9 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Sistema financeiro do personagem:** carteira derivada de tabela `moeda` com saldo inicial, entradas, saídas e saldo atual calculado (`saldo inicial + entradas − saídas`), coluna de seleção Entrada/Saída, formatação BRL com tolerância a valores legados (`"1.111,11"`), permissões por campo e saldo inicial configurável — sem integração automática com compras do inventário.
 - **Inventário com cálculos:** campos `tabela` semânticos `item` calculam peso/espaço/valor por linha (`quantidade × unidade`) e resumo geral, com validação de munição (`atual ≤ máxima`), valores não-negativos e tolerância a registros antigos.
 - **Poderes × Defeitos:** elementos de regra com níveis graduados (`selecao_nivel`), custos por nível (inclusive negativos que concedem pontos), limites configuráveis de poderes/defeitos, exigência de defeito e validação no backend.
-- **Pontos de Vida (HP) e Vitalidade:** HP máximo configurável por campanha (`base + atributo × por nível`, ex.: 100 + Vigor×20), HP atual persistido com dano/recuperação/ajuste, limites (0–máximo) e histórico com motivo e autor. Vitalidade: escala de níveis configurável que reduz dados nas rolagens — penalidade aplicada no backend, Incapacitado bloqueia ações do jogador (mestre pode autorizar exceção). HP e Vitalidade são independentes.
+- **Pontos de Vida (HP) e Vitalidade:** HP máximo configurável por campanha (`base + atributo × por nível`, ex.: 100 + Vigor×20), HP atual persistido com dano/recuperação/ajuste, limites (0–máximo) e histórico com motivo e autor. Vitalidade: escala de níveis configurável que reduz dados nas rolagens — penalidade aplicada no backend, Incapacitado bloqueia ações do jogador (mestre pode autorizar exceção). Conversão automática de ferimentos (dano de HP → subida de vitalidade) configurável por limiares de percentual na aba Regras.
+- **VTT (mesa virtual):** mapas táticos com tokens de personagem, movimento em tempo real, névoa de guerra com sincronização e reconciliação, tokens de NPC ocultos até exibição explícita do mestre e ficha de NPC com visibilidade decidida pelo mestre.
 - **Biblioteca de regras inicial:** sementes de talentos, habilidades, conhecimentos, profissões, vantagens, defeitos, poderes, disciplinas, perícias, itens, veículos e dinheiro — semeadas por campanha sem duplicar.
-
-### Pendências que dependem de decisão do mestre
-
-- **VTT (mesa virtual):** mapas táticos, tokens, movimento e névoa de guerra foram explicitamente deixados fora do escopo aprovado — exigem autorização para uma etapa futura.
-- **Conversão ferimento → vitalidade:** a relação automática entre dano de HP e nível de vitalidade ficou para configuração futura.
 
 ## Operação no Windows
 
@@ -134,13 +130,13 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 4. Cookies de sessão são `HttpOnly` + `SameSite=Lax` e ganham flag `Secure` quando a conexão chega via HTTPS (detectado por `req.secure` → `X-Forwarded-Proto` respeitando `trust proxy`). Socket.IO funciona sobre WebSocket/polling através do túnel; o handshake valida a origem (Fase 5).
 5. O proxy deve repassar `X-Forwarded-Proto`, `X-Forwarded-For` e os headers `Upgrade`/`Connection` do WebSocket. O redirecionamento HTTP→HTTPS, quando desejado, é responsabilidade do proxy (o backend não redireciona para não quebrar o acesso HTTP local/LAN).
 
-**Acesso pela rede NetBird (mesh):** com o NetBird ativo, o servidor responde em `http://100.97.99.149:3001` para os peers da malha — sem HTTPS (tráfego já criptografado pelo WireGuard). Para publicar na internet via NetBird, crie um ingress/domínio no painel NetBird apontando para a porta 3001 e cadastre o hostname resultante em `dominioPublico`.
+**Acesso pela rede NetBird (mesh):** com o NetBird ativo, o servidor responde em `http://<ip-da-malha>:3001` para os peers da malha (descubra o IP com `netbird status`) — sem HTTPS (tráfego já criptografado pelo WireGuard). Para publicar na internet via NetBird, crie um ingress/domínio no painel NetBird apontando para a porta 3001 e cadastre o hostname resultante em `dominioPublico`.
 
-**Exposição pública automática (NetBird Services):** o projeto inclui `expor-mestre-rpg.bat`, que roda `netbird expose --with-name-prefix mestre-rpg 3001` em loop (reinicia se cair) e registra a URL gerada em `logs/netbird-expose.log`. Uma tarefa agendada do Windows (`MestreRPG-NetBirdExpose`) o inicia no logon. **Atenção:** cada execução do `expose` gera um sufixo aleatório no domínio (`mestre-rpg-XXXX.eu1.netbird.services`) e a propagação leva alguns minutos — para descobrir a URL atual, veja a última linha `URL:` do log. O acesso também funciona de forma estável dentro da malha por `http://100.97.99.149:3001`.
+**Exposição pública automática (NetBird Services):** o projeto inclui `expor-mestre-rpg.bat`, que roda `netbird expose --with-name-prefix mestre-rpg 3001` em loop (reinicia se cair) e registra a URL gerada em `logs/netbird-expose.log`. Uma tarefa agendada do Windows (`MestreRPG-NetBirdExpose`) o inicia no logon. **Atenção:** cada execução do `expose` gera um sufixo aleatório no domínio (`mestre-rpg-XXXX.eu1.netbird.services`) e a propagação leva alguns minutos — para descobrir a URL atual, veja a última linha `URL:` do log. O acesso também funciona de forma estável dentro da malha por `http://<ip-da-malha>:3001`.
 
 ### Recuperação em outro computador Windows
 
-1. Instale Node.js 20+ e clone/baixe o projeto.
+1. Instale Node.js 20.19 ou superior e clone/baixe o projeto.
 2. `npm install` e `npm run db:migrate` (cria a estrutura vazia).
 3. Pare o servidor e copie para o novo PC: `banco/mestre-rpg.db`, a pasta `arquivos/campanhas/` e, se quiser manter os backups, `backups/`.
 4. Alternativa mais simples: copie a pasta `backups/<data>_manual/` inteira, substitua o banco pela cópia do backup e restaure `arquivos/` — o manifesto do backup indica exatamente o que foi incluído.
