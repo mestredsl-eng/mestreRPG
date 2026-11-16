@@ -428,6 +428,107 @@ try {
   const me = await pgM.evaluate(async () => (await (await fetch("/api/auth/me")).json()).usuario?.preferences?.dados);
   t("preferências gravadas via API", me?.corExterna === "#7c3aed" && me?.corInterna === "#fde047", JSON.stringify(me));
 
+  sec("6b. Temas da bandeja 3D — seleção, prévia e persistência");
+  const temaCards = pgM.locator(".tema-mesa-card");
+  t("cinco temas de bandeja disponíveis", await temaCards.count() === 5, `count=${await temaCards.count()}`);
+  t("cada tema exibe prévia visual própria",
+    await pgM.locator(".tema-mesa-previa").count() === 5
+      && await pgM.locator(".tema-mesa-previa").first().evaluate((el) => Boolean(el.style.backgroundImage && el.style.borderColor)));
+  const datasetTema = () => pgM.evaluate(() => document.documentElement.dataset.temaMesa ?? "");
+  const varFeltro = () => pgM.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--mesa-feltro").trim());
+  const temasIds = ["azul", "verde", "vinho", "madeira", "obsidiana"];
+  const nomesTema = ["Feltro azul", "Feltro verde", "Feltro vinho", "Madeira escura", "Obsidiana"];
+  const luminancias = [];
+  const luminanciaCanvas = () => pgM.evaluate(() => {
+    const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
+    if (!c) return -1;
+    const ctx = c.getContext("2d");
+    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    let s = 0, n = 0;
+    for (let i = 0; i < d.length; i += 400) {
+      if (d[i + 3] > 200) { s += 0.3 * d[i] + 0.6 * d[i + 1] + 0.1 * d[i + 2]; n++; }
+    }
+    return n ? s / n : -1;
+  });
+  for (let i = 0; i < temasIds.length; i++) {
+    await temaCards.filter({ hasText: nomesTema[i] }).click();
+    await pgM.waitForTimeout(300);
+    t(`tema ${temasIds[i]} selecionável`, (await datasetTema()) === temasIds[i], `data=${await datasetTema()}`);
+    t(`tema ${temasIds[i]} aplica cor da bandeja`, (await varFeltro()).length > 0);
+    luminancias.push(await luminanciaCanvas());
+    await shot(pgM, `06b-tema-${temasIds[i]}`);
+  }
+  // prova visual: os temas produzem claridades de bandeja realmente
+  // diferentes no canvas (não basta a variável CSS mudar)
+  const lumDistintas = new Set(luminancias.map((l) => Math.round(l / 8))).size;
+  t("temas produzem bandejas visualmente distintas no canvas", lumDistintas >= 3,
+    `luminâncias=${luminancias.map((l) => l.toFixed(0)).join(",")}`);
+  // seleção persiste no servidor e sobrevive a reload
+  const meTemaSel = await pgM.evaluate(async () => (await (await fetch("/api/auth/me")).json()).usuario?.preferences?.temaMesa);
+  t("temaMesa persistido via API", meTemaSel === "obsidiana", `lido=${meTemaSel}`);
+  await pgM.reload();
+  await pgM.getByText("Servidor online").waitFor({ timeout: 15000 });
+  await irCampanha(pgM);
+  await entrarNaMesa(pgM);
+  await pgM.waitForTimeout(600);
+  t("tema persiste após reload", (await datasetTema()) === "obsidiana", `data=${await datasetTema()}`);
+  // isolamento: o outro participante continua no tema padrão
+  const temaJ = await pg1.evaluate(() => document.documentElement.dataset.temaMesa ?? "");
+  t("tema é individual — outro usuário segue no padrão", temaJ === "azul", `jogador=${temaJ}`);
+  // valores inválidos rejeitados pela API
+  const temaInv = await pgM.evaluate(async () => (await fetch("/api/auth/preferences", {
+    method: "PATCH", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ temaMesa: "arco-iris" }),
+  })).status);
+  t("temaMesa inválido rejeitado (400)", temaInv === 400, `status=${temaInv}`);
+  const temaCss = await pgM.evaluate(async () => (await fetch("/api/auth/preferences", {
+    method: "PATCH", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ temaMesa: "url(javascript:alert(1))" }),
+  })).status);
+  t("temaMesa com CSS arbitrário rejeitado (400)", temaCss === 400, `status=${temaCss}`);
+  // volta ao azul para as próximas seções visuais
+  await temaCards.filter({ hasText: "Feltro azul" }).click();
+  await pgM.waitForTimeout(200);
+
+  sec("6c. Modo imersivo — ampliar/fechar preserva cena e rolagem");
+  const areaImersiva = pgM.locator(".mesa-dados-area").first();
+  const canvasArea = areaImersiva.locator(".mesa-dados-3d-canvas");
+  await canvasArea.waitFor({ timeout: 10000 });
+  const rotuloAntesImersao = await canvasArea.getAttribute("aria-label");
+  // garante o botão visível ANTES de medir: o scrollIntoView automático
+  // do click do Playwright não pode ser confundido com salto da feature
+  const btnAmpliar = areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" });
+  await btnAmpliar.scrollIntoViewIfNeeded();
+  await pgM.waitForTimeout(300);
+  const scrollAntesImersao = await pgM.evaluate(() => window.scrollY);
+  await btnAmpliar.click();
+  const areaAberta = pgM.locator(".mesa-dados-area.imersivo");
+  await areaAberta.waitFor({ timeout: 5000 });
+  const rectImersivo = await areaAberta.locator(".mesa-dados-3d-canvas").boundingBox();
+  t("overlay imersivo ocupa a tela", !!rectImersivo && rectImersivo.width > 1100 && rectImersivo.height > 500,
+    JSON.stringify(rectImersivo));
+  t("mesmo canvas/valores preservados ao ampliar",
+    (await areaAberta.locator(".mesa-dados-3d-canvas").getAttribute("aria-label")) === rotuloAntesImersao,
+    `${rotuloAntesImersao}`);
+  t("abrir não gera nova rolagem", (await pgM.evaluate(() => window.scrollY)) === scrollAntesImersao,
+    `antes=${scrollAntesImersao} depois=${await pgM.evaluate(() => window.scrollY)}`);
+  await shot(pgM, "06c-mesa-imersiva");
+  await pgM.keyboard.press("Escape");
+  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
+  t("Escape fecha o modo imersivo", await pgM.locator(".mesa-dados-area.imersivo").count() === 0);
+  t("fechar não gera nova rolagem", (await pgM.evaluate(() => window.scrollY)) === scrollAntesImersao,
+    `depois=${await pgM.evaluate(() => window.scrollY)}`);
+  // reabre e fecha pelo botão
+  await areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" }).click();
+  await pgM.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
+  await pgM.getByRole("button", { name: "Recolher mesa de dados" }).click();
+  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
+  t("botão Recolher fecha o modo imersivo", await pgM.locator(".mesa-dados-area.imersivo").count() === 0);
+  // rolagem continua autoritativa após ciclo imersivo
+  await rolarLivre(pgM, 6, 1, "pos-imersivo");
+  t("rolagem funciona após modo imersivo",
+    await pgM.locator(".rolagem-item", { hasText: "pos-imersivo" }).count() > 0);
+
   sec("7. D10 desafio continua autoritativo");
   // o formulário do desafio abre por padrão (fluxo principal); só clica
   // para expandir se por acaso estiver recolhido
@@ -487,6 +588,16 @@ try {
     return { w: r.width, h: r.height };
   }).catch(() => ({ w: 0, h: 0 }));
   t("mobile: mesa 3D visível e compacta", canvasMob > 0 && dim.w > 300 && dim.h <= 170, `w=${dim.w} h=${dim.h}`);
+  // modo imersivo também funciona no mobile
+  const areaMob = pgMob.locator(".mesa-dados-area").first();
+  await areaMob.getByRole("button", { name: "Ampliar mesa de dados" }).click();
+  await pgMob.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
+  const rectMob = await pgMob.locator(".mesa-dados-area.imersivo .mesa-dados-3d-canvas").boundingBox();
+  t("mobile: modo imersivo preenche a tela", !!rectMob && rectMob.width > 340 && rectMob.height > 400,
+    JSON.stringify(rectMob));
+  await pgMob.keyboard.press("Escape");
+  await pgMob.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
+  t("mobile: Escape fecha o modo imersivo", await pgMob.locator(".mesa-dados-area.imersivo").count() === 0);
   await shot(pgMob, "08-mobile-dados");
   await ctxMob.close();
 

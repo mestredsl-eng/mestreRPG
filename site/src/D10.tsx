@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
 import MesaDados3D, { seedDeId } from "./MesaDados3D";
+import MesaDadosArea from "./MesaDadosArea";
 
 interface Props {
   sessionId: string;
@@ -119,7 +120,7 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       {/* Mesa de dados sempre visível: bandeja vazia, tumble real
           durante o ACK e assentamento nas faces oficiais do servidor
           (sucesso/falha por dado). Nenhum valor é sorteado no cliente. */}
-      <div className="mesa-dados-area" aria-label="Mesa de dados D10">
+      <MesaDadosArea ariaLabel="Mesa de dados D10">
         <MesaDados3D
           dados={rolando
             ? Array.from({ length: efetivos }, () => ({ lados: 10, valor: null }))
@@ -132,7 +133,7 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
               : []}
           semente={seedDeId(`${sessionId}-d10-${rodada}`)}
         />
-      </div>
+      </MesaDadosArea>
 
       {resultado && (
         <div className="d10-resultado">

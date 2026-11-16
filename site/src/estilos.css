@@ -2011,6 +2011,84 @@ textarea:focus-visible,
   align-items: center;
   justify-content: center;
 }
+.mesa-dados-area { position: relative; }
+.mesa-dados-wrap { position: relative; }
+
+/* Botão Ampliar/Recolher — sempre visível no canto da bandeja. */
+.mesa-ampliar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 7px;
+  border: 1px solid var(--borda, #2a2f3f);
+  background: rgba(10, 14, 24, .72);
+  color: var(--texto, #e8ecf7);
+  cursor: pointer;
+  backdrop-filter: blur(2px);
+}
+.mesa-ampliar:hover { border-color: var(--acento, #8290bd); }
+.mesa-ampliar:focus-visible { outline: 2px solid var(--acento, #8290bd); outline-offset: 1px; }
+
+/* Modo imersivo: MESMO elemento, só CSS — a cena de física, o canvas e
+   os valores do servidor nunca são desmontados. O placeholder mantém a
+   altura original no fluxo, então abrir/fechar não gera rolagem nova. */
+.mesa-dados-placeholder { width: 100%; }
+.mesa-dados-area.imersivo {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  padding: 14px;
+  border-radius: 0;
+  border: none;
+  background: #0a0e18;
+}
+.mesa-dados-area.imersivo .mesa-dados-3d-canvas {
+  height: 100%;
+  border-radius: 12px;
+}
+.mesa-dados-area.imersivo .mesa-dados-fallback {
+  min-height: 100%;
+  width: 100%;
+}
+@media (max-width: 600px) {
+  .mesa-dados-area.imersivo { padding: 8px; }
+  .mesa-ampliar { top: 6px; right: 6px; padding: 3px 8px; }
+}
+
+/* ---- Seletor de tema da bandeja (Fase 1) ---- */
+.temas-mesa {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.tema-mesa-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 2px solid var(--borda, #2a2f3f);
+  background: var(--fundo-cartao, #161a26);
+  color: var(--texto, #e8ecf7);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.tema-mesa-card:hover { border-color: var(--acento, #8290bd); }
+.tema-mesa-card:focus-visible { outline: 2px solid var(--acento, #8290bd); outline-offset: 1px; }
+.tema-mesa-card.selecionado { border-color: var(--acento, #8290bd); box-shadow: 0 0 0 1px var(--acento, #8290bd) inset; }
+.tema-mesa-previa {
+  display: block;
+  height: 44px;
+  border-radius: 7px;
+  border: 2px solid;
+  box-shadow: inset 0 -8px 12px rgba(0,0,0,.35), 0 2px 4px rgba(0,0,0,.3);
+}
+.tema-mesa-nome { font-weight: 700; font-size: 13px; }
+.tema-mesa-desc { font-size: 11px; color: var(--texto-fraco, #8b93a7); }
 
 /* ---- Central de Novidades (Issue #42) ---- */
 .contador-nao-lidas {

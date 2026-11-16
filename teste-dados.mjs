@@ -52,6 +52,31 @@ const apiJ = (m, p, b) => req(m, p, b, tokJ);
   ok("cor inválida rejeitada", invalido.status === 400, `status=${invalido.status}`);
   const extra = await apiM("PATCH", "/api/auth/preferences", { dados: { corExterna: "#112233", corInterna: "#ffcc00", hacker: true } });
   ok("campo extra rejeitado (strict)", extra.status === 400, `status=${extra.status}`);
+  const extraTopo = await apiM("PATCH", "/api/auth/preferences", { hacker: true });
+  ok("chave arbitrária no topo rejeitada (strict)", extraTopo.status === 400, `status=${extraTopo.status}`);
+
+  // ---------- tema da bandeja 3D (temaMesa) ----------
+  const temaOk = await apiM("PATCH", "/api/auth/preferences", { temaMesa: "vinho" });
+  ok("temaMesa válido aceito", temaOk.status === 200 && temaOk.json?.preferences?.temaMesa === "vinho", `status=${temaOk.status}`);
+  const meTema = await apiM("GET", "/api/auth/me");
+  ok("temaMesa persiste após leitura", meTema.json?.usuario?.preferences?.temaMesa === "vinho");
+  const temaInvalido = await apiM("PATCH", "/api/auth/preferences", { temaMesa: "arco-iris" });
+  ok("temaMesa inválido rejeitado", temaInvalido.status === 400, `status=${temaInvalido.status}`);
+  const temaUrl = await apiM("PATCH", "/api/auth/preferences", { temaMesa: "url(javascript:alert(1))" });
+  ok("temaMesa com CSS arbitrário rejeitado", temaUrl.status === 400, `status=${temaUrl.status}`);
+  // mescla: salvar tema não apaga as cores já gravadas
+  const meMescla = await apiM("GET", "/api/auth/me");
+  ok("temaMesa não apaga preferências de dados",
+    meMescla.json?.usuario?.preferences?.dados?.corExterna === "#112233",
+    JSON.stringify(meMescla.json?.usuario?.preferences ?? {}));
+  // isolamento: jogador não recebe o tema do mestre
+  const meJTema = await apiJ("GET", "/api/auth/me");
+  ok("temaMesa é por usuário (jogador sem tema do mestre)",
+    meJTema.json?.usuario?.preferences?.temaMesa !== "vinho",
+    JSON.stringify(meJTema.json?.usuario?.preferences ?? {}));
+
+  // restaura tema padrão no mestre para não sujar homologações visuais
+  await apiM("PATCH", "/api/auth/preferences", { temaMesa: "azul" });
 
   // isolamento: jogador não herda a cor do mestre
   const meJ = await apiJ("GET", "/api/auth/me");
