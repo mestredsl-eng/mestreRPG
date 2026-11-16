@@ -475,10 +475,13 @@ function ModalCompra({ characterId, catalogo, acervo = [], requisitos = {}, fin,
     ? (templateSel?.data as (EconomiaAcervo & Record<string, unknown>) | undefined)
     : itemAcervoSelecionado ?? undefined;
   const refBRL = (() => {
-    const p = econRef?.economia?.precoReferenciaBRL;
-    if (typeof p === "number" && Number.isFinite(p)) return p;
+    // Mesma precedência do editor: valueCents (override local efetivo)
+    // primeiro; economia.precoReferenciaBRL é fallback — uma atualização
+    // parcial que mude só um dos campos não pode exibir o valor antigo.
     const vc = Number(econRef?.valueCents);
-    return Number.isFinite(vc) && vc > 0 ? vc / 100 : undefined;
+    if (Number.isFinite(vc) && vc > 0) return vc / 100;
+    const p = econRef?.economia?.precoReferenciaBRL;
+    return typeof p === "number" && Number.isFinite(p) ? p : undefined;
   })();
   const refFaixa = econRef?.economia?.faixaPrecoBRL ?? undefined;
   const refPeso = typeof econRef?.weight === "number" ? econRef.weight : undefined;
@@ -1316,15 +1319,19 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
           const precoDataReais = typeof d.valueCents === "number" ? d.valueCents / 100
             : typeof econData?.precoReferenciaBRL === "number" ? econData.precoReferenciaBRL : undefined;
           const precoRef = precoDataReais ?? el.economia?.precoReferenciaBRL ?? (el.valueCents !== undefined ? el.valueCents / 100 : undefined);
+          // null = "sem override local": o servidor remove o valor e a
+          // mescla com o Acervo repõe a referência original (Issue #119).
+          // Omitir a chave no PATCH preservaria o override anterior.
           const definirPeso = (v: number | undefined) => {
             const dataNovo = { ...(novo.data ?? {}) };
-            if (v === undefined) delete dataNovo.weight; else dataNovo.weight = v;
+            dataNovo.weight = v === undefined ? null : v;
             setNovo({ ...novo, data: dataNovo });
           };
           const definirPreco = (v: number | undefined) => {
             const dataNovo = { ...(novo.data ?? {}) };
             if (v === undefined) {
-              delete dataNovo.valueCents;
+              dataNovo.valueCents = null;
+              dataNovo.economia = null;
             } else {
               dataNovo.valueCents = Math.round(v * 100);
               const econAtual = (dataNovo.economia ?? el.economia) as Record<string, unknown> | undefined;
@@ -1332,6 +1339,13 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
                 dataNovo.economia = { ...econAtual, precoReferenciaBRL: v };
               }
             }
+            setNovo({ ...novo, data: dataNovo });
+          };
+          const restaurarReferencia = () => {
+            const dataNovo = { ...(novo.data ?? {}) };
+            dataNovo.weight = null;
+            dataNovo.valueCents = null;
+            dataNovo.economia = null;
             setNovo({ ...novo, data: dataNovo });
           };
           return (
@@ -1345,6 +1359,10 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
               <input placeholder="Preço override (R$)" type="number" min="0" step="0.01" style={{ width: 120 }}
                 value={precoDataReais !== undefined ? precoDataReais : ""}
                 onChange={(e) => definirPreco(e.target.value === "" ? undefined : Number(e.target.value))} />
+              <button type="button" className="secundario" onClick={restaurarReferencia}
+                title="Remove os overrides locais e volta aos valores de referência do Acervo">
+                Restaurar referência do Acervo
+              </button>
             </span>
           );
         })()}

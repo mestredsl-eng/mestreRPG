@@ -546,6 +546,84 @@ try {
   t("18m. peso/valor manuais editáveis sem vínculo",
     itemC?.weight === 0.8 && itemC?.data?.valueCents === 500, JSON.stringify({ w: itemC?.weight, vc: itemC?.data?.valueCents }));
 
+  // ---- 19. Restaurar referência do Acervo (Issue #119) ----
+  // null explícito em campo econômico = pedido de restauração: o
+  // override local é removido e a mescla com o elemento repõe a
+  // referência — ou deixa ausente quando o Acervo não tem o campo.
+  // Omitir a chave no PATCH continua preservando o valor atual.
+  sec("19. Restaurar referência do Acervo via PATCH data:null");
+  // Estado atual de tplId: overrides 1.5 / 99900 (seção 9) + custom.
+  const cat19a = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tpl19 = (cat19a.json?.itens ?? []).find((i) => i.id === tplId);
+  t("19a. overrides vigentes antes da restauração",
+    tpl19?.data?.weight === 1.5 && tpl19?.data?.valueCents === 99900, JSON.stringify(tpl19?.data));
+  // PATCH parcial que OMITE os campos econômicos: overrides preservados.
+  const patchOmite = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplId}`, {
+    cookie: ids.cm, body: { data: { custom: "preserva-override" } },
+  });
+  t("19b. PATCH omitindo campos preserva overrides", patchOmite.status === 200);
+  const cat19b = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tpl19b = (cat19b.json?.itens ?? []).find((i) => i.id === tplId);
+  t("19c. omissão preserva weight/valueCents",
+    tpl19b?.data?.weight === 1.5 && tpl19b?.data?.valueCents === 99900 && tpl19b?.data?.custom === "preserva-override",
+    JSON.stringify(tpl19b?.data));
+  // Restauração explícita: null nos três campos econômicos editáveis.
+  const patchRestaura = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplId}`, {
+    cookie: ids.cm,
+    body: { data: { weight: null, valueCents: null, economia: null, custom: "apos-restaurar" } },
+  });
+  t("19d. PATCH de restauração aceito", patchRestaura.status === 200, JSON.stringify(patchRestaura.json));
+  const cat19c = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tpl19c = (cat19c.json?.itens ?? []).find((i) => i.id === tplId);
+  t("19e. peso voltou à referência do Acervo (0.9)", tpl19c?.data?.weight === 0.9, JSON.stringify(tpl19c?.data?.weight));
+  t("19f. valor voltou à referência do Acervo (25000)", tpl19c?.data?.valueCents === 25000, JSON.stringify(tpl19c?.data?.valueCents));
+  t("19g. economia voltou à referência (precoReferenciaBRL=250)",
+    tpl19c?.data?.economia?.precoReferenciaBRL === 250 && tpl19c?.data?.economia?.moeda === "BRL", JSON.stringify(tpl19c?.data?.economia));
+  t("19h. campos não relacionados preservados (custom, regra)",
+    tpl19c?.data?.custom === "apos-restaurar" && tpl19c?.data?.regra?.key === "pistola_teste", JSON.stringify({ custom: tpl19c?.data?.custom, regra: tpl19c?.data?.regra }));
+  // Novo override + restauração parcial: só o peso volta; o valor
+  // continua sendo o override local (null seletivo por campo).
+  const patchOverride2 = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplId}`, {
+    cookie: ids.cm, body: { data: { weight: 2.5, valueCents: 11100 } },
+  });
+  t("19i. novo override parcial aceito", patchOverride2.status === 200);
+  const patchRestauraPeso = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplId}`, {
+    cookie: ids.cm, body: { data: { weight: null } },
+  });
+  t("19j. restauração só do peso aceita", patchRestauraPeso.status === 200);
+  const cat19d = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tpl19d = (cat19d.json?.itens ?? []).find((i) => i.id === tplId);
+  t("19k. peso restaurado, override de valor preservado",
+    tpl19d?.data?.weight === 0.9 && tpl19d?.data?.valueCents === 11100, JSON.stringify({ w: tpl19d?.data?.weight, v: tpl19d?.data?.valueCents }));
+  // Elemento SEM referência: override local existe → restaurar deixa ausente.
+  const patchSemRefOverride = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplSemRef.json?.id}`, {
+    cookie: ids.cm, body: { data: { weight: 3.3, valueCents: 4400, custom: "local" } },
+  });
+  t("19l. override em item sem referência aceito", patchSemRefOverride.status === 200);
+  const patchSemRefRestaura = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplSemRef.json?.id}`, {
+    cookie: ids.cm, body: { data: { weight: null, valueCents: null, economia: null, custom: "local" } },
+  });
+  t("19m. restauração em item sem referência aceita", patchSemRefRestaura.status === 200);
+  const cat19e = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tplSemRefRow = (cat19e.json?.itens ?? []).find((i) => i.id === tplSemRef.json?.id);
+  t("19n. sem referência: campos permanecem ausentes (nada inventado)",
+    tplSemRefRow?.data?.weight === undefined && tplSemRefRow?.data?.valueCents === undefined && tplSemRefRow?.data?.economia === undefined,
+    JSON.stringify(tplSemRefRow?.data));
+  t("19o. campo livre do template sem referência preservado",
+    tplSemRefRow?.data?.custom === "local" && tplSemRefRow?.data?.regra?.key === "item_sem_referencia", JSON.stringify(tplSemRefRow?.data));
+  // Template desvinculado: null limpa o campo e NÃO repõe referência
+  // (não há elemento para mesclar) — ausência honesta.
+  const desvLimpa = await req(BASE, "PATCH", `/campaigns/${ids.camp}/inventario/${tplBuggyRow?.id}`, {
+    cookie: ids.cm, body: { data: { weight: null, valueCents: null, economia: null } },
+  });
+  t("19p. restauração em template desvinculado aceita", desvLimpa.status === 200, `status=${desvLimpa.status}`);
+  const cat19f = await req(BASE, "GET", `/campaigns/${ids.camp}/inventario`, { cookie: ids.cm });
+  const tplBuggyLimpo = (cat19f.json?.itens ?? []).find((i) => i.id === tplBuggy.json?.id);
+  t("19q. desvinculado: campos econômicos ficam ausentes",
+    tplBuggyLimpo?.data?.weight === undefined && tplBuggyLimpo?.data?.valueCents === undefined && tplBuggyLimpo?.data?.economia === undefined,
+    JSON.stringify(tplBuggyLimpo?.data));
+  // Regra do Acervo permanece intocada (imutabilidade já verificada abaixo).
+
   // Imutabilidade final do Acervo (após TODAS as operações).
   {
     const w = abrirDb(BANCO);

@@ -29,10 +29,24 @@ const templateSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-/** data.regra nunca vem do cliente — só do campo `regra` validado. */
+/** Campos econômicos copiados do Acervo para o template — `null`
+ *  explícito neles significa "restaurar a referência do Acervo"
+ *  (Issue #119): o override local é removido e, havendo vínculo,
+ *  `mesclarEconomiaAcervo` repõe o valor do elemento — ou deixa o
+ *  campo ausente quando o Acervo não tem referência. Diferente de
+ *  omitir a chave no PATCH, que preserva o valor atual. */
+const CAMPOS_ECON_TEMPLATE = ["weight", "valueCents", "economia", "fuel", "capacity", "veiculo"] as const;
+
+/** `data.regra` nunca vem do cliente — só do campo `regra` validado.
+ *  `null` explícito em campo econômico é pedido de restauração da
+ *  referência do Acervo: a chave é descartada aqui para que a mescla
+ *  com o elemento decida o valor final (referência ou ausência). */
 function dataTemplateSemRegra(data: Record<string, unknown>) {
   const limpo = { ...data };
   delete limpo.regra;
+  for (const k of CAMPOS_ECON_TEMPLATE) {
+    if (limpo[k] === null) delete limpo[k];
+  }
   return limpo;
 }
 
@@ -50,10 +64,6 @@ function mesclarEconomiaAcervo(
   if (!elemento) return data;
   return { ...dadosEconomicosDefinicao(elemento.definition), ...data };
 }
-
-/** Campos econômicos preservados num PATCH de `data` que não os envia
- *  explicitamente — evita remoção inadvertida pelo cliente. */
-const CAMPOS_ECON_TEMPLATE = ["weight", "valueCents", "economia", "fuel", "capacity", "veiculo"] as const;
 
 /** GET /api/campaigns/:campaignId/inventario — catálogo + categorias +
  *  elementos do Acervo (kind item/veiculo) com pré-requisitos. */
