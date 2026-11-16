@@ -441,6 +441,10 @@ try {
   let reterEvtJ = null; // predicado (msg) => bool
   const filaEvtJ = [];
   const liberarEvtJ = () => { const q = filaEvtJ.splice(0); for (const m of q) { try { pgJWs?.send(m); } catch { /* morto */ } } };
+  // derruba o PRÓXIMO emit de sincronização do cliente — simula o pacote
+  // volátil perdido num flap de transporte (socket.connected===true mas
+  // o frame nunca chega). O app precisa se recuperar sozinho.
+  let derrubarSyncJ = false;
   // retenção de UMA resposta HTTP autenticada (histórico privilegiado)
   let armarHttpJ = false, httpRetidoJ = null;
   const liberarHttpJ = async () => { const r = httpRetidoJ; httpRetidoJ = null; if (r) await r.continue().catch(() => {}); };
@@ -453,6 +457,9 @@ try {
       if (typeof msg === "string" && msg.includes("mesa:entrar")) entrarCountJ++;
       // arma UMA única vez por solicitação do teste — sincronizações
       // posteriores (geração nova) NÃO podem ter o ACK retido
+      if (typeof msg === "string" && msg.includes("nevoa:sincronizar")) {
+        if (derrubarSyncJ) { derrubarSyncJ = false; return; } // perda proposital
+      }
       if (armarRetencaoSyncJ && !armadoUmaVezJ && typeof msg === "string" && msg.includes("nevoa:sincronizar")) {
         armarRetencaoSyncJ = false;
         armadoUmaVezJ = true;
@@ -1503,6 +1510,36 @@ try {
     cargasJ === cargasAntesRT
       && wsCountJ - wsAntesCorrida <= 1 && entrarCountJ - entrarAntesCorrida <= 1,
     `ws ${wsAntesCorrida}→${wsCountJ} entrar ${entrarAntesCorrida}→${entrarCountJ}`);
+
+  // Corrida 2 — perda do emit volátil: a sincronização da geração nova é
+  // derrubada no transporte (nunca chega ao servidor, sem ACK). O app
+  // precisa reagendar a sync e convergir para a visão filtrada — sem
+  // intervenção do usuário e sem enfraquecer a proteção visual.
+  armarRetencaoSyncJ = true;
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "mestre" } });
+  t("corrida2: PATCH promoção", rRT.status === 200);
+  for (let i = 0; i < 100 && ackSyncJRetido === null; i++) await new Promise((r) => setTimeout(r, 100));
+  t("corrida2: ACK da sync retido no transporte", ackSyncJRetido !== null);
+  rRT = await req(BASE, "PATCH", `/campaigns/${campId}/members/${midJ1}`, { cookie: cookieMestre, body: { role: "jogador" } });
+  t("corrida2: PATCH rebaixamento", rRT.status === 200);
+  await pgJ.waitForFunction(() => /Permissões atualizadas/.test(document.body.innerText)
+    || document.querySelectorAll(".vtt-tabuleiro").length === 0, null, { timeout: 20000 }).catch(() => {});
+  // arma a perda ANTES de liberar o ACK obsoleto: o emit de sync da
+  // geração nova (disparado pelo callback do ACK velho) é derrubado
+  derrubarSyncJ = true;
+  liberarAckSyncJ();
+  ackSyncJRetido = null;
+  const esperadoCorrida2 = await nTokHttpJ();
+  await pgJ.waitForFunction((n) => document.querySelectorAll(".vtt-tabuleiro").length === 1
+    && document.querySelectorAll(".vtt-token").length === n, esperadoCorrida2, { timeout: 45000 }).catch(() => {});
+  await pgJ.waitForFunction(() => !/Permissões atualizadas/.test(document.body.innerText), null, { timeout: 30000 }).catch(() => {});
+  const nTokJC2 = await pgJ.locator(".vtt-token").count();
+  const nTokMC2 = await pgM.locator(".vtt-token").count();
+  t("corrida2: visão final converge após sync perdida (filtrada de jogador)",
+    nTokJC2 === esperadoCorrida2 && nTokJC2 < nTokMC2, `jogador=${nTokJC2} esperado=${esperadoCorrida2} mestre=${nTokMC2}`);
+  const ctrlCorrida2 = await pgJ.locator(".vtt-nevoa-controles").count()
+    + await pgJ.getByRole("button", { name: "Encerrar" }).count();
+  t("corrida2: controles admin NÃO retornaram", ctrlCorrida2 === 0, `controles=${ctrlCorrida2}`);
 
   sec("Snapshot restaurado revoga membro ausente — UI sem reload");
   // snapshot do estado atual; edita o JSON no banco removendo j1;
