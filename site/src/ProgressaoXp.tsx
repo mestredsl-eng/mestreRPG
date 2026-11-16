@@ -78,10 +78,19 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
       setConfirmando(null);
       await carregar();
     } catch (e) {
-      const msgs = detalheErros(e);
-      setErro([e instanceof Error ? e.message : "Falha na compra", ...msgs].join(" — "));
-      setConfirmando(null);
-      await carregar();
+      if (e instanceof ApiErrorProgresso && e.codigo === "regras_alteradas") {
+        // Conflito de versão das regras (HTTP 409): nada foi debitado.
+        // Recarrega saldo/histórico/preços da configuração vigente e
+        // exige nova confirmação explícita — nunca repete a compra.
+        setErro(e.message);
+        setConfirmando(null);
+        await carregar();
+      } else {
+        const msgs = detalheErros(e);
+        setErro([e instanceof Error ? e.message : "Falha na compra", ...msgs].join(" — "));
+        setConfirmando(null);
+        await carregar();
+      }
     } finally {
       setOcupado(false);
     }

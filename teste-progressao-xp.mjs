@@ -8,12 +8,16 @@
 // atomicidade (compra inválida não altera nada) e concorrência.
 import { req, dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir, criarCenario, abrirDb } from "./teste-base.mjs";
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 
 const DIR = dirTeste("progressao");
 const BANCO = join(DIR, "mestre-rpg.db");
 const ARQ = join(DIR, "arquivos");
 const BKS = join(DIR, "backups");
+// Barreira determinística do contrato 409 (NODE_ENV=test no servidor):
+// <dir>/armado faz o endpoint sinalizar <dir>/iniciado e aguardar
+// <dir>/liberar entre a pré-carga das regras e a transação da compra.
+const BARREIRA = join(DIR, "barreira-regras");
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 let proc;
@@ -47,7 +51,7 @@ try {
   await prepararBanco(BANCO);
   mkdirSync(ARQ, { recursive: true });
   mkdirSync(BKS, { recursive: true });
-  proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS, env: { MESTRE_PROGRESSAO_BARRIER: BARREIRA } });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
 
@@ -386,6 +390,117 @@ try {
     t("histórico tem exatamente 1 compra", compras.length === 1, `n=${compras.length}`);
     const ficha = await fichaDe(CHAR3, J1);
     t("nível aplicado uma única vez", (ficha?.ficha?.campos?.["f-habs"] ?? []).filter((x) => x === "manipulacao").length === 1);
+  }
+
+  sec("Concorrência — regras alteradas na janela da compra → HTTP 409");
+  {
+    mkdirSync(BARREIRA, { recursive: true });
+    const pj4 = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Conflito", templateVersionId: vid, data: {} },
+    });
+    const CHAR4 = pj4.json?.personagem?.id ?? pj4.json?.id;
+    await darXp(CHAR4, M, { acao: "conceder", quantidade: 30, motivo: "fundo de prova" });
+
+    const esperarArquivo = async (caminho, timeoutMs = 10000) => {
+      const limite = Date.now() + timeoutMs;
+      while (Date.now() < limite) {
+        if (existsSync(caminho)) return true;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return false;
+    };
+    // Compra com mutação de regras DENTRO da janela pré-carga→tx:
+    // arma a barreira, dispara a compra, espera o "iniciado" do servidor,
+    // grava a nova definição direto no banco (mesmo efeito de um escritor
+    // fora do lease HTTP — restauração/importação) e libera.
+    const COMPRA_409 = { erro: "As regras da campanha foram alteradas durante a compra. Atualize os dados e tente novamente.", codigo: "regras_alteradas", detalhes: { recurso: "regras_campanha", atualizarAntesDeTentar: true, compraEfetivada: false } };
+    const gravarDefCovardia = (def) => {
+      const w = abrirDb(BANCO);
+      try {
+        w.prepare("update rule_definitions set definition = ?, updated_at = ? where rule_set_id = (select id from rule_sets where campaign_id = ? and is_active = 1) and kind = 'defeito' and key = 'covardia'").run(JSON.stringify(def), Date.now(), CID);
+      } finally { w.close(); }
+    };
+    const defBase = { niveis: [{ descricao: "n1", custo: 1 }, { descricao: "n2", custo: 2 }, { descricao: "n3", custo: 3 }], disponivel: true };
+    const compraComMutacao = async (body, mutar) => {
+      writeFileSync(join(BARREIRA, "armado"), "1");
+      const p = comprar(CHAR4, J1, body);
+      const iniciou = await esperarArquivo(join(BARREIRA, "iniciado"));
+      if (!iniciou) { writeFileSync(join(BARREIRA, "liberar"), "1"); return { status: -1, json: null }; }
+      mutar();
+      writeFileSync(join(BARREIRA, "liberar"), "1");
+      for (const f of ["armado", "iniciado", "liberar"]) rmSync(join(BARREIRA, f), { force: true });
+      return p;
+    };
+    const conferirConflito = async (rotulo, antes) => {
+      const pg = await progressaoDe(CHAR4, J1);
+      t(`${rotulo}: saldo inalterado`, pg.json?.xp?.saldo === antes.saldo, `antes=${antes.saldo} depois=${pg.json?.xp?.saldo}`);
+      t(`${rotulo}: histórico inalterado`, pg.json?.xp?.historico?.length === antes.hist, `antes=${antes.hist} depois=${pg.json?.xp?.historico?.length}`);
+      const ficha = await fichaDe(CHAR4, J1);
+      const itens = ficha?.ficha?.campos?.["f-defeitos"] ?? [];
+      t(`${rotulo}: ficha inalterada`, JSON.stringify(itens) === JSON.stringify(antes.defeitos), JSON.stringify(itens));
+      const w = abrirDb(BANCO);
+      try {
+        const n = w.prepare("select count(*) n from audit_logs where action = 'personagem.comprar_ponto' and json_extract(detail, '$.characterId') = ?").get(CHAR4)?.n ?? 0;
+        t(`${rotulo}: sem auditoria de compra efetivada`, n === antes.auditorias, `auditorias=${n} esperadas=${antes.auditorias}`);
+      } finally { w.close(); }
+    };
+    const auditoriasCompra = () => {
+      const w = abrirDb(BANCO);
+      try {
+        return w.prepare("select count(*) n from audit_logs where action = 'personagem.comprar_ponto' and json_extract(detail, '$.characterId') = ?").get(CHAR4)?.n ?? 0;
+      } finally { w.close(); }
+    };
+    const estadoAtual = async () => {
+      const pg = await progressaoDe(CHAR4, J1);
+      const ficha = await fichaDe(CHAR4, J1);
+      return { saldo: pg.json?.xp?.saldo, hist: pg.json?.xp?.historico?.length, defeitos: ficha?.ficha?.campos?.["f-defeitos"] ?? [], auditorias: auditoriasCompra() };
+    };
+    const confere409 = (r, rotulo) => {
+      t(`${rotulo}: HTTP 409`, r.status === 409, `status=${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+      t(`${rotulo}: código regras_alteradas`, r.json?.codigo === "regras_alteradas", `codigo=${r.json?.codigo}`);
+      t(`${rotulo}: corpo do contrato`, r.json?.erro === COMPRA_409.erro
+        && r.json?.detalhes?.recurso === "regras_campanha"
+        && r.json?.detalhes?.atualizarAntesDeTentar === true
+        && r.json?.detalhes?.compraEfetivada === false,
+        JSON.stringify(r.json));
+    };
+
+    // Rodada A — CUSTO alterado na janela: niveis[0].custo 1 → 5
+    let antes = await estadoAtual();
+    let r = await compraComMutacao({ kind: "defeito", key: "covardia", nivelAlvo: 1 }, () =>
+      gravarDefCovardia({ ...defBase, niveis: [{ ...defBase.niveis[0], custo: 5 }, defBase.niveis[1], defBase.niveis[2]] }));
+    confere409(r, "custo");
+    await conferirConflito("custo", antes);
+    // Nova tentativa usa a configuração VIGENTE: preço 5 (não 1)
+    r = await comprar(CHAR4, J1, { kind: "defeito", key: "covardia", nivelAlvo: 1 });
+    t("após conflito: compra usa preço vigente (5 XP)", r.status === 200 && r.json?.xp?.saldo === antes.saldo - 5, `status=${r.status} saldo=${r.json?.xp?.saldo}`);
+
+    // Rodada B — PRÉ-REQUISITO alterado na janela
+    antes = await estadoAtual();
+    r = await compraComMutacao({ kind: "defeito", key: "covardia", nivelAlvo: 2 }, () =>
+      gravarDefCovardia({ ...defBase, niveis: [{ ...defBase.niveis[0], custo: 5 }, defBase.niveis[1], defBase.niveis[2]], prerequisitos: [{ kind: "atributo", key: "forca", minLevel: 9 }] }));
+    confere409(r, "pré-requisito");
+    await conferirConflito("pré-requisito", antes);
+    // Restaura a definição vigente (sem pré-requisito, custo[0]=5) e tenta de novo
+    gravarDefCovardia({ ...defBase, niveis: [{ ...defBase.niveis[0], custo: 5 }, defBase.niveis[1], defBase.niveis[2]] });
+    r = await comprar(CHAR4, J1, { kind: "defeito", key: "covardia", nivelAlvo: 2 });
+    t("após pré-requisito: compra nível 2 → 200 @2 XP", r.status === 200 && r.json?.xp?.saldo === antes.saldo - 2, `status=${r.status} saldo=${r.json?.xp?.saldo}`);
+
+    // Rodada C — LIMITAÇÃO CONDICIONAL alterada na janela (#122)
+    antes = await estadoAtual();
+    r = await compraComMutacao({ kind: "defeito", key: "covardia", nivelAlvo: 3 }, () =>
+      gravarDefCovardia({ ...defBase, niveis: [{ ...defBase.niveis[0], custo: 5 }, defBase.niveis[1], defBase.niveis[2]], limitacoes: [{ kind: "atributo", key: "forca", maximo: 0 }] }));
+    confere409(r, "limitação");
+    await conferirConflito("limitação", antes);
+    gravarDefCovardia({ ...defBase, niveis: [{ ...defBase.niveis[0], custo: 5 }, defBase.niveis[1], defBase.niveis[2]] });
+    r = await comprar(CHAR4, J1, { kind: "defeito", key: "covardia", nivelAlvo: 3 });
+    t("após limitação: compra nível 3 → 200 @3 XP", r.status === 200 && r.json?.xp?.saldo === antes.saldo - 3, `status=${r.status} saldo=${r.json?.xp?.saldo}`);
+
+    // Estabilidade: compra normal com regras estáveis segue funcionando
+    // (CHAR3: saldo 0 → concede 10 e compra forca 0→1 @2 XP da tabela)
+    await darXp(CHAR3, M, { acao: "conceder", quantidade: 10, motivo: "estabilidade" });
+    r = await comprar(CHAR3, J1, { kind: "atributo", key: "forca", nivelAlvo: 1 });
+    t("regras estáveis: compra normal → 200 @2 XP", r.status === 200 && r.json?.xp?.saldo === 8, `status=${r.status} saldo=${r.json?.xp?.saldo}`);
   }
 
   sec("Mestre administra progressão de outro personagem");

@@ -1,12 +1,18 @@
 import { Router } from "express";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { getDb } from "../db/index.js";
 import { characters, memberships, sheetVersions, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requireLeasePersonagem } from "../lib/permissoes.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
-import { carregarRegras } from "../lib/regras.js";
+import {
+  carregarRegras,
+  carregarRegrasSincrono,
+  impressaoDigitalRegras,
+} from "../lib/regras.js";
 import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -166,6 +172,36 @@ const compraSchema = z.object({
   nivelAlvo: z.number().int().min(1).max(100),
 });
 
+/** Contrato obrigatório de conflito de regras (Issue #124 — endurecimento
+ *  de concorrência): preço, pré-requisitos e limitações devem pertencer à
+ *  mesma versão vigente das regras no momento da gravação. */
+const CONFLITO_REGRAS_409 = {
+  erro: "As regras da campanha foram alteradas durante a compra. Atualize os dados e tente novamente.",
+  codigo: "regras_alteradas",
+  detalhes: {
+    recurso: "regras_campanha",
+    atualizarAntesDeTentar: true,
+    compraEfetivada: false,
+  },
+} as const;
+
+/**
+ * Barreira determinística de teste (somente NODE_ENV=test +
+ * MESTRE_PROGRESSAO_BARRIER=<dir>): quando <dir>/armado existe, grava
+ * <dir>/iniciado e aguarda <dir>/liberar antes da transação — permite
+ * reproduzir uma mudança de regras na janela pré-carga→gravação sem
+ * sleeps arbitrários. Mesmo padrão de ganchos de MESTRE_SQL_TRACE.
+ */
+async function barreiraProvaRegras(): Promise<void> {
+  const dir = process.env.NODE_ENV === "test" ? process.env.MESTRE_PROGRESSAO_BARRIER : undefined;
+  if (!dir || !existsSync(join(dir, "armado"))) return;
+  writeFileSync(join(dir, "iniciado"), String(Date.now()));
+  const limite = Date.now() + 15_000;
+  while (!existsSync(join(dir, "liberar")) && Date.now() < limite) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 /**
  * POST /api/characters/:characterId/comprar-ponto — compra de UM nível
  * de elemento da biblioteca com XP. Fluxo (tudo dentro de UMA
@@ -195,12 +231,18 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
   }
   const { kind, key, nivelAlvo } = body.data;
 
-  // Pré-carga assíncrona (regras/estrutura não mudam dentro da tx).
+  // Pré-carga assíncrona: regras/estrutura são lidas aqui para a decisão
+  // preliminar, mas a compra só é efetivada se a impressão digital das
+  // regras for IDÊNTICA dentro da transação (mesma versão lógica para
+  // preço, pré-requisitos, limitações e gravação).
   const { estrutura, regras } = await carregarContextoRegras(p);
   if (!estrutura) {
     res.status(400).json({ erro: "Personagem sem ficha configurada", codigo: "sem_ficha" });
     return;
   }
+  const impPreCarga = impressaoDigitalRegras(regras!);
+  // Gancho de teste: reproduz mudança de regras entre a pré-carga e a tx.
+  await barreiraProvaRegras();
   const autorNome = await nomeUsuario(req.usuario!.id);
   const agora = new Date();
 
@@ -234,9 +276,19 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
     }
     if (!autorizado) return { tipo: "sem_permissao" };
 
+    // Consistência transacional das regras: relê ruleset+elementos DENTRO
+    // da transação e compara a impressão digital com a da pré-carga. Se
+    // qualquer custo, pré-requisito, dependência, exclusividade, teto ou
+    // limitação condicional mudou nesse intervalo, a compra é cancelada
+    // com 409 — nada é debitado, gravado ou auditado como compra.
+    const regrasTx = carregarRegrasSincrono(tx, p.campaignId);
+    if (!regrasTx || impressaoDigitalRegras(regrasTx) !== impPreCarga) {
+      return { tipo: "falha", status: 409, corpo: { ...CONFLITO_REGRAS_409 } };
+    }
+
     const dados = (atual.data ?? {}) as Record<string, unknown>;
     const compra = simularCompraNivel(
-      estrutura!, dados, regras!, kind, key, nivelAlvo,
+      estrutura!, dados, regrasTx, kind, key, nivelAlvo,
       { id: req.usuario!.id, nome: autorNome },
     );
     if (!compra.ok || !compra.dados) {
