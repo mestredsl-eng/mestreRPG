@@ -78,8 +78,8 @@ function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, 
       insert into money_transactions
         (id, character_id, campaign_id, kind, amount, currency, account, description,
          amount_cents, balance_before_cents, balance_after_cents, created_by, created_at)
-      values (?, ?, ?, 'entrada', ?, 'BRL', 'especie', ?, null, null, null, ?, ?)
-    `).run(crypto.randomUUID(), characterId, campaignId, amount, description, createdBy, Date.now());
+      values (?, ?, ?, ?, ?, 'BRL', 'especie', ?, null, null, null, ?, ?)
+    `).run(crypto.randomUUID(), characterId, campaignId, amount < 0 ? "saida" : "entrada", amount, description, createdBy, Date.now());
   } finally { db.close(); }
 }
 
