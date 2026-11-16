@@ -455,12 +455,13 @@ export const definicaoElementoSchema = z.object({
   // por extrairEscolhas), o elemento alvo kind:key passa a ter teto
   // efetivo min(maximo declarado, fórmula, limitacao.maximo). Genérico
   // entre tipos — ex.: vantagem "Sorte" limita atributo "Manipulação".
-  // `maximo` inválido/ausente torna a entrada inócua (nunca derruba a
-  // definição inteira — metadado tolerante como os demais campos).
+  // Schema ESTRITO na entrada: kind ∈ TIPOS_REGRA, key no padrão das
+  // chaves de elemento e maximo finito ≥ 0 (zero permitido) — estrutura
+  // inválida é rejeitada com 400, nunca ignorada silenciosamente.
   limitacoes: listaOuVazia(z.array(z.object({
-    kind: z.string().max(40),
-    key: z.string().max(80),
-    maximo: numOpcional,
+    kind: z.enum(TIPOS_REGRA),
+    key: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/, "Use letras minúsculas, números e _"),
+    maximo: z.number().nonnegative().refine((n) => Number.isFinite(n), "máximo deve ser finito"),
   })).max(50).default([])),
   // Fórmulas personalizadas (parser seguro de ficha.ts — sem eval).
   // Chaves especiais: "custo" (custo em pontos p/ escolhas por seleção),

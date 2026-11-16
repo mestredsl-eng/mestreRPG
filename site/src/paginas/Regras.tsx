@@ -1106,22 +1106,25 @@ function ModalElemento({
       }
       return out;
     };
-    // Limitações condicionais: "tipo:chave@máx" — o @máx é obrigatório
-    // (sem teto não há limitação); aceita vírgula decimal pt-BR.
+    // Limitações condicionais: "tipo:chave@máx" — exatamente um @,
+    // máximo não vazio, finito e ≥ 0 (zero é teto válido). Nada de
+    // "@", "@ ", "@Infinity", "@-1" ou "@2@3" passando como 0/solto.
     const listaLimitacoes = (s: string) => {
       const out: { kind: string; key: string; maximo?: number }[] = [];
       for (const bruto of s.split(",")) {
         const x = bruto.trim();
         if (!x) continue;
-        const [ref, max] = x.split("@");
+        const partes = x.split("@");
+        const [ref, max] = partes;
         const [kind, ...rest] = (ref ?? "").split(":");
         const key = rest.join(":").trim();
-        if (!kind?.trim() || !key || max === undefined) {
-          erros.push(`Limitações: "${x}" deve estar no formato tipo:chave@máx`);
+        const maxTxt = (max ?? "").trim();
+        const invalido = partes.length !== 2 || !kind?.trim() || !key || maxTxt === "";
+        const n = invalido ? NaN : Number(maxTxt.replace(",", "."));
+        if (invalido || !Number.isFinite(n) || n < 0) {
+          erros.push(`Limitações: "${x}" deve estar no formato tipo:chave@máx (máximo finito ≥ 0)`);
           continue;
         }
-        const n = Number(max.trim().replace(",", "."));
-        if (Number.isNaN(n)) { erros.push(`Limitações: máximo inválido em "${x}"`); continue; }
         out.push({ kind: kind.trim(), key, maximo: n });
       }
       return out;

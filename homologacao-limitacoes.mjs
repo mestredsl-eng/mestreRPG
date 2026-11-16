@@ -125,6 +125,37 @@ try {
   const rRuim = await novoEl("vantagem", "ruim", "Ruim", { limitacoes: "nao-e-lista" });
   t("limitacoes malformado → 400", rRuim.status === 400, `status=${rRuim.status}`);
 
+  // Schema estrito (Issue #122 revisão): entradas inválidas → 400 e
+  // NADA é persistido — o elemento de controle segue intacto.
+  const casosInvalidos = [
+    ["kind desconhecido", { kind: "kind_inexistente", key: "forca", maximo: 2 }],
+    ["kind vazio", { kind: "", key: "forca", maximo: 2 }],
+    ["key vazia", { kind: "atributo", key: "", maximo: 2 }],
+    ["key com espaços", { kind: "atributo", key: "for ca", maximo: 2 }],
+    ["key com caracteres inválidos", { kind: "atributo", key: "força!", maximo: 2 }],
+    ["máximo negativo", { kind: "atributo", key: "forca", maximo: -1 }],
+    ["máximo não finito", { kind: "atributo", key: "forca", maximo: "Infinity" }],
+    ["máximo ausente", { kind: "atributo", key: "forca" }],
+  ];
+  let seqInv = 0;
+  for (const [rotulo, lim] of casosInvalidos) {
+    seqInv += 1;
+    const rInv = await novoEl("vantagem", `inv_${seqInv}`, `Inválido ${seqInv}`, { limitacoes: [lim] });
+    t(`API rejeita ${rotulo} → 400`, rInv.status === 400, `status=${rInv.status} ${JSON.stringify(rInv.json?.detalhes ?? "").slice(0, 100)}`);
+  }
+  const listaAposInv = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
+  t("entradas inválidas não persistiram nenhum elemento",
+    !listaAposInv.json?.elementos?.some((e) => e.key?.startsWith("inv_")));
+  // edição com limitacao inválida também é rejeitada e preserva a definição
+  const rPatchInv = await req(BASE, "PATCH", `${API}/${sortId}`, {
+    cookie: ids.cm,
+    body: { definition: { limitacoes: [{ kind: "atributo", key: "forca", maximo: -3 }] } },
+  });
+  t("PATCH com limitacao inválida → 400", rPatchInv.status === 400, `status=${rPatchInv.status}`);
+  const listaPosInv = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
+  t("definição preservada após PATCH inválido",
+    listaPosInv.json?.elementos?.find((e) => e.key === "sorte")?.definition?.limitacoes?.[0]?.maximo === 2);
+
   sec("Motor — PATCH da ficha aplica o teto condicional");
   const PATCH = (data) => req(BASE, "PATCH", `/characters/${pjId}`, { cookie: ids.j1.cookie, body: { data } });
   const errosDe = (r) => (r.json?.detalhes?.erros ?? []);
@@ -224,20 +255,47 @@ try {
     JSON.stringify(sorteEd?.definition?.limitacoes));
 
   // formato inválido é bloqueado no cliente (erro nomeado, sem salvar)
-  await p.locator(".elemento", { hasText: "Sorte UI" }).getByRole("button", { name: "Editar" }).click();
-  await p.waitForTimeout(500);
-  const modalInv = p.locator(".modal");
-  await modalInv.locator("label", { hasText: "Limitações condicionais" }).locator("input").fill("atributo:forca");
-  await modalInv.getByRole("button", { name: "Salvar" }).click();
-  await p.waitForTimeout(500);
-  t("formato inválido mostra erro e não salva",
-    (await modalInv.locator(".erro").count()) > 0 && await modalInv.isVisible());
-  await modalInv.getByRole("button", { name: "Cancelar" }).click();
+  const invalidosUi = [
+    ["sem máximo", "atributo:forca"],
+    ["@ vazio", "atributo:forca@"],
+    ["@ só espaço", "atributo:forca@ "],
+    ["@Infinity", "atributo:forca@Infinity"],
+    ["@-1", "atributo:forca@-1"],
+    ["@2@3", "atributo:forca@2@3"],
+  ];
+  for (const [rotulo, valor] of invalidosUi) {
+    await p.locator(".elemento", { hasText: "Sorte UI" }).getByRole("button", { name: "Editar" }).click();
+    await p.waitForTimeout(400);
+    const modalInv = p.locator(".modal");
+    await modalInv.locator("label", { hasText: "Limitações condicionais" }).locator("input").fill(valor);
+    await modalInv.getByRole("button", { name: "Salvar" }).click();
+    await p.waitForTimeout(500);
+    t(`UI rejeita "${rotulo}" sem salvar`,
+      (await modalInv.locator(".erro").count()) > 0 && await modalInv.isVisible());
+    await modalInv.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForTimeout(300);
+  }
 
+  // zero é um teto válido e deve salvar
+  await p.locator(".elemento", { hasText: "Sorte UI" }).getByRole("button", { name: "Editar" }).click();
+  await p.waitForTimeout(400);
+  const modalZero = p.locator(".modal");
+  await modalZero.locator("label", { hasText: "Limitações condicionais" }).locator("input").fill("atributo:forca@0");
+  await modalZero.getByRole("button", { name: "Salvar" }).click();
+  await p.locator(".modal").waitFor({ state: "hidden", timeout: 10000 }).catch(() => {});
+  await p.waitForTimeout(400);
+  const listaZero = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
+  const sorteZero = listaZero.json?.elementos?.find((e) => e.key === "sorte_ui");
+  t("UI aceita teto zero (@0) e persiste",
+    sorteZero?.definition?.limitacoes?.[0]?.maximo === 0,
+    JSON.stringify(sorteZero?.definition?.limitacoes));
+
+  // nenhuma edição inválida alterou a definição previamente persistida
   const listaFim = await req(BASE, "GET", `/campaigns/${ids.camp}/regras`, { cookie: ids.cm });
   const sorteFim = listaFim.json?.elementos?.find((e) => e.key === "sorte_ui");
-  t("edição inválida não alterou a definição",
-    sorteFim?.definition?.limitacoes?.[0]?.maximo === 3);
+  t("entradas inválidas não alteraram a definição",
+    sorteFim?.definition?.limitacoes?.length === 1
+    && sorteFim.definition.limitacoes[0].maximo === 0);
 
   t("sem erros de console/pageerror", errosUi.length === 0, errosUi.join(" | ").slice(0, 200));
   await browser.close();
