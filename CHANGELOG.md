@@ -14,6 +14,31 @@
 - **Mesa de dados 3D:** Three.js e Rapier simulam dados poliédricos com colisões convexas, quique, atrito, bordas físicas e iluminação; o resultado continua autoritativo no servidor. Rapier/WASM e o viewer 3D são carregados sob demanda, com fallback para o renderer anterior.
 - **Homologação 3D:** verifica renderer WebGL real, movimento, valores autoritativos, temas e cores por pixels do framebuffer, reduced-motion e viewport mobile.
 
+---
+
+## [1.0.0.3] - 2026-11-17
+
+### Novidades
+
+- **Mesa de dados 3D com física Rapier** — bandeja compartilhada renderizada com Three.js e corpos rígidos Rapier, incluindo colisões entre dados, gravidade, atrito, quique, paredes e iluminação. D4, D6, D8, D10 e D20 preservam rótulos legíveis, temas e cores personalizadas.
+- **Resultado autoritativo** — a física é apenas apresentação: o resultado continua definido pelo servidor e cada dado assenta na face oficial recebida.
+
+### Acessibilidade, estabilidade e compatibilidade
+
+- **Movimento reduzido** — dados já resolvidos aparecem assentados imediatamente quando `prefers-reduced-motion` está ativo.
+- **Assentamento físico terminal** — corpos prontos dormem e não voltam a ser integrados pela gravidade; novos resultados podem acordá-los novamente.
+- **Frequências de atualização** — o ciclo de renderização continua corretamente em telas de 60, 90, 120 e 144 Hz.
+- **Carregamento sob demanda** — Three.js e Rapier/WASM são carregados ao abrir o visualizador; o renderer Canvas permanece como fallback sem WebGL.
+- **CSP do preview** — a política permite `wasm-unsafe-eval` para inicialização do Rapier, sem liberar `unsafe-eval` geral.
+
+### Testes
+
+- **`homologacao-dados3d.mjs`: 111/111** — histórico pré-resolvido, ACK posterior com reduced-motion, velocidades linear/angular, quaternion e posição finais, frequências de 60/90/120/144 Hz, CSP/preview WASM e mobile.
+- **CI #524:** servidor, typecheck, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA `7715a48fb32bc9538134db098fa95a0698ba5ec0`.
+- **Assistente de Desenvolvimento #370:** sucesso no mesmo SHA.
+
+---
+
 ## [1.0.0.2] - 2026-11-17
 
 ### Novidades
