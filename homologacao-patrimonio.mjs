@@ -92,7 +92,7 @@ async function testarHistoricoLegado(ids, casos, modo) {
     // dezenas de logins e acione limitadores de autenticação.
     await login(page, "jogador_um", "senha-jogador-123");
     for (const caso of casos) {
-      const prefixo = `Legado ${modo} ${caso.casas} casas`;
+      const prefixo = `Legado ${modo} ${caso.casas} casas ${caso.positivo}/${caso.negativo}`;
       const descricaoPositiva = `${prefixo} positivo`;
       const descricaoNegativa = `${prefixo} negativo`;
       configurarCasasDecimais(ids.campId, caso.casas);
@@ -106,8 +106,17 @@ async function testarHistoricoLegado(ids, casos, modo) {
       await abrirPersonagem(page, "Heroína Um");
       await abaPatrimonio(page, "Dinheiro");
 
-      const esperadoPositivo = caso.positivo.toFixed(caso.casas);
-      const esperadoNegativo = caso.negativo.toFixed(caso.casas);
+      // Política canônica do servidor: amountCents = Math.round(amount *
+      // 10 ** casas) e a UI formata (cents / 10 ** casas) com `casas`
+      // decimais. O esperado NÃO é toFixed() sobre o REAL bruto — ele
+      // diverge do contrato (ex.: 10.235 → "10.23" vs canônico "10.24";
+      // -0.125 → "-0.13" vs canônico "-0.12").
+      const esperadoLegado = (v, casas) => {
+        const cents = Math.round(v * 10 ** casas);
+        return (cents / 10 ** casas).toFixed(casas);
+      };
+      const esperadoPositivo = esperadoLegado(caso.positivo, caso.casas);
+      const esperadoNegativo = esperadoLegado(caso.negativo, caso.casas);
       if (modo === "desktop") {
         const linhaPositiva = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoPositiva }).first();
         const linhaNegativa = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoNegativa }).first();
@@ -185,6 +194,12 @@ try {
     { casas: 2, positivo: 42.25, negativo: -3.75 },
     { casas: 3, positivo: 42.125, negativo: -3.875 },
     { casas: 4, positivo: 42.0625, negativo: -3.9375 },
+    // Casos que distinguem Math.round canônico de toFixed() sobre o REAL:
+    // 10.235 → "10.24" (toFixed daria "10.23"); -0.125 → "-0.12"
+    // (toFixed daria "-0.13"); 0.35@1 → "0.4"; -0.12345@4 → "-0.1234".
+    { casas: 1, positivo: 0.35, negativo: -0.35 },
+    { casas: 2, positivo: 10.235, negativo: -0.125 },
+    { casas: 4, positivo: 0.12345, negativo: -0.12345 },
   ];
   await testarHistoricoLegado(idsLegado, casosLegado, "desktop");
   await testarHistoricoLegado(idsLegado, casosLegado, "mobile");

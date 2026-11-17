@@ -1020,15 +1020,14 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   const fmt = (unidades: number | null | undefined) =>
     unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
-  // Transações antigas guardam amount em unidades monetárias (REAL), enquanto
-  // amountCents guarda o inteiro escalado da configuração atual. Formatar o
-  // legado diretamente com a escala vigente evita assumir sempre duas casas.
-  const valorTransacao = (t: TransacaoFinanceira) =>
-    t.amountCents === null || t.amountCents === undefined
-      ? t.amount.toFixed(cfg.casasDecimais)
-      : fmt(t.amountCents);
-  const transacaoNegativa = (t: TransacaoFinanceira) =>
-    t.amountCents === null || t.amountCents === undefined ? t.amount < 0 : t.amountCents < 0;
+  // amountCents chega sempre escalado pelo servidor — inclusive para
+  // transações legadas, que o GET /financeiro normaliza na resposta com a
+  // mesma política das escritas (Math.round(valor * 10 ** casas)). O
+  // cliente não mantém um segundo caminho de arredondamento: toFixed()
+  // sobre o REAL bruto diverge do contrato canônico (ex.: 10.235 → 10.23
+  // vs 10.24) e não pode ser usado aqui.
+  const valorTransacao = (t: TransacaoFinanceira) => fmt(t.amountCents);
+  const transacaoNegativa = (t: TransacaoFinanceira) => (t.amountCents ?? 0) < 0;
 
   // Rótulos amigáveis dos tipos de movimentação.
   const ROTULO_KIND: Record<string, string> = {
