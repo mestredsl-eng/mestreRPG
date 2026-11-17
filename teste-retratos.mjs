@@ -115,6 +115,8 @@ try {
   pngGrande.writeUInt32BE(99999, 16); pngGrande.writeUInt32BE(99999, 20);
   const upDim = await upload(BASE, pjDono, cj1, "grande.png", "image/png", pngGrande);
   t("3g. dimensões acima de 4096 → 415", upDim.status === 415, `status=${upDim.status}`);
+  const gAposInvalidos = await req(BASE, "GET", `/characters/${pjDono}`, { cookie: cj1 });
+  t("3h. uploads rejeitados preservam o retrato atual", gAposInvalidos.json?.personagem?.retrato?.tipo === "arquivo" && /retrato\/imagem/.test(gAposInvalidos.json?.personagem?.retrato?.url ?? ""), JSON.stringify(gAposInvalidos.json?.personagem?.retrato));
 
   sec("4. Substituição, remoção e arquivo preservado");
   const antes = comDb(BANCO, (db) => db.prepare("select count(*) n from files where campaign_id=?").get(c.campId).n);

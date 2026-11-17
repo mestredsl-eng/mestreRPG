@@ -7,6 +7,29 @@
 - **Mesa de dados 3D:** Three.js e Rapier simulam dados poliédricos com colisões convexas, quique, atrito, bordas físicas e iluminação; o resultado continua autoritativo no servidor. Rapier/WASM e o viewer 3D são carregados sob demanda, com fallback para o renderer anterior.
 - **Homologação 3D:** verifica renderer WebGL real, movimento, valores autoritativos, temas e cores por pixels do framebuffer, reduced-motion e viewport mobile.
 
+## [1.0.0.2] - 2026-11-17
+
+### Novidades
+
+- **Sistema de XP/Merit** — personagens passam a ter saldo e histórico próprios de XP, com concessões e remoções pelo mestre, registro de autor/motivo e consulta pelo jogador.
+- **Compra de evolução com XP** — o preço do próximo nível é calculado pelas regras da campanha; jogadores podem adquirir níveis pela ficha, com confirmação em duas etapas e atualização em tempo real.
+- **Progressão integrada à ficha** — o painel apresenta saldo, histórico, custos e disponibilidade, mantendo o fluxo de criação e edição de personagens.
+
+### Integridade e compatibilidade
+
+- **Sem cobrança dupla** — níveis financiados por XP são identificados separadamente e não consomem novamente os pontos de criação.
+- **Validação transacional** — compras revalidam visibilidade, editabilidade, limites e regras antes de persistir; conflitos de edição concorrente são detectados.
+- **Proteção de informações ocultas** — vínculos e preços de campos invisíveis não são expostos ao jogador, inclusive em cenários com vínculos compartilhados.
+- **Compatibilidade com fichas existentes** — XP inicia em zero quando ausente; não requer migração de banco.
+
+### Testes
+
+- **`teste-progressao-xp.mjs`: 236/236** — regressões HTTP para concessão, compra, custos fracionários, financiamento, concorrência, limites e campos ocultos.
+- **`homologacao-progressao.mjs`: 26/26** — homologação Playwright do fluxo de progressão.
+- **CI #509 e CI dedicada #10: sucesso** — validações concluídas no SHA `e20f4bbaaceffb1d0e29abea2ad1052110e5d1c9` antes da integração.
+
+---
+
 ## [1.0.0.1] - 2026-11-17
 
 ### Novidades
