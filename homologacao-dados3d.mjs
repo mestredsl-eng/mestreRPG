@@ -703,6 +703,31 @@ try {
   const hashDepoisRM = await hashHistoricoRM();
   t("reduced-motion: rolagem histórica já resolvida permanece imóvel desde a montagem",
     hashInicialRM !== "" && hashInicialRM === hashDepoisRM, `${hashInicialRM}→${hashDepoisRM}`);
+
+  // Estado físico final (não só pixels): dados nascidos com resultado
+  // devem estar prontos, com velocidades zeradas e orientação no alvo —
+  // mesmo quando valor/alvo já vinham preenchidos na montagem.
+  const lerEstadoFisico = (canvas) => canvas.evaluate((c) => {
+    const ler = c.__mesaDadosFisica;
+    return typeof ler === "function" ? ler() : null;
+  });
+  const magnitud = (v) => Math.hypot(v[0], v[1], v[2]);
+  const quatNoAlvo = (q, alvo) => !!alvo
+    && Math.abs(q[0] * alvo[0] + q[1] * alvo[1] + q[2] * alvo[2] + q[3] * alvo[3]) > 0.9999;
+  const estadoFinalOk = (estado) => Array.isArray(estado) && estado.length > 0 && estado.every((d) =>
+    d.pronto === true
+    && magnitud(d.linvel) < 0.01
+    && magnitud(d.angvel) < 0.01
+    && quatNoAlvo(d.quat, d.alvo)
+    && d.pos[2] > 0.05);
+  const estadoHistoricoRM = await lerEstadoFisico(canvasHistoricoRM);
+  t("reduced-motion: histórico nasce assentado — pronto, velocidades zeradas, orientação no alvo",
+    estadoFinalOk(estadoHistoricoRM), JSON.stringify(estadoHistoricoRM).slice(0, 300));
+  const canvasMesaRM = pgRM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']").last();
+  await canvasMesaRM.waitFor({ timeout: 15000 });
+  const estadoMesaRM = await lerEstadoFisico(canvasMesaRM);
+  t("reduced-motion: ACK posterior também assenta imediatamente no estado final",
+    estadoFinalOk(estadoMesaRM), JSON.stringify(estadoMesaRM).slice(0, 300));
   await ctxRM.close();
 
   sec("8b. Física continua e assenta em 60/90/120/144 Hz");
@@ -740,6 +765,14 @@ try {
         && /d6=\d/.test(canvas.getAttribute("aria-label") ?? ""));
     t(`${hz} Hz: simulação termina depois de continuar os frames`, resultadoAssentado);
   }
+  // Estado físico final no caminho normal (sem reduced-motion): o dado
+  // percorrido pela simulação termina pronto, com velocidades zeradas e
+  // orientação na face oficial — mesma assinatura do caminho reduzido.
+  const canvasHz = pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']").last();
+  await canvasHz.waitFor({ timeout: 15000 });
+  const estadoHz = await lerEstadoFisico(canvasHz);
+  t("física normal: estado final pronto, velocidades zeradas e orientação no alvo",
+    estadoFinalOk(estadoHz), JSON.stringify(estadoHz).slice(0, 300));
   await ctxHz.close();
 
   sec("8c. Preview com CSP carrega o WASM Rapier");

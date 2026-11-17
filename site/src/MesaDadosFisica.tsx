@@ -334,6 +334,12 @@ function definirResultado(dado: DadoFisico, item: ItemDadoMesa, padrao: Props["e
     dado.corpo.setTranslation({ x: translation.x, y: translation.y, z: dado.alvoAltura }, true);
     dado.corpo.setLinvel({ x: 0, y: 0, z: 0 }, true);
     dado.corpo.setAngvel({ x: 0, y: 0, z: 0 }, true);
+    // Corpo dormindo não é mais integrado: sem isso, o frame de física
+    // já em voo (ou um passo residual do acumulador) re-aplicaria a
+    // gravidade e o dado "assentado" terminaria com velocidade linear
+    // residual e possivelmente abaixo da bandeja. Um novo resultado
+    // acorda o corpo via wakeUp() em definirResultado.
+    dado.corpo.sleep();
     dado.pronto = true;
     sincronizarGrupo(dado);
   }
@@ -387,6 +393,16 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
       if (disposed || !runtime) return;
       const delta = Math.min(0.05, Math.max(0, (now - (lastFrame || now)) / 1000));
       lastFrame = now;
+      // Todos assentados: nenhum passo físico é executado. Sem isso, um
+      // frame já em voo (ex.: ACK do resultado chegando com o RAF ativo)
+      // rodaria world.step() depois do assentamento e a gravidade
+      // re-aceleraria o dado "pronto" — o estado final mediria velocidade
+      // linear residual e o corpo poderia derivar da face oficial.
+      if (runtime.dados.every((dado) => dado.pronto)) {
+        render();
+        setPhysicsSettled(true);
+        return;
+      }
       accumulator = Math.min(accumulator + delta, PASSO_FISICO * 5);
       while (accumulator >= PASSO_FISICO) {
         runtime.world.timestep = PASSO_FISICO;
@@ -426,9 +442,18 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
               dado.corpo.setTranslation({ x: position.x, y: position.y, z: dado.alvoAltura }, true);
               dado.corpo.setLinvel({ x: 0, y: 0, z: 0 }, true);
               dado.corpo.setAngvel({ x: 0, y: 0, z: 0 }, true);
+              // Idem ao caminho reduzido: pronto é terminal — o corpo
+              // dorme para que passos residuais do frame não o tire
+              // do lugar nem acumulem velocidade por gravidade.
+              dado.corpo.sleep();
               dado.pronto = true;
             }
           }
+          // Um dado pronto que tenha sido acordado por colisão/predição
+          // de contato volta a dormir já neste passo — "pronto" é
+          // terminal e não pode derivar por integração residual enquanto
+          // outro dado ainda rola na mesma cena.
+          if (dado.pronto && !dado.corpo.isSleeping()) dado.corpo.sleep();
           sincronizarGrupo(dado);
         }
         accumulator -= PASSO_FISICO;
@@ -518,6 +543,35 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
         camera.lookAt(0, 0, 0.12);
         runtime = { renderer, cena: scene, camera, world, dados: [], startAnimation: requestFrame, bandeja, base, feltroTexture, metade: half };
         runtimeRef.current = runtime;
+
+        // Gancho de homologação: estado físico ao vivo de cada dado
+        // (leitura sob demanda — não polui renders). Permite provar o
+        // assentamento final em prefers-reduced-motion sem depender só
+        // de pixels: pronto, velocidades zeradas e orientação no alvo.
+        const canvasComEstado = canvas as HTMLCanvasElement & {
+          __mesaDadosFisica?: () => {
+            lados: number; valor: number | null; pronto: boolean;
+            pos: [number, number, number];
+            quat: [number, number, number, number];
+            alvo: [number, number, number, number] | null;
+            linvel: [number, number, number];
+            angvel: [number, number, number];
+          }[];
+        };
+        canvasComEstado.__mesaDadosFisica = () => (runtime?.dados ?? []).map((dado) => {
+          const t = dado.corpo.translation();
+          const r = dado.corpo.rotation();
+          const lv = dado.corpo.linvel();
+          const av = dado.corpo.angvel();
+          return {
+            lados: dado.lados, valor: dado.valor, pronto: dado.pronto,
+            pos: [t.x, t.y, t.z],
+            quat: [r.x, r.y, r.z, r.w],
+            alvo: dado.alvo ? [dado.alvo.x, dado.alvo.y, dado.alvo.z, dado.alvo.w] : null,
+            linvel: [lv.x, lv.y, lv.z],
+            angvel: [av.x, av.y, av.z],
+          };
+        });
 
         const rand = numeroAleatorio(initial.semente || 7);
         const count = initial.dados.length;
