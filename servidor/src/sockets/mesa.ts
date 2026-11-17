@@ -1291,9 +1291,14 @@ function socket_handlers(
       switch (payload.acao) {
         case "iniciar": {
           if (payload.ordem?.length) state.ordem = payload.ordem;
+          // Sem participantes válidos não existe sequência de turnos:
+          // recusa antes de persistir {ativo:true, ordem:[]} — estado
+          // que quebrava a renderização da mesa no cliente.
+          const nn = state.ordem.length;
+          if (nn === 0) { cb?.({ ok: false, erro: "Sem participantes para iniciar os turnos" }); return; }
           delete state.iniciativa;
           state.ativo = true;
-          state.atual = payload.primeiro !== undefined ? Math.min(Math.max(0, payload.primeiro), n - 1) : 0;
+          state.atual = payload.primeiro !== undefined ? Math.min(Math.max(0, payload.primeiro), nn - 1) : 0;
           break;
         }
         case "iniciativa": {
@@ -1337,7 +1342,13 @@ function socket_handlers(
           break;
         }
         case "definirOrdem":
-          if (Array.isArray(payload.ordem)) { state.ordem = payload.ordem; delete state.iniciativa; if (state.atual !== undefined && state.atual >= state.ordem.length) state.atual = state.ordem.length - 1; }
+          if (Array.isArray(payload.ordem)) {
+            state.ordem = payload.ordem; delete state.iniciativa;
+            if (state.atual !== undefined && state.atual >= state.ordem.length) state.atual = state.ordem.length - 1;
+            // Ordem esvaziada encerra a sequência — {ativo:true, ordem:[]}
+            // é estado inválido que a mesa não consegue renderizar.
+            if (!state.ordem.length) state.ativo = false;
+          }
           break;
         case "encerrar":
           state.ativo = false;

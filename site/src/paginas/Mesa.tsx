@@ -709,7 +709,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     if (atorId.startsWith("npc:")) return personagens.find((p) => p.id === atorId.slice(4))?.name ?? "NPC";
     return nomeMembro(atorId);
   };
-  const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeAtor(turnos.ordem[turnos.atual]) : null;
+  // Estados legados podem ter ativo:true com ordem vazia ou `atual`
+  // fora dos limites — sem ator resolvível a renderização não pode
+  // chamar nomeAtor (que assume string válida).
+  const atorAtualId = turnos.ativo && turnos.atual >= 0 ? turnos.ordem[turnos.atual] : undefined;
+  const turnoAtualNome = atorAtualId ? nomeAtor(atorAtualId) : null;
   const npcsElegiveisIniciativa = personagens.filter((p) => p.isNpc && p.npcRevelado && p.status === "aprovada");
   const quantidadeDadosIniciativa = dadosIniciativa.trim() === "" ? NaN : Number(dadosIniciativa);
   const iniciativaValida = Number.isInteger(quantidadeDadosIniciativa) && quantidadeDadosIniciativa >= 1 && quantidadeDadosIniciativa <= 10;
