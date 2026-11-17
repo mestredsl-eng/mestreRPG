@@ -12,6 +12,7 @@ import { limiteUsuario } from "../lib/ratelimit.js";
 import { carregarRegras } from "../lib/regras.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
+import { classificarConteudoArquivo, inicioDoArquivo } from "../lib/conteudo-arquivo.js";
 
 const db = getDb();
 export const arquivosRouter = Router({ mergeParams: true });
@@ -45,7 +46,7 @@ function extensaoSegura(nome: string): string {
 export function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
   const b = buf;
   switch (ext) {
-    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a;
     case "jpg":
     case "jpeg": return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
     case "gif": return b.length > 6 && b.toString("ascii", 0, 3) === "GIF";
@@ -231,8 +232,8 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
     res.status(415).json({ erro: "Conteúdo do arquivo não corresponde a uma imagem válida" }); return;
   }
 
-  const mimeType = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
-  if (MIMES_PERIGOSOS.test(mimeType)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }
+  const mimeDeclarado = String(req.headers["x-file-mime"] ?? "application/octet-stream").slice(0, 120);
+  if (MIMES_PERIGOSOS.test(mimeDeclarado)) { res.status(415).json({ erro: "Tipo de arquivo não permitido" }); return; }
 
   const folderId = typeof req.headers["x-folder-id"] === "string" && req.headers["x-folder-id"] ? String(req.headers["x-folder-id"]) : null;
   if (folderId) {
@@ -272,6 +273,11 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
 
   const id = crypto.randomUUID();
   const storageName = `${id}.${ext || "bin"}`;
+  // O MIME persistido é o canônico da classificação de conteúdo —
+  // nunca o valor arbitrário declarado pelo cliente. A entrega GET
+  // reclassifica de qualquer forma (arquivos antigos/incluídos).
+  const classeUpload = classificarConteudoArquivo(storageName, buffer.subarray(0, 8192));
+  const mimeType = classeUpload.mime === "text/plain; charset=utf-8" ? "text/plain" : classeUpload.mime;
   const displayName = String(req.headers["x-display-name"] ?? "").slice(0, 200) || null;
   const description = String(req.headers["x-description"] ?? "").slice(0, 2000) || null;
   const category = String(req.headers["x-category"] ?? "").slice(0, 120) || null;
@@ -325,9 +331,19 @@ arquivosRouter.get("/:fileId", requirePapel("mestre", "jogador", "espectador"), 
   }
   const querDownload = req.query.download === "1";
   const nomeExib = f.displayName ?? f.fileName;
-  res.setHeader("Content-Type", f.mimeType ?? "application/octet-stream");
-  res.setHeader("Content-Disposition", `${querDownload ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(nomeExib)}`);
+  // Entrega segura: o mimeType persistido/declarante não é prova —
+  // a classificação usa extensão do storageName + conteúdo real.
+  // Vale para arquivos novos, antigos, importados e restaurados.
+  const classe = classificarConteudoArquivo(f.storageName ?? "", inicioDoArquivo(caminho!));
+  const inline = classe.inline && !querDownload;
+  res.setHeader("Content-Type", classe.mime);
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(nomeExib)}`);
   res.setHeader("X-Content-Type-Options", "nosniff");
+  if (!inline) {
+    // camada extra para qualquer resposta não-preview: sandbox impede
+    // script mesmo que um cliente ignore o Content-Disposition.
+    res.setHeader("Content-Security-Policy", "sandbox; frame-ancestors 'self'");
+  }
   createReadStream(caminho!).pipe(res);
 });
 
