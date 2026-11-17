@@ -345,8 +345,10 @@ try {
     const pg = await progressaoDe(CHAR, J1);
     t("saldo inalterado (59)", pg.json?.xp?.saldo === 59, `saldo=${pg.json?.xp?.saldo}`);
     // remove ex_a via mestre → ex_b comprável
-    // (ignorarPontos: o pool de criação já está negativo pelas compras XP)
-    const rm = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-exa": 0 }, ignorarPontos: true } });
+    // (ignorarPontos: o pool de criação já está negativo pelas compras XP;
+    //  baseUpdatedAt: f-exa é nível financiado por XP → contrato BUG_0002)
+    const fxA = await fichaDe(CHAR, M);
+    const rm = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: M, body: { data: { "f-exa": 0 }, ignorarPontos: true, baseUpdatedAt: fxA?.personagem?.updatedAt } });
     t("mestre remove ex_a → 200", rm.status === 200, `status=${rm.status}`);
     const ok = await comprar(CHAR, J1, { kind: "vantagem", key: "ex_b", nivelAlvo: 1 });
     t("ex_b após remover ex_a → 200", ok.status === 200, `status=${ok.status} ${JSON.stringify(ok.json).slice(0, 200)}`);
@@ -687,6 +689,167 @@ try {
     t("B17. override de volta p/ mestre", ovVis2.status === 200, `status=${ovVis2.status}`);
     const pgJ3 = await progressaoDe(CHARC, J1);
     t("B18. vis_sec volta a ficar oculto", !(pgJ3.json?.disponiveis ?? []).some((d) => d.key === "vis_sec"));
+  }
+
+  // ---------- BUG_0001/0002: origem XP persistente + PATCH ----------
+  let vidX; // template "Ficha Origem XP" — reutilizado nas seções Y/Z
+  sec("BUG_0001/0002 — nível financiado por XP e PATCH com snapshot");
+  {
+    // Elementos e template dedicados: pool de pontos PEQUENO de
+    // propósito — nível comprado com XP não pode estourar a criação.
+    await elemento(CID, M, "atributo", "xp_nivel", "Nível XP", { disponivel: true });
+    await elemento(CID, M, "atributo", "xp_max", "Teto XP", { disponivel: true });
+    await elemento(CID, M, "habilidade", "xp_meio", "Custo Meio", { custoPontos: 0.5, disponivel: true });
+    await elemento(CID, M, "habilidade", "xp_dois", "Custo Dois e Meio", { custoPontos: 2.5, disponivel: true });
+    await elemento(CID, M, "disciplina", "xp_const", "Fórmula Constante", { formulas: { custo: "5" }, disponivel: true });
+    await elemento(CID, M, "defeito", "xp_grad", "Graduado XP", {
+      niveis: [{ descricao: "g1", custo: 1 }, { descricao: "g2", custo: 1 }], disponivel: true,
+    });
+    const modX = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Origem XP" } });
+    const tidX = modX.json.modelo.id;
+    vidX = modX.json.modelo.versionId;
+    const estruturaX = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          // custoPontos 2: pool da campanha é 5 — criação em 2 já gasta
+          // 4; se o nível XP fosse cobrado de novo (3 níveis = 6) estoura.
+          { id: "cx-nivel", label: "Nível", tipo: "inteiro", editavelPor: "ambos", visibilidade: "todos", custoPontos: 2, regra: { kind: "atributo", key: "xp_nivel" } },
+          { id: "cx-nota", label: "Nota", tipo: "texto", editavelPor: "ambos", visibilidade: "todos" },
+          { id: "cx-max", label: "Teto", tipo: "inteiro", editavelPor: "ambos", visibilidade: "todos", custoPontos: 1, maximo: 2, regra: { kind: "atributo", key: "xp_max" } },
+          { id: "cx-habs", label: "Habs XP", tipo: "selecao_multipla", editavelPor: "ambos", visibilidade: "todos", regraKind: "habilidade" },
+          { id: "cx-sele", label: "Sele XP", tipo: "selecao_nivel", editavelPor: "ambos", visibilidade: "todos", regraKind: "disciplina" },
+          { id: "cx-grad", label: "Grad XP", tipo: "selecao_nivel", editavelPor: "ambos", visibilidade: "todos", regraKind: "defeito" },
+        ],
+      }],
+      pontos: { habilitado: true, pontosIniciais: 2, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidX}/versions/${vidX}`, { cookie: M, body: { estrutura: estruturaX } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidX}/publish`, { cookie: M, body: { versionId: vidX } });
+    const pjX = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Origem XP", templateVersionId: vidX, data: { "cx-nivel": 2 } },
+    });
+    const CHX = pjX.json?.personagem?.id ?? pjX.json?.id;
+    t("X0. personagem origem criado", !!CHX, JSON.stringify(pjX.json).slice(0, 150));
+    await darXp(CHX, M, { acao: "conceder", quantidade: 60, motivo: "fundo X" });
+
+    // BUG_0001: compra XP sobe cx-nivel 2→3; o nível pago NÃO pode
+    // ser cobrado de novo no orçamento de pontos de criação.
+    const compX = await comprar(CHX, J1, { kind: "atributo", key: "xp_nivel", nivelAlvo: 3 });
+    t("X1. compra xp_nivel 2→3 → 200", compX.status === 200, `status=${compX.status} ${JSON.stringify(compX.json).slice(0, 200)}`);
+    // PATCH sem dados (só status) revalida pontos: sem a correção o
+    // nível XP seria cobrado (3 > pool 2) → 400.
+    const patchStatus = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: M, body: { status: "rascunho" } });
+    t("X2. PATCH status após compra XP → 200 (pontos não cobram nível XP)", patchStatus.status === 200, `status=${patchStatus.status} ${JSON.stringify(patchStatus.json).slice(0, 200)}`);
+
+    // Redução reconcilia: 3→2 consome o nível financiado por XP.
+    const fx1 = await fichaDe(CHX, M);
+    const u1 = fx1?.personagem?.updatedAt;
+    const red = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: M, body: { data: { "cx-nivel": 2 }, baseUpdatedAt: u1 } });
+    t("X3. redução 3→2 com base atual → 200", red.status === 200, `status=${red.status} ${JSON.stringify(red.json).slice(0, 200)}`);
+    // Subir de volta por PATCH agora é financiamento de CRIAÇÃO:
+    // 3 níveis > pool 2 → rejeitado (XP não virou ponto livre).
+    const fx2 = await fichaDe(CHX, M);
+    const sobe = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: M, body: { data: { "cx-nivel": 3 }, baseUpdatedAt: fx2?.personagem?.updatedAt } });
+    t("X4. subir por PATCH estoura pool → 400 (sem ponto artificial)", sobe.status === 400, `status=${sobe.status}`);
+
+    // BUG_0002: snapshot antigo não reverte nível pago.
+    // Jogador carrega ficha (nível 2), mestre compra →3, jogador salva
+    // o valor antigo → 409 e o nível permanece.
+    const snap = await fichaDe(CHX, J1);
+    const uSnap = snap?.personagem?.updatedAt;
+    const compX2 = await comprar(CHX, M, { kind: "atributo", key: "xp_nivel", nivelAlvo: 3 });
+    t("X5. mestre compra xp_nivel 2→3 → 200", compX2.status === 200, `status=${compX2.status}`);
+    const patchVelho = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: J1, body: { data: { "cx-nivel": 2 }, baseUpdatedAt: uSnap } });
+    t("X6. PATCH com base desatualizada → 409", patchVelho.status === 409, `status=${patchVelho.status} ${JSON.stringify(patchVelho.json).slice(0, 200)}`);
+    const patchSemToken = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: J1, body: { data: { "cx-nivel": 2 } } });
+    t("X7. PATCH sem token em campo financiado → 409", patchSemToken.status === 409, `status=${patchSemToken.status}`);
+    const pgX = await progressaoDe(CHX, J1);
+    const nivX = (pgX.json?.disponiveis ?? []).find((d) => d.key === "xp_nivel");
+    t("X8. nível pago preservado após tentativas de reversão", nivX?.nivelAtual === 3, `nivel=${nivX?.nivelAtual}`);
+    // Base atual + valor coerente → permitido e reconcilia financiado.
+    const fx3 = await fichaDe(CHX, J1);
+    const patchBom = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: J1, body: { data: { "cx-nivel": 2 }, baseUpdatedAt: fx3?.personagem?.updatedAt } });
+    t("X9. PATCH com base atual reduz nível → 200", patchBom.status === 200, `status=${patchBom.status} ${JSON.stringify(patchBom.json).slice(0, 200)}`);
+    const pgX2 = await progressaoDe(CHX, J1);
+    const nivX2 = (pgX2.json?.disponiveis ?? []).find((d) => d.key === "xp_nivel");
+    t("X10. nível reconciliado para 2", nivX2?.nivelAtual === 2, `nivel=${nivX2?.nivelAtual}`);
+    // PATCH narrativo (não toca campo financiado) não exige token e
+    // preserva o estado — compra seguida de edição comum.
+    const patchNarr = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: J1, body: { data: { "cx-nota": "capítulo 1" } } });
+    t("X11. PATCH narrativo → 200 sem token", patchNarr.status === 200, `status=${patchNarr.status}`);
+    const pgX3 = await progressaoDe(CHX, J1);
+    const nivX3 = (pgX3.json?.disponiveis ?? []).find((d) => d.key === "xp_nivel");
+    t("X12. nível XP preservado após PATCH narrativo", nivX3?.nivelAtual === 2, `nivel=${nivX3?.nivelAtual}`);
+    // Salvar e aprovar preserva compra.
+    const aprov = await req(BASE, "PATCH", `/characters/${CHX}`, { cookie: M, body: { status: "aprovada" } });
+    t("X13. aprovação após compra XP → 200", aprov.status === 200, `status=${aprov.status} ${JSON.stringify(aprov.json).slice(0, 150)}`);
+    const pgX4 = await progressaoDe(CHX, M);
+    const nivX4 = (pgX4.json?.disponiveis ?? []).find((d) => d.key === "xp_nivel");
+    t("X14. nível XP preservado após aprovação", nivX4?.nivelAtual === 2, `nivel=${nivX4?.nivelAtual}`);
+  }
+
+  // ---------- BUG_0003: tetos estruturais na compra ----------
+  sec("BUG_0003 — compra nunca excede máximo do campo/seleção");
+  {
+    const pjY = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J2, body: { name: "Herói Tetos", templateVersionId: vidX, data: {} },
+    });
+    const CHY = pjY.json?.personagem?.id ?? pjY.json?.id;
+    await darXp(CHY, M, { acao: "conceder", quantidade: 60, motivo: "fundo Y" });
+    // campo.maximo = 2 → alvo 3 rejeitado
+    const c1 = await comprar(CHY, J2, { kind: "atributo", key: "xp_max", nivelAlvo: 1 });
+    const c2 = await comprar(CHY, J2, { kind: "atributo", key: "xp_max", nivelAlvo: 2 });
+    const c3 = await comprar(CHY, J2, { kind: "atributo", key: "xp_max", nivelAlvo: 3 });
+    t("Y1. compras até o máximo → 200", c1.status === 200 && c2.status === 200, `c1=${c1.status} c2=${c2.status}`);
+    t("Y2. acima de campo.maximo → 400", c3.status === 400 && c3.json?.codigo === "maximo_campo", `status=${c3.status} codigo=${c3.json?.codigo} ${JSON.stringify(c3.json).slice(0, 200)}`);
+    // Seleção graduada: xp_grad tem 2 níveis → alvo 3 rejeitado
+    const g1 = await comprar(CHY, J2, { kind: "defeito", key: "xp_grad", nivelAlvo: 1 });
+    const g2 = await comprar(CHY, J2, { kind: "defeito", key: "xp_grad", nivelAlvo: 2 });
+    const g3 = await comprar(CHY, J2, { kind: "defeito", key: "xp_grad", nivelAlvo: 3 });
+    t("Y3. seleção graduada até o limite → 200", g1.status === 200 && g2.status === 200, `g1=${g1.status} g2=${g2.status} ${JSON.stringify(g2.json).slice(0, 150)}`);
+    t("Y4. acima do limite de seleção → 400", g3.status === 400 && g3.json?.codigo === "maximo_selecao", `status=${g3.status} codigo=${g3.json?.codigo}`);
+    // covardia (3 níveis) no template principal: alvo além de 3 rejeitado
+    await darXp(CHAR, M, { acao: "conceder", quantidade: 50, motivo: "fundo tetos" });
+    const cvOk = await comprar(CHAR, J1, { kind: "defeito", key: "covardia", nivelAlvo: 3 });
+    t("Y5a. covardia nível 3 → 200", cvOk.status === 200, `status=${cvOk.status} ${JSON.stringify(cvOk.json).slice(0, 150)}`);
+    const cv = await comprar(CHAR, J1, { kind: "defeito", key: "covardia", nivelAlvo: 4 });
+    t("Y5. covardia acima de 3 níveis → 400", cv.status === 400 && cv.json?.codigo === "maximo_selecao", `status=${cv.status} codigo=${cv.json?.codigo}`);
+  }
+
+  // ---------- BUG_0004/0005: frações e fórmula constante ----------
+  sec("BUG_0004/0005 — custos fracionários e primeira aquisição");
+  {
+    const pjZ = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Frações", templateVersionId: vidX, data: {} },
+    });
+    const CHZ = pjZ.json?.personagem?.id ?? pjZ.json?.id;
+    await darXp(CHZ, M, { acao: "conceder", quantidade: 20, motivo: "fundo Z" });
+    // 0.5 e 2.5 debitados EXATAMENTE — sem truncamento
+    const f1 = await comprar(CHZ, J1, { kind: "habilidade", key: "xp_meio", nivelAlvo: 1 });
+    t("Z1. custo 0.5 → 200", f1.status === 200, `status=${f1.status} ${JSON.stringify(f1.json).slice(0, 200)}`);
+    t("Z2. saldo 20−0.5=19.5 exato", f1.json?.xp?.saldo === 19.5, `saldo=${f1.json?.xp?.saldo}`);
+    const pgZ1 = await progressaoDe(CHZ, J1);
+    const ev1 = (pgZ1.json?.xp?.historico ?? []).find((e) => e.tipo === "compra" && e.compra?.key === "xp_meio");
+    t("Z3. histórico registra −0.5", ev1?.quantidade === -0.5, `qtd=${ev1?.quantidade}`);
+    const f2 = await comprar(CHZ, J1, { kind: "habilidade", key: "xp_dois", nivelAlvo: 1 });
+    t("Z4. custo 2.5 → 200", f2.status === 200, `status=${f2.status}`);
+    t("Z5. saldo 19.5−2.5=17 exato", f2.json?.xp?.saldo === 17, `saldo=${f2.json?.xp?.saldo}`);
+    const pgZ2 = await progressaoDe(CHZ, J1);
+    const ev2 = (pgZ2.json?.xp?.historico ?? []).find((e) => e.tipo === "compra" && e.compra?.key === "xp_dois");
+    t("Z6. histórico registra −2.5", ev2?.quantidade === -2.5, `qtd=${ev2?.quantidade}`);
+
+    // BUG_0005: fórmula constante "5" — 1ª aquisição custa 5 (não 0).
+    const k1 = await comprar(CHZ, J1, { kind: "disciplina", key: "xp_const", nivelAlvo: 1 });
+    t("Z7. 1ª aquisição c/ fórmula constante → 200", k1.status === 200, `status=${k1.status} ${JSON.stringify(k1.json).slice(0, 250)}`);
+    t("Z8. preço da 1ª aquisição = 5 XP", k1.json?.xp?.saldo === 12, `saldo=${k1.json?.xp?.saldo}`);
+    // 2ª aquisição: fórmula é TOTAL da seleção → delta 0 → sem preço
+    // configurado para o incremento (consistente, nunca negativo/grátis).
+    const k2 = await comprar(CHZ, J1, { kind: "disciplina", key: "xp_const", nivelAlvo: 2 });
+    t("Z9. 2ª aquisição sem preço incremental → 400 consistente", k2.status === 400, `status=${k2.status} ${JSON.stringify(k2.json).slice(0, 200)}`);
+    const pgZ3 = await progressaoDe(CHZ, J1);
+    const selZ = (pgZ3.json?.disponiveis ?? []).find((d) => d.key === "xp_const");
+    t("Z10. nível da fórmula permanece 1", selZ?.nivelAtual === 1, `nivel=${selZ?.nivelAtual}`);
   }
 
 } finally {

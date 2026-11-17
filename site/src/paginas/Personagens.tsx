@@ -107,7 +107,12 @@ export default function Personagens({ campaignId, campanha }: Props) {
           await carregar();
         }}
         aoSalvar={async (nome, data, status) => {
-          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, { name: nome, data, status });
+          // BUG_0002: envia o updatedAt carregado — fichas com níveis
+          // financiados por XP exigem base atual para aceitar escrita.
+          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, {
+            name: nome, data, status,
+            baseUpdatedAt: selecionado.personagem.updatedAt,
+          });
           setSelecionado(atualizado);
           await carregar();
         }}
@@ -370,6 +375,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
       } else {
         setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        // BUG_0002: conflito de base (ficha mudou no servidor, ex.: compra
+        // de XP) — sincroniza explicitamente em vez de perder a edição em silêncio.
+        if (e instanceof ApiError && e.status === 409) void aoRecarregar();
       }
     } finally {
       setSalvando(false);

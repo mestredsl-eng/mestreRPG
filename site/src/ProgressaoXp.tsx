@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSocket } from "./socket";
 import { api } from "./api";
 import {
@@ -27,6 +27,9 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
   const [acaoXp, setAcaoXp] = useState<"conceder" | "remover">("conceder");
   const [qtdXp, setQtdXp] = useState("10");
   const [motivoXp, setMotivoXp] = useState("");
+  // BUG_0006: erro de AÇÃO (compra/XP) sobrevive a recargas disparadas
+  // por socket/GET — só é limpo quando uma nova ação começa ou sucede.
+  const erroAcao = useRef(false);
 
   const carregar = useCallback(async () => {
     try {
@@ -42,7 +45,8 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
         }
       }
       setProg(await apiProgressao.obter(characterId));
-      setErro(null);
+      // Preserva erro de ação pendente (BUG_0006); erro de carga é limpo.
+      setErro((atual) => (erroAcao.current ? atual : null));
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Falha ao carregar progressão");
     }
@@ -73,11 +77,13 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
     if (ocupado) return;
     setOcupado(true);
     setErro(null);
+    erroAcao.current = false;
     try {
       await apiProgressao.comprarNivel(characterId, { kind: el.kind, key: el.key, nivelAlvo: el.nivelAtual + 1 });
       setConfirmando(null);
       await carregar();
     } catch (e) {
+      erroAcao.current = true;
       if (e instanceof ApiErrorProgresso && e.codigo === "regras_alteradas") {
         // Conflito de versão das regras (HTTP 409): nada foi debitado.
         // Recarrega saldo/histórico/preços da configuração vigente e
@@ -99,12 +105,14 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
   const operarXp = async () => {
     const quantidade = Number(qtdXp);
     if (!Number.isInteger(quantidade) || quantidade < 1 || !motivoXp.trim()) {
+      erroAcao.current = true;
       setErro("Informe quantidade inteira positiva e um motivo.");
       return;
     }
     if (ocupado) return;
     setOcupado(true);
     setErro(null);
+    erroAcao.current = false;
     try {
       await apiProgressao.concederXp(characterId, { acao: acaoXp, quantidade, motivo: motivoXp.trim() });
       setMotivoXp("");

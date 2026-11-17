@@ -81,9 +81,17 @@ export interface EventoXp {
 export interface EstadoXp {
   saldo: number;
   historico: EventoXp[];
+  /** Níveis financiados por XP por campo da ficha (BUG_0001): impede
+   *  que o orçamento de pontos de criação cobre de novo esses níveis
+   *  e permite reconciliar reduções/manutenção. */
+  financiado?: Record<string, number>;
 }
 
 const MAX_HISTORICO = 500;
+
+/** XP admite custos fracionários (BUG_0004): arredonda a 4 casas para
+ *  absorver ruído de ponto flutuante sem truncar valores legítimos. */
+const xpNum = (n: number): number => Math.round(n * 10000) / 10000;
 
 const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
@@ -93,11 +101,23 @@ const num = (v: unknown): number | null =>
 export function lerXp(dados: Record<string, unknown>): EstadoXp {
   const bruto = dados[CHAVE_XP] as EstadoXp | undefined;
   if (!bruto || typeof bruto !== "object") return { saldo: 0, historico: [] };
-  const saldo = num(bruto.saldo);
+  const saldoBruto = num(bruto.saldo);
   const historico = Array.isArray(bruto.historico)
     ? bruto.historico.filter((e) => e && typeof e === "object")
     : [];
-  return { saldo: saldo === null ? 0 : Math.trunc(saldo), historico };
+  const financiado: Record<string, number> = {};
+  const finBruto = (bruto as { financiado?: unknown }).financiado;
+  if (finBruto && typeof finBruto === "object") {
+    for (const [k, v] of Object.entries(finBruto as Record<string, unknown>)) {
+      const n = num(v);
+      if (n !== null && n > 0) financiado[k] = n;
+    }
+  }
+  return {
+    saldo: saldoBruto === null ? 0 : xpNum(saldoBruto),
+    historico,
+    financiado: Object.keys(financiado).length ? financiado : undefined,
+  };
 }
 
 export function saldoXp(dados: Record<string, unknown>): number {
@@ -115,7 +135,7 @@ export function aplicarXp(
   evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null },
 ): { dados: Record<string, unknown>; estado: EstadoXp } {
   const estado = lerXp(dados);
-  const saldo = estado.saldo + Math.trunc(delta);
+  const saldo = xpNum(estado.saldo + delta);
   const novo: EstadoXp = {
     saldo,
     historico: [
@@ -123,15 +143,48 @@ export function aplicarXp(
       {
         em: new Date().toISOString(),
         tipo: evento.tipo,
-        quantidade: Math.trunc(delta),
+        quantidade: xpNum(delta),
         motivo: evento.motivo?.trim() || null,
         autorId: evento.autorId,
         autorNome: evento.autorNome,
         saldoResultante: saldo,
       },
     ].slice(-MAX_HISTORICO),
+    financiado: estado.financiado,
   };
   return { dados: { ...dados, [CHAVE_XP]: novo }, estado: novo };
+}
+
+/** Níveis do campo `campoId` financiados por XP no estado persistido. */
+export function xpFinanciadoEm(dados: Record<string, unknown>, campoId: string): number {
+  const fin = (dados[CHAVE_XP] as EstadoXp | undefined)?.financiado;
+  const n = fin?.[campoId];
+  return typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : 0;
+}
+
+/**
+ * Reconcilia `financiado` após escrita NÃO-XP nos dados da ficha
+ * (PATCH do jogador/mestre, importação, restauração). Níveis
+ * reduzidos consomem primeiro os financiados por XP (são os mais
+ * recentes); aumentos por via não-XP são financiados por pontos de
+ * criação — o contador só é limitado ao novo valor. Sem __xp no
+ * estado, retorna os dados intactos.
+ */
+export function reconciliarFinanciadoXp(
+  dadosAntigos: Record<string, unknown>,
+  dadosNovos: Record<string, unknown>,
+): Record<string, unknown> {
+  const xp = lerXp(dadosNovos);
+  if (dadosNovos[CHAVE_XP] === undefined || !xp.financiado) return dadosNovos;
+  const fin: Record<string, number> = { ...xp.financiado };
+  for (const campoId of Object.keys(fin)) {
+    const antes = num(dadosAntigos[campoId]) ?? 0;
+    const depois = num(dadosNovos[campoId]) ?? 0;
+    if (depois < antes) fin[campoId] = Math.max(0, fin[campoId] - (antes - depois));
+    else fin[campoId] = Math.min(fin[campoId], Math.max(0, depois));
+    if (fin[campoId] <= 0) delete fin[campoId];
+  }
+  return { ...dadosNovos, [CHAVE_XP]: { ...xp, financiado: Object.keys(fin).length ? fin : undefined } };
 }
 
 // ---------- Vínculo elemento → campo da ficha ----------
@@ -316,6 +369,9 @@ function custoSelecaoAte(
   estrutura: EstruturaFicha,
   level: number,
 ): number | null {
+  // BUG_0005: nível 0 = seleção ausente → custo acumulado zero,
+  // mesmo quando a fórmula é constante (não depende do estado).
+  if (level <= 0) return 0;
   const def = elemento.definition;
   const formulaCusto = def.formulas?.custo;
   if (formulaCusto) {
@@ -552,6 +608,26 @@ export function simularCompraNivel(
     return { ok: false, erro: `"${elemento.name}" é uma seleção simples (nível máximo 1)`, codigo: "nivel_maximo" };
   }
 
+  // BUG_0003: tetos estruturais da ficha/seleção — a compra nunca
+  // persiste nível acima do máximo do campo nem do limite graduado
+  // do elemento, independentemente de preço/regras.
+  if (vinculo.modo === "nivel" && vinculo.campo.maximo !== undefined && nivelAlvo > vinculo.campo.maximo) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" excede o máximo do campo "${vinculo.campo.label}" (${vinculo.campo.maximo})`,
+      codigo: "maximo_campo",
+      detalhes: { campoId: vinculo.campo.id, maximo: vinculo.campo.maximo, nivelAlvo },
+    };
+  }
+  if (vinculo.modo === "selecao_nivel" && elemento.definition.niveis?.length && nivelAlvo > elemento.definition.niveis.length) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" excede o limite de níveis configurado (${elemento.definition.niveis.length})`,
+      codigo: "maximo_selecao",
+      detalhes: { maximo: elemento.definition.niveis.length, nivelAlvo },
+    };
+  }
+
   const preco = precoProximoNivel(estrutura, dados, regras, elemento, vinculo, nivelAtual, nivelAlvo);
   if (preco.preco === null) {
     return { ok: false, erro: preco.motivo ?? "Sem preço configurado", codigo: "sem_preco" };
@@ -595,6 +671,14 @@ export function simularCompraNivel(
   }).dados;
   // Enriquece o evento de compra com os dados do elemento.
   const estado = lerXp(dadosNovos);
+  // BUG_0001: nível comprado com XP em campo numérico é financiado
+  // por XP — o orçamento de pontos de criação não pode cobrá-lo de
+  // novo, e reduções futuras reconciliam por reconciliarFinanciadoXp.
+  if (vinculo.modo === "nivel") {
+    const fin = { ...(estado.financiado ?? {}) };
+    fin[vinculo.campo.id] = xpNum((fin[vinculo.campo.id] ?? 0) + (nivelAlvo - nivelAtual));
+    estado.financiado = fin;
+  }
   const ultimo = estado.historico[estado.historico.length - 1];
   if (ultimo) {
     ultimo.compra = {

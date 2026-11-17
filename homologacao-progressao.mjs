@@ -172,6 +172,46 @@ try {
     await ctx.close();
   }
 
+  sec("BUG_0006 — erro de ação persiste após refresh de socket");
+  {
+    // Campo Força vira exclusivo do mestre via override → a compra do
+    // jogador falha com 403 campo_nao_editavel (erro de ação real).
+    const ov = await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: ids.cm, body: { overrides: { "f-forca": { editavelPor: "mestre" } } },
+    });
+    t("override editavelPor=mestre aplicado", ov.status === 200, `status=${ov.status}`);
+    const { ctx, pg } = await novaPagina(ids.j1.cookie);
+    await abrirFicha(pg, "Herói Prog");
+    const painel = pg.locator(".progressao-xp");
+    const linhaForca = painel.locator("tr", { hasText: "Força" });
+    const btn = linhaForca.getByRole("button", { name: "Comprar" });
+    if (await btn.count()) {
+      await btn.click();
+      await linhaForca.getByRole("button", { name: /Confirmar/ }).click();
+      await pg.waitForFunction(
+        () => /não|permite|editad|mestre/i.test(document.querySelector(".progressao-xp .ficha-aviso")?.textContent ?? "")
+          || /não|permite|editad|mestre/i.test(document.querySelector(".progressao-xp")?.textContent ?? ""),
+        null, { timeout: 15000 }).catch(() => {});
+      await pg.waitForTimeout(600);
+    }
+    const txtErro = await painel.textContent();
+    t("erro de compra exibido ao jogador", /não|permite|editad|mestre|insuficiente/i.test(txtErro ?? ""), txtErro?.slice(0, 250));
+    // Socket: mestre concede XP → personagens:atualizados → carregar()
+    // tem sucesso e NÃO pode apagar o erro de ação (BUG_0006).
+    await req(BASE, "POST", `/characters/${CHAR}/xp`, {
+      cookie: ids.cm, body: { acao: "conceder", quantidade: 3, motivo: "refresh socket" },
+    });
+    await pg.waitForFunction(() => /saldo 14/.test(document.querySelector(".progressao-xp")?.textContent ?? ""), null, { timeout: 15000 }).catch(() => {});
+    await pg.waitForTimeout(800);
+    const txtDepois = await painel.textContent();
+    t("erro persiste após refresh via socket", /não|permite|editad|mestre|insuficiente/i.test(txtDepois ?? ""), txtDepois?.slice(0, 300));
+    // limpeza do override para não afetar outras verificações
+    await req(BASE, "PATCH", `/characters/${CHAR}`, {
+      cookie: ids.cm, body: { overrides: { "f-forca": { editavelPor: "ambos" } } },
+    });
+    await ctx.close();
+  }
+
   sec("Responsividade do painel");
   {
     const { ctx, pg } = await novaPagina(ids.j1.cookie, { width: 390, height: 844 });

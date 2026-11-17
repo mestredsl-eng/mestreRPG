@@ -447,7 +447,12 @@ export function calcularPontos(
     if (campo.custoPontos === undefined && !campo.custoProgressivo?.length && !cfg.custos?.[campo.semantico]) continue;
 
     const base = typeof campo.padrao === "number" ? campo.padrao : (campo.minimo ?? 0);
-    const diff = valor - base;
+    // BUG_0001: níveis financiados por XP (registrados em __xp.financiado
+    // pela compra) NÃO consomem pontos de criação — cobriria em dobro.
+    // Os níveis XP são os mais recentes: reduções os consomem primeiro
+    // (reconciliarFinanciadoXp em lib/progressao.ts).
+    const valorCusto = Math.max(base, valor - xpFinanciadoCampo(dados, campo.id));
+    const diff = valorCusto - base;
     if (diff <= 0) continue;
 
     const poolId = campo.reservaPontos ?? poolPadraoId;
@@ -456,8 +461,8 @@ export function calcularPontos(
 
     const tabela = campo.custoProgressivo?.length ? campo.custoProgressivo : cfg.custos?.[campo.semantico];
     if (tabela?.length) {
-      // custo progressivo: soma custos[base..valor-1]
-      for (let nivel = base; nivel < valor; nivel++) {
+      // custo progressivo: soma custos[base..valorCusto-1]
+      for (let nivel = base; nivel < valorCusto; nivel++) {
         const c = tabela[nivel];
         custo += typeof c === "number" ? c : (campo.custoPontos ?? 0);
       }
@@ -479,6 +484,15 @@ export function calcularPontos(
     if (pool.saldo < 0) erros.push(`Pool "${pool.nome}": pontos insuficientes (saldo ${pool.saldo})`);
   }
   return { habilitado: true, pools: saida, detalhes, erros };
+}
+
+/** Níveis do campo financiados por XP (metadado __xp.financiado,
+ *  gravado pela compra em lib/progressao.ts). Leitura direta para
+ *  evitar dependência circular ficha↔progressao. */
+function xpFinanciadoCampo(dados: Record<string, unknown>, campoId: string): number {
+  const xp = dados["__xp"] as { financiado?: Record<string, unknown> } | undefined;
+  const n = xp?.financiado?.[campoId];
+  return typeof n === "number" && Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 /** Valida se os dados estouram algum pool. Retorna null se OK. */
