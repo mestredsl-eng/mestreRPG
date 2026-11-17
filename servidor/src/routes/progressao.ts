@@ -13,15 +13,25 @@ import {
   carregarRegrasSincrono,
   impressaoDigitalRegras,
 } from "../lib/regras.js";
-import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
+import {
+  estruturaFichaSchema,
+  campoVisivelPara,
+  campoEditavelPor,
+  mapaCampos,
+  type EstruturaFicha,
+  type Visibilidade,
+  type EditavelPor,
+} from "../lib/ficha.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import {
   aplicarXp,
+  escolherVinculo,
   lerXp,
   resumoProgressao,
   simularCompraNivel,
+  type EventoXp,
 } from "../lib/progressao.js";
 
 const db = getDb();
@@ -30,6 +40,13 @@ progressaoRouter.use(requireAuth);
 // Rotas por personagem (/api/characters/:characterId/...): o lease de
 // mutação é aplicado por rota via requireLeasePersonagem (o parâmetro
 // só existe depois do match — mesmo padrão de personagens.ts).
+
+type OverrideCampo = { visibilidade?: Visibilidade; editavelPor?: EditavelPor; destinatarios?: string[] };
+type Overrides = Record<string, OverrideCampo>;
+
+function overridesDe(personagem: typeof characters.$inferSelect): Overrides {
+  return (personagem.overrides ?? {}) as Overrides;
+}
 
 async function nomeUsuario(id: string): Promise<string> {
   const [u] = await db.select({ displayName: users.displayName, username: users.username }).from(users).where(eq(users.id, id)).limit(1);
@@ -73,7 +90,37 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
     return;
   }
   const resumo = resumoProgressao(estrutura, dados, regras);
-  res.json({ xp: resumo.xp, disponiveis: resumo.disponiveis });
+  // Defesa no servidor (não só na UI): elementos vinculados a campos
+  // invisíveis para o requisitante não são enviados — nome, key, preço
+  // e nível inclusos. O vínculo é resolvido pela função canônica
+  // escolherVinculo sobre os dados persistidos; mestre recebe tudo.
+  const ehMestre = acesso.ehMestre;
+  const usuarioId = req.usuario!.id;
+  const overrides = overridesDe(p);
+  const mapa = mapaCampos(estrutura);
+  const campoVisivelId = (campoId: string | undefined): boolean => {
+    if (ehMestre) return true;
+    const campo = campoId ? mapa.get(campoId) : undefined;
+    if (!campo) return false; // fail-closed: campo fora da estrutura não vaza
+    return campoVisivelPara(campo, overrides[campo.id], false, acesso.ehDono, usuarioId, acesso.membershipId);
+  };
+  const disponiveis = ehMestre
+    ? resumo.disponiveis
+    : resumo.disponiveis.filter((el) => {
+        const v = escolherVinculo(estrutura, dados, el.kind, el.key, el.nivelAtual + 1);
+        return !!v && campoVisivelId(v.campo.id);
+      });
+  // Histórico: compras gravadas em campos ocultos perdem os detalhes
+  // (nome/key/campoId/níveis/custo) e o motivo original — que embute o
+  // nome do elemento. O evento de XP em si permanece (ledger próprio).
+  const historico = ehMestre
+    ? resumo.xp.historico
+    : resumo.xp.historico.map((ev: EventoXp) => {
+        if (ev.tipo !== "compra" || !ev.compra || campoVisivelId(ev.compra.campoId)) return ev;
+        const { compra: _compraOculta, ...resto } = ev;
+        return { ...resto, motivo: "Compra de nível" };
+      });
+  res.json({ xp: { saldo: resumo.xp.saldo, historico }, disponiveis });
 });
 
 // ---------- POST /api/characters/:characterId/xp ----------
@@ -298,6 +345,31 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
         corpo: { erro: compra.erro, codigo: compra.codigo, detalhes: compra.detalhes },
       };
     }
+
+    // Autorização de CAMPO dentro da transação (defeito A): a compra
+    // grava no campo vinculado — o jogador só pode comprar se esse
+    // campo for editável para ele. Overrides e status são relidos de
+    // `atual` (linha fresca da tx), nunca do estado pré-transação;
+    // o papel é o vínculo revalidado acima. campoEditavelPor já
+    // aplica a política canônica: mestre sempre; jogador nunca em
+    // ficha bloqueada/aprovada/arquivada; editavelPor decide o resto.
+    const campoId = (compra.compra as { campoId?: string } | undefined)?.campoId;
+    const campoAlvo = campoId ? mapaCampos(estrutura!).get(campoId) : undefined;
+    const ehMestreTx = vinculo.role === "mestre";
+    const editavel = campoAlvo
+      ? campoEditavelPor(campoAlvo, overridesDe(atual)[campoAlvo.id], ehMestreTx, atual.status)
+      : ehMestreTx; // campo ausente da estrutura → fail-closed p/ não-mestre
+    if (!editavel) {
+      return {
+        tipo: "falha",
+        status: 403,
+        corpo: {
+          erro: "Este elemento está vinculado a um campo que você não pode editar",
+          codigo: "campo_nao_editavel",
+        },
+      };
+    }
+
     tx.update(characters).set({ data: compra.dados, updatedAt: agora }).where(eq(characters.id, p.id)).run();
     return { tipo: "ok", saldo: compra.estadoXp?.saldo ?? 0, compra: compra.compra };
   });

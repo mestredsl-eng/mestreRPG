@@ -517,6 +517,178 @@ try {
     t("forca do CHAR2 = 1", ficha?.ficha?.campos?.["f-forca"] === 1, `forca=${ficha?.ficha?.campos?.["f-forca"]}`);
   }
 
+  // ---------- Defeito A: compra respeita editabilidade do campo ----------
+  let vidA; // template de autorização — reutilizado na prova de janela
+  sec("Defeito A — compra exige campo editável (dentro da transação)");
+  {
+    // Elementos dedicados (vantagem, custo fixo 1 XP)
+    await elemento(CID, M, "vantagem", "vis_editj", "Talento Jogador", { custoPontos: 1, disponivel: true });
+    await elemento(CID, M, "vantagem", "vis_editm", "Segredo do Mestre", { custoPontos: 1, disponivel: true });
+    await elemento(CID, M, "vantagem", "vis_ambos", "Talento Comum", { custoPontos: 1, disponivel: true });
+    // Template dedicado: campos inteiros com vínculo direto + editavelPor
+    const modA = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Autorização" } });
+    const tidA = modA.json.modelo.id;
+    vidA = modA.json.modelo.versionId;
+    const estruturaA = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          { id: "ca-editj", label: "Talento J", tipo: "inteiro", editavelPor: "jogador", visibilidade: "todos", custoPontos: 1, regra: { kind: "vantagem", key: "vis_editj" } },
+          { id: "ca-editm", label: "Talento M", tipo: "inteiro", editavelPor: "mestre", visibilidade: "todos", custoPontos: 1, regra: { kind: "vantagem", key: "vis_editm" } },
+          { id: "ca-ambos", label: "Talento A", tipo: "inteiro", editavelPor: "ambos", visibilidade: "todos", custoPontos: 1, regra: { kind: "vantagem", key: "vis_ambos" } },
+        ],
+      }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidA}/versions/${vidA}`, { cookie: M, body: { estrutura: estruturaA } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidA}/publish`, { cookie: M, body: { versionId: vidA } });
+    const pjA = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Autorização", templateVersionId: vidA, data: {} },
+    });
+    const CHARA = pjA.json?.personagem?.id ?? pjA.json?.id;
+    await darXp(CHARA, M, { acao: "conceder", quantidade: 50, motivo: "fundo A" });
+
+    const compraOk = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_editj", nivelAlvo: 1 });
+    t("A1. campo editavelPor=jogador → compra permitida", compraOk.status === 200, `status=${compraOk.status} ${JSON.stringify(compraOk.json).slice(0, 200)}`);
+    const saldoAposJ = compraOk.json?.xp?.saldo;
+
+    const compraM = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_editm", nivelAlvo: 1 });
+    t("A2. campo editavelPor=mestre → jogador 403", compraM.status === 403, `status=${compraM.status} ${JSON.stringify(compraM.json).slice(0, 200)}`);
+    t("A2b. código campo_nao_editavel", compraM.json?.codigo === "campo_nao_editavel", `codigo=${compraM.json?.codigo}`);
+    const pgA = await progressaoDe(CHARA, J1);
+    t("A3. sem débito após bloqueio", pgA.json?.xp?.saldo === saldoAposJ, `saldo=${pgA.json?.xp?.saldo}`);
+
+    const compraAmbos = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_ambos", nivelAlvo: 1 });
+    t("A4. editavelPor=ambos → compra permitida", compraAmbos.status === 200, `status=${compraAmbos.status}`);
+
+    // Overrides respeitados: template=mestre + override=jogador libera;
+    // template=jogador + override=mestre bloqueia.
+    const ov1 = await req(BASE, "PATCH", `/characters/${CHARA}`, { cookie: M, body: { overrides: { "ca-editm": { editavelPor: "jogador" } } } });
+    t("A5. override mestre→jogador aplicado", ov1.status === 200, `status=${ov1.status}`);
+    const compraOv = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_editm", nivelAlvo: 1 });
+    t("A6. override editavelPor=jogador → compra permitida", compraOv.status === 200, `status=${compraOv.status} ${JSON.stringify(compraOv.json).slice(0, 150)}`);
+    const ov2 = await req(BASE, "PATCH", `/characters/${CHARA}`, { cookie: M, body: { overrides: { "ca-editj": { editavelPor: "mestre" } } } });
+    t("A7. override jogador→mestre aplicado", ov2.status === 200, `status=${ov2.status}`);
+    // vis_editj já está nível 1; próximo nível é 2 — mas o campo é inteiro
+    // (modo nivel) e o elemento vantagem sem maximo → alvo 2 válido.
+    const compraOv2 = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_editj", nivelAlvo: 2 });
+    t("A8. override editavelPor=mestre → jogador bloqueado", compraOv2.status === 403 && compraOv2.json?.codigo === "campo_nao_editavel", `status=${compraOv2.status}`);
+
+    // Ficha aprovada/bloqueada: regra canônica campoEditavelPor barra
+    // o não-mestre por status, mesmo com campo editável.
+    const ap = await req(BASE, "PATCH", `/characters/${CHARA}`, { cookie: M, body: { status: "aprovada" } });
+    t("A9. mestre aprova ficha → 200", ap.status === 200, `status=${ap.status} ${JSON.stringify(ap.json).slice(0, 150)}`);
+    // desfaz override que bloquearia (ca-editj está mestre) — usa vis_ambos
+    const compraAprov = await comprar(CHARA, J1, { kind: "vantagem", key: "vis_ambos", nivelAlvo: 2 });
+    t("A10. ficha aprovada → jogador não compra", compraAprov.status === 403, `status=${compraAprov.status} ${JSON.stringify(compraAprov.json).slice(0, 200)}`);
+    const compraAprovM = await comprar(CHARA, M, { kind: "vantagem", key: "vis_ambos", nivelAlvo: 2 });
+    t("A11. ficha aprovada → mestre compra normalmente", compraAprovM.status === 200, `status=${compraAprovM.status} ${JSON.stringify(compraAprovM.json).slice(0, 150)}`);
+    const back = await req(BASE, "PATCH", `/characters/${CHARA}`, { cookie: M, body: { status: "rascunho" } });
+    t("A12. mestre devolve a rascunho", back.status === 200, `status=${back.status}`);
+  }
+
+  sec("Defeito A — overrides/status na janela pré-carga→transação não geram bypass");
+  {
+    mkdirSync(BARREIRA, { recursive: true });
+    const pjB = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Janela", templateVersionId: vidA, data: {} },
+    });
+    const CHARB = pjB.json?.personagem?.id ?? pjB.json?.id;
+    await darXp(CHARB, M, { acao: "conceder", quantidade: 30, motivo: "fundo B" });
+    const esperarArquivo = async (caminho, timeoutMs = 10000) => {
+      const limite = Date.now() + timeoutMs;
+      while (Date.now() < limite) {
+        if (existsSync(caminho)) return true;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      return false;
+    };
+    // Janela: compra do jogador armada; dentro dela o override do campo
+    // vira editavelPor=mestre DIRETO NO BANCO (efeito de restauração/
+    // importação — fora do PATCH). A tx deve reler overrides frescos.
+    writeFileSync(join(BARREIRA, "armado"), "1");
+    const compraJanela = comprar(CHARB, J1, { kind: "vantagem", key: "vis_ambos", nivelAlvo: 1 });
+    const iniciou = await esperarArquivo(join(BARREIRA, "iniciado"));
+    if (iniciou) {
+      const w = abrirDb(BANCO);
+      try {
+        w.prepare("update characters set overrides = ? where id = ?")
+          .run(JSON.stringify({ "ca-ambos": { editavelPor: "mestre" } }), CHARB);
+      } finally { w.close(); }
+    }
+    writeFileSync(join(BARREIRA, "liberar"), "1");
+    for (const f of ["armado", "iniciado", "liberar"]) rmSync(join(BARREIRA, f), { force: true });
+    const r = await compraJanela;
+    t("B1. override mutado na janela → compra bloqueada", r.status === 403 && r.json?.codigo === "campo_nao_editavel", `status=${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+    const pgB = await progressaoDe(CHARB, J1);
+    t("B2. saldo intacto após bypass tentado", pgB.json?.xp?.saldo === 30, `saldo=${pgB.json?.xp?.saldo}`);
+    // E o mestre segue podendo comprar no mesmo campo (política preservada)
+    const compraM2 = await comprar(CHARB, M, { kind: "vantagem", key: "vis_ambos", nivelAlvo: 1 });
+    t("B3. mestre compra no campo restrito → 200", compraM2.status === 200, `status=${compraM2.status}`);
+  }
+
+  // ---------- Defeito B: GET não revela campos ocultos ----------
+  sec("Defeito B — GET progressao filtra por visibilidade do campo");
+  {
+    await elemento(CID, M, "vantagem", "vis_pub", "Recurso Público", { custoPontos: 1, disponivel: true });
+    await elemento(CID, M, "vantagem", "vis_sec", "Segredo de Mestre XP", { custoPontos: 1, disponivel: true });
+    const modB = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Visibilidade" } });
+    const tidB = modB.json.modelo.id, vidB = modB.json.modelo.versionId;
+    const estruturaB = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          { id: "cv-pub", label: "Recurso P", tipo: "inteiro", visibilidade: "todos", custoPontos: 1, regra: { kind: "vantagem", key: "vis_pub" } },
+          { id: "cv-sec", label: "Segredo", tipo: "inteiro", visibilidade: "mestre", custoPontos: 1, regra: { kind: "vantagem", key: "vis_sec" } },
+        ],
+      }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidB}/versions/${vidB}`, { cookie: M, body: { estrutura: estruturaB } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidB}/publish`, { cookie: M, body: { versionId: vidB } });
+    const pjC = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Visibilidade", templateVersionId: vidB, data: {} },
+    });
+    const CHARC = pjC.json?.personagem?.id ?? pjC.json?.id;
+    await darXp(CHARC, M, { acao: "conceder", quantidade: 20, motivo: "fundo C" });
+    // Mestre compra o elemento do campo oculto → gera evento de compra
+    const compraSec = await comprar(CHARC, M, { kind: "vantagem", key: "vis_sec", nivelAlvo: 1 });
+    t("B4. mestre compra elemento de campo oculto → 200", compraSec.status === 200, `status=${compraSec.status}`);
+
+    // Mestre: visão completa
+    const pgM = await progressaoDe(CHARC, M);
+    const dispM = pgM.json?.disponiveis ?? [];
+    t("B5. mestre vê vis_pub e vis_sec", dispM.some((d) => d.key === "vis_pub") && dispM.some((d) => d.key === "vis_sec"));
+    const compraMHist = (pgM.json?.xp?.historico ?? []).find((e) => e.tipo === "compra");
+    t("B6. mestre vê detalhes da compra (campoId cv-sec)", compraMHist?.compra?.campoId === "cv-sec" && compraMHist?.compra?.key === "vis_sec", JSON.stringify(compraMHist?.compra));
+
+    // Jogador: campo visível aparece; oculto some por completo
+    const pgJ = await progressaoDe(CHARC, J1);
+    const dispJ = pgJ.json?.disponiveis ?? [];
+    t("B7. jogador vê vis_pub", dispJ.some((d) => d.key === "vis_pub"));
+    t("B8. jogador NÃO vê vis_sec", !dispJ.some((d) => d.key === "vis_sec"), JSON.stringify(dispJ.map((d) => d.key)));
+    const corpoJ = JSON.stringify(pgJ.json);
+    t("B9. resposta do jogador não vaza key/nome/campoId ocultos", !corpoJ.includes("vis_sec") && !corpoJ.includes("Segredo de Mestre XP") && !corpoJ.includes("cv-sec"), corpoJ.slice(0, 300));
+    // Histórico mascarado: evento permanece, detalhes somem
+    const histJ = (pgJ.json?.xp?.historico ?? []).filter((e) => e.tipo === "compra");
+    t("B10. histórico do jogador mantém o evento de XP", histJ.length === 1, `n=${histJ.length}`);
+    t("B11. compra mascarada (sem objeto compra)", histJ[0] && histJ[0].compra === undefined, JSON.stringify(histJ[0]));
+    t("B12. motivo sanitizado", histJ[0]?.motivo === "Compra de nível", `motivo=${histJ[0]?.motivo}`);
+    t("B13. histórico não vaza nome/key/campoId", !corpoJ.includes("vis_sec") && !corpoJ.includes("Segredo de Mestre XP") && !corpoJ.includes("cv-sec"));
+
+    // Override de visibilidade respeitado nos dois sentidos
+    const ovVis = await req(BASE, "PATCH", `/characters/${CHARC}`, { cookie: M, body: { overrides: { "cv-sec": { visibilidade: "todos" } } } });
+    t("B14. override visibilidade mestre→todos aplicado", ovVis.status === 200, `status=${ovVis.status}`);
+    const pgJ2 = await progressaoDe(CHARC, J1);
+    t("B15. override torna vis_sec visível ao jogador", (pgJ2.json?.disponiveis ?? []).some((d) => d.key === "vis_sec"));
+    const histJ2 = (pgJ2.json?.xp?.historico ?? []).find((e) => e.tipo === "compra");
+    t("B16. histórico revela compra após override", histJ2?.compra?.campoId === "cv-sec", JSON.stringify(histJ2?.compra));
+    const ovVis2 = await req(BASE, "PATCH", `/characters/${CHARC}`, { cookie: M, body: { overrides: { "cv-sec": { visibilidade: "mestre" } } } });
+    t("B17. override de volta p/ mestre", ovVis2.status === 200, `status=${ovVis2.status}`);
+    const pgJ3 = await progressaoDe(CHARC, J1);
+    t("B18. vis_sec volta a ficar oculto", !(pgJ3.json?.disponiveis ?? []).some((d) => d.key === "vis_sec"));
+  }
+
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);
