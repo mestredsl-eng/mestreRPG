@@ -447,8 +447,12 @@ export function calcularPontos(
     if (campo.custoPontos === undefined && !campo.custoProgressivo?.length && !cfg.custos?.[campo.semantico]) continue;
 
     const base = typeof campo.padrao === "number" ? campo.padrao : (campo.minimo ?? 0);
-    const diff = valor - base;
-    if (diff <= 0) continue;
+    // BUG_0001/P3: transições i→i+1 financiadas por XP (índices em
+    // __xp.financiado[campo.id]) NÃO consomem pontos de criação —
+    // cada uma é excluída individualmente, preservando a origem
+    // exata quando níveis XP e de criação se alternam.
+    const financiado = xpFinanciadoIndices(dados, campo.id, valor);
+    if (valor <= base && financiado.size === 0) continue;
 
     const poolId = campo.reservaPontos ?? poolPadraoId;
     const pool = garantirPool(poolId);
@@ -456,13 +460,23 @@ export function calcularPontos(
 
     const tabela = campo.custoProgressivo?.length ? campo.custoProgressivo : cfg.custos?.[campo.semantico];
     if (tabela?.length) {
-      // custo progressivo: soma custos[base..valor-1]
+      // custo progressivo: soma custos[base..valor-1] pulando financiados
       for (let nivel = base; nivel < valor; nivel++) {
+        if (financiado.has(nivel)) continue;
         const c = tabela[nivel];
         custo += typeof c === "number" ? c : (campo.custoPontos ?? 0);
       }
     } else {
-      custo = diff * (campo.custoPontos ?? 0);
+      // Custo fixo PROPORCIONAL ao intervalo [base, valor): campos
+      // decimais/moeda não são cobrados como unidades inteiras.
+      // Cada índice i de __xp.financiado cobre [i, i+1); desconta-se
+      // apenas a interseção com o intervalo cobrado (financiamento
+      // parcial por fração), preservando a semântica anterior à P3.
+      let financiadoTrecho = 0;
+      for (const i of financiado) {
+        financiadoTrecho += Math.max(0, Math.min(valor, i + 1) - Math.max(base, i));
+      }
+      custo = Math.max(0, valor - base - financiadoTrecho) * (campo.custoPontos ?? 0);
     }
 
     // Custos negativos concedem pontos (ex.: defeito custo -1 = +1 ponto).
@@ -479,6 +493,22 @@ export function calcularPontos(
     if (pool.saldo < 0) erros.push(`Pool "${pool.nome}": pontos insuficientes (saldo ${pool.saldo})`);
   }
   return { habilitado: true, pools: saida, detalhes, erros };
+}
+
+/** Índices de transição i→i+1 financiados por XP (metadado
+ *  __xp.financiado[campoId], gravado pela compra em lib/progressao.ts).
+ *  Aceita o formato novo (array de índices) e o legado (contagem de
+ *  sufixo, convertida com `valorRef`). Leitura direta para evitar
+ *  dependência circular ficha↔progressao. */
+function xpFinanciadoIndices(dados: Record<string, unknown>, campoId: string, valorRef: number): Set<number> {
+  const fin = (dados["__xp"] as { financiado?: Record<string, unknown> } | undefined)?.financiado?.[campoId];
+  const s = new Set<number>();
+  if (Array.isArray(fin)) {
+    for (const n of fin) if (typeof n === "number" && Number.isFinite(n)) s.add(n);
+  } else if (typeof fin === "number" && Number.isFinite(fin) && fin > 0) {
+    for (let i = Math.max(0, valorRef - fin); i < valorRef; i++) s.add(i);
+  }
+  return s;
 }
 
 /** Valida se os dados estouram algum pool. Retorna null se OK. */

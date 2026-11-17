@@ -299,7 +299,7 @@ export const api = {
   },
   previaPontos: (charId: string, dados: Record<string, unknown>) =>
     requisicao<{ pontos: ResultadoPontos; validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
-  atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
+  atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean; baseUpdatedAt?: string }) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   alterarHp: (charId: string, dados: { acao: "dano" | "recuperar" | "ajuste"; quantidade?: number; motivo?: string }) =>
     requisicao<{ ok: boolean; hp: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["hp"]; vitalidade?: NonNullable<NonNullable<PersonagemDetalhe["ficha"]>["vida"]>["vitalidade"]; ferimento?: { de: number; para: number } }>(`/characters/${charId}/hp`, { method: "POST", body: JSON.stringify(dados) }),

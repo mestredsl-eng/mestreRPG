@@ -510,20 +510,12 @@ export interface RegrasCampanha {
 
 const CHAVE = (kind: string, key: string) => `${kind}:${key}`;
 
-/** Garante que a campanha tenha um ruleset ativo e o retorna com seus elementos. */
-export async function carregarRegras(campaignId: string): Promise<RegrasCampanha> {
-  let [rs] = await db.select().from(ruleSets).where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).limit(1);
-  if (!rs) {
-    const agora = new Date();
-    const id = crypto.randomUUID();
-    const config = configRegrasSchema.parse({});
-    await db.insert(ruleSets).values({
-      id, campaignId, name: "Regras da campanha", version: 1, isActive: true, config, createdAt: agora, updatedAt: agora,
-    });
-    [rs] = await db.select().from(ruleSets).where(eq(ruleSets.id, id)).limit(1);
-  }
+type LinhaRuleSet = typeof ruleSets.$inferSelect;
+type LinhaRuleDef = typeof ruleDefinitions.$inferSelect;
 
-  const defs = await db.select().from(ruleDefinitions).where(eq(ruleDefinitions.ruleSetId, rs.id));
+/** Monta o RegrasCampanha a partir das linhas já lidas (compartilhado
+ *  entre a carga assíncrona e a síncrona/transacional). */
+function montarRegrasCampanha(rs: LinhaRuleSet, defs: LinhaRuleDef[]): RegrasCampanha {
   const elementos = new Map<string, ElementoRegra>();
   const porKind = new Map<string, ElementoRegra[]>();
   for (const d of defs) {
@@ -549,6 +541,58 @@ export async function carregarRegras(campaignId: string): Promise<RegrasCampanha
   const cfgBruta = (rs.config ?? {}) as Record<string, unknown>;
   const config = configRegrasSchema.parse({ ...cfgBruta, pontos: cfgBruta.pontos ?? {} });
   return { ruleSetId: rs.id, config, elementos, porKind };
+}
+
+/**
+ * Leitura SÍNCRONA das regras — aceita `db` ou uma transação drizzle
+ * (`tx`), para uso dentro de `db.transaction`. Retorna null quando a
+ * campanha não tem ruleset ativo (o caller decide o tratamento).
+ */
+export function carregarRegrasSincrono(
+  fonte: Pick<typeof db, "select">,
+  campaignId: string,
+): RegrasCampanha | null {
+  const [rs] = fonte.select().from(ruleSets)
+    .where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true)))
+    .limit(1).all();
+  if (!rs) return null;
+  const defs = fonte.select().from(ruleDefinitions)
+    .where(eq(ruleDefinitions.ruleSetId, rs.id)).all();
+  return montarRegrasCampanha(rs, defs);
+}
+
+/**
+ * Impressão digital estável da configuração lógica de regras — cobre
+ * ruleset ativo (id + config econômica), e de cada elemento: kind, key,
+ * nome, categoria, parentKey, definition e updatedAt. Usada para provar
+ * que preço e validação de uma compra usam a MESMA versão vigente das
+ * regras (Issue #124 — endurecimento de concorrência).
+ */
+export function impressaoDigitalRegras(regras: RegrasCampanha): string {
+  const els = [...regras.elementos.values()]
+    .map((e) => ({
+      k: e.kind, y: e.key, n: e.name, c: e.category, p: e.parentKey,
+      d: e.definition, u: e.updatedAt instanceof Date ? e.updatedAt.getTime() : e.updatedAt,
+    }))
+    .sort((a, b) => `${a.k}:${a.y}`.localeCompare(`${b.k}:${b.y}`));
+  return JSON.stringify({ rs: regras.ruleSetId, config: regras.config, els });
+}
+
+/** Garante que a campanha tenha um ruleset ativo e o retorna com seus elementos. */
+export async function carregarRegras(campaignId: string): Promise<RegrasCampanha> {
+  let [rs] = await db.select().from(ruleSets).where(and(eq(ruleSets.campaignId, campaignId), eq(ruleSets.isActive, true))).limit(1);
+  if (!rs) {
+    const agora = new Date();
+    const id = crypto.randomUUID();
+    const config = configRegrasSchema.parse({});
+    await db.insert(ruleSets).values({
+      id, campaignId, name: "Regras da campanha", version: 1, isActive: true, config, createdAt: agora, updatedAt: agora,
+    });
+    [rs] = await db.select().from(ruleSets).where(eq(ruleSets.id, id)).limit(1);
+  }
+
+  const defs = await db.select().from(ruleDefinitions).where(eq(ruleDefinitions.ruleSetId, rs!.id));
+  return montarRegrasCampanha(rs!, defs);
 }
 
 /**

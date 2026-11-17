@@ -24,6 +24,7 @@ import {
 } from "../lib/ficha.js";
 import { resumoHp, resumoVitalidade, lerHp, lerVitalidade, aplicarHp, hpMaximo, nivelExigidoPorHp, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { lerPontos, bonusPontos, comSeloPontos, aplicarBonusPontos } from "../lib/pontos.js";
+import { reconciliarFinanciadoXp } from "../lib/progressao.js";
 import {
   carregarRegras,
   validarRegras,
@@ -168,7 +169,26 @@ function montarFicha(
   const estruturaPontosVisivel = ehMestre
     ? basePontos
     : { ...basePontos, secoes: estruturaFiltrada.secoes };
-  const dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
+  // P4: o cálculo de pontos precisa conhecer os índices de transição
+  // financiados por XP dos campos VISÍVEIS — sem isso o orçamento
+  // cobraria de novo níveis já pagos com XP. O metadado interno
+  // (__xp) nunca entra no JSON renderizado: só o recorte de
+  // `financiado` dos campos que o requisitante pode ver é anexado
+  // aos dados de cálculo. Campos ocultos ficam de fora.
+  let dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
+  if (!ehMestre) {
+    const idsVisiveis = new Set(estruturaFiltrada.secoes.flatMap((s) => s.campos.map((c) => c.id)));
+    const finBruto = ((dados as Record<string, unknown>)["__xp"] as { financiado?: Record<string, unknown> } | undefined)?.financiado;
+    if (finBruto && typeof finBruto === "object") {
+      const finVisivel: Record<string, unknown> = {};
+      for (const [campoId, v] of Object.entries(finBruto)) {
+        if (idsVisiveis.has(campoId)) finVisivel[campoId] = v;
+      }
+      if (Object.keys(finVisivel).length) {
+        dadosPontos = { ...(campos as Record<string, unknown>), __xp: { financiado: finVisivel } };
+      }
+    }
+  }
   let pontos = calcularPontos(estruturaPontosVisivel, dadosPontos);
   if (regras) {
     pontos = aplicarTransferencias(aplicarCustosSelecao(pontos, estruturaPontosVisivel, dadosPontos, regras), regras);
@@ -716,6 +736,9 @@ personagensRouter.post("/:characterId/pontos-previa", requireLeasePersonagem(), 
     // vf.dados só contém campos permitidos e normalizados — chaves ocultas
     // ou inválidas enviadas pelo cliente são descartadas aqui.
     dadosMesclados = { ...dadosPersistidos, ...(vf.dados ?? {}) };
+    // P4: mesma reconciliação do PATCH — reduções no rascunho consomem
+    // primeiro os índices financiados por XP. Pura, nada persiste.
+    dadosMesclados = reconciliarFinanciadoXp(dadosPersistidos, dadosMesclados);
   }
 
   const ficha = montarFicha(
@@ -744,6 +767,10 @@ const atualizarSchema = z.object({
   })).optional(),
   // Ajuste administrativo do mestre: permite salvar mesmo estourando pontos (spec §8.5)
   ignorarPontos: z.boolean().optional(),
+  // BUG_0002: token de concorrência otimista (updatedAt da ficha que o
+  // cliente carregou). Obrigatório quando o PATCH altera campo com
+  // nível financiado por XP — snapshot velho não reverte nível pago.
+  baseUpdatedAt: z.string().max(40).optional(),
 });
 
 /** PATCH /api/characters/:characterId — dono edita campos permitidos; mestre tudo */
@@ -820,6 +847,43 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
     }
     dadosFinais = { ...(p.data as Record<string, unknown>), ...validacao.dados };
   }
+
+  // BUG_0002: se este PATCH altera o valor de um campo que possui
+  // nível financiado por XP, exige que o cliente prove que editou
+  // sobre o estado atual (baseUpdatedAt == updatedAt carregado).
+  // Roda ANTES da reconciliação — senão a própria reconciliação já
+  // teria consumido o marcador `financiado` e o check não veria nada.
+  // Sem o token — ou com token velho — a escrita poderia ser um
+  // snapshot anterior à compra revertendo nível pago: responde 409
+  // e o cliente sincroniza explicitamente.
+  {
+    const dadosAntes = (p.data ?? {}) as Record<string, unknown>;
+    const finaisRec = dadosFinais as Record<string, unknown>;
+    const xpState = finaisRec["__xp"] as { financiado?: Record<string, unknown> } | undefined;
+    const financiados = Object.keys(xpState?.financiado ?? {});
+    const tocaFinanciado = financiados.some((campoId) =>
+      !mesmoValorCampo(finaisRec[campoId], dadosAntes[campoId]));
+    if (tocaFinanciado) {
+      const isoAtual = p.updatedAt instanceof Date ? p.updatedAt.toISOString() : String(p.updatedAt);
+      if (!body.data.baseUpdatedAt || body.data.baseUpdatedAt !== isoAtual) {
+        res.status(409).json({
+          erro: "A ficha possui níveis comprados com XP e foi alterada depois do seu carregamento. Atualize os dados e tente novamente.",
+          codigo: "conflito_base",
+          detalhes: { atualizarAntesDeTentar: true },
+        });
+        return;
+      }
+    }
+  }
+
+  // BUG_0001: níveis financiados por XP seguem a ficha — reduções
+  // via PATCH consomem primeiro os níveis pagos com XP e aumentos
+  // não-XP viram financiamento por pontos de criação. Roda ANTES da
+  // validação de regras para que o orçamento veja o financiado novo.
+  dadosFinais = reconciliarFinanciadoXp(
+    (p.data ?? {}) as Record<string, unknown>,
+    dadosFinais as Record<string, unknown>,
+  ) as typeof dadosFinais;
 
   // Validação do motor de regras (spec §9): jogador sempre validado;
   // mestre também, salvo ajuste administrativo explícito (ignorarPontos).
