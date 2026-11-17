@@ -1143,6 +1143,8 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS, env: ENV_PAUSA });
   proc.stderr.on("data", () => {});
   await esperarSaudavel(BASE, proc);
+  t("falha ao baixar chunk físico durante a queda não derruba a interface",
+    !(await pgX.getByText("Algo deu errado", { exact: true }).count()));
   await pgX.locator(".vtt-tabuleiro").waitFor({ timeout: 30000 });
   await pgX.locator(".vtt-token").first().waitFor({ timeout: 15000 });
   t("socket desconectado ao abrir: entrada acontece no connect", true);

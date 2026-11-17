@@ -3,7 +3,9 @@ import MesaDadosCanvas, { seedDeId, type ItemDadoMesa } from "./MesaDados3D";
 
 export { seedDeId };
 
-const MesaDadosFisica = lazy(() => import("./MesaDadosFisica"));
+const MesaDadosFisica = lazy(() =>
+  import("./MesaDadosFisica").catch(() => ({ default: MesaDadosCanvas })),
+);
 
 interface Props {
   dados: ItemDadoMesa[];
