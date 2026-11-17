@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Homologação dos dados 3D na mesa (PRs #39/#40/#41 integradas):
-// canvas 3D real, cinco tipos, quantidade, cores independentes com
+// renderer Three.js/Rapier, cinco tipos, quantidade, cores independentes com
 // persistência no servidor, atualização imediata e resultado autoritativo.
 import { chromium } from "playwright";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -24,13 +25,56 @@ const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 const CAMPANHA = "Campanha Teste";
 
-let browser, proc;
+let browser, proc, previewProc;
+let previewBase = "";
 
 async function shot(page, nome) {
   try { await page.screenshot({ path: join(SHOTS, `${nome}.png`) }); } catch { }
 }
-async function login(page, user, senha) {
-  await page.goto(BASE);
+async function login(page, user, senha, base = BASE) {
+  await page.addInitScript(() => {
+    let rafId = 0;
+    let rafClock = 0;
+    let rafRate = 60;
+    const rafTimers = new Map();
+    window.__mesaRafTicks = 0;
+    window.__mesaUseRafRate = (hz) => {
+      rafRate = hz;
+      rafClock = performance.now();
+      window.__mesaRafTicks = 0;
+      window.requestAnimationFrame = (callback) => {
+        const id = ++rafId;
+        const interval = 1000 / rafRate;
+        const timer = window.setTimeout(() => {
+          rafTimers.delete(id);
+          rafClock += interval;
+          window.__mesaRafTicks++;
+          callback(rafClock);
+        }, interval);
+        rafTimers.set(id, timer);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        const timer = rafTimers.get(id);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          rafTimers.delete(id);
+        }
+      };
+    };
+    window.__mesaReadPixels = (canvas) => {
+      const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+      if (gl) {
+        gl.finish();
+        const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      }
+      const ctx = canvas.getContext("2d");
+      return ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+    };
+  });
+  await page.goto(base);
   await page.getByLabel("Usuário").fill(user);
   await page.getByLabel("Senha").fill(senha);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
@@ -75,16 +119,39 @@ async function rolarLivre(page, lados, qtd = 1, motivo = null) {
       const titPronto = tit && tit !== antTitulo && !tit.includes("rolando");
       return (txt && txt !== antTotal) || titPronto || Boolean(itemHistoricoNovo);
     },
-    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000 },
+    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000, polling: 50 },
   );
+}
+async function iniciarPreview(apiTarget) {
+  const porta = await portaLivre();
+  const base = `http://127.0.0.1:${porta}`;
+  const child = spawn(process.execPath, [
+    join(process.cwd(), "node_modules", "vite", "bin", "vite.js"),
+    "preview", "--host", "127.0.0.1", "--port", String(porta), "--strictPort",
+  ], {
+    cwd: join(process.cwd(), "site"),
+    env: { ...process.env, MESTRE_VITE_API_TARGET: apiTarget },
+    stdio: "ignore",
+  });
+  const limite = Date.now() + 15000;
+  while (Date.now() < limite) {
+    if (child.exitCode !== null) throw new Error(`vite preview encerrou com código ${child.exitCode}`);
+    try {
+      const response = await fetch(base);
+      if (response.ok) return { child, base, headers: response.headers };
+    } catch { }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  child.kill();
+  throw new Error("timeout aguardando vite preview");
 }
 const valoresCanvas = (page) =>
   page.$$eval(".mesa-dados-area .mesa-dados-3d-canvas", (cs) => cs.map((c) => c.getAttribute("aria-label")));
 const canvasPintado = (page) => page.evaluate(() => {
   const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
   if (!c) return false;
-  const ctx = c.getContext("2d");
-  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  const d = window.__mesaReadPixels(c);
+  if (!d) return false;
   for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
   return false;
 });
@@ -92,9 +159,8 @@ const canvasPintado = (page) => page.evaluate(() => {
 // Conta pixels reais do canvas próximos à cor RGB esperada. Isso verifica
 // o desenho (borda das faces), não apenas o aria-label ou classes React.
 const pixelsNaCor = (locator, rgb) => locator.evaluate((canvas, alvo) => {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return 0;
-  const dados = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const dados = window.__mesaReadPixels(canvas);
+  if (!dados) return 0;
   let total = 0;
   for (let i = 0; i < dados.length; i += 4) {
     if (dados[i + 3] < 220) continue;
@@ -110,6 +176,9 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO);
+  const preview = await iniciarPreview(BASE);
+  previewProc = preview.child;
+  previewBase = preview.base;
   // personagem do jogador 1 para o desafio D10
   cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
   browser = await chromium.launch();
@@ -122,6 +191,9 @@ try {
   sec("1. Mesa com dados 3D");
   await entrarNaMesa(pgM);
   t("painel de dados presente na mesa", await pgM.locator(".painel-dados").count() > 0);
+  await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").waitFor({ timeout: 30000 });
+  t("mesa usa Three.js e Rapier quando WebGL está disponível",
+    await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").count() === 1);
 
   // O segundo participante entra ANTES dos pools D10. Assim, a suíte
   // valida o evento/histórico recebido em tempo real, não uma leitura
@@ -301,9 +373,9 @@ try {
       const item = document.querySelector(".rolagem-item");
       const rotulo = item?.querySelector(".mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
       const resumo = item?.querySelector(".d10-rolagem")?.textContent ?? "";
-      const dados = item?.querySelector(".mesa-dados-3d-canvas")?.getContext("2d");
-      if (!dados) return false;
-      const pixels = dados.getImageData(0, 0, dados.canvas.width, dados.canvas.height).data;
+      const canvas = item?.querySelector(".mesa-dados-3d-canvas");
+      const pixels = canvas && window.__mesaReadPixels(canvas);
+      if (!pixels) return false;
       let verde = 0, vermelho = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 220) continue;
@@ -322,9 +394,8 @@ try {
 
     await pgM.waitForFunction(() => {
       const canvas = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
-      const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return false;
-      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const pixels = canvas && window.__mesaReadPixels(canvas);
+      if (!pixels) return false;
       let verde = 0, vermelho = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 220) continue;
@@ -356,7 +427,7 @@ try {
 
   await shot(pgM, "01-mesa-dados");
 
-  sec("2. Cinco tipos de dados em canvas 3D");
+  sec("2. Cinco tipos de dados no renderer WebGL");
   for (const d of [4, 6, 8, 10, 20]) {
     await rolarLivre(pgM, d);
     const titulos = await valoresCanvas(pgM);
@@ -438,31 +509,35 @@ try {
   const varFeltro = () => pgM.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--mesa-feltro").trim());
   const temasIds = ["azul", "verde", "vinho", "madeira", "obsidiana"];
   const nomesTema = ["Feltro azul", "Feltro verde", "Feltro vinho", "Madeira escura", "Obsidiana"];
-  const luminancias = [];
-  const luminanciaCanvas = () => pgM.evaluate(() => {
+  const coresBandeja = [];
+  const corBandejaCanvas = () => pgM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
-    if (!c) return -1;
-    const ctx = c.getContext("2d");
-    const d = ctx.getImageData(0, 0, c.width, c.height).data;
-    let s = 0, n = 0;
-    for (let i = 0; i < d.length; i += 400) {
-      if (d[i + 3] > 200) { s += 0.3 * d[i] + 0.6 * d[i + 1] + 0.1 * d[i + 2]; n++; }
+    if (!c) return null;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return null;
+    let r = 0, g = 0, b = 0, n = 0;
+    const left = Math.floor(c.width * 0.12), right = Math.ceil(c.width * 0.88);
+    const top = Math.floor(c.height * 0.12), bottom = Math.ceil(c.height * 0.88);
+    for (let y = top; y < bottom; y += 7) for (let x = left; x < right; x += 7) {
+      const i = (y * c.width + x) * 4;
+      if (d[i + 3] > 200) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
     }
-    return n ? s / n : -1;
+    return n ? [r / n, g / n, b / n] : null;
   });
   for (let i = 0; i < temasIds.length; i++) {
     await temaCards.filter({ hasText: nomesTema[i] }).click();
     await pgM.waitForTimeout(300);
     t(`tema ${temasIds[i]} selecionável`, (await datasetTema()) === temasIds[i], `data=${await datasetTema()}`);
     t(`tema ${temasIds[i]} aplica cor da bandeja`, (await varFeltro()).length > 0);
-    luminancias.push(await luminanciaCanvas());
+    coresBandeja.push(await corBandejaCanvas());
     await shot(pgM, `06b-tema-${temasIds[i]}`);
   }
-  // prova visual: os temas produzem claridades de bandeja realmente
-  // diferentes no canvas (não basta a variável CSS mudar)
-  const lumDistintas = new Set(luminancias.map((l) => Math.round(l / 8))).size;
-  t("temas produzem bandejas visualmente distintas no canvas", lumDistintas >= 3,
-    `luminâncias=${luminancias.map((l) => l.toFixed(0)).join(",")}`);
+  // prova visual: os temas produzem cores reais distintas no framebuffer
+  // (não basta a variável CSS mudar; luminância sozinha perde matizes).
+  const coresDistintas = coresBandeja.filter((cor, i) => cor && !coresBandeja.slice(0, i).some((anterior) => anterior
+    && Math.hypot(cor[0] - anterior[0], cor[1] - anterior[1], cor[2] - anterior[2]) < 8));
+  t("temas produzem bandejas visualmente distintas no canvas", coresDistintas.length >= 4,
+    `cores=${coresBandeja.map((c) => c?.map((v) => v.toFixed(0)).join("/") ?? "vazio").join(",")}`);
   // seleção persiste no servidor e sobrevive a reload
   const meTemaSel = await pgM.evaluate(async () => (await (await fetch("/api/auth/me")).json()).usuario?.preferences?.temaMesa);
   t("temaMesa persistido via API", meTemaSel === "obsidiana", `lido=${meTemaSel}`);
@@ -607,11 +682,119 @@ try {
   t("reduced-motion: canvas pintado", await pgRM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     if (!c) return false;
-    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return false;
     for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
     return false;
   }));
+  const canvasHistoricoRM = pgRM.locator(".rolagem-item canvas[data-renderer='three-rapier'][data-physics-ready='true'][data-physics-settled='true']").first();
+  await canvasHistoricoRM.waitFor({ timeout: 15000 });
+  const hashHistoricoRM = () => canvasHistoricoRM.evaluate((canvas) => {
+    const pixels = window.__mesaReadPixels(canvas);
+    if (!pixels) return "";
+    let hash = 0;
+    for (let i = 0; i < pixels.length; i += 64) {
+      hash = (hash * 31 + pixels[i] + pixels[i + 1] * 3 + pixels[i + 2] * 7) >>> 0;
+    }
+    return String(hash);
+  });
+  const hashInicialRM = await hashHistoricoRM();
+  await pgRM.waitForTimeout(300);
+  const hashDepoisRM = await hashHistoricoRM();
+  t("reduced-motion: rolagem histórica já resolvida permanece imóvel desde a montagem",
+    hashInicialRM !== "" && hashInicialRM === hashDepoisRM, `${hashInicialRM}→${hashDepoisRM}`);
+
+  // Estado físico final (não só pixels): dados nascidos com resultado
+  // devem estar prontos, com velocidades zeradas e orientação no alvo —
+  // mesmo quando valor/alvo já vinham preenchidos na montagem.
+  const lerEstadoFisico = (canvas) => canvas.evaluate((c) => {
+    const ler = c.__mesaDadosFisica;
+    return typeof ler === "function" ? ler() : null;
+  });
+  const magnitud = (v) => Math.hypot(v[0], v[1], v[2]);
+  const quatNoAlvo = (q, alvo) => !!alvo
+    && Math.abs(q[0] * alvo[0] + q[1] * alvo[1] + q[2] * alvo[2] + q[3] * alvo[3]) > 0.9999;
+  const estadoFinalOk = (estado) => Array.isArray(estado) && estado.length > 0 && estado.every((d) =>
+    d.pronto === true
+    && magnitud(d.linvel) < 0.01
+    && magnitud(d.angvel) < 0.01
+    && quatNoAlvo(d.quat, d.alvo)
+    && d.pos[2] > 0.05);
+  const estadoHistoricoRM = await lerEstadoFisico(canvasHistoricoRM);
+  t("reduced-motion: histórico nasce assentado — pronto, velocidades zeradas, orientação no alvo",
+    estadoFinalOk(estadoHistoricoRM), JSON.stringify(estadoHistoricoRM).slice(0, 300));
+  const canvasMesaRM = pgRM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']").last();
+  await canvasMesaRM.waitFor({ timeout: 15000 });
+  const estadoMesaRM = await lerEstadoFisico(canvasMesaRM);
+  t("reduced-motion: ACK posterior também assenta imediatamente no estado final",
+    estadoFinalOk(estadoMesaRM), JSON.stringify(estadoMesaRM).slice(0, 300));
   await ctxRM.close();
+
+  sec("8b. Física continua e assenta em 60/90/120/144 Hz");
+  const ctxHz = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgHz = await ctxHz.newPage();
+  await login(pgHz, "jogador_um", "senha-jogador-123");
+  await irCampanha(pgHz);
+  await entrarNaMesa(pgHz);
+  await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").waitFor({ timeout: 30000 });
+  for (const hz of [60, 90, 120, 144]) {
+    await pgHz.evaluate((rate) => window.__mesaUseRafRate(rate), hz);
+    await rolarLivre(pgHz, 6, 1, `refresh-${hz}hz`);
+    const ticksAntes = await pgHz.evaluate(() => window.__mesaRafTicks);
+    await pgHz.waitForTimeout(300);
+    const ticksDepois = await pgHz.evaluate(() => window.__mesaRafTicks);
+    t(`${hz} Hz: RAF continua após o resultado do servidor`, ticksDepois - ticksAntes >= 10,
+      `${ticksAntes}→${ticksDepois}`);
+    await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']")
+      .waitFor({ timeout: 10000 });
+    await pgHz.evaluate(() => {
+      window.__mesaRafLastObserved = window.__mesaRafTicks;
+      window.__mesaRafStablePolls = 0;
+    });
+    await pgHz.waitForFunction(() => {
+      if (window.__mesaRafTicks === window.__mesaRafLastObserved) {
+        window.__mesaRafStablePolls++;
+      } else {
+        window.__mesaRafLastObserved = window.__mesaRafTicks;
+        window.__mesaRafStablePolls = 0;
+      }
+      return window.__mesaRafStablePolls >= 5;
+    }, null, { timeout: 10000, polling: 100 });
+    const resultadoAssentado = await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']")
+      .evaluate((canvas) => canvas.dataset.physicsSettled === "true"
+        && /d6=\d/.test(canvas.getAttribute("aria-label") ?? ""));
+    t(`${hz} Hz: simulação termina depois de continuar os frames`, resultadoAssentado);
+  }
+  // Estado físico final no caminho normal (sem reduced-motion): o dado
+  // percorrido pela simulação termina pronto, com velocidades zeradas e
+  // orientação na face oficial — mesma assinatura do caminho reduzido.
+  const canvasHz = pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']").last();
+  await canvasHz.waitFor({ timeout: 15000 });
+  const estadoHz = await lerEstadoFisico(canvasHz);
+  t("física normal: estado final pronto, velocidades zeradas e orientação no alvo",
+    estadoFinalOk(estadoHz), JSON.stringify(estadoHz).slice(0, 300));
+  await ctxHz.close();
+
+  sec("8c. Preview com CSP carrega o WASM Rapier");
+  const csp = preview.headers.get("content-security-policy") ?? "";
+  t("preview permite somente compilação WASM específica na CSP",
+    csp.includes("script-src 'self' 'wasm-unsafe-eval'")
+      && !csp.includes("'unsafe-eval'"), csp);
+  const ctxPreview = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgPreview = await ctxPreview.newPage();
+  const errosPreview = [];
+  pgPreview.on("pageerror", (error) => errosPreview.push(error.message));
+  await login(pgPreview, "jogador_dois", "senha-jogador-123", previewBase);
+  await irCampanha(pgPreview);
+  await entrarNaMesa(pgPreview);
+  await pgPreview.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']")
+    .waitFor({ timeout: 30000 });
+  t("vite preview inicializa Three/Rapier em vez do fallback Canvas",
+    await pgPreview.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").count() === 1);
+  t("preview sem erros de inicialização WebAssembly",
+    !errosPreview.some((error) => /wasm|webassembly|content security policy/i.test(error)),
+    errosPreview.join(" | "));
+  await ctxPreview.close();
 
   sec("9. Mobile 390px");
   const ctxMob = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -663,8 +846,8 @@ try {
   const amostraPixels = () => pgM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     if (!c) return "";
-    const ctx = c.getContext("2d");
-    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return "";
     let h = 0;
     // Amostra 1 em cada 16 pixels (stride de 64 bytes RGBA). A amostragem
     // anterior (1 em 1024 pixels) podia passar entre os dados em canvases

@@ -1,5 +1,12 @@
 # Changelog - Mestre RPG
 
+## [Unreleased]
+
+### Melhorias
+
+- **Mesa de dados 3D:** Three.js e Rapier simulam dados poliédricos com colisões convexas, quique, atrito, bordas físicas e iluminação; o resultado continua autoritativo no servidor. Rapier/WASM e o viewer 3D são carregados sob demanda, com fallback para o renderer anterior.
+- **Homologação 3D:** verifica renderer WebGL real, movimento, valores autoritativos, temas e cores por pixels do framebuffer, reduced-motion e viewport mobile.
+
 ## [1.0.0.2] - 2026-11-17
 
 ### Novidades
