@@ -221,7 +221,7 @@ try {
   }, null, { timeout: 15000 });
   const rotuloD10Pool = await canvasD10Pool.getAttribute("aria-label");
   const valoresD10Pool = rotuloD10Pool?.match(/d10=\d+/g) ?? [];
-  const estadosD10Pool = rotuloD10Pool?.match(/\((sucesso|falha)\)/g) ?? [];
+  const estadosD10Pool = rotuloD10Pool?.match(/\((sucesso|falha|acerto_critico|erro_critico)\)/g) ?? [];
   t("pool D10 de 5 positivos e 2 negativos gera 3 dados efetivos", valoresD10Pool.length === 3, rotuloD10Pool);
   t("pool D10 inteiro aparece em um único canvas compartilhado",
     await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").count() === 1);
@@ -233,9 +233,9 @@ try {
   await canvasD10Historico.waitFor({ timeout: 15000 });
   const rotuloD10Historico = await canvasD10Historico.getAttribute("aria-label");
   const valoresD10Historico = rotuloD10Historico?.match(/d10=\d+/g) ?? [];
-  const estadosD10Historico = rotuloD10Historico?.match(/\((sucesso|falha)\)/g) ?? [];
-  const sucessosVisuais = (rotuloD10Historico?.match(/\(sucesso\)/g) ?? []).length;
-  const falhasVisuais = (rotuloD10Historico?.match(/\(falha\)/g) ?? []).length;
+  const estadosD10Historico = rotuloD10Historico?.match(/\((sucesso|falha|acerto_critico|erro_critico)\)/g) ?? [];
+  const sucessosVisuais = (rotuloD10Historico?.match(/\((sucesso|acerto_critico)\)/g) ?? []).length;
+  const falhasVisuais = (rotuloD10Historico?.match(/\((falha|erro_critico)\)/g) ?? []).length;
   const resumoD10Historico = await pgM.locator(".rolagem-item .d10-rolagem").last().innerText();
   const sucessosServidor = Number(resumoD10Historico.match(/(\d+) sucesso/)?.[1] ?? NaN);
   const falhasServidor = Number(resumoD10Historico.match(/\/\s*(\d+) falha/)?.[1] ?? NaN);
@@ -287,13 +287,20 @@ try {
   const rotuloHistMin = await pgM.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label");
   const resumoHistMin = await pgM.locator(".rolagem-item .d10-rolagem").first().innerText();
   const facesDe = (rotulo) =>
-    [...(rotulo ?? "").matchAll(/d10=(\d+) \((sucesso|falha)\)/g)]
-      .map((m) => ({ valor: Number(m[1]), estado: m[2] }));
+    // Issue #147: o D10 interno 10 é EXIBIDO como face "0" — converte de
+    // volta para o valor interno; classes de crítico fazem parte do
+    // contrato visual (acerto_critico/erro_critico).
+    [...(rotulo ?? "").matchAll(/d10=(\d+) \((sucesso|falha|acerto_critico|erro_critico)\)/g)]
+      .map((m) => ({ valor: Number(m[1]) === 0 ? 10 : Number(m[1]), estado: m[2] }));
   const facesPainel = facesDe(rotuloPainelMin);
   const facesHist = facesDe(rotuloHistMin);
   const classificarOk = (faces) =>
-    faces.length === 8 && faces.every((f) =>
-      f.estado === (f.valor >= MIN_D10 ? "sucesso" : "falha"));
+    faces.length === 8 && faces.every((f) => {
+      const esperado = f.valor === 10 ? "acerto_critico"
+        : f.valor === 1 ? "erro_critico"
+        : f.valor >= MIN_D10 ? "sucesso" : "falha";
+      return f.estado === esperado;
+    });
   t("pool D10 com regra alterada: painel classifica os 8 dados",
     facesPainel.length === 8, rotuloPainelMin);
   t("painel: cada face sucesso sse valor >= 9, falha sse valor < 9",
@@ -360,16 +367,16 @@ try {
     }, { anterior }, { timeout: 20000 });
     rotuloCores = await pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas").getAttribute("aria-label") ?? "";
     facesCores = facesDe(rotuloCores);
-    if (facesCores.some((f) => f.estado === "sucesso") && facesCores.some((f) => f.estado === "falha")) break;
+    if (facesCores.some((f) => f.estado === "sucesso" || f.estado === "acerto_critico") && facesCores.some((f) => f.estado === "falha" || f.estado === "erro_critico")) break;
   }
   const legendaCores = await pgM.locator(".d10-form .meta").innerText();
   t("legenda do painel acompanha o mínimo autoritativo 5 recebido no ACK",
     /sucesso ≥ 5/.test(legendaCores), legendaCores);
-  const poolMisto = facesCores.some((f) => f.estado === "sucesso") && facesCores.some((f) => f.estado === "falha");
+  const poolMisto = facesCores.some((f) => f.estado === "sucesso" || f.estado === "acerto_critico") && facesCores.some((f) => f.estado === "falha" || f.estado === "erro_critico");
   t("pool de cores contém D10 de sucesso e de falha", poolMisto, rotuloCores);
 
   if (poolMisto) {
-    await pg1.waitForFunction(() => {
+    const pxJogador = await pg1.waitForFunction(() => {
       const item = document.querySelector(".rolagem-item");
       const rotulo = item?.querySelector(".mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
       const resumo = item?.querySelector(".d10-rolagem")?.textContent ?? "";
@@ -383,8 +390,9 @@ try {
         if (Math.abs(pixels[i] - 138) <= 14 && Math.abs(pixels[i + 1] - 58) <= 14 && Math.abs(pixels[i + 2] - 58) <= 14) vermelho++;
       }
       return (rotulo.match(/d10=\d+/g) ?? []).length === 20
-        && /mín\s*5\b/.test(resumo) && verde > 0 && vermelho > 0;
-    }, null, { timeout: 20000 });
+        && /mín\s*5\b/.test(resumo) && verde > 0 && vermelho > 0
+        ? { verde, vermelho } : null;
+    }, null, { timeout: 20000 }).then((h) => h.jsonValue());
     const resumoJogadorCores = await pg1.locator(".rolagem-item .d10-rolagem").first().innerText();
     const facesJogadorCores = facesDe(await pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first().getAttribute("aria-label"));
     t("outro participante recebe o pool misto com mínimo 5",
@@ -392,22 +400,24 @@ try {
         && facesJogadorCores.every((f, i) => f.valor === facesCores[i].valor && f.estado === facesCores[i].estado),
       resumoJogadorCores);
 
-    await pgM.waitForFunction(() => {
+    // O flash de resultado é TRANSITÓRIO (~1.4s após o assentamento):
+    // as cores são capturadas dentro da janela do efeito, não depois.
+    const pxPainel = await pgM.waitForFunction(() => {
       const canvas = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
       const pixels = canvas && window.__mesaReadPixels(canvas);
-      if (!pixels) return false;
+      if (!pixels) return null;
       let verde = 0, vermelho = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 220) continue;
         if (Math.abs(pixels[i] - 46) <= 14 && Math.abs(pixels[i + 1] - 143) <= 14 && Math.abs(pixels[i + 2] - 91) <= 14) verde++;
         if (Math.abs(pixels[i] - 138) <= 14 && Math.abs(pixels[i + 1] - 58) <= 14 && Math.abs(pixels[i + 2] - 58) <= 14) vermelho++;
       }
-      return verde > 0 && vermelho > 0;
-    }, null, { timeout: 20000 });
-    const verdePainel = await pixelsNaCor(pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas"), [46, 143, 91]);
-    const vermelhoPainel = await pixelsNaCor(pgM.locator(".mesa-dados-area .mesa-dados-3d-canvas"), [138, 58, 58]);
-    const verdeHistorico = await pixelsNaCor(pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first(), [46, 143, 91]);
-    const vermelhoHistorico = await pixelsNaCor(pg1.locator(".rolagem-item .mesa-dados-3d-canvas").first(), [138, 58, 58]);
+      return verde > 0 && vermelho > 0 ? { verde, vermelho } : null;
+    }, null, { timeout: 20000 }).then((h) => h.jsonValue());
+    const verdePainel = pxPainel?.verde ?? 0;
+    const vermelhoPainel = pxPainel?.vermelho ?? 0;
+    const verdeHistorico = pxJogador?.verde ?? 0;
+    const vermelhoHistorico = pxJogador?.vermelho ?? 0;
     t("canvas do painel desenha borda verde real para sucesso", verdePainel > 0, `pixels verdes=${verdePainel}`);
     t("canvas do painel desenha borda vermelha real para falha", vermelhoPainel > 0, `pixels vermelhos=${vermelhoPainel}`);
     t("canvas do histórico de outro participante desenha as duas cores",
@@ -624,19 +634,22 @@ try {
   await pgM.evaluate(() => { document.documentElement.style.overflow = ""; });
   t("canvas é o mesmo nó DOM após o ciclo imersivo",
     await canvasArea.evaluate((el) => el.dataset.marcaImersao) === "1");
-  // saída inesperada: trocar de aba desmonta o painel — o cleanup do
-  // efeito precisa restaurar o overflow mesmo sem Escape/Recolher
+  // saída inesperada: com a área compartilhada, trocar de aba não a
+  // desmonta — o cleanup do efeito é provado desmontando a mesa de
+  // verdade (Sair da mesa) com o modo imersivo aberto, e entrando de
+  // novo para as próximas seções.
   await areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" }).click();
   await pgM.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
-  // dispatchEvent: com overflow:hidden o scrollIntoView do click travaria
-  // (o documento está propositalmente travado); o evento DOM dispara o
-  // onClick do React do mesmo jeito
-  await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" })
-    .evaluate((el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true })));
-  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
-  t("desmonte do painel restaura overflow (sem Escape/Recolher)",
+  // dispatchEvent: o overlay imersivo (position:fixed) cobre a página —
+  // o clique real seria interceptado; o evento DOM dispara o onClick
+  // do React do mesmo jeito e desmonta a mesa com a área imersiva aberta.
+  await pgM.getByRole("button", { name: "Sair da mesa" }).first()
+    .dispatchEvent("click");
+  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area"), null, { timeout: 10000 });
+  t("desmonte da área restaura overflow (sem Escape/Recolher)",
     await pgM.evaluate(() => document.documentElement.style.overflow) === "",
     await pgM.evaluate(() => document.documentElement.style.overflow));
+  await entrarNaMesa(pgM);
   // rolagem continua autoritativa após ciclo imersivo
   await rolarLivre(pgM, 6, 1, "pos-imersivo");
   t("rolagem funciona após modo imersivo",

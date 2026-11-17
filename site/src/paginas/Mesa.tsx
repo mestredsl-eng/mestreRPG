@@ -1031,12 +1031,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
               DENTRO da área ampliável — o usuário lança dados sem sair
               da tela cheia (Issue #147). Com a bandeja oculta, os
               controles continuam visíveis e funcionais. */}
-          {visibilidade.bandeja ? (
+          {/* A área permanece montada com a bandeja oculta (só os
+              controles ficam) — alternar a preferência não remonta o
+              painel nem perde o estado dos formulários (Issue #147). */}
+          {(visibilidade.bandeja || painelDadosEl) && (
             <MesaDadosArea ariaLabel="Mesa de dados 3D compartilhada">
-              <MesaDados3D dados={dadosQuadro} semente={sementeQuadro} />
+              {visibilidade.bandeja && <MesaDados3D dados={dadosQuadro} semente={sementeQuadro} />}
               {painelDadosEl}
             </MesaDadosArea>
-          ) : painelDadosEl}
+          )}
 
           {/* resultados de dados — histórico completo (Issue #147):
               rolador, papel, personagem, campo/categoria, dados

@@ -108,24 +108,18 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       cena = anterior;
       dados.forEach((item, i) => {
         const d = cena[i];
+        if (d.estado !== item.estado) d.efeitoAte = undefined;
         d.estado = item.estado;
         const mudou = item.valor === null
           ? d.alvo !== null
           : d.valor !== item.valor || d.alvo === null;
-        if (mudou) definirAlvoDado(d, item.valor);
+        if (mudou) { definirAlvoDado(d, item.valor); d.efeitoAte = undefined; }
       });
     } else {
       cena = criarCenaMesa(dados, semente);
       cenaRef.current = cena;
       sementeRef.current = semente;
     }
-    // Efeito de resultado é TRANSITÓRIO: a cor especial vale apenas por
-    // EFEITO_RESULTADO_MS após o valor oficial chegar; depois o dado
-    // volta à aparência normal (Issue #147).
-    const tEfeito = performance.now();
-    cena.forEach((d) => {
-      d.efeitoAte = d.estado && d.valor !== null ? tEfeito + EFEITO_RESULTADO_MS : 0;
-    });
     const limite = semiLadoMesa(cena.length);
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     if (reduced) {
@@ -143,7 +137,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     }
 
     let raf = 0;
-    let efeitoTimer: ReturnType<typeof setTimeout> | null = null;
+    let fxTimer: ReturnType<typeof setTimeout> | null = null;
     let width = 0, height = 0, dpr = 1;
     let finalizado = reduced || cenaRepousada(cena);
     let fill = "#2b3350";
@@ -347,26 +341,35 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
       lastFrame = now;
       passoCena(cena, dt);
-      finalizado = cenaRepousada(cena);
+      // O flash de resultado começa quando o dado ASSENTA na face
+      // oficial — não na chegada do ACK (Issue #147).
+      for (const d of cena) {
+        if (d.finalizado && d.estado && d.efeitoAte === undefined) {
+          d.efeitoAte = now + EFEITO_RESULTADO_MS;
+        }
+      }
+      finalizado = cenaRepousada(cena)
+        && !cena.some((d) => (d.efeitoAte ?? 0) > now);
       desenhar();
       if (!finalizado) raf = requestAnimationFrame(draw);
     };
-    // Repintura única quando o último efeito expira: sem isso as cores
-    // especiais ficariam congeladas no último frame desenhado.
-    const agendarExpiracao = () => {
-      if (efeitoTimer) clearTimeout(efeitoTimer);
-      const restante = Math.max(...cena.map((d) => (d.efeitoAte ?? 0) - performance.now()), 0);
-      efeitoTimer = setTimeout(() => {
-        efeitoTimer = null;
-        desenhar();
-      }, restante + 60);
-    };
+    // Cena já assentada na montagem (ex.: prefers-reduced-motion): o
+    // flash de resultado ainda precisa aparecer — arma efeitoAte e uma
+    // repintura única para restaurar a aparência normal ao expirar.
+    const tSetup = performance.now();
+    for (const d of cena) {
+      if (d.finalizado && d.estado && d.efeitoAte === undefined) {
+        d.efeitoAte = tSetup + EFEITO_RESULTADO_MS;
+      }
+    }
     if (!finalizado) {
       raf = requestAnimationFrame(draw);
-      agendarExpiracao();
     } else {
       desenhar();
-      agendarExpiracao();
+      const restanteFx = Math.max(0, ...cena.map((d) => (d.efeitoAte ?? 0) - performance.now()));
+      if (restanteFx > 0) {
+        fxTimer = setTimeout(() => { fxTimer = null; desenhar(); }, restanteFx + 60);
+      }
     }
 
     const observer = new ResizeObserver(() => {
@@ -382,7 +385,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     prefsObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     return () => {
       if (raf) cancelAnimationFrame(raf);
-      if (efeitoTimer) clearTimeout(efeitoTimer);
+      if (fxTimer) clearTimeout(fxTimer);
       observer.disconnect();
       prefsObserver.disconnect();
     };

@@ -22,6 +22,7 @@ interface DadoFisico {
   estado: EstadoEfeitoDado;
   /** expiração do flash de resultado (performance.now) */
   efeitoAte?: number;
+  efeitoTimer?: ReturnType<typeof setTimeout>;
   corpo: RapierTypes.RigidBody;
   grupo: THREE.Group;
   labelMesh: THREE.Mesh;
@@ -307,6 +308,16 @@ function criarBandeja(scene: THREE.Scene, world: RapierTypes.World, canvas: HTML
   return { bandeja, base, feltroTexture };
 }
 
+/** Repinta apenas os materiais de estado de UM dado (rótulos + arestas). */
+function repintarEstadoDado(dado: DadoFisico, canvas: HTMLCanvasElement) {
+  const text = corCss(canvas, "--dado-texto", "#e8ecf7");
+  const labelMaterial = dado.labelMesh.material as THREE.MeshBasicMaterial;
+  labelMaterial.map?.dispose();
+  labelMaterial.map = criarAtlasRotulos(dado.lados, dado.labels, dado.estado, text);
+  labelMaterial.needsUpdate = true;
+  (dado.edgeMesh.material as THREE.LineBasicMaterial).color.set(corEstado(dado.estado));
+}
+
 function atualizarCores(cena: CenaFisica, canvas: HTMLCanvasElement) {
   cena.bandeja.color.set(corCss(canvas, "--mesa-feltro", "#263456"));
   cena.bandeja.needsUpdate = true;
@@ -326,7 +337,9 @@ function atualizarCores(cena: CenaFisica, canvas: HTMLCanvasElement) {
 
 function definirResultado(dado: DadoFisico, item: ItemDadoMesa, padrao: Props["estado"], reduzido: boolean) {
   dado.estado = item.estado ?? padrao ?? null;
-  dado.efeitoAte = dado.estado && item.valor !== null ? performance.now() + EFEITO_RESULTADO_MS : 0;
+  // novo resultado zera o efeito anterior — o flash recomeça no assentamento
+  if (dado.efeitoTimer) { clearTimeout(dado.efeitoTimer); dado.efeitoTimer = undefined; }
+  dado.efeitoAte = undefined;
   const resultadoIgual = item.valor === dado.valor && (item.valor === null || dado.alvo !== null);
   if (resultadoIgual && (!reduzido || !dado.alvo || dado.pronto)) return;
   dado.valor = item.valor;
@@ -379,6 +392,19 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
     let accumulator = 0;
     const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+    // Expiração do flash por dado: ao fim, repinta rótulos/arestas com
+    // as cores normais e gera um frame para limpar as classes de crítico.
+    const armarExpiracao = (dado: DadoFisico) => {
+      if (dado.efeitoTimer) clearTimeout(dado.efeitoTimer);
+      dado.efeitoTimer = setTimeout(() => {
+        dado.efeitoTimer = undefined;
+        if (disposed) return;
+        dado.efeitoAte = undefined;
+        dado.estado = null;
+        repintarEstadoDado(dado, canvas);
+        runtime?.startAnimation();
+      }, EFEITO_RESULTADO_MS + 80);
+    };
     const render = () => {
       if (!runtime) return;
       runtime.renderer.render(runtime.cena, runtime.camera);
@@ -420,7 +446,16 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
       // rodaria world.step() depois do assentamento e a gravidade
       // re-aceleraria o dado "pronto" — o estado final mediria velocidade
       // linear residual e o corpo poderia derivar da face oficial.
-      if (runtime.dados.every((dado) => dado.pronto)) {
+      // O flash de resultado começa quando o dado ASSENTA (pronto) —
+      // não na chegada do ACK (Issue #147).
+      for (const dado of runtime.dados) {
+        if (dado.pronto && dado.estado && dado.efeitoAte === undefined) {
+          dado.efeitoAte = now + EFEITO_RESULTADO_MS;
+          armarExpiracao(dado);
+        }
+      }
+      const efeitoPendente = runtime.dados.some((dado) => (dado.efeitoAte ?? 0) > now);
+      if (runtime.dados.every((dado) => dado.pronto) && !efeitoPendente) {
         render();
         setPhysicsSettled(true);
         return;
@@ -482,7 +517,7 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
       }
       render();
       if (runtime.dados.every((dado) => dado.pronto)) setPhysicsSettled(true);
-      const needsAnotherFrame = runtime.dados.some(
+      const needsAnotherFrame = efeitoPendente || runtime.dados.some(
         (dado) => !dado.pronto && (!dado.corpo.isSleeping() || dado.alvo !== null),
       );
       if (needsAnotherFrame) requestFrame();
@@ -490,6 +525,7 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
 
     const cleanupRenderer = () => {
       if (frame) cancelAnimationFrame(frame);
+      runtime?.dados.forEach((dado) => { if (dado.efeitoTimer) clearTimeout(dado.efeitoTimer); });
       if (runtime) {
         runtime.world.free();
         const geometries = new Set<THREE.BufferGeometry>();
@@ -643,7 +679,6 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
           group.quaternion.copy(rotation);
           const die: DadoFisico = {
             lados: item.lados, labels, valor: item.valor, estado: state,
-            efeitoAte: state && item.valor !== null ? performance.now() + EFEITO_RESULTADO_MS : 0,
             corpo: body, grupo: group,
             labelMesh, edgeMesh,
             alvo: target?.orientation ?? null, alvoAltura: target?.altura ?? 0,
@@ -715,20 +750,6 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
     });
     setPhysicsSettled(runtime.dados.every((die) => die.pronto));
     runtime.startAnimation();
-    // Efeito de resultado é transitório: ao expirar, o dado volta às
-    // cores normais (Issue #147) — atlas de rótulos, arestas e classes.
-    const timerEfeito = setTimeout(() => {
-      const agoraFx = performance.now();
-      let expirou = false;
-      runtime.dados.forEach((die) => {
-        if (die.estado && (die.efeitoAte ?? 0) <= agoraFx) { die.estado = null; expirou = true; }
-      });
-      if (!expirou) return;
-      const cv = canvasRef.current;
-      if (cv) atualizarCores(runtime, cv);
-      runtime.startAnimation();
-    }, EFEITO_RESULTADO_MS + 80);
-    return () => clearTimeout(timerEfeito);
   }, [valuesKey, estado]);
 
   if (canvasUnavailable) {
