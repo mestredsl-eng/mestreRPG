@@ -49,6 +49,8 @@ export default function Mesa({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
   const seqSessoesRef = useRef(0);
+  const ativaRef = useRef<Sessao | null>(null);
+  useEffect(() => { ativaRef.current = ativa; }, [ativa]);
 
   const carregar = useCallback(async () => {
     const seq = ++seqSessoesRef.current;
@@ -88,6 +90,20 @@ export default function Mesa({ campaignId, campanha }: Props) {
     socket.on("campanha:restaurada", aoRestaurada);
     return () => { socket.off("campanha:restaurada", aoRestaurada); };
   }, [campaignId, carregar]);
+
+  // Reconexão com a lista de sessões aberta (MesaView desmontada):
+  // Campanha.tsx pula o entrar-campanha no connect quando a aba é Mesa
+  // (a MesaView cobriria o caso montada) — sem sessão aberta ninguém
+  // reingressa na room campanha:* e o cliente perde campanha:restaurada
+  // para sempre (lista congelada após restore/import).
+  useEffect(() => {
+    const socket = getSocket();
+    const aoConnect = () => {
+      if (!ativaRef.current) socket.emit("entrar-campanha", campaignId, () => undefined);
+    };
+    socket.on("connect", aoConnect);
+    return () => { socket.off("connect", aoConnect); };
+  }, [campaignId]);
 
   if (ativa) {
     return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
@@ -234,6 +250,12 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     return !!p?.ehEu;
   }, [personagens]);
 
+  // erro assíncrono genérico (REST, filho) não pode sobrescrever a
+  // mensagem terminal de revogação — ela só sai com reativação ativa
+  const reportarErro = useCallback((msg: string | null) => {
+    if (msg !== null && !revogadoRef.current) setErro(msg);
+  }, []);
+
   // carga completa (mensagens, testes, turnos, timer, sessão, membros,
   // personagens, regras): geração própria via permSeqRef — respostas de
   // gerações antigas são descartadas. Usada na carga inicial, na
@@ -264,9 +286,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         if (typeof minD10 === "number") setMinimoD10(minD10);
         const eu = mem.membros.find((m) => m.ehEu);
         if (eu) setMeuUserId(eu.userId);
-      } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar mesa"); }
+      } catch (e) { reportarErro(e instanceof Error ? e.message : "Erro ao carregar mesa"); }
     })();
-  }, [campaignId, sessao.id]);
+  }, [campaignId, sessao.id, reportarErro]);
 
   // carga inicial
   useEffect(() => { recarregarCompleta(); }, [recarregarCompleta]);
@@ -455,10 +477,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       }
       if (revogadoRef.current) {
         // reativação: só um caminho de autorização novo restaura o acesso
-        revogadoRef.current = false;
-        setEntradaFalhou(false);
-        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
-        entrar();
+        // — e somente com status "ativo" explícito. O emissor do servidor
+        // (notificarPermissaoAtualizada) sempre envia status; evento sem
+        // status ou com qualquer outro estado NÃO limpa o bloqueio.
+        if (d.status === "ativo") {
+          revogadoRef.current = false;
+          setEntradaFalhou(false);
+          setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
+          entrar();
+        }
       }
       if (d.papel) {
         // compara o privilégio ANTES de aplicar: queda exige proteção
@@ -540,6 +567,21 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // descartando gerações HTTP antigas via permSeqRef
           recarregarCompleta();
         } else {
+          // Uma revogação já recebida é mais específica que QUALQUER ACK
+          // posterior — inclusive "Sessão não encontrada" de um ID
+          // substituído por restauração/importação e RATE_LIMITED
+          // transitório: sem esta guarda o aoSair() abaixo desmontaria a
+          // view, o retry reagendaria entradas contra uma sessão morta e
+          // a mensagem de revogação seria apagada, devolvendo o usuário
+          // à lista como se nada tivesse acontecido. O ACK não pode
+          // apagar a causa nem fazer parecer que a mesa está autorizada.
+          if (revogadoRef.current) {
+            setEntradaFalhou(true);
+            setPapel("espectador");
+            papelRef.current = "espectador";
+            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+            return;
+          }
           // RATE_LIMITED é transitório, não rejeição de autorização —
           // mas a espera não pode manter dados privilegiados visíveis:
           // bloqueia a visão imediatamente e reagenda a entrada após
@@ -551,20 +593,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             setEntradaFalhou(true);
             setPapel("espectador");
             window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
-            return;
-          }
-          // Uma revogação já recebida é mais específica que QUALQUER ACK
-          // posterior — inclusive "Sessão não encontrada" de um ID
-          // substituído por restauração/importação: sem esta guarda o
-          // aoSair() abaixo desmontaria a view e apagaria a mensagem de
-          // revogação, devolvendo o usuário à lista como se nada tivesse
-          // acontecido. O ACK não pode apagar a causa nem fazer parecer
-          // que a mesa ainda está autorizada.
-          if (revogadoRef.current) {
-            setEntradaFalhou(true);
-            setPapel("espectador");
-            papelRef.current = "espectador";
-            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
             return;
           }
           // sessão substituída por restauração/importação: o ID não
@@ -628,8 +656,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       destinatarioUserId: privado ? destinoPriv || undefined : undefined,
     }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       const espera = retryAfterDoAck(r);
-      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
-      if (!r?.ok) setErro(r?.erro ?? "Falha ao enviar");
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
+      if (!r?.ok) reportarErro(r?.erro ?? "Falha ao enviar");
       else setTexto("");
     });
   };
@@ -637,8 +665,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => void) => {
     getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       const espera = retryAfterDoAck(r);
-      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
-      if (r && !r.ok) setErro(r.erro ?? "Erro");
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
+      if (r && !r.ok) reportarErro(r.erro ?? "Erro");
     }));
   };
 
@@ -840,7 +868,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                         {(ehMestreAtual || ehDono) && (
                           <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number; codigo?: string; retryAfterMs?: number }) => {
                             const espera = retryAfterDoAck(r);
-                            if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
+                            if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.pool?.dadosLados ?? t.dados?.lados ?? t.diceSides ?? 20], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
                           })}>Rolar</button>
                         )}
@@ -862,7 +890,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                               const nota = (document.getElementById(`nota-${t.id}`) as HTMLInputElement)?.value;
                               getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, (r: { ok?: boolean; codigo?: string; retryAfterMs?: number }) => {
                                 const espera = retryAfterDoAck(r);
-                                if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); }
+                                if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); }
                               });
                             }}>Confirmar</button>
                           </>
@@ -877,17 +905,17 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+            <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
           {ehMestreAtual && (
-            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
           )}
 
           {/* lançador unificado: testes D10 | rolagem livre e dano */}
           {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <PainelDados sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
+            <PainelDados sessionId={sessao.id} aoErro={reportarErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
           )}
 
           {/* resultados de dados */}
