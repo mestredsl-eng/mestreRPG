@@ -2,17 +2,29 @@
 
 ## [Unreleased]
 
+## [1.0.0.4] - 2026-11-17
+
 ### Novidades
 
-- **Iniciativa na mesa:** mestre pode ordenar jogadores e NPCs revelados por rolagem autoritativa de d20, com quantidade configurável, resultados persistidos e desempate alfabético.
+- **Iniciativa d20 na mesa:** o mestre pode rolar de 1 a 10 dados d20 por participante, incluindo jogadores ativos e NPCs aprovados e revelados. Os resultados são calculados pelo servidor, ordenados por total decrescente e desempatados alfabeticamente.
+- **Resultados persistentes e sincronizados:** iniciativa, dados e ordem são persistidos na sessão, transmitidos em tempo real pelo Socket.IO e registrados no chat da mesa.
+- **Compatibilidade com turnos manuais:** o mestre pode continuar usando ou redefinindo a ordem manual após uma iniciativa.
 
-### Melhorias
+### Integridade, permissões e recuperação
 
-- A homologação multiplayer da mesa cobre iniciativa, autorização por papel e retorno à ordem manual; o teste unitário da iniciativa roda no CI.
-- **Turnos à prova de estado inválido** — o servidor recusa iniciar sequência sem participantes e esvaziar a ordem encerra a rodada; a mesa abre sem erro mesmo com estado legado inconsistente, e o mestre repara a sequência pela interface.
-- O documento da release v1.0.0 identifica a publicação e separa as evidências históricas do estado atual da `main`.
-- **Mesa de dados 3D:** Three.js e Rapier simulam dados poliédricos com colisões convexas, quique, atrito, bordas físicas e iluminação; o resultado continua autoritativo no servidor. Rapier/WASM e o viewer 3D são carregados sob demanda, com fallback para o renderer anterior.
-- **Homologação 3D:** verifica renderer WebGL real, movimento, valores autoritativos, temas e cores por pixels do framebuffer, reduced-motion e viewport mobile.
+- **Autorização no servidor:** apenas o mestre controla início, encerramento, avanço, ordem e rolagem de iniciativa.
+- **NPCs protegidos:** somente NPCs da campanha aprovados, ativos e revelados pelo mestre podem participar.
+- **Ordem vazia protegida:** o servidor rejeita iniciar turnos sem participantes; esvaziar a ordem encerra a sequência.
+- **Estados legados resilientes:** a mesa abre sem crash mesmo quando encontra estado antigo inconsistente, e o mestre consegue reparar a ordem pela interface.
+
+### Testes
+
+- **servidor/testes/iniciativa.test.ts: 4/4** — cálculo, limites de dados e ordenação/desempate.
+- **homologacao-mesa.mjs: 52/52** — iniciativa autoritativa, NPCs, permissões, ordem vazia, recuperação de estado legado e turnos manuais.
+- **homologacao-mesa-virtual.mjs: 30/30** — abertura da mesa com estado legado inválido, sem erro de renderização e com controles de recuperação funcionais.
+- **teste-permissao-tempo-real.mjs: 579/579** — permissões, revogação e sincronização de turnos.
+- **CI #534:** servidor, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA f872816c5d649528da7c1fa63940ff7e494bc19e.
+- **Assistente de Desenvolvimento #376:** sucesso no mesmo SHA.
 
 ---
 
