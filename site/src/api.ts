@@ -280,6 +280,23 @@ export const api = {
     requisicao<PersonagemDetalhe>(`/campaigns/${cid}/characters`, { method: "POST", body: JSON.stringify(dados) }),
   obterPersonagem: (charId: string) =>
     requisicao<PersonagemDetalhe>(`/characters/${charId}`),
+  definirRetrato: (charId: string, retrato: { tipo: "galeria"; id: string } | { tipo: "arquivo"; arquivoId: string } | null) =>
+    requisicao<{ ok: boolean; retrato: RetratoPersonagem | null }>(`/characters/${charId}/retrato`, { method: "PUT", body: JSON.stringify({ retrato }) }),
+  uploadRetrato: async (charId: string, arquivo: File) => {
+    const res = await fetch(`${API_BASE}/characters/${charId}/retrato/upload`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-File-Name": encodeURIComponent(arquivo.name),
+        "X-File-Mime": arquivo.type || "application/octet-stream",
+      },
+      body: arquivo,
+    });
+    const corpo = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError((corpo as { erro?: string }).erro ?? `HTTP ${res.status}`);
+    return corpo as { ok: boolean; retrato: RetratoPersonagem | null };
+  },
   previaPontos: (charId: string, dados: Record<string, unknown>) =>
     requisicao<{ pontos: ResultadoPontos; validacao?: { ok: boolean; erros: { campoId?: string; codigo: string; mensagem: string }[] } | null }>(`/characters/${charId}/pontos-previa`, { method: "POST", body: JSON.stringify({ dados }) }),
   atualizarPersonagem: (charId: string, dados: { name?: string; data?: Record<string, unknown>; status?: string; overrides?: Record<string, unknown>; ignorarPontos?: boolean }) =>
@@ -646,6 +663,13 @@ export interface VersaoModelo {
   estrutura?: EstruturaFicha;
 }
 
+export interface RetratoPersonagem {
+  tipo: "galeria" | "arquivo";
+  /** URL pronta para <img>: estático da galeria ou endpoint com
+   *  checagem de acesso ao personagem. */
+  url: string;
+}
+
 export interface PersonagemResumo {
   id: string;
   name: string;
@@ -656,6 +680,7 @@ export interface PersonagemResumo {
   ehEu: boolean;
   isNpc?: boolean;
   npcRevelado?: boolean;
+  retrato?: RetratoPersonagem | null;
   arquivadoDe?: string | null;
   updatedAt: string;
 }
@@ -1139,6 +1164,7 @@ export interface PersonagemDetalhe {
     donoNome?: string | null;
     isNpc?: boolean;
     npcRevelado?: boolean;
+    retrato?: RetratoPersonagem | null;
     ehEu?: boolean;
     arquivadoDe?: string | null;
     createdAt?: string;

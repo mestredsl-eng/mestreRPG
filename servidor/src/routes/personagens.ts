@@ -1,12 +1,12 @@
-import { Router, type Request } from "express";
+import express, { Router, type Request } from "express";
 import { and, eq, desc, ne, inArray } from "drizzle-orm";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts } from "../db/schema.js";
+import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
-import { requirePapel, requireLeasePersonagem, getMembership } from "../lib/permissoes.js";
+import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
 import {
   estruturaFichaSchema,
   validarFicha,
@@ -34,6 +34,8 @@ import {
 import { emitirCampanha } from "../lib/io.js";
 import { audit } from "../lib/audit.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
+import { retratoGaleriaPorId, urlRetratoGaleria } from "../lib/retratos.js";
+import { arquivoVisivel, assinaturaImagemOk, caminhoFisico, caminhoLixeira, garantirDir } from "./arquivos.js";
 
 const db = getDb();
 export const personagensRouter = Router({ mergeParams: true });
@@ -315,7 +317,7 @@ async function personagemPublico(
   const carregada = p.templateVersionId ? await carregarEstrutura(p.templateVersionId) : null;
   const ehDono = p.membershipId === membershipId;
   if (!carregada) {
-    return { personagem: { id: p.id, name: p.name, status: p.status }, ficha: null };
+    return { personagem: { id: p.id, name: p.name, status: p.status, retrato: retratoPublico(p) }, ficha: null };
   }
   const regras = await carregarRegras(p.campaignId);
   const ficha = montarFicha(p, carregada.estrutura, ehMestre, ehDono, userId, membershipId, regras);
@@ -337,6 +339,7 @@ async function personagemPublico(
       donoNome: dono?.displayName ?? dono?.username ?? null,
       isNpc: p.isNpc,
       npcRevelado: p.isNpc ? npcFichaVisivel(p.data) : undefined,
+      retrato: retratoPublico(p),
       ehEu: ehDono,
       arquivadoDe: p.status === "arquivado" ? (metaArquivamento(p.data)?.statusAnterior ?? null) : null,
       createdAt: p.createdAt,
@@ -376,6 +379,43 @@ function npcFichaVisivel(data: unknown): boolean {
 function metaArquivamento(data: unknown): { statusAnterior?: string; arquivadoEm?: string; arquivadoPor?: string } | null {
   const meta = (data as Record<string, unknown> | null)?.[CHAVE_ARQUIVAMENTO];
   return meta && typeof meta === "object" ? (meta as { statusAnterior?: string }) : null;
+}
+
+// ---------- Retrato do personagem (Issue #129) ----------
+// Metadado reservado em characters.data — nunca vem de campos da ficha
+// (validarFicha descarta chaves fora do modelo; o PATCH não pode
+// forjá-lo). Referência estável, nunca base64.
+const CHAVE_RETRATO = "__retrato";
+
+export type RetratoRef =
+  | { tipo: "galeria"; id: string }
+  | { tipo: "arquivo"; arquivoId: string };
+
+function retratoDe(data: unknown): RetratoRef | null {
+  const r = (data as Record<string, unknown> | null)?.[CHAVE_RETRATO];
+  if (!r || typeof r !== "object") return null;
+  const o = r as Record<string, unknown>;
+  if (o.tipo === "galeria" && typeof o.id === "string" && retratoGaleriaPorId(o.id)) {
+    return { tipo: "galeria", id: o.id };
+  }
+  if (o.tipo === "arquivo" && typeof o.arquivoId === "string" && o.arquivoId.length > 0) {
+    return { tipo: "arquivo", arquivoId: o.arquivoId };
+  }
+  return null;
+}
+
+/** Retrato serializado para o cliente: `url` já vem resolvida —
+ *  galeria aponta para o estático /retratos/, arquivo para o endpoint
+ *  com checagem de acesso ao personagem (nunca a URL crua do arquivo,
+ *  que poderia vazar a existência de arquivo de outra campanha). */
+function retratoPublico(p: typeof characters.$inferSelect): { tipo: string; url: string } | null {
+  const r = retratoDe(p.data);
+  if (!r) return null;
+  if (r.tipo === "galeria") {
+    const g = retratoGaleriaPorId(r.id);
+    return g ? { tipo: "galeria", url: urlRetratoGaleria(g) } : null;
+  }
+  return { tipo: "arquivo", url: `/api/characters/${p.id}/retrato/imagem` };
 }
 
 /** GET /api/campaigns/:campaignId/characters — mestre vê todos; jogador só os seus.
@@ -433,6 +473,7 @@ personagensRouter.get("/", requirePapel("mestre", "jogador"), async (req, res) =
       ehEu: r.membership.userId === req.usuario!.id,
       isNpc: r.personagem.isNpc,
       npcRevelado: r.personagem.isNpc ? npcFichaVisivel(r.personagem.data) : undefined,
+      retrato: retratoPublico(r.personagem),
       arquivadoDe: r.personagem.status === "arquivado" ? (metaArquivamento(r.personagem.data)?.statusAnterior ?? null) : null,
       updatedAt: r.personagem.updatedAt,
     })),
@@ -1424,4 +1465,291 @@ personagensRouter.post("/:characterId/desarquivar", requireLeasePersonagem(), as
   await audit(req, "personagem.desarquivado", { characterId: p.id, statusRestaurado: restaurado });
   emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
   res.json({ ok: true, status: restaurado });
+});
+
+// ---------- Retrato do personagem (Issue #129) ----------
+// O retrato é metadado do personagem (characters.data.__retrato),
+// independente da arte do token VTT. Referência estável: id da galeria
+// padrão ou arquivoId da biblioteca da campanha — nunca base64.
+
+const EXT_IMAGEM_RETRATO = new Set(["png", "jpg", "jpeg", "webp"]);
+const RETRATO_MAX_BYTES = 5 * 1024 * 1024;
+const RETRATO_MAX_DIM = 4096;
+
+/** Dimensões reais do arquivo (PNG IHDR / JPEG SOF / WebP) — null se
+ *  o conteúdo não puder ser reconhecido como a imagem declarada. */
+function dimensoesImagem(ext: string, buf: Buffer): { w: number; h: number } | null {
+  try {
+    if (ext === "png" && buf.length > 24) {
+      return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+    }
+    if (ext === "jpg" || ext === "jpeg") {
+      let off = 2;
+      while (off + 9 < buf.length) {
+        if (buf[off] !== 0xff) { off++; continue; }
+        const marker = buf[off + 1];
+        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) { off += 2; continue; }
+        const len = buf.readUInt16BE(off + 2);
+        if (len < 2) return null;
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { h: buf.readUInt16BE(off + 5), w: buf.readUInt16BE(off + 7) };
+        }
+        off += 2 + len;
+      }
+      return null;
+    }
+    if (ext === "webp" && buf.length > 30) {
+      const fourcc = buf.toString("ascii", 12, 16);
+      if (fourcc === "VP8X") return { w: 1 + buf.readUIntLE(24, 3), h: 1 + buf.readUIntLE(27, 3) };
+      if (fourcc === "VP8L") {
+        const b = buf.readUInt32LE(21);
+        return { w: (b & 0x3fff) + 1, h: ((b >> 14) & 0x3fff) + 1 };
+      }
+      if (fourcc === "VP8 ") {
+        return { w: buf.readUInt16LE(26) & 0x3fff, h: buf.readUInt16LE(28) & 0x3fff };
+      }
+    }
+  } catch { /* conteúdo inesperado → null */ }
+  return null;
+}
+
+const MIME_RETRATO_OK = new Set(["image/png", "image/jpeg", "image/webp"]);
+
+/** Lê e valida um arquivo da biblioteca para uso como retrato: somente
+ *  raster da allowlist (PNG/JPEG/WebP), MIME coerente, magic bytes reais
+ *  e dimensões 16–4096px. SVG e qualquer conteúdo ativo retornam null —
+ *  vale para o PUT (escolha) e para o GET (defesa contra referências
+ *  gravadas antes da validação existir). */
+async function imagemRetratoValida(f: typeof files.$inferSelect, cid: string): Promise<Buffer | null> {
+  const ext = (f.storageName ?? "").split(".").pop()?.toLowerCase() ?? "";
+  if (!EXT_IMAGEM_RETRATO.has(ext)) return null;
+  if (!MIME_RETRATO_OK.has((f.mimeType ?? "").toLowerCase())) return null;
+  if (!f.storageName || !f.sizeBytes || f.sizeBytes > RETRATO_MAX_BYTES) return null;
+  let caminho = caminhoFisico(cid, f.storageName);
+  if (!caminho || !existsSync(caminho)) {
+    const lix = caminhoLixeira(cid, f.storageName);
+    if (existsSync(lix)) {
+      try { renameSync(lix, caminho!); } catch { return null; }
+    } else { return null; }
+  }
+  if (!caminho) return null;
+  let buf: Buffer;
+  try { buf = readFileSync(caminho); } catch { return null; }
+  if (buf.length === 0 || buf.length > RETRATO_MAX_BYTES) return null;
+  if (!assinaturaImagemOk(ext, buf)) return null;
+  const dim = dimensoesImagem(ext, buf);
+  if (!dim || dim.w < 16 || dim.h < 16 || dim.w > RETRATO_MAX_DIM || dim.h > RETRATO_MAX_DIM) return null;
+  return buf;
+}
+
+/** Acesso para LEITURA do retrato: mesma regra do GET da ficha —
+ *  dono/mestre ou NPC com ficha revelada pelo mestre. */
+async function acessoLeituraRetrato(req: Request) {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    if (acesso.erro === 403) {
+      const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
+      const membership = p ? await getMembership(p.campaignId, req.usuario!.id) : null;
+      if (p && p.isNpc && membership?.status === "ativo" && npcFichaVisivel(p.data)) {
+        return { personagem: p, somenteLeitura: true };
+      }
+    }
+    return acesso;
+  }
+  return { ...acesso, somenteLeitura: false };
+}
+
+/** Acesso para ESCRITA do retrato: mestre ou dono; NPC só mestre;
+ *  arquivado é somente leitura. */
+async function acessoEscritaRetrato(req: Request, res: express.Response) {
+  const acesso = await carregarPersonagemComAcesso(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return null;
+  }
+  const { personagem: p, ehMestre } = acesso;
+  if (p.status === "arquivado") {
+    res.status(403).json({ erro: "Personagem arquivado — restaure-o antes de alterar" });
+    return null;
+  }
+  if (p.isNpc && !ehMestre) {
+    res.status(403).json({ erro: "Somente o mestre define o retrato de um NPC" });
+    return null;
+  }
+  return acesso;
+}
+
+const retratoBodySchema = z.object({
+  retrato: z.union([
+    z.null(),
+    z.object({ tipo: z.literal("galeria"), id: z.string().min(1).max(80) }),
+    z.object({ tipo: z.literal("arquivo"), arquivoId: z.string().min(1).max(80) }),
+  ]),
+});
+
+/** PUT /api/characters/:characterId/retrato — define/troca/remove o
+ *  retrato: {retrato:null} remove; {tipo:"galeria",id} usa a galeria
+ *  padrão; {tipo:"arquivo",arquivoId} usa imagem da biblioteca da
+ *  mesma campanha (sem duplicar o arquivo). */
+personagensRouter.put("/:characterId/retrato", requireLeasePersonagem(), async (req, res) => {
+  const acesso = await acessoEscritaRetrato(req, res);
+  if (!acesso) return;
+  const body = retratoBodySchema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues });
+    return;
+  }
+  const p = acesso.personagem;
+  const entrada = body.data.retrato;
+  let ref: RetratoRef | null = null;
+  if (entrada !== null) {
+    if (entrada.tipo === "galeria") {
+      if (!retratoGaleriaPorId(entrada.id)) {
+        res.status(400).json({ erro: "Retrato da galeria não encontrado" });
+        return;
+      }
+      ref = { tipo: "galeria", id: entrada.id };
+    } else {
+      const [f] = await db.select().from(files)
+        .where(and(eq(files.id, entrada.arquivoId), eq(files.campaignId, p.campaignId))).limit(1);
+      if (!f) {
+        res.status(400).json({ erro: "Imagem da biblioteca não encontrada nesta campanha" });
+        return;
+      }
+      // Mesma autorização do download da biblioteca: visibilidade,
+      // destinatários e estado de moderação — não basta ser da campanha.
+      const memReq = acesso.membership;
+      if (memReq?.role === "espectador") {
+        const regras = await carregarRegras(p.campaignId);
+        if (!regras.config.arquivos?.espectadorVe || permissoesDe(memReq).verBiblioteca === false) {
+          res.status(403).json({ erro: "Sem acesso à biblioteca" });
+          return;
+        }
+      }
+      const membershipIds = new Set([req.usuario!.id, memReq?.id].filter((x): x is string => !!x));
+      if (!arquivoVisivel(f, req.usuario!.id, acesso.ehMestre, membershipIds)) {
+        res.status(403).json({ erro: "Sem permissão para usar este arquivo" });
+        return;
+      }
+      if (f.status !== "aprovado") {
+        res.status(403).json({ erro: "Arquivo ainda não foi aprovado na biblioteca" });
+        return;
+      }
+      if (!(await imagemRetratoValida(f, p.campaignId))) {
+        res.status(415).json({ erro: "Arquivo não é uma imagem raster válida (PNG, JPG ou WebP)" });
+        return;
+      }
+      ref = { tipo: "arquivo", arquivoId: f.id };
+    }
+  }
+  const dados = { ...((p.data ?? {}) as Record<string, unknown>) };
+  if (ref) dados[CHAVE_RETRATO] = ref; else delete dados[CHAVE_RETRATO];
+  const [atualizado] = await db.update(characters).set({ data: dados, updatedAt: new Date() })
+    .where(eq(characters.id, p.id)).returning();
+  await audit(req, "personagem.retrato", { characterId: p.id, retrato: ref ?? "removido" });
+  emitirCampanha(p.campaignId, "personagens:atualizados", { characterId: p.id });
+  res.json({ ok: true, retrato: retratoPublico(atualizado) });
+});
+
+/** POST /api/characters/:characterId/retrato/upload — envia imagem
+ *  própria (PNG/JPEG/WebP, máx. 5 MB, máx. 4096px). Valida magic bytes
+ *  E dimensões reais; SVG e qualquer conteúdo ativo são rejeitados.
+ *  O arquivo entra na biblioteca da campanha com visibilidade "mestre"
+ *  (não aparece na listagem do jogador) e o retrato aponta para ele —
+ *  a imagem só é servida pelo endpoint com checagem de acesso ao
+ *  personagem. */
+personagensRouter.post("/:characterId/retrato/upload", requireLeasePersonagem(), limiteUsuario({ nome: "retrato-upload", janelaMs: 5 * 60_000, max: 20 }), express.raw({ type: () => true, limit: "6mb" }), async (req, res) => {
+  const acesso = await acessoEscritaRetrato(req, res);
+  if (!acesso) return;
+  const p = acesso.personagem;
+  const cid = p.campaignId;
+  const nomeHeader = String(req.headers["x-file-name"] ?? "");
+  let fileName: string;
+  try {
+    fileName = decodeURIComponent(nomeHeader).slice(0, 255) || "retrato";
+  } catch {
+    res.status(400).json({ erro: "Nome de arquivo inválido" });
+    return;
+  }
+  const ext = fileName.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ?? "";
+  if (!EXT_IMAGEM_RETRATO.has(ext)) {
+    res.status(415).json({ erro: "Formato não suportado — use PNG, JPG ou WebP" });
+    return;
+  }
+  const buffer = req.body as Buffer;
+  if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
+    res.status(400).json({ erro: "Arquivo vazio" });
+    return;
+  }
+  if (buffer.length > RETRATO_MAX_BYTES) {
+    res.status(413).json({ erro: "Imagem excede o limite de 5 MB" });
+    return;
+  }
+  if (!assinaturaImagemOk(ext, buffer)) {
+    res.status(415).json({ erro: "Conteúdo do arquivo não corresponde a uma imagem válida" });
+    return;
+  }
+  const dim = dimensoesImagem(ext, buffer);
+  if (!dim || dim.w < 16 || dim.h < 16 || dim.w > RETRATO_MAX_DIM || dim.h > RETRATO_MAX_DIM) {
+    res.status(415).json({ erro: "Dimensões da imagem inválidas ou acima de 4096px" });
+    return;
+  }
+
+  const id = crypto.randomUUID();
+  const storageName = `${id}.${ext}`;
+  const mimeType = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  garantirDir(cid);
+  try {
+    writeFileSync(caminhoFisico(cid, storageName)!, buffer);
+  } catch {
+    res.status(500).json({ erro: "Falha ao gravar imagem" });
+    return;
+  }
+  await db.insert(files).values({
+    id, campaignId: cid, folderId: null, folderPath: "/",
+    fileName, displayName: fileName, description: "Retrato de personagem",
+    category: "retrato", storageName, mimeType, sizeBytes: buffer.length,
+    status: "aprovado", visibility: "mestre", recipients: null,
+    uploadedBy: req.usuario!.id, createdAt: new Date(), updatedAt: new Date(),
+  });
+  const dados = { ...((p.data ?? {}) as Record<string, unknown>), [CHAVE_RETRATO]: { tipo: "arquivo", arquivoId: id } satisfies RetratoRef };
+  const [atualizado] = await db.update(characters).set({ data: dados, updatedAt: new Date() })
+    .where(eq(characters.id, p.id)).returning();
+  await audit(req, "personagem.retrato_upload", { characterId: p.id, fileId: id, bytes: buffer.length });
+  emitirCampanha(cid, "personagens:atualizados", { characterId: p.id });
+  res.status(201).json({ ok: true, retrato: retratoPublico(atualizado) });
+});
+
+/** GET /api/characters/:characterId/retrato/imagem — serve o retrato
+ *  após revalidar o acesso ao personagem (mesma regra do GET da
+ *  ficha, incluindo NPC revelado). Galeria → redirect para o estático;
+ *  arquivo → stream do storage da campanha, com recuperação da lixeira.
+ *  Personagem sem retrato ou arquivo ausente → 404 (o cliente exibe o
+ *  fallback visual; não há loop de requisições). */
+personagensRouter.get("/:characterId/retrato/imagem", async (req, res) => {
+  const acesso = await acessoLeituraRetrato(req);
+  if ("erro" in acesso) {
+    res.status(acesso.erro ?? 500).json({ erro: acesso.erro === 404 ? "Personagem não encontrado" : "Sem permissão" });
+    return;
+  }
+  const p = acesso.personagem;
+  const r = retratoDe(p.data);
+  if (!r) { res.status(404).json({ erro: "Personagem sem retrato" }); return; }
+  if (r.tipo === "galeria") {
+    const g = retratoGaleriaPorId(r.id);
+    if (!g) { res.status(404).json({ erro: "Retrato indisponível" }); return; }
+    res.redirect(302, urlRetratoGaleria(g));
+    return;
+  }
+  const [f] = await db.select().from(files)
+    .where(and(eq(files.id, r.arquivoId), eq(files.campaignId, p.campaignId))).limit(1);
+  if (!f) { res.status(404).json({ erro: "Imagem indisponível" }); return; }
+  // Revalida raster real no GET: referências gravadas antes da
+  // validação (ou arquivos alterados depois) não servem SVG/ativo.
+  const buf = await imagemRetratoValida(f, p.campaignId);
+  if (!buf) { res.status(404).json({ erro: "Imagem indisponível" }); return; }
+  res.setHeader("Content-Type", f.mimeType ?? "application/octet-stream");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Cache-Control", "private, max-age=300");
+  res.send(buf);
 });

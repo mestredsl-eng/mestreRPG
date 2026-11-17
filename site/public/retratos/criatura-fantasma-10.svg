@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="retrato">
+<defs>
+    <linearGradient id="bgcriatura-fantasma-10" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#28322e"/><stop offset="1" stop-color="#10141f"/>
+    </linearGradient>
+    <radialGradient id="hlcriatura-fantasma-10" cx="0.5" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.14"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.22"/>
+    </radialGradient>
+  </defs>
+  <rect width="200" height="200" fill="url(#bgcriatura-fantasma-10)"/>
+  <rect width="200" height="200" fill="url(#hlcriatura-fantasma-10)"/>
+<path d="M60 60 Q60 30 100 30 Q140 30 140 60 L140 150 Q134 160 128 150 Q122 162 116 150 Q110 160 104 150 Q98 162 92 150 Q86 160 80 150 Q74 162 68 150 Q62 160 60 148 Z" fill="#cfe8ff" opacity="0.92"/>
+<ellipse cx="84" cy="86" rx="7" ry="10" fill="#3a2a4a"/><ellipse cx="116" cy="86" rx="7" ry="10" fill="#3a2a4a"/>
+<ellipse cx="86" cy="83" rx="2.4" ry="3.4" fill="#ffffff"/><ellipse cx="118" cy="83" rx="2.4" ry="3.4" fill="#ffffff"/>
+<path d="M92 112 Q100 118 108 112" stroke="#3a2a4a" stroke-width="3" fill="none" stroke-linecap="round"/>
+<path d="M62 168 q6 -10 12 0 q6 10 12 0" stroke="#cfe8ff" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/><path d="M86 168 q6 -10 12 0 q6 10 12 0" stroke="#cfe8ff" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/><path d="M110 168 q6 -10 12 0 q6 10 12 0" stroke="#cfe8ff" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/><path d="M134 168 q6 -10 12 0 q6 10 12 0" stroke="#cfe8ff" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.9"/>
+</svg>
