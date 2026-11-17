@@ -11,8 +11,8 @@
 - A homologação multiplayer da mesa cobre iniciativa, autorização por papel e retorno à ordem manual; o teste unitário da iniciativa roda no CI.
 - **Turnos à prova de estado inválido** — o servidor recusa iniciar sequência sem participantes e esvaziar a ordem encerra a rodada; a mesa abre sem erro mesmo com estado legado inconsistente, e o mestre repara a sequência pela interface.
 - O documento da release v1.0.0 identifica a publicação e separa as evidências históricas do estado atual da `main`.
-
----
+- **Mesa de dados 3D:** Three.js e Rapier simulam dados poliédricos com colisões convexas, quique, atrito, bordas físicas e iluminação; o resultado continua autoritativo no servidor. Rapier/WASM e o viewer 3D são carregados sob demanda, com fallback para o renderer anterior.
+- **Homologação 3D:** verifica renderer WebGL real, movimento, valores autoritativos, temas e cores por pixels do framebuffer, reduced-motion e viewport mobile.
 
 ## [1.0.0.2] - 2026-11-17
 

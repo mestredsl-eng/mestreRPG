@@ -8,7 +8,7 @@ import {
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
 import PainelDados from "../Dados";
-import MesaDados3D, { seedDeId } from "../MesaDados3D";
+import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
 

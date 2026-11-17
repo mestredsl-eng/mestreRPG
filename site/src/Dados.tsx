@@ -3,7 +3,7 @@ import { api } from "./api";
 import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
 import Dado3D from "./Dado3D";
-import MesaDados3D, { seedDeId } from "./MesaDados3D";
+import MesaDados3D, { seedDeId } from "./MesaDadosFisicaLazy";
 import MesaDadosArea from "./MesaDadosArea";
 import { TEMAS_MESA, TEMAS_MESA_IDS, TEMA_MESA_PADRAO, aplicarTemaMesa, ehTemaMesa, type TemaMesaId } from "./temasMesa";
 
