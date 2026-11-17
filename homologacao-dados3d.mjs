@@ -3,6 +3,7 @@
 // renderer Three.js/Rapier, cinco tipos, quantidade, cores independentes com
 // persistência no servidor, atualização imediata e resultado autoritativo.
 import { chromium } from "playwright";
+import { spawn } from "node:child_process";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -24,13 +25,43 @@ const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 const CAMPANHA = "Campanha Teste";
 
-let browser, proc;
+let browser, proc, previewProc;
+let previewBase = "";
 
 async function shot(page, nome) {
   try { await page.screenshot({ path: join(SHOTS, `${nome}.png`) }); } catch { }
 }
-async function login(page, user, senha) {
+async function login(page, user, senha, base = BASE) {
   await page.addInitScript(() => {
+    let rafId = 0;
+    let rafClock = 0;
+    let rafRate = 60;
+    const rafTimers = new Map();
+    window.__mesaRafTicks = 0;
+    window.__mesaUseRafRate = (hz) => {
+      rafRate = hz;
+      rafClock = performance.now();
+      window.__mesaRafTicks = 0;
+      window.requestAnimationFrame = (callback) => {
+        const id = ++rafId;
+        const interval = 1000 / rafRate;
+        const timer = window.setTimeout(() => {
+          rafTimers.delete(id);
+          rafClock += interval;
+          window.__mesaRafTicks++;
+          callback(rafClock);
+        }, interval);
+        rafTimers.set(id, timer);
+        return id;
+      };
+      window.cancelAnimationFrame = (id) => {
+        const timer = rafTimers.get(id);
+        if (timer !== undefined) {
+          window.clearTimeout(timer);
+          rafTimers.delete(id);
+        }
+      };
+    };
     window.__mesaReadPixels = (canvas) => {
       const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
       if (gl) {
@@ -43,7 +74,7 @@ async function login(page, user, senha) {
       return ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
     };
   });
-  await page.goto(BASE);
+  await page.goto(base);
   await page.getByLabel("Usuário").fill(user);
   await page.getByLabel("Senha").fill(senha);
   await page.getByRole("button", { name: "Entrar", exact: true }).click();
@@ -88,8 +119,31 @@ async function rolarLivre(page, lados, qtd = 1, motivo = null) {
       const titPronto = tit && tit !== antTitulo && !tit.includes("rolando");
       return (txt && txt !== antTotal) || titPronto || Boolean(itemHistoricoNovo);
     },
-    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000 },
+    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000, polling: 50 },
   );
+}
+async function iniciarPreview(apiTarget) {
+  const porta = await portaLivre();
+  const base = `http://127.0.0.1:${porta}`;
+  const child = spawn(process.execPath, [
+    join(process.cwd(), "node_modules", "vite", "bin", "vite.js"),
+    "preview", "--host", "127.0.0.1", "--port", String(porta), "--strictPort",
+  ], {
+    cwd: join(process.cwd(), "site"),
+    env: { ...process.env, MESTRE_VITE_API_TARGET: apiTarget },
+    stdio: "ignore",
+  });
+  const limite = Date.now() + 15000;
+  while (Date.now() < limite) {
+    if (child.exitCode !== null) throw new Error(`vite preview encerrou com código ${child.exitCode}`);
+    try {
+      const response = await fetch(base);
+      if (response.ok) return { child, base, headers: response.headers };
+    } catch { }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  child.kill();
+  throw new Error("timeout aguardando vite preview");
 }
 const valoresCanvas = (page) =>
   page.$$eval(".mesa-dados-area .mesa-dados-3d-canvas", (cs) => cs.map((c) => c.getAttribute("aria-label")));
@@ -122,6 +176,9 @@ try {
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO);
+  const preview = await iniciarPreview(BASE);
+  previewProc = preview.child;
+  previewBase = preview.base;
   // personagem do jogador 1 para o desafio D10
   cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
   browser = await chromium.launch();
@@ -134,9 +191,9 @@ try {
   sec("1. Mesa com dados 3D");
   await entrarNaMesa(pgM);
   t("painel de dados presente na mesa", await pgM.locator(".painel-dados").count() > 0);
-  await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier']").waitFor({ timeout: 30000 });
+  await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").waitFor({ timeout: 30000 });
   t("mesa usa Three.js e Rapier quando WebGL está disponível",
-    await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier']").count() === 1);
+    await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").count() === 1);
 
   // O segundo participante entra ANTES dos pools D10. Assim, a suíte
   // valida o evento/histórico recebido em tempo real, não uma leitura
@@ -630,7 +687,81 @@ try {
     for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
     return false;
   }));
+  const canvasHistoricoRM = pgRM.locator(".rolagem-item canvas[data-renderer='three-rapier'][data-physics-ready='true'][data-physics-settled='true']").first();
+  await canvasHistoricoRM.waitFor({ timeout: 15000 });
+  const hashHistoricoRM = () => canvasHistoricoRM.evaluate((canvas) => {
+    const pixels = window.__mesaReadPixels(canvas);
+    if (!pixels) return "";
+    let hash = 0;
+    for (let i = 0; i < pixels.length; i += 64) {
+      hash = (hash * 31 + pixels[i] + pixels[i + 1] * 3 + pixels[i + 2] * 7) >>> 0;
+    }
+    return String(hash);
+  });
+  const hashInicialRM = await hashHistoricoRM();
+  await pgRM.waitForTimeout(300);
+  const hashDepoisRM = await hashHistoricoRM();
+  t("reduced-motion: rolagem histórica já resolvida permanece imóvel desde a montagem",
+    hashInicialRM !== "" && hashInicialRM === hashDepoisRM, `${hashInicialRM}→${hashDepoisRM}`);
   await ctxRM.close();
+
+  sec("8b. Física continua e assenta em 60/90/120/144 Hz");
+  const ctxHz = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgHz = await ctxHz.newPage();
+  await login(pgHz, "jogador_um", "senha-jogador-123");
+  await irCampanha(pgHz);
+  await entrarNaMesa(pgHz);
+  await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").waitFor({ timeout: 30000 });
+  for (const hz of [60, 90, 120, 144]) {
+    await pgHz.evaluate((rate) => window.__mesaUseRafRate(rate), hz);
+    await rolarLivre(pgHz, 6, 1, `refresh-${hz}hz`);
+    const ticksAntes = await pgHz.evaluate(() => window.__mesaRafTicks);
+    await pgHz.waitForTimeout(300);
+    const ticksDepois = await pgHz.evaluate(() => window.__mesaRafTicks);
+    t(`${hz} Hz: RAF continua após o resultado do servidor`, ticksDepois - ticksAntes >= 10,
+      `${ticksAntes}→${ticksDepois}`);
+    await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-settled='true']")
+      .waitFor({ timeout: 10000 });
+    await pgHz.evaluate(() => {
+      window.__mesaRafLastObserved = window.__mesaRafTicks;
+      window.__mesaRafStablePolls = 0;
+    });
+    await pgHz.waitForFunction(() => {
+      if (window.__mesaRafTicks === window.__mesaRafLastObserved) {
+        window.__mesaRafStablePolls++;
+      } else {
+        window.__mesaRafLastObserved = window.__mesaRafTicks;
+        window.__mesaRafStablePolls = 0;
+      }
+      return window.__mesaRafStablePolls >= 5;
+    }, null, { timeout: 10000, polling: 100 });
+    const resultadoAssentado = await pgHz.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']")
+      .evaluate((canvas) => canvas.dataset.physicsSettled === "true"
+        && /d6=\d/.test(canvas.getAttribute("aria-label") ?? ""));
+    t(`${hz} Hz: simulação termina depois de continuar os frames`, resultadoAssentado);
+  }
+  await ctxHz.close();
+
+  sec("8c. Preview com CSP carrega o WASM Rapier");
+  const csp = preview.headers.get("content-security-policy") ?? "";
+  t("preview permite somente compilação WASM específica na CSP",
+    csp.includes("script-src 'self' 'wasm-unsafe-eval'")
+      && !csp.includes("'unsafe-eval'"), csp);
+  const ctxPreview = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgPreview = await ctxPreview.newPage();
+  const errosPreview = [];
+  pgPreview.on("pageerror", (error) => errosPreview.push(error.message));
+  await login(pgPreview, "jogador_dois", "senha-jogador-123", previewBase);
+  await irCampanha(pgPreview);
+  await entrarNaMesa(pgPreview);
+  await pgPreview.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']")
+    .waitFor({ timeout: 30000 });
+  t("vite preview inicializa Three/Rapier em vez do fallback Canvas",
+    await pgPreview.locator(".mesa-dados-area canvas[data-renderer='three-rapier'][data-physics-ready='true']").count() === 1);
+  t("preview sem erros de inicialização WebAssembly",
+    !errosPreview.some((error) => /wasm|webassembly|content security policy/i.test(error)),
+    errosPreview.join(" | "));
+  await ctxPreview.close();
 
   sec("9. Mobile 390px");
   const ctxMob = await browser.newContext({ viewport: { width: 390, height: 844 } });

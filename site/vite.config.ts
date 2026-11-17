@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import wasm from "vite-plugin-wasm";
+import { env } from "node:process";
 
 // Cabeçalhos de segurança da SPA (Etapa 15, R2).
 // A API aplica sua própria política em servidor/src/middleware/headers.ts.
@@ -11,14 +12,15 @@ const cabecalhosBase = {
   "X-Frame-Options": "SAMEORIGIN",
 };
 
-// CSP da SPA: scripts/estilos/fontes/imagens somente da mesma origem.
+// CSP da SPA: JavaScript/estilos/fontes/imagens somente da mesma origem.
+// wasm-unsafe-eval libera compilação WebAssembly do Rapier, sem permitir eval de JavaScript.
 // style-src 'unsafe-inline' é necessário: React usa style attributes e o Vite
 // injeta <style> em dev/HMR. connect-src permite 'self' + ws:/wss: porque o
 // Socket.IO pode usar websocket em qualquer host da LAN ou do túnel — a
 // autenticação da sessão continua sendo a barreira real.
 const csp = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob:",
   "font-src 'self'",
@@ -29,9 +31,10 @@ const csp = [
   "frame-ancestors 'self'",
 ].join("; ");
 
+const apiTarget = env.MESTRE_VITE_API_TARGET ?? "http://localhost:3001";
 const proxyApi = {
-  "/api": "http://localhost:3001",
-  "/socket.io": { target: "http://localhost:3001", ws: true },
+  "/api": apiTarget,
+  "/socket.io": { target: apiTarget, ws: true },
 };
 
 export default defineConfig({

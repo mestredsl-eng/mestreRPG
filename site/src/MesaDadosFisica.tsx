@@ -217,6 +217,13 @@ function corEstado(estado: DadoFisico["estado"]): string {
   return estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#c3c9d8";
 }
 
+function sincronizarGrupo(dado: DadoFisico) {
+  const position = dado.corpo.translation();
+  const rotation = dado.corpo.rotation();
+  dado.grupo.position.set(position.x, position.y, position.z);
+  dado.grupo.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
+}
+
 function criarArestas(faces: number[][], vertices: Vec3[], escala: number, estado: DadoFisico["estado"]): THREE.LineSegments {
   const edges = new Map<string, [number, number]>();
   for (const face of faces) for (let i = 0; i < face.length; i++) {
@@ -311,7 +318,8 @@ function atualizarCores(cena: CenaFisica, canvas: HTMLCanvasElement) {
 
 function definirResultado(dado: DadoFisico, item: ItemDadoMesa, padrao: Props["estado"], reduzido: boolean) {
   dado.estado = item.estado ?? padrao ?? null;
-  if (item.valor === dado.valor && (item.valor === null || dado.alvo !== null)) return;
+  const resultadoIgual = item.valor === dado.valor && (item.valor === null || dado.alvo !== null);
+  if (resultadoIgual && (!reduzido || !dado.alvo || dado.pronto)) return;
   dado.valor = item.valor;
   const target = item.valor === null ? null : alvoDoValor(item.lados, item.valor);
   dado.alvo = target?.orientation ?? null;
@@ -327,6 +335,7 @@ function definirResultado(dado: DadoFisico, item: ItemDadoMesa, padrao: Props["e
     dado.corpo.setLinvel({ x: 0, y: 0, z: 0 }, true);
     dado.corpo.setAngvel({ x: 0, y: 0, z: 0 }, true);
     dado.pronto = true;
+    sincronizarGrupo(dado);
   }
 }
 
@@ -335,11 +344,15 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
   const runtimeRef = useRef<CenaFisica | null>(null);
   const propsRef = useRef({ dados, semente, estado });
   const [canvasUnavailable, setCanvasUnavailable] = useState(false);
+  const [physicsReady, setPhysicsReady] = useState(false);
+  const [physicsSettled, setPhysicsSettled] = useState(false);
   propsRef.current = { dados, semente, estado };
   const key = `${semente}:${dados.map((d) => d.lados).join(",")}`;
   const valuesKey = dados.map((d) => `${d.lados}:${d.valor ?? "…"}:${d.estado ?? ""}`).join(",");
 
   useEffect(() => {
+    setPhysicsReady(false);
+    setPhysicsSettled(false);
     const canvas = canvasRef.current;
     if (!canvas) return;
     let disposed = false;
@@ -375,7 +388,6 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
       const delta = Math.min(0.05, Math.max(0, (now - (lastFrame || now)) / 1000));
       lastFrame = now;
       accumulator = Math.min(accumulator + delta, PASSO_FISICO * 5);
-      let move = false;
       while (accumulator >= PASSO_FISICO) {
         runtime.world.timestep = PASSO_FISICO;
         runtime.world.step();
@@ -417,16 +429,16 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
               dado.pronto = true;
             }
           }
-          const position = dado.corpo.translation();
-          const rotation = dado.corpo.rotation();
-          dado.grupo.position.set(position.x, position.y, position.z);
-          dado.grupo.quaternion.set(rotation.x, rotation.y, rotation.z, rotation.w);
-          if (!dado.pronto && !dado.corpo.isSleeping()) move = true;
+          sincronizarGrupo(dado);
         }
         accumulator -= PASSO_FISICO;
       }
       render();
-      if (move) requestFrame();
+      if (runtime.dados.every((dado) => dado.pronto)) setPhysicsSettled(true);
+      const needsAnotherFrame = runtime.dados.some(
+        (dado) => !dado.pronto && (!dado.corpo.isSleeping() || dado.alvo !== null),
+      );
+      if (needsAnotherFrame) requestFrame();
     };
 
     const cleanupRenderer = () => {
@@ -562,12 +574,17 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
           runtime.dados.push(die);
           if (reduced && target) definirResultado(die, item, initial.estado, true);
         }
+        setPhysicsSettled(runtime.dados.every((die) => die.pronto));
         fit();
         if (runtime.dados.some((die) => !die.pronto)) requestFrame();
         else render();
+        setPhysicsReady(true);
         setCanvasUnavailable(false);
       } catch {
-        if (!disposed) setCanvasUnavailable(true);
+        if (!disposed) {
+          setPhysicsReady(false);
+          setCanvasUnavailable(true);
+        }
         cleanupRenderer();
       }
     };
@@ -618,6 +635,7 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
         die.corpo.wakeUp();
       }
     });
+    setPhysicsSettled(runtime.dados.every((die) => die.pronto));
     runtime.startAnimation();
   }, [valuesKey, estado]);
 
@@ -629,6 +647,8 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
       ref={canvasRef}
       className={`mesa-dados-3d-canvas mesa-dados-webgl ${estado ? `estado-${estado}` : ""} ${className ?? ""}`}
       data-renderer="three-rapier"
+      data-physics-ready={physicsReady ? "true" : "false"}
+      data-physics-settled={physicsSettled ? "true" : "false"}
       role="img"
       aria-label={dados.length === 0
         ? "Mesa 3D de dados: bandeja de feltro aguardando rolagem"
