@@ -21,9 +21,9 @@ export async function gravarPapelStatusMembro(
     SET role = \${role}, status = \${status}, updated_at = \${agora.getTime()}
     WHERE id = \${membershipId}
       AND guild_id = \${guildId}
-      AND user_id IS (
+      AND user_id IS NOT (
         SELECT responsible_user_id FROM guilds WHERE id = \${guildId}
-      ) IS NOT TRUE
+      )
       AND NOT (
         \${perdeGmCapaz}
         AND (
