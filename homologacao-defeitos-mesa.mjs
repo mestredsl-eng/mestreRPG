@@ -183,6 +183,42 @@ try {
   await blocoAlpha.getByText("Nenhum defeito registrado.").waitFor({ timeout: 10000 });
   t("remoção refletida no painel", await blocoAlpha.getByText("Nenhum defeito registrado.").isVisible());
 
+  // ---------- restauração de snapshot com a Mesa aberta ----------
+  // O painel deve reagir a `campanha:restaurada` — o snapshot substitui
+  // o estado inteiro da campanha sem emitir personagens:/regras:.
+  sec("Restauração de snapshot com a Mesa aberta");
+  const snap = async (descricao) => {
+    const r = await req(BASE, "POST", `/campaigns/${CID}/snapshots`, { cookie: M, body: { description: descricao } });
+    t(`snapshot "${descricao}" criado`, r.status === 201 && !!r.json?.id, `status=${r.status}`);
+    return r.json?.id;
+  };
+  const restaurar = async (id) => {
+    const r = await req(BASE, "POST", `/campaigns/${CID}/snapshots/${id}/restaurar`, { cookie: M, body: { confirmacao: "RESTAURAR" } });
+    t(`snapshot restaurado (${id?.slice(0, 8)})`, r.status === 200, `status=${r.status} ${JSON.stringify(r.json).slice(0, 160)}`);
+  };
+
+  // estado A: cegueira nv1 -> snapshot; estado B: nv3; restaura A
+  await req(BASE, "PATCH", `/characters/${ALPHA}`, { cookie: J1, body: { data: { "fd-defeitos": [{ key: "cegueira", nivel: 1 }] } } });
+  await blocoAlpha.getByText("Nv. 1", { exact: true }).waitFor({ timeout: 10000 });
+  const snapNv1 = await snap("defeitos-nv1");
+  await req(BASE, "PATCH", `/characters/${ALPHA}`, { cookie: J1, body: { data: { "fd-defeitos": [{ key: "cegueira", nivel: 3 }] } } });
+  await blocoAlpha.getByText("Nv. 3", { exact: true }).waitFor({ timeout: 10000 });
+  t("antes da restauração: Nv. 3 visível", await blocoAlpha.getByText("Nv. 3").isVisible());
+  await restaurar(snapNv1);
+  await blocoAlpha.getByText("Nv. 1", { exact: true }).waitFor({ timeout: 15000 });
+  t("após restaurar: painel volta a Nv. 1 sem recarregar", await blocoAlpha.getByText("Nv. 1").isVisible());
+  t("após restaurar: descrição do nv1", await blocoAlpha.getByText("Cegueira nv1 — visão turva").isVisible());
+
+  // sentido inverso: snapshot sem defeito -> restaura e o painel limpa
+  await req(BASE, "PATCH", `/characters/${ALPHA}`, { cookie: J1, body: { data: { "fd-defeitos": [] } } });
+  await blocoAlpha.getByText("Nenhum defeito registrado.").waitFor({ timeout: 10000 });
+  const snapVazio = await snap("defeitos-vazio");
+  await req(BASE, "PATCH", `/characters/${ALPHA}`, { cookie: J1, body: { data: { "fd-defeitos": [{ key: "cegueira", nivel: 2 }] } } });
+  await blocoAlpha.getByText("Nv. 2", { exact: true }).waitFor({ timeout: 10000 });
+  await restaurar(snapVazio);
+  await blocoAlpha.getByText("Nenhum defeito registrado.").waitFor({ timeout: 15000 });
+  t("restauração de snapshot sem defeito limpa o painel", await blocoAlpha.getByText("Nenhum defeito registrado.").isVisible());
+
   // ---------- jogador ----------
   sec("Jogador na Mesa");
   const ctxJ = await browser.newContext({ viewport: { width: 1440, height: 900 } });

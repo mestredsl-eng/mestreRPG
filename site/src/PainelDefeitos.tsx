@@ -8,9 +8,11 @@ import { useSincronizacaoCampanha } from "./useSincronizacao";
  * atual e a descrição do nível, resolvidos pela biblioteca da campanha.
  * Somente consulta: nenhuma edição acontece aqui.
  *
- * Atualiza sozinho via `personagens:atualizados` (edição de ficha) e
- * `regras:atualizadas` (renomear/descrição dos elementos) — sempre
- * rebuscando pela API, que reaplica a autorização do mestre.
+ * Atualiza sozinho via `personagens:atualizados` (edição de ficha),
+ * `regras:atualizadas` (renomear/descrição dos elementos) e
+ * `campanha:restaurada` (snapshot/import substitui o estado inteiro —
+ * sem os eventos de personagem/regras) — sempre rebuscando pela API,
+ * que reaplica a autorização do mestre.
  */
 export default function PainelDefeitos({ campaignId }: { campaignId: string }) {
   const [personagens, setPersonagens] = useState<PersonagemComDefeitos[] | null>(null);
@@ -29,7 +31,18 @@ export default function PainelDefeitos({ campaignId }: { campaignId: string }) {
   }, [campaignId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
-  useSincronizacaoCampanha(["personagens:atualizados", "regras:atualizadas"], () => { void carregar(); });
+  useSincronizacaoCampanha(
+    ["personagens:atualizados", "regras:atualizadas", "campanha:restaurada"],
+    (evento, payload) => {
+      // restauração é da campanha inteira: só rebusca se o evento for
+      // desta campanha (mesmo filtro da Mesa — payload pode trazer o id)
+      if (evento === "campanha:restaurada") {
+        const cid = (payload as { campaignId?: string } | undefined)?.campaignId;
+        if (cid && cid !== campaignId) return;
+      }
+      void carregar();
+    },
+  );
 
   const alternarPersonagem = (id: string) => {
     setRecolhidos((s) => {
