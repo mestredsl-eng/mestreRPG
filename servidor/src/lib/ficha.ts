@@ -467,9 +467,16 @@ export function calcularPontos(
         custo += typeof c === "number" ? c : (campo.custoPontos ?? 0);
       }
     } else {
-      let qtd = 0;
-      for (let nivel = base; nivel < valor; nivel++) if (!financiado.has(nivel)) qtd++;
-      custo = qtd * (campo.custoPontos ?? 0);
+      // Custo fixo PROPORCIONAL ao intervalo [base, valor): campos
+      // decimais/moeda não são cobrados como unidades inteiras.
+      // Cada índice i de __xp.financiado cobre [i, i+1); desconta-se
+      // apenas a interseção com o intervalo cobrado (financiamento
+      // parcial por fração), preservando a semântica anterior à P3.
+      let financiadoTrecho = 0;
+      for (const i of financiado) {
+        financiadoTrecho += Math.max(0, Math.min(valor, i + 1) - Math.max(base, i));
+      }
+      custo = Math.max(0, valor - base - financiadoTrecho) * (campo.custoPontos ?? 0);
     }
 
     // Custos negativos concedem pontos (ex.: defeito custo -1 = +1 ponto).

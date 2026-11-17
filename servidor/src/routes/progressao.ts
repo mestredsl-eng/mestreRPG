@@ -18,6 +18,7 @@ import {
   campoVisivelPara,
   campoEditavelPor,
   mapaCampos,
+  type CampoDef,
   type EstruturaFicha,
   type Visibilidade,
   type EditavelPor,
@@ -27,7 +28,6 @@ import { emitirCampanha } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import {
   aplicarXp,
-  escolherVinculo,
   lerXp,
   resumoProgressao,
   simularCompraNivel,
@@ -89,11 +89,12 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
     res.json({ xp: lerXp(dados), disponiveis: [] });
     return;
   }
-  const resumo = resumoProgressao(estrutura, dados, regras);
-  // Defesa no servidor (não só na UI): elementos vinculados a campos
-  // invisíveis para o requisitante não são enviados — nome, key, preço
-  // e nível inclusos. O vínculo é resolvido pela função canônica
-  // escolherVinculo sobre os dados persistidos; mestre recebe tudo.
+  // Defesa no servidor (não só na UI): para não-mestres, o resumo
+  // inteiro é calculado somente sobre vínculos visíveis ao requisitante
+  // (campoVisivelPara canônica, com overrides atuais). Nível atual,
+  // vínculo, preço e disponibilidade nunca derivam de campo oculto —
+  // um elemento com vínculo visível E oculto não pode vazar o preço do
+  // oculto pela linha do visível. Mestre recebe a visão completa.
   const ehMestre = acesso.ehMestre;
   const usuarioId = req.usuario!.id;
   const overrides = overridesDe(p);
@@ -104,17 +105,11 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
     if (!campo) return false; // fail-closed: campo fora da estrutura não vaza
     return campoVisivelPara(campo, overrides[campo.id], false, acesso.ehDono, usuarioId, acesso.membershipId);
   };
-  const disponiveis = ehMestre
-    ? resumo.disponiveis
-    : resumo.disponiveis.filter((el) => {
-        // P2: para elemento já adquirido, resolve o vínculo do nível
-        // ATUAL — em seleções binárias não existe "próximo nível" e
-        // escolherVinculo(nivelAtual+1) não acharia campo, escondendo
-        // uma seleção legítima do jogador.
-        const alvoVis = el.nivelAtual > 0 ? el.nivelAtual : el.nivelAtual + 1;
-        const v = escolherVinculo(estrutura, dados, el.kind, el.key, alvoVis);
-        return !!v && campoVisivelId(v.campo.id);
-      });
+  const filtroVinculos = ehMestre
+    ? undefined
+    : (campo: CampoDef) => campoVisivelPara(campo, overrides[campo.id], false, acesso.ehDono, usuarioId, acesso.membershipId);
+  const resumo = resumoProgressao(estrutura, dados, regras, filtroVinculos ? { filtroVinculos } : {});
+  const disponiveis = resumo.disponiveis;
   // Histórico: compras gravadas em campos ocultos perdem os detalhes
   // (nome/key/campoId/níveis/custo) e o motivo original — que embute o
   // nome do elemento. O evento de XP em si permanece (ledger próprio).
@@ -320,12 +315,14 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
       ))
       .limit(1).all();
     if (!vinculo) return { tipo: "sem_permissao" };
-    let autorizado = vinculo.role === "mestre";
-    if (!autorizado) {
-      const [dono] = tx.select({ userId: memberships.userId, status: memberships.status, campaignId: memberships.campaignId })
-        .from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
-      autorizado = dono?.userId === req.usuario!.id && dono.status === "ativo" && dono.campaignId === p.campaignId;
-    }
+    // Dono da ficha: necessário tanto para a autorização quanto para a
+    // visibilidade efetiva dos campos (dono_mestre/selecionados).
+    const [dono] = tx.select({ userId: memberships.userId, status: memberships.status, campaignId: memberships.campaignId })
+      .from(memberships).where(eq(memberships.id, atual.membershipId)).limit(1).all();
+    const ehMestreTx = vinculo.role === "mestre";
+    const ehDonoTx = dono?.userId === req.usuario!.id;
+    const autorizado = ehMestreTx
+      || (ehDonoTx && dono?.status === "ativo" && dono.campaignId === p.campaignId);
     if (!autorizado) return { tipo: "sem_permissao" };
 
     // Consistência transacional das regras: relê ruleset+elementos DENTRO
@@ -339,9 +336,18 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
     }
 
     const dados = (atual.data ?? {}) as Record<string, unknown>;
+    // P2: a simulação e a gravação usam o MESMO conjunto de vínculos —
+    // somente campos visíveis ao requisitante segundo a política
+    // canônica (campoVisivelPara) com overrides/status da linha fresca
+    // da transação. Um vínculo oculto nunca pode ser escolhido, precificar
+    // ou receber a escrita, mesmo que editavelPor permita edição.
+    const overridesTx = overridesDe(atual);
+    const filtroVinculosTx = (campo: CampoDef) =>
+      campoVisivelPara(campo, overridesTx[campo.id], ehMestreTx, ehDonoTx, req.usuario!.id, atual.membershipId);
     const compra = simularCompraNivel(
       estrutura!, dados, regrasTx, kind, key, nivelAlvo,
       { id: req.usuario!.id, nome: autorNome },
+      { filtroVinculos: filtroVinculosTx },
     );
     if (!compra.ok || !compra.dados) {
       return {
@@ -360,7 +366,22 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
     // ficha bloqueada/aprovada/arquivada; editavelPor decide o resto.
     const campoId = (compra.compra as { campoId?: string } | undefined)?.campoId;
     const campoAlvo = campoId ? mapaCampos(estrutura!).get(campoId) : undefined;
-    const ehMestreTx = vinculo.role === "mestre";
+    // Revalidação explícita de VISIBILIDADE do campo que recebeu a
+    // compra (defesa em profundidade — a simulação já filtrou, mas a
+    // checagem canônica garante o invariante mesmo se o resolvedor mudar).
+    const visivel = campoAlvo
+      ? campoVisivelPara(campoAlvo, overridesTx[campoAlvo.id], ehMestreTx, ehDonoTx, req.usuario!.id, atual.membershipId)
+      : ehMestreTx; // campo ausente da estrutura → fail-closed p/ não-mestre
+    if (!visivel) {
+      return {
+        tipo: "falha",
+        status: 403,
+        corpo: {
+          erro: "Você não tem permissão para evoluir este elemento nesta ficha",
+          codigo: "campo_nao_visivel",
+        },
+      };
+    }
     const editavel = campoAlvo
       ? campoEditavelPor(campoAlvo, overridesDe(atual)[campoAlvo.id], ehMestreTx, atual.status)
       : ehMestreTx; // campo ausente da estrutura → fail-closed p/ não-mestre

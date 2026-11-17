@@ -294,8 +294,11 @@ export function escolherVinculo(
   kind: string,
   key: string,
   nivelAlvo: number,
+  filtroCampo?: (campo: CampoDef) => boolean,
 ): VinculoElemento | null {
-  const candidatos = vinculosElemento(estrutura, kind, key).filter((v) => vinculoExpressa(v, nivelAlvo));
+  const candidatos = vinculosElemento(estrutura, kind, key)
+    .filter((v) => vinculoExpressa(v, nivelAlvo))
+    .filter((v) => !filtroCampo || filtroCampo(v.campo));
   if (!candidatos.length) return null;
   let melhor: VinculoElemento | null = null;
   let melhorNivel = -1;
@@ -317,10 +320,12 @@ export function nivelAtualElemento(
   regras: RegrasCampanha,
   kind: string,
   key: string,
+  filtroCampo?: (campo: CampoDef) => boolean,
 ): number {
   let max = 0;
   for (const e of extrairEscolhas(estrutura, dados, regras)) {
     if (!e.elemento || !e.selecionado) continue;
+    if (filtroCampo && !filtroCampo(e.campo)) continue;
     if (e.elemento.kind === kind && e.elemento.key === key) {
       max = Math.max(max, e.level);
     }
@@ -519,6 +524,15 @@ export interface ElementoDisponivel {
   motivo?: string;
 }
 
+export interface OpcoesProgressao {
+  /** Restringe os campos elegíveis a vínculo (ex.: somente campos
+   *  visíveis ao requisitante). Com filtro, nível atual, vínculo,
+   *  preço e disponibilidade NUNCA derivam de campo fora da
+   *  política — fail-closed. Elementos sem nenhum vínculo
+   *  autorizado não aparecem na lista. */
+  filtroVinculos?: (campo: CampoDef) => boolean;
+}
+
 /**
  * Saldo + histórico + lista de elementos compráveis da ficha.
  * `disponiveis` cobre todos os elementos da biblioteca vinculados a
@@ -528,7 +542,9 @@ export function resumoProgressao(
   estrutura: EstruturaFicha,
   dados: Record<string, unknown>,
   regras: RegrasCampanha,
+  opcoes: OpcoesProgressao = {},
 ): { xp: EstadoXp; disponiveis: ElementoDisponivel[] } {
+  const filtro = opcoes.filtroVinculos;
   const xp = lerXp(dados);
   const disponiveis: ElementoDisponivel[] = [];
 
@@ -550,9 +566,13 @@ export function resumoProgressao(
   }
 
   for (const el of candidatos.values()) {
-    const nivelAtual = nivelAtualElemento(estrutura, dados, regras, el.kind, el.key);
+    // Com filtro de visibilidade, elemento que só existe em campos
+    // fora da política do requisitante não entra na lista — nome,
+    // nível e qualquer metadado econômico ficam ocultos.
+    if (filtro && !vinculosElemento(estrutura, el.kind, el.key).some((v) => filtro(v.campo))) continue;
+    const nivelAtual = nivelAtualElemento(estrutura, dados, regras, el.kind, el.key, filtro);
     const nivelAlvo = nivelAtual + 1;
-    const vinculo = escolherVinculo(estrutura, dados, el.kind, el.key, nivelAlvo);
+    const vinculo = escolherVinculo(estrutura, dados, el.kind, el.key, nivelAlvo, filtro);
     let precoProximo: number | null = null;
     let compravel = false;
     let motivo: string | undefined;
@@ -611,7 +631,9 @@ export function simularCompraNivel(
   key: string,
   nivelAlvo: number,
   autor: { id: string | null; nome: string | null },
+  opcoes: OpcoesProgressao = {},
 ): ResultadoCompra {
+  const filtro = opcoes.filtroVinculos;
   const elemento = regras.elementos.get(`${kind}:${key}`);
   if (!elemento) {
     return { ok: false, erro: `Elemento ${kind}:${key} não existe nas regras da campanha`, codigo: "elemento_inexistente" };
@@ -620,7 +642,7 @@ export function simularCompraNivel(
     return { ok: false, erro: `"${elemento.name}" está desativado nesta campanha`, codigo: "indisponivel" };
   }
 
-  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key);
+  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
   if (nivelAlvo !== nivelAtual + 1) {
     return {
       ok: false,
@@ -630,8 +652,9 @@ export function simularCompraNivel(
     };
   }
 
-  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo);
-  const semVinculo = vinculosElemento(estrutura, kind, key).length === 0;
+  const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtro || filtro(v.campo));
+  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtro);
+  const semVinculo = vinculosAutorizados.length === 0;
   if (!vinculo) {
     return {
       ok: false,

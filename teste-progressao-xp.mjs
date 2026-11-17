@@ -944,6 +944,175 @@ try {
     t("W14. prévia jogador cx-fixo=3 → 2", pjFixo?.custo === 2, `detalhes=${JSON.stringify(detPJ)}`);
   }
 
+
+  // ---------- MC3 P1: custo fixo proporcional em decimal/moeda ----------
+  sec("MC3-P1 — custo fixo proporcional (decimal/moeda) e financiamento fracionário");
+  {
+    await elemento(CID, M, "atributo", "dec_nivel", "Nível Decimal", { disponivel: true });
+    const modV = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Decimais" } });
+    const tidV = modV.json.modelo.id, vidV = modV.json.modelo.versionId;
+    const estruturaV = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          // custo fixo 2 por unidade acima da base — valor 1.5 deve
+          // custar 3 (proporcional), não 4 (contagem inteira).
+          { id: "cd-dec", label: "Decimal", tipo: "decimal", editavelPor: "ambos", visibilidade: "todos", custoPontos: 2, regra: { kind: "atributo", key: "dec_nivel" } },
+          { id: "cd-moeda", label: "Moeda", tipo: "moeda", editavelPor: "ambos", visibilidade: "todos", custoPontos: 3 },
+          // custo negativo: concessão proporcional de pontos.
+          { id: "cd-neg", label: "Defeito", tipo: "decimal", editavelPor: "ambos", visibilidade: "todos", custoPontos: -1 },
+          // base não-zero (padrao 0.25): 1.75-0.25=1.5 × 2 = 3.
+          { id: "cd-base", label: "Com Base", tipo: "decimal", padrao: 0.25, editavelPor: "ambos", visibilidade: "todos", custoPontos: 2 },
+        ],
+      }],
+      pontos: { habilitado: true, pontosIniciais: 100, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidV}/versions/${vidV}`, { cookie: M, body: { estrutura: estruturaV } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidV}/publish`, { cookie: M, body: { versionId: vidV } });
+    const pjV = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Decimais", templateVersionId: vidV, data: {} },
+    });
+    const CHV = pjV.json?.personagem?.id ?? pjV.json?.id;
+    t("V0. personagem decimal criado", !!CHV, JSON.stringify(pjV.json).slice(0, 150));
+    const custoDe = (prev, campoId) => (prev.json?.pontos?.detalhes ?? []).find((d) => d.campoId === campoId)?.custo;
+
+    // Sem financiamento: cobrança integral proporcional.
+    const v1 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-dec": 1.5 } } });
+    t("V1. decimal 1.5 × custo 2 → 3 pontos", custoDe(v1, "cd-dec") === 3, `custo=${custoDe(v1, "cd-dec")}`);
+    const v2 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-moeda": 2.5 } } });
+    t("V2. moeda 2.5 × custo 3 → 7.5 pontos", custoDe(v2, "cd-moeda") === 7.5, `custo=${custoDe(v2, "cd-moeda")}`);
+    const v3 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-neg": 1 } } });
+    t("V3. custo negativo -1 → concede 1 ponto", custoDe(v3, "cd-neg") === -1, `custo=${custoDe(v3, "cd-neg")}`);
+    const v4 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-base": 1.75 } } });
+    t("V4. base 0.25: (1.75-0.25)×2 → 3 pontos", custoDe(v4, "cd-base") === 3, `custo=${custoDe(v4, "cd-base")}`);
+    const v5 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-base": 0.25 } } });
+    t("V5. valor == base → sem cobrança", custoDe(v5, "cd-base") === undefined, `custo=${custoDe(v5, "cd-base")}`);
+    const v6 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-neg": 2.5 } } });
+    t("V6. negativo proporcional: 2.5 × -1 → -2.5", custoDe(v6, "cd-neg") === -2.5, `custo=${custoDe(v6, "cd-neg")}`);
+
+    // XP financia as transições 0→1 e 1→2 de cd-dec (2 XP cada).
+    await darXp(CHV, M, { acao: "conceder", quantidade: 10, motivo: "fundo V" });
+    const vd1 = await comprar(CHV, J1, { kind: "atributo", key: "dec_nivel", nivelAlvo: 1 });
+    t("V7. compra dec_nivel 0→1 → 200", vd1.status === 200, `status=${vd1.status} ${JSON.stringify(vd1.json).slice(0, 200)}`);
+    const vd2 = await comprar(CHV, J1, { kind: "atributo", key: "dec_nivel", nivelAlvo: 2 });
+    t("V8. compra dec_nivel 1→2 → 200", vd2.status === 200, `status=${vd2.status}`);
+
+    // Intervalo [0,1.5) está INTEIRAMENTE coberto pelos financiamentos
+    // [0,1) e [1,1.5) → custo zero (fração financiada, não nível inteiro).
+    const v7 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-dec": 1.5 } } });
+    t("V9. 1.5 totalmente financiado → custo 0", custoDe(v7, "cd-dec") === undefined, `detalhes=${JSON.stringify(v7.json?.pontos?.detalhes)}`);
+    // [0,2.5): financiado cobre 2.0 → restam 0.5 × 2 = 1 ponto.
+    const v8 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-dec": 2.5 } } });
+    t("V10. 2.5 com 2 financiados → cobra 0.5×2=1", custoDe(v8, "cd-dec") === 1, `custo=${custoDe(v8, "cd-dec")}`);
+    // [0,3.5): financiado cobre 2.0 → restam 1.5 × 2 = 3 pontos.
+    const v9 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-dec": 3.5 } } });
+    t("V11. 3.5 com 2 financiados → cobra 1.5×2=3", custoDe(v9, "cd-dec") === 3, `custo=${custoDe(v9, "cd-dec")}`);
+    // PATCH real grava 2.5 por pontos (custo 1 ≤ pool) e o
+    // financiamento das transições 0→1 e 1→2 permanece intacto.
+    const fxV = await fichaDe(CHV, M);
+    const upV = await req(BASE, "PATCH", `/characters/${CHV}`, {
+      cookie: M, body: { data: { "cd-dec": 2.5 }, baseUpdatedAt: fxV?.personagem?.updatedAt },
+    });
+    t("V12. PATCH decimal 2.5 → 200", upV.status === 200, `status=${upV.status} ${JSON.stringify(upV.json).slice(0, 200)}`);
+    const v10 = await req(BASE, "POST", `/characters/${CHV}/pontos-previa`, { cookie: M, body: { dados: { "cd-dec": 2.5 } } });
+    t("V13. após PATCH, custo de 2.5 segue 1 (financiamento preservado)", custoDe(v10, "cd-dec") === 1, `custo=${custoDe(v10, "cd-dec")}`);
+  }
+
+  // ---------- MC3 P2: elemento com vínculo visível E oculto ----------
+  sec("MC3-P2 — vínculo oculto não vaza preço nem recebe compra");
+  {
+    // Mesmo kind:key em DOIS campos: seleção múltipla pública (binária)
+    // e campo numérico oculto com editavelPor=ambos (preço sentinela 7).
+    await elemento(CID, M, "caracteristica", "dup_item", "Relíquia Duplicada", {
+      // 3 níveis: nv.1 custa 3 XP na seleção pública; o campo
+      // numérico oculto tem custoPontos próprio (7) — sentinela.
+      niveis: [{ descricao: "nv1", custo: 3 }, { descricao: "nv2", custo: 7 }, { descricao: "nv3", custo: 7 }], disponivel: true,
+    });
+    const modU = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Duplicada" } });
+    const tidU = modU.json.modelo.id, vidU = modU.json.modelo.versionId;
+    const estruturaU = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          { id: "cu-pub", label: "Relíquias", tipo: "selecao_multipla", editavelPor: "ambos", visibilidade: "todos", regraKind: "caracteristica" },
+          { id: "cu-sec", label: "Cofre Secreto", tipo: "inteiro", editavelPor: "ambos", visibilidade: "mestre", custoPontos: 7, regra: { kind: "caracteristica", key: "dup_item" } },
+        ],
+      }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidU}/versions/${vidU}`, { cookie: M, body: { estrutura: estruturaU } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidU}/publish`, { cookie: M, body: { versionId: vidU } });
+    const pjU = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Duplicado", templateVersionId: vidU, data: {} },
+    });
+    const CHU = pjU.json?.personagem?.id ?? pjU.json?.id;
+    t("U0. personagem duplicado criado", !!CHU, JSON.stringify(pjU.json).slice(0, 150));
+    await darXp(CHU, M, { acao: "conceder", quantidade: 50, motivo: "fundo U" });
+
+    // A) Jogador compra nível 1 pelo vínculo PÚBLICO (3 XP da biblioteca).
+    const u1 = await comprar(CHU, J1, { kind: "caracteristica", key: "dup_item", nivelAlvo: 1 });
+    t("U1. compra nv.1 pelo vínculo público → 200", u1.status === 200, `status=${u1.status} ${JSON.stringify(u1.json).slice(0, 250)}`);
+    t("U2. débito de 3 XP (preço da seleção, não do campo oculto)", u1.json?.xp?.saldo === 47, `saldo=${u1.json?.xp?.saldo}`);
+    t("U3. escrita no campo público cu-pub", u1.json?.compra?.campoId === "cu-pub", `campoId=${u1.json?.compra?.campoId}`);
+
+    // B) GET do jogador: seleção adquirida visível, SEM preço do oculto.
+    const pgU1 = await progressaoDe(CHU, J1);
+    const elU = (pgU1.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U4. elemento permanece no GET com nivelAtual 1", elU?.nivelAtual === 1, `el=${JSON.stringify(elU)}`);
+    t("U5. precoProximo null (binário não expressa nv.2)", elU?.precoProximo === null, `preco=${elU?.precoProximo}`);
+    t("U6. compravel false", elU?.compravel === false, `compravel=${elU?.compravel}`);
+    const corpoU = JSON.stringify(pgU1.json);
+    t("U7. resposta não vaza campoId/label/custo do oculto", !corpoU.includes("cu-sec") && !corpoU.includes("Cofre Secreto") && !corpoU.includes('"precoProximo":7'), corpoU.slice(0, 300));
+
+    // C) POST direto do jogador no nível 2 → fail-closed, sem efeitos.
+    const histAntes = (pgU1.json?.xp?.historico ?? []).length;
+    const u2 = await comprar(CHU, J1, { kind: "caracteristica", key: "dup_item", nivelAlvo: 2 });
+    t("U8. POST jogador nv.2 → rejeitado", u2.status === 400, `status=${u2.status} ${JSON.stringify(u2.json).slice(0, 250)}`);
+    const corpoU2 = JSON.stringify(u2.json);
+    t("U9. erro não vaza campoId/preço do oculto", !corpoU2.includes("cu-sec") && !corpoU2.includes("Cofre Secreto"), corpoU2.slice(0, 200));
+    const pgU2 = await progressaoDe(CHU, J1);
+    t("U10. saldo XP inalterado (47)", pgU2.json?.xp?.saldo === 47, `saldo=${pgU2.json?.xp?.saldo}`);
+    t("U11. histórico inalterado", (pgU2.json?.xp?.historico ?? []).length === histAntes, `n=${(pgU2.json?.xp?.historico ?? []).length}`);
+    const pgUM = await progressaoDe(CHU, M);
+    const elUM = (pgUM.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U12. campo oculto continua 0 (nível do elemento = 1)", elUM?.nivelAtual === 1, `nivel=${elUM?.nivelAtual}`);
+
+    // D) Mestre compra o nível 2 pelo campo oculto (7 XP sentinela).
+    const u3 = await comprar(CHU, M, { kind: "caracteristica", key: "dup_item", nivelAlvo: 2 });
+    t("U13. mestre compra nv.2 → 200", u3.status === 200, `status=${u3.status} ${JSON.stringify(u3.json).slice(0, 250)}`);
+    t("U14. débito de 7 XP no campo oculto", u3.json?.xp?.saldo === 40 && u3.json?.compra?.campoId === "cu-sec", `saldo=${u3.json?.xp?.saldo} campoId=${u3.json?.compra?.campoId}`);
+    // Histórico do jogador mascara a compra do mestre no campo oculto.
+    const pgU3 = await progressaoDe(CHU, J1);
+    const comprasU = (pgU3.json?.xp?.historico ?? []).filter((e) => e.tipo === "compra");
+    const compraOculta = comprasU.find((e) => e.compra === undefined);
+    t("U15. histórico do jogador mascara compra no oculto", !!compraOculta && compraOculta.motivo === "Compra de nível", JSON.stringify(comprasU));
+    t("U16. histórico não vaza cu-sec/Cofre da compra oculta", !JSON.stringify(comprasU).includes("cu-sec") && !JSON.stringify(comprasU).includes("Cofre"), "");
+    // Jogador continua vendo o elemento no nível 1 (o 2 está oculto).
+    const elU3 = (pgU3.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U17. jogador segue vendo nivelAtual 1 após compra oculta", elU3?.nivelAtual === 1 && elU3?.precoProximo === null, `el=${JSON.stringify(elU3)}`);
+
+    // E) Override torna o campo visível → política efetiva muda.
+    const ovU = await req(BASE, "PATCH", `/characters/${CHU}`, { cookie: M, body: { overrides: { "cu-sec": { visibilidade: "todos" } }, ignorarPontos: true } });
+    t("U18. override visibilidade→todos", ovU.status === 200, `status=${ovU.status} ${JSON.stringify(ovU.json).slice(0,300)}`);
+    const pgU4 = await progressaoDe(CHU, J1);
+    const elU4 = (pgU4.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U19. com override, jogador vê nivelAtual 2 e preço 7", elU4?.nivelAtual === 2 && elU4?.precoProximo === 7 && elU4?.compravel === true, `el=${JSON.stringify(elU4)}`);
+    const u4 = await comprar(CHU, J1, { kind: "caracteristica", key: "dup_item", nivelAlvo: 3 });
+    t("U20. jogador compra nv.3 pelo campo agora visível → 200", u4.status === 200, `status=${u4.status} ${JSON.stringify(u4.json).slice(0, 200)}`);
+    t("U21. débito de 7 XP (saldo 33)", u4.json?.xp?.saldo === 33 && u4.json?.compra?.campoId === "cu-sec", `saldo=${u4.json?.xp?.saldo}`);
+
+    // Volta a ocultar → proteção restaurada.
+    const ovU2 = await req(BASE, "PATCH", `/characters/${CHU}`, { cookie: M, body: { overrides: { "cu-sec": { visibilidade: "mestre" } }, ignorarPontos: true } });
+    t("U22. override de volta p/ mestre", ovU2.status === 200, `status=${ovU2.status} ${JSON.stringify(ovU2.json).slice(0,300)}`);
+    const pgU5 = await progressaoDe(CHU, J1);
+    const elU5 = (pgU5.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U23. oculto de novo: nivelAtual 1, sem preço", elU5?.nivelAtual === 1 && elU5?.precoProximo === null && elU5?.compravel === false, `el=${JSON.stringify(elU5)}`);
+    const u5 = await comprar(CHU, J1, { kind: "caracteristica", key: "dup_item", nivelAlvo: 2 });
+    t("U24. POST nv.2 rejeitado de novo", u5.status === 400, `status=${u5.status}`);
+    const pgUM2 = await progressaoDe(CHU, M);
+    const elUM2 = (pgUM2.json?.disponiveis ?? []).find((d) => d.key === "dup_item");
+    t("U25. mestre vê nivelAtual 3", elUM2?.nivelAtual === 3, `nivel=${elUM2?.nivelAtual}`);
+  }
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);
