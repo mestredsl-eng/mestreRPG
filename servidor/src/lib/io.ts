@@ -334,6 +334,20 @@ async function calcularRejoins(campaignId: string, b: Barreira, modo: "sucesso" 
     }
     if (liberadas.length) rejoins.set(sid, liberadas);
   }
+  // Sockets que reconectaram DURANTE a barreira têm SID novo e nunca
+  // constaram em evacuados — sem esta varredura eles ficariam fora da
+  // room campanha:* para sempre e perderiam campanha:restaurada (lista
+  // de sessões congelada). Todo membro ativo conectado precisa receber
+  // eventos de campanha; salas sessao:* continuam exigindo mesa:entrar.
+  if (io) {
+    for (const s of io.sockets.sockets.values()) {
+      const u = s.data.usuario as { id?: string } | undefined;
+      if (!u?.id || !set.has(u.id)) continue;
+      const liberadas = rejoins.get(s.id) ?? [];
+      if (!liberadas.includes(salaCampanha)) liberadas.push(salaCampanha);
+      rejoins.set(s.id, liberadas);
+    }
+  }
   return rejoins;
 }
 
