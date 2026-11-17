@@ -228,8 +228,14 @@ try {
   const skillSk = JSON.parse(rowSk?.skill_ref ?? "null");
   t("skill_ref persistido = campoId e label reais",
     skillSk?.campoId === "medicina" && skillSk?.rotulo === "Medicina", JSON.stringify(skillSk));
+  // Issue #147: o skillRef pode carregar metadados DERIVADOS da estrutura
+  // validada (tipo/semantico/categoria/secao) — chaves fora desse
+  // conjunto ou valores forjados continuam proibidos.
+  const CHAVES_SKILLREF_OK = new Set(["campoId", "rotulo", "tipo", "semantico", "categoria", "secao"]);
   t("nenhuma propriedade forjada persistida",
-    skillSk && Object.keys(skillSk).sort().join(",") === "campoId,rotulo", JSON.stringify(skillSk));
+    skillSk && Object.keys(skillSk).every((k) => CHAVES_SKILLREF_OK.has(k))
+      && !Object.values(skillSk).some((v) => typeof v === "string" && v.includes("FORJADO")),
+    JSON.stringify(skillSk));
   const evSkJ = evJ1.teste.find((x) => x.id === rSk?.id);
   const evSkM = evM.teste.find((x) => x.id === rSk?.id);
   const evSkJ2 = evJ2.teste.find((x) => x.id === rSk?.id);
