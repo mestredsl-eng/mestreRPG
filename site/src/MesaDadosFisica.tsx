@@ -4,13 +4,14 @@ import type * as RapierTypes from "@dimforge/rapier3d";
 import MesaDadosCanvas, { seedDeId, type ItemDadoMesa } from "./MesaDados3D";
 import { faceValues, geometry, normalFor, type Vec3 } from "./fisicaDado";
 import { semiLadoMesa } from "./fisicaMesa";
+import { EFEITO_RESULTADO_MS, type EstadoEfeitoDado } from "./convencaoD10";
 
 export { seedDeId };
 
 interface Props {
   dados: ItemDadoMesa[];
   semente?: number;
-  estado?: "sucesso" | "falha" | null;
+  estado?: EstadoEfeitoDado;
   className?: string;
 }
 
@@ -18,7 +19,9 @@ interface DadoFisico {
   lados: number;
   labels: number[];
   valor: number | null;
-  estado: "sucesso" | "falha" | null;
+  estado: EstadoEfeitoDado;
+  /** expiração do flash de resultado (performance.now) */
+  efeitoAte?: number;
   corpo: RapierTypes.RigidBody;
   grupo: THREE.Group;
   labelMesh: THREE.Mesh;
@@ -122,6 +125,7 @@ function criarAtlasRotulos(lados: number, labels: number[], estado: DadoFisico["
   const context = canvas.getContext("2d");
   if (context) {
     const cor = estado === "sucesso" ? "#b4ffd0" : estado === "falha" ? "#ffc0c0"
+      : estado === "acerto_critico" ? "#ffd75e" : estado === "erro_critico" ? "#ff9d8f"
       : `#${corTexto.getHexString()}`;
     context.font = `800 ${lados === 20 ? 76 : 88}px system-ui, sans-serif`;
     context.textAlign = "center";
@@ -133,8 +137,10 @@ function criarAtlasRotulos(lados: number, labels: number[], estado: DadoFisico["
     labels.forEach((label, index) => {
       const x = (index % colunas) * celula + celula / 2;
       const y = Math.floor(index / colunas) * celula + celula / 2;
-      context.strokeText(String(label), x, y);
-      context.fillText(String(label), x, y);
+      // D10: valor interno 10 é exibido como face "0" (Issue #147)
+      const rotulo = lados === 10 && label === 10 ? "0" : String(label);
+      context.strokeText(rotulo, x, y);
+      context.fillText(rotulo, x, y);
     });
   }
   const texture = new THREE.CanvasTexture(canvas);
@@ -214,7 +220,9 @@ function criarRotulos(
 }
 
 function corEstado(estado: DadoFisico["estado"]): string {
-  return estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#c3c9d8";
+  return estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a"
+    : estado === "acerto_critico" ? "#c9a227" : estado === "erro_critico" ? "#a33327"
+    : "#c3c9d8";
 }
 
 function sincronizarGrupo(dado: DadoFisico) {
@@ -318,6 +326,7 @@ function atualizarCores(cena: CenaFisica, canvas: HTMLCanvasElement) {
 
 function definirResultado(dado: DadoFisico, item: ItemDadoMesa, padrao: Props["estado"], reduzido: boolean) {
   dado.estado = item.estado ?? padrao ?? null;
+  dado.efeitoAte = dado.estado && item.valor !== null ? performance.now() + EFEITO_RESULTADO_MS : 0;
   const resultadoIgual = item.valor === dado.valor && (item.valor === null || dado.alvo !== null);
   if (resultadoIgual && (!reduzido || !dado.alvo || dado.pronto)) return;
   dado.valor = item.valor;
@@ -373,6 +382,19 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
     const render = () => {
       if (!runtime) return;
       runtime.renderer.render(runtime.cena, runtime.camera);
+      // Flash transitório de crítico: classes CSS no canvas (pulso
+      // dourado / impacto vermelho); expirado o efeito elas saem —
+      // prefers-reduced-motion desativa a animação (estilos.css).
+      const agoraFx = performance.now();
+      let temCrit = false, temErroCrit = false;
+      for (const d of runtime.dados) {
+        if ((d.efeitoAte ?? 0) > agoraFx && d.estado) {
+          if (d.estado === "acerto_critico") temCrit = true;
+          else if (d.estado === "erro_critico") temErroCrit = true;
+        }
+      }
+      canvas.classList.toggle("mesa-efeito-critico", temCrit);
+      canvas.classList.toggle("mesa-efeito-erro-critico", temErroCrit);
     };
     const fit = () => {
       const rect = canvas.getBoundingClientRect();
@@ -620,7 +642,9 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
           group.position.set(startX, startY, 2.0);
           group.quaternion.copy(rotation);
           const die: DadoFisico = {
-            lados: item.lados, labels, valor: item.valor, estado: state, corpo: body, grupo: group,
+            lados: item.lados, labels, valor: item.valor, estado: state,
+            efeitoAte: state && item.valor !== null ? performance.now() + EFEITO_RESULTADO_MS : 0,
+            corpo: body, grupo: group,
             labelMesh, edgeMesh,
             alvo: target?.orientation ?? null, alvoAltura: target?.altura ?? 0,
             alvoDesde: 0, tempo: 0, assentado: 0, pronto: false,
@@ -691,6 +715,20 @@ export default function MesaDadosFisica({ dados, semente = 7, estado, className 
     });
     setPhysicsSettled(runtime.dados.every((die) => die.pronto));
     runtime.startAnimation();
+    // Efeito de resultado é transitório: ao expirar, o dado volta às
+    // cores normais (Issue #147) — atlas de rótulos, arestas e classes.
+    const timerEfeito = setTimeout(() => {
+      const agoraFx = performance.now();
+      let expirou = false;
+      runtime.dados.forEach((die) => {
+        if (die.estado && (die.efeitoAte ?? 0) <= agoraFx) { die.estado = null; expirou = true; }
+      });
+      if (!expirou) return;
+      const cv = canvasRef.current;
+      if (cv) atualizarCores(runtime, cv);
+      runtime.startAnimation();
+    }, EFEITO_RESULTADO_MS + 80);
+    return () => clearTimeout(timerEfeito);
   }, [valuesKey, estado]);
 
   if (canvasUnavailable) {
