@@ -1111,9 +1111,10 @@ export interface TimerState {
 }
 
 export interface TurnosState {
-  ordem: string[]; // membershipIds
+  ordem: string[]; // membershipIds ou IDs de NPC prefixados com "npc:"
   atual: number;
   ativo: boolean;
+  iniciativa?: { atorId: string; nome: string; dados: number[]; total: number }[];
 }
 
 export interface MensagemMesa {

@@ -180,6 +180,23 @@ try {
     const av = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "avancar" });
     t("avançar turno → atual=1", av.ok === true && av.turnos?.atual === 1, JSON.stringify(av.turnos).slice(0, 120));
 
+    const iniciativaEvt = esperar(sockJ1, "mesa:turnos", 8000,
+      (evento) => Array.isArray(evento?.turnos?.iniciativa));
+    const iniciativa = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "iniciativa", dados: 2 });
+    const estadoIniciativa = await iniciativaEvt;
+    const resultados = estadoIniciativa.turnos.iniciativa;
+    t("mestre rola e transmite iniciativa dos jogadores", iniciativa.ok === true
+      && estadoIniciativa.turnos.ativo === true
+      && resultados.length === 2
+      && estadoIniciativa.turnos.ordem.length === resultados.length
+      && resultados.every((r) => r.dados.length === 2 && r.total === r.dados.reduce((soma, d) => soma + d, 0)));
+    const iniciativaNegada = await emitirCb(sockJ1, "mesa:turno", { sessionId: sid, acao: "iniciativa", dados: 1 });
+    t("jogador NÃO controla iniciativa", iniciativaNegada.ok === false, JSON.stringify(iniciativaNegada));
+
+    const ordemRestaurada = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "iniciar", ordem });
+    const avancarNovamente = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "avancar" });
+    t("ordem manual segue disponível após iniciativa", ordemRestaurada.ok === true && avancarNovamente.turnos?.atual === 1);
+
     // ampulheta: listeners instalados ANTES de iniciar — evento final não pode passar despercebido
     const eventosTimer = [];
     const hTimerM = (d) => { if (d?.sessionId === sid) eventosTimer.push(d); };

@@ -12,6 +12,8 @@ import { permissoesDe } from "../lib/permissoes.js";
 import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
+import { calcularIniciativa, INICIATIVA_DADOS_MAX, type ResultadoIniciativa } from "../lib/iniciativa.js";
+import { npcFichaVisivel } from "../lib/npc-visibility.js";
 import {
   lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
@@ -1245,10 +1247,16 @@ function socket_handlers(
     // ---------- turnos (mestre) ----------
     on(socket, "mesa:turno", async (payload: {
       sessionId?: string; acao?: string;
-      ordem?: string[]; primeiro?: number; pular?: number;
+      ordem?: string[]; primeiro?: number; pular?: number; dados?: number; npcs?: string[];
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.acao) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
+      if (payload.acao === "iniciativa" && (
+        !Number.isInteger(payload.dados ?? 1) || (payload.dados ?? 1) < 1 || (payload.dados ?? 1) > INICIATIVA_DADOS_MAX
+        || (payload.npcs !== undefined && (!Array.isArray(payload.npcs) || payload.npcs.length > 20
+          || payload.npcs.some((id) => typeof id !== "string" || !id.trim())
+          || new Set(payload.npcs).size !== payload.npcs.length))
+      )) { cb?.({ ok: false, erro: "Dados de iniciativa inválidos" }); return; }
       if (!consumirOuRecusar(socket, "turno", cb)) return;
       const ctx = await resolverCtx(socket, payload.sessionId);
       if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
@@ -1261,7 +1269,9 @@ function socket_handlers(
         await db.insert(turns).values({ id, sessionId: payload.sessionId, state: { ordem: [], atual: -1, ativo: false }, updatedBy: u.id, updatedAt: new Date() });
         [t] = await db.select().from(turns).where(eq(turns.id, id)).limit(1);
       }
-      const state = { ...((t.state ?? {}) as Record<string, unknown>) } as { ordem?: string[]; atual?: number; ativo?: boolean };
+      const state = { ...((t.state ?? {}) as Record<string, unknown>) } as {
+        ordem?: string[]; atual?: number; ativo?: boolean; iniciativa?: ResultadoIniciativa[];
+      };
       state.ordem = state.ordem ?? [];
       const n = state.ordem.length;
 
@@ -1270,12 +1280,49 @@ function socket_handlers(
         if (!m) return "?";
         return nomeUsuario(m.userId);
       };
+      const rotuloAtor = async (atorId: string) => {
+        if (!atorId.startsWith("npc:")) return rotuloMembro(atorId);
+        const [npc] = await db.select({ name: characters.name }).from(characters).where(and(
+          eq(characters.id, atorId.slice(4)), eq(characters.campaignId, ctx.sessao.campaignId),
+        )).limit(1);
+        return npc?.name ?? "NPC";
+      };
 
       switch (payload.acao) {
         case "iniciar": {
           if (payload.ordem?.length) state.ordem = payload.ordem;
+          delete state.iniciativa;
           state.ativo = true;
           state.atual = payload.primeiro !== undefined ? Math.min(Math.max(0, payload.primeiro), n - 1) : 0;
+          break;
+        }
+        case "iniciativa": {
+          const npcIds = payload.npcs ?? [];
+          const jogadores = await db.select({
+            membershipId: memberships.id, username: users.username, displayName: users.displayName,
+          }).from(memberships).innerJoin(users, eq(memberships.userId, users.id)).where(and(
+            eq(memberships.campaignId, ctx.sessao.campaignId),
+            eq(memberships.role, "jogador"), eq(memberships.status, "ativo"),
+          ));
+          const npcs = npcIds.length ? await db.select({
+            id: characters.id, name: characters.name, data: characters.data,
+          }).from(characters).innerJoin(memberships, eq(characters.membershipId, memberships.id)).where(and(
+            eq(characters.campaignId, ctx.sessao.campaignId), eq(characters.isNpc, true),
+            eq(characters.status, "aprovada"), eq(memberships.status, "ativo"), inArray(characters.id, npcIds),
+          )) : [];
+          if (npcs.length !== npcIds.length || npcs.some((npc) => !npcFichaVisivel(npc.data))) {
+            cb?.({ ok: false, erro: "NPC inválido ou ainda não revelado" });
+            return;
+          }
+          const participantes = [
+            ...jogadores.map((j) => ({ atorId: j.membershipId, nome: j.displayName || j.username })),
+            ...npcs.map((npc) => ({ atorId: `npc:${npc.id}`, nome: npc.name })),
+          ];
+          if (!participantes.length) { cb?.({ ok: false, erro: "Nenhum participante elegível para iniciativa" }); return; }
+          state.iniciativa = calcularIniciativa(participantes, payload.dados ?? 1, (quantidade) => rolarLados(20, quantidade));
+          state.ordem = state.iniciativa.map((resultado) => resultado.atorId);
+          state.ativo = true;
+          state.atual = 0;
           break;
         }
         case "avancar":
@@ -1290,10 +1337,11 @@ function socket_handlers(
           break;
         }
         case "definirOrdem":
-          if (Array.isArray(payload.ordem)) { state.ordem = payload.ordem; if (state.atual !== undefined && state.atual >= state.ordem.length) state.atual = state.ordem.length - 1; }
+          if (Array.isArray(payload.ordem)) { state.ordem = payload.ordem; delete state.iniciativa; if (state.atual !== undefined && state.atual >= state.ordem.length) state.atual = state.ordem.length - 1; }
           break;
         case "encerrar":
           state.ativo = false;
+          delete state.iniciativa;
           break;
         default:
           cb?.({ ok: false, erro: "Ação inválida" }); return;
@@ -1306,11 +1354,12 @@ function socket_handlers(
       await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       io.to(`sessao:${payload.sessionId}`).emit("mesa:turnos", { sessionId: payload.sessionId, turnos: state });
       const atualId = state.ativo && state.atual !== undefined && state.atual >= 0 ? state.ordem[state.atual] : null;
-      const rotulo = atualId ? await rotuloMembro(atualId) : null;
+      const rotulo = atualId ? state.iniciativa?.find((r) => r.atorId === atualId)?.nome ?? await rotuloAtor(atualId) : null;
       await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: "evento",
         content: payload.acao === "iniciar" ? `Turnos iniciados${rotulo ? ` — começa ${rotulo}` : ""}`
+          : payload.acao === "iniciativa" ? `Iniciativa (${payload.dados ?? 1}d20): ${(state.iniciativa ?? []).map((r) => `${r.nome} (${r.dados.join(" + ")} = ${r.total})`).join(" → ")}`
           : payload.acao === "encerrar" ? "Sequência de turnos encerrada"
           : payload.acao === "avancar" || payload.acao === "voltar" || payload.acao === "pular" ? `Turno: ${rotulo ?? "—"}`
           : "Ordem de turnos atualizada",

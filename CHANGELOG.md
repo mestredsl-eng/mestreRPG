@@ -1,5 +1,16 @@
 # Changelog - Mestre RPG
 
+## [Unreleased]
+
+### Novidades
+
+- **Iniciativa na mesa:** mestre pode ordenar jogadores e NPCs revelados por rolagem autoritativa de d20, com quantidade configurável, resultados persistidos e desempate alfabético.
+
+### Melhorias
+
+- A homologação multiplayer da mesa cobre iniciativa, autorização por papel e retorno à ordem manual; o teste unitário da iniciativa roda no CI.
+- O documento da release v1.0.0 identifica a publicação e separa as evidências históricas do estado atual da `main`.
+
 ## [1.0.0] - 2026-11-11
 
 ### Novidades

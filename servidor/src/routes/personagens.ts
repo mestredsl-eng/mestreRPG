@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { characters, sheetTemplates, sheetVersions, memberships, users, tests, moneyTransactions, financialAccounts, files } from "../db/schema.js";
+import { CHAVE_NPC_VISIVEL, npcFichaVisivel } from "../lib/npc-visibility.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, requireLeasePersonagem, getMembership, permissoesDe } from "../lib/permissoes.js";
 import {
@@ -357,24 +358,6 @@ const STATUS_EXCLUIVEIS_JOGADOR = new Set(["rascunho", "devolvida", "reaberta"])
  *  nunca vem de campos da ficha — validarFicha descarta chaves fora do modelo. */
 const CHAVE_ARQUIVAMENTO = "__arquivamento";
 const STATUS_VALIDOS = new Set(["rascunho", "aguardando_aprovacao", "devolvida", "reaberta", "aprovada", "bloqueada"]);
-
-// ---------- Visibilidade de ficha do NPC (decisão do mestre) ----------
-// Metadado reservado em characters.data — nunca vem de campos da ficha.
-const CHAVE_NPC_VISIVEL = "__npcVisivel";
-
-interface NpcVisivelMeta { visivel: boolean; em?: string; por?: string }
-
-function metaNpcVisivel(data: unknown): NpcVisivelMeta | null {
-  const meta = (data as Record<string, unknown> | null)?.[CHAVE_NPC_VISIVEL];
-  if (!meta || typeof meta !== "object") return null;
-  const m = meta as NpcVisivelMeta;
-  return typeof m.visivel === "boolean" ? m : null;
-}
-
-/** Ficha do NPC liberada para leitura pelos jogadores da campanha. */
-function npcFichaVisivel(data: unknown): boolean {
-  return metaNpcVisivel(data)?.visivel === true;
-}
 
 function metaArquivamento(data: unknown): { statusAnterior?: string; arquivadoEm?: string; arquivadoPor?: string } | null {
   const meta = (data as Record<string, unknown> | null)?.[CHAVE_ARQUIVAMENTO];

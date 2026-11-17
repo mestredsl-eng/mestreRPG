@@ -150,6 +150,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const [turnos, setTurnos] = useState<TurnosState>({ ordem: [], atual: -1, ativo: false });
   const [timer, setTimer] = useState<TimerView | null>(sessao.timerState ?? null);
   const [duracaoTimerMinutos, setDuracaoTimerMinutos] = useState("5");
+  const [dadosIniciativa, setDadosIniciativa] = useState("1");
+  const [npcsIniciativa, setNpcsIniciativa] = useState<string[]>([]);
   const [online, setOnline] = useState<string[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
@@ -701,7 +703,16 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     const m = membros.find((x) => x.membershipId === membershipId);
     return m ? (m.displayName || m.username) : "?";
   };
-  const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeMembro(turnos.ordem[turnos.atual]) : null;
+  const nomeAtor = (atorId: string) => {
+    const resultado = turnos.iniciativa?.find((r) => r.atorId === atorId);
+    if (resultado) return resultado.nome;
+    if (atorId.startsWith("npc:")) return personagens.find((p) => p.id === atorId.slice(4))?.name ?? "NPC";
+    return nomeMembro(atorId);
+  };
+  const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeAtor(turnos.ordem[turnos.atual]) : null;
+  const npcsElegiveisIniciativa = personagens.filter((p) => p.isNpc && p.npcRevelado && p.status === "aprovada");
+  const quantidadeDadosIniciativa = dadosIniciativa.trim() === "" ? NaN : Number(dadosIniciativa);
+  const iniciativaValida = Number.isInteger(quantidadeDadosIniciativa) && quantidadeDadosIniciativa >= 1 && quantidadeDadosIniciativa <= 10;
 
   // entrada rejeitada: não apresenta a visão antiga como atual —
   // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
@@ -802,10 +813,36 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "encerrar" })}>Encerrar</button>
               </div>
             )}
+            {ehMestreAtual && (
+              <div className="mesa-iniciativa">
+                <label className="meta">Dados d20 por participante
+                  <input type="number" min="1" max="10" step="1" value={dadosIniciativa} onChange={(e) => setDadosIniciativa(e.target.value)} />
+                </label>
+                {npcsElegiveisIniciativa.length > 0 && (
+                  <div className="linha">
+                    {npcsElegiveisIniciativa.map((npc) => (
+                      <label className="check" key={npc.id}>
+                        <input type="checkbox" checked={npcsIniciativa.includes(npc.id)} onChange={(e) => setNpcsIniciativa((atuais) => e.target.checked
+                          ? (atuais.length < 20 ? [...atuais, npc.id] : atuais)
+                          : atuais.filter((id) => id !== npc.id))} />
+                        {npc.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <button className="secundario" disabled={!iniciativaValida} onClick={() => socketEmit("mesa:turno", {
+                  acao: "iniciativa", dados: quantidadeDadosIniciativa,
+                  npcs: npcsIniciativa.filter((id) => npcsElegiveisIniciativa.some((npc) => npc.id === id)),
+                })}>Rolar iniciativa</button>
+              </div>
+            )}
             {turnos.ativo && turnos.ordem.length > 0 && (
               <p className="meta">Ordem: {turnos.ordem.map((id, i) => (
-                <span key={id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeMembro(id)}</span>
+                <span key={id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeAtor(id)}</span>
               ))}</p>
+            )}
+            {turnos.iniciativa && (
+              <p className="meta">Resultados: {turnos.iniciativa.map((r) => `${r.nome}: ${r.dados.join(" + ")} = ${r.total}`).join(" · ")}</p>
             )}
           </section>
 
