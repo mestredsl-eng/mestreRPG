@@ -46,7 +46,7 @@ function extensaoSegura(nome: string): string {
 export function assinaturaImagemOk(ext: string, buf: Buffer): boolean {
   const b = buf;
   switch (ext) {
-    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47;
+    case "png": return b.length > 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a;
     case "jpg":
     case "jpeg": return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
     case "gif": return b.length > 6 && b.toString("ascii", 0, 3) === "GIF";

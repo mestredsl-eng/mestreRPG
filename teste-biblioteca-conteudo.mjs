@@ -186,8 +186,11 @@ try {
   t("Ea. extensão desconhecida → attachment octet-stream", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g), `${cd(g)} ${ct(g)}`);
   const fidCorrompido = inserirLegado({ nome: "partido.png", ext: "png", mime: "image/png", conteudo: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0, 0, 0]) });
   g = await getArq(BASE, c.campId, fidCorrompido, cj1);
-  // magic png bate nos 4 primeiros bytes → reconhecido como png (assinatura mínima)
-  t("Eb. .png truncado com magic válido → inline image/png", g.status === 200 && inline(g) && ct(g) === "image/png", `${cd(g)} ${ct(g)}`);
+  // assinatura PNG incompleta (4 de 8 bytes) → não é PNG verificado
+  t("Eb. .png com assinatura incompleta → attachment octet-stream", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g), `${cd(g)} ${ct(g)}`);
+  const fidDivergente = inserirLegado({ nome: "divergente.png", ext: "png", mime: "image/png", conteudo: JPEG_MIN });
+  g = await getArq(BASE, c.campId, fidDivergente, cj1);
+  t("Eb2. .png com assinatura divergente (JPEG) → attachment", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g), `${cd(g)} ${ct(g)}`);
   const fidBinario = inserirLegado({ nome: "dados.bin", ext: "bin", mime: "application/octet-stream", conteudo: crypto.getRandomValues(new Uint8Array(256)) });
   g = await getArq(BASE, c.campId, fidBinario, cj1);
   t("Ec. binário não reconhecido → attachment octet-stream", g.status === 200 && anexo(g) && octet(g) && sandboxOk(g));
