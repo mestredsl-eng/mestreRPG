@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
@@ -107,7 +107,12 @@ export default function Personagens({ campaignId, campanha }: Props) {
           await carregar();
         }}
         aoSalvar={async (nome, data, status) => {
-          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, { name: nome, data, status });
+          // BUG_0002: envia o updatedAt carregado — fichas com níveis
+          // financiados por XP exigem base atual para aceitar escrita.
+          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, {
+            name: nome, data, status,
+            baseUpdatedAt: selecionado.personagem.updatedAt,
+          });
           setSelecionado(atualizado);
           await carregar();
         }}
@@ -297,6 +302,29 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const estrutura = ficha?.estrutura ?? null;
   const inicial = ficha?.campos ?? {};
   const { valores, setValores, aoMudar } = useFichaValores(inicial as Record<string, unknown>);
+  // P1 (auditoria): quando o detalhe recarregado traz versão nova do
+  // servidor (pós-409, "Atualizar", retorno de operação), o formulário
+  // passa a editar sobre o estado atual — nunca envia valores velhos
+  // com token baseUpdatedAt novo. Rascunho divergente é substituído de
+  // forma VISÍVEL (aviso abaixo), não silenciosa.
+  const versaoServidor = personagem.updatedAt ?? "";
+  const valoresRef = useRef(valores);
+  valoresRef.current = valores;
+  const inicialRef = useRef(inicial);
+  const versaoRef = useRef(versaoServidor);
+  useEffect(() => {
+    if (versaoServidor === versaoRef.current) return;
+    versaoRef.current = versaoServidor;
+    const anterior = inicialRef.current;
+    inicialRef.current = inicial;
+    const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    const tinhaRascunho = !igual(valoresRef.current, anterior) && !igual(valoresRef.current, inicial);
+    setValores(inicial as Record<string, unknown>);
+    if (tinhaRascunho) {
+      setMsg("A ficha foi alterada no servidor — o formulário foi sincronizado com a versão atual. Revise antes de salvar.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versaoServidor]);
   const [nome, setNome] = useState(personagem.name);
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -362,14 +390,23 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       setMsg(status === "aguardando_aprovacao" ? "Ficha enviada para aprovação." : "Ficha salva.");
       setEditando(false);
     } catch (e) {
-      const estruturados = extrairErrosValidacao(e instanceof ApiError ? e.detalhes : undefined);
-      if (estruturados.length > 0) {
-        // Painel persistente com TODOS os motivos — dados preenchidos
-        // permanecem intactos para correção e nova tentativa.
-        setErrosValidacao(estruturados);
-        setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
+      // BUG_0002: conflito de base (ficha mudou no servidor, ex.: compra
+      // de XP) — sincroniza explicitamente em vez de perder a edição em
+      // silêncio. Tratado ANTES do parser de validação: o `detalhes` do
+      // 409 não é um mapa de erros de campo.
+      if (e instanceof ApiError && e.status === 409) {
+        setErro(e.message);
+        void aoRecarregar();
       } else {
-        setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        const estruturados = extrairErrosValidacao(e instanceof ApiError ? e.detalhes : undefined);
+        if (estruturados.length > 0) {
+          // Painel persistente com TODOS os motivos — dados preenchidos
+          // permanecem intactos para correção e nova tentativa.
+          setErrosValidacao(estruturados);
+          setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
+        } else {
+          setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        }
       }
     } finally {
       setSalvando(false);

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 import { AjudaPopover } from "./Modal";
+import ProgressaoXp from "./ProgressaoXp";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -234,6 +235,13 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
             </div>
           );
         })}
+      {/* Progressão XP/Merit (Issue #124): painel próprio com saldo,
+          compras e histórico — só existe com personagem real (não no
+          simulador do editor nem na criação de ficha). O servidor é a
+          autoridade de saldo/preço/nível e das permissões. */}
+      {personagemId && !simulacao && (
+        <ProgressaoXp characterId={personagemId} ehMestre={!!ehMestre} />
+      )}
     </div>
   );
 }

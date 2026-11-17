@@ -1,5 +1,53 @@
 # Changelog - Mestre RPG
 
+## [1.0.0.2] - 2026-11-17
+
+### Novidades
+
+- **Sistema de XP/Merit** — personagens passam a ter saldo e histórico próprios de XP, com concessões e remoções pelo mestre, registro de autor/motivo e consulta pelo jogador.
+- **Compra de evolução com XP** — o preço do próximo nível é calculado pelas regras da campanha; jogadores podem adquirir níveis pela ficha, com confirmação em duas etapas e atualização em tempo real.
+- **Progressão integrada à ficha** — o painel apresenta saldo, histórico, custos e disponibilidade, mantendo o fluxo de criação e edição de personagens.
+
+### Integridade e compatibilidade
+
+- **Sem cobrança dupla** — níveis financiados por XP são identificados separadamente e não consomem novamente os pontos de criação.
+- **Validação transacional** — compras revalidam visibilidade, editabilidade, limites e regras antes de persistir; conflitos de edição concorrente são detectados.
+- **Proteção de informações ocultas** — vínculos e preços de campos invisíveis não são expostos ao jogador, inclusive em cenários com vínculos compartilhados.
+- **Compatibilidade com fichas existentes** — XP inicia em zero quando ausente; não requer migração de banco.
+
+### Testes
+
+- **`teste-progressao-xp.mjs`: 236/236** — regressões HTTP para concessão, compra, custos fracionários, financiamento, concorrência, limites e campos ocultos.
+- **`homologacao-progressao.mjs`: 26/26** — homologação Playwright do fluxo de progressão.
+- **CI #509 e CI dedicada #10: sucesso** — validações concluídas no SHA `e20f4bbaaceffb1d0e29abea2ad1052110e5d1c9` antes da integração.
+
+---
+
+## [1.0.0.1] - 2026-11-17
+
+### Novidades
+
+- **Entrega segura da Biblioteca** — arquivos agora são classificados pela extensão física gerada no servidor e pelo conteúdo real, não pelo MIME declarado no upload.
+- **Compatibilidade com arquivos antigos** — a mesma proteção vale para arquivos já existentes, importados e restaurados, sem exigir migração do banco.
+
+### Segurança
+
+- **Proteção contra XSS armazenado** — SVG/HTML e conteúdo ativo disfarçado de TXT ou imagem deixam de ser executados na origem da aplicação.
+- **MIME canônico** — uploads persistem o tipo derivado do conteúdo; o GET revalida a classificação antes de servir.
+- **Fallback seguro** — conteúdo desconhecido, vazio, corrompido, incompatível ou ativo é entregue como anexo `application/octet-stream`, com `nosniff` e CSP `sandbox`; `?download=1` continua disponível.
+
+### Testes
+
+- **`teste-biblioteca-conteudo.mjs`: 42/42** — regressões HTTP reais para XSS, MIME forjado, arquivos legados, assinaturas incompletas/divergentes, formatos legítimos, download e isolamento entre campanhas.
+- **CI #491: sucesso** — jobs de servidor e homologações Playwright concluídos no SHA da PR #138 antes do merge.
+
+### Migração e atualização
+
+- **Sem migração de banco** — a proteção é aplicada na leitura e no upload; campanhas, personagens e arquivos existentes são preservados.
+- Faça backup antes de atualizar e siga o procedimento de atualização descrito no README.
+
+---
+
 ## [1.0.0] - 2026-11-11
 
 ### Novidades
