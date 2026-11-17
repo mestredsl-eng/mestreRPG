@@ -834,6 +834,11 @@ try {
     t("Z3. histórico registra −0.5", ev1?.quantidade === -0.5, `qtd=${ev1?.quantidade}`);
     const f2 = await comprar(CHZ, J1, { kind: "habilidade", key: "xp_dois", nivelAlvo: 1 });
     t("Z4. custo 2.5 → 200", f2.status === 200, `status=${f2.status}`);
+    // P2: seleção binária adquirida (nível 1) NÃO pode sumir do GET —
+    // não existe "próximo nível" para escolherVinculo(nivelAtual+1).
+    const pgBin = await progressaoDe(CHZ, J1);
+    const binEl = (pgBin.json?.disponiveis ?? []).find((d) => d.key === "xp_meio");
+    t("P2. seleção binária nv.1 permanece no GET", binEl?.nivelAtual === 1, `el=${JSON.stringify(binEl)}`);
     t("Z5. saldo 19.5−2.5=17 exato", f2.json?.xp?.saldo === 17, `saldo=${f2.json?.xp?.saldo}`);
     const pgZ2 = await progressaoDe(CHZ, J1);
     const ev2 = (pgZ2.json?.xp?.historico ?? []).find((e) => e.tipo === "compra" && e.compra?.key === "xp_dois");
@@ -850,6 +855,93 @@ try {
     const pgZ3 = await progressaoDe(CHZ, J1);
     const selZ = (pgZ3.json?.disponiveis ?? []).find((d) => d.key === "xp_const");
     t("Z10. nível da fórmula permanece 1", selZ?.nivelAtual === 1, `nivel=${selZ?.nivelAtual}`);
+  }
+
+  // ---------- P3/P4: financiamento por posição exata + montarFicha ----------
+  sec("P3/P4 — índices de transição financiados e custo consistente");
+  {
+    await elemento(CID, M, "atributo", "xp_prog", "Progressivo XP", { disponivel: true });
+    await elemento(CID, M, "atributo", "xp_fixo", "Fixo XP", { disponivel: true });
+    const modW = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Posições" } });
+    const tidW = modW.json.modelo.id, vidW = modW.json.modelo.versionId;
+    const estruturaW = {
+      versao: 1,
+      secoes: [{
+        id: "s1", titulo: "Campos", ordem: 0, campos: [
+          // custos[i] = custo da transição i→i+1: [1,2,5,10]
+          { id: "cx-prog", label: "Progressivo", tipo: "inteiro", editavelPor: "ambos", visibilidade: "todos", custoProgressivo: [1, 2, 5, 10], regra: { kind: "atributo", key: "xp_prog" } },
+          { id: "cx-fixo", label: "Fixo", tipo: "inteiro", editavelPor: "ambos", visibilidade: "todos", custoPontos: 1, regra: { kind: "atributo", key: "xp_fixo" } },
+        ],
+      }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tidW}/versions/${vidW}`, { cookie: M, body: { estrutura: estruturaW } });
+    await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tidW}/publish`, { cookie: M, body: { versionId: vidW } });
+    const pjW = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Herói Posições", templateVersionId: vidW, data: { "cx-prog": 2, "cx-fixo": 1 } },
+    });
+    const CHW = pjW.json?.personagem?.id ?? pjW.json?.id;
+    t("W0. personagem posições criado", !!CHW, JSON.stringify(pjW.json).slice(0, 150));
+    await darXp(CHW, M, { acao: "conceder", quantidade: 30, motivo: "fundo W" });
+
+    // XP financia a transição 2→3 de cx-prog (custa tabela[2]=5 XP)
+    // e a transição 1→2 de cx-fixo (custa 1 XP).
+    const wp1 = await comprar(CHW, J1, { kind: "atributo", key: "xp_prog", nivelAlvo: 3 });
+    t("W1. compra xp_prog 2→3 → 200", wp1.status === 200, `status=${wp1.status} ${JSON.stringify(wp1.json).slice(0, 200)}`);
+    const wf1 = await comprar(CHW, J1, { kind: "atributo", key: "xp_fixo", nivelAlvo: 2 });
+    t("W2. compra xp_fixo 1→2 → 200", wf1.status === 200, `status=${wf1.status}`);
+
+    // P3: pontos sobem cx-prog para 4 por PATCH — o custo correto é
+    // transições 0,1,3 = 1+2+10 = 13 (a transição 2→3 é XP).
+    const prevM = await req(BASE, "POST", `/characters/${CHW}/pontos-previa`, { cookie: M, body: { dados: { "cx-prog": 4 } } });
+    const detProg = prevM.json?.pontos?.detalhes?.find?.((d) => d.campoId === "cx-prog");
+    t("W3. prévia cx-prog=4 cobra 13 (1+2+10, pula transição XP)", detProg?.custo === 13, `detalhes=${JSON.stringify(prevM.json?.pontos?.detalhes)}`);
+    // custo fixo: cx-fixo=3 → transições 0 e 2 = 2 pontos (1→2 é XP)
+    const prevF = await req(BASE, "POST", `/characters/${CHW}/pontos-previa`, { cookie: M, body: { dados: { "cx-fixo": 3 } } });
+    const detFixo = prevF.json?.pontos?.detalhes?.find?.((d) => d.campoId === "cx-fixo");
+    t("W4. prévia cx-fixo=3 cobra 2 (transição 1→2 é XP)", detFixo?.custo === 2, `detalhes=${JSON.stringify(prevF.json?.pontos?.detalhes)}`);
+
+    // PATCH real sobe os dois (ignorarPontos: pool 5 < custo total).
+    const fxW = await fichaDe(CHW, M);
+    const upW = await req(BASE, "PATCH", `/characters/${CHW}`, {
+      cookie: M, body: { data: { "cx-prog": 4, "cx-fixo": 3 }, baseUpdatedAt: fxW?.personagem?.updatedAt, ignorarPontos: true },
+    });
+    t("W5. PATCH sobe níveis por pontos → 200", upW.status === 200, `status=${upW.status} ${JSON.stringify(upW.json).slice(0, 200)}`);
+    // GET da ficha reflete o mesmo cálculo no servidor.
+    const fichaW = await fichaDe(CHW, M);
+    const detW = fichaW?.ficha?.pontos?.detalhes ?? [];
+    const dProg = detW.find((d) => d.campoId === "cx-prog");
+    const dFixo = detW.find((d) => d.campoId === "cx-fixo");
+    t("W6. GET ficha: cx-prog custo 13", dProg?.custo === 13, `detalhes=${JSON.stringify(detW)}`);
+    t("W7. GET ficha: cx-fixo custo 2", dFixo?.custo === 2, `detalhes=${JSON.stringify(detW)}`);
+    // P4: resposta da ficha nunca expõe __xp.
+    t("W8. GET ficha não vaza __xp", !JSON.stringify(fichaW).includes('"__xp"'), "");
+
+    // Redução 4→3: a transição 3→4 sai (era de criação); a transição
+    // 2→3 segue financiada por XP — marcador permanece.
+    const fxW2 = await fichaDe(CHW, M);
+    const redW = await req(BASE, "PATCH", `/characters/${CHW}`, {
+      cookie: M, body: { data: { "cx-prog": 3 }, baseUpdatedAt: fxW2?.personagem?.updatedAt },
+    });
+    t("W9. redução 4→3 → 200 (custo 3+2=5 = pool)", redW.status === 200, `status=${redW.status} ${JSON.stringify(redW.json).slice(0, 200)}`);
+    const prevR = await req(BASE, "POST", `/characters/${CHW}/pontos-previa`, { cookie: M, body: { dados: { "cx-prog": 3 } } });
+    const detR = prevR.json?.pontos?.detalhes?.find?.((d) => d.campoId === "cx-prog");
+    t("W10. cx-prog=3 segue custando 3 (nível 3 continua XP)", detR?.custo === 3, `detalhes=${JSON.stringify(prevR.json?.pontos?.detalhes)}`);
+
+    // P4: jogador vê o MESMO cálculo (metadado de financiamento dos
+    // campos visíveis chega ao cálculo sem expor __xp).
+    const fichaJ = await fichaDe(CHW, J1);
+    const detJ = fichaJ?.ficha?.pontos?.detalhes ?? [];
+    const dJProg = detJ.find((d) => d.campoId === "cx-prog");
+    t("W11. GET ficha jogador: mesmo custo 3", dJProg?.custo === 3, `detalhes=${JSON.stringify(detJ)}`);
+    t("W12. GET ficha jogador não vaza __xp", !JSON.stringify(fichaJ).includes('"__xp"'), "");
+    // Prévia do jogador equivalente ao PATCH.
+    const prevJ = await req(BASE, "POST", `/characters/${CHW}/pontos-previa`, { cookie: J1, body: { dados: { "cx-prog": 4, "cx-fixo": 3 } } });
+    const detPJ = prevJ.json?.pontos?.detalhes ?? [];
+    const pjProg = detPJ.find((d) => d.campoId === "cx-prog");
+    const pjFixo = detPJ.find((d) => d.campoId === "cx-fixo");
+    t("W13. prévia jogador cx-prog=4 → 13", pjProg?.custo === 13, `detalhes=${JSON.stringify(detPJ)}`);
+    t("W14. prévia jogador cx-fixo=3 → 2", pjFixo?.custo === 2, `detalhes=${JSON.stringify(detPJ)}`);
   }
 
 } finally {

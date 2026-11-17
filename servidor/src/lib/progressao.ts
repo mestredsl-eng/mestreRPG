@@ -83,8 +83,14 @@ export interface EstadoXp {
   historico: EventoXp[];
   /** Níveis financiados por XP por campo da ficha (BUG_0001): impede
    *  que o orçamento de pontos de criação cobre de novo esses níveis
-   *  e permite reconciliar reduções/manutenção. */
-  financiado?: Record<string, number>;
+   *  e permite reconciliar reduções/manutenção.
+   *  Formato por POSIÇÃO (auditoria P3): cada entrada é o índice i da
+   *  transição financiada — o valor absoluto do campo antes do
+   *  incremento i→i+1 (em calcularPontos, tabela[i] é o custo dessa
+   *  transição). Arrays preservam a origem exata quando níveis pagos
+   *  por XP e por pontos se alternam. LEGADO: number = contagem de
+   *  sufixo (últimos N níveis), convertido para índices na leitura. */
+  financiado?: Record<string, number | number[]>;
 }
 
 const MAX_HISTORICO = 500;
@@ -105,12 +111,16 @@ export function lerXp(dados: Record<string, unknown>): EstadoXp {
   const historico = Array.isArray(bruto.historico)
     ? bruto.historico.filter((e) => e && typeof e === "object")
     : [];
-  const financiado: Record<string, number> = {};
+  const financiado: Record<string, number | number[]> = {};
   const finBruto = (bruto as { financiado?: unknown }).financiado;
   if (finBruto && typeof finBruto === "object") {
     for (const [k, v] of Object.entries(finBruto as Record<string, unknown>)) {
       const n = num(v);
-      if (n !== null && n > 0) financiado[k] = n;
+      if (n !== null && n > 0) { financiado[k] = n; continue; }
+      if (Array.isArray(v)) {
+        const idx = v.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+        if (idx.length) financiado[k] = [...new Set(idx)].sort((a, b) => a - b);
+      }
     }
   }
   return {
@@ -155,20 +165,42 @@ export function aplicarXp(
   return { dados: { ...dados, [CHAVE_XP]: novo }, estado: novo };
 }
 
-/** Níveis do campo `campoId` financiados por XP no estado persistido. */
-export function xpFinanciadoEm(dados: Record<string, unknown>, campoId: string): number {
-  const fin = (dados[CHAVE_XP] as EstadoXp | undefined)?.financiado;
-  const n = fin?.[campoId];
-  return typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : 0;
+/**
+ * Índices de transição (valor absoluto de origem i do incremento
+ * i→i+1) financiados por XP no campo `campoId`. `valorRef` é o valor
+ * atual do campo, usado apenas para converter o formato legado
+ * (contagem de sufixo) em índices concretos.
+ */
+export function financiadoIndices(
+  dados: Record<string, unknown>,
+  campoId: string,
+  valorRef: number,
+): Set<number> {
+  const fin = (dados[CHAVE_XP] as EstadoXp | undefined)?.financiado?.[campoId];
+  const s = new Set<number>();
+  if (Array.isArray(fin)) {
+    for (const n of fin) if (typeof n === "number" && Number.isFinite(n)) s.add(n);
+  } else if (typeof fin === "number" && Number.isFinite(fin) && fin > 0) {
+    // Legado: "últimos N níveis" → transições valorRef-N .. valorRef-1.
+    for (let i = Math.max(0, valorRef - fin); i < valorRef; i++) s.add(i);
+  }
+  return s;
 }
 
 /**
  * Reconcilia `financiado` após escrita NÃO-XP nos dados da ficha
- * (PATCH do jogador/mestre, importação, restauração). Níveis
- * reduzidos consomem primeiro os financiados por XP (são os mais
- * recentes); aumentos por via não-XP são financiados por pontos de
- * criação — o contador só é limitado ao novo valor. Sem __xp no
- * estado, retorna os dados intactos.
+ * (PATCH do jogador/mestre, importação, restauração).
+ *
+ * Cada índice i marca a transição i→i+1 paga com XP; ela só existe
+ * enquanto o valor do campo é > i. Portanto:
+ * - redução de→para remove exatamente os marcadores i ∈ [para, antes)
+ *   — ou seja, somente as transições que deixaram de existir;
+ * - aumento preserva todos os marcadores e NÃO cria novos (o
+ *   incremento veio de pontos de criação);
+ * - alternância XP/pontos é natural: o custo de cada transição segue
+ *   sua origem, sem deslocamento artificial.
+ * Formato legado (number) é convertido com o valor anterior.
+ * Sem __xp no estado, retorna os dados intactos.
  */
 export function reconciliarFinanciadoXp(
   dadosAntigos: Record<string, unknown>,
@@ -176,13 +208,18 @@ export function reconciliarFinanciadoXp(
 ): Record<string, unknown> {
   const xp = lerXp(dadosNovos);
   if (dadosNovos[CHAVE_XP] === undefined || !xp.financiado) return dadosNovos;
-  const fin: Record<string, number> = { ...xp.financiado };
-  for (const campoId of Object.keys(fin)) {
+  const fin: Record<string, number | number[]> = {};
+  for (const [campoId, bruto] of Object.entries(xp.financiado)) {
     const antes = num(dadosAntigos[campoId]) ?? 0;
     const depois = num(dadosNovos[campoId]) ?? 0;
-    if (depois < antes) fin[campoId] = Math.max(0, fin[campoId] - (antes - depois));
-    else fin[campoId] = Math.min(fin[campoId], Math.max(0, depois));
-    if (fin[campoId] <= 0) delete fin[campoId];
+    let indices: number[];
+    if (Array.isArray(bruto)) {
+      indices = bruto.filter((n): n is number => typeof n === "number" && n < depois);
+    } else if (typeof bruto === "number" && bruto > 0) {
+      indices = [];
+      for (let i = Math.max(0, antes - bruto); i < Math.min(antes, depois); i++) indices.push(i);
+    } else continue;
+    if (indices.length) fin[campoId] = [...new Set(indices)].sort((a, b) => a - b);
   }
   return { ...dadosNovos, [CHAVE_XP]: { ...xp, financiado: Object.keys(fin).length ? fin : undefined } };
 }
@@ -671,12 +708,14 @@ export function simularCompraNivel(
   }).dados;
   // Enriquece o evento de compra com os dados do elemento.
   const estado = lerXp(dadosNovos);
-  // BUG_0001: nível comprado com XP em campo numérico é financiado
-  // por XP — o orçamento de pontos de criação não pode cobrá-lo de
-  // novo, e reduções futuras reconciliam por reconciliarFinanciadoXp.
+  // BUG_0001/P3: a transição nivelAtual→nivelAlvo (índice nivelAtual)
+  // passa a ser financiada por XP — o orçamento de pontos de criação
+  // não pode cobrá-la de novo, e reduções reconciliam por posição.
   if (vinculo.modo === "nivel") {
     const fin = { ...(estado.financiado ?? {}) };
-    fin[vinculo.campo.id] = xpNum((fin[vinculo.campo.id] ?? 0) + (nivelAlvo - nivelAtual));
+    const indices = financiadoIndices(dados, vinculo.campo.id, nivelAtual);
+    indices.add(nivelAtual);
+    fin[vinculo.campo.id] = [...indices].sort((a, b) => a - b);
     estado.financiado = fin;
   }
   const ultimo = estado.historico[estado.historico.length - 1];

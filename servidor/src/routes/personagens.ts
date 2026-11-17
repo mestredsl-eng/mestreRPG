@@ -168,7 +168,26 @@ function montarFicha(
   const estruturaPontosVisivel = ehMestre
     ? basePontos
     : { ...basePontos, secoes: estruturaFiltrada.secoes };
-  const dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
+  // P4: o cálculo de pontos precisa conhecer os índices de transição
+  // financiados por XP dos campos VISÍVEIS — sem isso o orçamento
+  // cobraria de novo níveis já pagos com XP. O metadado interno
+  // (__xp) nunca entra no JSON renderizado: só o recorte de
+  // `financiado` dos campos que o requisitante pode ver é anexado
+  // aos dados de cálculo. Campos ocultos ficam de fora.
+  let dadosPontos = ehMestre ? dados : (campos as Record<string, unknown>);
+  if (!ehMestre) {
+    const idsVisiveis = new Set(estruturaFiltrada.secoes.flatMap((s) => s.campos.map((c) => c.id)));
+    const finBruto = ((dados as Record<string, unknown>)["__xp"] as { financiado?: Record<string, unknown> } | undefined)?.financiado;
+    if (finBruto && typeof finBruto === "object") {
+      const finVisivel: Record<string, unknown> = {};
+      for (const [campoId, v] of Object.entries(finBruto)) {
+        if (idsVisiveis.has(campoId)) finVisivel[campoId] = v;
+      }
+      if (Object.keys(finVisivel).length) {
+        dadosPontos = { ...(campos as Record<string, unknown>), __xp: { financiado: finVisivel } };
+      }
+    }
+  }
   let pontos = calcularPontos(estruturaPontosVisivel, dadosPontos);
   if (regras) {
     pontos = aplicarTransferencias(aplicarCustosSelecao(pontos, estruturaPontosVisivel, dadosPontos, regras), regras);
@@ -734,6 +753,9 @@ personagensRouter.post("/:characterId/pontos-previa", requireLeasePersonagem(), 
     // vf.dados só contém campos permitidos e normalizados — chaves ocultas
     // ou inválidas enviadas pelo cliente são descartadas aqui.
     dadosMesclados = { ...dadosPersistidos, ...(vf.dados ?? {}) };
+    // P4: mesma reconciliação do PATCH — reduções no rascunho consomem
+    // primeiro os índices financiados por XP. Pura, nada persiste.
+    dadosMesclados = reconciliarFinanciadoXp(dadosPersistidos, dadosMesclados);
   }
 
   const ficha = montarFicha(

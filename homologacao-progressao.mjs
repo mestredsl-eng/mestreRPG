@@ -212,6 +212,40 @@ try {
     await ctx.close();
   }
 
+  sec("P1 — formulário sincroniza após conflito 409");
+  {
+    // Jogador abre a ficha e edita (rascunho local com snapshot velho).
+    const { ctx, pg } = await novaPagina(ids.j1.cookie);
+    await abrirFicha(pg, "Herói Prog");
+    await pg.getByRole("button", { name: "Editar ficha" }).click();
+    await pg.waitForTimeout(400);
+    // Força (atributo) renderiza como seletor de bolinhas — o valor atual
+    // aparece no span .seletor-valor dentro de #ficha-campo-f-forca.
+    const campoForca = pg.locator("#ficha-campo-f-forca .seletor-valor");
+    const valorAntigo = (await campoForca.textContent().catch(() => null))?.trim() ?? null;
+    // Outra sessão (mestre via API) compra nível de Força com XP —
+    // o snapshot do jogador fica desatualizado.
+    const compraApi = await req(BASE, "POST", `/characters/${CHAR}/comprar-ponto`, {
+      cookie: ids.cm, body: { kind: "atributo", key: "forca", nivelAlvo: 2 },
+    });
+    t("compra XP por outra sessão → 200", compraApi.status === 200, `status=${compraApi.status} ${JSON.stringify(compraApi.json).slice(0, 200)}`);
+    // Jogador salva com o formulário antigo → 409 + sincronização.
+    await pg.getByRole("button", { name: "Salvar", exact: true }).first().click();
+    await pg.waitForTimeout(1500);
+    const corpoFicha = await pg.locator("body").textContent();
+    t("conflito 409 exibido ao usuário", /alterada|sincronizado|atualize|não foi possível/i.test(corpoFicha ?? ""), corpoFicha?.slice(0, 300));
+    // Formulário resincronizado com o estado do servidor (Força=2).
+    const valorNovo = (await campoForca.textContent().catch(() => null))?.trim() ?? null;
+    t("campo Força resincronizado com o servidor", valorNovo === "2", `antes=${valorAntigo} depois=${valorNovo}`);
+    // Novo salvamento com base atual funciona e preserva o nível pago.
+    await pg.getByRole("button", { name: "Salvar", exact: true }).first().click();
+    await pg.waitForTimeout(1500);
+    const pgProg = await req(BASE, "GET", `/characters/${CHAR}/progressao`, { cookie: ids.j1.cookie });
+    const elForca = (pgProg.json?.disponiveis ?? []).find((d) => d.key === "forca");
+    t("nível comprado por XP permanece após salvar", elForca?.nivelAtual === 2, `nivel=${elForca?.nivelAtual}`);
+    await ctx.close();
+  }
+
   sec("Responsividade do painel");
   {
     const { ctx, pg } = await novaPagina(ids.j1.cookie, { width: 390, height: 844 });

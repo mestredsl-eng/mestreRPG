@@ -107,7 +107,12 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
   const disponiveis = ehMestre
     ? resumo.disponiveis
     : resumo.disponiveis.filter((el) => {
-        const v = escolherVinculo(estrutura, dados, el.kind, el.key, el.nivelAtual + 1);
+        // P2: para elemento já adquirido, resolve o vínculo do nível
+        // ATUAL — em seleções binárias não existe "próximo nível" e
+        // escolherVinculo(nivelAtual+1) não acharia campo, escondendo
+        // uma seleção legítima do jogador.
+        const alvoVis = el.nivelAtual > 0 ? el.nivelAtual : el.nivelAtual + 1;
+        const v = escolherVinculo(estrutura, dados, el.kind, el.key, alvoVis);
         return !!v && campoVisivelId(v.campo.id);
       });
   // Histórico: compras gravadas em campos ocultos perdem os detalhes
