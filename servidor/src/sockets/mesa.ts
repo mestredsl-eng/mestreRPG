@@ -5,7 +5,7 @@ import { getDb } from "../db/index.js";
 import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions, files,
 } from "../db/schema.js";
-import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
+import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef, type EstruturaFicha } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
@@ -13,6 +13,7 @@ import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampan
 import { carregarRegras } from "../lib/regras.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import { calcularIniciativa, INICIATIVA_DADOS_MAX, type ResultadoIniciativa } from "../lib/iniciativa.js";
+import { avaliarD10, type AvaliacaoDadoD10 } from "../lib/d10.js";
 import { npcFichaVisivel } from "../lib/npc-visibility.js";
 import {
   lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
@@ -795,6 +796,19 @@ function socket_handlers(
       if (typeof o.nome === "string" && o.nome.length <= 160) out.nome = o.nome;
       return Object.keys(out).length ? out : null;
     };
+    // Metadados de exibição do campo de teste (Issue #147): derivados
+    // APENAS do skillRef já validado/persistido — nunca do payload do
+    // cliente. Campos ausentes ou de tipo inesperado são omitidos.
+    const campoDoSkillRef = (ref: unknown): Record<string, string> | null => {
+      if (ref == null || typeof ref !== "object" || Array.isArray(ref)) return null;
+      const o = ref as Record<string, unknown>;
+      const out: Record<string, string> = {};
+      for (const k of ["campoId", "rotulo", "tipo", "semantico", "categoria", "secao"] as const) {
+        const v = o[k];
+        if (typeof v === "string" && v.length <= 200) out[k] = v;
+      }
+      return Object.keys(out).length ? out : null;
+    };
     on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
       campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
@@ -841,6 +855,10 @@ function socket_handlers(
       // campo vem da ESTRUTURA persistida — um rótulo forjado no payload
       // não pode renomear o campo que o jogador vai ver no desafio.
       let rotuloExibicao: string | null = null;
+      // Estrutura validada da ficha — reutilizada para derivar seção/tipo
+      // do campo no skillRef enriquecido (Issue #147).
+      let estruturaValida: EstruturaFicha | null = null;
+      let campoInfo: Record<string, unknown> | null = null;
       // Elegibilidade do campo de teste: com campoId, a estrutura publicada
       // da ficha é obrigatória e precisa passar no parse — sem ela não há
       // como provar elegibilidade, então a solicitação é rejeitada (o
@@ -860,6 +878,7 @@ function socket_handlers(
               motivo = `estrutura inválida (${parse.error.issues.length} problema(s) de schema)`;
             } else {
               campo = mapaCampos(parse.data).get(payload.campoId);
+              estruturaValida = parse.data;
             }
           }
         }
@@ -869,13 +888,27 @@ function socket_handlers(
           return;
         }
         rotuloExibicao = campo.label;
+        // Seção que contém o campo (estrutura já validada) — exibição
+        // no histórico; derivada no servidor, nunca do cliente.
+        const secao = estruturaValida?.secoes.find((sec) =>
+          sec.campos.some((c) => c.id === payload.campoId)
+        )?.titulo ?? null;
+        campoInfo = {
+          campoId: payload.campoId,
+          rotulo: campo.label,
+          tipo: campo.tipo,
+          semantico: campo.semantico,
+          ...(campo.categoria ? { categoria: campo.categoria } : {}),
+          ...(secao ? { secao } : {}),
+        };
       }
       // Referência autoritativa ÚNICA do desafio: com campoId validado,
-      // campoId + label reais da estrutura persistida; sem campoId, só o
-      // contrato mínimo — objetos arbitrários do cliente nunca chegam à
+      // campoId + label reais da estrutura persistida (enriquecido com
+      // tipo/semântica/categoria/seção); sem campoId, só o contrato
+      // mínimo — objetos arbitrários do cliente nunca chegam à
       // persistência, ao evento nem ao chat.
       const skillRefFinal: unknown = payload.campoId
-        ? { campoId: payload.campoId, rotulo: rotuloExibicao }
+        ? (campoInfo ?? { campoId: payload.campoId, rotulo: rotuloExibicao })
         : skillRefManual(payload.skillRef);
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));
@@ -1024,11 +1057,11 @@ function socket_handlers(
 
       // Desafio D10: sucessos/falhas calculados no servidor com a meta da
       // campanha — o navegador não pode alterar o mínimo de sucesso.
-      let d10: { minimo: number; lancados: number; sucessos: number; falhas: number } | null = null;
+      let d10: { minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] } | null = null;
       if (teste.diceSides === 10) {
         const minimo = regras.config.dados?.d10SucessoMinimo ?? 6;
-        const sucessos = resultados.filter((v) => v >= minimo).length;
-        d10 = { minimo, lancados: resultados.length, sucessos, falhas: resultados.length - sucessos };
+        const av = avaliarD10(resultados, minimo);
+        d10 = { minimo, lancados: resultados.length, sucessos: av.sucessos, falhas: av.falhas, avaliacao: av.avaliacao };
       }
 
       await pausaTesteEmit(JSON.stringify(payload));
@@ -1039,7 +1072,7 @@ function socket_handlers(
           id: rollId, campaignId: teste.campaignId, sessionId: teste.sessionId,
           characterId: teste.characterId, userId: u.id,
           dice: [{ sides: teste.diceSides, count: countFinal }] as never,
-          results: { dados: resultados, total, soma: total, vitalidade, d10 } as never,
+          results: { dados: resultados, total, soma: total, vitalidade, d10, campo: campoDoSkillRef(teste.skillRef) } as never,
           reason: `teste:${teste.id}`, visibility: teste.visibility,
           requestId: payload.requestId ?? null, createdAt: agora,
         });
@@ -1057,6 +1090,8 @@ function socket_handlers(
         id: rollId, testId: teste.id, sessionId: teste.sessionId,
         characterId: teste.characterId, characterName: char?.name,
         userId: u.id, rolador: await nomeUsuario(u.id),
+        papel: ctx.papel, solicitante: await nomeUsuario(teste.requestedBy),
+        campo: campoDoSkillRef(teste.skillRef),
         dados: resultados, total, lados: teste.diceSides, count: countFinal,
         dadosOriginais: teste.diceCount, vitalidade, d10,
         alvo: teste.target, // só mestres recebem via filtro abaixo
@@ -1119,7 +1154,7 @@ function socket_handlers(
       const total = grupos.reduce((s, g) => s + g.resultados.reduce((a, b) => a + b, 0), 0);
 
       // Lançador D10: dados negativos consomem positivos; sucessos = valor >= mínimo.
-      let d10: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null = null;
+      let d10: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] } | null = null;
       if (payload.d10) {
         const pos = Math.round(payload.d10.positivos ?? NaN);
         const neg = Math.round(payload.d10.negativos ?? NaN);
@@ -1141,8 +1176,8 @@ function socket_handlers(
         // ativo desta campanha em cada rolagem.
         const regras = await carregarRegras(ctx.sessao.campaignId);
         const minimo = regras.config.dados?.d10SucessoMinimo ?? 6;
-        const sucessos = resD10.filter((v) => v >= minimo).length;
-        d10 = { positivos: pos, negativos: neg, minimo, lancados: resD10.length, sucessos, falhas: resD10.length - sucessos };
+        const av = avaliarD10(resD10, minimo);
+        d10 = { positivos: pos, negativos: neg, minimo, lancados: resD10.length, sucessos: av.sucessos, falhas: av.falhas, avaliacao: av.avaliacao };
       }
 
       // Modo explícito "dano": totalização genérica, sem contagem de sucessos D10.
@@ -1166,6 +1201,7 @@ function socket_handlers(
       }
       const rollPayload = {
         id: rollId, sessionId: ctx.sessao.id, userId: u.id, rolador: await nomeUsuario(u.id),
+        papel: ctx.papel,
         grupos: grupos.map((g) => ({ lados: g.sides, resultados: g.resultados })),
         total, motivo: payload.motivo ?? (modoDano ? "Dano" : null), visibility: vis, createdAt: agora, d10, modo: modoDano,
       };
