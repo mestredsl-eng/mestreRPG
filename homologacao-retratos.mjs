@@ -71,6 +71,20 @@ async function abrirModalRetrato(page) {
   await page.getByRole("button", { name: "Alterar retrato" }).click();
   await page.getByRole("dialog", { name: /Retrato de/ }).waitFor({ timeout: 10000 });
 }
+// Após fechar o modal, o avatar só muda quando o GET do personagem
+// retorna — ler o src imediatamente corre o risco de capturar o valor
+// anterior. Espera a condição real (src esperado) antes de afirmar.
+async function aguardarAvatarSrc(page, seletor, regex, timeout = 15000) {
+  try {
+    await page.waitForFunction(
+      ([sel, padrao]) => {
+        const el = document.querySelector(sel);
+        return !!el && new RegExp(padrao).test(el.getAttribute("src") ?? "");
+      },
+      [seletor, regex.source], { timeout });
+  } catch { /* assert abaixo reporta o src atual */ }
+  return page.locator(seletor).first().getAttribute("src").catch(() => "");
+}
 
 try {
   await prepararBanco(BANCO);
@@ -116,13 +130,14 @@ try {
   await pg.getByRole("dialog", { name: /Retrato de/ }).waitFor({ state: "detached", timeout: 10000 });
   const imgFicha = pg.locator(".ficha-cartao img.avatar-retrato, .cartao img.avatar-retrato").first();
   await imgFicha.waitFor({ timeout: 10000 });
-  const srcFicha = await imgFicha.getAttribute("src");
+  const srcFicha = await aguardarAvatarSrc(pg, ".ficha-cartao img.avatar-retrato, .cartao img.avatar-retrato", /\/retratos\/homem-01\.svg/);
   t("2d. ficha exibe retrato da galeria", /\/retratos\/homem-01\.svg/.test(srcFicha ?? ""), srcFicha);
   await pg.locator("section.cartao", { has: pg.getByRole("button", { name: "Alterar retrato" }) })
     .getByRole("button", { name: "Voltar", exact: true }).click();
   await pg.locator("table").waitFor({ timeout: 10000 });
   const imgLista = pg.locator("table img.avatar-retrato").first();
-  t("2e. lista exibe o mesmo retrato", /\/retratos\/homem-01\.svg/.test((await imgLista.getAttribute("src").catch(() => "")) ?? ""));
+  const srcLista = await aguardarAvatarSrc(pg, "table img.avatar-retrato", /\/retratos\/homem-01\.svg/);
+  t("2e. lista exibe o mesmo retrato", /\/retratos\/homem-01\.svg/.test(srcLista ?? ""), srcLista);
   await abrirPersonagem(pg, "Heroína Retrato");
 
   sec("3. Upload de imagem própria");
@@ -132,12 +147,20 @@ try {
   await pg.getByRole("dialog", { name: /Retrato de/ }).waitFor({ state: "detached", timeout: 15000 });
   const imgUp = pg.locator(".cartao img.avatar-retrato").first();
   await imgUp.waitFor({ timeout: 10000 });
-  const srcUp = await imgUp.getAttribute("src");
+  const srcUp = await aguardarAvatarSrc(pg, ".cartao img.avatar-retrato", /\/retrato\/imagem/);
   t("3a. avatar aponta para endpoint de imagem própria", /\/retrato\/imagem/.test(srcUp ?? ""), srcUp);
   // a imagem carrega de verdade (sem fallback)
   await pg.waitForTimeout(800);
   const aindaImg = await pg.locator(".cartao img.avatar-retrato").count();
   t("3b. imagem própria renderiza sem fallback", aindaImg > 0);
+
+  // persistência real: recarrega a página e confere o avatar de novo
+  await pg.goto(BASE);
+  await pg.getByText("Servidor online").waitFor({ timeout: 15000 });
+  await irCampanha(pg);
+  await abrirPersonagem(pg, "Heroína Retrato");
+  const srcReload = await aguardarAvatarSrc(pg, ".cartao img.avatar-retrato", /\/retrato\/imagem/);
+  t("3c. retrato próprio persiste após reload", /\/retrato\/imagem/.test(srcReload ?? ""), srcReload);
 
   sec("4. Remoção do retrato");
   await abrirModalRetrato(pg);
