@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import wasm from "vite-plugin-wasm";
 
 // Cabeçalhos de segurança da SPA (Etapa 15, R2).
 // A API aplica sua própria política em servidor/src/middleware/headers.ts.
@@ -34,7 +35,17 @@ const proxyApi = {
 };
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [wasm(), react()],
+  build: {
+    target: "es2022",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("/node_modules/three/")) return "three";
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     // Em dev não enviamos CSP: o plugin React injeta um <script> inline de

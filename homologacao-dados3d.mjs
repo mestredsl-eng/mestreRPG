@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Homologação dos dados 3D na mesa (PRs #39/#40/#41 integradas):
-// canvas 3D real, cinco tipos, quantidade, cores independentes com
+// renderer Three.js/Rapier, cinco tipos, quantidade, cores independentes com
 // persistência no servidor, atualização imediata e resultado autoritativo.
 import { chromium } from "playwright";
 import { join } from "node:path";
@@ -30,6 +30,19 @@ async function shot(page, nome) {
   try { await page.screenshot({ path: join(SHOTS, `${nome}.png`) }); } catch { }
 }
 async function login(page, user, senha) {
+  await page.addInitScript(() => {
+    window.__mesaReadPixels = (canvas) => {
+      const gl = canvas.getContext("webgl2") || canvas.getContext("webgl");
+      if (gl) {
+        gl.finish();
+        const pixels = new Uint8Array(canvas.width * canvas.height * 4);
+        gl.readPixels(0, 0, canvas.width, canvas.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        return pixels;
+      }
+      const ctx = canvas.getContext("2d");
+      return ctx ? ctx.getImageData(0, 0, canvas.width, canvas.height).data : null;
+    };
+  });
   await page.goto(BASE);
   await page.getByLabel("Usuário").fill(user);
   await page.getByLabel("Senha").fill(senha);
@@ -83,8 +96,8 @@ const valoresCanvas = (page) =>
 const canvasPintado = (page) => page.evaluate(() => {
   const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
   if (!c) return false;
-  const ctx = c.getContext("2d");
-  const d = ctx.getImageData(0, 0, c.width, c.height).data;
+  const d = window.__mesaReadPixels(c);
+  if (!d) return false;
   for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
   return false;
 });
@@ -92,9 +105,8 @@ const canvasPintado = (page) => page.evaluate(() => {
 // Conta pixels reais do canvas próximos à cor RGB esperada. Isso verifica
 // o desenho (borda das faces), não apenas o aria-label ou classes React.
 const pixelsNaCor = (locator, rgb) => locator.evaluate((canvas, alvo) => {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return 0;
-  const dados = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const dados = window.__mesaReadPixels(canvas);
+  if (!dados) return 0;
   let total = 0;
   for (let i = 0; i < dados.length; i += 4) {
     if (dados[i + 3] < 220) continue;
@@ -122,6 +134,9 @@ try {
   sec("1. Mesa com dados 3D");
   await entrarNaMesa(pgM);
   t("painel de dados presente na mesa", await pgM.locator(".painel-dados").count() > 0);
+  await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier']").waitFor({ timeout: 30000 });
+  t("mesa usa Three.js e Rapier quando WebGL está disponível",
+    await pgM.locator(".mesa-dados-area canvas[data-renderer='three-rapier']").count() === 1);
 
   // O segundo participante entra ANTES dos pools D10. Assim, a suíte
   // valida o evento/histórico recebido em tempo real, não uma leitura
@@ -301,9 +316,9 @@ try {
       const item = document.querySelector(".rolagem-item");
       const rotulo = item?.querySelector(".mesa-dados-3d-canvas")?.getAttribute("aria-label") ?? "";
       const resumo = item?.querySelector(".d10-rolagem")?.textContent ?? "";
-      const dados = item?.querySelector(".mesa-dados-3d-canvas")?.getContext("2d");
-      if (!dados) return false;
-      const pixels = dados.getImageData(0, 0, dados.canvas.width, dados.canvas.height).data;
+      const canvas = item?.querySelector(".mesa-dados-3d-canvas");
+      const pixels = canvas && window.__mesaReadPixels(canvas);
+      if (!pixels) return false;
       let verde = 0, vermelho = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 220) continue;
@@ -322,9 +337,8 @@ try {
 
     await pgM.waitForFunction(() => {
       const canvas = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
-      const ctx = canvas?.getContext("2d");
-      if (!canvas || !ctx) return false;
-      const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const pixels = canvas && window.__mesaReadPixels(canvas);
+      if (!pixels) return false;
       let verde = 0, vermelho = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (pixels[i + 3] < 220) continue;
@@ -356,7 +370,7 @@ try {
 
   await shot(pgM, "01-mesa-dados");
 
-  sec("2. Cinco tipos de dados em canvas 3D");
+  sec("2. Cinco tipos de dados no renderer WebGL");
   for (const d of [4, 6, 8, 10, 20]) {
     await rolarLivre(pgM, d);
     const titulos = await valoresCanvas(pgM);
@@ -438,31 +452,35 @@ try {
   const varFeltro = () => pgM.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--mesa-feltro").trim());
   const temasIds = ["azul", "verde", "vinho", "madeira", "obsidiana"];
   const nomesTema = ["Feltro azul", "Feltro verde", "Feltro vinho", "Madeira escura", "Obsidiana"];
-  const luminancias = [];
-  const luminanciaCanvas = () => pgM.evaluate(() => {
+  const coresBandeja = [];
+  const corBandejaCanvas = () => pgM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
-    if (!c) return -1;
-    const ctx = c.getContext("2d");
-    const d = ctx.getImageData(0, 0, c.width, c.height).data;
-    let s = 0, n = 0;
-    for (let i = 0; i < d.length; i += 400) {
-      if (d[i + 3] > 200) { s += 0.3 * d[i] + 0.6 * d[i + 1] + 0.1 * d[i + 2]; n++; }
+    if (!c) return null;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return null;
+    let r = 0, g = 0, b = 0, n = 0;
+    const left = Math.floor(c.width * 0.12), right = Math.ceil(c.width * 0.88);
+    const top = Math.floor(c.height * 0.12), bottom = Math.ceil(c.height * 0.88);
+    for (let y = top; y < bottom; y += 7) for (let x = left; x < right; x += 7) {
+      const i = (y * c.width + x) * 4;
+      if (d[i + 3] > 200) { r += d[i]; g += d[i + 1]; b += d[i + 2]; n++; }
     }
-    return n ? s / n : -1;
+    return n ? [r / n, g / n, b / n] : null;
   });
   for (let i = 0; i < temasIds.length; i++) {
     await temaCards.filter({ hasText: nomesTema[i] }).click();
     await pgM.waitForTimeout(300);
     t(`tema ${temasIds[i]} selecionável`, (await datasetTema()) === temasIds[i], `data=${await datasetTema()}`);
     t(`tema ${temasIds[i]} aplica cor da bandeja`, (await varFeltro()).length > 0);
-    luminancias.push(await luminanciaCanvas());
+    coresBandeja.push(await corBandejaCanvas());
     await shot(pgM, `06b-tema-${temasIds[i]}`);
   }
-  // prova visual: os temas produzem claridades de bandeja realmente
-  // diferentes no canvas (não basta a variável CSS mudar)
-  const lumDistintas = new Set(luminancias.map((l) => Math.round(l / 8))).size;
-  t("temas produzem bandejas visualmente distintas no canvas", lumDistintas >= 3,
-    `luminâncias=${luminancias.map((l) => l.toFixed(0)).join(",")}`);
+  // prova visual: os temas produzem cores reais distintas no framebuffer
+  // (não basta a variável CSS mudar; luminância sozinha perde matizes).
+  const coresDistintas = coresBandeja.filter((cor, i) => cor && !coresBandeja.slice(0, i).some((anterior) => anterior
+    && Math.hypot(cor[0] - anterior[0], cor[1] - anterior[1], cor[2] - anterior[2]) < 8));
+  t("temas produzem bandejas visualmente distintas no canvas", coresDistintas.length >= 4,
+    `cores=${coresBandeja.map((c) => c?.map((v) => v.toFixed(0)).join("/") ?? "vazio").join(",")}`);
   // seleção persiste no servidor e sobrevive a reload
   const meTemaSel = await pgM.evaluate(async () => (await (await fetch("/api/auth/me")).json()).usuario?.preferences?.temaMesa);
   t("temaMesa persistido via API", meTemaSel === "obsidiana", `lido=${meTemaSel}`);
@@ -607,7 +625,8 @@ try {
   t("reduced-motion: canvas pintado", await pgRM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     if (!c) return false;
-    const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return false;
     for (let i = 3; i < d.length; i += 400) if (d[i] > 0) return true;
     return false;
   }));
@@ -663,8 +682,8 @@ try {
   const amostraPixels = () => pgM.evaluate(() => {
     const c = document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas");
     if (!c) return "";
-    const ctx = c.getContext("2d");
-    const d = ctx.getImageData(0, 0, c.width, c.height).data;
+    const d = window.__mesaReadPixels(c);
+    if (!d) return "";
     let h = 0;
     // Amostra 1 em cada 16 pixels (stride de 64 bytes RGBA). A amostragem
     // anterior (1 em 1024 pixels) podia passar entre os dados em canvases

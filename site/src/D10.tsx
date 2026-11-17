@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
-import MesaDados3D, { seedDeId } from "./MesaDados3D";
+import MesaDados3D, { seedDeId } from "./MesaDadosFisicaLazy";
 import MesaDadosArea from "./MesaDadosArea";
 
 interface Props {
