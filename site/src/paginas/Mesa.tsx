@@ -7,8 +7,11 @@ import {
 } from "../api";
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
-import PainelDados from "../Dados";
+import PainelDados, { usePreferenciasDados } from "../Dados";
 import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
+import MesaDadosArea from "../MesaDadosArea";
+import type { ItemDadoMesa } from "../MesaDados3D";
+import { efeitoDaClasse, classificarD10, rotuloClasseD10, faceExibida, type ClasseD10 } from "../convencaoD10";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
 
@@ -18,6 +21,45 @@ interface Props {
 }
 
 interface TimerView { status?: string; remainingMs?: number; totalMs?: number; endsAt?: number; servidorAgora?: number }
+
+/** Item do histórico de rolagens da mesa — metadados autorizados pelo servidor. */
+interface RolagemMesa {
+  id: string;
+  dados: number[][];
+  lados: number[];
+  total: number | null;
+  motivo?: string | null;
+  autor?: string;
+  papel?: string | null;
+  solicitante?: string | null;
+  personagem?: string | null;
+  campo?: Record<string, string> | null;
+  ts: number;
+  vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null;
+  dadosOriginais?: number;
+  d10?: {
+    positivos?: number; negativos?: number; minimo: number; lancados: number;
+    sucessos: number; falhas: number;
+    avaliacao?: { valor: number; face: number; classe: ClasseD10; sucesso: boolean }[];
+  } | null;
+}
+
+/** Converte uma rolagem autorizada em itens do tabuleiro 3D, com o
+ *  estado visual por dado derivado da classificação oficial (D10). */
+function itensDoRol(r: RolagemMesa): ItemDadoMesa[] {
+  const av = r.d10?.avaliacao;
+  const usarAvaliacao = !!av && r.dados.length === 1 && r.lados[0] === 10;
+  return r.dados.flatMap((resultados, gi) =>
+    resultados.map((v, vi) => {
+      const item: ItemDadoMesa = { lados: r.lados[gi], valor: v };
+      if (r.d10 && usarAvaliacao) {
+        const a = av[vi] ?? classificarD10(v, r.d10.minimo);
+        item.estado = efeitoDaClasse(a.classe);
+      }
+      return item;
+    }),
+  );
+}
 
 const LADOS = [4, 6, 8, 10, 20] as const;
 
@@ -237,8 +279,18 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const [privado, setPrivado] = useState(false);
   const [secreto, setSecreto] = useState(false);
   const [destinoPriv, setDestinoPriv] = useState("");
-  const [rolagens, setRolagens] = useState<{ id: string; dados: number[][]; lados: number[]; total: number | null; motivo?: string | null; autor?: string; ts: number; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }[]>([]);
+  const [rolagens, setRolagens] = useState<RolagemMesa[]>([]);
   const [minimoD10, setMinimoD10] = useState(6);
+  // Preferências individuais de visibilidade (Issue #147) — compartilhadas
+  // com o PainelDados para que os toggles afetem Mesa e painel juntos.
+  const prefsDados = usePreferenciasDados();
+  // Tumble otimista do próprio lançamento: dados "no ar" até o evento
+  // oficial do servidor chegar — mesma semente (requestId) do rollId,
+  // então a trajetória continua sem reiniciar a física.
+  const [pendente, setPendente] = useState<{ dados: ItemDadoMesa[]; semente: number; ts: number } | null>(null);
+  const aoPendencia = useCallback((dados: ItemDadoMesa[] | null, requestId: string) => {
+    setPendente(dados ? { dados, semente: seedDeId(requestId), ts: Date.now() } : null);
+  }, []);
   const [erro, setErro] = useState<string | null>(null);
   const [sessaoAtual, setSessaoAtual] = useState(sessao);
   const [confirmandoEncerrar, setConfirmandoEncerrar] = useState(false);
@@ -394,7 +446,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; characterId?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos: number; negativos: number; minimo: number; lancados: number; sucessos: number; falhas: number } | null }) => {
+    const aoRolagem = (r: { id: string; testId?: string; characterId?: string | null; characterName?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; papel?: string | null; solicitante?: string | null; campo?: Record<string, string> | null; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos?: number; negativos?: number; minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: { valor: number; face: number; classe: ClasseD10; sucesso: boolean }[] } | null }) => {
       // rolagem: mesma classificação fail-closed — mestre/secreta/
       // desconhecida só para mestre atual; privada segue a regra de
       // dono/teste conhecido/rolador livre
@@ -418,6 +470,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       setRolagens((prev) => prev.some((x) => x.id === r.id) ? prev : [...prev, {
         id: r.id, dados: grupos.map((g) => g.resultados), lados: grupos.map((g) => g.lados),
         total: r.total, motivo: r.motivo ?? null, autor: r.rolador, ts: Date.now(),
+        papel: r.papel ?? null, solicitante: r.solicitante ?? null,
+        personagem: r.characterName ?? null, campo: r.campo ?? null,
         vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais, d10: r.d10 ?? null,
       }]);
     };
@@ -718,6 +772,25 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const quantidadeDadosIniciativa = dadosIniciativa.trim() === "" ? NaN : Number(dadosIniciativa);
   const iniciativaValida = Number.isInteger(quantidadeDadosIniciativa) && quantidadeDadosIniciativa >= 1 && quantidadeDadosIniciativa <= 10;
 
+  // Tabuleiro 3D compartilhado (Issue #147): mostra a ÚLTIMA rolagem
+  // autorizada recebida via Socket.IO — pública para todos, privada só
+  // para os destinatários do filtro fail-closed em aoRolagem. O tumble
+  // otimista (pendente) só aparece enquanto for mais novo que o último
+  // evento oficial; a mesma semente (requestId = rollId) mantém a
+  // trajetória contínua quando o resultado chega.
+  const ultimoQuadro = [...rolagens].reverse().find((r) => r.dados.some((g) => g.length > 0));
+  const usandoPendente = !!pendente && (!ultimoQuadro || pendente.ts > ultimoQuadro.ts);
+  const dadosQuadro: ItemDadoMesa[] = usandoPendente ? pendente!.dados : ultimoQuadro ? itensDoRol(ultimoQuadro) : [];
+  const sementeQuadro = usandoPendente ? pendente!.semente : ultimoQuadro ? seedDeId(ultimoQuadro.id) : 7;
+  const visibilidade = prefsDados.visibilidade;
+  const podeLancar = papel !== "espectador" && sessaoAtual.status !== "encerrada";
+  const painelDadosEl = podeLancar ? (
+    <PainelDados
+      sessionId={sessao.id} aoErro={reportarErro} minimoPadrao={minimoD10}
+      souMestre={ehMestreAtual} prefsDados={prefsDados} aoPendencia={aoPendencia}
+    />
+  ) : null;
+
   // entrada rejeitada: não apresenta a visão antiga como atual —
   // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
   if (entradaFalhou) {
@@ -954,36 +1027,54 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
           )}
 
-          {/* lançador unificado: testes D10 | rolagem livre e dano */}
-          {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <PainelDados sessionId={sessao.id} aoErro={reportarErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
-          )}
+          {/* Tabuleiro 3D compartilhado + lançadores: os controles ficam
+              DENTRO da área ampliável — o usuário lança dados sem sair
+              da tela cheia (Issue #147). Com a bandeja oculta, os
+              controles continuam visíveis e funcionais. */}
+          {visibilidade.bandeja ? (
+            <MesaDadosArea ariaLabel="Mesa de dados 3D compartilhada">
+              <MesaDados3D dados={dadosQuadro} semente={sementeQuadro} />
+              {painelDadosEl}
+            </MesaDadosArea>
+          ) : painelDadosEl}
 
-          {/* resultados de dados */}
-          {rolagens.length > 0 && (
+          {/* resultados de dados — histórico completo (Issue #147):
+              rolador, papel, personagem, campo/categoria, dados
+              individuais com classificação e total. A preferência
+              "rolagens" só oculta a exibição — nada é apagado. */}
+          {rolagens.length > 0 && visibilidade.rolagens && (
             <section className="cartao">
               <h3>Rolagens</h3>
               {rolagens.slice(-8).reverse().map((r) => (
                 <div key={r.id} className="rolagem-item" data-rolagem-id={r.id}>
                   <div className="linha">
-                    <MesaDados3D
-                      dados={r.dados.flatMap((resultados, gi) => resultados.map((v) => ({
-                        lados: r.lados[gi],
-                        valor: v,
-                        // O servidor já validou o mínimo do desafio/pool D10.
-                        // Reproduz a mesma classificação no histórico para
-                        // que todos os participantes vejam sucesso/falha por dado.
-                        estado: r.d10 && r.lados[gi] === 10
-                          ? (v >= r.d10.minimo ? "sucesso" as const : "falha" as const)
-                          : null,
-                      })))}
-                      semente={seedDeId(r.id)}
-                    />
+                    <MesaDados3D dados={itensDoRol(r)} semente={seedDeId(r.id)} />
                     {r.total !== null && <strong> = {r.total}</strong>}
                   </div>
                   <p className="meta">
-                    {r.autor ?? ""}{r.motivo ? ` — ${r.motivo}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}
+                    {r.autor ?? ""}
+                    {r.papel ? ` (${r.papel === "mestre" ? "Mestre" : r.papel === "jogador" ? "Jogador" : r.papel})` : ""}
+                    {r.motivo ? ` — ${r.motivo}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}
                   </p>
+                  {(r.personagem || r.campo?.rotulo || (r.solicitante && r.solicitante !== r.autor)) && (
+                    <p className="meta">
+                      {r.personagem ? `Personagem: ${r.personagem}` : ""}
+                      {r.campo?.rotulo ? `${r.personagem ? " · " : ""}Campo: ${r.campo.rotulo}` : ""}
+                      {r.campo?.categoria ? ` (${r.campo.categoria})` : ""}
+                      {r.campo?.secao ? ` · ${r.campo.secao}` : ""}
+                      {r.solicitante && r.solicitante !== r.autor ? `${r.personagem || r.campo?.rotulo ? " · " : ""}Solicitado por: ${r.solicitante}` : ""}
+                    </p>
+                  )}
+                  {r.d10?.avaliacao ? (
+                    <p className="meta">
+                      Dados: {r.d10.avaliacao.map((a) => `${a.face} ${rotuloClasseD10(a.classe)}`).join(" · ")}
+                    </p>
+                  ) : r.dados.some((g) => g.length > 0) ? (
+                    <p className="meta">
+                      Dados: {r.dados.flatMap((g, gi) => g.map((v) => faceExibida(r.lados[gi], v))).join(", ")}
+                      {" · "}{r.dados.map((g, gi) => `${g.length}d${r.lados[gi]}`).join(" + ")}
+                    </p>
+                  ) : null}
                   {r.vitalidade && (
                     <p className="meta vitalidade-rolagem">
                       Vitalidade: {r.vitalidade.nome}
