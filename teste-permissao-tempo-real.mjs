@@ -1048,7 +1048,7 @@ try {
     () => emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelar", traco: { raioX: 0.1, raioY: 0.1, pontos: [{ x: 0.11, y: 0.11 }, { x: 0.22, y: 0.22 }] } }),
     (pre) => pre.includes('"revelados":[{"id"'));
   await cicloPW("Z4/turno", m13.cookie,
-    () => emitirCb(sM, "mesa:turno", { sessionId: sid, acao: "iniciar" }),
+    () => emitirCb(sM, "mesa:turno", { sessionId: sid, acao: "iniciar", ordem: [ids.j1mid] }),
     (pre) => pre.includes('"ativo":true'));
   await cicloPW("Z5/timer", m13.cookie,
     () => emitirCb(sM, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 555 }),
