@@ -1,5 +1,30 @@
 # Changelog - Mestre RPG
 
+## [1.0.0+1] - 2026-11-17
+
+### Novidades
+
+- **Entrega segura da Biblioteca** — arquivos agora são classificados pela extensão física gerada no servidor e pelo conteúdo real, não pelo MIME declarado no upload.
+- **Compatibilidade com arquivos antigos** — a mesma proteção vale para arquivos já existentes, importados e restaurados, sem exigir migração do banco.
+
+### Segurança
+
+- **Proteção contra XSS armazenado** — SVG/HTML e conteúdo ativo disfarçado de TXT ou imagem deixam de ser executados na origem da aplicação.
+- **MIME canônico** — uploads persistem o tipo derivado do conteúdo; o GET revalida a classificação antes de servir.
+- **Fallback seguro** — conteúdo desconhecido, vazio, corrompido, incompatível ou ativo é entregue como anexo `application/octet-stream`, com `nosniff` e CSP `sandbox`; `?download=1` continua disponível.
+
+### Testes
+
+- **`teste-biblioteca-conteudo.mjs`: 42/42** — regressões HTTP reais para XSS, MIME forjado, arquivos legados, assinaturas incompletas/divergentes, formatos legítimos, download e isolamento entre campanhas.
+- **CI #491: sucesso** — jobs de servidor e homologações Playwright concluídos no SHA da PR #138 antes do merge.
+
+### Migração e atualização
+
+- **Sem migração de banco** — a proteção é aplicada na leitura e no upload; campanhas, personagens e arquivos existentes são preservados.
+- Faça backup antes de atualizar e siga o procedimento de atualização descrito no README.
+
+---
+
 ## [1.0.0] - 2026-11-11
 
 ### Novidades
