@@ -5,7 +5,7 @@ import { getDb } from "../db/index.js";
 import {
   sessions, turns, chatMessages, rolls, tests, characters, memberships, users, sheetVersions, files,
 } from "../db/schema.js";
-import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, type CampoDef } from "../lib/ficha.js";
+import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, campoElegivelParaTesteNivel, type CampoDef } from "../lib/ficha.js";
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
@@ -155,6 +155,20 @@ function classeVisibilidadeTeste(v: unknown): "publica" | "privada" | "mestre" {
  *  teste: mestre/secreta/desconhecida viram "mestre" — nunca "publica". */
 function visibilidadeChatDoTeste(v: unknown): "publica" | "privada" | "mestre" {
   return classeVisibilidadeTeste(v);
+}
+
+/** Nome autoritativo de um elemento de campo `selecao_nivel`: biblioteca
+ *  da campanha (regraKind) tem prioridade; opções manuais usam a própria
+ *  chave como nome; sem correspondência, exibe a chave crua. */
+async function nomeElementoTeste(campo: CampoDef, key: string, campaignId: string): Promise<string> {
+  if (campo.regraKind) {
+    try {
+      const regras = await carregarRegras(campaignId);
+      const el = regras.elementos.get(`${campo.regraKind}:${key}`);
+      if (el?.name) return el.name;
+    } catch { /* biblioteca indisponível — cai no fallback */ }
+  }
+  return key;
 }
 
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
@@ -797,7 +811,7 @@ function socket_handlers(
     };
     on(socket, "mesa:teste:pedir", async (payload: {
       sessionId?: string; characterId?: string; rotulo?: string;
-      campoId?: string; skillRef?: unknown; bonus?: number; malus?: number;
+      campoId?: string; elementoKey?: string; skillRef?: unknown; bonus?: number; malus?: number;
       dadosLados?: number; dadosCount?: number; minimo?: number;
       visibilidade?: "publica" | "privada"; requestId?: string;
     }, cb?: (r: unknown) => void) => {
@@ -828,54 +842,85 @@ function socket_handlers(
       // dados calculados no servidor: campoId → valor numérico da ficha; senão dadosCount explícito.
       // Testes de ficha (atributo/habilidade/ataque) são sempre D10 — o cliente não escolhe o dado.
       const dadosLados = payload.campoId ? 10 : (LADOS_VALIDOS.has(payload.dadosLados ?? 0) ? payload.dadosLados! : 20);
+      const dadosFicha = (char.data ?? {}) as Record<string, unknown>;
       let valorCampo: number | null = null;
-      const base = payload.campoId
-        ? (() => {
-            const dados = (char.data ?? {}) as Record<string, unknown>;
-            const v = dados[payload.campoId!];
-            return typeof v === "number" && Number.isFinite(v) ? v : null;
-          })()
-        : null;
-      if (payload.campoId) valorCampo = base;
       // Rótulo de exibição autoritativo: com campoId válido, o nome do
-      // campo vem da ESTRUTURA persistida — um rótulo forjado no payload
-      // não pode renomear o campo que o jogador vai ver no desafio.
+      // campo/elemento vem da ESTRUTURA persistida — um rótulo forjado no
+      // payload não pode renomear o que o jogador vai ver no desafio.
       let rotuloExibicao: string | null = null;
+      let elementoTeste: { key: string; nome: string } | null = null;
+      let campoSel: CampoDef | undefined;
+      const rejeitarCampo = (motivo: string, detalhe?: string) => {
+        console.warn(`[mesa] teste:pedir rejeitado — ${motivo}${detalhe ? ` (${detalhe})` : ""} (campoId=${payload.campoId}, elemento=${payload.elementoKey ?? "-"}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
+        cb?.({ ok: false, erro: "Campo não é elegível para teste" });
+      };
       // Elegibilidade do campo de teste: com campoId, a estrutura publicada
       // da ficha é obrigatória e precisa passar no parse — sem ela não há
       // como provar elegibilidade, então a solicitação é rejeitada (o
       // cliente nunca é fonte de confiança para validar o próprio campo).
       if (payload.campoId) {
-        let campo: CampoDef | undefined;
-        let motivo = "";
         if (!char.templateVersionId) {
-          motivo = "personagem sem versão de ficha";
-        } else {
-          const [ver] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, char.templateVersionId)).limit(1);
-          if (!ver) {
-            motivo = "versão de ficha não encontrada";
-          } else {
-            const parse = estruturaFichaSchema.safeParse(ver.structure);
-            if (!parse.success) {
-              motivo = `estrutura inválida (${parse.error.issues.length} problema(s) de schema)`;
-            } else {
-              campo = mapaCampos(parse.data).get(payload.campoId);
-            }
-          }
-        }
-        if (!campo || !campoElegivelParaTeste(campo)) {
-          console.warn(`[mesa] teste:pedir rejeitado — ${motivo || "campo não elegível"} (campoId=${payload.campoId}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
-          cb?.({ ok: false, erro: "Campo não é elegível para teste" });
+          rejeitarCampo("personagem sem versão de ficha");
           return;
         }
-        rotuloExibicao = campo.label;
+        const [ver] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, char.templateVersionId)).limit(1);
+        if (!ver) {
+          rejeitarCampo("versão de ficha não encontrada");
+          return;
+        }
+        const parse = estruturaFichaSchema.safeParse(ver.structure);
+        if (!parse.success) {
+          rejeitarCampo(`estrutura inválida (${parse.error.issues.length} problema(s) de schema)`);
+          return;
+        }
+        campoSel = mapaCampos(parse.data).get(payload.campoId);
+        if (!campoSel) {
+          rejeitarCampo("campo não elegível");
+          return;
+        }
+        if (campoSel.tipo === "selecao_nivel") {
+          // Desafio por ELEMENTO: o mestre escolhe um item da lista (ex.:
+          // "Computador") e o nível individual dele define os dados
+          // positivos. O campo inteiro nunca vira um número.
+          if (!campoElegivelParaTesteNivel(campoSel)) {
+            rejeitarCampo("campo não elegível");
+            return;
+          }
+          const key = typeof payload.elementoKey === "string" ? payload.elementoKey.trim() : "";
+          const lista = Array.isArray(dadosFicha[campoSel.id]) ? (dadosFicha[campoSel.id] as { key?: unknown; nivel?: unknown }[]) : [];
+          const item = key ? lista.find((i) => i && typeof i === "object" && i.key === key) : undefined;
+          const nivel = item && typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : null;
+          if (!key || nivel === null || nivel < 1) {
+            rejeitarCampo("elemento sem nível na ficha");
+            return;
+          }
+          valorCampo = nivel;
+          elementoTeste = { key, nome: await nomeElementoTeste(campoSel, key, ctx.sessao.campaignId) };
+          rotuloExibicao = elementoTeste.nome;
+        } else {
+          if (!campoElegivelParaTeste(campoSel)) {
+            rejeitarCampo("campo não elegível");
+            return;
+          }
+          const v = dadosFicha[campoSel.id];
+          if (typeof v !== "number" || !Number.isFinite(v)) {
+            // campo elegível mas sem valor numérico persistido — nunca
+            // cair no dadosCount do cliente como fallback
+            rejeitarCampo("campo sem valor numérico na ficha");
+            return;
+          }
+          valorCampo = v;
+          rotuloExibicao = campoSel.label;
+        }
       }
       // Referência autoritativa ÚNICA do desafio: com campoId validado,
       // campoId + label reais da estrutura persistida; sem campoId, só o
       // contrato mínimo — objetos arbitrários do cliente nunca chegam à
       // persistência, ao evento nem ao chat.
       const skillRefFinal: unknown = payload.campoId
-        ? { campoId: payload.campoId, rotulo: rotuloExibicao }
+        ? elementoTeste
+          ? { campoId: payload.campoId, rotulo: rotuloExibicao, elementoKey: elementoTeste.key, campoRotulo: campoSel?.label }
+          : { campoId: payload.campoId, rotulo: rotuloExibicao }
         : skillRefManual(payload.skillRef);
       // pool: base = dados positivos (valor do campo ou dadosCount); bonus/malus ajustam
       const positivos = Math.round((valorCampo ?? payload.dadosCount ?? 1) + (payload.bonus ?? 0));

@@ -82,14 +82,16 @@ function campoVazio(tipo: TipoCampo): CampoDef {
 // estado quando ela está ausente.
 const SEMANTICOS_TESTE = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
 
+const TIPOS_TESTE = new Set(["inteiro", "decimal", "selecao_nivel"]);
+
 function semanticaDeTeste(c: { tipo?: string; semantico?: string }): boolean {
-  return (c.tipo === "inteiro" || c.tipo === "decimal")
+  return !!c.tipo && TIPOS_TESTE.has(c.tipo)
     && c.semantico !== "moeda" && c.semantico !== "item"
     && SEMANTICOS_TESTE.has(c.semantico ?? "");
 }
 
 function elegivelTesteCampo(c: { tipo?: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
-  if (c.tipo !== "inteiro" && c.tipo !== "decimal") return false;
+  if (!c.tipo || !TIPOS_TESTE.has(c.tipo)) return false;
   if (c.semantico === "moeda" || c.semantico === "item") return false;
   if (c.usadoEmTestes === true) return true;
   if (c.usadoEmTestes === false) return false;

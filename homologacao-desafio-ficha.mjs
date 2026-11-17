@@ -152,9 +152,9 @@ try {
         { id: "inteligencia", label: "Inteligência", tipo: "inteiro", semantico: "atributo" },
       ]},
       { id: "s-hab", titulo: "Habilidades", ordem: 2, campos: [
-        { id: "pericias", label: "Pericias", tipo: "selecao_nivel", semantico: "especializacao" },
-        { id: "conhecimentos", label: "Conhecimento", tipo: "selecao_nivel", semantico: "conhecimento" },
-        { id: "talentos", label: "Talentos", tipo: "selecao_nivel", semantico: "talento" },
+        { id: "pericias", label: "Pericias", tipo: "selecao_nivel", semantico: "especializacao", regraKind: "pericia" },
+        { id: "conhecimentos", label: "Conhecimento", tipo: "selecao_nivel", semantico: "conhecimento", regraKind: "conhecimento" },
+        { id: "talentos", label: "Talentos", tipo: "selecao_nivel", semantico: "talento", opcoes: ["Liderança", "Furtividade"] },
         { id: "computador_fern", label: "Computador", tipo: "inteiro", semantico: "conhecimento" },
         { id: "doencas", label: "Doenças", tipo: "inteiro", semantico: "habilidade", usadoEmTestes: false },
       ]},
@@ -177,18 +177,58 @@ try {
       w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
         .run(ver3Id, tpl3Id, JSON.stringify(ESTRUTURA_FERNANDINHO), agora, agora);
       w.prepare("update sheet_templates set current_version_id=? where id=?").run(ver3Id, tpl3Id);
+      // biblioteca da campanha: nomes reais dos elementos selecao_nivel
+      let rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(ids.camp);
+      if (!rs) {
+        const rsId = crypto.randomUUID();
+        w.prepare("insert into rule_sets (id,campaign_id,name,version,is_active,config,created_at,updated_at) values (?,?,?,?,1,?,?,?)")
+          .run(rsId, ids.camp, "Regras da campanha", 1, "{}", agora, agora);
+        rs = { id: rsId };
+      }
+      const defs = [
+        ["conhecimento", "academicos", "Acadêmicos"],
+        ["conhecimento", "computador", "Computador"],
+        ["conhecimento", "medicina", "Medicina"],
+        ["conhecimento", "quimica", "Química"],
+        ["pericia", "esportes", "Esportes"],
+      ];
+      for (const [kind, key, name] of defs) {
+        w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+          .run(crypto.randomUUID(), rs.id, kind, key, name, null, null, "{}", agora, agora);
+      }
       w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
         .run(pj3Id, ids.camp, ids.j1.membershipId, ver3Id, "Fernandinho",
           JSON.stringify({
             forca: 3, destreza: 1, vigor: 3,
             percepcao: 2, raciocinio: 2, inteligencia: 3,
-            conhecimentos: [{ key: "academicos", nivel: 3 }],
+            pericias: [{ key: "esportes", nivel: 2 }],
+            conhecimentos: [
+              { key: "academicos", nivel: 3 },
+              { key: "computador", nivel: 5 },
+              { key: "medicina", nivel: 3 },
+              { key: "quimica", nivel: 2 },
+            ],
+            talentos: [{ key: "Liderança", nivel: 4 }],
             computador_fern: 5, doencas: 4, pontos_sangue: 1,
             dinheiro: [], inventario: [],
           }), "{}", "aprovada", 0, agora, agora);
     } finally { w.close(); }
   }
   ids.pj3 = pj3Id;
+
+  // Quarto personagem: do JOGADOR 2, mesma ficha com campos elegíveis —
+  // prova que o desafio chega ao dono certo e que não-donos não rolam.
+  const pj4Id = crypto.randomUUID();
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pj4Id, ids.camp, ids.j2.membershipId, verId, "PJ Dois",
+          JSON.stringify({ for: 4, computador: 3, medicina: 2, atletismo: 5, ouro: 10, carisma: 1, apelido: "y" }),
+          "{}", "aprovada", 0, agora, agora);
+    } finally { w.close(); }
+  }
+  ids.pj4 = pj4Id;
 
   // mínimo de sucesso D10 conhecido
   await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, { cookie: ids.cm, body: { dados: { d10SucessoMinimo: 6 } } });
@@ -270,8 +310,56 @@ try {
     sessionId: sid, characterId: pj3Id, campoId: "conhecimentos",
     dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
   });
-  t("Fernandinho: selecao_nivel (Conhecimento biblioteca) rejeitado por tipo",
+  t("Fernandinho: selecao_nivel sem elementoKey rejeitado",
     rSel?.ok === false, JSON.stringify(rSel));
+  // desafio por ELEMENTO: cada item da lista vira um teste próprio com o
+  // nível individual como dados positivos — nome real vem da biblioteca
+  const rElComp = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "conhecimentos", elementoKey: "computador",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evElComp = evJ1.teste.find((x) => x.id === rElComp?.id);
+  t("Fernandinho: elemento Conhecimento/Computador nível 5 -> 5 positivos",
+    rElComp?.ok === true && evElComp?.pool?.positivos === 5 && evElComp?.pool?.dadosLados === 10,
+    JSON.stringify(rElComp) + " " + JSON.stringify(evElComp?.pool));
+  t("evento do jogador rotula o elemento real (não a lista)",
+    evElComp?.rotulo === "Computador" && evElComp?.skillRef?.elementoKey === "computador"
+      && evElComp?.skillRef?.campoRotulo === "Conhecimento", JSON.stringify(evElComp?.skillRef));
+  const rowEl = rElComp?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref,modifiers from tests where id=?").get(rElComp.id)) : null;
+  const skillEl = JSON.parse(rowEl?.skill_ref ?? "null");
+  const modsEl = JSON.parse(rowEl?.modifiers ?? "{}");
+  t("banco: skill_ref do elemento + valorCampo=5",
+    skillEl?.campoId === "conhecimentos" && skillEl?.elementoKey === "computador"
+      && skillEl?.rotulo === "Computador" && modsEl?.valorCampo === 5, JSON.stringify(skillEl));
+  await new Promise((r) => setTimeout(r, 400));
+  const rElMed = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "conhecimentos", elementoKey: "medicina", malus: 2,
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evElMed = evJ1.teste.find((x) => x.id === rElMed?.id);
+  t("Fernandinho: Medicina nível 3 − malus 2 -> 1 efetivo",
+    rElMed?.ok === true && evElMed?.pool?.positivos === 3 && evElMed?.pool?.negativos === 2 && evElMed?.dados?.count === 1,
+    JSON.stringify(evElMed?.pool));
+  const rElInexistente = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "conhecimentos", elementoKey: "elemento_falso",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: elementoKey inexistente rejeitado", rElInexistente?.ok === false, JSON.stringify(rElInexistente));
+  await new Promise((r) => setTimeout(r, 350));
+  const rElPericia = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "pericias", elementoKey: "esportes",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: perícia (especializacao sem flag) rejeitada — exige opt-in",
+    rElPericia?.ok === false, JSON.stringify(rElPericia));
+  const rElTalento = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "talentos", elementoKey: "Liderança",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evElTal = evJ1.teste.find((x) => x.id === rElTalento?.id);
+  t("Fernandinho: Talento 'Liderança' nível 4 elegível via fallback",
+    rElTalento?.ok === true && evElTal?.pool?.positivos === 4, JSON.stringify(evElTal?.pool));
+  await new Promise((r) => setTimeout(r, 400));
   const rDoencas = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pj3Id, campoId: "doencas",
     dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
@@ -293,6 +381,27 @@ try {
   // a fixture adiciona emits ao mesmo socket — respeita a janela do rate limit
   await new Promise((r) => setTimeout(r, 600));
 
+  sec("desafio para personagem do jogador 2 — dono certo, permissões");
+  const rPj4 = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj4Id, campoId: "computador",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evPj4 = evJ2.teste.find((x) => x.id === rPj4?.id);
+  t("jogador2 recebe o desafio do próprio personagem (Computador=3)",
+    rPj4?.ok === true && !!evPj4 && evPj4.pool?.positivos === 3, JSON.stringify(evPj4?.pool));
+  // jogador1 (não-dono, não-mestre) não pode rolar o teste do pj4
+  const rRollErrado = await emitirCb(sockJ1, "mesa:teste:rolar", { testId: rPj4?.id, requestId: "df-rr-" + crypto.randomUUID().slice(0, 8) });
+  t("não-dono não rola teste de personagem alheio", rRollErrado?.ok === false, JSON.stringify(rRollErrado));
+  // dono rola normalmente
+  const rRollPj4 = await emitirCb(sockJ2, "mesa:teste:rolar", { testId: rPj4?.id, requestId: "df-rr-" + crypto.randomUUID().slice(0, 8) });
+  t("dono (jogador2) rola o próprio desafio", rRollPj4?.ok === true && rRollPj4?.d10?.lancados === 3, JSON.stringify(rRollPj4?.d10));
+  // persistência: o desafio por elemento continua pendente no histórico HTTP
+  const histPendente = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}/testes`, { cookie: ids.j1.cookie });
+  const pendEl = (histPendente.json?.testes ?? []).find((x) => x.id === rElComp?.id);
+  t("histórico HTTP mantém desafio por elemento pendente",
+    !!pendEl && pendEl.status === "pendente", JSON.stringify(pendEl?.status));
+  await new Promise((r) => setTimeout(r, 400));
+
   sec("campoId forjado/inexistente e rótulo adulterado");
   const rInexistente = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pjId, campoId: "campo_que_nao_existe",
@@ -304,6 +413,7 @@ try {
     dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
   });
   t("campo inelegível de outra ficha rejeitado", rCofre?.ok === false, JSON.stringify(rCofre));
+  await new Promise((r) => setTimeout(r, 400));
   const rForjado = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pjId, campoId: "medicina", rotulo: "RÓTULO FORJADO PELO CLIENTE",
     dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
@@ -315,6 +425,7 @@ try {
   const rowF = rForjado?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rForjado.id)) : null;
   const skillF = JSON.parse(rowF?.skill_ref ?? "{}");
   t("skill_ref persistido usa label real", skillF?.rotulo === "Medicina" && skillF?.campoId === "medicina", JSON.stringify(skillF));
+  await new Promise((r) => setTimeout(r, 400));
 
   sec("skillRef forjado — referência autoritativa única");
   // campoId válido + rótulo forjado + skillRef objeto forjado: nada do
@@ -515,21 +626,39 @@ try {
   t("UI. Fernandinho: Força (3) elegível", opcoesF.some((o) => /Força\s*\(3\)/.test(o)), opcoesF.join("|"));
   t("UI. Fernandinho: moeda/item/contador ausentes",
     !opcoesF.some((o) => /Dinheiro|Inventario|Pontos de Sangue|Doenças/.test(o)), opcoesF.join("|"));
-  t("UI. Fernandinho: selecao_nivel de conhecimento ausente",
-    !opcoesF.some((o) => /Conhecimento\s*\(/.test(o)), opcoesF.join("|"));
-  const idxCompF = opcoesF.findIndex((o) => /Computador/.test(o));
+  // selecao_nivel elegível expande cada ELEMENTO com seu nível — nome real
+  // da biblioteca, sem somar nem usar a quantidade de itens
+  t("UI. Fernandinho: elementos de Conhecimento listados individualmente",
+    opcoesF.some((o) => /Conhecimento — Computador\s*\(5\)/.test(o))
+      && opcoesF.some((o) => /Conhecimento — Medicina\s*\(3\)/.test(o))
+      && opcoesF.some((o) => /Conhecimento — Química\s*\(2\)/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: elemento de Talentos listado",
+    opcoesF.some((o) => /Talentos — Liderança\s*\(4\)/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: perícia sem opt-in ausente",
+    !opcoesF.some((o) => /Esportes/.test(o)), opcoesF.join("|"));
+  const idxCompF = opcoesF.findIndex((o) => /Conhecimento — Computador/.test(o));
+  t("UI. Fernandinho: opção de elemento encontrada", idxCompF >= 0, opcoesF.join("|"));
   await selCampo.selectOption({ index: idxCompF });
   await pM.waitForTimeout(300);
+  const metaF = await form.locator(".meta, .desafio-pool").allTextContents();
+  t("UI. pool do elemento: 5 positivos", metaF.some((m) => /5\s*positivo/.test(m)), metaF.join(" | "));
   await form.locator('button[type="submit"]').click();
   await pM.waitForTimeout(900);
-  const evFern = evJ1.teste.filter((x) => x.skillRef?.campoId === "computador_fern").pop();
-  t("UI. jogador recebe desafio do Fernandinho com 5 positivos",
+  const evFern = evJ1.teste.filter((x) => x.skillRef?.elementoKey === "computador" && x.skillRef?.campoId === "conhecimentos").pop();
+  t("UI. jogador recebe desafio do elemento com 5 positivos",
     !!evFern && evFern.pool?.positivos === 5 && evFern.pool?.dadosLados === 10, JSON.stringify(evFern?.pool));
-  const cardFern = pJ.locator(".teste-card", { hasText: "Computador" }).last();
+  const cardFern = pJ.locator(".teste-card", { hasText: "Computador" }).filter({ hasText: "5d10 positivos" }).last();
   await cardFern.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
   const txtFern = await cardFern.textContent().catch(() => "");
-  t("UI. card do jogador identifica Computador com 5 positivos",
+  t("UI. card do jogador identifica o elemento Computador com 5 positivos",
     /Computador/.test(txtFern ?? "") && /5d10 positivos/.test(txtFern ?? ""), txtFern?.slice(0, 160));
+  // reload completo: o desafio pendente NÃO pode sumir — vem do histórico
+  await abrirMesa(pJ);
+  const cardFernReload = pJ.locator(".teste-card", { hasText: "Computador" }).filter({ hasText: "5d10 positivos" }).last();
+  await cardFernReload.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  const txtFernR = await cardFernReload.textContent().catch(() => "");
+  t("UI. após reload o desafio pendente continua na Mesa do jogador",
+    /Computador/.test(txtFernR ?? "") && /Rolar/.test(txtFernR ?? ""), txtFernR?.slice(0, 160));
 
   // o desafio criado com skillRef forjado aparece com o label REAL da ficha
   const cardSk = pJ.locator(".teste-card", { hasText: "Medicina" }).last();
