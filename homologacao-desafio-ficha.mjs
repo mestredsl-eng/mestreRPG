@@ -132,6 +132,64 @@ try {
   }
   ids.pj2 = pj2Id;
 
+  // Terceiro personagem reproduz a ficha real do Fernandinho (retrato do
+  // formato publicado em produção): seções com nomes do template real,
+  // atributos como `inteiro` + semantico sem `usadoEmTestes` (legado —
+  // fallback semântico deve elegê-los), conhecimentos/perícias como
+  // `selecao_nivel` (não elegíveis por tipo), moeda/item em tabela,
+  // campo numérico explicitamente desabilitado e campo "livre" sem flag.
+  const ESTRUTURA_FERNANDINHO = {
+    versao: 1,
+    secoes: [
+      { id: "s-forca", titulo: "Atributos De Força", ordem: 0, campos: [
+        { id: "forca", label: "Força", tipo: "inteiro", semantico: "atributo" },
+        { id: "destreza", label: "Destreza", tipo: "inteiro", semantico: "atributo" },
+        { id: "vigor", label: "Vigor", tipo: "inteiro", semantico: "atributo" },
+      ]},
+      { id: "s-mental", titulo: "Atributos Mental", ordem: 1, campos: [
+        { id: "percepcao", label: "Percepção", tipo: "inteiro", semantico: "atributo" },
+        { id: "raciocinio", label: "Raciocínio", tipo: "inteiro", semantico: "atributo" },
+        { id: "inteligencia", label: "Inteligência", tipo: "inteiro", semantico: "atributo" },
+      ]},
+      { id: "s-hab", titulo: "Habilidades", ordem: 2, campos: [
+        { id: "pericias", label: "Pericias", tipo: "selecao_nivel", semantico: "especializacao" },
+        { id: "conhecimentos", label: "Conhecimento", tipo: "selecao_nivel", semantico: "conhecimento" },
+        { id: "talentos", label: "Talentos", tipo: "selecao_nivel", semantico: "talento" },
+        { id: "computador_fern", label: "Computador", tipo: "inteiro", semantico: "conhecimento" },
+        { id: "doencas", label: "Doenças", tipo: "inteiro", semantico: "habilidade", usadoEmTestes: false },
+      ]},
+      { id: "s-virt", titulo: "Virtudes", ordem: 3, campos: [
+        { id: "pontos_sangue", label: "Pontos de Sangue", tipo: "inteiro", semantico: "livre" },
+      ]},
+      { id: "s-inv", titulo: "Inventario", ordem: 4, campos: [
+        { id: "dinheiro", label: "Dinheiro", tipo: "tabela", semantico: "moeda" },
+        { id: "inventario", label: "Inventario", tipo: "tabela", semantico: "item" },
+      ]},
+    ],
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+  };
+  const tpl3Id = crypto.randomUUID(), ver3Id = crypto.randomUUID(), pj3Id = crypto.randomUUID();
+  {
+    const w = abrirDb(BANCO);
+    try {
+      w.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+        .run(tpl3Id, ids.camp, "Ficha Mundo Tenebroso", null, ids.admin, agora, agora);
+      w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+        .run(ver3Id, tpl3Id, JSON.stringify(ESTRUTURA_FERNANDINHO), agora, agora);
+      w.prepare("update sheet_templates set current_version_id=? where id=?").run(ver3Id, tpl3Id);
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pj3Id, ids.camp, ids.j1.membershipId, ver3Id, "Fernandinho",
+          JSON.stringify({
+            forca: 3, destreza: 1, vigor: 3,
+            percepcao: 2, raciocinio: 2, inteligencia: 3,
+            conhecimentos: [{ key: "academicos", nivel: 3 }],
+            computador_fern: 5, doencas: 4, pontos_sangue: 1,
+            dinheiro: [], inventario: [],
+          }), "{}", "aprovada", 0, agora, agora);
+    } finally { w.close(); }
+  }
+  ids.pj3 = pj3Id;
+
   // mínimo de sucesso D10 conhecido
   await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, { cookie: ids.cm, body: { dados: { d10SucessoMinimo: 6 } } });
 
@@ -192,6 +250,49 @@ try {
   const evL = evJ1.teste.filter((x) => x.id === rLivre?.id).pop();
   t("campo livre com usadoEmTestes elegível (carisma=2)", rLivre?.ok === true && evL?.pool?.positivos === 2, JSON.stringify(evL?.pool));
 
+  sec("fixture Fernandinho — formato real publicado");
+  // atributos legados sem `usadoEmTestes` caem no fallback semântico
+  const rFor = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "forca",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evFor = evJ1.teste.find((x) => x.id === rFor?.id);
+  t("Fernandinho: Força (atributo sem flag) elegível, 3 positivos",
+    rFor?.ok === true && evFor?.pool?.positivos === 3, JSON.stringify(rFor) + " " + JSON.stringify(evFor?.pool));
+  const rCompF = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "computador_fern",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evCompF = evJ1.teste.find((x) => x.id === rCompF?.id);
+  t("Fernandinho: Conhecimento Computador=5 -> 5 positivos D10",
+    rCompF?.ok === true && evCompF?.pool?.positivos === 5 && evCompF?.pool?.dadosLados === 10, JSON.stringify(evCompF?.pool));
+  const rSel = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "conhecimentos",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: selecao_nivel (Conhecimento biblioteca) rejeitado por tipo",
+    rSel?.ok === false, JSON.stringify(rSel));
+  const rDoencas = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "doencas",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: usadoEmTestes:false explícito bloqueia campo numérico",
+    rDoencas?.ok === false, JSON.stringify(rDoencas));
+  const rPS = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "pontos_sangue",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: contador 'livre' sem flag não entra no fallback",
+    rPS?.ok === false, JSON.stringify(rPS));
+  const rDin = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "dinheiro",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("Fernandinho: moeda/item em tabela rejeitados",
+    rDin?.ok === false, JSON.stringify(rDin));
+  // a fixture adiciona emits ao mesmo socket — respeita a janela do rate limit
+  await new Promise((r) => setTimeout(r, 600));
+
   sec("campoId forjado/inexistente e rótulo adulterado");
   const rInexistente = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pjId, campoId: "campo_que_nao_existe",
@@ -250,6 +351,7 @@ try {
   t("chat do desafio usa rótulo validado da ficha",
     typeof chatSkill?.content === "string" && chatSkill.content.includes("Medicina")
       && !chatSkill.content.includes("FORJADO"), JSON.stringify(chatSkill?.content));
+  await new Promise((r) => setTimeout(r, 500));
 
   sec("skillRef manual — contrato mínimo sem campoId");
   const rManOk = await emitirCb(sockM, "mesa:teste:pedir", {
@@ -263,6 +365,7 @@ try {
   t("skillRef manual sanitizado: só rotulo/nome permitidos",
     skillMan && skillMan.rotulo === "Percepção" && skillMan.nome === "Vigia"
       && !("campoId" in skillMan) && !("extra" in skillMan), JSON.stringify(skillMan));
+  await new Promise((r) => setTimeout(r, 400));
   const rManLixo = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pjId, rotulo: "Teste",
     skillRef: "string-forjada", dadosLados: 20, dadosCount: 1,
@@ -285,6 +388,7 @@ try {
 
   sec("visibilidade");
   evJ2.teste.length = 0;
+  await new Promise((r) => setTimeout(r, 600));
   const rPub = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pjId, campoId: "atletismo", rotulo: "Atletismo",
     dadosLados: 10, visibilidade: "publica", requestId: "df-" + crypto.randomUUID().slice(0, 8),
@@ -366,7 +470,9 @@ try {
   // envia o desafio pela UI
   await form.locator('button[type="submit"]').click();
   await pM.waitForTimeout(800);
-  const cardJ = pJ.locator(".teste-card", { hasText: "Computador" }).last();
+  // o card do jogador deve ser o desafio submetido pela UI (3 efetivos
+  // após malus) — não os testes de socket pendentes com o mesmo rótulo
+  const cardJ = pJ.locator(".teste-card", { hasText: "Computador" }).filter({ hasText: "3 efetivos" }).last();
   await cardJ.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
   const txtJ = await cardJ.textContent().catch(() => "");
   t("UI. jogador vê desafio pendente identificado", /Computador/.test(txtJ ?? "") && /5d10 positivos/.test(txtJ ?? "") && /3 efetivos/.test(txtJ ?? ""), txtJ?.slice(0, 160));
@@ -393,6 +499,37 @@ try {
     msgsVazio.some((m) => /Nenhum campo elegível/.test(m) && /Usado em testes/.test(m)), msgsVazio.join(" | "));
   const opcoesVazio = await selCampo.locator("option").allTextContents();
   t("UI. seletor sem opções de campo", opcoesVazio.every((o) => /Escolher|Carregando/.test(o)), opcoesVazio.join("|"));
+
+  // aceite da missão: mestre seleciona Fernandinho, escolhe Conhecimento
+  // Computador (5), solicita e o jogador recebe exatamente 5 D10 positivos
+  if (!(await form.isVisible().catch(() => false))) {
+    await tituloFicha.locator("button", { hasText: "+ Desafio" }).click();
+    await pM.waitForTimeout(300);
+  }
+  const idxFern = opsPers.findIndex((o) => o.includes("Fernandinho"));
+  t("UI. Fernandinho presente na lista de personagens", idxFern >= 0, opsPers.join("|"));
+  await selPers.selectOption({ index: idxFern });
+  await pM.waitForTimeout(1200);
+  const opcoesF = await selCampo.locator("option").allTextContents();
+  t("UI. Fernandinho: Computador (5) elegível", opcoesF.some((o) => /Computador\s*\(5\)/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: Força (3) elegível", opcoesF.some((o) => /Força\s*\(3\)/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: moeda/item/contador ausentes",
+    !opcoesF.some((o) => /Dinheiro|Inventario|Pontos de Sangue|Doenças/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: selecao_nivel de conhecimento ausente",
+    !opcoesF.some((o) => /Conhecimento\s*\(/.test(o)), opcoesF.join("|"));
+  const idxCompF = opcoesF.findIndex((o) => /Computador/.test(o));
+  await selCampo.selectOption({ index: idxCompF });
+  await pM.waitForTimeout(300);
+  await form.locator('button[type="submit"]').click();
+  await pM.waitForTimeout(900);
+  const evFern = evJ1.teste.filter((x) => x.skillRef?.campoId === "computador_fern").pop();
+  t("UI. jogador recebe desafio do Fernandinho com 5 positivos",
+    !!evFern && evFern.pool?.positivos === 5 && evFern.pool?.dadosLados === 10, JSON.stringify(evFern?.pool));
+  const cardFern = pJ.locator(".teste-card", { hasText: "Computador" }).last();
+  await cardFern.waitFor({ state: "visible", timeout: 8000 }).catch(() => {});
+  const txtFern = await cardFern.textContent().catch(() => "");
+  t("UI. card do jogador identifica Computador com 5 positivos",
+    /Computador/.test(txtFern ?? "") && /5d10 positivos/.test(txtFern ?? ""), txtFern?.slice(0, 160));
 
   // o desafio criado com skillRef forjado aparece com o label REAL da ficha
   const cardSk = pJ.locator(".teste-card", { hasText: "Medicina" }).last();
