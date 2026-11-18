@@ -66,6 +66,72 @@ try {
   ], custos: {} };
   regras.config.pontosExtras = 5;
 
+  console.log("== Orçamento da pool Principal ==");
+  // Regressão: quando Principal está declarada em pools, seus pontos devem
+  // continuar disponíveis. Antes, pontosEfetivos a substituía por zero e
+  // uma ficha que gastasse exatamente 31 recebia saldo -31 no servidor.
+  const regrasPrincipal = {
+    ...regras,
+    config: {
+      ...regras.config,
+      pontos: {
+        habilitado: true,
+        pontosIniciais: 0,
+        pools: [{ id: "principal", nome: "Principal", pontos: 31 }],
+        custos: {},
+      },
+      pontosExtras: 0,
+      transferivelEntreReservas: false,
+      transferencias: [],
+    },
+  };
+  const estruturaPrincipal = {
+    versao: 1,
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    secoes: [{
+      id: "principal",
+      titulo: "Principal",
+      ordem: 0,
+      campos: [{
+        id: "nivelPrincipal",
+        label: "Campo de teste",
+        tipo: "inteiro",
+        semantico: "atributo",
+        padrao: 0,
+        custoPontos: 31,
+        obrigatorio: false,
+        repetivel: false,
+        visibilidade: "todos",
+        editavelPor: "ambos",
+        usadoEmTestes: false,
+      }],
+    }],
+  };
+  let rPrincipal = validarRegras(estruturaPrincipal, { nivelPrincipal: 1 }, regrasPrincipal);
+  const poolPrincipal = rPrincipal.pontos.pools.find((p) => p.id === "principal");
+  t(
+    "Principal preserva os 31 pontos e aceita gasto de 31 (saldo zero)",
+    rPrincipal.ok && poolPrincipal?.disponiveis === 31 && poolPrincipal.gastos === 31 && poolPrincipal.saldo === 0,
+    JSON.stringify({ erros: rPrincipal.erros, pool: poolPrincipal })
+  );
+
+  // Orçamento da pool + pontos iniciais + extras + bônus individual são aditivos.
+  const regrasPrincipalAdicional = {
+    ...regrasPrincipal,
+    config: {
+      ...regrasPrincipal.config,
+      pontos: { ...regrasPrincipal.config.pontos, pontosIniciais: 2 },
+      pontosExtras: 3,
+    },
+  };
+  rPrincipal = validarRegras(estruturaPrincipal, { nivelPrincipal: 1 }, regrasPrincipalAdicional, { bonusPontos: 4 });
+  const poolPrincipalAdicional = rPrincipal.pontos.pools.find((p) => p.id === "principal");
+  t(
+    "Principal soma pontos declarados, iniciais, extras e bônus individual",
+    rPrincipal.ok && poolPrincipalAdicional?.disponiveis === 40 && poolPrincipalAdicional.saldo === 9,
+    JSON.stringify({ erros: rPrincipal.erros, pool: poolPrincipalAdicional })
+  );
+
   const est = {
     versao: 1,
     pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },

@@ -4,6 +4,7 @@ import { api, type ConviteGuildaPreview, type HealthStatus } from "./api";
 import Login from "./paginas/Login";
 import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
 import { getSocket } from "./socket";
+import IconeInterface from "./IconeInterface";
 
 // Telas secundárias são carregadas sob demanda para reduzir o JavaScript
 // necessário no primeiro acesso. O estado e a navegação continuam no Shell.
@@ -222,7 +223,7 @@ function Shell() {
     return (
       <>
         <header className="topo">
-          <span className="marca">Mestre RPG</span>
+          <span className="marca"><IconeInterface nome="simbolo" /><span>Mestre RPG</span></span>
           <nav><button className="sair" onClick={() => { window.location.href = "/"; }}>Painel</button></nav>
         </header>
         <Convite aoEntrar={() => { window.location.href = "/"; }} />
@@ -245,21 +246,21 @@ function Shell() {
   return (
     <>
       <header className="topo">
-        <span className="marca">Mestre RPG</span>
+        <span className="marca"><IconeInterface nome="simbolo" /><span>Mestre RPG</span></span>
         <nav>
-          <button className={aba === "painel" ? "ativo" : ""} onClick={() => { setAba("painel"); setCampanhaAberta(null); }}>Painel</button>
-          <button className={aba === "campanhas" ? "ativo" : ""} onClick={() => { setAba("campanhas"); setCampanhaAberta(null); }}>Campanhas</button>
-          <button className={aba === "acervo" ? "ativo" : ""} onClick={() => { setAba("acervo"); setCampanhaAberta(null); }}>Acervo</button>
+          <button className={aba === "painel" ? "ativo" : ""} onClick={() => { setAba("painel"); setCampanhaAberta(null); }}><IconeInterface nome="painel" /><span>Painel</span></button>
+          <button className={aba === "campanhas" ? "ativo" : ""} onClick={() => { setAba("campanhas"); setCampanhaAberta(null); }}><IconeInterface nome="campanhas" /><span>Campanhas</span></button>
+          <button className={aba === "acervo" ? "ativo" : ""} onClick={() => { setAba("acervo"); setCampanhaAberta(null); }}><IconeInterface nome="acervo" /><span>Acervo</span></button>
           <button className={aba === "novidades" ? "ativo" : ""} onClick={() => { setAba("novidades"); setCampanhaAberta(null); atualizarNaoLidas(); }}>
-            Novidades
+            <IconeInterface nome="novidades" /><span>Novidades</span>
             {naoLidas > 0 && <span className="contador-nao-lidas" aria-label={`${naoLidas} não lidas`}>{naoLidas}</span>}
           </button>
-          <button className={aba === "guildas" ? "ativo" : ""} onClick={() => { setAba("guildas"); setCampanhaAberta(null); }}>Guildas</button>
+          <button className={aba === "guildas" ? "ativo" : ""} onClick={() => { setAba("guildas"); setCampanhaAberta(null); }}><IconeInterface nome="guildas" /><span>Guildas</span></button>
           {usuario?.isAdmin && (
-            <button className={aba === "admin" ? "ativo" : ""} onClick={() => setAba("admin")}>Administração</button>
+            <button className={aba === "admin" ? "ativo" : ""} onClick={() => setAba("admin")}><IconeInterface nome="admin" /><span>Administração</span></button>
           )}
-          <button className={aba === "conta" ? "ativo" : ""} onClick={() => setAba("conta")}>Conta</button>
-          <button className="sair" onClick={() => void sair()}>Sair</button>
+          <button className={aba === "conta" ? "ativo" : ""} onClick={() => setAba("conta")}><IconeInterface nome="conta" /><span>Conta</span></button>
+          <button className="sair" onClick={() => void sair()}><IconeInterface nome="sair" /><span>Sair</span></button>
         </nav>
       </header>
       <main className={campanhaAberta ? "container container-largo" : "container"}>

@@ -60,7 +60,10 @@ try {
   const c = await criarCenario(BASE, BANCO, {
     campanha: "Campanha Progressão",
     jogadores: { jogador1: "jog_prog", jogador2: "jog_outro" },
-    config: { pontos: { habilitado: true, pontosIniciais: 5, pools: [{ id: "principal", nome: "Principal", pontos: 5 }], custos: {} } },
+    // pools vazio de propósito: desde que a pool Principal declarada
+    // passou a SOMAR ao orçamento (PR #151), manter {principal,5} aqui
+    // dobraria o saldo e quebraria as premissas de pool quase zerado.
+    config: { pontos: { habilitado: true, pontosIniciais: 5, pools: [], custos: {} } },
   });
   const CID = c.campId, M = c.cookieMestre;
   const J1 = c.jogadores.jogador1.cookie;

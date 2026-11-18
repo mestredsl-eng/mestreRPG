@@ -101,6 +101,8 @@ jobs:
         run: npx tsx servidor/testes/socket-rate-limit.test.ts
       - name: Testes unitários da iniciativa
         run: npm run test:iniciativa --workspace servidor
+      - name: Testes unitários da convenção D10
+        run: npm run test:d10 --workspace servidor
       - name: Testes unitários da guarda do último GM
         run: npm run test:guildas-guarda --workspace servidor
       - name: Testes de formatação das rolagens do histórico
@@ -139,6 +141,7 @@ jobs:
             teste-financeiro-integracao.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
+            teste-pool-principal-http.mjs \
             teste-novidades.mjs \
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \

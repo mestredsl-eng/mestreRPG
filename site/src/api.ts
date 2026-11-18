@@ -26,6 +26,7 @@ export interface Usuario {
   preferences?: {
     dados?: { corExterna: string; corInterna: string };
     temaMesa?: string;
+    visibilidade?: { aparencia?: boolean; bandeja?: boolean; rolagens?: boolean };
   } & Record<string, unknown>;
 }
 
@@ -167,6 +168,13 @@ export const api = {
     requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
       method: "PATCH",
       body: JSON.stringify({ temaMesa }),
+    }),
+
+  /** Preferências de visibilidade da mesa (Issue #147) — merge parcial no servidor. */
+  atualizarVisibilidadeMesa: (visibilidade: { aparencia?: boolean; bandeja?: boolean; rolagens?: boolean }) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ visibilidade }),
     }),
 
   // Administração (somente admin)
