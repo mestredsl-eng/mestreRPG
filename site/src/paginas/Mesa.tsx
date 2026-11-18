@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerE
 import {
   api,
   type Sessao, type MensagemMesa, type TesteMesa, type TurnosState,
-  type Membro, type PersonagemResumo, type CampanhaResumo,
+  type Membro, type PersonagemResumo, type CampanhaResumo, type ElementoVinculavel,
   type VttState, type TokenVtt, arquivoUrl,
 } from "../api";
 import { getSocket } from "../socket";
@@ -1076,7 +1076,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
@@ -1288,33 +1288,71 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // fallback por semântica — números "livres" (idade, contadores) não entram.
 const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
 
-function campoElegivelTeste(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
-  if (c.tipo !== "inteiro" && c.tipo !== "decimal") return false;
+// Regra compartilhada com o backend (campoElegivelParaTeste* em
+// servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback
+// semântico — moeda/item nunca são stats de teste.
+function regraElegivelTeste(c: { semantico?: string; usadoEmTestes?: boolean }): boolean {
   if (c.semantico === "moeda" || c.semantico === "item") return false;
   if (c.usadoEmTestes === true) return true;
   if (c.usadoEmTestes === false) return false;
   return SEMANTICOS_TESTAVEIS_FALLBACK.has(c.semantico ?? "");
 }
 
-interface CampoTeste { id: string; label: string; valor: number; secao: string }
+function campoElegivelTeste(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  return (c.tipo === "inteiro" || c.tipo === "decimal") && regraElegivelTeste(c);
+}
+
+// selecao_nivel elegível gera UMA OPÇÃO POR ELEMENTO selecionado — o nível
+// individual é o valor do teste; o campo inteiro nunca vira um número.
+function campoElegivelTesteNivel(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  return c.tipo === "selecao_nivel" && regraElegivelTeste(c);
+}
+
+interface CampoTeste {
+  /** Identidade da opção no <select> — campo + elemento (se houver). */
+  optId: string;
+  id: string;
+  elementoKey?: string;
+  label: string;
+  valor: number;
+  secao: string;
+}
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, personagens, aoErro }: {
-  sessionId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
   const [aberto, setAberto] = useState(true);
   const [characterId, setCharacterId] = useState("");
   const [grupos, setGrupos] = useState<GrupoTeste[]>([]);
-  const [campoId, setCampoId] = useState("");
+  const [selecao, setSelecao] = useState("");
   const [negativos, setNegativos] = useState(0);
   const [privado, setPrivado] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  // Biblioteca da campanha — resolve o NOME real dos elementos de campos
+  // selecao_nivel (regraKind); sem ela cai na chave crua como fallback.
+  const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    api.obterVinculaveis(campaignId)
+      .then((r) => { if (vivo) setBiblioteca(r.elementos ?? {}); })
+      .catch(() => { if (vivo) setBiblioteca({}); });
+    return () => { vivo = false; };
+  }, [campaignId]);
+
+  const nomeElemento = (c: { regraKind?: string; opcoes?: string[] }, key: string): string => {
+    if (c.regraKind) {
+      const el = biblioteca?.[c.regraKind]?.find((e) => e.key === key);
+      if (el?.name) return el.name;
+    }
+    return key;
+  };
 
   const escolherPersonagem = async (id: string) => {
     setCharacterId(id);
-    setCampoId("");
+    setSelecao("");
     setGrupos([]);
     if (!id) return;
     setCarregando(true);
@@ -1322,15 +1360,36 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
       const det = await api.obterPersonagem(id);
       const valores = det.ficha?.campos ?? {};
       const porSecao = new Map<string, CampoTeste[]>();
+      const empurrar = (c: CampoTeste, titulo: string) => {
+        const lista = porSecao.get(titulo) ?? [];
+        lista.push(c);
+        porSecao.set(titulo, lista);
+      };
       for (const s of det.ficha?.estrutura?.secoes ?? []) {
+        const titulo = s.titulo || "Outros campos";
         for (const c of s.campos ?? []) {
-          if (!campoElegivelTeste(c)) continue;
           const v = valores[c.id];
-          if (typeof v === "number" && Number.isFinite(v)) {
-            const titulo = s.titulo || "Outros campos";
-            const lista = porSecao.get(titulo) ?? [];
-            lista.push({ id: c.id, label: c.label, valor: v, secao: titulo });
-            porSecao.set(titulo, lista);
+          if (campoElegivelTeste(c)) {
+            // campo escalar: o valor persistido precisa ser número finito
+            if (typeof v === "number" && Number.isFinite(v)) {
+              empurrar({ optId: JSON.stringify([c.id]), id: c.id, label: c.label, valor: v, secao: titulo }, titulo);
+            }
+            continue;
+          }
+          if (campoElegivelTesteNivel(c)) {
+            // selecao_nivel: cada elemento com nivel >= 1 vira uma opção
+            // própria — o nível individual é o valor do teste.
+            if (!Array.isArray(v)) continue;
+            for (const item of v as { key?: unknown; nivel?: unknown }[]) {
+              if (!item || typeof item !== "object") continue;
+              const nivel = typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : 0;
+              if (typeof item.key !== "string" || !item.key || nivel < 1) continue;
+              const nome = nomeElemento(c, item.key);
+              empurrar({
+                optId: JSON.stringify([c.id, item.key]), id: c.id, elementoKey: item.key,
+                label: `${c.label} — ${nome}`, valor: nivel, secao: titulo,
+              }, titulo);
+            }
           }
         }
       }
@@ -1341,7 +1400,7 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 
   const campos = grupos.flatMap((g) => g.campos);
   if (personagens.length === 0) return null;
-  const campoSel = campos.find((c) => c.id === campoId);
+  const campoSel = campos.find((c) => c.optId === selecao);
   const efetivos = campoSel ? Math.max(0, Math.round(campoSel.valor) - Math.max(0, Math.round(negativos) || 0)) : null;
 
   return (
@@ -1355,7 +1414,9 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
           e.preventDefault();
           if (!campoSel) { aoErro("Escolha a habilidade/atributo do personagem"); return; }
           getSocket().emit("mesa:teste:pedir", {
-            sessionId, characterId, campoId: campoSel.id, rotulo: campoSel.label,
+            sessionId, characterId, campoId: campoSel.id,
+            ...(campoSel.elementoKey ? { elementoKey: campoSel.elementoKey } : {}),
+            rotulo: campoSel.label,
             dadosLados: 10, malus: Math.max(0, Math.round(negativos) || 0),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
@@ -1375,20 +1436,20 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             </select>
           </label>
           <label>Habilidade/atributo (define os dados positivos)
-            <select value={campoId} onChange={(e) => setCampoId(e.target.value)} required disabled={!characterId || carregando}>
+            <select value={selecao} onChange={(e) => setSelecao(e.target.value)} required disabled={!characterId || carregando}>
               <option value="">{carregando ? "Carregando ficha…" : "Escolher…"}</option>
               {grupos.map((g) => (
                 <optgroup key={g.titulo} label={g.titulo}>
-                  {g.campos.map((c) => <option key={c.id} value={c.id}>{c.label} ({Math.round(c.valor)})</option>)}
+                  {g.campos.map((c) => <option key={c.optId} value={c.optId}>{c.label} ({Math.round(c.valor)})</option>)}
                 </optgroup>
               ))}
             </select>
           </label>
           {campos.length === 0 && characterId && !carregando && (
             <p className="meta">
-              Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) das seções
-              Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como "Usado em testes" no editor de
-              fichas — podem gerar dados. Itens, moedas e contadores não entram no desafio.
+              Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) ou elementos
+              de seleções com nível das seções Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como
+              "Usado em testes" no editor de fichas — podem gerar dados. Itens, moedas e contadores não entram no desafio.
             </p>
           )}
           {campoSel && (
