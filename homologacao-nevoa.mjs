@@ -1382,9 +1382,23 @@ try {
   };
   // nomes renderizados na 1ª coluna das decisões recentes, na ordem
   const nomesDecisoes = () => pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Decisões recentes" }) }).locator(".tabela tbody tr td:first-child").allInnerTexts();
-  await new Promise((r) => setTimeout(r, 1200)); // eventos mesa:teste/decisao assentaram
-  // baseline: lista do jogador ainda vazia (personagem criado pós-carga)
-  let nomes = await nomesDecisoes();
+  // espera as DUAS decisões renderizarem de verdade — os eventos
+  // mesa:teste/decisao chegam por socket e o re-render é assíncrono;
+  // o assert abaixo continua exigindo ≥2 linhas, só que sem corrida
+  await pgJ.waitForFunction(() => {
+    const sec = [...document.querySelectorAll("section.cartao")]
+      .find((s) => /Decisões recentes/i.test(s.querySelector("h3")?.textContent ?? ""));
+    return !!sec && sec.querySelectorAll(".tabela tbody tr").length >= 2;
+  }, null, { timeout: 20000 }).catch(() => {});
+  // baseline: lista do jogador ainda vazia (personagem criado pós-carga).
+  // segunda camada de espera via locator (polling até 10s) — cobre o caso
+  // do waitForFunction estourar o timeout em runner lento sem falhar aqui
+  let nomes = [];
+  for (let i = 0; i < 100; i++) {
+    nomes = await nomesDecisoes();
+    if (nomes.length >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   t("baseline jogador sem lista: ambos os testes resolvem '?’",
     nomes.length >= 2 && nomes.every((n) => n.trim() === "?"), JSON.stringify(nomes));
 

@@ -318,6 +318,10 @@ export const api = {
   desarquivarPersonagem: (charId: string) =>
     requisicao<{ ok: boolean; status?: string }>(`/characters/${charId}/desarquivar`, { method: "POST" }),
 
+  // Painel de defeitos da Mesa — somente mestre (GET /campaigns/:cid/defeitos)
+  listarDefeitos: (cid: string) =>
+    requisicao<{ personagens: PersonagemComDefeitos[] }>(`/campaigns/${cid}/defeitos`),
+
   // Regras da campanha (Etapa 5)
   obterRegras: (cid: string) =>
     requisicao<RegrasCampanha>(`/campaigns/${cid}/regras`),
@@ -683,6 +687,22 @@ export interface PersonagemResumo {
   retrato?: RetratoPersonagem | null;
   arquivadoDe?: string | null;
   updatedAt: string;
+}
+
+export interface DefeitoPainel {
+  kind: string;
+  key: string;
+  nome: string;
+  nivel: number;
+  descricao: string | null;
+}
+
+export interface PersonagemComDefeitos {
+  id: string;
+  nome: string;
+  jogador: string;
+  ehNpc: boolean;
+  defeitos: DefeitoPainel[];
 }
 
 export interface PoolPontos {
