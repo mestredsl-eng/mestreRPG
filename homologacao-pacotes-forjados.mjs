@@ -179,6 +179,34 @@ try {
   t("M/mestre: mestre exibida", (await nChat(pgM, "PF2-msg-mestre")) === 1);
   t("M/mestre: publica+privado tratada como privada (exibida ao mestre)", (await nChat(pgM, "PF2-msg-pub-priv")) === 1);
 
+  // ---------- M2. sessionId explícito (auditoria #149) ----------
+  // Contrato do handler: sessionId null é a ÚNICA forma legítima sem
+  // sessão (mensagem de campanha); UUID só vale quando é ESTA sessão.
+  // Ausente, vazio, inválido ou UUID de outra sessão → descartado
+  // ANTES dos filtros de visibilidade/conteúdo (fail-closed).
+  const sidOutra = crypto.randomUUID();
+  const casosSid = [
+    ["ausente", undefined], ["vazio", ""], ["invalido", "nao-e-uuid"], ["outra-sessao", sidOutra],
+  ];
+  for (const [pg] of [[pgA], [pgB], [pgE]]) {
+    for (const [tag, sv] of casosSid) {
+      const payload = { id: crypto.randomUUID(), kind: "texto", content: `PF2-sid-${tag}`, authorId: ids.jb, visibility: "publica", createdAt: new Date().toISOString() };
+      if (sv !== undefined) payload.sessionId = sv;
+      await injetar(pg, "mesa:mensagem", payload);
+    }
+  }
+  // mensagem de CAMPANHA legítima (sessionId null) → visível para todos
+  for (const pg of [pgA, pgB, pgE]) {
+    await injetar(pg, "mesa:mensagem", { id: crypto.randomUUID(), sessionId: null, kind: "texto", content: "PF2-msg-campanha-ok", authorId: ids.jb, visibility: "publica", createdAt: new Date().toISOString() });
+  }
+  await dormir(400);
+  for (const [pg, tag] of [[pgA, "A"], [pgB, "B"], [pgE, "esp"]]) {
+    for (const [nome] of casosSid) {
+      t(`M/${tag}: sessionId ${nome} rejeitado`, (await nChat(pg, `PF2-sid-${nome}`)) === 0);
+    }
+    t(`M/${tag}: mensagem de campanha (sessionId null) exibida`, (await nChat(pg, "PF2-msg-campanha-ok")) === 1);
+  }
+
   // ---------- T. Testes forjados ----------
   sec("T. Testes forjados — alvo oculto e propriedade");
   // mestre cria teste PRIVADO real do personagem A (fluxo legítimo)
@@ -230,7 +258,7 @@ try {
   const outroTeste = { A: { testId: privTB, characterId: charB }, B: { testId: idTestePrivA, characterId: charA }, esp: { testId: privTB, characterId: charB } };
   for (const [pg, tag] of [[pgA, "A"], [pgB, "B"], [pgE, "esp"]]) {
     const ot = outroTeste[tag];
-    const rollBase = { id: crypto.randomUUID(), testId: ot.testId, characterId: ot.characterId, dados: [7], total: 7, lados: 20, count: 1, rolador: "PF Rolador", visibility: "privada", userId: ids.mestre, createdAt: new Date().toISOString() };
+    const rollBase = { id: crypto.randomUUID(), sessionId: sid, testId: ot.testId, characterId: ot.characterId, dados: [7], total: 7, lados: 20, count: 1, rolador: "PF Rolador", visibility: "privada", userId: ids.mestre, createdAt: new Date().toISOString() };
     await injetar(pg, "mesa:rolagem", { ...rollBase, motivo: "PF2-roll-priv-outro" });
     // userId ADULTERADO: pacote diz que o próprio usuário rolei —
     // para rolagem DE TESTE isso não autoriza (só dono/mestre)
@@ -256,7 +284,7 @@ try {
   const outroDec = { A: { testId: privTB, characterId: charB }, B: { testId: idTestePrivA, characterId: charA }, esp: { testId: privTB, characterId: charB } };
   for (const [pg, tag] of [[pgA, "A"], [pgB, "B"], [pgE, "esp"]]) {
     const od = outroDec[tag];
-    const decBase = { testId: od.testId, characterId: od.characterId, characterName: "X", outcome: "sucesso", visibility: "privada", nota: "PF2-nota-priv-outro", decididoPor: "Mestre", createdAt: new Date().toISOString() };
+    const decBase = { sessionId: sid, testId: od.testId, characterId: od.characterId, characterName: "X", outcome: "sucesso", visibility: "privada", nota: "PF2-nota-priv-outro", decididoPor: "Mestre", createdAt: new Date().toISOString() };
     await injetar(pg, "mesa:decisao", decBase);
     // proprietário adulterado: characterId trocado
     await injetar(pg, "mesa:decisao", { ...decBase, characterId: tag === "B" ? charB : charA, nota: "PF2-nota-adul" });
@@ -275,7 +303,7 @@ try {
   }
   // decisão pública legítima aparece
   for (const pg of [pgA, pgB, pgE]) {
-    await injetar(pg, "mesa:decisao", { testId: pubT, characterId: charB, characterName: "PersB", outcome: "parcial", nota: "PF2-nota-publica-ok", visibility: "publica", decididoPor: "Mestre", createdAt: new Date().toISOString() });
+    await injetar(pg, "mesa:decisao", { sessionId: sid, testId: pubT, characterId: charB, characterName: "PersB", outcome: "parcial", nota: "PF2-nota-publica-ok", visibility: "publica", decididoPor: "Mestre", createdAt: new Date().toISOString() });
   }
   await dormir(400);
   for (const [pg, tag] of [[pgA, "A"], [pgB, "B"], [pgE, "esp"]]) {
@@ -353,8 +381,8 @@ try {
     // classificar como privada deixava o dono passar como "rolador"
     await injetar(pgA, "mesa:rolagem", { id: crypto.randomUUID(), sessionId: sid, characterId: charA, userId: ids.ja, rolador: "PF3", grupos: [{ lados: 20, resultados: [3] }], total: 3, motivo: marker, visibility: vis, privado: true, createdAt: new Date().toISOString() });
     // mesa:decisao — com testId conhecido e sem testId
-    await injetar(pgA, "mesa:decisao", { testId: pubT, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
-    await injetar(pgA, "mesa:decisao", { testId: undefined, characterId: charA, outcome: "falha", nota: `${marker}-dec-sem-id`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+    await injetar(pgA, "mesa:decisao", { sessionId: sid, testId: pubT, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+    await injetar(pgA, "mesa:decisao", { sessionId: sid, testId: undefined, characterId: charA, outcome: "falha", nota: `${marker}-dec-sem-id`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
   }
   await dormir(500);
   for (const [vis, marker] of reservado) {
@@ -371,7 +399,7 @@ try {
     // pendentes) — usa um SEGUNDO teste forjado para não esconder o
     // card cujo rótulo está sendo verificado
     await injetar(pgM, "mesa:teste", { id: `forge-d-${marker}`, sessionId: sid, characterId: charB, characterName: "PersB", rotulo: `${marker}-m-dec-t`, status: "pendente", visibility: vis, privado: true, createdAt: new Date().toISOString() });
-    await injetar(pgM, "mesa:decisao", { testId: `forge-d-${marker}`, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-m-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
+    await injetar(pgM, "mesa:decisao", { sessionId: sid, testId: `forge-d-${marker}`, characterId: charB, characterName: "PersB", outcome: "sucesso", nota: `${marker}-m-dec`, visibility: vis, privado: true, decididoPor: "M", createdAt: new Date().toISOString() });
   }
   await dormir(500);
   for (const [vis, marker] of reservado) {
