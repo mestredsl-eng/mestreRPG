@@ -306,13 +306,42 @@ const OPCOES_VISIBILIDADE: { chave: keyof VisibilidadeMesa; rotulo: string; desc
   { chave: "rolagens", rotulo: "Rolagens", descricao: "histórico de rolagens da mesa" },
 ];
 
+/** Cartão "Exibição" — preferências individuais de visibilidade.
+ *  Separado dos lançadores para que espectadores (que não veem o
+ *  PainelDados) também possam ajustar as próprias preferências
+ *  (auditoria #149). Os toggles sempre ficam visíveis: esconder uma
+ *  seção nunca impede de reexibi-la, e nada aqui afeta outros usuários. */
+export function CartaoExibicao({ prefsDados }: { prefsDados: PreferenciasDados }) {
+  const { visibilidade, salvarVisibilidade } = prefsDados;
+  return (
+    <section className="cartao cores-cartao">
+      <h3>Exibição</h3>
+      <div className="visibilidade-mesa">
+        {OPCOES_VISIBILIDADE.map((op) => (
+          <label key={op.chave} className="check">
+            <input
+              type="checkbox"
+              checked={visibilidade[op.chave]}
+              onChange={(e) => void salvarVisibilidade({ [op.chave]: e.target.checked })}
+            />
+            <span>
+              <strong>{op.rotulo}</strong>
+              <span className="meta"> — {op.descricao}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre, prefsDados, aoPendencia }: {
   sessionId: string; aoErro: (e: string | null) => void; minimoPadrao: number; souMestre: boolean;
   prefsDados: PreferenciasDados;
   aoPendencia?: (dados: ItemDadoMesa[] | null, requestId: string) => void;
 }) {
   const [aba, setAba] = useState<"d10" | "livre">("d10");
-  const { prefs, temaMesa, visibilidade, salvar, salvarTema, salvarVisibilidade } = prefsDados;
+  const { prefs, temaMesa, visibilidade, salvar, salvarTema } = prefsDados;
   return (
     <div className="painel-dados">
       <div className="abas-dados" role="tablist">
@@ -325,24 +354,7 @@ export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre
       {/* Exibição: toggles sempre visíveis — esconder uma seção nunca
           impede de reexibi-la (Issue #147). Só afeta a apresentação
           do próprio usuário; rolagens e resultados seguem íntegros. */}
-      <section className="cartao cores-cartao">
-        <h3>Exibição</h3>
-        <div className="visibilidade-mesa">
-          {OPCOES_VISIBILIDADE.map((op) => (
-            <label key={op.chave} className="check">
-              <input
-                type="checkbox"
-                checked={visibilidade[op.chave]}
-                onChange={(e) => void salvarVisibilidade({ [op.chave]: e.target.checked })}
-              />
-              <span>
-                <strong>{op.rotulo}</strong>
-                <span className="meta"> — {op.descricao}</span>
-              </span>
-            </label>
-          ))}
-        </div>
-      </section>
+      <CartaoExibicao prefsDados={prefsDados} />
       {visibilidade.aparencia && (
         <section className="cartao cores-cartao">
           <h3>Aparência dos dados</h3>

@@ -7,7 +7,7 @@ import {
 } from "../api";
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
-import PainelDados, { usePreferenciasDados } from "../Dados";
+import PainelDados, { CartaoExibicao, usePreferenciasDados } from "../Dados";
 import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
 import MesaDadosArea from "../MesaDadosArea";
 import type { ItemDadoMesa } from "../MesaDados3D";
@@ -34,6 +34,10 @@ interface RolagemMesa {
   solicitante?: string | null;
   personagem?: string | null;
   campo?: Record<string, string> | null;
+  /** Rolagem livre (sem teste de ficha) — base do rótulo "Mão livre". */
+  livre?: boolean;
+  /** "dano" quando o lançamento livre foi no modo dano. */
+  modo?: string | null;
   ts: number;
   vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null;
   dadosOriginais?: number;
@@ -59,6 +63,40 @@ function itensDoRol(r: RolagemMesa): ItemDadoMesa[] {
       return item;
     }),
   );
+}
+
+/** Categoria/tipo do campo em texto legível — derivada APENAS dos
+ *  metadados que o servidor sanitizou da estrutura validada da ficha
+ *  (campoDoSkillRef). Ordem: categoria livre → semantico → tipo;
+ *  valores internos desconhecidos nunca aparecem crus. */
+const SEMANTICO_CAMPO_ROTULO: Record<string, string> = {
+  atributo: "Atributo", habilidade: "Habilidade", conhecimento: "Conhecimento",
+  profissao: "Profissão", especializacao: "Especialização", poder: "Poder",
+  vantagem: "Vantagem", defeito: "Defeito", talento: "Talento",
+};
+const TIPO_CAMPO_ROTULO: Record<string, string> = {
+  texto: "Texto", texto_longo: "Texto", inteiro: "Número", decimal: "Número",
+  moeda: "Valor", data: "Data", checkbox: "Marcação", selecao_unica: "Opção",
+  selecao_multipla: "Opções", selecao_nivel: "Nível", lista: "Lista",
+  tabela: "Registro", calculado: "Calculado", referencia: "Referência",
+};
+function categoriaLegivelCampo(campo?: Record<string, string> | null): string | null {
+  if (!campo) return null;
+  const categoria = campo.categoria?.trim();
+  if (categoria) return categoria;
+  const semantico = campo.semantico ? SEMANTICO_CAMPO_ROTULO[campo.semantico] : undefined;
+  if (semantico) return semantico;
+  const tipo = campo.tipo ? TIPO_CAMPO_ROTULO[campo.tipo] : undefined;
+  return tipo ?? null;
+}
+
+/** Rótulo da finalidade no histórico: dano mantém "Dano"; rolagem livre
+ *  sem ficha é "Mão livre" (com motivo quando informado); teste de ficha
+ *  se identifica por personagem/campo, não por este rótulo. */
+function rotuloMotivoRolagem(r: RolagemMesa): string {
+  if (r.modo === "dano") return r.motivo ?? "Dano";
+  if (r.livre) return `Mão livre${r.motivo ? ` · ${r.motivo}` : ""}`;
+  return r.motivo ?? "";
 }
 
 const LADOS = [4, 6, 8, 10, 20] as const;
@@ -431,12 +469,20 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       return flagPrivado(flagPriv) ? "privada" : "publica";
     };
     const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
+      // Isolamento por sessão (auditoria #149): mensagens privadas chegam
+      // por usuario:<id> — uma aba de OUTRA sessão do mesmo usuário não
+      // pode exibi-las. Mensagens de campanha (sessionId nulo) passam.
+      if (m.sessionId && m.sessionId !== sessao.id) return;
       if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
     const aoTeste = (t: TesteMesa & { alvo?: number | null; dados?: { lados: number; count: number }; pool?: { positivos: number; negativos: number; dadosLados: number }; privado?: boolean; visibility?: string }) => {
       // teste: só "publica" é pública e só "privada" chega ao dono;
       // mestre/secreta/desconhecida são exclusivas de mestres atuais —
+      // Isolamento por sessão (auditoria #149): eventos privados chegam
+      // por usuario:<id> — um listener de OUTRA sessão do mesmo usuário
+      // não pode exibir teste que não é dela. Fail-closed.
+      if ((t as { sessionId?: string }).sessionId !== sessao.id) return;
       // `privado:true` contraditório é tratado como privado
       const classe = classeEventoTeste((t as { visibility?: string }).visibility, (t as { privado?: unknown }).privado);
       if (classe === "mestre" && !souMestreAtual()) return;
@@ -446,7 +492,12 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         setRolagens((r) => [...r, { id: `aviso-${t.id}`, dados: [], lados: [t.dados?.lados ?? 20], total: null, motivo: (t as { rotulo?: string }).rotulo ?? "Teste solicitado", autor: t.requestedBy, ts: Date.now() }]);
       }
     };
-    const aoRolagem = (r: { id: string; testId?: string; characterId?: string | null; characterName?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; papel?: string | null; solicitante?: string | null; campo?: Record<string, string> | null; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos?: number; negativos?: number; minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: { valor: number; face: number; classe: ClasseD10; sucesso: boolean }[] } | null }) => {
+    const aoRolagem = (r: { id: string; sessionId?: string; testId?: string; characterId?: string | null; characterName?: string | null; dados?: number[]; grupos?: { lados: number; resultados: number[] }[]; total: number; lados?: number; count?: number; rolador?: string; papel?: string | null; solicitante?: string | null; campo?: Record<string, string> | null; motivo?: string | null; visibility?: string; privado?: unknown; userId?: string; alvo?: number | null; createdAt?: string; vitalidade?: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null; dadosOriginais?: number; d10?: { positivos?: number; negativos?: number; minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: { valor: number; face: number; classe: ClasseD10; sucesso: boolean }[] } | null; modo?: string | null }) => {
+      // Isolamento por sessão (auditoria #149): o usuário pode ter duas
+      // sessões abertas — eventos privados chegam por usuario:<id> e um
+      // listener de OUTRA sessão não pode exibir rolagem que não é dela.
+      // Fail-closed: evento sem sessionId também é ignorado.
+      if (r.sessionId !== sessao.id) return;
       // rolagem: mesma classificação fail-closed — mestre/secreta/
       // desconhecida só para mestre atual; privada segue a regra de
       // dono/teste conhecido/rolador livre
@@ -471,11 +522,13 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         id: r.id, dados: grupos.map((g) => g.resultados), lados: grupos.map((g) => g.lados),
         total: r.total, motivo: r.motivo ?? null, autor: r.rolador, ts: Date.now(),
         papel: r.papel ?? null, solicitante: r.solicitante ?? null,
-        personagem: r.characterName ?? null, campo: r.campo ?? null,
+        personagem: r.characterName ?? null, campo: r.campo ?? null, livre: !r.testId, modo: r.modo ?? null,
         vitalidade: r.vitalidade ?? null, dadosOriginais: r.dadosOriginais, d10: r.d10 ?? null,
       }]);
     };
-    const aoDecisao = (d: { testId: string; characterId?: string | null; outcome: string; nota?: string | null; characterName?: string; visibility?: string; privado?: unknown }) => {
+    const aoDecisao = (d: { testId: string; sessionId?: string; characterId?: string | null; outcome: string; nota?: string | null; characterName?: string; visibility?: string; privado?: unknown }) => {
+      // mesmo isolamento por sessão do aoRolagem/aoTeste (auditoria #149)
+      if (d.sessionId !== sessao.id) return;
       // decisão: mesma classificação fail-closed — mestre/secreta/
       // desconhecida só para mestre atual; privada exige teste conhecido
       // e dono atual do personagem (ehEu do estado da API)
@@ -790,6 +843,10 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       souMestre={ehMestreAtual} prefsDados={prefsDados} aoPendencia={aoPendencia}
     />
   ) : null;
+  // Espectadores (e sessões encerradas) não recebem lançadores, mas as
+  // preferências de exibição são INDIVIDUAIS — cada usuário ajusta as
+  // próprias sem ganhar controle de rolagem (auditoria #149).
+  const exibicaoEl = !painelDadosEl ? <CartaoExibicao prefsDados={prefsDados} /> : null;
 
   // entrada rejeitada: não apresenta a visão antiga como atual —
   // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
@@ -1034,10 +1091,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           {/* A área permanece montada com a bandeja oculta (só os
               controles ficam) — alternar a preferência não remonta o
               painel nem perde o estado dos formulários (Issue #147). */}
-          {(visibilidade.bandeja || painelDadosEl) && (
+          {(visibilidade.bandeja || painelDadosEl || exibicaoEl) && (
             <MesaDadosArea ariaLabel="Mesa de dados 3D compartilhada">
               {visibilidade.bandeja && <MesaDados3D dados={dadosQuadro} semente={sementeQuadro} />}
               {painelDadosEl}
+              {exibicaoEl}
             </MesaDadosArea>
           )}
 
@@ -1057,13 +1115,13 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                   <p className="meta">
                     {r.autor ?? ""}
                     {r.papel ? ` (${r.papel === "mestre" ? "Mestre" : r.papel === "jogador" ? "Jogador" : r.papel})` : ""}
-                    {r.motivo ? ` — ${r.motivo}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}
+                    {rotuloMotivoRolagem(r) ? ` — ${rotuloMotivoRolagem(r)}` : ""} · {new Date(r.ts).toLocaleTimeString("pt-BR")}
                   </p>
                   {(r.personagem || r.campo?.rotulo || (r.solicitante && r.solicitante !== r.autor)) && (
                     <p className="meta">
                       {r.personagem ? `Personagem: ${r.personagem}` : ""}
                       {r.campo?.rotulo ? `${r.personagem ? " · " : ""}Campo: ${r.campo.rotulo}` : ""}
-                      {r.campo?.categoria ? ` (${r.campo.categoria})` : ""}
+                      {categoriaLegivelCampo(r.campo) ? ` (${categoriaLegivelCampo(r.campo)})` : ""}
                       {r.campo?.secao ? ` · ${r.campo.secao}` : ""}
                       {r.solicitante && r.solicitante !== r.autor ? `${r.personagem || r.campo?.rotulo ? " · " : ""}Solicitado por: ${r.solicitante}` : ""}
                     </p>
