@@ -188,7 +188,10 @@ export default function Mesa({ campaignId, campanha }: Props) {
   }, [campaignId]);
 
   if (ativa) {
-    return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
+    // A identidade da sessão é também a identidade da view: a troca desmonta
+    // a instância anterior e impede respostas HTTP atrasadas de repovoarem o
+    // estado da nova sessão (inclusive mensagens privadas do histórico).
+    return <MesaView key={ativa.id} campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
   }
 
   return (
