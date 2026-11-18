@@ -162,6 +162,44 @@ describe("distanciaReal", () => {
     assert.equal(distanciaReal(10, { unidade: "", distanciaReferencia: 100, valorReferencia: 1 }).ok, false);
     assert.equal(distanciaReal(10, { unidade: "m", distanciaReferencia: 0, valorReferencia: 1 }).ok, false);
   });
+  it("estabilidade numérica: overflow intermediário da divisão", () => {
+    // (1 / MIN) * MIN estouraria para Infinity; o resultado real é 1.
+    const r = distanciaReal(1, { unidade: "m", distanciaReferencia: Number.MIN_VALUE, valorReferencia: Number.MIN_VALUE });
+    assert.ok(r.ok, "esperava sucesso finito");
+    assert.equal(r.valor, 1);
+  });
+  it("estabilidade numérica: underflow intermediário da divisão", () => {
+    // (MIN / MAX) * MAX zeraria por underflow; o resultado real é MIN.
+    const r = distanciaReal(Number.MIN_VALUE, { unidade: "m", distanciaReferencia: Number.MAX_VALUE, valorReferencia: Number.MAX_VALUE });
+    assert.ok(r.ok, "esperava sucesso finito");
+    assert.equal(r.valor, Number.MIN_VALUE);
+  });
+  it("distância zero com referências extremas permanece zero, sem NaN", () => {
+    for (const cal2 of [
+      { unidade: "m", distanciaReferencia: Number.MIN_VALUE, valorReferencia: Number.MAX_VALUE },
+      { unidade: "m", distanciaReferencia: Number.MAX_VALUE, valorReferencia: Number.MIN_VALUE },
+      { unidade: "m", distanciaReferencia: Number.MIN_VALUE, valorReferencia: Number.MIN_VALUE },
+    ]) {
+      const r = distanciaReal(0, cal2);
+      assert.ok(r.ok, "esperava sucesso");
+      assert.equal(r.valor, 0);
+    }
+  });
+  it("caminho primário preservado: valor finito grande sem fallback", () => {
+    // (1e308 / 2) * 2 = 1e308 finito — não deve acionar a ordem alternativa.
+    const r = distanciaReal(1e308, { unidade: "m", distanciaReferencia: 2, valorReferencia: 2 });
+    assert.ok(r.ok);
+    assert.equal(r.valor, 1e308);
+    // valor comum continua idêntico ao comportamento anterior
+    const comum = distanciaReal(200, { unidade: "m", distanciaReferencia: 100, valorReferencia: 3 });
+    assert.ok(comum.ok);
+    assert.equal(comum.valor, 6);
+  });
+  it("overflow real do resultado final continua erro explícito", () => {
+    const r = distanciaReal(Number.MAX_VALUE, { unidade: "m", distanciaReferencia: 1, valorReferencia: 2 });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.match(r.erro, /intervalo representável/);
+  });
 });
 
 describe("medirRegua", () => {

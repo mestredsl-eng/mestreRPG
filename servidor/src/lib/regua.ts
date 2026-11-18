@@ -115,9 +115,18 @@ export function distanciaReal(dMapa: number, calibracao: CalibracaoRegua): Resul
   if (typeof dMapa !== "number" || !Number.isFinite(dMapa) || dMapa < 0) {
     return { ok: false, erro: "Distância em unidades do mapa inválida" };
   }
+  // Caminho primário: (dMapa / ref) * val. A divisão intermediária pode
+  // estourar (ref minúscula) ou zerar por underflow (ref gigante) mesmo
+  // quando o resultado final é representável. Nesses casos — resultado
+  // não finito ou zero espúrio com dMapa > 0 — tenta a ordem alternativa
+  // dMapa * (val / ref), que distribui os fatores de forma diferente.
   const real = (dMapa / calibracao.distanciaReferencia) * calibracao.valorReferencia;
-  if (!Number.isFinite(real)) return { ok: false, erro: "Distância convertida fora do intervalo representável" };
-  return { ok: true, valor: real };
+  if (Number.isFinite(real) && !(real === 0 && dMapa > 0)) {
+    return { ok: true, valor: real };
+  }
+  const alternativo = dMapa * (calibracao.valorReferencia / calibracao.distanciaReferencia);
+  if (Number.isFinite(alternativo)) return { ok: true, valor: alternativo };
+  return { ok: false, erro: "Distância convertida fora do intervalo representável" };
 }
 
 export interface MedidaRegua {
