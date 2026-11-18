@@ -606,8 +606,16 @@ export function pontosEfetivos(estrutura: EstruturaFicha, regras: RegrasCampanha
     // Garante um pool "principal" implícito: pontos iniciais/extras são o
     // orçamento geral do personagem e NÃO devem cair numa reserva de
     // categoria (vantagens/defeitos são reservas independentes — spec §5.3).
+    // Preserva o orçamento explicitamente configurado na pool Principal.
+    // Pontos iniciais, extras e bônus individual são adicionais a esse valor;
+    // substituir a pool por zero fazia o servidor rejeitar fichas válidas.
+    const poolPrincipal = cfg.pools.find((p) => p.id === "principal");
     const pools = [
-      { id: "principal", nome: "Principal", pontos: 0 },
+      {
+        id: "principal",
+        nome: poolPrincipal?.nome ?? "Principal",
+        pontos: poolPrincipal?.pontos ?? 0,
+      },
       ...cfg.pools.filter((p) => p.id !== "principal"),
     ];
     return {

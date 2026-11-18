@@ -290,6 +290,17 @@ const preferenciasSchema = z
       .strict()
       .optional(),
     temaMesa: z.enum(TEMAS_MESA).optional(),
+    // Visibilidade individual de seções da mesa (Issue #147): cada opção
+    // é independente e só afeta a apresentação do próprio usuário.
+    // Contas antigas sem o objeto mantêm tudo visível (default true).
+    visibilidade: z
+      .object({
+        aparencia: z.boolean().optional(),
+        bandeja: z.boolean().optional(),
+        rolagens: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
 
@@ -307,6 +318,10 @@ authRouter.patch("/preferences", requireAuth, async (req, res) => {
   }
   const atuais = (user.preferences ?? {}) as Record<string, unknown>;
   const novas = { ...atuais, ...body.data } as Record<string, unknown>;
+  // visibilidade mescla por chave: PATCH parcial não apaga toggles irmãos
+  if (body.data.visibilidade && typeof atuais.visibilidade === "object" && atuais.visibilidade !== null) {
+    novas.visibilidade = { ...(atuais.visibilidade as Record<string, unknown>), ...body.data.visibilidade };
+  }
   await db
     .update(users)
     .set({ preferences: novas, updatedAt: new Date() })
