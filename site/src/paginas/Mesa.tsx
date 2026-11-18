@@ -8,6 +8,7 @@ import {
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
 import PainelDados, { CartaoExibicao, usePreferenciasDados } from "../Dados";
+import PainelDefeitos from "../PainelDefeitos";
 import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
 import MesaDadosArea from "../MesaDadosArea";
 import type { ItemDadoMesa } from "../MesaDados3D";
@@ -1082,6 +1083,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           {/* teste manual genérico (mestre) — opção secundária */}
           {ehMestreAtual && (
             <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
+          )}
+
+          {/* defeitos dos personagens (somente mestre — consulta) */}
+          {ehMestreAtual && (
+            <PainelDefeitos campaignId={campaignId} />
           )}
 
           {/* Tabuleiro 3D compartilhado + lançadores: os controles ficam
