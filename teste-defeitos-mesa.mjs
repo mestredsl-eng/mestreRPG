@@ -252,6 +252,19 @@ try {
   const cookieFora = sessao(BANCO, uidFora);
   const rFora = await defeitos(CID, cookieFora);
   t("não-membro recebe 403", rFora.status === 403, `status=${rFora.status}`);
+
+  // ---------- GET é consulta pura: não cria ruleset ----------
+  sec("Campanha sem ruleset ativo");
+  const camp2 = await req(BASE, "POST", "/campaigns", { cookie: M, body: { name: "Campanha Sem Regras" } });
+  const CID2 = camp2.json?.campanha?.id;
+  t("segunda campanha criada", camp2.status === 201 && !!CID2, `status=${camp2.status}`);
+  const rsAntes = abrirDb(BANCO).prepare("select count(*) n from rule_sets where campaign_id=?").get(CID2)?.n;
+  const rVazia = await defeitos(CID2, M);
+  t("GET /defeitos sem ruleset retorna 200 com lista vazia",
+    rVazia.status === 200 && Array.isArray(rVazia.json?.personagens), `status=${rVazia.status}`);
+  const rsDepois = abrirDb(BANCO).prepare("select count(*) n from rule_sets where campaign_id=?").get(CID2)?.n;
+  t("GET /defeitos NÃO criou rule_sets (antes=" + rsAntes + ", depois=" + rsDepois + ")",
+    (rsAntes ?? 0) === 0 && (rsDepois ?? 0) === 0, `antes=${rsAntes} depois=${rsDepois}`);
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);

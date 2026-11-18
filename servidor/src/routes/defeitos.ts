@@ -4,7 +4,7 @@ import { getDb } from "../db/index.js";
 import { characters, memberships, sheetVersions, users } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel } from "../lib/permissoes.js";
-import { carregarRegras } from "../lib/regras.js";
+import { carregarRegrasSincrono, configRegrasSchema, type RegrasCampanha } from "../lib/regras.js";
 import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
 import { defeitosDaFicha, type DefeitoPainel } from "../lib/defeitos.js";
 
@@ -36,7 +36,15 @@ defeitosRouter.get("/", requirePapel("mestre"), async (req, res) => {
     .where(and(eq(characters.campaignId, campaignId), ne(characters.status, "arquivado")))
     .orderBy(characters.name);
 
-  const regras = await carregarRegras(campaignId);
+  // GET é consulta pura: NUNCA cria ruleset. Campanha sem ruleset ativo
+  // devolve o painel com regras vazias (nenhum defeito resolvível) em
+  // vez de materializar a biblioteca padrão como efeito colateral.
+  const regras: RegrasCampanha = carregarRegrasSincrono(db, campaignId) ?? {
+    ruleSetId: null,
+    config: configRegrasSchema.parse({}),
+    elementos: new Map(),
+    porKind: new Map(),
+  };
 
   // estruturas por templateVersionId — personagens costumam dividir a
   // mesma versão publicada, então o cache evita releituras repetidas
