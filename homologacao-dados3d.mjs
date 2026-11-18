@@ -937,7 +937,11 @@ try {
     await pgHz.evaluate((rate) => window.__mesaUseRafRate(rate), hz);
     await rolarLivre(pgHz, 6, 1, `refresh-${hz}hz`);
     const ticksAntes = await pgHz.evaluate(() => window.__mesaRafTicks);
-    await pgHz.waitForTimeout(300);
+    // Espera POR TICKS, não por tempo de parede: em CI com CPU
+    // disputada os setTimeout do shim de RAF atrasam e uma janela fixa
+    // de 300 ms pode capturar menos de 10 frames mesmo com a animação
+    // viva. Se o RAF congelasse de verdade, o wait estouraria.
+    await pgHz.waitForFunction((antes) => window.__mesaRafTicks >= antes + 10, ticksAntes, { timeout: 15000, polling: 50 });
     const ticksDepois = await pgHz.evaluate(() => window.__mesaRafTicks);
     t(`${hz} Hz: RAF continua após o resultado do servidor`, ticksDepois - ticksAntes >= 10,
       `${ticksAntes}→${ticksDepois}`);
