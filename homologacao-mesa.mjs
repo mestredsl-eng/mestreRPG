@@ -3,6 +3,7 @@
 // socket.io reais: entrada/saída/reconexão, chat público/privado,
 // rolagens compartilhadas, turno e ampulheta do mestre, permissões e
 // persistência após reinício do servidor.
+import crypto from "node:crypto";
 import { io as ioClient } from "socket.io-client";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -164,6 +165,43 @@ try {
     t("dono rola o próprio teste → 200", rolar.ok === true, JSON.stringify(rolar).slice(0, 140));
     const rolar2 = await emitirCb(sockJ1, "mesa:teste:rolar", { testId });
     t("re-rolar teste já rolado → idempotente", rolar2.ok === true && (rolar2.jaRolado === true || rolar2.status === "rolado"), JSON.stringify(rolar2).slice(0, 120));
+
+    // ===== Issue #147: metadados completos e convenção D10 =====
+    // rolagem de teste chega ao ouvinte com papel, solicitante, campo
+    // e avaliação por dado — tudo derivado no servidor.
+    const ouvinteTeste = esperar(sockJ2, "mesa:rolagem");
+    const pedir2 = await emitirCb(sockM, "mesa:teste:pedir", {
+      sessionId: sid, characterId: ids.charJ1, campoId: "for", visibilidade: "publica",
+    });
+    t("mestre pede segundo teste D10", pedir2.ok === true, JSON.stringify(pedir2).slice(0, 140));
+    const testId2 = pedir2.testId ?? pedir2.id;
+    const rolarT2 = await emitirCb(sockJ1, "mesa:teste:rolar", { testId: testId2 });
+    t("dono rola segundo teste", rolarT2.ok === true, JSON.stringify(rolarT2).slice(0, 120));
+    const rollTeste = await ouvinteTeste;
+    t("evento de teste traz papel do rolador", rollTeste?.papel === "jogador", JSON.stringify(rollTeste?.papel));
+    t("evento de teste traz solicitante (mestre)", typeof rollTeste?.solicitante === "string" && rollTeste.solicitante.length > 0, JSON.stringify(rollTeste?.solicitante));
+    t("evento de teste traz personagem", rollTeste?.characterName === "J1" || typeof rollTeste?.characterName === "string", JSON.stringify(rollTeste?.characterName));
+    t("evento de teste traz campo validado", rollTeste?.campo?.rotulo === "For" || typeof rollTeste?.campo?.rotulo === "string", JSON.stringify(rollTeste?.campo));
+    const av = rollTeste?.d10?.avaliacao;
+    t("d10.avaliacao tem um item por dado", Array.isArray(av) && av.length === (rollTeste?.count ?? rollTeste?.dados?.length ?? -1), JSON.stringify(av?.length));
+    t("avaliacao respeita convenção face/classe",
+      Array.isArray(av) && av.every((a) =>
+        a.face === (a.valor === 10 ? 0 : a.valor)
+        && (a.valor === 10 ? a.classe === "acerto_critico" && a.sucesso === true
+          : a.valor === 1 ? a.classe === "erro_critico" && a.sucesso === false
+          : true)),
+      JSON.stringify(av?.slice(0, 3)));
+    t("sucessos/falhas batem com a avaliação", !av || (rollTeste.d10.sucessos === av.filter((a) => a.sucesso).length && rollTeste.d10.falhas === av.filter((a) => !a.sucesso).length), JSON.stringify(rollTeste?.d10));
+
+    // rolagem livre D10 do lançador: papel + avaliacao no evento público
+    const ouvinteD10 = esperar(sockJ1, "mesa:rolagem");
+    const rD10 = await emitirCb(sockJ2, "mesa:rolar", {
+      sessionId: sid, dados: [{ sides: 10, count: 4 }],
+      d10: { positivos: 4, negativos: 0 }, visibilidade: "publica",
+    });
+    t("rolagem livre D10 aceita", rD10.ok === true && Array.isArray(rD10.d10?.avaliacao), JSON.stringify(rD10.d10).slice(0, 140));
+    const rollD10 = await ouvinteD10;
+    t("evento livre D10 traz papel e avaliacao", rollD10?.papel === "jogador" && Array.isArray(rollD10?.d10?.avaliacao), JSON.stringify({ papel: rollD10?.papel, av: rollD10?.d10?.avaliacao?.length }));
   }
 
   // ===== Turnos e ampulheta (só mestre) =====
@@ -179,6 +217,23 @@ try {
     t("mestre inicia turnos", ini.ok === true && ini.turnos?.ativo === true, JSON.stringify(ini).slice(0, 160));
     const av = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "avancar" });
     t("avançar turno → atual=1", av.ok === true && av.turnos?.atual === 1, JSON.stringify(av.turnos).slice(0, 120));
+
+    const iniciativaEvt = esperar(sockJ1, "mesa:turnos", 8000,
+      (evento) => Array.isArray(evento?.turnos?.iniciativa));
+    const iniciativa = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "iniciativa", dados: 2 });
+    const estadoIniciativa = await iniciativaEvt;
+    const resultados = estadoIniciativa.turnos.iniciativa;
+    t("mestre rola e transmite iniciativa dos jogadores", iniciativa.ok === true
+      && estadoIniciativa.turnos.ativo === true
+      && resultados.length === 2
+      && estadoIniciativa.turnos.ordem.length === resultados.length
+      && resultados.every((r) => r.dados.length === 2 && r.total === r.dados.reduce((soma, d) => soma + d, 0)));
+    const iniciativaNegada = await emitirCb(sockJ1, "mesa:turno", { sessionId: sid, acao: "iniciativa", dados: 1 });
+    t("jogador NÃO controla iniciativa", iniciativaNegada.ok === false, JSON.stringify(iniciativaNegada));
+
+    const ordemRestaurada = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "iniciar", ordem });
+    const avancarNovamente = await emitirCb(sockM, "mesa:turno", { sessionId: sid, acao: "avancar" });
+    t("ordem manual segue disponível após iniciativa", ordemRestaurada.ok === true && avancarNovamente.turnos?.atual === 1);
 
     // ampulheta: listeners instalados ANTES de iniciar — evento final não pode passar despercebido
     const eventosTimer = [];
@@ -234,6 +289,59 @@ try {
     } finally {
       sockM.off("mesa:timer", hTimerM); sockJ1.off("mesa:timer", hTimerJ);
     }
+  }
+
+  // ===== Turnos — ordem vazia, estado legado e retomada =====
+  sec("Turnos — ordem vazia e estado legado");
+  {
+    // sessão dedicada: não interfere no estado de `sid` (persistência)
+    const sessT = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: cm, body: { name: "Sessão Turnos Vazio" } });
+    const sidT = sessT.json?.sessao?.id ?? sessT.json?.id;
+    t("sessão de turnos criada", !!sidT, `status=${sessT.status}`);
+    const entT = await emitirCb(sockM, "mesa:entrar", { sessionId: sidT });
+    t("mestre entra na sessão de turnos", entT?.ok === true, JSON.stringify(entT).slice(0, 120));
+
+    // 1. iniciar sem ordem válida → recusado, nada persiste como ativo
+    const iniVazio = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "iniciar" });
+    t("iniciar sem ordem → rejeitado", iniVazio.ok === false, JSON.stringify(iniVazio).slice(0, 140));
+    const iniVazioOrd = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "iniciar", ordem: [] });
+    t("iniciar com ordem:[] → rejeitado", iniVazioOrd.ok === false, JSON.stringify(iniVazioOrd).slice(0, 140));
+    const dbT1 = comDb(BANCO, (db) => db.prepare("select state from turns where session_id=?").get(sidT)?.state);
+    const st1 = dbT1 ? JSON.parse(dbT1) : null;
+    t("estado persistido continua inativo/vazio", !st1 || (st1.ativo !== true && (st1.ordem ?? []).length === 0), dbT1);
+
+    // 2. definirOrdem povoa; iniciar SEM ordem reutiliza a ordem existente
+    const def = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "definirOrdem", ordem: [ids.membJ1, ids.membJ2] });
+    t("definirOrdem grava ordem", def.ok === true && def.turnos?.ordem?.length === 2, JSON.stringify(def.turnos).slice(0, 140));
+    const iniReuso = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "iniciar" });
+    t("iniciar reutiliza ordem existente", iniReuso.ok === true && iniReuso.turnos?.ativo === true && iniReuso.turnos?.atual === 0, JSON.stringify(iniReuso.turnos).slice(0, 140));
+
+    // 3. definirOrdem [] com sequência ativa → desativa (sem estado inválido)
+    const defVazio = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "definirOrdem", ordem: [] });
+    t("definirOrdem [] desativa a sequência", defVazio.ok === true && defVazio.turnos?.ativo === false && (defVazio.turnos?.ordem ?? []).length === 0, JSON.stringify(defVazio.turnos).slice(0, 140));
+    const avVazio = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "avancar" });
+    t("avancar sem ordem é no-op", avVazio.ok === true && avVazio.turnos?.ativo === false, JSON.stringify(avVazio.turnos).slice(0, 120));
+
+    // 4. estado legado inválido injetado direto no banco → entrada o entrega,
+    //    e a iniciativa o repara com participantes reais
+    const dbL = abrirDb(BANCO);
+    const updLegado = dbL.prepare("update turns set state=?, updated_at=? where session_id=?")
+      .run(JSON.stringify({ ordem: [], atual: 0, ativo: true }), Date.now(), sidT);
+    if (updLegado.changes === 0) {
+      dbL.prepare("insert into turns (id, session_id, state, updated_by, updated_at) values (?,?,?,?,?)")
+        .run(crypto.randomUUID(), sidT, JSON.stringify({ ordem: [], atual: 0, ativo: true }), ids.admin, Date.now());
+    }
+    dbL.close();
+    const entLegado = await emitirCb(sockM, "mesa:entrar", { sessionId: sidT });
+    t("estado legado {ativo:true,ordem:[],atual:0} é entregue na entrada",
+      entLegado?.ok === true && entLegado?.turnos?.ativo === true && (entLegado?.turnos?.ordem ?? []).length === 0,
+      JSON.stringify(entLegado?.turnos).slice(0, 160));
+    const iniLegado = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "iniciativa", dados: 1 });
+    t("iniciativa repara estado legado com ordem real",
+      iniLegado.ok === true && iniLegado.turnos?.ativo === true && (iniLegado.turnos?.ordem ?? []).length >= 2 && iniLegado.turnos?.atual === 0,
+      JSON.stringify(iniLegado.turnos).slice(0, 160));
+    const avPos = await emitirCb(sockM, "mesa:turno", { sessionId: sidT, acao: "avancar" });
+    t("controles de turno seguem funcionando após reparo", avPos.ok === true && avPos.turnos?.atual === 1, JSON.stringify(avPos.turnos).slice(0, 140));
   }
 
   // ===== Persistência após reinício =====

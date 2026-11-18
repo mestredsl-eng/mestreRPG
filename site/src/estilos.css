@@ -1994,6 +1994,27 @@ textarea:focus-visible,
 .mesa-dados-3d-canvas.estado-sucesso { box-shadow: inset 0 0 0 1px rgba(46,143,91,.5); }
 .mesa-dados-3d-canvas.estado-falha { box-shadow: inset 0 0 0 1px rgba(138,58,58,.5); }
 
+/* Efeitos transitórios de resultado (Issue #147): pulso dourado para
+   acerto crítico e impacto vermelho para erro crítico. As classes são
+   ligadas/desligadas pelo renderer — nunca permanecem após a rolagem. */
+@keyframes mesa-critico-ouro {
+  0% { box-shadow: 0 0 0 0 rgba(255, 215, 94, .85), inset 0 0 22px rgba(255, 215, 94, .55); }
+  100% { box-shadow: 0 0 0 14px rgba(255, 215, 94, 0), inset 0 0 0 rgba(255, 215, 94, 0); }
+}
+@keyframes mesa-erro-critico-impacto {
+  0%, 100% { transform: translate(0, 0); box-shadow: inset 0 0 0 0 rgba(255, 90, 70, 0); }
+  20% { transform: translate(-3px, 1px); box-shadow: inset 0 0 26px rgba(255, 90, 70, .6); }
+  40% { transform: translate(3px, -1px); box-shadow: inset 0 0 18px rgba(255, 90, 70, .45); }
+  60% { transform: translate(-2px, 0); }
+  80% { transform: translate(2px, 0); }
+}
+.mesa-dados-3d-canvas.mesa-efeito-critico { animation: mesa-critico-ouro .9s ease-out; }
+.mesa-dados-3d-canvas.mesa-efeito-erro-critico { animation: mesa-erro-critico-impacto .7s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .mesa-dados-3d-canvas.mesa-efeito-critico,
+  .mesa-dados-3d-canvas.mesa-efeito-erro-critico { animation: none; }
+}
+
 /* Mesa de dados sempre visível: bandeja vazia, tumble durante o ACK
    e assentamento na face oficial — área dedicada com destaque. */
 .mesa-dados-area {
@@ -2044,14 +2065,33 @@ textarea:focus-visible,
   border-radius: 0;
   border: none;
   background: #0a0e18;
+  /* Auditoria #149: o overlay ganha rolagem vertical própria — os
+     controles (PainelDados) ficam DEPOIS do canvas no fluxo e precisam
+     permanecer acessíveis abaixo da dobra, sem desmontar a cena. */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+.mesa-dados-area.imersivo > * {
+  flex: 0 0 auto;
+}
+/* Canvas com altura limitada e responsiva — nunca 100% da viewport,
+   senão empurra os controles para fora da área visível. */
 .mesa-dados-area.imersivo .mesa-dados-3d-canvas {
-  height: 100%;
+  height: min(52vh, 460px);
+  min-height: 200px;
   border-radius: 12px;
 }
 .mesa-dados-area.imersivo .mesa-dados-fallback {
-  min-height: 100%;
+  min-height: 200px;
   width: 100%;
+}
+@media (max-width: 600px) {
+  .mesa-dados-area.imersivo .mesa-dados-3d-canvas {
+    height: min(46vh, 320px);
+    min-height: 160px;
+  }
 }
 @media (max-width: 600px) {
   .mesa-dados-area.imersivo { padding: 8px; }
@@ -2239,6 +2279,84 @@ textarea:focus-visible,
   .vtt-tabuleiro { aspect-ratio: 4 / 3; max-height: 50vh; }
   .vtt-token { width: 36px; height: 36px; font-size: 12px; }
 }
+
+/* Retrato de personagem (Issue #129) */
+.avatar-retrato {
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #2a2f3a;
+  color: #c9cdd3;
+  font-weight: 700;
+  user-select: none;
+}
+.avatar-fallback { border: 1px solid #3a4050; }
+.grade-retratos {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 10px;
+  max-height: 50vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.retrato-opcao {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+.retrato-opcao:hover { border-color: #4a5568; }
+.retrato-opcao img {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #2a2f3a;
+}
+.modal-retrato { max-width: 720px; width: min(92vw, 720px); }
+@media (max-width: 700px) {
+  .grade-retratos { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); }
+  .retrato-opcao img { width: 60px; height: 60px; }
+}
+.chip {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid #3a4050;
+  background: transparent;
+  color: #c9cdd3;
+  font-size: 12px;
+  cursor: pointer;
+}
+.chip.ativo { background: #2b3350; border-color: #46538a; color: #e8ecf7; }
+
+/* Painel de defeitos dos personagens (Mesa — somente mestre) */
+.defeito-personagem { border-top: 1px solid #2a2f3a; padding: 6px 0; }
+.defeito-personagem:first-of-type { border-top: none; }
+.defeito-cabecalho {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  width: 100%; background: transparent; border: none; padding: 2px 0;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.defeito-cabecalho .meta { font-size: 12px; }
+.defeito-lista { margin: 4px 0 2px 10px; }
+.defeito-item { margin: 2px 0; }
+.defeito-nome {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: transparent; border: none; padding: 2px 0;
+  color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.defeito-nome:disabled { cursor: default; }
+.defeito-nome .badge { font-size: 11px; }
+.defeito-descricao { margin: 2px 0 6px 14px; white-space: pre-wrap; }
 
 
 /* Mestre Voice — controles locais de leitura do chat */

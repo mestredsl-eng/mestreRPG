@@ -1,5 +1,104 @@
 # Changelog - Mestre RPG
 
+## [Unreleased]
+
+## [1.0.0.4] - 2026-11-17
+
+### Novidades
+
+- **Iniciativa d20 na mesa:** o mestre pode rolar de 1 a 10 dados d20 por participante, incluindo jogadores ativos e NPCs aprovados e revelados. Os resultados são calculados pelo servidor, ordenados por total decrescente e desempatados alfabeticamente.
+- **Resultados persistentes e sincronizados:** iniciativa, dados e ordem são persistidos na sessão, transmitidos em tempo real pelo Socket.IO e registrados no chat da mesa.
+- **Compatibilidade com turnos manuais:** o mestre pode continuar usando ou redefinindo a ordem manual após uma iniciativa.
+
+### Integridade, permissões e recuperação
+
+- **Autorização no servidor:** apenas o mestre controla início, encerramento, avanço, ordem e rolagem de iniciativa.
+- **NPCs protegidos:** somente NPCs da campanha aprovados, ativos e revelados pelo mestre podem participar.
+- **Ordem vazia protegida:** o servidor rejeita iniciar turnos sem participantes; esvaziar a ordem encerra a sequência.
+- **Estados legados resilientes:** a mesa abre sem crash mesmo quando encontra estado antigo inconsistente, e o mestre consegue reparar a ordem pela interface.
+
+### Testes
+
+- **servidor/testes/iniciativa.test.ts: 4/4** — cálculo, limites de dados e ordenação/desempate.
+- **homologacao-mesa.mjs: 52/52** — iniciativa autoritativa, NPCs, permissões, ordem vazia, recuperação de estado legado e turnos manuais.
+- **homologacao-mesa-virtual.mjs: 30/30** — abertura da mesa com estado legado inválido, sem erro de renderização e com controles de recuperação funcionais.
+- **teste-permissao-tempo-real.mjs: 579/579** — permissões, revogação e sincronização de turnos.
+- **CI #534:** servidor, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA f872816c5d649528da7c1fa63940ff7e494bc19e.
+- **Assistente de Desenvolvimento #376:** sucesso no mesmo SHA.
+
+---
+
+## [1.0.0.3] - 2026-11-17
+
+### Novidades
+
+- **Mesa de dados 3D com física Rapier** — bandeja compartilhada renderizada com Three.js e corpos rígidos Rapier, incluindo colisões entre dados, gravidade, atrito, quique, paredes e iluminação. D4, D6, D8, D10 e D20 preservam rótulos legíveis, temas e cores personalizadas.
+- **Resultado autoritativo** — a física é apenas apresentação: o resultado continua definido pelo servidor e cada dado assenta na face oficial recebida.
+
+### Acessibilidade, estabilidade e compatibilidade
+
+- **Movimento reduzido** — dados já resolvidos aparecem assentados imediatamente quando `prefers-reduced-motion` está ativo.
+- **Assentamento físico terminal** — corpos prontos dormem e não voltam a ser integrados pela gravidade; novos resultados podem acordá-los novamente.
+- **Frequências de atualização** — o ciclo de renderização continua corretamente em telas de 60, 90, 120 e 144 Hz.
+- **Carregamento sob demanda** — Three.js e Rapier/WASM são carregados ao abrir o visualizador; o renderer Canvas permanece como fallback sem WebGL.
+- **CSP do preview** — a política permite `wasm-unsafe-eval` para inicialização do Rapier, sem liberar `unsafe-eval` geral.
+
+### Testes
+
+- **`homologacao-dados3d.mjs`: 111/111** — histórico pré-resolvido, ACK posterior com reduced-motion, velocidades linear/angular, quaternion e posição finais, frequências de 60/90/120/144 Hz, CSP/preview WASM e mobile.
+- **CI #524:** servidor, typecheck, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA `7715a48fb32bc9538134db098fa95a0698ba5ec0`.
+- **Assistente de Desenvolvimento #370:** sucesso no mesmo SHA.
+
+---
+
+## [1.0.0.2] - 2026-11-17
+
+### Novidades
+
+- **Sistema de XP/Merit** — personagens passam a ter saldo e histórico próprios de XP, com concessões e remoções pelo mestre, registro de autor/motivo e consulta pelo jogador.
+- **Compra de evolução com XP** — o preço do próximo nível é calculado pelas regras da campanha; jogadores podem adquirir níveis pela ficha, com confirmação em duas etapas e atualização em tempo real.
+- **Progressão integrada à ficha** — o painel apresenta saldo, histórico, custos e disponibilidade, mantendo o fluxo de criação e edição de personagens.
+
+### Integridade e compatibilidade
+
+- **Sem cobrança dupla** — níveis financiados por XP são identificados separadamente e não consomem novamente os pontos de criação.
+- **Validação transacional** — compras revalidam visibilidade, editabilidade, limites e regras antes de persistir; conflitos de edição concorrente são detectados.
+- **Proteção de informações ocultas** — vínculos e preços de campos invisíveis não são expostos ao jogador, inclusive em cenários com vínculos compartilhados.
+- **Compatibilidade com fichas existentes** — XP inicia em zero quando ausente; não requer migração de banco.
+
+### Testes
+
+- **`teste-progressao-xp.mjs`: 236/236** — regressões HTTP para concessão, compra, custos fracionários, financiamento, concorrência, limites e campos ocultos.
+- **`homologacao-progressao.mjs`: 26/26** — homologação Playwright do fluxo de progressão.
+- **CI #509 e CI dedicada #10: sucesso** — validações concluídas no SHA `e20f4bbaaceffb1d0e29abea2ad1052110e5d1c9` antes da integração.
+
+---
+
+## [1.0.0.1] - 2026-11-17
+
+### Novidades
+
+- **Entrega segura da Biblioteca** — arquivos agora são classificados pela extensão física gerada no servidor e pelo conteúdo real, não pelo MIME declarado no upload.
+- **Compatibilidade com arquivos antigos** — a mesma proteção vale para arquivos já existentes, importados e restaurados, sem exigir migração do banco.
+
+### Segurança
+
+- **Proteção contra XSS armazenado** — SVG/HTML e conteúdo ativo disfarçado de TXT ou imagem deixam de ser executados na origem da aplicação.
+- **MIME canônico** — uploads persistem o tipo derivado do conteúdo; o GET revalida a classificação antes de servir.
+- **Fallback seguro** — conteúdo desconhecido, vazio, corrompido, incompatível ou ativo é entregue como anexo `application/octet-stream`, com `nosniff` e CSP `sandbox`; `?download=1` continua disponível.
+
+### Testes
+
+- **`teste-biblioteca-conteudo.mjs`: 42/42** — regressões HTTP reais para XSS, MIME forjado, arquivos legados, assinaturas incompletas/divergentes, formatos legítimos, download e isolamento entre campanhas.
+- **CI #491: sucesso** — jobs de servidor e homologações Playwright concluídos no SHA da PR #138 antes do merge.
+
+### Migração e atualização
+
+- **Sem migração de banco** — a proteção é aplicada na leitura e no upload; campanhas, personagens e arquivos existentes são preservados.
+- Faça backup antes de atualizar e siga o procedimento de atualização descrito no README.
+
+---
+
 ## [1.0.0] - 2026-11-11
 
 ### Novidades

@@ -1,11 +1,13 @@
 {
   "name": "@mestre-rpg/servidor",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
+    "test:iniciativa": "tsx --test testes/iniciativa.test.ts",
+    "test:d10": "tsx --test testes/d10.test.ts",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts"

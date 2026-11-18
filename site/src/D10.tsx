@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { getSocket } from "./socket";
-import MesaDados3D, { seedDeId } from "./MesaDados3D";
-import MesaDadosArea from "./MesaDadosArea";
+import type { ItemDadoMesa } from "./MesaDados3D";
 
 interface Props {
   sessionId: string;
   aoErro: (e: string | null) => void;
   /** Meta de sucesso configurada pela campanha (regras.dados.d10SucessoMinimo). */
   minimoPadrao: number;
+  /** Tumble otimista no tabuleiro compartilhado da Mesa (Issue #147). */
+  aoPendencia?: (dados: ItemDadoMesa[] | null, requestId: string) => void;
 }
 
 interface ResultadoD10 {
@@ -28,13 +29,11 @@ const MAX_DADOS = 30;
  * Os dados rolam no servidor (mesa:rolar), então o resultado entra no
  * chat, no histórico de rolagens e fica visível para a mesa.
  */
-export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) {
+export default function LancadorD10({ sessionId, aoErro, minimoPadrao, aoPendencia }: Props) {
   const [positivos, setPositivos] = useState(5);
   const [negativos, setNegativos] = useState(0);
   const [resultado, setResultado] = useState<ResultadoD10 | null>(null);
   const [rolando, setRolando] = useState(false);
-  // mesma semente cobre tumble (ACK pendente) e assentamento oficial
-  const [rodada, setRodada] = useState(0);
   // timeout do ACK: libera o botão e avisa se o servidor não responder
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (ackTimer.current) clearTimeout(ackTimer.current); }, []);
@@ -59,11 +58,15 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       aoErro("Sem conexão com o servidor — aguardando reconexão. Tente novamente.");
       return;
     }
-    setRodada((r) => r + 1);
+    const requestId = crypto.randomUUID();
     setRolando(true);
+    // Tumble otimista no tabuleiro compartilhado: os dados ficam "no ar"
+    // até o evento oficial chegar (mesma semente → assentamento contínuo).
+    aoPendencia?.(Array.from({ length: efetivos }, () => ({ lados: 10, valor: null })), requestId);
     ackTimer.current = setTimeout(() => {
       ackTimer.current = null;
       setRolando(false);
+      aoPendencia?.(null, requestId);
       aoErro("O servidor não respondeu à rolagem a tempo — verifique a conexão e tente novamente.");
     }, 15000);
     socket.emit("mesa:rolar", {
@@ -71,10 +74,11 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
       dados: [{ sides: 10, count: efetivos }],
       motivo: `D10 ${pos}${neg ? ` − ${neg} negativo${neg > 1 ? "s" : ""}` : ""}`,
       d10: { positivos: pos, negativos: neg, minimo: minimoPadrao },
-      requestId: crypto.randomUUID(),
+      requestId,
     }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados: number; resultados: number[] }[]; d10?: { sucessos: number; falhas: number; lancados: number; minimo?: number } }) => {
       if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; }
       setRolando(false);
+      aoPendencia?.(null, requestId);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar D10"); return; }
       const res = r.grupos?.[0]?.resultados ?? [];
       // Mínimo autoritativo devolvido pelo servidor (campanha). Se a
@@ -116,24 +120,6 @@ export default function LancadorD10({ sessionId, aoErro, minimoPadrao }: Props) 
         </p>
         <button type="submit" disabled={rolando}>{rolando ? "Rolando…" : resultado ? "Lançar novamente" : "Lançar D10"}</button>
       </form>
-
-      {/* Mesa de dados sempre visível: bandeja vazia, tumble real
-          durante o ACK e assentamento nas faces oficiais do servidor
-          (sucesso/falha por dado). Nenhum valor é sorteado no cliente. */}
-      <MesaDadosArea ariaLabel="Mesa de dados D10">
-        <MesaDados3D
-          dados={rolando
-            ? Array.from({ length: efetivos }, () => ({ lados: 10, valor: null }))
-            : resultado
-              ? resultado.resultados.map((valor) => ({
-                  lados: 10,
-                  valor,
-                  estado: valor >= resultado.minimo ? "sucesso" as const : "falha" as const,
-                }))
-              : []}
-          semente={seedDeId(`${sessionId}-d10-${rodada}`)}
-        />
-      </MesaDadosArea>
 
       {resultado && (
         <div className="d10-resultado">

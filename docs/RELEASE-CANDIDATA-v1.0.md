@@ -1,10 +1,10 @@
-# Release Candidate v1.0 — Mestre RPG
+# Registro histórico da Release Candidate v1.0 — Mestre RPG
 
-> **Atualização de estado — 2026-11-14:** as cinco etapas do roteiro mestre da Issue #33 foram concluídas. A candidata continua sem tag/publicação, aguardando autorização explícita. A `main` de referência após a PR #77 é `9046ae3071f99022595ee2b7ea592454755c0b55`. A homologação histórica abaixo não deve ser interpretada como CI executado nesse SHA: a validação final da candidata deve usar o HEAD efetivo após a integração das PRs pendentes.
+> **Status:** a versão `v1.0.0` foi publicada no GitHub e sua tag aponta para o commit `974c7282a9df79ed78e084c383c9ed581b8420fe`. Este documento preserva a preparação e as evidências históricas da candidata; os resultados abaixo não certificam o estado atual da `main`.
 
-Documento de preparação da candidata. **Não é uma release publicada**: a
-tag `v1.0.0` e a publicação da release estão pendentes de autorização
-explícita do responsável.
+Este registro deve ser lido como histórico da preparação da versão 1.0.0,
+não como checklist atual de publicação. Para operar a versão estável, consulte
+`README.md` e `docs/GUIA-OPERACAO.md`.
 
 - **Branch de referência:** `main`
 - **SHAs da candidata (três momentos distintos):**
@@ -16,12 +16,10 @@ explícita do responsável.
     (`2edae410c862330b04d202cf7e18e222806089bd`), que incorporou este
     documento e a correção do workflow de CI da PR #48
     (`1bb129f1222685ebb7f6fa2cf1da6eec119fb5b7`).
-  - *SHA efetivo da tag:* a tag `v1.0.0` deverá apontar para o HEAD da
-    `main` conferido imediatamente antes da publicação — **não** para um
-    SHA registrado antecipadamente neste documento.
+  - *SHA publicado da tag `v1.0.0`:* `974c7282a9df79ed78e084c383c9ed581b8420fe`.
 - **PRs integradas:** #37 (Etapa 2), #43 (Acervo/suplementos/restauração), #44 (financeiro com compras e vendas), #45 (conversão de ferimentos em Vitalidade), #46 (Central de Novidades) e entregas posteriores registradas no histórico, incluindo #72 (hierarquia), #75 (rate limit Socket.IO) e #77 (mesa compartilhada de dados 3D).
-- **Pendências de estabilização em 2026-11-14:** PR #74 (correções de guildas), PR #78 (integração do pool D10 à mesa compartilhada) e PR #79 (propagação de eventos de guilda em tempo real) ainda exigem conclusão/revisão/CI antes da validação final da candidata. A Issue #65 permanece aberta para acompanhar pontos residuais da hierarquia de guildas.
-- As cinco etapas da Issue #33 foram concluídas; a Issue permanece como roteiro/histórico do projeto. A criação da tag `v1.0.0` e a publicação da release continuam pendentes de autorização explícita do responsável.
+- **Pendências registradas em 2026-11-14:** PRs #74, #78 e #79 ainda aguardavam integração naquela data; essa anotação é histórica e não descreve o estado atual do backlog.
+- As cinco etapas da Issue #33 foram concluídas antes da publicação; a Issue permanece como roteiro/histórico do projeto.
 - **Última migration:** `0024_guildas_hierarquia` (tabelas `guilds` e
   `guild_members`, colunas `guild_id` em `campaigns`/`audit_logs` e
   trigger de proteção do privilégio de ADMIN principal).
@@ -130,5 +128,4 @@ symlink/permissão POSIX).
   carregar a sessão e após ações do próprio usuário (sem polling).
 - Homologado no Windows; acesso externo depende de proxy/túnel do usuário.
 - Chunk do frontend >500 kB (warning do Vite, não funcional).
-- As cinco etapas da Issue #33 foram concluídas; a Issue permanece como roteiro/histórico. A tag `v1.0.0` e a publicação da release continuam pendentes de autorização explícita — esta candidata ainda não é uma release.
-- Antes da publicação, atualizar as evidências de CI para o HEAD final da `main` e executar homologação integrada após concluir as PRs pendentes.
+- A release `v1.0.0` foi publicada. A `main` avançou desde a tag; valide o HEAD atual pelos workflows do GitHub antes de usar este registro como referência de qualidade ou preparar outra release.

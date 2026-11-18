@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import AvatarRetrato from "../AvatarRetrato";
+import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -105,7 +107,12 @@ export default function Personagens({ campaignId, campanha }: Props) {
           await carregar();
         }}
         aoSalvar={async (nome, data, status) => {
-          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, { name: nome, data, status });
+          // BUG_0002: envia o updatedAt carregado — fichas com níveis
+          // financiados por XP exigem base atual para aceitar escrita.
+          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, {
+            name: nome, data, status,
+            baseUpdatedAt: selecionado.personagem.updatedAt,
+          });
           setSelecionado(atualizado);
           await carregar();
         }}
@@ -174,7 +181,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             <tbody>
               {visiveis.map((p) => (
                 <tr key={p.id} className={`clicavel${p.status === "arquivado" ? " arquivado" : ""}`} onClick={() => void abrir(p.id)}>
-                  <td>{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</td>
+                  <td><span className="linha"><AvatarRetrato retrato={p.retrato} nome={p.name} tamanho={30} />{p.name}{p.isNpc && <span className="badge badge-npc"> NPC</span>}</span></td>
                   <td>{p.displayName ?? p.dono}</td>
                   <td>
                     <span className={`badge badge-${p.status}`}>{STATUS_LABEL[p.status] ?? p.status}</span>
@@ -295,6 +302,29 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const estrutura = ficha?.estrutura ?? null;
   const inicial = ficha?.campos ?? {};
   const { valores, setValores, aoMudar } = useFichaValores(inicial as Record<string, unknown>);
+  // P1 (auditoria): quando o detalhe recarregado traz versão nova do
+  // servidor (pós-409, "Atualizar", retorno de operação), o formulário
+  // passa a editar sobre o estado atual — nunca envia valores velhos
+  // com token baseUpdatedAt novo. Rascunho divergente é substituído de
+  // forma VISÍVEL (aviso abaixo), não silenciosa.
+  const versaoServidor = personagem.updatedAt ?? "";
+  const valoresRef = useRef(valores);
+  valoresRef.current = valores;
+  const inicialRef = useRef(inicial);
+  const versaoRef = useRef(versaoServidor);
+  useEffect(() => {
+    if (versaoServidor === versaoRef.current) return;
+    versaoRef.current = versaoServidor;
+    const anterior = inicialRef.current;
+    inicialRef.current = inicial;
+    const igual = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+    const tinhaRascunho = !igual(valoresRef.current, anterior) && !igual(valoresRef.current, inicial);
+    setValores(inicial as Record<string, unknown>);
+    if (tinhaRascunho) {
+      setMsg("A ficha foi alterada no servidor — o formulário foi sincronizado com a versão atual. Revise antes de salvar.");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [versaoServidor]);
   const [nome, setNome] = useState(personagem.name);
   const [editando, setEditando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -302,6 +332,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [msg, setMsg] = useState<string | null>(null);
   const [errosValidacao, setErrosValidacao] = useState<ErroValidacao[] | null>(null);
   const [confirmando, setConfirmando] = useState<"excluir" | "arquivar" | "restaurar" | null>(null);
+  const [retratoModal, setRetratoModal] = useState(false);
   const [operando, setOperando] = useState(false);
 
   const arquivado = personagem.status === "arquivado";
@@ -315,6 +346,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       personagem.status !== "bloqueada" && personagem.status !== "aprovada"));
   // Exclusão: mestre sempre; jogador só o próprio personagem em status editável.
   const podeExcluir = souMestre || (personagem.ehEu === true && STATUS_EXCLUIVEIS.has(personagem.status));
+  // Retrato: metadado do personagem — mestre sempre; dono do próprio
+  // personagem (NPC só pelo mestre); arquivado é somente leitura.
+  const podeMudarRetrato = !arquivado && (souMestre || (personagem.ehEu === true && personagem.isNpc !== true));
   const estruturaVazia = !estrutura || estrutura.secoes.length === 0;
 
   const executarOperacao = async () => {
@@ -356,14 +390,23 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       setMsg(status === "aguardando_aprovacao" ? "Ficha enviada para aprovação." : "Ficha salva.");
       setEditando(false);
     } catch (e) {
-      const estruturados = extrairErrosValidacao(e instanceof ApiError ? e.detalhes : undefined);
-      if (estruturados.length > 0) {
-        // Painel persistente com TODOS os motivos — dados preenchidos
-        // permanecem intactos para correção e nova tentativa.
-        setErrosValidacao(estruturados);
-        setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
+      // BUG_0002: conflito de base (ficha mudou no servidor, ex.: compra
+      // de XP) — sincroniza explicitamente em vez de perder a edição em
+      // silêncio. Tratado ANTES do parser de validação: o `detalhes` do
+      // 409 não é um mapa de erros de campo.
+      if (e instanceof ApiError && e.status === 409) {
+        setErro(e.message);
+        void aoRecarregar();
       } else {
-        setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        const estruturados = extrairErrosValidacao(e instanceof ApiError ? e.detalhes : undefined);
+        if (estruturados.length > 0) {
+          // Painel persistente com TODOS os motivos — dados preenchidos
+          // permanecem intactos para correção e nova tentativa.
+          setErrosValidacao(estruturados);
+          setErro("Não foi possível salvar o personagem. Existem requisitos que precisam ser corrigidos.");
+        } else {
+          setErro(e instanceof Error ? e.message : "Erro ao salvar");
+        }
       }
     } finally {
       setSalvando(false);
@@ -391,7 +434,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
     <>
       <section className="cartao">
         <div className="linha-entre">
-          <div>
+          <div className="linha">
+            <AvatarRetrato retrato={personagem.retrato} nome={personagem.name} tamanho={64} />
+            <div>
             <h2>{personagem.name}{personagem.isNpc && <span className="badge badge-npc"> NPC</span>}{personagem.isNpc && <span className={`badge ${personagem.npcRevelado ? "badge-aprovada" : "badge-bloqueada"}`}>{personagem.npcRevelado ? " ficha visível" : " ficha oculta"}</span>}</h2>
             <p className="meta ficha-dono">
               Jogador: <strong>{personagem.isNpc ? "Mestre (NPC)" : (personagem.donoNome ?? "—")}</strong>
@@ -399,8 +444,14 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
               <span className={`badge badge-${personagem.status}`}>{STATUS_LABEL[personagem.status] ?? personagem.status}</span>
               {ficha?.pontosBonus?.selado && <span className="badge badge-selo" title="Os pontos desta ficha estão selados — só o mestre pode alterá-los"> pontos selados</span>}
             </p>
+            </div>
           </div>
-          <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
+          <div className="linha">
+            {podeMudarRetrato && !editando && (
+              <button className="secundario" onClick={() => setRetratoModal(true)}>Alterar retrato</button>
+            )}
+            <button className="secundario" onClick={() => void aoVoltar()}>Voltar</button>
+          </div>
         </div>
         {souMestre && editando && (
           <label>Nome do personagem<input value={nome} onChange={(e) => setNome(e.target.value)} /></label>
@@ -489,6 +540,16 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           ocupado={operando}
           aoConfirmar={() => void executarOperacao()}
           aoCancelar={() => setConfirmando(null)}
+        />
+      )}
+      {retratoModal && (
+        <ModalRetrato
+          characterId={personagem.id}
+          campaignId={campaignId}
+          retratoAtual={personagem.retrato}
+          nome={personagem.name}
+          aoMudar={() => void aoRecarregar()}
+          aoFechar={() => setRetratoModal(false)}
         />
       )}
 

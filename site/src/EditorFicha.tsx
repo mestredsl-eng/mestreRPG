@@ -73,8 +73,29 @@ function campoVazio(tipo: TipoCampo): CampoDef {
     repetivel: false,
     visibilidade: "todos",
     editavelPor: "ambos",
-    usadoEmTestes: false,
   };
+}
+
+// Mesma regra do backend (campoElegivelParaTeste em servidor/src/lib/ficha.ts)
+// e do seletor da mesa: a checkbox reflete a elegibilidade EFETIVA — campos
+// semânticos de teste já são elegíveis sem a flag, e o fallback decide o
+// estado quando ela está ausente.
+const SEMANTICOS_TESTE = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+
+const TIPOS_TESTE = new Set(["inteiro", "decimal", "selecao_nivel"]);
+
+function semanticaDeTeste(c: { tipo?: string; semantico?: string }): boolean {
+  return !!c.tipo && TIPOS_TESTE.has(c.tipo)
+    && c.semantico !== "moeda" && c.semantico !== "item"
+    && SEMANTICOS_TESTE.has(c.semantico ?? "");
+}
+
+function elegivelTesteCampo(c: { tipo?: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  if (!c.tipo || !TIPOS_TESTE.has(c.tipo)) return false;
+  if (c.semantico === "moeda" || c.semantico === "item") return false;
+  if (c.usadoEmTestes === true) return true;
+  if (c.usadoEmTestes === false) return false;
+  return semanticaDeTeste(c);
 }
 
 interface Vinculaveis {
@@ -598,7 +619,7 @@ function EditorCampo({ campo, estrutura, vinculaveis, aoSalvar, aoFechar }: {
       <div className="linha">
         <label className="checkbox-inline"><input type="checkbox" checked={edit.obrigatorio} onChange={(e) => set("obrigatorio", e.target.checked)} /> Obrigatório</label>
         <label className="checkbox-inline"><input type="checkbox" checked={edit.repetivel} onChange={(e) => set("repetivel", e.target.checked)} /> Repetível</label>
-        <label className="checkbox-inline"><input type="checkbox" checked={edit.usadoEmTestes === true} onChange={(e) => set("usadoEmTestes", e.target.checked)} /> Usado em testes</label>
+        <label className="checkbox-inline"><input type="checkbox" checked={elegivelTesteCampo(edit)} onChange={(e) => set("usadoEmTestes", e.target.checked ? true : semanticaDeTeste(edit) ? false : undefined)} /> Usado em testes</label>
       </div>
       <div className="linha">
         <button onClick={() => aoSalvar(edit)}>Salvar campo</button>
