@@ -2065,14 +2065,33 @@ textarea:focus-visible,
   border-radius: 0;
   border: none;
   background: #0a0e18;
+  /* Auditoria #149: o overlay ganha rolagem vertical própria — os
+     controles (PainelDados) ficam DEPOIS do canvas no fluxo e precisam
+     permanecer acessíveis abaixo da dobra, sem desmontar a cena. */
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
+.mesa-dados-area.imersivo > * {
+  flex: 0 0 auto;
+}
+/* Canvas com altura limitada e responsiva — nunca 100% da viewport,
+   senão empurra os controles para fora da área visível. */
 .mesa-dados-area.imersivo .mesa-dados-3d-canvas {
-  height: 100%;
+  height: min(52vh, 460px);
+  min-height: 200px;
   border-radius: 12px;
 }
 .mesa-dados-area.imersivo .mesa-dados-fallback {
-  min-height: 100%;
+  min-height: 200px;
   width: 100%;
+}
+@media (max-width: 600px) {
+  .mesa-dados-area.imersivo .mesa-dados-3d-canvas {
+    height: min(46vh, 320px);
+    min-height: 160px;
+  }
 }
 @media (max-width: 600px) {
   .mesa-dados-area.imersivo { padding: 8px; }
