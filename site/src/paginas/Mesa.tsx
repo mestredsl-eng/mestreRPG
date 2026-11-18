@@ -441,6 +441,34 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     })();
   }, [campaignId, sessao.id, reportarErro]);
 
+  // Troca de sessão na mesma MesaView: nunca mesclar o histórico anterior
+  // com a resposta da nova sessão. A visão fica bloqueada até mesa:entrar
+  // confirmar a nova sessão; o merge de mensagens passa a começar vazio.
+  const sessaoEstadoRef = useRef(sessao.id);
+  useEffect(() => {
+    if (sessaoEstadoRef.current === sessao.id) return;
+    sessaoEstadoRef.current = sessao.id;
+    setEntradaFalhou(true);
+    setVisaoBloqueada(true);
+    setPapel("espectador");
+    papelRef.current = "espectador";
+    setPodeEnviar(false);
+    setMensagens([]);
+    setTestes([]);
+    setRolagens([]);
+    setTurnos({ ordem: [], atual: -1, ativo: false });
+    setTimer(sessao.timerState ?? null);
+    setSessaoAtual(sessao);
+    setPendente(null);
+    setOnline([]);
+    setTexto("");
+    setComoAcao(false);
+    setPrivado(false);
+    setSecreto(false);
+    setDestinoPriv("");
+    setErro(null);
+  }, [sessao.id]);
+
   // carga inicial
   useEffect(() => { recarregarCompleta(); }, [recarregarCompleta]);
 
