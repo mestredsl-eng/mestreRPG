@@ -11,32 +11,40 @@ export async function gravarPapelStatusMembro(
   status: string,
 ): Promise<number> {
   const agora = new Date();
-  const perdeGmCapaz = sql\`(
+  // A linha só "perde GM capaz" quando o registro ATUAL é gm+ativo, a
+  // CONTA do usuário está ativa (GM de conta bloqueada nunca foi capaz)
+  // e os NOVOS valores deixam de sê-lo — comparações usam colunas da
+  // própria linha e parâmetros vinculados, nunca strings do cliente.
+  const perdeGmCapaz = sql`(
     role = 'gm'
     AND status = 'ativo'
-    AND (\${role} <> 'gm' OR \${status} <> 'ativo')
-  )\`;
-  const r = await executor.run(sql\`
+    AND EXISTS (
+      SELECT 1 FROM users ux
+      WHERE ux.id = guild_members.user_id AND ux.status = 'ativo'
+    )
+    AND (${role} <> 'gm' OR ${status} <> 'ativo')
+  )`;
+  const r = await executor.run(sql`
     UPDATE guild_members
-    SET role = \${role}, status = \${status}, updated_at = \${agora.getTime()}
-    WHERE id = \${membershipId}
-      AND guild_id = \${guildId}
+    SET role = ${role}, status = ${status}, updated_at = ${agora.getTime()}
+    WHERE id = ${membershipId}
+      AND guild_id = ${guildId}
       AND user_id IS NOT (
-        SELECT responsible_user_id FROM guilds WHERE id = \${guildId}
+        SELECT responsible_user_id FROM guilds WHERE id = ${guildId}
       )
       AND NOT (
-        \${perdeGmCapaz}
+        ${perdeGmCapaz}
         AND (
           SELECT count(*)
           FROM guild_members gm
           JOIN users u ON u.id = gm.user_id
-          WHERE gm.guild_id = \${guildId}
+          WHERE gm.guild_id = ${guildId}
             AND gm.role = 'gm'
             AND gm.status = 'ativo'
             AND u.status = 'ativo'
         ) <= 1
       )
-  \`);
+  `);
   return r.changes;
 }
 
@@ -47,20 +55,20 @@ export async function gravarResponsavelGuilda(
   novoId: string,
 ): Promise<number> {
   const agora = new Date();
-  const r = await executor.run(sql\`
+  const r = await executor.run(sql`
     UPDATE guilds
-    SET responsible_user_id = \${novoId}, updated_at = \${agora.getTime()}
-    WHERE id = \${guildId}
-      AND responsible_user_id IS \${responsavelAnteriorId}
+    SET responsible_user_id = ${novoId}, updated_at = ${agora.getTime()}
+    WHERE id = ${guildId}
+      AND responsible_user_id IS ${responsavelAnteriorId}
       AND EXISTS (
         SELECT 1 FROM guild_members gm
         JOIN users u ON u.id = gm.user_id
-        WHERE gm.guild_id = \${guildId}
-          AND gm.user_id = \${novoId}
+        WHERE gm.guild_id = ${guildId}
+          AND gm.user_id = ${novoId}
           AND gm.role = 'gm'
           AND gm.status = 'ativo'
           AND u.status = 'ativo'
       )
-  \`);
+  `);
   return r.changes;
 }
