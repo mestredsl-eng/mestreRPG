@@ -103,6 +103,8 @@ jobs:
         run: npx tsx servidor/testes/socket-rate-limit.test.ts
       - name: Testes unitários da iniciativa
         run: npm run test:iniciativa --workspace servidor
+      - name: Testes unitários da régua VTT (#125)
+        run: npm run test:regua --workspace servidor
       - name: Testes unitários da convenção D10
         run: npm run test:d10 --workspace servidor
       - name: Testes unitários da guarda do último GM
