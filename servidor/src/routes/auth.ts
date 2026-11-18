@@ -283,6 +283,20 @@ const corHex = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Cor deve estar no formato 
 // Temas da bandeja 3D (Mesa de Dados). Lista fechada: o cliente não pode
 // injetar CSS/cores arbitrárias — só um dos identificadores conhecidos.
 export const TEMAS_MESA = ["azul", "verde", "vinho", "madeira", "obsidiana"] as const;
+// Preferências visuais da conta (Issue #132). Objeto completo e fechado:
+// o frontend envia todos os campos e o servidor substitui `visual`
+// inteiro — sem merge parcial interno. "Restaurar padrões" é o cliente
+// reenviando o objeto default; não há visual:null.
+const visualSchema = z
+  .object({
+    intensidade: z.enum(["discreta", "equilibrada", "imersiva"]),
+    corDestaque: z.enum(["vinho", "ambar", "violeta", "cinza-frio"]),
+    superficies: z.enum(["padrao", "flat", "elevado"]),
+    textura: z.enum(["nenhuma", "sutil", "intensa"]),
+    animacoes: z.enum(["reduzido", "normal", "completo"]),
+    densidade: z.enum(["compacta", "padrao", "ampla"]),
+  })
+  .strict();
 const preferenciasSchema = z
   .object({
     dados: z
@@ -290,6 +304,7 @@ const preferenciasSchema = z
       .strict()
       .optional(),
     temaMesa: z.enum(TEMAS_MESA).optional(),
+    visual: visualSchema.optional(),
   })
   .strict();
 
@@ -300,17 +315,26 @@ authRouter.patch("/preferences", requireAuth, async (req, res) => {
     res.status(400).json({ erro: "Preferências inválidas", detalhes: body.error.issues });
     return;
   }
-  const [user] = await db.select().from(users).where(eq(users.id, req.usuario!.id)).limit(1);
-  if (!user) {
+  // Leitura + merge + gravação na MESMA transação síncrona (better-sqlite3):
+  // sessões concorrentes do mesmo usuário não perdem atualizações — cada
+  // PATCH relê a linha atual dentro do lock e só substitui as chaves
+  // enviadas (`visual` é objeto completo; dados/temaMesa/futuras intactas).
+  let novas: Record<string, unknown> | null = null;
+  const sumiu = db.transaction((tx) => {
+    const [user] = tx.select().from(users).where(eq(users.id, req.usuario!.id)).limit(1).all();
+    if (!user) return true;
+    const atuais = (user.preferences ?? {}) as Record<string, unknown>;
+    novas = { ...atuais, ...body.data } as Record<string, unknown>;
+    tx.update(users)
+      .set({ preferences: novas, updatedAt: new Date() })
+      .where(eq(users.id, user.id))
+      .run();
+    return false;
+  });
+  if (sumiu) {
     res.status(404).json({ erro: "Usuário não encontrado" });
     return;
   }
-  const atuais = (user.preferences ?? {}) as Record<string, unknown>;
-  const novas = { ...atuais, ...body.data } as Record<string, unknown>;
-  await db
-    .update(users)
-    .set({ preferences: novas, updatedAt: new Date() })
-    .where(eq(users.id, user.id));
   res.json({ ok: true, preferences: novas });
 });
 
