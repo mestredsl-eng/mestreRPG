@@ -886,7 +886,9 @@ function socket_handlers(
             rejeitarCampo("campo não elegível");
             return;
           }
-          const key = typeof payload.elementoKey === "string" ? payload.elementoKey.trim() : "";
+          // a chave é comparada com o valor persistido na ficha — espaços
+          // fazem parte da identidade do elemento e nunca são removidos
+          const key = typeof payload.elementoKey === "string" ? payload.elementoKey : "";
           const lista = Array.isArray(dadosFicha[campoSel.id]) ? (dadosFicha[campoSel.id] as { key?: unknown; nivel?: unknown }[]) : [];
           const item = key ? lista.find((i) => i && typeof i === "object" && i.key === key) : undefined;
           const nivel = item && typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : null;

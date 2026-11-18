@@ -154,7 +154,7 @@ try {
       { id: "s-hab", titulo: "Habilidades", ordem: 2, campos: [
         { id: "pericias", label: "Pericias", tipo: "selecao_nivel", semantico: "especializacao", regraKind: "pericia" },
         { id: "conhecimentos", label: "Conhecimento", tipo: "selecao_nivel", semantico: "conhecimento", regraKind: "conhecimento" },
-        { id: "talentos", label: "Talentos", tipo: "selecao_nivel", semantico: "talento", opcoes: ["Liderança", "Furtividade"] },
+        { id: "talentos", label: "Talentos", tipo: "selecao_nivel", semantico: "talento", opcoes: ["Liderança", "Furtividade", " Espionagem", "Negociação "] },
         { id: "computador_fern", label: "Computador", tipo: "inteiro", semantico: "conhecimento" },
         { id: "doencas", label: "Doenças", tipo: "inteiro", semantico: "habilidade", usadoEmTestes: false },
       ]},
@@ -208,7 +208,11 @@ try {
               { key: "medicina", nivel: 3 },
               { key: "quimica", nivel: 2 },
             ],
-            talentos: [{ key: "Liderança", nivel: 4 }],
+            talentos: [
+              { key: "Liderança", nivel: 4 },
+              { key: " Espionagem", nivel: 3 },
+              { key: "Negociação ", nivel: 2 },
+            ],
             computador_fern: 5, doencas: 4, pontos_sangue: 1,
             dinheiro: [], inventario: [],
           }), "{}", "aprovada", 0, agora, agora);
@@ -359,6 +363,41 @@ try {
   const evElTal = evJ1.teste.find((x) => x.id === rElTalento?.id);
   t("Fernandinho: Talento 'Liderança' nível 4 elegível via fallback",
     rElTalento?.ok === true && evElTal?.pool?.positivos === 4, JSON.stringify(evElTal?.pool));
+
+  // Chaves com espaços fazem parte da identidade do elemento: a comparação
+  // é EXATA contra o valor persistido — trim no servidor quebraria isso.
+  await new Promise((r) => setTimeout(r, 400));
+  const rEsp = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "talentos", elementoKey: " Espionagem",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evEsp = evJ1.teste.find((x) => x.id === rEsp?.id);
+  t("elemento com espaço inicial: chave exata aceita, nível 3 -> 3 positivos",
+    rEsp?.ok === true && evEsp?.pool?.positivos === 3, JSON.stringify(rEsp) + " " + JSON.stringify(evEsp?.pool));
+  const rowEsp = rEsp?.id ? comDb(BANCO, (db) => db.prepare("select skill_ref from tests where id=?").get(rEsp.id)) : null;
+  const skillEsp = JSON.parse(rowEsp?.skill_ref ?? "null");
+  t("skill_ref persiste a chave original com espaço",
+    skillEsp?.elementoKey === " Espionagem" && skillEsp?.campoId === "talentos", JSON.stringify(skillEsp));
+  const rEspAparada = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "talentos", elementoKey: "Espionagem",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("elementoKey aparada (sem o espaço persistido) rejeitada",
+    rEspAparada?.ok === false, JSON.stringify(rEspAparada));
+  await new Promise((r) => setTimeout(r, 400));
+  const rNeg = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "talentos", elementoKey: "Negociação ",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  const evNeg = evJ1.teste.find((x) => x.id === rNeg?.id);
+  t("elemento com espaço final: chave exata aceita, nível 2 -> 2 positivos",
+    rNeg?.ok === true && evNeg?.pool?.positivos === 2, JSON.stringify(rNeg) + " " + JSON.stringify(evNeg?.pool));
+  const rNegAparada = await emitirCb(sockM, "mesa:teste:pedir", {
+    sessionId: sid, characterId: pj3Id, campoId: "talentos", elementoKey: "Negociação",
+    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+  });
+  t("elementoKey sem o espaço final rejeitada",
+    rNegAparada?.ok === false, JSON.stringify(rNegAparada));
   await new Promise((r) => setTimeout(r, 400));
   const rDoencas = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pj3Id, campoId: "doencas",
@@ -634,6 +673,9 @@ try {
       && opcoesF.some((o) => /Conhecimento — Química\s*\(2\)/.test(o)), opcoesF.join("|"));
   t("UI. Fernandinho: elemento de Talentos listado",
     opcoesF.some((o) => /Talentos — Liderança\s*\(4\)/.test(o)), opcoesF.join("|"));
+  t("UI. Fernandinho: elementos com espaços nas chaves listados",
+    opcoesF.some((o) => /Talentos —\s+Espionagem\s*\(3\)/.test(o))
+      && opcoesF.some((o) => /Talentos —\s+Negociação\s*\(2\)/.test(o)), opcoesF.join("|"));
   t("UI. Fernandinho: perícia sem opt-in ausente",
     !opcoesF.some((o) => /Esportes/.test(o)), opcoesF.join("|"));
   const idxCompF = opcoesF.findIndex((o) => /Conhecimento — Computador/.test(o));
