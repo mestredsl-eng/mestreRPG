@@ -101,6 +101,21 @@ for (const cor of CORES_DESTAQUE) {
     ["--horror-noite", "--horror-carvao", "--horror-superficie", "--horror-superficie-elevada",
       "--horror-borda", "--horror-vinho", "--horror-vinho-claro", "--horror-ambar", "--horror-sombra"]
       .every((k) => typeof css[k] === "string" && css[k].length > 0));
+  ok("paleta vinho preserva os acentos originais da identidade #134",
+    PALETA_DESTAQUE.vinho.principal === "#8d3d4b"
+    && PALETA_DESTAQUE.vinho.claro === "#b85c69"
+    && PALETA_DESTAQUE.vinho.suave === "rgba(141,61,75,.24)");
+  ok("VISUAL_PADRAO preserva exatamente as bordas originais da identidade #134",
+    css["--horror-borda"] === "rgba(154, 111, 125, .24)"
+    && css["--horror-borda-forte"] === "rgba(177, 91, 105, .48)");
+  ok("VISUAL_PADRAO preserva as cores-base da identidade #134",
+    css["--horror-noite"] === "#0b0a0f"
+    && css["--horror-carvao"] === "#131118"
+    && css["--horror-superficie"] === "#1b1720"
+    && css["--horror-superficie-elevada"] === "#211b26"
+    && css["--horror-vinho"] === "#8d3d4b"
+    && css["--horror-vinho-claro"] === "#b85c69"
+    && css["--horror-ambar"] === "#b99a62");
   ok("atributos semânticos refletem as 6 preferências",
     CAMPOS.every((c) => atributos[`data-${c.replace(/[A-Z]/g, (m) => "-" + m.toLowerCase())}`] !== undefined ||
       Object.values(atributos).includes(VISUAL_PADRAO[c])));

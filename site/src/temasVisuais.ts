@@ -61,9 +61,11 @@ export const PALETA_DESTAQUE: Record<CorDestaqueVisual, CorDestaqueInfo> = {
     id: "vinho",
     nome: "Vinho",
     descricao: "Acento da identidade — vinho profundo com rosé.",
-    principal: "#9e3a55",
-    claro: "#d98ba0",
-    suave: "rgba(158,58,85,.55)",
+    // Valores originais da identidade #134: o padrão não pode alterar
+    // o visual de quem ainda não escolheu uma personalização.
+    principal: "#8d3d4b",
+    claro: "#b85c69",
+    suave: "rgba(141,61,75,.24)",
   },
   ambar: {
     id: "ambar",
@@ -190,8 +192,14 @@ export function resolverTokensVisuais(preferencias: PreferenciasVisuais): Tokens
       "--horror-destaque-suave": destaque.suave,
       "--horror-ambar": "#b99a62",
       // Bordas tingidas pelo destaque escolhido.
-      "--horror-borda": rgbaDe(destaque.principal, 0.24),
-      "--horror-borda-forte": rgbaDe(destaque.principal, 0.48),
+      // Sem personalização, preservar inclusive as bordas originais da
+      // identidade #134; as demais paletas derivam bordas do próprio acento.
+      "--horror-borda": prefs.corDestaque === "vinho"
+        ? "rgba(154, 111, 125, .24)"
+        : rgbaDe(destaque.principal, 0.24),
+      "--horror-borda-forte": prefs.corDestaque === "vinho"
+        ? "rgba(177, 91, 105, .48)"
+        : rgbaDe(destaque.principal, 0.48),
       // Superfícies conforme a preferência.
       "--horror-superficie": superficie.superficie,
       "--horror-superficie-elevada": superficie.elevada,
