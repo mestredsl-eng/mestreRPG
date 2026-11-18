@@ -472,8 +472,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     const aoMensagem = (m: MensagemMesa & { autorNome?: string; visibility?: string; authorId?: string | null; recipients?: unknown }) => {
       // Isolamento por sessão (auditoria #149): mensagens privadas chegam
       // por usuario:<id> — uma aba de OUTRA sessão do mesmo usuário não
-      // pode exibi-las. Mensagens de campanha (sessionId nulo) passam.
-      if (m.sessionId && m.sessionId !== sessao.id) return;
+      // pode exibi-las. Validação explícita: sessionId null é a ÚNICA
+      // forma legítima sem sessão (mensagem de campanha); UUID só passa
+      // quando é ESTA sessão. undefined, vazio, tipo inválido ou UUID de
+      // outra sessão → rejeita antes de qualquer filtro de conteúdo.
+      if (m.sessionId !== null && m.sessionId !== sessao.id) return;
       if (!autorizaMensagem(m)) return; // descarta antes de entrar no estado
       setMensagens((prev) => prev.some((x) => x.id === m.id) ? prev : [...prev.slice(-400), m]);
     };
