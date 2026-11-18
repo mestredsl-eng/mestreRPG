@@ -101,6 +101,8 @@ jobs:
         run: npx tsx servidor/testes/socket-rate-limit.test.ts
       - name: Testes unitários da iniciativa
         run: npm run test:iniciativa --workspace servidor
+      - name: Testes unitários da convenção D10
+        run: npm run test:d10 --workspace servidor
       - name: Testes de formatação das rolagens do histórico
         run: npx tsx teste-historico-rolagens.mjs
       - name: Suítes residuais Acervo + dados 3D (sem navegador)

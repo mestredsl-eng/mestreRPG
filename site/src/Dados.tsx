@@ -3,8 +3,7 @@ import { api } from "./api";
 import { getSocket } from "./socket";
 import LancadorD10 from "./D10";
 import Dado3D from "./Dado3D";
-import MesaDados3D, { seedDeId } from "./MesaDadosFisicaLazy";
-import MesaDadosArea from "./MesaDadosArea";
+import type { ItemDadoMesa } from "./MesaDados3D";
 import { TEMAS_MESA, TEMAS_MESA_IDS, TEMA_MESA_PADRAO, aplicarTemaMesa, ehTemaMesa, type TemaMesaId } from "./temasMesa";
 
 // ---------- Preferências visuais de dados (por usuário, persistidas no servidor) ----------
@@ -20,9 +19,18 @@ export function aplicarPrefsDados(prefs: { corExterna: string; corInterna: strin
   r.setProperty("--dado-texto", prefs.corInterna);
 }
 
+export interface VisibilidadeMesa {
+  aparencia: boolean;
+  bandeja: boolean;
+  rolagens: boolean;
+}
+
+export const VISIBILIDADE_PADRAO: VisibilidadeMesa = { aparencia: true, bandeja: true, rolagens: true };
+
 export function usePreferenciasDados() {
   const [prefs, setPrefs] = useState(DADOS_PADRAO);
   const [temaMesa, setTemaMesa] = useState<TemaMesaId>(TEMA_MESA_PADRAO);
+  const [visibilidade, setVisibilidade] = useState<VisibilidadeMesa>(VISIBILIDADE_PADRAO);
   const [pronto, setPronto] = useState(false);
   useEffect(() => {
     let vivo = true;
@@ -39,6 +47,15 @@ export function usePreferenciasDados() {
         // tema padrão — o JSON de preferências não exige migration.
         const tema = ehTemaMesa(p?.temaMesa) ? p.temaMesa : TEMA_MESA_PADRAO;
         if (vivo) { setTemaMesa(tema); aplicarTemaMesa(tema); }
+        // Contas antigas sem visibilidade → tudo visível (Issue #147).
+        const v = p?.visibilidade;
+        if (vivo && v && typeof v === "object") {
+          setVisibilidade({
+            aparencia: v.aparencia !== false,
+            bandeja: v.bandeja !== false,
+            rolagens: v.rolagens !== false,
+          });
+        }
       })
       .catch(() => undefined)
       .finally(() => { if (vivo) setPronto(true); });
@@ -55,8 +72,15 @@ export function usePreferenciasDados() {
     aplicarTemaMesa(tema);
     try { await api.atualizarTemaMesa(tema); } catch { /* mantém local */ }
   };
-  return { prefs, temaMesa, pronto, salvar, salvarTema };
+  const salvarVisibilidade = async (parcial: Partial<VisibilidadeMesa>) => {
+    const v = { ...visibilidade, ...parcial };
+    setVisibilidade(v);
+    try { await api.atualizarVisibilidadeMesa(v); } catch { /* mantém local */ }
+  };
+  return { prefs, temaMesa, visibilidade, pronto, salvar, salvarTema, salvarVisibilidade };
 }
+
+export type PreferenciasDados = ReturnType<typeof usePreferenciasDados>;
 
 // ---------- Tipos de dados disponíveis ----------
 
@@ -169,10 +193,10 @@ interface ResultadoLivre {
   ts: number;
 }
 
-const count0 = (v: number) => Math.max(1, Math.min(30, Math.round(v) || 1));
 
-function RolagemDados({ sessionId, aoErro, souMestre }: {
+function RolagemDados({ sessionId, aoErro, souMestre, aoPendencia }: {
   sessionId: string; aoErro: (e: string | null) => void; souMestre: boolean;
+  aoPendencia?: (dados: ItemDadoMesa[] | null, requestId: string) => void;
 }) {
   const [lados, setLados] = useState(20);
   const [qtd, setQtd] = useState(1);
@@ -181,10 +205,6 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
   const [privado, setPrivado] = useState(false);
   const [resultado, setResultado] = useState<ResultadoLivre | null>(null);
   const [rolando, setRolando] = useState(false);
-  // rodada identifica a tentativa de lançamento: a mesma semente cobre o
-  // tumble (ACK pendente) e o assentamento no resultado oficial — a cena
-  // de física continua de onde estava em vez de reiniciar do zero.
-  const [rodada, setRodada] = useState(0);
   // timeout do ACK: sem resposta do servidor em 15s, libera o botão e
   // avisa — nunca deixa "Rolando…" eterno quando o socket cai
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -199,11 +219,17 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       return;
     }
     const count = Math.max(1, Math.min(30, Math.round(qtd) || 1));
-    setRodada((r) => r + 1);
+    const requestId = crypto.randomUUID();
     setRolando(true);
+    // Tumble otimista no tabuleiro compartilhado da Mesa (Issue #147).
+    aoPendencia?.(
+      Array.from({ length: count }, () => ({ lados, valor: null })),
+      requestId,
+    );
     ackTimer.current = setTimeout(() => {
       ackTimer.current = null;
       setRolando(false);
+      aoPendencia?.(null, requestId);
       aoErro("O servidor não respondeu à rolagem a tempo — verifique a conexão e tente novamente.");
     }, 15000);
     socket.emit("mesa:rolar", {
@@ -212,10 +238,11 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
       motivo: motivo || (modo === "dano" ? "Dano" : undefined),
       modo: modo === "dano" ? "dano" : undefined,
       visibilidade: privado ? "privada" : "publica",
-      requestId: crypto.randomUUID(),
+      requestId,
     }, (r: { ok?: boolean; erro?: string; id?: string; grupos?: { lados?: number; sides?: number; resultados: number[] }[]; total?: number; modo?: string }) => {
       if (ackTimer.current) { clearTimeout(ackTimer.current); ackTimer.current = null; }
       setRolando(false);
+      aoPendencia?.(null, requestId);
       if (!r?.ok) { aoErro(r?.erro ?? "Erro ao rolar"); return; }
       setResultado({
         id: r.id ?? `rol-${Date.now()}`,
@@ -258,20 +285,6 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
         </div>
       </form>
 
-      {/* Mesa de dados sempre visível: bandeja vazia antes da primeira
-          rolagem, tumble real durante o ACK e assentamento na face
-          oficial do servidor. Nenhum valor é sorteado no cliente. */}
-      <MesaDadosArea ariaLabel="Mesa de dados 3D">
-        <MesaDados3D
-          dados={rolando
-            ? Array.from({ length: count0(qtd) }, () => ({ lados, valor: null }))
-            : resultado
-              ? resultado.grupos.flatMap((g) => g.resultados.map((v) => ({ lados: g.lados, valor: v })))
-              : []}
-          semente={seedDeId(`${sessionId}-rol-${rodada}`)}
-        />
-      </MesaDadosArea>
-
       {resultado && (
         <div className="rolagem-resultado">
           <div className="d10-resumo">
@@ -287,11 +300,48 @@ function RolagemDados({ sessionId, aoErro, souMestre }: {
 
 // ---------- Painel unificado: Testes D10 | Rolagem livre e dano ----------
 
-export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre }: {
+const OPCOES_VISIBILIDADE: { chave: keyof VisibilidadeMesa; rotulo: string; descricao: string }[] = [
+  { chave: "aparencia", rotulo: "Aparência dos dados", descricao: "cores e pré-visualização dos dados" },
+  { chave: "bandeja", rotulo: "Bandeja da mesa", descricao: "tabuleiro 3D compartilhado e tema da bandeja" },
+  { chave: "rolagens", rotulo: "Rolagens", descricao: "histórico de rolagens da mesa" },
+];
+
+/** Cartão "Exibição" — preferências individuais de visibilidade.
+ *  Separado dos lançadores para que espectadores (que não veem o
+ *  PainelDados) também possam ajustar as próprias preferências
+ *  (auditoria #149). Os toggles sempre ficam visíveis: esconder uma
+ *  seção nunca impede de reexibi-la, e nada aqui afeta outros usuários. */
+export function CartaoExibicao({ prefsDados }: { prefsDados: PreferenciasDados }) {
+  const { visibilidade, salvarVisibilidade } = prefsDados;
+  return (
+    <section className="cartao cores-cartao">
+      <h3>Exibição</h3>
+      <div className="visibilidade-mesa">
+        {OPCOES_VISIBILIDADE.map((op) => (
+          <label key={op.chave} className="check">
+            <input
+              type="checkbox"
+              checked={visibilidade[op.chave]}
+              onChange={(e) => void salvarVisibilidade({ [op.chave]: e.target.checked })}
+            />
+            <span>
+              <strong>{op.rotulo}</strong>
+              <span className="meta"> — {op.descricao}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre, prefsDados, aoPendencia }: {
   sessionId: string; aoErro: (e: string | null) => void; minimoPadrao: number; souMestre: boolean;
+  prefsDados: PreferenciasDados;
+  aoPendencia?: (dados: ItemDadoMesa[] | null, requestId: string) => void;
 }) {
   const [aba, setAba] = useState<"d10" | "livre">("d10");
-  const { prefs, temaMesa, salvar, salvarTema } = usePreferenciasDados();
+  const { prefs, temaMesa, visibilidade, salvar, salvarTema } = prefsDados;
   return (
     <div className="painel-dados">
       <div className="abas-dados" role="tablist">
@@ -299,16 +349,24 @@ export default function PainelDados({ sessionId, aoErro, minimoPadrao, souMestre
         <button type="button" role="tab" aria-selected={aba === "livre"} className={aba === "livre" ? "ativo" : ""} onClick={() => setAba("livre")}>Rolagem e dano</button>
       </div>
       {aba === "d10"
-        ? <LancadorD10 sessionId={sessionId} aoErro={aoErro} minimoPadrao={minimoPadrao} />
-        : <RolagemDados sessionId={sessionId} aoErro={aoErro} souMestre={souMestre} />}
-      <section className="cartao cores-cartao">
-        <h3>Aparência dos dados</h3>
-        <SeletorCores prefs={prefs} salvar={salvar} />
-      </section>
-      <section className="cartao cores-cartao">
-        <h3>Bandeja da mesa</h3>
-        <SeletorTemaMesa tema={temaMesa} salvar={salvarTema} />
-      </section>
+        ? <LancadorD10 sessionId={sessionId} aoErro={aoErro} minimoPadrao={minimoPadrao} aoPendencia={aoPendencia} />
+        : <RolagemDados sessionId={sessionId} aoErro={aoErro} souMestre={souMestre} aoPendencia={aoPendencia} />}
+      {/* Exibição: toggles sempre visíveis — esconder uma seção nunca
+          impede de reexibi-la (Issue #147). Só afeta a apresentação
+          do próprio usuário; rolagens e resultados seguem íntegros. */}
+      <CartaoExibicao prefsDados={prefsDados} />
+      {visibilidade.aparencia && (
+        <section className="cartao cores-cartao">
+          <h3>Aparência dos dados</h3>
+          <SeletorCores prefs={prefs} salvar={salvar} />
+        </section>
+      )}
+      {visibilidade.bandeja && (
+        <section className="cartao cores-cartao">
+          <h3>Bandeja da mesa</h3>
+          <SeletorTemaMesa tema={temaMesa} salvar={salvarTema} />
+        </section>
+      )}
     </div>
   );
 }
