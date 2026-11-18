@@ -435,7 +435,7 @@ try {
   t("vtt corrompido vira estado vazio controlado", rCorr?.sessao?.vttState?.tokens?.length === 0 || rCorr?.sessao?.vttState == null, JSON.stringify(rCorr?.sessao?.vttState).slice(0, 120));
   const rChat = await emitirCb(sMestre3, "mesa:mensagem", { sessionId: sid, content: "chat com vtt corrompido" });
   t("chat funciona com vtt_state corrompido", rChat?.ok !== false, JSON.stringify(rChat).slice(0, 160));
-  const rTurno = await emitirCb(sMestre3, "mesa:turno", { sessionId: sid, acao: "iniciar" });
+  const rTurno = await emitirCb(sMestre3, "mesa:turno", { sessionId: sid, acao: "iniciar", ordem: [c.jogadores.jogador1.membershipId, c.membMestre] });
   t("turnos funcionam com vtt_state corrompido", rTurno?.ok !== false, JSON.stringify(rTurno).slice(0, 160));
   const rTimer = await emitirCb(sMestre3, "mesa:timer", { sessionId: sid, acao: "iniciar", duracaoSegundos: 60 });
   t("timer funciona com vtt_state corrompido", rTimer?.ok === true, JSON.stringify(rTimer).slice(0, 160));

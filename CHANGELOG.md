@@ -1,5 +1,56 @@
 # Changelog - Mestre RPG
 
+## [Unreleased]
+
+## [1.0.0.4] - 2026-11-17
+
+### Novidades
+
+- **Iniciativa d20 na mesa:** o mestre pode rolar de 1 a 10 dados d20 por participante, incluindo jogadores ativos e NPCs aprovados e revelados. Os resultados são calculados pelo servidor, ordenados por total decrescente e desempatados alfabeticamente.
+- **Resultados persistentes e sincronizados:** iniciativa, dados e ordem são persistidos na sessão, transmitidos em tempo real pelo Socket.IO e registrados no chat da mesa.
+- **Compatibilidade com turnos manuais:** o mestre pode continuar usando ou redefinindo a ordem manual após uma iniciativa.
+
+### Integridade, permissões e recuperação
+
+- **Autorização no servidor:** apenas o mestre controla início, encerramento, avanço, ordem e rolagem de iniciativa.
+- **NPCs protegidos:** somente NPCs da campanha aprovados, ativos e revelados pelo mestre podem participar.
+- **Ordem vazia protegida:** o servidor rejeita iniciar turnos sem participantes; esvaziar a ordem encerra a sequência.
+- **Estados legados resilientes:** a mesa abre sem crash mesmo quando encontra estado antigo inconsistente, e o mestre consegue reparar a ordem pela interface.
+
+### Testes
+
+- **servidor/testes/iniciativa.test.ts: 4/4** — cálculo, limites de dados e ordenação/desempate.
+- **homologacao-mesa.mjs: 52/52** — iniciativa autoritativa, NPCs, permissões, ordem vazia, recuperação de estado legado e turnos manuais.
+- **homologacao-mesa-virtual.mjs: 30/30** — abertura da mesa com estado legado inválido, sem erro de renderização e com controles de recuperação funcionais.
+- **teste-permissao-tempo-real.mjs: 579/579** — permissões, revogação e sincronização de turnos.
+- **CI #534:** servidor, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA f872816c5d649528da7c1fa63940ff7e494bc19e.
+- **Assistente de Desenvolvimento #376:** sucesso no mesmo SHA.
+
+---
+
+## [1.0.0.3] - 2026-11-17
+
+### Novidades
+
+- **Mesa de dados 3D com física Rapier** — bandeja compartilhada renderizada com Three.js e corpos rígidos Rapier, incluindo colisões entre dados, gravidade, atrito, quique, paredes e iluminação. D4, D6, D8, D10 e D20 preservam rótulos legíveis, temas e cores personalizadas.
+- **Resultado autoritativo** — a física é apenas apresentação: o resultado continua definido pelo servidor e cada dado assenta na face oficial recebida.
+
+### Acessibilidade, estabilidade e compatibilidade
+
+- **Movimento reduzido** — dados já resolvidos aparecem assentados imediatamente quando `prefers-reduced-motion` está ativo.
+- **Assentamento físico terminal** — corpos prontos dormem e não voltam a ser integrados pela gravidade; novos resultados podem acordá-los novamente.
+- **Frequências de atualização** — o ciclo de renderização continua corretamente em telas de 60, 90, 120 e 144 Hz.
+- **Carregamento sob demanda** — Three.js e Rapier/WASM são carregados ao abrir o visualizador; o renderer Canvas permanece como fallback sem WebGL.
+- **CSP do preview** — a política permite `wasm-unsafe-eval` para inicialização do Rapier, sem liberar `unsafe-eval` geral.
+
+### Testes
+
+- **`homologacao-dados3d.mjs`: 111/111** — histórico pré-resolvido, ACK posterior com reduced-motion, velocidades linear/angular, quaternion e posição finais, frequências de 60/90/120/144 Hz, CSP/preview WASM e mobile.
+- **CI #524:** servidor, typecheck, build, suítes sem navegador e homologações Playwright concluídos com sucesso no SHA `7715a48fb32bc9538134db098fa95a0698ba5ec0`.
+- **Assistente de Desenvolvimento #370:** sucesso no mesmo SHA.
+
+---
+
 ## [1.0.0.2] - 2026-11-17
 
 ### Novidades

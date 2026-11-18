@@ -99,6 +99,8 @@ jobs:
         run: npm run build
       - name: Testes unitários do limitador Socket.IO
         run: npx tsx servidor/testes/socket-rate-limit.test.ts
+      - name: Testes unitários da iniciativa
+        run: npm run test:iniciativa --workspace servidor
       - name: Testes de formatação das rolagens do histórico
         run: npx tsx teste-historico-rolagens.mjs
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
@@ -152,7 +154,8 @@ jobs:
             teste-diario.mjs \
             teste-regras.mjs \
             teste-retratos.mjs \
-            teste-biblioteca-conteudo.mjs
+            teste-biblioteca-conteudo.mjs \
+            teste-defeitos-mesa.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
@@ -267,6 +270,7 @@ jobs:
             homologacao-limitacoes.mjs \
             homologacao-ajuda-contextual.mjs \
             homologacao-retratos.mjs \
+            homologacao-defeitos-mesa.mjs \
             auditoria-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
