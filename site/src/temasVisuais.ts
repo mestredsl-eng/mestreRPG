@@ -59,6 +59,9 @@ export interface CorDestaqueInfo {
 // A opacidade do token `suave` é específica de cada paleta: vinho mantém
 // .24 para preservar a linguagem de bordas legada; os novos acentos usam .55.
 // Consumidores não devem presumir alfa uniforme entre paletas.
+// A opacidade do token `suave` é específica de cada paleta: vinho mantém
+// .24 para preservar a linguagem de bordas legada; os novos acentos usam .55.
+// Consumidores não devem presumir alfa uniforme entre paletas.
 export const PALETA_DESTAQUE: Readonly<Record<CorDestaqueVisual, Readonly<CorDestaqueInfo>>> = Object.freeze({
   vinho: Object.freeze({
     id: "vinho",
@@ -69,7 +72,7 @@ export const PALETA_DESTAQUE: Readonly<Record<CorDestaqueVisual, Readonly<CorDes
     principal: "#8d3d4b",
     claro: "#b85c69",
     suave: "rgba(141,61,75,.24)",
-  },
+  }),
   ambar: Object.freeze({
     id: "ambar",
     nome: "Âmbar",
@@ -77,7 +80,7 @@ export const PALETA_DESTAQUE: Readonly<Record<CorDestaqueVisual, Readonly<CorDes
     principal: "#b08d4f",
     claro: "#e3c98f",
     suave: "rgba(176,141,79,.55)",
-  },
+  }),
   violeta: Object.freeze({
     id: "violeta",
     nome: "Violeta",
@@ -85,7 +88,7 @@ export const PALETA_DESTAQUE: Readonly<Record<CorDestaqueVisual, Readonly<CorDes
     principal: "#7a5f9e",
     claro: "#b9a4d6",
     suave: "rgba(122,95,158,.55)",
-  },
+  }),
   "cinza-frio": Object.freeze({
     id: "cinza-frio",
     nome: "Cinza frio",
@@ -268,8 +271,8 @@ export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.f
       textura: "nenhuma",
       animacoes: "reduzido",
       densidade: "compacta",
-    },
-  },
+    }),
+  }),
   Object.freeze({
     id: "investigacao-noturna",
     nome: "Investigação Noturna",
@@ -282,8 +285,8 @@ export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.f
       textura: "sutil",
       animacoes: "normal",
       densidade: "padrao",
-    },
-  },
+    }),
+  }),
   Object.freeze({
     id: "ocultismo",
     nome: "Ocultismo",
@@ -296,8 +299,8 @@ export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.f
       textura: "intensa",
       animacoes: "completo",
       densidade: "ampla",
-    },
-  },
+    }),
+  }),
   Object.freeze({
     id: "terror-psicologico",
     nome: "Terror Psicológico",
@@ -310,8 +313,8 @@ export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.f
       textura: "intensa",
       animacoes: "reduzido",
       densidade: "padrao",
-    },
-  },
+    }),
+  }),
   Object.freeze({
     id: "misterio-sobrenatural",
     nome: "Mistério Sobrenatural",
