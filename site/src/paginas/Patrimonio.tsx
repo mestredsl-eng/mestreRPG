@@ -1028,6 +1028,12 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   // vs 10.24) e não pode ser usado aqui.
   const valorTransacao = (t: TransacaoFinanceira) => fmt(t.amountCents);
   const transacaoNegativa = (t: TransacaoFinanceira) => (t.amountCents ?? 0) < 0;
+  // Modal de estorno: mesmo amountCents já normalizado pelo servidor —
+  // transações legadas chegam com o inteiro canônico preenchido pelo
+  // GET, então o valor nunca cai em "—" por causa do REAL bruto. O "—"
+  // só aparece quando nem o legado nem o cents existem de fato.
+  const valorTransacaoAbs = (t: TransacaoFinanceira) =>
+    t.amountCents != null ? fmt(Math.abs(t.amountCents)) : "—";
 
   // Rótulos amigáveis dos tipos de movimentação.
   const ROTULO_KIND: Record<string, string> = {
@@ -1116,7 +1122,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
       {estornando && (
         <ModalConfirmar
           titulo="Estornar operação"
-          mensagem={`Estornar a ${rotuloKind(estornando.kind).toLowerCase()} de ${estornando.amountCents !== null ? fmt(Math.abs(estornando.amountCents)) : "—"}? O saldo será revertido na mesma conta e o item correspondente será devolvido/removido do inventário. O histórico original será preservado.`}
+          mensagem={`Estornar a ${rotuloKind(estornando.kind).toLowerCase()} de ${valorTransacaoAbs(estornando)}? O saldo será revertido na mesma conta e o item correspondente será devolvido/removido do inventário. O histórico original será preservado.`}
           rotuloConfirmar="Estornar"
           perigo
           ocupado={ocupadoEstorno}

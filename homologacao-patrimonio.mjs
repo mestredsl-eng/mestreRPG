@@ -71,15 +71,15 @@ function configurarCasasDecimais(campId, casas) {
   } finally { db.close(); }
 }
 
-function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, description) {
+function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, description, extra = {}) {
   const db = abrirDb(BANCO);
   try {
     db.prepare(`
       insert into money_transactions
         (id, character_id, campaign_id, kind, amount, currency, account, description,
-         amount_cents, balance_before_cents, balance_after_cents, created_by, created_at)
-      values (?, ?, ?, ?, ?, 'BRL', 'especie', ?, null, null, null, ?, ?)
-    `).run(crypto.randomUUID(), characterId, campaignId, amount < 0 ? "saida" : "entrada", amount, description, createdBy, Date.now());
+         amount_cents, request_id, balance_before_cents, balance_after_cents, created_by, created_at)
+      values (?, ?, ?, ?, ?, 'BRL', 'especie', ?, null, ?, null, null, ?, ?)
+    `).run(crypto.randomUUID(), characterId, campaignId, extra.kind ?? (amount < 0 ? "saida" : "entrada"), amount, description, extra.requestId ?? null, createdBy, Date.now());
   } finally { db.close(); }
 }
 
@@ -139,6 +139,45 @@ async function testarHistoricoLegado(ids, casos, modo) {
         t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
       }
     }
+  } finally {
+    await contexto.close();
+  }
+}
+
+
+// Modal de estorno sobre transacao legada (amount REAL, amount_cents
+// NULL): o GET normaliza amountCents e o modal deve exibir o valor
+// canonico — nunca "—" — em desktop e mobile.
+async function testarModalEstornoLegado(ids, modo) {
+  const viewport = modo === "desktop" ? { width: 1366, height: 900 } : { width: 390, height: 844 };
+  const contexto = await browser.newContext({ viewport });
+  const page = await contexto.newPage();
+  const requestId = `legado-estorno-${modo}`;
+  const descricao = `Legado estorno ${modo}`;
+  const amount = 10.235;
+  try {
+    inserirTransacaoLegada(ids, amount, descricao, { kind: "compra", requestId });
+    await login(page, "jogador_um", "senha-jogador-123");
+    await irCampanha(page);
+    await abrirPersonagem(page, "Heroína Um");
+    await abaPatrimonio(page, "Dinheiro");
+
+    // amountCents canonico: Math.round(10.235 * 100) = 1024 -> "10.24".
+    const esperado = (Math.abs(Math.round(amount * 100)) / 100).toFixed(2);
+    const gatilho = modo === "desktop"
+      ? page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricao }).first().getByRole("button", { name: "Estornar" })
+      : page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricao }).first().getByRole("button", { name: "Estornar operação" });
+    await gatilho.waitFor({ state: "visible", timeout: 8000 });
+    await gatilho.click();
+    await page.locator(".modal").waitFor({ timeout: 8000 });
+    const modalTxt = await page.locator(".modal").innerText();
+    t(`modal estorno ${modo}: valor legado normalizado visivel`,
+      modalTxt.includes(`de ${esperado}?`) && !modalTxt.includes("de —?"),
+      modalTxt.slice(0, 200));
+    t(`modal estorno ${modo}: nao exibe "—" no lugar do valor`,
+      /Estornar a compra de \d/.test(modalTxt), modalTxt.slice(0, 200));
+    await page.locator(".modal").getByRole("button", { name: "Cancelar" }).click();
+    await page.locator(".modal").waitFor({ state: "hidden", timeout: 5000 }).catch(() => undefined);
   } finally {
     await contexto.close();
   }
@@ -204,6 +243,10 @@ try {
   await testarHistoricoLegado(idsLegado, casosLegado, "desktop");
   await testarHistoricoLegado(idsLegado, casosLegado, "mobile");
   configurarCasasDecimais(cenario.campId, 2);
+
+  sec("2.2 Modal de estorno — transação legada normalizada (desktop + mobile)");
+  await testarModalEstornoLegado(idsLegado, "desktop");
+  await testarModalEstornoLegado(idsLegado, "mobile");
 
   sec("3. Transferência de item entre personagens (UI, mestre)");
   // Jogador só enxerga o próprio personagem — transferência é visão do mestre.
