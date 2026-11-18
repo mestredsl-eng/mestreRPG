@@ -324,6 +324,39 @@ try {
   const cookieAlice2 = sessaoDb(idDe("alice"));
   const cookieCarol2 = sessaoDb(idDe("carol"));
 
+  sec("Concorrência real — dois DELETEs simultâneos não zeram os GMs capazes");
+  // Cenário: bob é responsável com conta BLOQUEADA (não conta como capaz);
+  // restam exatamente DOIS GMs capazes — carol e alice. Duas remoções em
+  // voo ao mesmo tempo: a guarda DENTRO do UPDATE decide quem perde —
+  // não é await sequencial, são duas requisições HTTP concorrentes.
+  const gCorrida = await req(base, "POST", "/guildas", { cookie: cookieBob, body: { name: "Guilda Corrida" } });
+  const guildCorrida = gCorrida.json.guilda.id;
+  await req(base, "POST", `/guildas/${guildCorrida}/membros`, { cookie: cookieBob, body: { username: "carol" } });
+  await req(base, "POST", `/guildas/${guildCorrida}/membros`, { cookie: cookieBob, body: { username: "alice" } });
+  await req(base, "PATCH", `/guildas/${guildCorrida}/membros/${idDe("carol")}`, { cookie: cookieBob, body: { role: "gm" } });
+  await req(base, "PATCH", `/guildas/${guildCorrida}/membros/${idDe("alice")}`, { cookie: cookieBob, body: { role: "gm" } });
+  await req(base, "PATCH", `/admin/users/${idDe("bob")}`, { cookie: cookieRoot, body: { status: "bloqueado" } });
+  const [delCarol, delAlice] = await Promise.all([
+    req(base, "DELETE", `/guildas/${guildCorrida}/membros/${idDe("carol")}`, { cookie: cookieRoot }),
+    req(base, "DELETE", `/guildas/${guildCorrida}/membros/${idDe("alice")}`, { cookie: cookieRoot }),
+  ]);
+  const stCorrida = [delCarol.status, delAlice.status].sort((a, b) => a - b);
+  t("corrida: exatamente um DELETE passa e o outro é recusado",
+    stCorrida[0] === 200 && stCorrida[1] === 409,
+    JSON.stringify({ carol: delCarol.status, alice: delAlice.status, carolBody: delCarol.json, aliceBody: delAlice.json }));
+  const dbCorrida = abrirDb(BANCO);
+  const gmCorrida = dbCorrida.prepare(`
+    select count(*) n from guild_members gm join users u on u.id = gm.user_id
+    where gm.guild_id=? and gm.role='gm' and gm.status='ativo' and u.status='ativo'
+  `).get(guildCorrida).n;
+  const removidosCorrida = dbCorrida.prepare(`
+    select count(*) n from guild_members where guild_id=? and status='removido'
+  `).get(guildCorrida).n;
+  dbCorrida.close();
+  t("corrida: guilda termina com exatamente 1 GM capaz e 1 vínculo removido",
+    gmCorrida === 1 && removidosCorrida === 1, `capazes=${gmCorrida} removidos=${removidosCorrida}`);
+  await req(base, "PATCH", `/admin/users/${idDe("bob")}`, { cookie: cookieRoot, body: { status: "ativo" } });
+
   sec("Campanhas candidatas — ADMIN vê todas, GM só as operáveis");
   const candRoot = await req(base, "GET", `/guildas/${guildB}/campanhas-candidatas`, { cookie: cookieRoot });
   t("ADMIN lista candidatas de qualquer usuário", candRoot.status === 200 && (candRoot.json?.campanhas ?? []).some((c) => c.id === campId), JSON.stringify(candRoot.json).slice(0, 200));
