@@ -97,6 +97,8 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Testes unitários do catálogo visual (Issue #132, etapa 2.2a)
+        run: npx tsx teste-temas-visuais.mjs
       - name: Testes unitários do limitador Socket.IO
         run: npx tsx servidor/testes/socket-rate-limit.test.ts
       - name: Testes unitários da iniciativa

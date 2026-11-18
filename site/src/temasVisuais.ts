@@ -4,22 +4,22 @@
 // O contrato espelha o backend da PR #154: seis dimensões fechadas e
 // objeto completo — nenhum valor fora das listas abaixo é aceito.
 
-export const INTENSIDADES = ["discreta", "equilibrada", "imersiva"] as const;
+export const INTENSIDADES = Object.freeze(["discreta", "equilibrada", "imersiva"] as const);
 export type IntensidadeVisual = (typeof INTENSIDADES)[number];
 
-export const CORES_DESTAQUE = ["vinho", "ambar", "violeta", "cinza-frio"] as const;
+export const CORES_DESTAQUE = Object.freeze(["vinho", "ambar", "violeta", "cinza-frio"] as const);
 export type CorDestaqueVisual = (typeof CORES_DESTAQUE)[number];
 
-export const SUPERFICIES = ["padrao", "flat", "elevado"] as const;
+export const SUPERFICIES = Object.freeze(["padrao", "flat", "elevado"] as const);
 export type SuperficieVisual = (typeof SUPERFICIES)[number];
 
-export const TEXTURAS = ["nenhuma", "sutil", "intensa"] as const;
+export const TEXTURAS = Object.freeze(["nenhuma", "sutil", "intensa"] as const);
 export type TexturaVisual = (typeof TEXTURAS)[number];
 
-export const ANIMACOES = ["reduzido", "normal", "completo"] as const;
+export const ANIMACOES = Object.freeze(["reduzido", "normal", "completo"] as const);
 export type AnimacoesVisual = (typeof ANIMACOES)[number];
 
-export const DENSIDADES = ["compacta", "padrao", "ampla"] as const;
+export const DENSIDADES = Object.freeze(["compacta", "padrao", "ampla"] as const);
 export type DensidadeVisual = (typeof DENSIDADES)[number];
 
 export interface PreferenciasVisuais {
@@ -33,14 +33,14 @@ export interface PreferenciasVisuais {
 
 // Mesmo formato enviado ao backend (PR #154). Identidade base: vinho,
 // textura sutil, movimento normal — os padrões da identidade #134.
-export const VISUAL_PADRAO: PreferenciasVisuais = {
+export const VISUAL_PADRAO: Readonly<PreferenciasVisuais> = Object.freeze({
   intensidade: "equilibrada",
   corDestaque: "vinho",
   superficies: "padrao",
   textura: "sutil",
   animacoes: "normal",
   densidade: "padrao",
-};
+});
 
 // ---------- Paleta fechada de destaque ----------
 // Apenas estas quatro cores podem virar tokens de destaque. `principal`
@@ -56,8 +56,11 @@ export interface CorDestaqueInfo {
   suave: string;
 }
 
-export const PALETA_DESTAQUE: Record<CorDestaqueVisual, CorDestaqueInfo> = {
-  vinho: {
+// A opacidade do token `suave` é específica de cada paleta: vinho mantém
+// .24 para preservar a linguagem de bordas legada; os novos acentos usam .55.
+// Consumidores não devem presumir alfa uniforme entre paletas.
+export const PALETA_DESTAQUE: Readonly<Record<CorDestaqueVisual, Readonly<CorDestaqueInfo>>> = Object.freeze({
+  vinho: Object.freeze({
     id: "vinho",
     nome: "Vinho",
     descricao: "Acento da identidade — vinho profundo com rosé.",
@@ -67,7 +70,7 @@ export const PALETA_DESTAQUE: Record<CorDestaqueVisual, CorDestaqueInfo> = {
     claro: "#b85c69",
     suave: "rgba(141,61,75,.24)",
   },
-  ambar: {
+  ambar: Object.freeze({
     id: "ambar",
     nome: "Âmbar",
     descricao: "Luz de vela e arquivo antigo — dourado queimado.",
@@ -75,7 +78,7 @@ export const PALETA_DESTAQUE: Record<CorDestaqueVisual, CorDestaqueInfo> = {
     claro: "#e3c98f",
     suave: "rgba(176,141,79,.55)",
   },
-  violeta: {
+  violeta: Object.freeze({
     id: "violeta",
     nome: "Violeta",
     descricao: "Ritual e ocultismo — violeta frio de velório.",
@@ -83,15 +86,15 @@ export const PALETA_DESTAQUE: Record<CorDestaqueVisual, CorDestaqueInfo> = {
     claro: "#b9a4d6",
     suave: "rgba(122,95,158,.55)",
   },
-  "cinza-frio": {
+  "cinza-frio": Object.freeze({
     id: "cinza-frio",
     nome: "Cinza frio",
     descricao: "Hospital e expediente — aço sem calor.",
     principal: "#8a93a3",
     claro: "#c3c9d4",
     suave: "rgba(138,147,163,.55)",
-  },
-};
+  }),
+});
 
 // ---------- Normalização ----------
 // Recebe unknown (payload do backend, storage, formulários) e devolve
@@ -190,6 +193,8 @@ export function resolverTokensVisuais(preferencias: PreferenciasVisuais): Tokens
       "--horror-destaque": destaque.principal,
       "--horror-destaque-claro": destaque.claro,
       "--horror-destaque-suave": destaque.suave,
+      // Dourado estrutural da identidade, não o acento selecionado.
+      // O acento ativo deve ser consumido por --horror-destaque*.
       "--horror-ambar": "#b99a62",
       // Bordas tingidas pelo destaque escolhido.
       // Sem personalização, preservar inclusive as bordas originais da
@@ -247,16 +252,16 @@ export interface AtmosferaVisual {
   id: string;
   nome: string;
   descricao: string;
-  preferencias: PreferenciasVisuais;
+  preferencias: Readonly<PreferenciasVisuais>;
 }
 
-export const ATMOSFERAS_VISUAIS: readonly AtmosferaVisual[] = [
-  {
+export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.freeze([
+  Object.freeze({
     id: "arquivo-oculto",
     nome: "Arquivo Oculto",
     descricao:
       "Gabinete abafado: discreto, superfícies planas e densidade compacta para fichas e registros sem distração.",
-    preferencias: {
+    preferencias: Object.freeze({
       intensidade: "discreta",
       corDestaque: "vinho",
       superficies: "flat",
@@ -265,12 +270,12 @@ export const ATMOSFERAS_VISUAIS: readonly AtmosferaVisual[] = [
       densidade: "compacta",
     },
   },
-  {
+  Object.freeze({
     id: "investigacao-noturna",
     nome: "Investigação Noturna",
     descricao:
       "Ronda sob chuva: equilibrado, âmbar de lampião, textura sutil e movimento normal para ler pistas sem pressa.",
-    preferencias: {
+    preferencias: Object.freeze({
       intensidade: "equilibrada",
       corDestaque: "ambar",
       superficies: "padrao",
@@ -279,12 +284,12 @@ export const ATMOSFERAS_VISUAIS: readonly AtmosferaVisual[] = [
       densidade: "padrao",
     },
   },
-  {
+  Object.freeze({
     id: "ocultismo",
     nome: "Ocultismo",
     descricao:
       "Círculo de velas: imersivo, violeta ritual, texturas intensas e animações completas para sessões de invocação.",
-    preferencias: {
+    preferencias: Object.freeze({
       intensidade: "imersiva",
       corDestaque: "violeta",
       superficies: "elevado",
@@ -293,12 +298,12 @@ export const ATMOSFERAS_VISUAIS: readonly AtmosferaVisual[] = [
       densidade: "ampla",
     },
   },
-  {
+  Object.freeze({
     id: "terror-psicologico",
     nome: "Terror Psicológico",
     descricao:
       "Paranoia clínica: cinza frio, superfícies elevadas e movimento reduzido — a ameaça está nos detalhes.",
-    preferencias: {
+    preferencias: Object.freeze({
       intensidade: "imersiva",
       corDestaque: "cinza-frio",
       superficies: "elevado",
@@ -307,21 +312,21 @@ export const ATMOSFERAS_VISUAIS: readonly AtmosferaVisual[] = [
       densidade: "padrao",
     },
   },
-  {
+  Object.freeze({
     id: "misterio-sobrenatural",
     nome: "Mistério Sobrenatural",
     descricao:
       "O caso clássico: equilíbrio perfeito, vinho da casa, textura sutil e densidade ampla para narração e investigação.",
-    preferencias: {
+    preferencias: Object.freeze({
       intensidade: "equilibrada",
       corDestaque: "vinho",
       superficies: "padrao",
       textura: "sutil",
       animacoes: "normal",
       densidade: "ampla",
-    },
-  },
-];
+    }),
+  }),
+]);
 
 export function atmosferaPorId(id: string): AtmosferaVisual | undefined {
   return ATMOSFERAS_VISUAIS.find((a) => a.id === id);

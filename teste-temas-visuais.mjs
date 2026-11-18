@@ -24,6 +24,9 @@ const CAMPOS = ["intensidade", "corDestaque", "superficies", "textura", "animaco
 // ---------- Valores padrão ----------
 ok("VISUAL_PADRAO tem exatamente os 6 campos do contrato",
   CAMPOS.every((c) => c in VISUAL_PADRAO) && Object.keys(VISUAL_PADRAO).length === 6);
+ok("catálogos de enums congelados em runtime",
+  [INTENSIDADES, CORES_DESTAQUE, SUPERFICIES, TEXTURAS, ANIMACOES, DENSIDADES].every(Object.isFrozen));
+ok("VISUAL_PADRAO congelado em runtime", Object.isFrozen(VISUAL_PADRAO));
 ok("VISUAL_PADRAO usa valores válidos do contrato",
   INTENSIDADES.includes(VISUAL_PADRAO.intensidade)
   && CORES_DESTAQUE.includes(VISUAL_PADRAO.corDestaque)
@@ -75,6 +78,8 @@ for (const [campo, lista] of [
 // ---------- Paleta fechada ----------
 ok("PALETA_DESTAQUE cobre exatamente as 4 cores do contrato",
   Object.keys(PALETA_DESTAQUE).sort().join(",") === [...CORES_DESTAQUE].sort().join(","));
+ok("mapa e entradas de PALETA_DESTAQUE congelados em runtime",
+  Object.isFrozen(PALETA_DESTAQUE) && CORES_DESTAQUE.every((cor) => Object.isFrozen(PALETA_DESTAQUE[cor])));
 for (const cor of CORES_DESTAQUE) {
   const info = PALETA_DESTAQUE[cor];
   ok(`paleta ${cor}: campos completos e hex válidos`,
@@ -90,6 +95,10 @@ for (const cor of CORES_DESTAQUE) {
     vistos.add(css["--horror-destaque"]);
     ok(`cor ${cor}: --horror-vinho segue a paleta`, css["--horror-vinho"] === PALETA_DESTAQUE[cor].principal);
     ok(`cor ${cor}: --horror-vinho-claro segue a paleta`, css["--horror-vinho-claro"] === PALETA_DESTAQUE[cor].claro);
+    ok(`cor ${cor}: token suave segue a paleta e sua opacidade declarada`,
+      css["--horror-destaque-suave"] === PALETA_DESTAQUE[cor].suave);
+    ok(`cor ${cor}: dourado estrutural permanece distinto do acento`,
+      css["--horror-ambar"] === "#b99a62" && css["--horror-destaque"] === PALETA_DESTAQUE[cor].principal);
   }
   ok("4 destaques produzem 4 cores distintas", vistos.size === 4);
 }
@@ -158,6 +167,9 @@ ok("resolverTokensVisuais tolera objeto incompleto",
 
 // ---------- Atmosferas ----------
 ok("exatamente 5 atmosferas", ATMOSFERAS_VISUAIS.length === 5);
+ok("catálogo, presets e preferências são congelados em runtime",
+  Object.isFrozen(ATMOSFERAS_VISUAIS)
+  && ATMOSFERAS_VISUAIS.every((a) => Object.isFrozen(a) && Object.isFrozen(a.preferencias)));
 ok("ids únicos", new Set(ATMOSFERAS_VISUAIS.map((a) => a.id)).size === 5);
 const NOMES = ["Arquivo Oculto", "Investigação Noturna", "Ocultismo", "Terror Psicológico", "Mistério Sobrenatural"];
 for (const nome of NOMES) {
