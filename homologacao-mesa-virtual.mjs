@@ -313,6 +313,56 @@ try {
   await pgA.waitForTimeout(800);
   t("sessão B NÃO exibe rolagem do teste de ficha da sessão A",
     await pgB.locator(".rolagem-item", { hasText: "Mestre Herói" }).count() === 0);
+
+  // 3) mensagem PRIVADA na sessão A — fluxo real cliente→servidor: o
+  //    evento privado vai por usuario:<id> e alcança as DUAS abas do
+  //    mesmo usuário; o guard de sessionId decide qual exibe.
+  const msgPriv = await pgA.evaluate(({ sessId, uid, cid }) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:mensagem", {
+      sessionId: sessId, content: cid, clientId: crypto.randomUUID(),
+      visibilidade: "privada", destinatarioUserId: uid, tipo: "texto",
+    }, res);
+  }), { sessId: idSessA, uid: c.adminId, cid: "msg-privada-sessao-A" });
+  t("mensagem privada da sessão A aceita pelo servidor", msgPriv?.ok === true, JSON.stringify(msgPriv).slice(0, 140));
+  await pgA.locator(".chat-msg", { hasText: "msg-privada-sessao-A" }).waitFor({ timeout: 10000 });
+  t("sessão A exibe a mensagem privada", true);
+  await pgA.waitForTimeout(800);
+  t("sessão B NÃO exibe mensagem privada da sessão A",
+    await pgB.locator(".chat-msg", { hasText: "msg-privada-sessao-A" }).count() === 0);
+
+  // 4) decisão PRIVADA de teste na sessão A — a sessão B tem um teste
+  //    PÚBLICO próprio pendente; a decisão da sessão A não pode
+  //    alterá-lo nem exibir a nota na aba errada.
+  const pedirB = await pgB.evaluate(({ sessId, charId, rid }) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:teste:pedir", {
+      sessionId: sessId, characterId: charId, campoId: "for",
+      dadosLados: 10, visibilidade: "publica", requestId: rid,
+    }, res);
+  }), { sessId: idSessB, charId: c.personagemMestre, rid: crypto.randomUUID() });
+  t("teste público pendente criado na sessão B", pedirB?.ok === true, JSON.stringify(pedirB).slice(0, 140));
+  await pgB.locator(".teste-card").first().waitFor({ timeout: 10000 });
+  const pendentesB = await pgB.locator(".teste-card").count();
+  const reqIdTeste2 = crypto.randomUUID();
+  const pedir2 = await pgA.evaluate(({ sessId, charId, rid }) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:teste:pedir", {
+      sessionId: sessId, characterId: charId, campoId: "for",
+      dadosLados: 10, visibilidade: "privada", requestId: rid,
+    }, res);
+  }), { sessId: idSessA, charId: c.personagemMestre, rid: reqIdTeste2 });
+  t("segundo teste privado solicitado na sessão A", pedir2?.ok === true, JSON.stringify(pedir2).slice(0, 140));
+  await pgA.waitForTimeout(600);
+  const decPriv = await pgA.evaluate((testId) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:teste:decidir", { testId, outcome: "sucesso", nota: "decisao-privada-A" }, res);
+  }), pedir2.id ?? reqIdTeste2);
+  t("decisão privada da sessão A aceita", decPriv?.ok === true, JSON.stringify(decPriv).slice(0, 140));
+  await pgA.waitForTimeout(800);
+  t("sessão A registra a decisão (nota visível)",
+    await pgA.getByText("decisao-privada-A", { exact: false }).count() >= 1);
+  t("sessão B NÃO exibe a decisão privada da sessão A",
+    await pgB.getByText("decisao-privada-A", { exact: false }).count() === 0);
+  t("sessão B mantém o teste público pendente intacto",
+    await pgB.locator(".teste-card").count() === pendentesB
+    && await pgB.locator(".teste-card").first().locator("select, input, button").count() > 0);
   await ctxIso.close();
 
   // ---------- demais viewports: layout + toque ----------

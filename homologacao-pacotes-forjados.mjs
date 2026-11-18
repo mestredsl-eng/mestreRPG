@@ -179,6 +179,34 @@ try {
   t("M/mestre: mestre exibida", (await nChat(pgM, "PF2-msg-mestre")) === 1);
   t("M/mestre: publica+privado tratada como privada (exibida ao mestre)", (await nChat(pgM, "PF2-msg-pub-priv")) === 1);
 
+  // ---------- M2. sessionId explícito (auditoria #149) ----------
+  // Contrato do handler: sessionId null é a ÚNICA forma legítima sem
+  // sessão (mensagem de campanha); UUID só vale quando é ESTA sessão.
+  // Ausente, vazio, inválido ou UUID de outra sessão → descartado
+  // ANTES dos filtros de visibilidade/conteúdo (fail-closed).
+  const sidOutra = crypto.randomUUID();
+  const casosSid = [
+    ["ausente", undefined], ["vazio", ""], ["invalido", "nao-e-uuid"], ["outra-sessao", sidOutra],
+  ];
+  for (const [pg] of [[pgA], [pgB], [pgE]]) {
+    for (const [tag, sv] of casosSid) {
+      const payload = { id: crypto.randomUUID(), kind: "texto", content: `PF2-sid-${tag}`, authorId: ids.jb, visibility: "publica", createdAt: new Date().toISOString() };
+      if (sv !== undefined) payload.sessionId = sv;
+      await injetar(pg, "mesa:mensagem", payload);
+    }
+  }
+  // mensagem de CAMPANHA legítima (sessionId null) → visível para todos
+  for (const pg of [pgA, pgB, pgE]) {
+    await injetar(pg, "mesa:mensagem", { id: crypto.randomUUID(), sessionId: null, kind: "texto", content: "PF2-msg-campanha-ok", authorId: ids.jb, visibility: "publica", createdAt: new Date().toISOString() });
+  }
+  await dormir(400);
+  for (const [pg, tag] of [[pgA, "A"], [pgB, "B"], [pgE, "esp"]]) {
+    for (const [nome] of casosSid) {
+      t(`M/${tag}: sessionId ${nome} rejeitado`, (await nChat(pg, `PF2-sid-${nome}`)) === 0);
+    }
+    t(`M/${tag}: mensagem de campanha (sessionId null) exibida`, (await nChat(pg, "PF2-msg-campanha-ok")) === 1);
+  }
+
   // ---------- T. Testes forjados ----------
   sec("T. Testes forjados — alvo oculto e propriedade");
   // mestre cria teste PRIVADO real do personagem A (fluxo legítimo)
