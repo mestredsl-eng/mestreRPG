@@ -249,7 +249,19 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const vozAtivaRef = useRef(false);
   const mensagensFaladasRef = useRef(new Set<string>());
   const filaVozRef = useRef<ReturnType<typeof criarFilaMestreVoice> | null>(null);
-  if (!filaVozRef.current) filaVozRef.current = criarFilaMestreVoice();
+  const [vozDisponivel, setVozDisponivel] = useState(false);
+  // A fila pertence ao ciclo de vida do efeito, não ao render. No React
+  // StrictMode (desenvolvimento), o setup/cleanup/setup extra destrói a
+  // primeira fila; o segundo setup cria uma instância nova e utilizável.
+  useEffect(() => {
+    const fila = criarFilaMestreVoice();
+    filaVozRef.current = fila;
+    setVozDisponivel(fila.disponivel);
+    return () => {
+      fila.destruir();
+      if (filaVozRef.current === fila) filaVozRef.current = null;
+    };
+  }, []);
   useEffect(() => { vozAtivaRef.current = vozAtiva; }, [vozAtiva]);
   // A fila é local à sessão: ao alternar de sessão na mesma MesaView,
   // cancela áudio pendente e limpa a deduplicação para não narrar conteúdo
@@ -261,7 +273,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     filaVozRef.current?.parar();
     mensagensFaladasRef.current.clear();
   }, [sessao.id]);
-  useEffect(() => () => { filaVozRef.current?.destruir(); }, []);
   const [papel, setPapel] = useState<string>(souMestre ? "mestre" : "jogador");
   // papel ATUAL vem do ACK de mesa:entrar — a prop inicial só serve
   // para o primeiro render; após cada entrada/reentrada o servidor é
@@ -1013,7 +1024,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                 }} />
                 Ler novas mensagens
               </label>
-              <button type="button" className="secundario" onClick={ativarVoz} disabled={!filaVozRef.current?.disponivel}>
+              <button type="button" className="secundario" onClick={ativarVoz} disabled={!vozDisponivel}>
                 {vozAtiva ? "Voz ativada" : "Ativar voz"}
               </button>
               <button type="button" className="secundario" onClick={pararVoz}>Parar</button>
@@ -1032,7 +1043,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                     {m.visibility === "privada" && <span className="tag">privada</span>}
                     {m.visibility === "mestre" && ehMestreAtual && <span className="tag">secreta</span>}
                   </div>
-                  <button type="button" className="chat-ler" title="Ler mensagem em voz alta" onClick={() => falarMensagem(m)} disabled={!filaVozRef.current?.disponivel}>Ler</button>
+                  <button type="button" className="chat-ler" title="Ler mensagem em voz alta" onClick={() => falarMensagem(m)} disabled={!vozDisponivel}>Ler</button>
                 </div>
                 <div className="chat-conteudo">{m.content}</div>
               </div>

@@ -113,6 +113,20 @@ try {
 
   console.log("OK: fallback progressivo quando SpeechSynthesis não existe");
   console.log("Mestre Voice: 19 verificações aprovadas");
+
+  // Simula setup → cleanup → setup de efeitos do React StrictMode em dev:
+  // uma fila destruída não pode ser reutilizada, mas o ciclo seguinte cria
+  // outra instância funcional.
+  const strictPrimeira = criarFilaMestreVoice();
+  assert.equal(strictPrimeira.disponivel, true, "primeiro setup cria fila disponível");
+  strictPrimeira.destruir();
+  assert.equal(strictPrimeira.ativar(), false, "fila do primeiro setup não pode ser reutilizada após cleanup");
+  const strictSegunda = criarFilaMestreVoice();
+  assert.equal(strictSegunda.disponivel, true, "segundo setup cria nova fila disponível");
+  assert.equal(strictSegunda.ativar(), true, "fila do segundo setup pode ser ativada");
+  strictSegunda.destruir();
+  console.log("OK: ciclo setup/cleanup/setup do StrictMode recria uma fila funcional");
+
 } finally {
   if (descritores.window) Object.defineProperty(globalThis, "window", descritores.window);
   else Reflect.deleteProperty(globalThis, "window");
