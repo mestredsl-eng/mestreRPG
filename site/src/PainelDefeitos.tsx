@@ -35,10 +35,11 @@ export default function PainelDefeitos({ campaignId }: { campaignId: string }) {
     ["personagens:atualizados", "regras:atualizadas", "campanha:restaurada"],
     (evento, payload) => {
       // restauração é da campanha inteira: só rebusca se o evento for
-      // desta campanha (mesmo filtro da Mesa — payload pode trazer o id)
+      // desta campanha — sem campaignId ou de outra campanha não recarrega
+      // (mesmo filtro estrito da Mesa)
       if (evento === "campanha:restaurada") {
         const cid = (payload as { campaignId?: string } | undefined)?.campaignId;
-        if (cid && cid !== campaignId) return;
+        if (cid !== campaignId) return;
       }
       void carregar();
     },

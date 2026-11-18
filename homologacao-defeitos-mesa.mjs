@@ -219,6 +219,55 @@ try {
   await blocoAlpha.getByText("Nenhum defeito registrado.").waitFor({ timeout: 15000 });
   t("restauração de snapshot sem defeito limpa o painel", await blocoAlpha.getByText("Nenhum defeito registrado.").isVisible());
 
+  // ---------- restauração de OUTRA campanha não recarrega o painel ----------
+  // O socket é por usuário: um mestre membro de duas campanhas pode estar
+  // nas rooms de ambas. `campanha:restaurada` de outra campanha chega ao
+  // cliente — o painel só pode recarregar com campaignId idêntico.
+  sec("Restauração de outra campanha (guarda de campaignId)");
+  const campB = await req(BASE, "POST", "/campaigns", { cookie: M, body: { name: "Campanha Vizinha" } });
+  const CID2 = campB.json?.campanha?.id;
+  t("segunda campanha criada", campB.status === 201 && !!CID2, `status=${campB.status}`);
+  // socket real da página entra na room da campanha vizinha (alça de
+  // diagnóstico __mesaSocket, somente localhost — sem listener novo no app)
+  const entrouB = await pageM.evaluate((cid) => new Promise((res) => {
+    const s = window.__mesaSocket;
+    if (!s) return res(false);
+    s.emit("entrar-campanha", cid, (ok) => res(!!ok));
+  }), CID2);
+  t("socket da página entrou na room da campanha vizinha", entrouB);
+  // ouvinte temporário SÓ no teste — prova que o evento foi entregue ao
+  // socket da página (remoção por referência, sem tocar nos listeners do app)
+  await pageM.evaluate(() => {
+    window.__evsRest = [];
+    window.__ouvRest = (d) => window.__evsRest.push(d);
+    window.__mesaSocket.on("campanha:restaurada", window.__ouvRest);
+  });
+  let defsReqs = 0;
+  const contaDefs = (rq) => {
+    if (rq.method() === "GET" && rq.url().includes(`/campaigns/${CID}/defeitos`)) defsReqs++;
+  };
+  pageM.on("request", contaDefs);
+  const snapB = await req(BASE, "POST", `/campaigns/${CID2}/snapshots`, { cookie: M, body: { description: "vizinha" } });
+  t("snapshot da campanha vizinha criado", snapB.status === 201 && !!snapB.json?.id, `status=${snapB.status}`);
+  const restB = await req(BASE, "POST", `/campaigns/${CID2}/snapshots/${snapB.json?.id}/restaurar`, { cookie: M, body: { confirmacao: "RESTAURAR" } });
+  t("restore da campanha vizinha aceito", restB.status === 200, `status=${restB.status} ${JSON.stringify(restB.json).slice(0, 120)}`);
+  // o evento precisa ter CHEGADO ao socket da página (entrega real na room)
+  await pageM.waitForFunction(() => (window.__evsRest ?? []).length > 0, null, { timeout: 10000 });
+  const evsRest = await pageM.evaluate(() => window.__evsRest);
+  t("evento de restauração da vizinha entregue ao socket da página",
+    evsRest.some((d) => d?.campaignId === CID2), JSON.stringify(evsRest));
+  // janela para uma recarga indevida disparar
+  await new Promise((r) => setTimeout(r, 1500));
+  pageM.off("request", contaDefs);
+  t("painel NÃO buscou /defeitos após restore de outra campanha", defsReqs === 0, `reqs=${defsReqs}`);
+  t("painel mantém estado (Alpha sem defeito)", await blocoAlpha.getByText("Nenhum defeito registrado.").isVisible());
+  await pageM.evaluate((cid) => {
+    window.__mesaSocket?.emit("sair-campanha", cid);
+    window.__mesaSocket?.off("campanha:restaurada", window.__ouvRest);
+    window.__evsRest = undefined;
+    window.__ouvRest = undefined;
+  }, CID2);
+
   // ---------- jogador ----------
   sec("Jogador na Mesa");
   const ctxJ = await browser.newContext({ viewport: { width: 1440, height: 900 } });
