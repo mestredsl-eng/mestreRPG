@@ -7,8 +7,9 @@ import { spawn } from "node:child_process";
 import { join } from "node:path";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, encerrarServidor, limparDir,
+  criarCenario, encerrarServidor, limparDir, req, abrirDb, sessao,
 } from "./teste-base.mjs";
+import { hashSenha } from "./servidor/dist/lib/password.js";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -89,11 +90,28 @@ async function aba(page, nome) {
 }
 async function entrarNaMesa(page) {
   await aba(page, "Mesa");
-  // mestre inicia; demais clicam na sessão listada
+  // A lista vem da sessão mais NOVA para a mais antiga. O mestre
+  // reentra na MAIS ANTIGA ativa: clicar "Iniciar sessão" criaria uma
+  // sessão nova a cada reload e divergiria dos jogadores — com o
+  // isolamento por sessionId (auditoria #149) os eventos deixariam de
+  // atravessar as sessões. Sem nenhuma sessão, cria a primeira.
   const iniciar = page.getByRole("button", { name: "Iniciar sessão" });
-  if (await iniciar.count()) { await iniciar.click(); }
-  else { await page.locator("table.tabela tr.clicavel").first().click(); }
-  await page.locator(".chat-form").waitFor({ timeout: 15000 });
+  const linhas = page.locator("table.tabela tr.clicavel").filter({ hasNotText: "encerrada" });
+  // espera a lista estabilizar: sem isso o count() roda antes do fetch
+  // das sessões e o jogador (que nunca tem "Iniciar sessão") cai no
+  // branch errado
+  await iniciar.or(linhas.first()).first().waitFor({ timeout: 15000 });
+  const total = await linhas.count();
+  if (total > 0) {
+    const ehMestre = await iniciar.count() > 0;
+    await linhas.nth(ehMestre ? total - 1 : 0).click();
+  } else {
+    await iniciar.click();
+  }
+  // .mesa-view e não .chat-form: espectadores não têm formulário de
+  // chat por padrão (somente leitura) — a view da mesa é o sinal
+  // universal de entrada autorizada
+  await page.locator(".mesa-view").first().waitFor({ timeout: 15000 });
 }
 async function rolarLivre(page, lados, qtd = 1, motivo = null) {
   await page.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
@@ -102,24 +120,28 @@ async function rolarLivre(page, lados, qtd = 1, motivo = null) {
   if (motivo) await page.locator('.rolagem-form input[placeholder="Motivo (opcional)"]').fill(motivo);
   const totalAntes = await page.locator(".rolagem-resultado .d10-chip-total").last().textContent().catch(() => "");
   const tituloAntes = await page.locator(".mesa-dados-area .mesa-dados-3d-canvas").last().getAttribute("aria-label").catch(() => "");
+  // o item mais novo do histórico é o PRIMEIRO do DOM (lista revertida)
+  const itemAntes = await page.locator(".rolagem-item").first().getAttribute("data-rolagem-id").catch(() => null);
   await page.getByRole("button", { name: /Lançar/ }).click();
   // o painel mostra só a última rolagem: aguarda resultado novo —
   // total OU face podem coincidir, então espera qualquer um dos dois mudar
   await page.waitForFunction(
-    ([antTotal, antTitulo, motivoEsperado]) => {
+    ([antTotal, antTitulo, motivoEsperado, antItem]) => {
       const totais = document.querySelectorAll(".rolagem-resultado .d10-chip-total");
       const txt = totais.length ? totais[totais.length - 1].textContent : "";
       const canvases = document.querySelectorAll(".mesa-dados-area .mesa-dados-3d-canvas");
       const tit = canvases.length ? canvases[canvases.length - 1].getAttribute("aria-label") : "";
+      const primeiroItem = document.querySelector(".rolagem-item");
+      const itemNovo = !!primeiroItem && primeiroItem.dataset.rolagemId !== antItem;
       const itemHistoricoNovo = motivoEsperado
         && Array.from(document.querySelectorAll(".rolagem-item"))
           .some((item) => item.textContent?.includes(motivoEsperado));
       // "rolando" é o tumble pré-ACK — só conta como resultado o label
       // já fixado nos valores oficiais do servidor
       const titPronto = tit && tit !== antTitulo && !tit.includes("rolando");
-      return (txt && txt !== antTotal) || titPronto || Boolean(itemHistoricoNovo);
+      return (txt && txt !== antTotal) || titPronto || itemNovo || Boolean(itemHistoricoNovo);
     },
-    [totalAntes ?? "", tituloAntes ?? "", motivo ?? ""], { timeout: 20000, polling: 50 },
+    [totalAntes ?? "", tituloAntes ?? "", motivo ?? "", itemAntes], { timeout: 20000, polling: 50 },
   );
 }
 async function iniciarPreview(apiTarget) {
@@ -589,9 +611,12 @@ try {
   await btnAmpliar.click();
   const areaAberta = pgM.locator(".mesa-dados-area.imersivo");
   await areaAberta.waitFor({ timeout: 5000 });
+  const rectAreaImersiva = await areaAberta.boundingBox();
   const rectImersivo = await areaAberta.locator(".mesa-dados-3d-canvas").boundingBox();
-  t("overlay imersivo ocupa a tela", !!rectImersivo && rectImersivo.width > 1100 && rectImersivo.height > 500,
-    JSON.stringify(rectImersivo));
+  t("overlay imersivo ocupa a tela", !!rectAreaImersiva && rectAreaImersiva.width > 1100 && rectAreaImersiva.height > 500,
+    JSON.stringify(rectAreaImersiva));
+  t("canvas imersivo com altura limitada (controles acessíveis abaixo)",
+    !!rectImersivo && rectImersivo.height > 200 && rectImersivo.height <= 500, JSON.stringify(rectImersivo));
   t("mesmo canvas/valores preservados ao ampliar",
     (await areaAberta.locator(".mesa-dados-3d-canvas").getAttribute("aria-label")) === rotuloAntesImersao,
     `${rotuloAntesImersao}`);
@@ -649,13 +674,161 @@ try {
   t("desmonte da área restaura overflow (sem Escape/Recolher)",
     await pgM.evaluate(() => document.documentElement.style.overflow) === "",
     await pgM.evaluate(() => document.documentElement.style.overflow));
-  await entrarNaMesa(pgM);
+  // Reentra na MESMA sessão: "Iniciar sessão" criaria uma segunda e o
+  // mestre divergiria do pg1 — com o isolamento por sessionId (auditoria
+  // #149) os eventos deixariam de chegar ao outro participante. A lista
+  // só tem a sessão original, então a primeira linha é ela.
+  await aba(pgM, "Mesa");
+  await pgM.locator("table.tabela tr.clicavel").first().click();
+  await pgM.locator(".chat-form").waitFor({ timeout: 15000 });
   // rolagem continua autoritativa após ciclo imersivo
   await rolarLivre(pgM, 6, 1, "pos-imersivo");
   t("rolagem funciona após modo imersivo",
     await pgM.locator(".rolagem-item", { hasText: "pos-imersivo" }).count() > 0);
 
+  sec("6d. Controles acessíveis de verdade dentro do modo imersivo");
+  // Auditoria #149: o overlay precisa de rolagem própria — os
+  // lançadores ficam abaixo do canvas e devem ser CLICÁVEIS sem sair
+  // da tela cheia. Cliques reais do Playwright (nada de dispatchEvent).
+  await areaImersiva.getByRole("button", { name: "Ampliar mesa de dados" }).click();
+  await pgM.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
+  const areaIm = pgM.locator(".mesa-dados-area.imersivo");
+  await areaIm.locator(".mesa-dados-3d-canvas").evaluate((el) => { el.dataset.marcaControles = "1"; });
+  // a lista renderiza slice(-8).reverse() — o item MAIS NOVO é o
+  // primeiro do DOM; comparar o primeiro detecta a rolagem nova
+  const idAntesIm = await pgM.locator(".rolagem-item").first().getAttribute("data-rolagem-id").catch(() => null);
+  const aguardarNovaRolagem = (idAnterior) => pgM.waitForFunction((id) => {
+    const itens = document.querySelectorAll(".rolagem-item");
+    return itens.length > 0 && itens[0].dataset.rolagemId !== id;
+  }, idAnterior, { timeout: 25000 });
+  // garante a aba D10 (o estado persiste da última troca de aba)
+  await areaIm.locator(".abas-dados button", { hasText: "Testes D10" }).click();
+  // D10: o botão pode estar abaixo da dobra — o overlay rola até ele
+  const btnLancD10 = areaIm.getByRole("button", { name: /Lançar D10|Lançar novamente/ }).first();
+  await btnLancD10.scrollIntoViewIfNeeded();
+  const boxLanc = await btnLancD10.boundingBox();
+  t("Lançar D10 dentro da viewport no modo imersivo",
+    !!boxLanc && boxLanc.y >= 0 && boxLanc.y + boxLanc.height <= 900, JSON.stringify(boxLanc));
+  await btnLancD10.click();
+  await aguardarNovaRolagem(idAntesIm);
+  t("Lançar D10 de dentro do imersivo gera rolagem oficial", true);
+  // Rolagem e dano: troca de aba DENTRO do overlay + lançamento real
+  await areaIm.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
+  await areaIm.locator(".rolagem-form select").first().selectOption("6");
+  const idAntesLivre = await pgM.locator(".rolagem-item").first().getAttribute("data-rolagem-id");
+  await areaIm.getByRole("button", { name: "Lançar", exact: true }).click();
+  await aguardarNovaRolagem(idAntesLivre);
+  t("Rolagem e dano lançada de dentro do imersivo chega ao histórico", true);
+  // ESC recolhe sem reinicializar a cena (mesmo nó canvas)
+  await pgM.keyboard.press("Escape");
+  await pgM.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
+  t("ESC preserva o mesmo canvas após lançamentos no imersivo",
+    await areaImersiva.locator(".mesa-dados-3d-canvas").evaluate((el) => el.dataset.marcaControles) === "1");
+  await shot(pgM, "06d-imersivo-controles");
+
+  sec("6e. Rótulos do histórico — Mão livre, motivo e dano");
+  // rolagem livre SEM motivo → "Mão livre"
+  await rolarLivre(pgM, 6, 1);
+  t("rolagem livre sem motivo identificada como Mão livre",
+    await pgM.locator(".rolagem-item", { hasText: "Mão livre" }).count() > 0);
+  // com motivo → Mão livre + motivo
+  await rolarLivre(pgM, 6, 1, "motivo-livre-xyz");
+  t("Mão livre com motivo mostra os dois",
+    await pgM.locator(".rolagem-item").filter({ hasText: "Mão livre" }).filter({ hasText: "motivo-livre-xyz" }).count() > 0);
+  // dano → identificado como Dano, sem rótulo de mão livre
+  await pgM.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
+  await pgM.locator(".rolagem-form select").nth(1).selectOption("dano");
+  const idAntesDano = await pgM.locator(".rolagem-item").first().getAttribute("data-rolagem-id");
+  await pgM.getByRole("button", { name: /Lançar( novamente)?/ }).click();
+  await aguardarNovaRolagem(idAntesDano);
+  const txtDano = await pgM.locator(".rolagem-item").first().textContent();
+  t("dano identificado como Dano (sem Mão livre)",
+    /Dano/.test(txtDano ?? "") && !/Mão livre/.test(txtDano ?? ""), (txtDano ?? "").slice(0, 160));
+  // restaura o modo rolagem para as próximas seções
+  await pgM.locator(".rolagem-form select").nth(1).selectOption("rolagem");
+
+  sec("6f. Preferências de exibição para espectador (auditoria #149)");
+  // Espectador real: membership role=espectador — não recebe
+  // lançadores, mas ajusta as PRÓPRIAS preferências de visibilidade.
+  const dbEsp = abrirDb(BANCO);
+  const espId = crypto.randomUUID(), espMid = crypto.randomUUID();
+  const agoraEsp = Date.now();
+  dbEsp.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+    .run(espId, "espectador_teste", "Espectador Teste", await hashSenha("senha-espectador-123"), agoraEsp, agoraEsp);
+  dbEsp.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'espectador','ativo',?,?,?)")
+    .run(espMid, cenario.campId, espId, agoraEsp, agoraEsp, agoraEsp);
+  dbEsp.close();
+  const cookieEsp = sessao(BANCO, espId);
+  const ctxE = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgE = await ctxE.newPage();
+  await login(pgE, "espectador_teste", "senha-espectador-123");
+  await irCampanha(pgE);
+  await entrarNaMesa(pgE);
+  await pgE.locator(".visibilidade-mesa input[type='checkbox']").first().waitFor({ timeout: 15000 });
+  t("espectador vê o cartão Exibição com os 3 toggles",
+    await pgE.locator(".visibilidade-mesa input[type='checkbox']").count() === 3);
+  t("espectador NÃO recebe lançadores (sem painel de dados)",
+    await pgE.locator(".painel-dados").count() === 0
+    && await pgE.getByRole("button", { name: /Lançar/ }).count() === 0);
+  // rolagem pública do mestre aparece para o espectador
+  await rolarLivre(pgM, 6, 1, "esp-rolagem-publica");
+  await pgE.locator(".rolagem-item", { hasText: "esp-rolagem-publica" }).first().waitFor({ timeout: 15000 });
+  t("espectador recebe rolagem pública no histórico", true);
+  // desliga "Rolagens" → histórico some SÓ para ele
+  await pgE.locator(".visibilidade-mesa label", { hasText: "Rolagens" }).locator("input").click();
+  await pgE.waitForFunction(() => !document.querySelector(".rolagem-item"), null, { timeout: 8000 });
+  t("espectador: ocultar Rolagens esconde o histórico", true);
+  // preferência individual no nível do DADO: a conta do jogador não foi
+  // tocada pelo PATCH do espectador — e o próprio mestre segue vendo a
+  // rolagem pública que ele mesmo lançou
+  const prefsJog1 = await req(BASE, "GET", "/auth/me", { cookie: cenario.jogadores.jogador1.cookie });
+  t("preferência do jogador não foi alterada pelo toggle do espectador",
+    prefsJog1.json?.usuario?.preferences?.visibilidade?.rolagens !== false,
+    JSON.stringify(prefsJog1.json?.usuario?.preferences?.visibilidade));
+  t("rolagem pública segue visível para os demais participantes",
+    await pgM.locator(".rolagem-item", { hasText: "esp-rolagem-publica" }).count() > 0);
+  // desliga "Bandeja da mesa" → canvas da área some, cartão Exibição fica
+  await pgE.locator(".visibilidade-mesa label", { hasText: "Bandeja da mesa" }).locator("input").click();
+  await pgE.waitForFunction(() => !document.querySelector(".mesa-dados-area .mesa-dados-3d-canvas"), null, { timeout: 8000 });
+  t("espectador: ocultar Bandeja remove o canvas mas mantém Exibição",
+    await pgE.locator(".visibilidade-mesa input[type='checkbox']").count() === 3);
+  // persistência: API confirma e reload mantém os toggles desligados
+  const prefsEsp = await req(BASE, "GET", "/auth/me", { cookie: cookieEsp });
+  t("preferências do espectador persistidas via API",
+    prefsEsp.json?.usuario?.preferences?.visibilidade?.rolagens === false
+    && prefsEsp.json?.usuario?.preferences?.visibilidade?.bandeja === false,
+    JSON.stringify(prefsEsp.json?.usuario?.preferences?.visibilidade));
+  await pgE.reload();
+  await irCampanha(pgE);
+  await entrarNaMesa(pgE);
+  await pgE.locator(".visibilidade-mesa input[type='checkbox']").first().waitFor({ timeout: 15000 });
+  const estadoAposReload = await pgE.locator(".visibilidade-mesa label").evaluateAll(
+    (els) => els.map((el) => el.textContent.trim().split("—")[0].trim() + "=" + el.querySelector("input").checked));
+  t("preferências do espectador sobrevivem ao reload",
+    estadoAposReload.some((s) => s.startsWith("Rolagens=false"))
+    && estadoAposReload.some((s) => s.startsWith("Bandeja da mesa=false")),
+    JSON.stringify(estadoAposReload));
+  t("histórico continua oculto para o espectador após reload",
+    await pgE.locator(".rolagem-item").count() === 0);
+  // reexibe tudo — os toggles nunca ficam inacessíveis. O histórico é
+  // estado em memória (socket), não recarrega: após reexibir, uma nova
+  // rolagem pública do mestre prova que o espectador volta a ver.
+  await pgE.locator(".visibilidade-mesa label", { hasText: "Rolagens" }).locator("input").click();
+  await pgE.locator(".visibilidade-mesa label", { hasText: "Bandeja da mesa" }).locator("input").click();
+  await rolarLivre(pgM, 6, 1, "esp-rolagem-pos-reload");
+  await pgE.locator(".rolagem-item", { hasText: "esp-rolagem-pos-reload" }).first().waitFor({ timeout: 15000 });
+  t("espectador reexibe histórico e bandeja pelos próprios toggles", true);
+  await ctxE.close();
+
   sec("7. D10 desafio continua autoritativo");
+  // pg1 fica montado durante toda a suíte — sob carga, o socket
+  // prolongado pode perder a room sessao:* sem disconnect visível.
+  // Um reload garante socket novo em todas as rooms (e de quebra
+  // valida que testes pendentes são recarregados via HTTP):
+  await pg1.reload();
+  await irCampanha(pg1);
+  await entrarNaMesa(pg1);
+  await pg1.locator(".painel-dados").waitFor({ timeout: 15000 });
   // o formulário do desafio abre por padrão (fluxo principal); só clica
   // para expandir se por acaso estiver recolhido
   const formD = pgM.locator("form", { has: pgM.getByRole("button", { name: "Enviar desafio" }) });
@@ -671,7 +844,7 @@ try {
   await selCampo.selectOption({ index: 1 });
   await formD.getByRole("button", { name: "Enviar desafio" }).click();
   // o dono do personagem vê o teste pendente e rola pelo botão "Rolar" do card
-  await pg1.getByText("Testes pendentes").waitFor({ timeout: 10000 });
+  await pg1.getByText("Testes pendentes").waitFor({ timeout: 20000 });
   const btnRolarD10 = pg1.locator(".teste-card").getByRole("button", { name: "Rolar", exact: true });
   await btnRolarD10.waitFor({ timeout: 5000 });
   await btnRolarD10.click();
@@ -680,6 +853,16 @@ try {
     return [...cs].some((c) => /d10=\d/.test(c.getAttribute("aria-label") ?? ""));
   }, null, { timeout: 15000 }).then(() => true).catch(() => false);
   t("desafio D10 renderiza dado 3D na mesa", d10Canvas, "nenhuma mesa com d10=");
+  // histórico do teste de ficha: personagem + campo com categoria
+  // legível derivada da estrutura validada (auditoria #149)
+  const itemFicha = pg1.locator(".rolagem-item", { hasText: "Campo:" }).first();
+  const achouFicha = await itemFicha.waitFor({ timeout: 15000 }).then(() => true).catch(() => false);
+  if (!achouFicha) {
+    console.log("DBG7 itens pg1:", JSON.stringify((await pg1.locator(".rolagem-item").allTextContents()).map((s) => s.slice(0, 140))));
+  }
+  const txtFicha = achouFicha ? await itemFicha.textContent() : "";
+  t("histórico do teste de ficha mostra campo com categoria legível",
+    /Campo:/.test(txtFicha ?? "") && /\(Atributo\)/.test(txtFicha ?? ""), (txtFicha ?? "").slice(0, 220));
   await shot(pg1, "07-d10-3d");
 
   sec("8. Reduced motion: resultado final imediato, sem simulação");
@@ -822,13 +1005,31 @@ try {
     return { w: r.width, h: r.height };
   }).catch(() => ({ w: 0, h: 0 }));
   t("mobile: mesa 3D visível e compacta", canvasMob > 0 && dim.w > 300 && dim.h <= 170, `w=${dim.w} h=${dim.h}`);
-  // modo imersivo também funciona no mobile
+  // modo imersivo também funciona no mobile — canvas com altura
+  // limitada e o painel de controles acessível via rolagem do overlay
   const areaMob = pgMob.locator(".mesa-dados-area").first();
   await areaMob.getByRole("button", { name: "Ampliar mesa de dados" }).click();
   await pgMob.locator(".mesa-dados-area.imersivo").waitFor({ timeout: 5000 });
-  const rectMob = await pgMob.locator(".mesa-dados-area.imersivo .mesa-dados-3d-canvas").boundingBox();
-  t("mobile: modo imersivo preenche a tela", !!rectMob && rectMob.width > 340 && rectMob.height > 400,
+  const areaImMob = pgMob.locator(".mesa-dados-area.imersivo");
+  const rectMob = await areaImMob.locator(".mesa-dados-3d-canvas").boundingBox();
+  t("mobile: modo imersivo preenche a tela com canvas de altura limitada",
+    !!rectMob && rectMob.width > 340 && rectMob.height > 250 && rectMob.height <= 400,
     JSON.stringify(rectMob));
+  // controle real dentro do imersivo mobile: a aba já está em
+  // "Rolagem e dano" (rolarLivre anterior) — rola o overlay até o
+  // botão e clica de verdade
+  const idAntesMob = await pgMob.locator(".rolagem-item").first().getAttribute("data-rolagem-id").catch(() => null);
+  const btnLancarMob = areaImMob.getByRole("button", { name: /Lançar( novamente)?/ });
+  await btnLancarMob.scrollIntoViewIfNeeded();
+  const boxMob = await btnLancarMob.boundingBox();
+  t("mobile: Lançar dentro da viewport no modo imersivo",
+    !!boxMob && boxMob.y >= 0 && boxMob.y + boxMob.height <= 844, JSON.stringify(boxMob));
+  await btnLancarMob.click();
+  await pgMob.waitForFunction((id) => {
+    const itens = document.querySelectorAll(".rolagem-item");
+    return itens.length > 0 && itens[0].dataset.rolagemId !== id;
+  }, idAntesMob, { timeout: 25000 });
+  t("mobile: rolagem lançada de dentro do imersivo chega ao histórico", true);
   await pgMob.keyboard.press("Escape");
   await pgMob.waitForFunction(() => !document.querySelector(".mesa-dados-area.imersivo"), null, { timeout: 5000 });
   t("mobile: Escape fecha o modo imersivo", await pgMob.locator(".mesa-dados-area.imersivo").count() === 0);

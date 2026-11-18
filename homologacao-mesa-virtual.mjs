@@ -256,6 +256,65 @@ try {
     await ctxL.close();
   }
 
+  // ---------- isolamento de eventos por sessão (auditoria #149) ----------
+  sec("Isolamento por sessão — mesmo usuário, duas abas");
+  // Eventos privados (rolagem/teste/decisão) chegam por usuario:<id>:
+  // sem o filtro de sessionId no cliente, a aba da sessão B exibiria
+  // rolagens da sessão A. Duas sessões REAIS do mesmo mestre.
+  const sessA = await req(BASE, "POST", `/campaigns/${c.campId}/sessoes`, { cookie: c.cookieMestre, body: { name: "Sessão Alfa" } });
+  const sessB = await req(BASE, "POST", `/campaigns/${c.campId}/sessoes`, { cookie: c.cookieMestre, body: { name: "Sessão Beta" } });
+  const idSessA = sessA.json?.sessao?.id, idSessB = sessB.json?.sessao?.id;
+  t("duas sessões ativas do mesmo mestre", !!idSessA && !!idSessB && idSessA !== idSessB,
+    JSON.stringify({ a: sessA.status, b: sessB.status }));
+  const ctxIso = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgA = await ctxIso.newPage(), pgB = await ctxIso.newPage();
+  vigiar(pgA, "isoA"); vigiar(pgB, "isoB");
+  await login(pgA, "mestre_teste", "senha-forte-123");
+  // mesmo contexto compartilha storage — pgB já abre autenticado
+  await pgB.goto(BASE);
+  await pgB.getByText("Servidor online").waitFor({ timeout: 15000 });
+  await Promise.all([irMesa(pgA), irMesa(pgB)]);
+  await abrirSessao(pgA, "Sessão Alfa");
+  await abrirSessao(pgB, "Sessão Beta");
+
+  // 1) rolagem LIVRE privada na sessão A — pela UI real (checkbox Privada)
+  await pgA.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
+  const formA = pgA.locator(".rolagem-form");
+  await formA.locator("input[placeholder='Motivo (opcional)']").fill("privada-sessao-A");
+  await formA.locator("label.check input[type='checkbox']").check();
+  await formA.getByRole("button", { name: /Lançar( novamente)?/ }).click();
+  await pgA.locator(".rolagem-item", { hasText: "privada-sessao-A" }).waitFor({ timeout: 15000 });
+  t("sessão A exibe a rolagem livre privada", true);
+  await pgA.waitForTimeout(800);
+  t("sessão B NÃO exibe rolagem privada da sessão A",
+    await pgB.locator(".rolagem-item", { hasText: "privada-sessao-A" }).count() === 0
+    && await pgB.locator(".rolagem-item").count() === 0);
+
+  // 2) teste de ficha PRIVADO na sessão A — pedir + rolar via socket real
+  await pgA.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 15000 });
+  const reqIdTeste = crypto.randomUUID();
+  const pedir = await pgA.evaluate(({ sessId, charId, rid }) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:teste:pedir", {
+      sessionId: sessId, characterId: charId, campoId: "for",
+      dadosLados: 10, visibilidade: "privada", requestId: rid,
+    }, res);
+  }), { sessId: idSessA, charId: c.personagemMestre, rid: reqIdTeste });
+  t("teste privado de ficha solicitado na sessão A", pedir?.ok === true, JSON.stringify(pedir).slice(0, 140));
+  // o evento mesa:teste também é privado — a sessão B não pode vê-lo
+  await pgA.waitForTimeout(600);
+  t("sessão B NÃO recebe o teste pendente da sessão A",
+    await pgB.locator(".teste-card", { hasText: "Mestre Herói" }).count() === 0);
+  const rolarTeste = await pgA.evaluate((testId) => new Promise((res) => {
+    window.__mesaSocket.emit("mesa:teste:rolar", { testId, requestId: crypto.randomUUID() }, res);
+  }), pedir.id ?? reqIdTeste);
+  t("rolagem do teste privado autorizada (mestre/dono)", rolarTeste?.ok === true, JSON.stringify(rolarTeste).slice(0, 140));
+  await pgA.locator(".rolagem-item", { hasText: "Mestre Herói" }).waitFor({ timeout: 15000 });
+  t("sessão A exibe rolagem do teste de ficha", true);
+  await pgA.waitForTimeout(800);
+  t("sessão B NÃO exibe rolagem do teste de ficha da sessão A",
+    await pgB.locator(".rolagem-item", { hasText: "Mestre Herói" }).count() === 0);
+  await ctxIso.close();
+
   // ---------- demais viewports: layout + toque ----------
   sec("Viewports 1366 / 768 / 390 — layout e toque");
   for (const [w, h, nome] of [[1366, 768, "1366x768"], [768, 1024, "768x1024"], [390, 844, "390x844"]]) {
