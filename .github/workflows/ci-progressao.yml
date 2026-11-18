@@ -1,0 +1,52 @@
+name: CI — Progressão XP (Issue #124)
+
+# Workflow aditivo da frente de progressão XP/Merit. Existe porque o
+# ci.yml principal está sendo alterado em paralelo pela PR #131 e não
+# pode ser editado nesta branch. Quando a #131 for integrada, estas
+# suítes podem ser movidas para as listas do ci.yml e este arquivo
+# removido. O filtro de paths limita a execução às mudanças desta
+# feature — PRs alheias não disparam este workflow.
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - "servidor/src/lib/progressao.ts"
+      - "servidor/src/routes/progressao.ts"
+      - "servidor/src/index.ts"
+      - "site/src/ProgressaoXp.tsx"
+      - "site/src/api-progressao.ts"
+      - "site/src/FichaForm.tsx"
+      - "teste-progressao-xp.mjs"
+      - "homologacao-progressao.mjs"
+      - ".github/workflows/ci-progressao.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  progressao:
+    name: Progressão XP — suítes da Issue #124
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build workspaces
+        run: npm run build
+      - name: Suíte de servidor — XP e compras
+        run: node teste-progressao-xp.mjs
+      - name: Chromium para Playwright
+        run: npx playwright install chromium
+      - name: Homologação de navegador — painel de progressão
+        run: node homologacao-progressao.mjs

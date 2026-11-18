@@ -2,13 +2,14 @@ import { useCallback, useEffect, useRef, useState, type FormEvent, type PointerE
 import {
   api,
   type Sessao, type MensagemMesa, type TesteMesa, type TurnosState,
-  type Membro, type PersonagemResumo, type CampanhaResumo,
+  type Membro, type PersonagemResumo, type CampanhaResumo, type ElementoVinculavel,
   type VttState, type TokenVtt, arquivoUrl,
 } from "../api";
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
 import PainelDados from "../Dados";
-import MesaDados3D, { seedDeId } from "../MesaDados3D";
+import PainelDefeitos from "../PainelDefeitos";
+import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
 
@@ -49,6 +50,8 @@ export default function Mesa({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const souMestre = campanha?.meuPapel === "mestre";
   const seqSessoesRef = useRef(0);
+  const ativaRef = useRef<Sessao | null>(null);
+  useEffect(() => { ativaRef.current = ativa; }, [ativa]);
 
   const carregar = useCallback(async () => {
     const seq = ++seqSessoesRef.current;
@@ -88,6 +91,20 @@ export default function Mesa({ campaignId, campanha }: Props) {
     socket.on("campanha:restaurada", aoRestaurada);
     return () => { socket.off("campanha:restaurada", aoRestaurada); };
   }, [campaignId, carregar]);
+
+  // Reconexão com a lista de sessões aberta (MesaView desmontada):
+  // Campanha.tsx pula o entrar-campanha no connect quando a aba é Mesa
+  // (a MesaView cobriria o caso montada) — sem sessão aberta ninguém
+  // reingressa na room campanha:* e o cliente perde campanha:restaurada
+  // para sempre (lista congelada após restore/import).
+  useEffect(() => {
+    const socket = getSocket();
+    const aoConnect = () => {
+      if (!ativaRef.current) socket.emit("entrar-campanha", campaignId, () => undefined);
+    };
+    socket.on("connect", aoConnect);
+    return () => { socket.off("connect", aoConnect); };
+  }, [campaignId]);
 
   if (ativa) {
     return <MesaView campaignId={campaignId} sessao={ativa} souMestre={souMestre} restKey={restKey} aoSair={() => { setAtiva(null); void carregar(); }} />;
@@ -134,6 +151,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const [turnos, setTurnos] = useState<TurnosState>({ ordem: [], atual: -1, ativo: false });
   const [timer, setTimer] = useState<TimerView | null>(sessao.timerState ?? null);
   const [duracaoTimerMinutos, setDuracaoTimerMinutos] = useState("5");
+  const [dadosIniciativa, setDadosIniciativa] = useState("1");
+  const [npcsIniciativa, setNpcsIniciativa] = useState<string[]>([]);
   const [online, setOnline] = useState<string[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
@@ -234,6 +253,12 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     return !!p?.ehEu;
   }, [personagens]);
 
+  // erro assíncrono genérico (REST, filho) não pode sobrescrever a
+  // mensagem terminal de revogação — ela só sai com reativação ativa
+  const reportarErro = useCallback((msg: string | null) => {
+    if (msg !== null && !revogadoRef.current) setErro(msg);
+  }, []);
+
   // carga completa (mensagens, testes, turnos, timer, sessão, membros,
   // personagens, regras): geração própria via permSeqRef — respostas de
   // gerações antigas são descartadas. Usada na carga inicial, na
@@ -264,9 +289,9 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         if (typeof minD10 === "number") setMinimoD10(minD10);
         const eu = mem.membros.find((m) => m.ehEu);
         if (eu) setMeuUserId(eu.userId);
-      } catch (e) { setErro(e instanceof Error ? e.message : "Erro ao carregar mesa"); }
+      } catch (e) { reportarErro(e instanceof Error ? e.message : "Erro ao carregar mesa"); }
     })();
-  }, [campaignId, sessao.id]);
+  }, [campaignId, sessao.id, reportarErro]);
 
   // carga inicial
   useEffect(() => { recarregarCompleta(); }, [recarregarCompleta]);
@@ -455,10 +480,15 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       }
       if (revogadoRef.current) {
         // reativação: só um caminho de autorização novo restaura o acesso
-        revogadoRef.current = false;
-        setEntradaFalhou(false);
-        setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
-        entrar();
+        // — e somente com status "ativo" explícito. O emissor do servidor
+        // (notificarPermissaoAtualizada) sempre envia status; evento sem
+        // status ou com qualquer outro estado NÃO limpa o bloqueio.
+        if (d.status === "ativo") {
+          revogadoRef.current = false;
+          setEntradaFalhou(false);
+          setErro(null); // a mensagem de revogação não pode sobreviver à reautorização
+          entrar();
+        }
       }
       if (d.papel) {
         // compara o privilégio ANTES de aplicar: queda exige proteção
@@ -540,6 +570,21 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           // descartando gerações HTTP antigas via permSeqRef
           recarregarCompleta();
         } else {
+          // Uma revogação já recebida é mais específica que QUALQUER ACK
+          // posterior — inclusive "Sessão não encontrada" de um ID
+          // substituído por restauração/importação e RATE_LIMITED
+          // transitório: sem esta guarda o aoSair() abaixo desmontaria a
+          // view, o retry reagendaria entradas contra uma sessão morta e
+          // a mensagem de revogação seria apagada, devolvendo o usuário
+          // à lista como se nada tivesse acontecido. O ACK não pode
+          // apagar a causa nem fazer parecer que a mesa está autorizada.
+          if (revogadoRef.current) {
+            setEntradaFalhou(true);
+            setPapel("espectador");
+            papelRef.current = "espectador";
+            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
+            return;
+          }
           // RATE_LIMITED é transitório, não rejeição de autorização —
           // mas a espera não pode manter dados privilegiados visíveis:
           // bloqueia a visão imediatamente e reagenda a entrada após
@@ -551,20 +596,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
             setEntradaFalhou(true);
             setPapel("espectador");
             window.setTimeout(() => { if (ativo) entrar(); }, espera + 250);
-            return;
-          }
-          // Uma revogação já recebida é mais específica que QUALQUER ACK
-          // posterior — inclusive "Sessão não encontrada" de um ID
-          // substituído por restauração/importação: sem esta guarda o
-          // aoSair() abaixo desmontaria a view e apagaria a mensagem de
-          // revogação, devolvendo o usuário à lista como se nada tivesse
-          // acontecido. O ACK não pode apagar a causa nem fazer parecer
-          // que a mesa ainda está autorizada.
-          if (revogadoRef.current) {
-            setEntradaFalhou(true);
-            setPapel("espectador");
-            papelRef.current = "espectador";
-            setErro("Seu acesso a esta campanha foi revogado — entre novamente para solicitar acesso.");
             return;
           }
           // sessão substituída por restauração/importação: o ID não
@@ -628,8 +659,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
       destinatarioUserId: privado ? destinoPriv || undefined : undefined,
     }, (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       const espera = retryAfterDoAck(r);
-      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
-      if (!r?.ok) setErro(r?.erro ?? "Falha ao enviar");
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
+      if (!r?.ok) reportarErro(r?.erro ?? "Falha ao enviar");
       else setTexto("");
     });
   };
@@ -637,8 +668,8 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
   const socketEmit = (evento: string, payload: Record<string, unknown>, cb?: (r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => void) => {
     getSocket().emit(evento, { sessionId: sessao.id, ...payload }, cb ?? ((r: { ok?: boolean; erro?: string; codigo?: string; retryAfterMs?: number }) => {
       const espera = retryAfterDoAck(r);
-      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
-      if (r && !r.ok) setErro(r.erro ?? "Erro");
+      if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
+      if (r && !r.ok) reportarErro(r.erro ?? "Erro");
     }));
   };
 
@@ -673,7 +704,20 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     const m = membros.find((x) => x.membershipId === membershipId);
     return m ? (m.displayName || m.username) : "?";
   };
-  const turnoAtualNome = turnos.ativo && turnos.atual >= 0 ? nomeMembro(turnos.ordem[turnos.atual]) : null;
+  const nomeAtor = (atorId: string) => {
+    const resultado = turnos.iniciativa?.find((r) => r.atorId === atorId);
+    if (resultado) return resultado.nome;
+    if (atorId.startsWith("npc:")) return personagens.find((p) => p.id === atorId.slice(4))?.name ?? "NPC";
+    return nomeMembro(atorId);
+  };
+  // Estados legados podem ter ativo:true com ordem vazia ou `atual`
+  // fora dos limites — sem ator resolvível a renderização não pode
+  // chamar nomeAtor (que assume string válida).
+  const atorAtualId = turnos.ativo && turnos.atual >= 0 ? turnos.ordem[turnos.atual] : undefined;
+  const turnoAtualNome = atorAtualId ? nomeAtor(atorAtualId) : null;
+  const npcsElegiveisIniciativa = personagens.filter((p) => p.isNpc && p.npcRevelado && p.status === "aprovada");
+  const quantidadeDadosIniciativa = dadosIniciativa.trim() === "" ? NaN : Number(dadosIniciativa);
+  const iniciativaValida = Number.isInteger(quantidadeDadosIniciativa) && quantidadeDadosIniciativa >= 1 && quantidadeDadosIniciativa <= 10;
 
   // entrada rejeitada: não apresenta a visão antiga como atual —
   // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
@@ -774,10 +818,36 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                 <button className="secundario" onClick={() => socketEmit("mesa:turno", { acao: "encerrar" })}>Encerrar</button>
               </div>
             )}
+            {ehMestreAtual && (
+              <div className="mesa-iniciativa">
+                <label className="meta">Dados d20 por participante
+                  <input type="number" min="1" max="10" step="1" value={dadosIniciativa} onChange={(e) => setDadosIniciativa(e.target.value)} />
+                </label>
+                {npcsElegiveisIniciativa.length > 0 && (
+                  <div className="linha">
+                    {npcsElegiveisIniciativa.map((npc) => (
+                      <label className="check" key={npc.id}>
+                        <input type="checkbox" checked={npcsIniciativa.includes(npc.id)} onChange={(e) => setNpcsIniciativa((atuais) => e.target.checked
+                          ? (atuais.length < 20 ? [...atuais, npc.id] : atuais)
+                          : atuais.filter((id) => id !== npc.id))} />
+                        {npc.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <button className="secundario" disabled={!iniciativaValida} onClick={() => socketEmit("mesa:turno", {
+                  acao: "iniciativa", dados: quantidadeDadosIniciativa,
+                  npcs: npcsIniciativa.filter((id) => npcsElegiveisIniciativa.some((npc) => npc.id === id)),
+                })}>Rolar iniciativa</button>
+              </div>
+            )}
             {turnos.ativo && turnos.ordem.length > 0 && (
               <p className="meta">Ordem: {turnos.ordem.map((id, i) => (
-                <span key={id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeMembro(id)}</span>
+                <span key={id} className={i === turnos.atual ? "tag tag-atual" : "tag"}>{nomeAtor(id)}</span>
               ))}</p>
+            )}
+            {turnos.iniciativa && (
+              <p className="meta">Resultados: {turnos.iniciativa.map((r) => `${r.nome}: ${r.dados.join(" + ")} = ${r.total}`).join(" · ")}</p>
             )}
           </section>
 
@@ -840,7 +910,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                         {(ehMestreAtual || ehDono) && (
                           <button onClick={() => getSocket().emit("mesa:teste:rolar", { testId: t.id, requestId: crypto.randomUUID() }, (r: { ok?: boolean; dados?: number[]; total?: number; codigo?: string; retryAfterMs?: number }) => {
                             const espera = retryAfterDoAck(r);
-                            if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); return; }
+                            if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); return; }
                             if (r?.dados) setRolagens((prev) => [...prev, { id: `t-${t.id}`, dados: [r.dados!], lados: [t.pool?.dadosLados ?? t.dados?.lados ?? t.diceSides ?? 20], total: r.total ?? null, motivo: "Teste", ts: Date.now() }]);
                           })}>Rolar</button>
                         )}
@@ -862,7 +932,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
                               const nota = (document.getElementById(`nota-${t.id}`) as HTMLInputElement)?.value;
                               getSocket().emit("mesa:teste:decidir", { testId: t.id, outcome: sel.value, nota: nota || undefined }, (r: { ok?: boolean; codigo?: string; retryAfterMs?: number }) => {
                                 const espera = retryAfterDoAck(r);
-                                if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) setErro(msg); }
+                                if (espera !== null) { const msg = avisoRateLimit(espera); if (msg) reportarErro(msg); }
                               });
                             }}>Confirmar</button>
                           </>
@@ -877,17 +947,22 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
           {ehMestreAtual && (
-            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={setErro} />
+            <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
+          )}
+
+          {/* defeitos dos personagens (somente mestre — consulta) */}
+          {ehMestreAtual && (
+            <PainelDefeitos campaignId={campaignId} />
           )}
 
           {/* lançador unificado: testes D10 | rolagem livre e dano */}
           {papel !== "espectador" && sessaoAtual.status !== "encerrada" && (
-            <PainelDados sessionId={sessao.id} aoErro={setErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
+            <PainelDados sessionId={sessao.id} aoErro={reportarErro} minimoPadrao={minimoD10} souMestre={ehMestreAtual} />
           )}
 
           {/* resultados de dados */}
@@ -1067,33 +1142,71 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // fallback por semântica — números "livres" (idade, contadores) não entram.
 const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
 
-function campoElegivelTeste(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
-  if (c.tipo !== "inteiro" && c.tipo !== "decimal") return false;
+// Regra compartilhada com o backend (campoElegivelParaTeste* em
+// servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback
+// semântico — moeda/item nunca são stats de teste.
+function regraElegivelTeste(c: { semantico?: string; usadoEmTestes?: boolean }): boolean {
   if (c.semantico === "moeda" || c.semantico === "item") return false;
   if (c.usadoEmTestes === true) return true;
   if (c.usadoEmTestes === false) return false;
   return SEMANTICOS_TESTAVEIS_FALLBACK.has(c.semantico ?? "");
 }
 
-interface CampoTeste { id: string; label: string; valor: number; secao: string }
+function campoElegivelTeste(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  return (c.tipo === "inteiro" || c.tipo === "decimal") && regraElegivelTeste(c);
+}
+
+// selecao_nivel elegível gera UMA OPÇÃO POR ELEMENTO selecionado — o nível
+// individual é o valor do teste; o campo inteiro nunca vira um número.
+function campoElegivelTesteNivel(c: { tipo: string; semantico?: string; usadoEmTestes?: boolean }): boolean {
+  return c.tipo === "selecao_nivel" && regraElegivelTeste(c);
+}
+
+interface CampoTeste {
+  /** Identidade da opção no <select> — campo + elemento (se houver). */
+  optId: string;
+  id: string;
+  elementoKey?: string;
+  label: string;
+  valor: number;
+  secao: string;
+}
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, personagens, aoErro }: {
-  sessionId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
   const [aberto, setAberto] = useState(true);
   const [characterId, setCharacterId] = useState("");
   const [grupos, setGrupos] = useState<GrupoTeste[]>([]);
-  const [campoId, setCampoId] = useState("");
+  const [selecao, setSelecao] = useState("");
   const [negativos, setNegativos] = useState(0);
   const [privado, setPrivado] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  // Biblioteca da campanha — resolve o NOME real dos elementos de campos
+  // selecao_nivel (regraKind); sem ela cai na chave crua como fallback.
+  const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    api.obterVinculaveis(campaignId)
+      .then((r) => { if (vivo) setBiblioteca(r.elementos ?? {}); })
+      .catch(() => { if (vivo) setBiblioteca({}); });
+    return () => { vivo = false; };
+  }, [campaignId]);
+
+  const nomeElemento = (c: { regraKind?: string; opcoes?: string[] }, key: string): string => {
+    if (c.regraKind) {
+      const el = biblioteca?.[c.regraKind]?.find((e) => e.key === key);
+      if (el?.name) return el.name;
+    }
+    return key;
+  };
 
   const escolherPersonagem = async (id: string) => {
     setCharacterId(id);
-    setCampoId("");
+    setSelecao("");
     setGrupos([]);
     if (!id) return;
     setCarregando(true);
@@ -1101,15 +1214,36 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
       const det = await api.obterPersonagem(id);
       const valores = det.ficha?.campos ?? {};
       const porSecao = new Map<string, CampoTeste[]>();
+      const empurrar = (c: CampoTeste, titulo: string) => {
+        const lista = porSecao.get(titulo) ?? [];
+        lista.push(c);
+        porSecao.set(titulo, lista);
+      };
       for (const s of det.ficha?.estrutura?.secoes ?? []) {
+        const titulo = s.titulo || "Outros campos";
         for (const c of s.campos ?? []) {
-          if (!campoElegivelTeste(c)) continue;
           const v = valores[c.id];
-          if (typeof v === "number" && Number.isFinite(v)) {
-            const titulo = s.titulo || "Outros campos";
-            const lista = porSecao.get(titulo) ?? [];
-            lista.push({ id: c.id, label: c.label, valor: v, secao: titulo });
-            porSecao.set(titulo, lista);
+          if (campoElegivelTeste(c)) {
+            // campo escalar: o valor persistido precisa ser número finito
+            if (typeof v === "number" && Number.isFinite(v)) {
+              empurrar({ optId: JSON.stringify([c.id]), id: c.id, label: c.label, valor: v, secao: titulo }, titulo);
+            }
+            continue;
+          }
+          if (campoElegivelTesteNivel(c)) {
+            // selecao_nivel: cada elemento com nivel >= 1 vira uma opção
+            // própria — o nível individual é o valor do teste.
+            if (!Array.isArray(v)) continue;
+            for (const item of v as { key?: unknown; nivel?: unknown }[]) {
+              if (!item || typeof item !== "object") continue;
+              const nivel = typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : 0;
+              if (typeof item.key !== "string" || !item.key || nivel < 1) continue;
+              const nome = nomeElemento(c, item.key);
+              empurrar({
+                optId: JSON.stringify([c.id, item.key]), id: c.id, elementoKey: item.key,
+                label: `${c.label} — ${nome}`, valor: nivel, secao: titulo,
+              }, titulo);
+            }
           }
         }
       }
@@ -1120,7 +1254,7 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
 
   const campos = grupos.flatMap((g) => g.campos);
   if (personagens.length === 0) return null;
-  const campoSel = campos.find((c) => c.id === campoId);
+  const campoSel = campos.find((c) => c.optId === selecao);
   const efetivos = campoSel ? Math.max(0, Math.round(campoSel.valor) - Math.max(0, Math.round(negativos) || 0)) : null;
 
   return (
@@ -1134,7 +1268,9 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
           e.preventDefault();
           if (!campoSel) { aoErro("Escolha a habilidade/atributo do personagem"); return; }
           getSocket().emit("mesa:teste:pedir", {
-            sessionId, characterId, campoId: campoSel.id, rotulo: campoSel.label,
+            sessionId, characterId, campoId: campoSel.id,
+            ...(campoSel.elementoKey ? { elementoKey: campoSel.elementoKey } : {}),
+            rotulo: campoSel.label,
             dadosLados: 10, malus: Math.max(0, Math.round(negativos) || 0),
             visibilidade: privado ? "privada" : "publica",
             requestId: crypto.randomUUID(),
@@ -1154,20 +1290,20 @@ function DesafioD10({ sessionId, personagens, aoErro }: {
             </select>
           </label>
           <label>Habilidade/atributo (define os dados positivos)
-            <select value={campoId} onChange={(e) => setCampoId(e.target.value)} required disabled={!characterId || carregando}>
+            <select value={selecao} onChange={(e) => setSelecao(e.target.value)} required disabled={!characterId || carregando}>
               <option value="">{carregando ? "Carregando ficha…" : "Escolher…"}</option>
               {grupos.map((g) => (
                 <optgroup key={g.titulo} label={g.titulo}>
-                  {g.campos.map((c) => <option key={c.id} value={c.id}>{c.label} ({Math.round(c.valor)})</option>)}
+                  {g.campos.map((c) => <option key={c.optId} value={c.optId}>{c.label} ({Math.round(c.valor)})</option>)}
                 </optgroup>
               ))}
             </select>
           </label>
           {campos.length === 0 && characterId && !carregando && (
             <p className="meta">
-              Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) das seções
-              Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como "Usado em testes" no editor de
-              fichas — podem gerar dados. Itens, moedas e contadores não entram no desafio.
+              Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) ou elementos
+              de seleções com nível das seções Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como
+              "Usado em testes" no editor de fichas — podem gerar dados. Itens, moedas e contadores não entram no desafio.
             </p>
           )}
           {campoSel && (
