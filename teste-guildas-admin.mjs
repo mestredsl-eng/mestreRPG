@@ -384,6 +384,38 @@ try {
   const candCarolComum = await req(base, "GET", `/guildas/${guildA}/campanhas-candidatas`, { cookie: cookieCarol2 });
   t("membro comum NAO lista candidatas (403)", candCarolComum.status === 403, String(candCarolComum.status));
 
+  sec("Campanhas — corrida do último mestre ativo");
+  const dbCampCorrida = abrirDb(BANCO);
+  const mCarol = dbCampCorrida.prepare("select id from memberships where campaign_id=? and user_id=?").get(campCarol.json.campanha.id, idDe("carol"));
+  const mAlice = crypto.randomUUID();
+  const mBob = crypto.randomUUID();
+  const agoraCorrida = Date.now();
+  dbCampCorrida.prepare("update memberships set role='jogador', status='ativo', updated_at=? where id=?").run(agoraCorrida, mCarol.id);
+  dbCampCorrida.prepare(`
+    insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at)
+    values (?,?,?,?,?,?,?,?,?)
+  `).run(mAlice, campCarol.json.campanha.id, idDe("alice"), "mestre", "ativo", JSON.stringify({}), agoraCorrida, agoraCorrida, agoraCorrida);
+  dbCampCorrida.prepare(`
+    insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at)
+    values (?,?,?,?,?,?,?,?,?)
+  `).run(mBob, campCarol.json.campanha.id, idDe("bob"), "mestre", "ativo", JSON.stringify({}), agoraCorrida, agoraCorrida, agoraCorrida);
+  dbCampCorrida.close();
+  const [delMestreAlice, delMestreBob] = await Promise.all([
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieCarol }),
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieCarol }),
+  ]);
+  const stMestres = [delMestreAlice.status, delMestreBob.status].sort((a, b) => a - b);
+  t("corrida: uma remoção do último mestre passa e a outra é recusada",
+    stMestres[0] === 200 && stMestres[1] === 400,
+    JSON.stringify({ alice: delMestreAlice.status, bob: delMestreBob.status }));
+  const dbCampDepois = abrirDb(BANCO);
+  const mestresRestantes = dbCampDepois.prepare(`
+    select count(*) n from memberships
+    where campaign_id=? and role='mestre' and status='ativo'
+  `).get(campCarol.json.campanha.id).n;
+  dbCampDepois.close();
+  t("corrida: campanha termina com exatamente 1 mestre ativo", mestresRestantes === 1, `restantes=${mestresRestantes}`);
+
   sec("Auditoria");
   const db2 = abrirDb(BANCO);
   const audits = db2.prepare("select action from audit_logs").all().map((r) => r.action);
