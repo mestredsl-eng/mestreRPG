@@ -449,7 +449,6 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
     if (sessaoEstadoRef.current === sessao.id) return;
     sessaoEstadoRef.current = sessao.id;
     setEntradaFalhou(true);
-    setVisaoBloqueada(true);
     setPapel("espectador");
     papelRef.current = "espectador";
     setPodeEnviar(false);
