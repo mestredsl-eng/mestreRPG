@@ -1,0 +1,47 @@
+name: CI — Preferências Visuais (Issue #132)
+
+# Workflow aditivo da etapa 2.1 da identidade visual: camada de backend
+# das preferências visuais (PATCH /api/auth/preferences com `visual`).
+# O filtro de paths limita a execução às mudanças desta feature —
+# PRs alheias não disparam este workflow.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "servidor/src/routes/auth.ts"
+      - "teste-preferencias-visual.mjs"
+      - ".github/workflows/ci-preferencias-visual.yml"
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+    paths:
+      - "servidor/src/routes/auth.ts"
+      - "teste-preferencias-visual.mjs"
+      - ".github/workflows/ci-preferencias-visual.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preferencias-visual:
+    name: Preferências Visuais — suíte da Issue #132
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build workspaces
+        run: npm run build
+      - name: Suíte HTTP — preferências visuais
+        run: node teste-preferencias-visual.mjs
