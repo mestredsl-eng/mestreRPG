@@ -956,7 +956,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
   // entrada rejeitada: não apresenta a visão antiga como atual —
   // sem chat, mapa, tokens nem controles até uma nova entrada autorizada
-  if (entradaFalhou) {
+  if (sessaoEstadoRef.current !== sessao.id || entradaFalhou) {
     return (
       <div className="mesa-view">
         <section className="cartao">
