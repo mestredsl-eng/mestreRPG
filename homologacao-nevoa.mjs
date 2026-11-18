@@ -1382,9 +1382,15 @@ try {
   };
   // nomes renderizados na 1ª coluna das decisões recentes, na ordem
   const nomesDecisoes = () => pgJ.locator("section.cartao", { has: pgJ.locator("h3", { hasText: "Decisões recentes" }) }).locator(".tabela tbody tr td:first-child").allInnerTexts();
-  await new Promise((r) => setTimeout(r, 1200)); // eventos mesa:teste/decisao assentaram
-  // baseline: lista do jogador ainda vazia (personagem criado pós-carga)
-  let nomes = await nomesDecisoes();
+  // baseline: lista do jogador ainda vazia (personagem criado pós-carga).
+  // espera os eventos mesa:teste/decisao assentarem com polling — um sleep
+  // fixo falha intermitentemente em runners mais lentos.
+  let nomes = [];
+  for (let i = 0; i < 100; i++) {
+    nomes = await nomesDecisoes();
+    if (nomes.length >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   t("baseline jogador sem lista: ambos os testes resolvem '?’",
     nomes.length >= 2 && nomes.every((n) => n.trim() === "?"), JSON.stringify(nomes));
 
