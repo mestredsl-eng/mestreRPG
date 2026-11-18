@@ -21,14 +21,17 @@ export interface ItemDado {
   /** null = dado "no ar" aguardando o resultado do servidor (tumble). */
   valor: number | null;
   /** Estado visual individual (ex.: sucesso/falha de cada D10). */
-  estado?: "sucesso" | "falha" | null;
+  estado?: "sucesso" | "falha" | "acerto_critico" | "erro_critico" | null;
 }
 
 export interface DadoMesa {
   lados: number;
   /** valor oficial exibido na face de repouso; null durante o tumble */
   valor: number | null;
-  estado?: "sucesso" | "falha" | null;
+  estado?: "sucesso" | "falha" | "acerto_critico" | "erro_critico" | null;
+  /** timestamp (performance.now) até quando o efeito de cor fica visível;
+   *  expirado, o dado volta à aparência normal (Issue #147). */
+  efeitoAte?: number;
   vertices: Vec3[];
   faces: Face[];
   labels: number[];

@@ -103,6 +103,10 @@ jobs:
         run: npm run test:iniciativa --workspace servidor
       - name: Testes unitários da régua VTT (#125)
         run: npm run test:regua --workspace servidor
+      - name: Testes unitários da convenção D10
+        run: npm run test:d10 --workspace servidor
+      - name: Testes unitários da guarda do último GM
+        run: npm run test:guildas-guarda --workspace servidor
       - name: Testes de formatação das rolagens do histórico
         run: npx tsx teste-historico-rolagens.mjs
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
@@ -139,6 +143,7 @@ jobs:
             teste-financeiro-integracao.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
+            teste-pool-principal-http.mjs \
             teste-novidades.mjs \
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \

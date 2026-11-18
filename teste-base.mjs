@@ -52,7 +52,7 @@ export function subirServidor(porta, { banco, arquivos, backups, env }) {
   });
 }
 
-export async function esperarSaudavel(base, proc, timeoutMs = 30000) {
+export async function esperarSaudavel(base, proc, timeoutMs = 90000) {
   const limite = Date.now() + timeoutMs;
   while (Date.now() < limite) {
     try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }

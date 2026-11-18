@@ -8,9 +8,11 @@
     "build": "tsc -p tsconfig.json",
     "test:iniciativa": "tsx --test testes/iniciativa.test.ts",
     "test:regua": "tsx --test testes/regua.test.ts",
+    "test:d10": "tsx --test testes/d10.test.ts",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "tsx src/db/migrate.ts"
+    "db:migrate": "tsx src/db/migrate.ts",
+    "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",
