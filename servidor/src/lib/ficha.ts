@@ -158,12 +158,25 @@ export const SEMANTICOS_TESTAVEIS_FALLBACK = new Set<TipoSemantico>([
  *   conhecimento/talento. Campos numéricos "livres" (idade, crônica,
  *   contadores) não entram só por serem números.
  */
-export function campoElegivelParaTeste(campo: Pick<CampoDef, "tipo" | "semantico" | "usadoEmTestes">): boolean {
-  if (campo.tipo !== "inteiro" && campo.tipo !== "decimal") return false;
+function regraElegibilidadeTeste(campo: Pick<CampoDef, "semantico" | "usadoEmTestes">): boolean {
   if (campo.semantico === "moeda" || campo.semantico === "item") return false;
   if (campo.usadoEmTestes === true) return true;
   if (campo.usadoEmTestes === false) return false;
   return SEMANTICOS_TESTAVEIS_FALLBACK.has(campo.semantico);
+}
+
+export function campoElegivelParaTeste(campo: Pick<CampoDef, "tipo" | "semantico" | "usadoEmTestes">): boolean {
+  if (campo.tipo !== "inteiro" && campo.tipo !== "decimal") return false;
+  return regraElegibilidadeTeste(campo);
+}
+
+/** Elegibilidade de um campo `selecao_nivel` para desafio por ELEMENTO:
+ *  mesma regra de flag/semântica do escalar, trocando o requisito de tipo
+ *  numérico por "lista de elementos com nível". Cada elemento entra como
+ *  opção própria usando seu `nivel` como dados positivos — nunca a soma. */
+export function campoElegivelParaTesteNivel(campo: Pick<CampoDef, "tipo" | "semantico" | "usadoEmTestes">): boolean {
+  if (campo.tipo !== "selecao_nivel") return false;
+  return regraElegibilidadeTeste(campo);
 }
 
 export function mapaCampos(estrutura: EstruturaFicha): Map<string, CampoDef> {
