@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { normalFor, rotate, add, dot, unit, type Vec3 } from "./fisicaDado";
+import { faceExibida, EFEITO_RESULTADO_MS, type EstadoEfeitoDado } from "./convencaoD10";
 import {
   criarCenaMesa, passoCena, cenaRepousada, semiLadoMesa, definirAlvoDado,
   type DadoMesa,
@@ -10,7 +11,7 @@ export interface ItemDadoMesa {
   /** valor oficial do servidor; null = dado em tumble aguardando o ACK */
   valor: number | null;
   /** Estado visual opcional por dado, preservando pools mistos de sucesso/falha. */
-  estado?: "sucesso" | "falha" | null;
+  estado?: EstadoEfeitoDado;
 }
 
 /** Semente estável a partir do id da rolagem — trajetória reproduzível. */
@@ -27,7 +28,7 @@ interface Props {
   dados: ItemDadoMesa[];
   /** semente estável por rolagem (ex.: hash do id) — trajetória reproduzível */
   semente?: number;
-  estado?: "sucesso" | "falha" | null;
+  estado?: EstadoEfeitoDado;
   className?: string;
 }
 
@@ -36,7 +37,7 @@ interface FaceVisivel {
   profundidade: number;
   luz: number;
   rotulo: number;
-  estado?: "sucesso" | "falha" | null;
+  estado?: EstadoEfeitoDado;
   dado: DadoMesa;
 }
 
@@ -107,11 +108,12 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       cena = anterior;
       dados.forEach((item, i) => {
         const d = cena[i];
+        if (d.estado !== item.estado) d.efeitoAte = undefined;
         d.estado = item.estado;
         const mudou = item.valor === null
           ? d.alvo !== null
           : d.valor !== item.valor || d.alvo === null;
-        if (mudou) definirAlvoDado(d, item.valor);
+        if (mudou) { definirAlvoDado(d, item.valor); d.efeitoAte = undefined; }
       });
     } else {
       cena = criarCenaMesa(dados, semente);
@@ -135,6 +137,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     }
 
     let raf = 0;
+    let fxTimer: ReturnType<typeof setTimeout> | null = null;
     let width = 0, height = 0, dpr = 1;
     let finalizado = reduced || cenaRepousada(cena);
     let fill = "#2b3350";
@@ -148,7 +151,8 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       const colors = getComputedStyle(canvas);
       fill = colors.getPropertyValue("--dado-fundo").trim() || "#2b3350";
       const text = colors.getPropertyValue("--dado-texto").trim() || "#e8ecf7";
-      textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0" : text;
+      textColor = estado === "sucesso" ? "#8fe6b0" : estado === "falha" ? "#e8a0a0"
+        : estado === "acerto_critico" ? "#ffd75e" : estado === "erro_critico" ? "#ff9d8f" : text;
       mesaFeltro = colors.getPropertyValue("--mesa-feltro").trim() || mesaFeltro;
       mesaFeltroEscuro = colors.getPropertyValue("--mesa-feltro-escuro").trim() || mesaFeltroEscuro;
       mesaBorda = colors.getPropertyValue("--mesa-borda").trim() || mesaBorda;
@@ -157,9 +161,12 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       mesaSombra = colors.getPropertyValue("--mesa-sombra").trim() || mesaSombra;
     };
     lerCores();
-    const border = estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a" : "#8290bd";
+    const border = estado === "sucesso" ? "#2e8f5b" : estado === "falha" ? "#8a3a3a"
+      : estado === "acerto_critico" ? "#c9a227" : estado === "erro_critico" ? "#a33327" : "#8290bd";
 
+    const agoraEfeito = () => performance.now();
     const desenhar = () => {
+      const agoraFx = agoraEfeito();
       // Mundo → tela: mesa ocupa ~92% do menor lado; z alto vira elevação.
       const k = Math.min(width, height) / (limite * 2 + 2.4);
       const cx = width / 2, cy = height / 2;
@@ -240,7 +247,11 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
           const luz = Math.max(0, dot(n, unit([-0.35, 0.55, 1])));
           facesVisiveis.push({
             pts: face.map((i) => projetados[i]),
-            profundidade, luz, rotulo: d.labels[fi], estado: d.estado ?? estado, dado: d,
+            profundidade, luz,
+            // D10: o valor interno 10 é exibido como face "0" (Issue #147)
+            rotulo: faceExibida(d.lados, d.labels[fi]),
+            estado: (d.efeitoAte ?? 0) > agoraFx ? (d.estado ?? estado) : estado,
+            dado: d,
           });
         }
         // Sombra do dado no tampo.
@@ -257,6 +268,20 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
         ctx.restore();
       }
       facesVisiveis.sort((a, b) => a.profundidade - b.profundidade);
+
+      // Efeitos transitórios de crítico no canvas inteiro: pulso dourado
+      // (acerto crítico) e impacto vermelho (erro crítico). As classes
+      // são removidas quando o efeito expira — a animação é CSS e o
+      // prefers-reduced-motion a desativa (ver estilos.css).
+      let temCrit = false, temErroCrit = false;
+      for (const d of cena) {
+        if ((d.efeitoAte ?? 0) > agoraFx && d.estado) {
+          if (d.estado === "acerto_critico") temCrit = true;
+          if (d.estado === "erro_critico") temErroCrit = true;
+        }
+      }
+      canvas.classList.toggle("mesa-efeito-critico", temCrit);
+      canvas.classList.toggle("mesa-efeito-erro-critico", temErroCrit);
 
       const gradient = ctx.createRadialGradient(cx - k, cy - k, k * 0.2, cx, cy, k * limite);
       gradient.addColorStop(0, mesaLuz);
@@ -276,9 +301,13 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
         ctx.fill();
         const estadoFace = f.estado;
         const bordaFace = estadoFace === "sucesso" ? "#2e8f5b"
-          : estadoFace === "falha" ? "#8a3a3a" : border;
+          : estadoFace === "falha" ? "#8a3a3a"
+          : estadoFace === "acerto_critico" ? "#c9a227"
+          : estadoFace === "erro_critico" ? "#a33327" : border;
         const textoFace = estadoFace === "sucesso" ? "#8fe6b0"
-          : estadoFace === "falha" ? "#e8a0a0" : textColor;
+          : estadoFace === "falha" ? "#e8a0a0"
+          : estadoFace === "acerto_critico" ? "#ffd75e"
+          : estadoFace === "erro_critico" ? "#ff9d8f" : textColor;
         ctx.strokeStyle = bordaFace;
         ctx.lineWidth = Math.max(1, k * 0.045);
         ctx.stroke();
@@ -312,14 +341,35 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       const dt = Math.min(0.032, Math.max(0.001, (now - lastFrame) / 1000));
       lastFrame = now;
       passoCena(cena, dt);
-      finalizado = cenaRepousada(cena);
+      // O flash de resultado começa quando o dado ASSENTA na face
+      // oficial — não na chegada do ACK (Issue #147).
+      for (const d of cena) {
+        if (d.finalizado && d.estado && d.efeitoAte === undefined) {
+          d.efeitoAte = now + EFEITO_RESULTADO_MS;
+        }
+      }
+      finalizado = cenaRepousada(cena)
+        && !cena.some((d) => (d.efeitoAte ?? 0) > now);
       desenhar();
       if (!finalizado) raf = requestAnimationFrame(draw);
     };
+    // Cena já assentada na montagem (ex.: prefers-reduced-motion): o
+    // flash de resultado ainda precisa aparecer — arma efeitoAte e uma
+    // repintura única para restaurar a aparência normal ao expirar.
+    const tSetup = performance.now();
+    for (const d of cena) {
+      if (d.finalizado && d.estado && d.efeitoAte === undefined) {
+        d.efeitoAte = tSetup + EFEITO_RESULTADO_MS;
+      }
+    }
     if (!finalizado) {
       raf = requestAnimationFrame(draw);
     } else {
       desenhar();
+      const restanteFx = Math.max(0, ...cena.map((d) => (d.efeitoAte ?? 0) - performance.now()));
+      if (restanteFx > 0) {
+        fxTimer = setTimeout(() => { fxTimer = null; desenhar(); }, restanteFx + 60);
+      }
     }
 
     const observer = new ResizeObserver(() => {
@@ -335,6 +385,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     prefsObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style"] });
     return () => {
       if (raf) cancelAnimationFrame(raf);
+      if (fxTimer) clearTimeout(fxTimer);
       observer.disconnect();
       prefsObserver.disconnect();
     };
@@ -348,7 +399,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
     return (
       <span className={`mesa-dados-fallback ${className ?? ""}`}>
         {dados.map((d, i) => (
-          <span key={i} className="dado-3d-fallback" title={`d${d.lados} = ${d.valor ?? "…"}`}>{d.valor ?? "…"}</span>
+          <span key={i} className="dado-3d-fallback" title={`d${d.lados} = ${d.valor == null ? "…" : faceExibida(d.lados, d.valor)}`}>{d.valor == null ? "…" : faceExibida(d.lados, d.valor)}</span>
         ))}
       </span>
     );
@@ -360,7 +411,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       role="img"
       aria-label={dados.length === 0
         ? "Mesa de dados: bandeja vazia aguardando a rolagem"
-        : `Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor ?? "rolando"}${d.estado ? ` (${d.estado})` : ""}`).join(", ")}`}
+        : `Mesa de dados: ${dados.map((d) => `d${d.lados}=${d.valor == null ? "rolando" : faceExibida(d.lados, d.valor)}${d.estado ? ` (${d.estado})` : ""}`).join(", ")}`}
     />
   );
 }

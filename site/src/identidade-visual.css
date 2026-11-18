@@ -1,0 +1,308 @@
+/* Fundação visual da Issue #132 — Terror & Mistério.
+   Camada intencionalmente isolada: não substitui o CSS funcional legado. */
+:root {
+  color-scheme: dark;
+  --horror-noite: #0b0a0f;
+  --horror-carvao: #131118;
+  --horror-superficie: #1b1720;
+  --horror-superficie-elevada: #211b26;
+  --horror-borda: rgba(154, 111, 125, .24);
+  --horror-borda-forte: rgba(177, 91, 105, .48);
+  --horror-vinho: #8d3d4b;
+  --horror-vinho-claro: #b85c69;
+  --horror-ambar: #b99a62;
+  --horror-texto: #eee7e8;
+  --horror-texto-suave: #b4a9b1;
+  --horror-sombra: 0 14px 36px rgba(0, 0, 0, .28);
+}
+
+html {
+  min-height: 100%;
+  background: var(--horror-noite);
+}
+
+body {
+  min-height: 100vh;
+  color: var(--horror-texto);
+  background:
+    radial-gradient(ellipse at 12% 0%, rgba(102, 43, 62, .19), transparent 38rem),
+    radial-gradient(ellipse at 88% 18%, rgba(58, 48, 79, .16), transparent 34rem),
+    linear-gradient(145deg, #111018 0%, #0d0c12 48%, #121016 100%);
+  background-attachment: fixed;
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+}
+
+#root::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: .14;
+  background-image:
+    radial-gradient(rgba(230, 207, 211, .32) .45px, transparent .75px),
+    radial-gradient(rgba(151, 105, 121, .22) .5px, transparent .8px);
+  background-size: 5px 5px, 9px 9px;
+  background-position: 0 0, 2px 3px;
+}
+
+::selection {
+  color: #fff;
+  background: rgba(141, 61, 75, .68);
+}
+
+/* Cabeçalho: placa escura, vidro discreto e filete vinho. */
+.topo {
+  background: linear-gradient(105deg, rgba(24, 19, 27, .96), rgba(17, 15, 22, .94));
+  border-bottom: 1px solid var(--horror-borda-forte);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .24), 0 1px 0 rgba(255, 222, 225, .025) inset;
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+  backdrop-filter: blur(16px) saturate(115%);
+}
+
+.marca {
+  display: inline-flex;
+  align-items: center;
+  gap: .58rem;
+  color: #f1e7e9;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.18rem;
+  letter-spacing: .035em;
+  text-shadow: 0 0 18px rgba(184, 92, 105, .24);
+}
+
+.marca .icone-interface {
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--horror-vinho-claro);
+  filter: drop-shadow(0 0 7px rgba(184, 92, 105, .28));
+}
+
+.topo nav {
+  gap: .42rem;
+}
+
+.topo nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .42rem;
+  min-height: 36px;
+  border-color: rgba(154, 130, 145, .19);
+  color: var(--horror-texto-suave);
+  transition:
+    color .18s ease,
+    border-color .18s ease,
+    background .18s ease,
+    box-shadow .18s ease,
+    transform .18s ease;
+}
+
+.topo nav button .icone-interface {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  opacity: .88;
+}
+
+.topo nav button:hover {
+  color: #fff;
+  border-color: rgba(184, 92, 105, .52);
+  background: rgba(107, 48, 64, .18);
+  transform: translateY(-1px);
+}
+
+.topo nav button.ativo {
+  color: #fff2f2;
+  border-color: rgba(184, 92, 105, .62);
+  background: linear-gradient(135deg, rgba(112, 49, 64, .42), rgba(51, 32, 47, .58));
+  box-shadow: 0 0 0 1px rgba(184, 92, 105, .11) inset, 0 4px 16px rgba(0, 0, 0, .16);
+}
+
+.topo nav button.sair {
+  color: #e69aa1;
+  border-color: rgba(160, 69, 82, .42);
+  background: rgba(84, 35, 46, .16);
+}
+
+.topo nav button.sair:hover {
+  background: rgba(119, 42, 55, .32);
+  border-color: rgba(207, 105, 119, .68);
+}
+
+/* Superfícies com profundidade: os cartões existentes preservam sua
+   geometria e comportamento, recebendo apenas iluminação e acabamento. */
+.cartao {
+  position: relative;
+  background: linear-gradient(145deg, rgba(31, 26, 36, .97), rgba(22, 19, 27, .98));
+  border-color: var(--horror-borda);
+  box-shadow: var(--horror-sombra), 0 1px 0 rgba(255, 235, 238, .025) inset;
+}
+
+.cartao::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 1.1rem;
+  right: 1.1rem;
+  height: 1px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(184, 92, 105, .4), rgba(185, 154, 98, .24), transparent);
+}
+
+.cartao h2 {
+  color: #f0e5e8;
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: .012em;
+}
+
+.cartao-campanha,
+.cartao-item,
+.nivel-item {
+  transition:
+    border-color .18s ease,
+    background-color .18s ease,
+    box-shadow .18s ease,
+    transform .18s ease;
+}
+
+.cartao-campanha:hover,
+.cartao-item:hover {
+  border-color: rgba(184, 92, 105, .55);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .22), 0 0 0 1px rgba(184, 92, 105, .08) inset;
+}
+
+.cartao-campanha:hover {
+  transform: translateY(-2px);
+}
+
+.cartao-item.selecionado,
+.nivel-item:focus-within {
+  border-color: var(--horror-borda-forte);
+  box-shadow: 0 0 0 1px rgba(184, 92, 105, .12) inset;
+}
+
+/* Acento de ações: troca o azul genérico por vinho escuro e mantém
+   botões secundários/perigo com suas próprias classes semânticas. */
+button:not([class]),
+button.primario {
+  border: 1px solid rgba(203, 112, 124, .32);
+  background: linear-gradient(145deg, #783744, #542632);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .18), 0 1px 0 rgba(255, 230, 232, .08) inset;
+  transition:
+    filter .16s ease,
+    border-color .16s ease,
+    box-shadow .16s ease,
+    transform .16s ease;
+}
+
+button:not([class]):hover:not(:disabled),
+button.primario:hover:not(:disabled) {
+  filter: brightness(1.14);
+  border-color: rgba(222, 137, 147, .6);
+  box-shadow: 0 5px 16px rgba(90, 34, 48, .28), 0 1px 0 rgba(255, 230, 232, .1) inset;
+  transform: translateY(-1px);
+}
+
+button.secundario,
+button.mini {
+  border: 1px solid rgba(154, 130, 145, .2);
+  background: linear-gradient(145deg, #302834, #24202a);
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+button.secundario:hover:not(:disabled),
+button.mini:hover:not(:disabled) {
+  border-color: rgba(184, 92, 105, .45);
+  background: #392b37;
+}
+
+button.perigo,
+button.mini.perigo {
+  border-color: rgba(188, 77, 86, .42);
+  background: linear-gradient(145deg, #78333a, #51232d);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--horror-vinho-claro);
+  outline-offset: 2px;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: rgba(184, 92, 105, .72);
+  box-shadow: 0 0 0 3px rgba(141, 61, 75, .12);
+}
+
+.meta,
+.subtitulo {
+  color: var(--horror-texto-suave);
+}
+
+/* Seções da ficha e blocos de informação recebem uma moldura mais
+   próxima de um arquivo de investigação, sem perder contraste. */
+.ficha-secao {
+  background: linear-gradient(145deg, rgba(25, 22, 31, .98), rgba(18, 17, 24, .98));
+  border-color: rgba(146, 114, 133, .22);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .16), 0 1px 0 rgba(255, 255, 255, .02) inset;
+}
+
+.ficha-secao h3 {
+  color: #c59a82;
+  border-bottom-color: rgba(166, 111, 116, .28);
+}
+
+.ficha-subsecao h4 {
+  color: #b9a6ae;
+}
+
+.badge {
+  border: 1px solid rgba(169, 145, 159, .16);
+}
+
+@media (max-width: 760px) {
+  .topo {
+    padding-inline: .85rem;
+  }
+
+  .topo nav {
+    justify-content: flex-start;
+  }
+
+  .topo nav button {
+    padding-inline: .62rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .marca {
+    font-size: 1.05rem;
+  }
+
+  .topo nav button {
+    gap: .32rem;
+    padding: .38rem .52rem;
+    font-size: .84rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
