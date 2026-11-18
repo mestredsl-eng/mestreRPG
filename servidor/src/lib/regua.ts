@@ -81,7 +81,10 @@ export function distanciaMapa(
   }
   const dx = (b.x - a.x) * dims.largura;
   const dy = (b.y - a.y) * dims.altura;
-  const d = Math.sqrt(dx * dx + dy * dy);
+  // Math.hypot evita o overflow intermediário de dx*dx + dy*dy em mapas
+  // com dimensões muito grandes; o resultado ainda pode ser infinito e
+  // é rejeitado explicitamente abaixo.
+  const d = Math.hypot(dx, dy);
   if (!Number.isFinite(d)) return { ok: false, erro: "Distância fora do intervalo representável" };
   return { ok: true, valor: d };
 }
@@ -157,9 +160,19 @@ export function medirRegua(
 /**
  * Arredondamento exclusivo para apresentação. Nunca usar o resultado
  * para cálculos subsequentes — o valor interno permanece em float64.
+ *
+ * `casas` inválido ou não finito (NaN, Infinity, string, Symbol etc.)
+ * é normalizado para o padrão 2 — a função nunca lança nem devolve NaN
+ * por causa do parâmetro. O limite efetivo continua 0–10 casas.
+ * Se `valor * 10^casas` estourar para Infinity (valor já além da
+ * precisão representável), devolve `valor` inalterado: um resultado
+ * finito e coerente em vez de Infinity silencioso.
  */
 export function arredondarParaApresentacao(valor: number, casas = 2): number {
   if (!Number.isFinite(valor)) return valor;
-  const f = 10 ** Math.max(0, Math.min(10, Math.floor(casas)));
-  return Math.round(valor * f) / f;
+  const c = typeof casas === "number" && Number.isFinite(casas) ? casas : 2;
+  const f = 10 ** Math.max(0, Math.min(10, Math.floor(c)));
+  const escalado = valor * f;
+  if (!Number.isFinite(escalado)) return valor;
+  return Math.round(escalado) / f;
 }

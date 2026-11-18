@@ -74,11 +74,20 @@ describe("distanciaMapa", () => {
     assert.ok(Math.abs(r.valor - Math.sqrt(400 ** 2 + 1600 ** 2)) < 1e-9);
   });
   it("não depende do viewport: dimensões do mapa bastam", () => {
-    // Duas "telas" diferentes renderizando o mesmo mapa normalizado
-    // produzem a mesma distância — a função nem recebe viewport.
-    const a = distanciaMapa(p(0.1, 0.2), p(0.9, 0.8), QUADRADO);
-    const b = distanciaMapa(p(0.1, 0.2), p(0.9, 0.8), QUADRADO);
-    assert.deepEqual(a, b);
+    // O módulo recebe as dimensões da IMAGEM do mapa, nunca do viewport:
+    // a assinatura nem possui parâmetro de tela. Simulamos dois viewports
+    // (mobile 390px e desktop 1366px) renderizando o MESMO mapa — a medida
+    // precisa ser idêntica e igual ao valor esperado calculado à mão.
+    const pts = { a: p(0.1, 0.2), b: p(0.9, 0.8) };
+    // viewport mobile: 390×292px → mesmo mapa normalizado
+    const rMobile = distanciaMapa(pts.a, pts.b, QUADRADO);
+    // viewport desktop: 1366×1024px → mesmo mapa normalizado
+    const rDesktop = distanciaMapa(pts.a, pts.b, QUADRADO);
+    const esperado = Math.hypot((0.9 - 0.1) * 1000, (0.8 - 0.2) * 1000);
+    assert.ok(rMobile.ok && rDesktop.ok);
+    assert.equal(rMobile.valor, esperado);
+    assert.equal(rDesktop.valor, esperado);
+    assert.equal(rMobile.valor, rDesktop.valor);
   });
   it("pontos nas bordas 0 e 1 são medidos normalmente", () => {
     const r = distanciaMapa(p(0, 0), p(1, 1), QUADRADO);
@@ -94,12 +103,16 @@ describe("distanciaMapa", () => {
     assert.equal(distanciaMapa(p(0, 0), p(0.5, 0.5), { largura: 0, altura: 10 }).ok, false);
     assert.equal(distanciaMapa(p(NaN, 0), p(0.5, 0.5), QUADRADO).ok, false);
   });
-  it("valores extremamente grandes permanecem finitos ou falham limpo", () => {
-    const dims = { largura: Number.MAX_VALUE, altura: Number.MAX_VALUE };
-    const r = distanciaMapa(p(0, 0), p(1, 1), dims);
-    // estouro para Infinity deve retornar erro, nunca Infinity silencioso
-    if (r.ok) assert.ok(Number.isFinite(r.valor));
-    else assert.equal(r.ok, false);
+  it("extremos: hypot evita overflow intermediário e rejeita infinito", () => {
+    // dims 1e200: dx=dy=1e200 → hypot finito (sqrt intermediário daria Inf)
+    const grande = distanciaMapa(p(0, 0), p(1, 1), { largura: 1e200, altura: 1e200 });
+    assert.ok(grande.ok, "esperava sucesso finito");
+    assert.ok(Math.abs(grande.valor - Math.hypot(1e200, 1e200)) < 1e185);
+    assert.ok(Number.isFinite(grande.valor));
+    // dims MAX_VALUE: hypot(1.8e308, 1.8e308) estoura → erro deliberado
+    const extremo = distanciaMapa(p(0, 0), p(1, 1), { largura: Number.MAX_VALUE, altura: Number.MAX_VALUE });
+    assert.equal(extremo.ok, false, "esperava erro deliberado para resultado infinito");
+    if (!extremo.ok) assert.match(extremo.erro, /intervalo representável/);
   });
 });
 
@@ -196,5 +209,27 @@ describe("arredondarParaApresentacao", () => {
   it("valores não finitos passam intactos (defesa)", () => {
     assert.equal(arredondarParaApresentacao(NaN), NaN);
     assert.equal(arredondarParaApresentacao(Infinity), Infinity);
+  });
+  it("casas inválido/não finito cai no padrão 2 sem lançar nem NaN", () => {
+    const esperado = arredondarParaApresentacao(1.2345, 2);
+    for (const c of [NaN, Infinity, -Infinity, "abc", Symbol("x"), null, undefined, {}, []]) {
+      const r = arredondarParaApresentacao(1.2345, c as number);
+      assert.equal(r, esperado, `casas=${String(c)}`);
+    }
+  });
+  it("valor gigante além da precisão retorna finito e coerente", () => {
+    // 1e308 * 100 estouraria para Infinity — deve devolver o valor intacto
+    const r = arredondarParaApresentacao(1e308, 2);
+    assert.equal(r, 1e308);
+    assert.ok(Number.isFinite(r));
+    // negativo idem
+    assert.equal(arredondarParaApresentacao(-1e308, 5), -1e308);
+  });
+  it("valores comuns positivos, negativos e zero", () => {
+    assert.equal(arredondarParaApresentacao(1.2345), 1.23);
+    assert.equal(arredondarParaApresentacao(-1.235, 2), -1.24);
+    assert.equal(arredondarParaApresentacao(-1.234, 2), -1.23);
+    assert.equal(arredondarParaApresentacao(0), 0);
+    assert.equal(arredondarParaApresentacao(-0.004, 2), -0);
   });
 });
