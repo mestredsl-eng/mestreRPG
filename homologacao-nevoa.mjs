@@ -1390,8 +1390,15 @@ try {
       .find((s) => /Decisões recentes/i.test(s.querySelector("h3")?.textContent ?? ""));
     return !!sec && sec.querySelectorAll(".tabela tbody tr").length >= 2;
   }, null, { timeout: 20000 }).catch(() => {});
-  // baseline: lista do jogador ainda vazia (personagem criado pós-carga)
-  let nomes = await nomesDecisoes();
+  // baseline: lista do jogador ainda vazia (personagem criado pós-carga).
+  // segunda camada de espera via locator (polling até 10s) — cobre o caso
+  // do waitForFunction estourar o timeout em runner lento sem falhar aqui
+  let nomes = [];
+  for (let i = 0; i < 100; i++) {
+    nomes = await nomesDecisoes();
+    if (nomes.length >= 2) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
   t("baseline jogador sem lista: ambos os testes resolvem '?’",
     nomes.length >= 2 && nomes.every((n) => n.trim() === "?"), JSON.stringify(nomes));
 

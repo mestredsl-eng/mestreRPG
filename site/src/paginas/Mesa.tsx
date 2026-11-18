@@ -8,6 +8,7 @@ import {
 import { getSocket } from "../socket";
 import { avisoRateLimit, retryAfterDoAck } from "../limiteSocket";
 import PainelDados from "../Dados";
+import PainelDefeitos from "../PainelDefeitos";
 import MesaDados3D, { seedDeId } from "../MesaDadosFisicaLazy";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
@@ -952,6 +953,11 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
           {/* teste manual genérico (mestre) — opção secundária */}
           {ehMestreAtual && (
             <SolicitarTeste sessionId={sessao.id} personagens={personagens} aoErro={reportarErro} />
+          )}
+
+          {/* defeitos dos personagens (somente mestre — consulta) */}
+          {ehMestreAtual && (
+            <PainelDefeitos campaignId={campaignId} />
           )}
 
           {/* lançador unificado: testes D10 | rolagem livre e dano */}
