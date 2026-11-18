@@ -137,6 +137,7 @@ jobs:
             teste-financeiro-integracao.mjs \
             teste-regressao-revisao.mjs \
             teste-pontos-concorrencia.mjs \
+            teste-pool-principal-http.mjs \
             teste-novidades.mjs \
             teste-novidades-realtime.mjs \
             teste-sessoes-socket.mjs \
