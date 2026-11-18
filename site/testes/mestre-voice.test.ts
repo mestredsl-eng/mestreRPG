@@ -114,6 +114,9 @@ try {
   console.log("OK: fallback progressivo quando SpeechSynthesis não existe");
   console.log("Mestre Voice: 19 verificações aprovadas");
 
+  // O teste anterior removeu a API global para cobrir o fallback sem navegador.
+  // Reinstala um SpeechSynthesis simulado para exercitar setup/cleanup/setup.
+  criarAmbiente([voz("Microsoft Júlia Desktop")]);
   // Simula setup → cleanup → setup de efeitos do React StrictMode em dev:
   // uma fila destruída não pode ser reutilizada, mas o ciclo seguinte cria
   // outra instância funcional.
