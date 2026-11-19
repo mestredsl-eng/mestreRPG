@@ -164,7 +164,7 @@ export async function verificarAtualizacao(opts = {}) {
       if (headAgora !== shaAnterior) {
         return pular("estado-incerto-pos-pull", {
           repoDir, branch, shaAnterior,
-          rollback: { shaAnterior, shaNovo: headAgora, repoDir, depsMudaram: true },
+          rollback: { shaAnterior, shaNovo: headAgora, repoDir, depsMudaram: true, branch },
           detalhe: String(pull.stderr).trim().slice(0, 300),
         });
       }
@@ -176,7 +176,7 @@ export async function verificarAtualizacao(opts = {}) {
     if (shaNovo === shaAnterior || anc.code !== 0) {
       return pular("pull-nao-foi-ff", {
         repoDir, branch, shaAnterior, shaNovo,
-        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true },
+        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true, branch },
       });
     }
     const commits = git(["rev-list", "--count", `${shaAnterior}..${shaNovo}`]);
@@ -208,7 +208,7 @@ export async function verificarAtualizacao(opts = {}) {
     try { headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim(); } catch { /* ignora */ }
     return pular("erro-inesperado-pos-pull", {
       repoDir, branch, shaAnterior,
-      rollback: { shaAnterior, shaNovo: headAgora || shaAnterior, repoDir, depsMudaram: true },
+      rollback: { shaAnterior, shaNovo: headAgora || shaAnterior, repoDir, depsMudaram: true, branch },
       detalhe: String(e?.message ?? e).slice(0, 300),
     });
   }
