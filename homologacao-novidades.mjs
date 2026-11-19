@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, req, encerrarServidor, limparDir,
+  criarCenario, req, abrirDb, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -37,6 +37,18 @@ const btnNav = (page, nome) => page.locator(".topo nav button", { hasText: nome 
 
 try {
   await prepararBanco(BANCO);
+  // O seed v1.0.5 é publicado por padrão nas instalações novas. Esta
+  // homologação cria suas próprias publicações e preserva contagens
+  // determinísticas; a presença/idempotência do seed é testada em
+  // teste-novidades.mjs. BANCO é sempre temporário.
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("delete from novidades where id=?")
+      .run("00000000-0000-4000-8000-000000000105");
+    db.prepare("delete from novidades where id=?")
+      .run("00000000-0000-4000-8000-000000000106");
+    db.close();
+  }
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);

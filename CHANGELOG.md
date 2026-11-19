@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [1.0.0.5] - 2026-11-19
+
+### Integridade de importações e progressão XP
+
+- **Ledger XP autenticado:** exportações assinam o ledger de cada personagem com HMAC-SHA256 e chave específica da instalação, cobrindo personagem, saldo, histórico, âncora, financiamentos e impressão digital das regras.
+- **Importação externa fail-closed:** ledger sem assinatura válida perde saldo, histórico e financiamentos; metadados reservados de XP, pontos, HP e vitalidade são validados e saneados. Restaurações de snapshots internos preservam os metadados confiáveis.
+- **Campos reservados protegidos:** IDs de campos iniciados por `__` são rejeitados para impedir colisões com metadados internos.
+- **Registro na Central de Novidades:** migration `0029_release_1005_xp_import_integrity_news.sql`, com seed idempotente próprio, publica esta entrega na versão `1.0.5`.
+
+### Correções e permissões
+
+- **Substituição de campanha restrita ao mestre ativo:** a interface só oferece o modal de substituição quando a campanha importada já pertence ao usuário e a associação dele está com papel `mestre` e status `ativo`.
+- **Falha fechada para associações não ativas:** jogador, espectador, mestre pendente, bloqueado ou removido e usuário sem vínculo recebem a mensagem de campanha existente sem receber a ação de substituição. A autorização do servidor permanece obrigatória e retorna 403 para esses cenários.
+- **Registro na Central de Novidades:** a migration `0028_release_1005_campaign_substitution_news.sql` publica esta correção para os usuários da instalação, na categoria `correcao`, versão `1.0.5`; o seed usa ID estável e é idempotente.
+
+### Testes
+
+- **`homologacao-papeis-ui.mjs`: 69/69** — cenários de jogador, espectador, mestre ativo, mestre pendente, mestre bloqueado, mestre removido e usuário sem vínculo; inclui validações diretas da autorização HTTP.
+- **CI no SHA `665acaaca7d688d9988f225a27e31f6a3d12f516`: 3/3 checks concluídos com sucesso** — build, typecheck, suítes e homologações Playwright.
+
+---
+
 ## [1.0.0.4] - 2026-11-17
 
 ### Novidades

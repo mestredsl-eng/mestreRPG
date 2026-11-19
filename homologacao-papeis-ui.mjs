@@ -5,10 +5,11 @@
 // administrativos só porque componentes invisíveis montaram.
 import { chromium } from "playwright";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, abrirDb, encerrarServidor, limparDir, req,
+  criarCenario, abrirDb, encerrarServidor, limparDir, req, sessao,
 } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
@@ -50,7 +51,33 @@ try {
     .run(especId, "espectador_ui", "Espectador UI", hashEspec, agora, agora);
   dbEspec.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'espectador','ativo',?,?,?)")
     .run(crypto.randomUUID(), campId, especId, agora, agora, agora);
+  // mestres com associação não ativa + usuário sem vínculo (Issue #157, bloqueador UI)
+  const mkUsuario = (username, display) => {
+    const id = crypto.randomUUID();
+    dbEspec.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+      .run(id, username, display, hashEspec, agora, agora);
+    return id;
+  };
+  const mkMembro = (uid, role, status) =>
+    dbEspec.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), campId, uid, role, status, agora, agora, agora);
+  const idMestrePendente = mkUsuario("mestre_pendente", "Mestre Pendente");
+  mkMembro(idMestrePendente, "mestre", "pendente");
+  const idMestreBloqueado = mkUsuario("mestre_bloqueado", "Mestre Bloqueado");
+  mkMembro(idMestreBloqueado, "mestre", "bloqueado");
+  const idMestreRemovido = mkUsuario("mestre_removido", "Mestre Removido");
+  mkMembro(idMestreRemovido, "mestre", "removido");
+  const idSemVinculo = mkUsuario("sem_vinculo", "Sem Vinculo");
   dbEspec.close();
+  const cookies = {
+    jogador: c.jogadores.jogador1.cookie,
+    espectador: sessao(BANCO, especId),
+    mestreAtivo: c.cookieMestre,
+    mestrePendente: sessao(BANCO, idMestrePendente),
+    mestreBloqueado: sessao(BANCO, idMestreBloqueado),
+    mestreRemovido: sessao(BANCO, idMestreRemovido),
+    semVinculo: sessao(BANCO, idSemVinculo),
+  };
 
   browser = await chromium.launch();
   const novoContexto = async () => {
@@ -208,6 +235,70 @@ try {
       t("flag off: mestre mantém 4 opções de visibilidade", opcoesM.length === 4, JSON.stringify(opcoesM));
       await page.context().close();
     }
+  }
+  sec("Importar campanha — substituição só para mestre ativo (Issue #157)");
+  {
+    const pacoteSub = {
+      versao: 1, exportadoEm: new Date().toISOString(), campanhaId: campId,
+      estado: { campanha: { name: "Qualquer" }, memberships: [], characters: [], files: [] },
+      arquivos: {},
+    };
+    const arqPacote = join(DIR, "pacote-substituir.json");
+    writeFileSync(arqPacote, JSON.stringify(pacoteSub));
+    // Sessão via cookie direto (sessao()): evita estourar o rate limit de login (10/5min por IP).
+    const abrirComCookie = async (cookieStr) => {
+      const ctx = await browser.newContext({ viewport: { width: 1366, height: 800 } });
+      const [name, enc] = cookieStr.split("=");
+      await ctx.addCookies([{ name, value: decodeURIComponent(enc), url: BASE }]);
+      const page = await ctx.newPage();
+      await page.goto(BASE);
+      await page.getByRole("button", { name: "Campanhas" }).waitFor({ timeout: 15000 });
+      return page;
+    };
+    const cenarios = [
+      ["jogador", cookies.jogador],
+      ["espectador", cookies.espectador],
+      ["mestre pendente", cookies.mestrePendente],
+      ["mestre bloqueado", cookies.mestreBloqueado],
+      ["mestre removido", cookies.mestreRemovido],
+      ["sem vínculo", cookies.semVinculo],
+    ];
+    for (const [rotulo, cookie] of cenarios) {
+      const page = await abrirComCookie(cookie);
+      await page.getByRole("button", { name: "Campanhas" }).click();
+      await page.getByText("Minhas campanhas").waitFor({ timeout: 10000 });
+      await page.locator('input[type="file"][accept*="json"]').setInputFiles(arqPacote);
+      await page.waitForTimeout(2500);
+      t(`${rotulo}: erro de campanha existente exibido`, await temTexto(page, "Já existe"));
+      t(`${rotulo}: modal Substituir NÃO oferecido`, !(await temTexto(page, "Deseja SUBSTITUIR")));
+      await page.context().close();
+    }
+    {
+      const page = await novoContexto();
+      await login(page, "mestre_teste", "senha-forte-123");
+      await page.getByRole("button", { name: "Campanhas" }).click();
+      await page.getByText("Minhas campanhas").waitFor({ timeout: 10000 });
+      await page.locator('input[type="file"][accept*="json"]').setInputFiles(arqPacote);
+      await page.waitForTimeout(2500);
+      t("mestre ativo: modal Substituir oferecido", await temTexto(page, "Deseja SUBSTITUIR"));
+      await page.context().close();
+    }
+
+    // Backend: substituir exige role=mestre E status=ativo — não pode ser contornado pela UI.
+    const API_I = "/campaigns/importar";
+    const corpoSub = { pacote: pacoteSub, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" };
+    for (const [rotulo, cookie] of [
+      ["jogador", cookies.jogador], ["espectador", cookies.espectador],
+      ["mestre pendente", cookies.mestrePendente], ["mestre bloqueado", cookies.mestreBloqueado],
+      ["mestre removido", cookies.mestreRemovido], ["sem vínculo", cookies.semVinculo],
+    ]) {
+      const r = await req(BASE, "POST", API_I, { cookie, body: corpoSub });
+      t(`backend: substituir ${rotulo} → 403`, r.status === 403, `status=${r.status} ${JSON.stringify(r.json).slice(0, 120)}`);
+    }
+    // Mestre ativo passa pela autorização: pacote incoerente deve falhar em 400 (não 403), sem restaurar nada.
+    const pacoteIncoerente = { ...pacoteSub, estado: { ...pacoteSub.estado, memberships: [{ campaignId: "outro", userId: "x", role: "mestre" }] } };
+    const rMestre = await req(BASE, "POST", API_I, { cookie: cookies.mestreAtivo, body: { ...corpoSub, pacote: pacoteIncoerente } });
+    t("backend: mestre ativo passa na autorização (400 pacote incoerente, não 403)", rMestre.status === 400, `status=${rMestre.status}`);
   }
   console.log(`\n${pass} ok / ${fail} falhas`);
   if (fail > 0) process.exitCode = 1;
