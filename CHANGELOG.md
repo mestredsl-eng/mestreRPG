@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.0.5] - 2026-11-19
+
+### Correções e permissões
+
+- **Substituição de campanha restrita ao mestre ativo:** a interface só oferece o modal de substituição quando a campanha importada já pertence ao usuário e a associação dele está com papel `mestre` e status `ativo`.
+- **Falha fechada para associações não ativas:** jogador, espectador, mestre pendente, bloqueado ou removido e usuário sem vínculo recebem a mensagem de campanha existente sem receber a ação de substituição. A autorização do servidor permanece obrigatória e retorna 403 para esses cenários.
+
+### Testes
+
+- **`homologacao-papeis-ui.mjs`: 69/69** — cenários de jogador, espectador, mestre ativo, mestre pendente, mestre bloqueado, mestre removido e usuário sem vínculo; inclui validações diretas da autorização HTTP.
+- **CI no SHA `665acaaca7d688d9988f225a27e31f6a3d12f516`: 3/3 checks concluídos com sucesso** — build, typecheck, suítes e homologações Playwright.
+
+---
+
 ## [1.0.0.4] - 2026-11-17
 
 ### Novidades
