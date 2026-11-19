@@ -35,6 +35,9 @@ try {
   const cenario = await criarCenario(BASE, BANCO, {
     jogadores: { jogador1: "prq_j1", jogador2: "prq_j2" },
     ficha: false,
+    // Transferências j1→j2 exercitam pré-requisitos do Acervo, não as
+    // permissões granulares — ambas habilitadas para isolar o alvo.
+    config: { patrimonio: { jogadorAdicionaItens: true, jogadorRemoveItens: true } },
   });
   ids = { admin: cenario.adminId, camp: cenario.campId, cm: cenario.cookieMestre };
   ids.j1 = cenario.jogadores.jogador1; ids.j2 = cenario.jogadores.jogador2;

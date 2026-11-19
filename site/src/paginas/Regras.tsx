@@ -623,6 +623,17 @@ interface CampoHp {
   modelo?: string;
 }
 
+// Seções de permissão granular (Issue #165) — presentes no payload real da
+// API mas fora do tipo ConfigRegras; o merge parcial do backend preserva as
+// chaves irmãs não enviadas.
+interface ConfigPermissoesRegras {
+  financeiro?: { jogadorCompraVenda?: boolean; jogadorPix?: boolean };
+  patrimonio?: {
+    jogadorAdicionaItens?: boolean; jogadorRemoveItens?: boolean;
+    jogadorEditaEquipamentos?: boolean; jogadorEditaVeiculos?: boolean; jogadorCriaContas?: boolean;
+  };
+}
+
 function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegras; onSalvar: (c: ConfigRegras) => Promise<void>; campaignId: string }) {
   const [form, setForm] = useState<ConfigRegras>(config);
   const [custosTxt, setCustosTxt] = useState(""); // "talento:1,2,3,4,5" por linha
@@ -676,6 +687,19 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
   const setPontos = (patch: Partial<ConfigRegras["pontos"]>) =>
     setForm((f) => ({ ...f, pontos: { ...f.pontos, ...patch } }));
 
+  // Defaults do schema do backend para campanhas antigas sem as chaves.
+  const cfgPerm = form as unknown as ConfigPermissoesRegras;
+  const finPerm = { jogadorCompraVenda: true, jogadorPix: true, ...cfgPerm.financeiro };
+  const patPerm = {
+    jogadorAdicionaItens: true, jogadorRemoveItens: false,
+    jogadorEditaEquipamentos: true, jogadorEditaVeiculos: true, jogadorCriaContas: true,
+    ...cfgPerm.patrimonio,
+  };
+  const setFinPerm = (k: keyof typeof finPerm, v: boolean) =>
+    setForm((f) => ({ ...f, financeiro: { ...(f as unknown as ConfigPermissoesRegras).financeiro, [k]: v } } as ConfigRegras));
+  const setPatPerm = (k: keyof typeof patPerm, v: boolean) =>
+    setForm((f) => ({ ...f, patrimonio: { ...(f as unknown as ConfigPermissoesRegras).patrimonio, [k]: v } } as ConfigRegras));
+
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     setErroLocal(null);
@@ -715,7 +739,18 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
       if (!m) continue;
       custos[m[1]] = m[2].split(",").map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n));
     }
-    await onSalvar({ ...form, pontos: { ...form.pontos, custos } });
+    await onSalvar({
+      ...form,
+      pontos: { ...form.pontos, custos },
+      financeiro: { jogadorCompraVenda: finPerm.jogadorCompraVenda, jogadorPix: finPerm.jogadorPix },
+      patrimonio: {
+        jogadorAdicionaItens: patPerm.jogadorAdicionaItens,
+        jogadorRemoveItens: patPerm.jogadorRemoveItens,
+        jogadorEditaEquipamentos: patPerm.jogadorEditaEquipamentos,
+        jogadorEditaVeiculos: patPerm.jogadorEditaVeiculos,
+        jogadorCriaContas: patPerm.jogadorCriaContas,
+      },
+    } as ConfigRegras);
   };
 
   return (
@@ -1030,6 +1065,39 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
           <button type="button" className="secundario" onClick={() => setForm((f) => ({ ...f, transferencias: [...(f.transferencias ?? []), { origem: "principal", destino: "vantagens" }] }))}>+ Aresta de transferência</button>
         </div>
       )}
+
+      <h4>Patrimônio e permissões do jogador</h4>
+      <p className="dica">Ações que os jogadores podem executar no patrimônio e no dinheiro. O mestre sempre mantém acesso administrativo. Campanhas antigas sem estas chaves usam os valores padrão indicados.</p>
+      <div className="grade-form">
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorCompraVenda} onChange={(e) => setFinPerm("jogadorCompraVenda", e.target.checked)} />
+          Jogador registra compra e venda
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorPix} onChange={(e) => setFinPerm("jogadorPix", e.target.checked)} />
+          Jogador faz PIX fictício entre personagens
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={patPerm.jogadorAdicionaItens} onChange={(e) => setPatPerm("jogadorAdicionaItens", e.target.checked)} />
+          Jogador adiciona itens ao inventário
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={patPerm.jogadorRemoveItens} onChange={(e) => setPatPerm("jogadorRemoveItens", e.target.checked)} />
+          Jogador remove itens do inventário
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={patPerm.jogadorEditaEquipamentos} onChange={(e) => setPatPerm("jogadorEditaEquipamentos", e.target.checked)} />
+          Jogador edita equipamentos
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={patPerm.jogadorEditaVeiculos} onChange={(e) => setPatPerm("jogadorEditaVeiculos", e.target.checked)} />
+          Jogador edita veículos
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={patPerm.jogadorCriaContas} onChange={(e) => setPatPerm("jogadorCriaContas", e.target.checked)} />
+          Jogador cria contas financeiras
+        </label>
+      </div>
 
       {erroLocal && <div className="erro">{erroLocal}</div>}
       <button className="primario" type="submit">Salvar configuração</button>

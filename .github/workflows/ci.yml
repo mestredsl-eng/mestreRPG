@@ -158,6 +158,7 @@ jobs:
             teste-responsavel-guilda.mjs \
             teste-sessoes-conta.mjs \
             teste-prerequisitos-patrimonio.mjs \
+            teste-patrimonio-permissoes.mjs \
             teste-escopo-cruzado.mjs \
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \

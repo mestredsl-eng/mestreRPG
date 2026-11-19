@@ -12,6 +12,7 @@ import {
   operacaoEstornos,
   itemTemplates,
   sheetVersions,
+  memberships,
 } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
@@ -575,6 +576,32 @@ patrimonioRouter.post("/inventario/:itemId/transferir", async (req, res) => {
     res.status(400).json({ erro: "Destino inválido" }); return;
   }
   const qtdPedida = body.data.quantidade;
+
+  // Issue #165 — permissões granulares na transferência: tirar itens do
+  // patrimônio da origem exige jogadorRemoveItens; colocar no patrimônio
+  // de OUTRO jogador exige jogadorAdicionaItens. A campanha é a mesma dos
+  // dois lados (destino de outra campanha já foi rejeitado). O mestre
+  // mantém bypass administrativo. As checagens ocorrem antes de qualquer
+  // mutação — falha de autorização nunca deixa inventário meio alterado.
+  const config = await configPatrimonio(a.personagem.campaignId);
+  if (!a.ehMestre) {
+    if (!config.patrimonio.jogadorRemoveItens) {
+      res.status(403).json({ erro: "Transferir itens exige permissão de remoção nesta campanha" }); return;
+    }
+    const [memOrig] = await db.select({ userId: memberships.userId }).from(memberships)
+      .where(eq(memberships.id, a.personagem.membershipId)).limit(1);
+    const [memDest] = destino.membershipId
+      ? await db.select({ userId: memberships.userId }).from(memberships)
+          .where(eq(memberships.id, destino.membershipId)).limit(1)
+      : [];
+    // Destino do próprio jogador (outra ficha do mesmo usuário) segue as
+    // regras de propriedade já existentes; destino sem dono identificável
+    // falha fechado — exige permissão de adição.
+    const mesmoProprietario = !!memOrig && !!memDest && memOrig.userId === memDest.userId;
+    if (!mesmoProprietario && !config.patrimonio.jogadorAdicionaItens) {
+      res.status(403).json({ erro: "O personagem de destino não pode receber itens nesta campanha" }); return;
+    }
+  }
 
   // Item vinculado a elemento do Acervo: o DESTINO precisa atender aos
   // pré-requisitos (mesmo caminho canônico da aquisição). O bypass é
@@ -1170,6 +1197,15 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   const limiteCreditoCents = body.data.creditLimitReais !== undefined
     ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais)
     : 0;
+  // Issue #165 (P2): abrir conta já com saldo ou limite de crédito
+  // positivo equivale a registrar valor — exige também
+  // jogadorCompraVenda, não apenas jogadorCriaContas. O mestre é isento;
+  // valores nunca são zerados silenciosamente e a rejeição acontece
+  // antes de qualquer INSERT (conta e lançamento de abertura são
+  // atômicos na transação abaixo).
+  if (!a.ehMestre && (saldoInicial > 0 || limiteCreditoCents > 0) && !cfg.jogadorCompraVenda) {
+    res.status(403).json({ erro: "Criar conta com saldo ou limite positivo exige permissão de compra/venda nesta campanha" }); return;
+  }
   // A política vale também para a abertura da conta: saldo negativo não
   // pode entrar por um atalho que contorne as validações de movimentação.
   const pisoInicial = cfg.permitirSaldoNegativo
