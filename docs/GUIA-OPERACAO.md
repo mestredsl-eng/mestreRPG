@@ -135,7 +135,7 @@ O `iniciar-mestre-rpg.bat` executa `node scripts/auto-update.mjs` **depois** de 
 **Quando a atualização é tentada** — todas as condições precisam valer:
 
 - `git` está instalado e a pasta contém um repositório (`.git`); instalações ZIP sem `.git` pulam silenciosamente.
-- O remoto `origin` aponta para `github.com/mestredsl-eng/mestreRPG` (outros remotos são ignorados).
+- A URL **efetiva** de `origin` (consultada com `git remote get-url --all origin`, que expande regras `url.*.insteadOf`) precisa ser exatamente uma única URL do repositório oficial `github.com/mestredsl-eng/mestreRPG`; origem múltipla ou reescrita para outro destino é rejeitada.
 - A branch atual tem upstream configurado **e exatamente `origin/<branch-da-branch-atual>`** — upstream de outro remoto ou de fork cancela a atualização, mesmo com `origin` oficial (sem upstream, nada é adivinhado).
 - `git status --porcelain` está limpo — qualquer alteração local, rastreada ou não, adia a atualização. Nada é descartado, escondido (stash) ou limpo automaticamente.
 - O `fetch` (não interativo, `GIT_TERMINAL_PROMPT=0`, timeout de 30 s) funciona — sem rede, autenticação ou dentro do timeout, o boot segue com a versão local.

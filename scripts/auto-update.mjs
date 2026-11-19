@@ -102,12 +102,14 @@ export async function verificarAtualizacao(opts = {}) {
   const top = git(["rev-parse", "--show-toplevel"]);
   const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
 
-  // 3. remoto oficial — nunca atualizar origem desconhecida
-  // remote.origin.url cru — "git remote get-url" aplicaria url.insteadOf
-  const remote = git(["config", "--get", "remote.origin.url"]);
+  // 3. URL efetiva do origin — inclui reescritas url.*.insteadOf e
+  // TODAS as URLs configuradas. Validar apenas remote.origin.url cru
+  // permitiria que o fetch fosse redirecionado a outro host (supply chain).
+  const remote = git(["remote", "get-url", "--all", "origin"]);
   if (remote.code !== 0) return pular("sem-remoto-origin", { repoDir });
-  if (normalizarUrlRepo(remote.stdout) !== oficialNorm) {
-    return pular("remoto-desconhecido", { repoDir, remoto: remote.stdout.trim() });
+  const urlsEfetivas = String(remote.stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  if (urlsEfetivas.length !== 1 || normalizarUrlRepo(urlsEfetivas[0]) !== oficialNorm) {
+    return pular("remoto-desconhecido", { repoDir });
   }
 
   // 4. branch atual (detached HEAD nao atualiza)
@@ -182,7 +184,16 @@ export async function verificarAtualizacao(opts = {}) {
 
     // dependencias mudaram? (lockfile ou package.json) ou node_modules ausente
     const diffDeps = git(["diff", "--name-only", shaAnterior, shaNovo, "--", "package-lock.json", "package.json"]);
-    const depsMudaram = (diffDeps.code === 0 && String(diffDeps.stdout).trim() !== "")
+    if (diffDeps.code !== 0) {
+      // Depois do pull, não presumir que deps ficaram iguais quando o
+      // diagnóstico falha: marcar como potencialmente alteradas e reverter.
+      return pular("falha-diagnostico-dependencias", {
+        repoDir, branch, shaAnterior, shaNovo,
+        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true, branch },
+        detalhe: String(diffDeps.stderr).trim().slice(0, 300),
+      });
+    }
+    const depsMudaram = String(diffDeps.stdout).trim() !== ""
       || !existsSync(join(repoDir, "node_modules"));
 
     return {
@@ -301,6 +312,15 @@ async function executarRollback(estado, opts = {}) {
   const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
   if (estado.repoDir && resolve(estado.repoDir) !== resolve(repoDir)) {
     return { ok: false, motivo: "repositorio-divergente" };
+  }
+  // Não mover outra branch caso alguém troque HEAD durante deps/build.
+  // O SHA pode continuar igual após checkout de uma branch recém-criada;
+  // SHA+árvore limpos, sozinhos, não identificam a branch autorizada.
+  if (estado.branch) {
+    const branchAtual = git(["symbolic-ref", "--quiet", "--short", "HEAD"], repoDir);
+    if (branchAtual.code !== 0 || String(branchAtual.stdout).trim() !== estado.branch) {
+      return { ok: false, motivo: "branch-alterada-durante-atualizacao" };
+    }
   }
 
   const status = git(["status", "--porcelain"], repoDir);

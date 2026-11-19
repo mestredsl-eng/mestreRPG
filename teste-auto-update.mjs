@@ -89,6 +89,7 @@ function executarHibrido({ npmHandler, registro } = {}) {
 }
 const execReal = (cmd, args, opcoes = {}) => executarReal(cmd, args, { cwd: opcoes.cwd, env: opcoes.env, timeoutMs: opcoes.timeoutMs });
 const estado = (dir) => join(dir, "estado-update.json");
+const opcoesRepo = (c, extra = {}) => ({ cwd: c.local, urlOficial: c.origin, ...extra });
 const logSilencio = [];
 const log = (m) => logSilencio.push(m);
 
@@ -96,7 +97,7 @@ try {
   sec("1. Git ausente");
   {
     const c = criarRepo("c1");
-    const r = await verificarAtualizacao({ cwd: c.local, executar: () => ({ code: 1, stdout: "", stderr: "not found" }), log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: () => ({ code: 1, stdout: "", stderr: "not found" }), log: silencioso });
     t("git ausente → pula com git-indisponivel", r.atualizou === false && r.motivo === "git-indisponivel", r.motivo);
   }
 
@@ -111,7 +112,7 @@ try {
   sec("3. Repositorio oficial sem atualizacao");
   {
     const c = criarRepo("c3");
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
     t("sem commits novos → sem-atualizacao", r.atualizou === false && r.motivo === "sem-atualizacao", `${r.motivo} ${r.commits}`);
   }
 
@@ -120,7 +121,7 @@ try {
     const c = criarRepo("c4");
     publicar(c);
     const shaAnt = head(c.local);
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
     t("pull --ff-only aplicado", r.atualizou === true && r.shaAnterior === shaAnt && r.shaNovo !== shaAnt, JSON.stringify(r));
     t("HEAD agora e o commit remoto", head(c.local) === r.shaNovo);
     t("commits contados = 1", r.commits === 1, `commits=${r.commits}`);
@@ -131,7 +132,7 @@ try {
     publicar(c);
     const st = estado(c.base);
     const reg = [];
-    const b = await executarBoot({ cwd: c.local, executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: st });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: st });
     t("boot retorna 0 apos atualizar+build", b.codigo === 0 && b.atualizou === true, JSON.stringify(b));
     t("npm ci executado (sem node_modules)", reg.some((x) => x.includes("npm") && x.includes("ci")), reg.join(" | "));
     t("build servidor executado", reg.some((x) => x.includes("build") && x.includes("servidor")));
@@ -142,8 +143,9 @@ try {
   {
     const c = criarRepo("c5");
     publicar(c);
-    trocarInsteadOf(c, join(c.base, "inexistente.git"));
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso });
+    const destino = join(c.base, "inexistente.git");
+    trocarInsteadOf(c, destino);
+    const r = await verificarAtualizacao({ ...opcoesRepo(c, { urlOficial: destino }), executar: execReal, log: silencioso });
     t("fetch falha → pula com falha-fetch", r.atualizou === false && r.motivo === "falha-fetch", r.motivo);
     t("HEAD preservado", head(c.local) !== "");
   }
@@ -153,8 +155,9 @@ try {
     const c = criarRepo("c6");
     publicar(c);
     // porta 1 em localhost: conexao recusada — mesmo caminho de erro de auth https
-    trocarInsteadOf(c, "http://127.0.0.1:1/x.git");
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso, timeoutFetchMs: 8000 });
+    const destino = "http://127.0.0.1:1/x.git";
+    trocarInsteadOf(c, destino);
+    const r = await verificarAtualizacao({ ...opcoesRepo(c, { urlOficial: destino }), executar: execReal, log: silencioso, timeoutFetchMs: 8000 });
     t("erro de rede/auth → pula com falha-fetch", r.atualizou === false && r.motivo === "falha-fetch", `${r.motivo} ${r.detalhe ?? ""}`);
   }
 
@@ -166,13 +169,37 @@ try {
     const srv = createServer(() => {});
     await new Promise((res) => srv.listen(0, "127.0.0.1", res));
     const porta = srv.address().port;
-    trocarInsteadOf(c, `http://127.0.0.1:${porta}/x.git`);
+    const destino = `http://127.0.0.1:${porta}/x.git`;
+    trocarInsteadOf(c, destino);
     const ini = Date.now();
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso, timeoutFetchMs: 1500 });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c, { urlOficial: destino }), executar: execReal, log: silencioso, timeoutFetchMs: 1500 });
     const decorrido = Date.now() - ini;
     srv.close();
     t("fetch travado → timeout → falha-fetch", r.atualizou === false && r.motivo === "falha-fetch", r.motivo);
     t("timeout respeitado (<10s)", decorrido < 10000, `${decorrido}ms`);
+  }
+
+  sec("8.1. URL efetiva reescrita para host não oficial");
+  {
+    const c = criarRepo("c8-rewrite");
+    publicar(c);
+    const destino = "https://evil.invalid/mestreRPG.git";
+    trocarInsteadOf(c, destino);
+    const reg = [];
+    const r = await verificarAtualizacao({ cwd: c.local, executar: executarHibrido({ registro: reg }), log: silencioso });
+    t("origin bruto oficial + insteadOf malicioso → bloqueado", r.motivo === "remoto-desconhecido", r.motivo);
+    t("nenhum fetch/pull após rewrite malicioso", !reg.some((x) => x.includes("fetch") || x.includes("pull")), reg.join(" | "));
+  }
+
+  sec("8.2. Mais de uma URL configurada em origin");
+  {
+    const c = criarRepo("c8-multiurl");
+    publicar(c);
+    gitSetup(["remote", "set-url", "--add", "origin", "https://evil.invalid/outro-repo"], c.local);
+    const reg = [];
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
+    t("origin com múltiplas URLs → bloqueado", r.motivo === "remoto-desconhecido", r.motivo);
+    t("nenhum fetch/pull com origin ambíguo", !reg.some((x) => x.includes("fetch") || x.includes("pull")), reg.join(" | "));
   }
 
   sec("8. Remoto origin diferente do oficial");
@@ -181,7 +208,7 @@ try {
     publicar(c);
     gitSetup(["remote", "set-url", "origin", "https://github.com/outro-usuario/outro-repo"], c.local);
     const reg = [];
-    const r = await verificarAtualizacao({ cwd: c.local, executar: executarHibrido({ registro: reg }), log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
     t("remoto desconhecido → remoto-desconhecido", r.motivo === "remoto-desconhecido", r.motivo);
     t("nenhum fetch/pull executado", !reg.some((x) => x.includes("fetch") || x.includes("pull")), reg.join(" | "));
   }
@@ -193,14 +220,14 @@ try {
     // alteracao rastreada
     writeFileSync(join(c.local, "site/src/app.txt"), "editado localmente\n");
     const reg = [];
-    const r1 = await verificarAtualizacao({ cwd: c.local, executar: executarHibrido({ registro: reg }), log: silencioso });
+    const r1 = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
     t("arquivo modificado → arvore-suja", r1.motivo === "arvore-suja", r1.motivo);
     t("fetch nao executado com arvore suja", !reg.some((x) => x.includes("fetch")), reg.join(" | "));
     // arquivo nao rastreado tambem bloqueia
     const c2 = criarRepo("c9b");
     publicar(c2);
     writeFileSync(join(c2.local, "novo-arquivo-local.txt"), "x\n");
-    const r2 = await verificarAtualizacao({ cwd: c2.local, executar: execReal, log: silencioso });
+    const r2 = await verificarAtualizacao({ ...opcoesRepo(c2), executar: execReal, log: silencioso });
     t("arquivo nao rastreado → arvore-suja", r2.motivo === "arvore-suja", r2.motivo);
   }
 
@@ -209,7 +236,7 @@ try {
     const c = criarRepo("c10");
     publicar(c);
     gitSetup(["branch", "--unset-upstream"], c.local);
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
     t("sem upstream → pula", r.atualizou === false && r.motivo === "sem-upstream", r.motivo);
   }
 
@@ -219,7 +246,7 @@ try {
     publicar(c);
     // commit local nao enviado + remoto avancou = divergencia
     c.commit(c.local, "local", { "local.txt": "x\n" });
-    const r = await verificarAtualizacao({ cwd: c.local, executar: execReal, log: silencioso });
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
     t("divergente → atualizacao cancelada", r.atualizou === false && r.motivo === "divergente", r.motivo);
     t("HEAD local preservado", head(c.local) === git(["rev-parse", "HEAD"], c.local).stdout.toString().trim());
   }
@@ -243,7 +270,7 @@ try {
       if (cmd === "git" && args[0] === "reset") chamadasReset++;
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: st });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: st });
     t("npm ci falhou → boot continua (codigo 0)", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
     t("rollback executou reset --hard", chamadasReset === 1, `resets=${chamadasReset}`);
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt, `${head(c.local)} vs ${shaAnt}`);
@@ -261,7 +288,7 @@ try {
       }
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
     t("build falhou → rollback → boot segue local", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
   }
@@ -283,7 +310,7 @@ try {
       }
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
     t("rollback bloqueado por arvore suja → codigo 1", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
     t("alteracao local intacta", readFileSync(join(c.local, "site/src/app.txt"), "utf8").includes("durante processo"));
     // HEAD deve ser o commit do pull — nada foi revertido nem forçado
@@ -310,7 +337,7 @@ try {
     publicar(c, "so-src", { "site/src/app.txt": "v2\n" }); // nao toca package-lock
     mkdirSync(join(c.local, "node_modules"), { recursive: true });
     const reg = [];
-    const b = await executarBoot({ cwd: c.local, executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
     t("lockfile inalterado → npm ci pulado", b.codigo === 0 && !reg.some((x) => x.includes(" ci")), reg.join(" | "));
     t("build ainda executado", reg.some((x) => x.includes("build")));
   }
@@ -364,7 +391,7 @@ try {
       if (cmd === "npm" || cmd === "npm.cmd") return { code: 0, stdout: "", stderr: "" };
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: execThrow, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: execThrow, log: silencioso, stateFile: estado(c.base) });
     t("excecao no npm ci → rollback → codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
   }
@@ -377,7 +404,7 @@ try {
       if (cmd === "npm" || cmd === "npm.cmd") throw new Error("npm sempre explode");
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: execThrowAll, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: execThrowAll, log: silencioso, stateFile: estado(c.base) });
     t("excecao persistente → codigo 1 (sem sucesso falso)", b.codigo === 1, JSON.stringify(b));
   }
   {
@@ -391,9 +418,24 @@ try {
       if (cmd === "npm" || cmd === "npm.cmd") return { code: 0, stdout: "", stderr: "" };
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
     t("excecao pos-pull no verificar → rollback → codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    // código de saída não-zero ao identificar mudanças nas dependências
+    // é estado desconhecido pós-pull: rollback, nunca assumir deps inalteradas.
+    const c = criarRepo("b2-diff-code");
+    publicar(c);
+    const shaAnt = head(c.local);
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "git" && args[0] === "diff") return { code: 128, stdout: "", stderr: "falha simulada no git diff" };
+      if (cmd === "npm" || cmd === "npm.cmd") return { code: 0, stdout: "", stderr: "" };
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
+    t("git diff não-zero pós-pull → rollback seguro", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("HEAD retorna ao SHA anterior após diff falho", head(c.local) === shaAnt);
   }
   {
     // falha de PERSISTENCIA do estado (stateFile e um diretorio) →
@@ -411,10 +453,37 @@ try {
       return executarReal(cmd, args, opcoes);
     };
     const logs = [];
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: (m) => logs.push(m), stateFile: dirEstado });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: (m) => logs.push(m), stateFile: dirEstado });
     t("falha ao gravar estado nao impede rollback em memoria", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
     t("aviso de falha de persistencia emitido", logs.some((m) => m.includes("estado de rollback")), logs.join(" | "));
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    // alguém troca de branch após o pull, mantendo o mesmo SHA.
+    // Rollback não deve mover a branch nova para o SHA anterior.
+    const c = criarRepo("b2-branch");
+    publicar(c);
+    const shaAnterior = head(c.local);
+    let trocou = false, resets = 0;
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") {
+        if (args[0] === "ci" && !trocou) {
+          trocou = true;
+          gitSetup(["switch", "-c", "branch-externa"], c.local);
+          return { code: 0, stdout: "", stderr: "" };
+        }
+        if (args.includes("build")) return { code: 2, stdout: "", stderr: "build fake" };
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (cmd === "git" && args[0] === "reset") resets++;
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const branchAtual = String(git(["symbolic-ref", "--quiet", "--short", "HEAD"], c.local).stdout).trim();
+    const shaNovo = String(git(["rev-parse", "HEAD"], c.local).stdout).trim();
+    t("branch alterada → rollback bloqueia e retorna 1", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
+    t("rollback não executa reset na branch externa", resets === 0, `resets=${resets}`);
+    t("branch externa permanece no SHA do pull", branchAtual === "branch-externa" && shaNovo !== shaAnterior, `${branchAtual} ${shaNovo}`);
   }
   {
     // rollback que FALHA (git reset retorna erro) → codigo 1
@@ -428,7 +497,7 @@ try {
       if (cmd === "git" && args[0] === "reset") return { code: 1, stdout: "", stderr: "reset negado" };
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
     t("rollback falhou → codigo 1 (integridade nao garantida)", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
   }
 } finally {
