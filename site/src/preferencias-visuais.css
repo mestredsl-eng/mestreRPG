@@ -1,0 +1,233 @@
+/* Editor de aparência da conta (Issue #132, etapa 2.2b).
+   Consome exclusivamente os tokens --horror-* resolvidos pelo catálogo —
+   nenhum valor arbitrário fora da paleta/identidade. */
+
+.prefs-atmosferas legend,
+.prefs-dimensao legend {
+  font-weight: 600;
+  color: var(--horror-texto);
+  padding: 0 6px;
+}
+
+.prefs-atmosferas {
+  border: 1px solid var(--horror-borda);
+  border-radius: 10px;
+  padding: 12px;
+  margin: 0 0 16px;
+}
+
+.prefs-atmosferas-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.prefs-atmosfera {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border: 1px solid var(--horror-borda);
+  border-radius: 8px;
+  background: var(--horror-superficie);
+  color: var(--horror-texto);
+  cursor: pointer;
+}
+
+.prefs-atmosfera span {
+  font-size: 0.82rem;
+  color: var(--horror-texto-suave);
+}
+
+.prefs-atmosfera.ativo,
+.prefs-atmosfera[aria-pressed="true"] {
+  border-color: var(--horror-destaque);
+  background: var(--horror-destaque-suave);
+}
+
+.prefs-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.prefs-dimensao {
+  border: 1px solid var(--horror-borda);
+  border-radius: 10px;
+  padding: 10px 12px 12px;
+  margin: 0;
+}
+
+.prefs-opcoes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prefs-opcao {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.prefs-opcao:hover {
+  border-color: var(--horror-borda);
+}
+
+.prefs-opcao.ativo {
+  border-color: var(--horror-destaque);
+  background: var(--horror-destaque-suave);
+}
+
+.prefs-opcao:focus-within {
+  outline: 2px solid var(--horror-destaque-claro);
+  outline-offset: 1px;
+}
+
+/* Input de rádio acessível: fora do fluxo visual, nunca display:none. */
+.prefs-opcao input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.prefs-amostra {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  border-radius: 50%;
+  border: 1px solid var(--horror-borda-forte);
+}
+
+.prefs-opcao-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.prefs-opcao-texto span {
+  font-size: 0.78rem;
+  color: var(--horror-texto-suave);
+}
+
+.prefs-previa-bloco {
+  margin: 4px 0 14px;
+}
+
+.prefs-previa-bloco h3 {
+  margin: 0 0 4px;
+}
+
+/* Painel de demonstração isolado: os tokens chegam via estilo inline
+   do rascunho — nunca tocam o tema global antes de salvar. */
+.pv-visual {
+  border: 1px solid var(--horror-borda);
+  border-radius: 12px;
+  padding: 14px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 255, 255, 0.025), transparent 60%),
+    var(--horror-carvao, #131118);
+}
+
+/* Textura de demonstração controlada pelo token derivado. */
+.pv-visual::before {
+  content: "";
+  display: block;
+  height: 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  opacity: var(--horror-textura-opacidade, 0.14);
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--horror-destaque, #8d3d4b) 0 2px,
+    transparent 2px 7px
+  );
+}
+
+.pv-cartao {
+  background: var(--horror-superficie, #1b1720);
+  border: 1px solid var(--horror-borda, rgba(154, 111, 125, .24));
+  border-radius: 10px;
+  padding: calc(14px * var(--horror-densidade, 1));
+  box-shadow: var(--horror-sombra, 0 14px 36px rgba(0, 0, 0, .28));
+}
+
+.pv-titulo {
+  margin: 0 0 6px;
+  color: var(--horror-destaque-claro, #b85c69);
+}
+
+.pv-texto {
+  margin: 0 0 10px;
+  color: var(--horror-texto, #eee7e8);
+  opacity: calc(0.72 + var(--horror-intensidade, 1) * 0.14);
+}
+
+.pv-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pv-botao {
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font: inherit;
+  cursor: pointer;
+  background: var(--horror-destaque, #8d3d4b);
+  color: #fff;
+}
+
+.pv-botao.secundario {
+  background: transparent;
+  border: 1px solid var(--horror-borda, rgba(154, 111, 125, .24));
+  color: var(--horror-texto, #eee7e8);
+}
+
+/* Demonstração de animações — só dentro do painel isolado. */
+.pv-visual[data-animacoes="reduzido"] .pv-botao {
+  transition: none;
+}
+
+.pv-visual[data-animacoes="normal"] .pv-botao {
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.pv-visual[data-animacoes="completo"] .pv-botao {
+  transition: background-color 320ms ease, border-color 320ms ease, transform 320ms ease;
+}
+
+.pv-botao:hover {
+  background: var(--horror-destaque-claro, #b85c69);
+}
+
+.pv-nota {
+  margin: 10px 0 0;
+  font-size: 0.82rem;
+  color: var(--horror-texto-suave, #b4a9b1);
+}
+
+.prefs-acoes {
+  margin-top: 6px;
+}
+
+@media (max-width: 560px) {
+  .prefs-atmosferas-grade,
+  .prefs-grade {
+    grid-template-columns: 1fr;
+  }
+}
+```
+
+Wait — I already wrote the CSS file successfully in the previous call. Now mount in Conta.tsx and build.<|close|>think<|sep|><|open|>response<|sep|>CSS criado. Agora monto a seção no `Conta.tsx`:<|close|>response<|sep|><|open|>tools<|sep|><|open|>call tool="edit" index="1"<|sep|><|open|>argument key="file_path" type="string"<|sep|>C:\Users\mestr\OneDrive\Documentos\GitHub\mestre-132-pref-ui\site\src\paginas\Conta.tsx

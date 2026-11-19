@@ -5,6 +5,7 @@ import Login from "./paginas/Login";
 import { ProvedorNotificacoes, useNotificar } from "./Notificacoes";
 import { getSocket } from "./socket";
 import IconeInterface from "./IconeInterface";
+import { aplicarPreferenciasVisuais, limparPreferenciasVisuais, preferenciasVisuaisDe } from "./visualUsuario";
 
 // Telas secundárias são carregadas sob demanda para reduzir o JavaScript
 // necessário no primeiro acesso. O estado e a navegação continuam no Shell.
@@ -179,6 +180,17 @@ function Shell() {
     if (estado.status === "autenticado") atualizarNaoLidas();
     else setNaoLidas(0);
   }, [estado.status, atualizarNaoLidas]);
+
+  // Preferências visuais da conta (Issue #132): aplica os tokens salvos
+  // no <html> a cada mudança de sessão/usuário; no logout, limpa os
+  // overrides para não vazar o tema de um usuário para outro.
+  useEffect(() => {
+    if (estado.status === "autenticado") {
+      aplicarPreferenciasVisuais(preferenciasVisuaisDe(estado.usuario.preferences?.visual));
+    } else if (estado.status === "anonimo") {
+      limparPreferenciasVisuais();
+    }
+  }, [estado]);
 
   // Tempo real: toast + reconciliação do contador a cada publicação.
   // O contador é sempre reconsultado no servidor (novidadesNaoLidas) —
