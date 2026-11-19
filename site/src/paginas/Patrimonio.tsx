@@ -219,7 +219,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   };
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
-  const podeOperar = !somenteLeitura && (souMestre || (fin?.config.jogadorCompraVenda ?? false));
+  const podeOperar = !somenteLeitura && (souMestre || permissoes.compraVenda);
   // Compra registrada com pagar=false: sem transação financeira, o
   // estorno só é localizável pelo operacaoId gravado nos dados do item.
   const compraSemPagamento = (item: ItemInventario) => {
@@ -1134,7 +1134,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   // possuem transação de estorno `${requestId}:estorno` no histórico.
   const estornadas = new Set(fin.historico.map((t) => t.requestId).filter(Boolean));
   const podeEstornar = (t: TransacaoFinanceira) =>
-    !somenteLeitura && (souMestre || cfg.jogadorCompraVenda) &&
+    !somenteLeitura && (souMestre || permissoes.compraVenda) &&
     (t.kind === "compra" || t.kind === "venda") && !!t.requestId &&
     !estornadas.has(`${t.requestId}:estorno`);
   const confirmarEstorno = async () => {
