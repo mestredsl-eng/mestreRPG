@@ -49,7 +49,9 @@ interface ConfigPermissoes {
 export default function Patrimonio({ characterId, campaignId, souMestre, somenteLeitura = false }: Props) {
   const [aba, setAba] = useState<Aba>("inventario");
   const [erro, setErro] = useState<string | null>(null);
-  const [permissoes, setPermissoes] = useState<PermissoesPatrimonio>(PERMISSOES_PADRAO);
+  // null enquanto as regras não chegam (ou se a busca falhar): fail-closed
+  // para jogadores — nenhuma ação granular aparece até a config confirmar.
+  const [permissoes, setPermissoes] = useState<PermissoesPatrimonio | null>(null);
   const recarregarRef = useRef<{ fn?: () => Promise<void> }>({}).current;
 
   useEffect(() => {
@@ -117,7 +119,7 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
 
 function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
   characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean;
-  permissoes: PermissoesPatrimonio;
+  permissoes: PermissoesPatrimonio | null;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -201,10 +203,11 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
 
   // Issue #165: cada ação consulta a permissão granular exata. O mestre
   // mantém capacidade administrativa; somenteLeitura continua barreira total.
-  const podeAdicionar = souMestre || permissoes.adicionaItens;
-  const podeRemover = souMestre || permissoes.removeItens;
-  const podeEquiparItem = souMestre || permissoes.editaEquipamentos;
-  const podeTransferir = souMestre || permissoes.removeItens;
+  const podeAdicionar = souMestre || permissoes?.adicionaItens === true;
+  const podeRemover = souMestre || permissoes?.removeItens === true;
+  const podeEquiparItem = souMestre || permissoes?.editaEquipamentos === true;
+  const podeReceberDeOutros = souMestre || permissoes?.adicionaItens === true;
+  const podeTransferir = souMestre || permissoes?.removeItens === true;
   const podeAjustarQuantidade = (atual: number, novoQ: number) =>
     novoQ < atual ? podeRemover : podeAdicionar; // PATCH: redução→removeItens, demais→adicionaItens
 
@@ -219,7 +222,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   };
 
   const qtd = (_item: ItemInventario, data: Record<string, unknown>) => Number(data.valueCents ?? 0);
-  const podeOperar = !somenteLeitura && (souMestre || permissoes.compraVenda);
+  const podeOperar = !somenteLeitura && (souMestre || permissoes?.compraVenda === true);
   // Compra registrada com pagar=false: sem transação financeira, o
   // estorno só é localizável pelo operacaoId gravado nos dados do item.
   const compraSemPagamento = (item: ItemInventario) => {
@@ -330,7 +333,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
                 {podeOperar && compraSemPagamento(item) && (
                   <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
                 )}
-                {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
+                {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} podeReceberDeOutros={podeReceberDeOutros} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
                 }} aoErro={aoErro} />}
@@ -384,7 +387,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
               {podeOperar && compraSemPagamento(item) && (
                 <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
               )}
-              {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
+              {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} podeReceberDeOutros={podeReceberDeOutros} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
               }} aoErro={aoErro} />}
@@ -450,16 +453,21 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
   );
 }
 
-function TransferirButton({ item, personagens, proprioId, souMestre, onTransfer, aoErro }: {
+function TransferirButton({ item, personagens, proprioId, souMestre, podeReceberDeOutros, onTransfer, aoErro }: {
   item: ItemInventario; personagens: PersonagemResumo[]; proprioId: string; souMestre: boolean;
+  podeReceberDeOutros: boolean;
   onTransfer: (destinoId: string, quantidade?: number) => Promise<void>;
   aoErro: (e: unknown) => void;
 }) {
   const [aberto, setAberto] = useState(false);
   const [destino, setDestino] = useState("");
   const [qtd, setQtd] = useState<number | undefined>(undefined);
-  const outros = personagens.filter((p) => p.id !== proprioId);
+  // Backend: tirar o item exige jogadorRemoveItens; colocar no patrimônio
+  // de OUTRO jogador exige também jogadorAdicionaItens. Personagens do
+  // próprio usuário (ehEu) dispensam a segunda permissão.
+  const outros = personagens.filter((p) => p.id !== proprioId && (podeReceberDeOutros || p.ehEu));
   if (!souMestre && (item.data?.transferable === false)) return null;
+  if (outros.length === 0) return null;
   return (
     <>
       <button className="secundario" onClick={() => setAberto(true)}>Transferir</button>
@@ -801,12 +809,12 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
 // ================= EQUIPAMENTOS =================
 
 function Equipamentos({ characterId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
-  characterId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  characterId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio | null;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Equipamento[]>([]);
-  const podeEditar = souMestre || permissoes.editaEquipamentos;
+  const podeEditar = souMestre || permissoes?.editaEquipamentos === true;
   const [slots, setSlots] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [nome, setNome] = useState("");
@@ -888,7 +896,7 @@ function Equipamentos({ characterId, souMestre, somenteLeitura = false, permisso
 // ================= VEÍCULOS =================
 
 function Veiculos({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio | null;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -900,10 +908,10 @@ function Veiculos({ characterId, campaignId, souMestre, somenteLeitura = false, 
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
   const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
-  const podeEditar = souMestre || permissoes.editaVeiculos;
+  const podeEditar = souMestre || permissoes?.editaVeiculos === true;
   // Backend: DELETE /veiculos/:id usa jogadorRemoveItens (remoção), enquanto
   // criar/editar usa jogadorEditaVeiculos — a UI espelha essa distinção.
-  const podeRemover = souMestre || permissoes.removeItens;
+  const podeRemover = souMestre || permissoes?.removeItens === true;
 
   const carregar = useCallback(async () => {
     try {
@@ -1066,7 +1074,7 @@ function Veiculos({ characterId, campaignId, souMestre, somenteLeitura = false, 
 // ================= DINHEIRO =================
 
 function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio | null;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -1098,10 +1106,11 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   const cfg = fin.config;
   // Issue #165: permissões granulares — criar conta, movimentar (compra/venda),
   // PIX entre personagens e transferência entre contas próprias são independentes.
-  const podeCriarConta = souMestre || permissoes.criaContas;
-  const podeMovimentar = souMestre || permissoes.compraVenda;
-  const podePix = souMestre || permissoes.pix;
-  const podeMesmaConta = souMestre || permissoes.compraVenda;
+  const podeCriarConta = souMestre || permissoes?.criaContas === true;
+  const podeMovimentar = souMestre || permissoes?.compraVenda === true;
+  const podePix = souMestre || permissoes?.pix === true;
+  const podeMesmaConta = souMestre || permissoes?.compraVenda === true;
+  const podeDefinirValor = souMestre || permissoes?.compraVenda === true;
   const mostrarTransferir = souMestre ||
     (podeMesmaConta && fin.contas.length > 0) ||
     (podePix && contasOutros.length > 0);
@@ -1134,7 +1143,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   // possuem transação de estorno `${requestId}:estorno` no histórico.
   const estornadas = new Set(fin.historico.map((t) => t.requestId).filter(Boolean));
   const podeEstornar = (t: TransacaoFinanceira) =>
-    !somenteLeitura && (souMestre || permissoes.compraVenda) &&
+    !somenteLeitura && (souMestre || permissoes?.compraVenda === true) &&
     (t.kind === "compra" || t.kind === "venda") && !!t.requestId &&
     !estornadas.has(`${t.requestId}:estorno`);
   const confirmarEstorno = async () => {
@@ -1160,7 +1169,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
       </div>
 
       {!somenteLeitura && <>
-      {podeCriarConta && <NovaConta characterId={characterId} cfg={cfg} aoErro={aoErro} aoOk={carregar} />}
+      {podeCriarConta && <NovaConta characterId={characterId} cfg={cfg} podeDefinirValor={podeDefinirValor} aoErro={aoErro} aoOk={carregar} />}
       {podeMovimentar && <Movimentar characterId={characterId} contas={fin.contas} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />}
       {mostrarTransferir && <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} podePix={podePix} podeMesmaConta={podeMesmaConta} aoErro={aoErro} aoOk={carregar} />}
       </>}
@@ -1223,9 +1232,12 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   );
 }
 
-function NovaConta({ characterId, cfg, aoErro, aoOk }: {
+function NovaConta({ characterId, cfg, podeDefinirValor, aoErro, aoOk }: {
   characterId: string;
   cfg: Financeiro["config"];
+  // Backend: conta aberta com saldo/limite positivo exige também
+  // jogadorCompraVenda — sem a permissão os campos nem aparecem.
+  podeDefinirValor: boolean;
   aoErro: (e: unknown) => void; aoOk: () => Promise<void>;
 }) {
   const [form, setForm] = useState<ContaInput>({ type: "especie", name: "", balanceReais: 0 });
@@ -1240,7 +1252,10 @@ function NovaConta({ characterId, cfg, aoErro, aoOk }: {
       {aberto && (
         <form className="formulario linha" onSubmit={async (e: FormEvent) => {
           e.preventDefault();
-          try { await api.criarConta(characterId, form); setAberto(false); setForm({ type: "especie", name: "", balanceReais: 0 }); await aoOk(); }
+          try {
+            await api.criarConta(characterId, podeDefinirValor ? form : { ...form, balanceReais: 0, creditLimitReais: undefined });
+            setAberto(false); setForm({ type: "especie", name: "", balanceReais: 0 }); await aoOk();
+          }
           catch (err) { aoErro(err); }
         }}>
           <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as ContaInput["type"] })}>
@@ -1252,8 +1267,10 @@ function NovaConta({ characterId, cfg, aoErro, aoOk }: {
             <option value={cfg.moedaPrincipal}>{cfg.moedaPrincipal} (principal)</option>
             {cfg.moedas.map((m) => <option key={m.codigo} value={m.codigo}>{m.codigo} — {m.nome}</option>)}
           </select>
-          <input placeholder="Saldo inicial" type="number" step="0.01" value={form.balanceReais ?? 0} onChange={(e) => setForm({ ...form, balanceReais: Number(e.target.value) })} style={{ width: 110 }} />
-          {form.type === "cartao_credito" && (
+          {podeDefinirValor && (
+            <input placeholder="Saldo inicial" type="number" step="0.01" value={form.balanceReais ?? 0} onChange={(e) => setForm({ ...form, balanceReais: Number(e.target.value) })} style={{ width: 110 }} />
+          )}
+          {podeDefinirValor && form.type === "cartao_credito" && (
             <input placeholder="Limite de crédito" type="number" step="0.01" min="0" value={form.creditLimitReais ?? ""} onChange={(e) => setForm({ ...form, creditLimitReais: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ width: 130 }} />
           )}
           <button type="submit">Criar</button>
