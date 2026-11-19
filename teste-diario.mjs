@@ -6,7 +6,7 @@ import { join, resolve, sep } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  encerrarServidor, limparDir, req as reqBase, criarCenario, comDb, abrirDb,
+  encerrarServidor, limparDir, req as reqBase, criarCenario, comDb, abrirDb, sessao,
 } from "./teste-base.mjs";
 
 const RAIZ = dirTeste("diario");
@@ -288,6 +288,94 @@ try {
   t("29e nome hostil não controla o caminho físico",
     !!rowHostil && storageSeguro && confinado && semArquivoFora,
     JSON.stringify({ storageName: sn, fileName: rowHostil?.file_name, fisico }));
+  // ============ Issue #164 — config.notas.espectadorLeCompartilhadas ============
+  // Espectador sintético: usuário + membership direto no banco; cookie de
+  // sessão real via sessao() — mesmo caminho de autenticação dos demais.
+  const uEsp = crypto.randomUUID();
+  {
+    const w = abrirDb(BANCO); const agora = Date.now();
+    w.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+      .run(uEsp, "espectador_teste", "Espectador Teste", "sem-login", agora, agora);
+    w.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'espectador','ativo',?,?,?)")
+      .run(crypto.randomUUID(), CID, uEsp, agora, agora, agora);
+    w.close();
+  }
+  const COOKIE_ESP = sessao(BANCO, uEsp);
+
+  const setFlagEsp = (v) => {
+    const w = abrirDb(BANCO);
+    const rs = w.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(CID);
+    const cfg = JSON.parse(rs?.config || "{}");
+    cfg.notas = { ...(cfg.notas ?? {}), espectadorLeCompartilhadas: v };
+    w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+    w.close();
+  };
+  const idsAnot = async (cookie) =>
+    (await req("GET", "/anotacoes?tipo=todas", { cookie })).json?.anotacoes?.map((a) => a.id) ?? [];
+  const criarNota = async (title, visibility, recipients) => {
+    const rr = await req("POST", "/anotacoes", { body: { title, kind: "diario", visibility, ...(recipients ? { recipients } : {}) } });
+    return rr.json?.id;
+  };
+
+  // Cinco notas cobrindo as 4 visibilidades + selecionada com destinatário
+  // correto (espectador) e incorreto (jogador dois) para o espectador.
+  const N_PRIV = await criarNota(`E164 privada ${RUN}`, "privada");
+  const N_MST = await criarNota(`E164 mestre ${RUN}`, "mestre");
+  const N_PUB = await criarNota(`E164 publica ${RUN}`, "publica");
+  const N_SEL_OK = await criarNota(`E164 sel-esp ${RUN}`, "selecionada", [uEsp]);
+  const N_SEL_ERR = await criarNota(`E164 sel-j2 ${RUN}`, "selecionada", [uJ2]);
+  const N_J5 = await (async () => {
+    const rr = await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title: `E164 j5 ${RUN}`, kind: "diario", visibility: "privada" } });
+    return rr.json?.id;
+  })();
+  t("164-00 notas da matriz criadas", [N_PRIV, N_MST, N_PUB, N_SEL_OK, N_SEL_ERR, N_J5].every(Boolean));
+
+  const tem = (ids, id) => ids.includes(id);
+  const vis = async (cookie) => {
+    const r = await req("GET", "/anotacoes?tipo=todas", { cookie });
+    return { status: r.status, ids: (r.json?.anotacoes ?? []).map((a) => a.id), lista: r.json?.anotacoes ?? [] };
+  };
+
+  // ---------- flag LIGADA (default true) ----------
+  setFlagEsp(true);
+  let vM = await vis(ADMIN.cookie), vJ5 = await vis(JOG5.cookie), vJ2 = await vis(JOG2.cookie), vE = await vis(COOKIE_ESP);
+  t("164-01 flag on: mestre vê as 5 notas da matriz",
+    [N_PRIV, N_MST, N_PUB, N_SEL_OK, N_SEL_ERR].every((id) => tem(vM.ids, id)), JSON.stringify(vM.ids));
+  t("164-02 flag on: ehMinha preservada para o dono (mestre)",
+    vM.lista.find((a) => a.id === N_PUB)?.ehMinha === true);
+  t("164-03 flag on: jogador vê só a pública (sem destinatário)",
+    tem(vJ5.ids, N_PUB) && ![N_PRIV, N_MST, N_SEL_OK, N_SEL_ERR].some((id) => tem(vJ5.ids, id)), JSON.stringify(vJ5.ids));
+  t("164-04 flag on: jog2 vê pública + selecionada destinada a ele",
+    tem(vJ2.ids, N_PUB) && tem(vJ2.ids, N_SEL_ERR) && ![N_PRIV, N_MST, N_SEL_OK].some((id) => tem(vJ2.ids, id)), JSON.stringify(vJ2.ids));
+  t("164-05 flag on: espectador vê pública + selecionada destinada a ele",
+    vE.status === 200 && tem(vE.ids, N_PUB) && tem(vE.ids, N_SEL_OK)
+    && ![N_PRIV, N_MST, N_SEL_ERR].some((id) => tem(vE.ids, id)), JSON.stringify(vE.ids));
+  t("164-06 flag on: privada do jogador invisível até para o mestre",
+    !tem(vM.ids, N_J5) && tem(vJ5.ids, N_J5)
+    && vJ5.lista.find((a) => a.id === N_J5)?.ehMinha === true);
+
+  // ---------- flag DESLIGADA ----------
+  setFlagEsp(false);
+  vM = await vis(ADMIN.cookie); vJ5 = await vis(JOG5.cookie); vJ2 = await vis(JOG2.cookie); vE = await vis(COOKIE_ESP);
+  t("164-07 flag off: espectador não recebe nenhuma nota compartilhada",
+    vE.status === 200 && ![N_PRIV, N_MST, N_PUB, N_SEL_OK, N_SEL_ERR].some((id) => tem(vE.ids, id)), JSON.stringify(vE.ids));
+  t("164-08 flag off: mestre inalterado (vê as 5)",
+    [N_PRIV, N_MST, N_PUB, N_SEL_OK, N_SEL_ERR].every((id) => tem(vM.ids, id)));
+  t("164-09 flag off: jogador inalterado (vê a pública)",
+    tem(vJ5.ids, N_PUB));
+  t("164-10 flag off: jog2 inalterado (pública + selecionada dele)",
+    tem(vJ2.ids, N_PUB) && tem(vJ2.ids, N_SEL_ERR));
+  const espPost = await req("POST", "/anotacoes", { cookie: COOKIE_ESP, body: { title: "x", kind: "diario", visibility: "publica" } });
+  t("164-11 flag off: escrita de espectador segue bloqueada (403)", espPost.status === 403, String(espPost.status));
+  const espPatch = await req("PATCH", `/anotacoes/${N_PUB}`, { cookie: COOKIE_ESP, body: { title: "invadir" } });
+  t("164-12 flag off: espectador não edita anotação alheia", espPatch.status === 403 || espPatch.status === 404, String(espPatch.status));
+
+  // devolve flag ao default para não contaminar o restante do arquivo
+  setFlagEsp(true);
+  vE = await vis(COOKIE_ESP);
+  t("164-13 flag restaurada: espectador volta a ver compartilhadas",
+    tem(vE.ids, N_PUB) && tem(vE.ids, N_SEL_OK));
+
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
 } finally {

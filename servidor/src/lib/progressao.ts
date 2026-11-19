@@ -53,6 +53,24 @@ import {
 
 export const CHAVE_XP = "__xp";
 
+/** Kinds elegiveis a evolucao por XP (Issue #152): somente elementos
+ *  de progressao da ficha. Itens, veiculos, dinheiro, conhecimentos e
+ *  os kinds estruturais (caracteristica/profissao/vantagem) nao evoluem
+ *  por XP. */
+export const KINDS_COMPRAVEIS_XP: ReadonlySet<string> = new Set([
+  "atributo",
+  "talento",
+  "habilidade",
+  "especializacao",
+  "defeito",
+  "disciplina",
+  "pericia",
+  "poder",
+]);
+
+/** Unico kind que pode ser adquirido do zero (nivel 0->1) por XP. */
+const KIND_AQUISICAO_ZERO_XP = "poder";
+
 // ---------- Estado __xp ----------
 
 export type TipoEventoXp = "concessao" | "remocao" | "compra" | "ajuste";
@@ -576,10 +594,21 @@ export function resumoProgressao(
     let precoProximo: number | null = null;
     let compravel = false;
     let motivo: string | undefined;
-    if (!vinculo) {
-      motivo = "Elemento sem campo de nível disponível na ficha";
+    if (!KINDS_COMPRAVEIS_XP.has(el.kind)) {
+      // Issue #152: kind proibido nunca calcula preco nem aparece
+      // compravel, mesmo que tenha vinculo e custo configurado.
+      motivo = `"${el.name}" nao pode evoluir por XP (tipo ${el.kind})`;
     } else if (el.definition.disponivel === false) {
+      // Espelha simularCompraNivel: indisponível tem precedência
+      // sobre vínculo e aquisição inicial.
       motivo = "Elemento desativado nesta campanha";
+    } else if (!vinculo) {
+      motivo = "Elemento sem campo de nível disponível na ficha";
+    } else if (el.kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+      // Issue #152 M1: espelha simularCompraNivel — fora de "poder",
+      // o elemento precisa de nível atual; o motivo vem antes do
+      // cálculo de preço para GET nunca divergir do POST.
+      motivo = `${el.name} precisa de nível atual para evoluir por XP — somente poderes podem ser adquiridos do zero`;
     } else {
       const preco = precoProximoNivel(estrutura, dados, regras, el, vinculo, nivelAtual, nivelAlvo);
       precoProximo = preco.preco;
@@ -641,16 +670,15 @@ export function simularCompraNivel(
   if (elemento.definition.disponivel === false) {
     return { ok: false, erro: `"${elemento.name}" está desativado nesta campanha`, codigo: "indisponivel" };
   }
-
-  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
-  if (nivelAlvo !== nivelAtual + 1) {
+  if (!KINDS_COMPRAVEIS_XP.has(kind)) {
     return {
       ok: false,
-      erro: `A compra avança exatamente um nível por vez (atual ${nivelAtual}, alvo ${nivelAlvo})`,
-      codigo: "salto_nivel",
-      detalhes: { nivelAtual, nivelAlvo },
+      erro: `"${elemento.name}" não pode evoluir por XP (tipo ${kind})`,
+      codigo: "kind_nao_elegivel",
     };
   }
+
+  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
 
   const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtro || filtro(v.campo));
   const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtro);
@@ -662,6 +690,22 @@ export function simularCompraNivel(
         ? `"${elemento.name}" não está vinculado a nenhum campo da ficha`
         : `"${elemento.name}" não pode expressar o nível ${nivelAlvo} nos campos da ficha`,
       codigo: "sem_vinculo",
+    };
+  }
+  if (kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" precisa de nível atual para evoluir por XP — somente poderes podem ser adquiridos do zero`,
+      codigo: "aquisicao_nao_permitida",
+      detalhes: { nivelAtual, nivelAlvo },
+    };
+  }
+  if (nivelAlvo !== nivelAtual + 1) {
+    return {
+      ok: false,
+      erro: `A compra avança exatamente um nível por vez (atual ${nivelAtual}, alvo ${nivelAlvo})`,
+      codigo: "salto_nivel",
+      detalhes: { nivelAtual, nivelAlvo },
     };
   }
   if (vinculo.modo === "binario" && nivelAtual >= 1) {

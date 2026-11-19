@@ -80,10 +80,17 @@ anotacoesRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async 
   const tipo = typeof req.query.tipo === "string" ? req.query.tipo : "todas";
   const cid = req.params.campaignId;
   const ehMestre = req.membership!.role === "mestre";
+  const ehEspectador = req.membership!.role === "espectador";
+  // config.notas.espectadorLeCompartilhadas: quando false, o espectador
+  // nao recebe notas publicas nem selecionadas — bloqueio adicional
+  // somente de leitura; escrita e demais papeis nao mudam.
+  const leCompartilhadas = !ehEspectador
+    || (await carregarRegras(cid)).config.notas?.espectadorLeCompartilhadas !== false;
   const todas = await db.select().from(notes).where(eq(notes.campaignId, cid)).orderBy(desc(notes.updatedAt));
   const visiveis = todas.filter((n) => {
     if (tipo === "diario" && n.kind !== "diario") return false;
     if (tipo === "mestre" && n.kind !== "mestre") return false;
+    if (!leCompartilhadas && (n.visibility === "publica" || n.visibility === "selecionada")) return false;
     return notaVisivel(n, req.usuario!.id, ehMestre);
   });
   const mapa = await nomesOwners([...new Set(visiveis.map((n) => n.ownerId))]);
