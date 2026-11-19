@@ -370,7 +370,7 @@ try {
     });
     t("config do site atualizada → boot completo com código 0", b.codigo === 0 && b.atualizou === true, JSON.stringify(b));
     t("vite.config alterado força npm run build -w site apesar do dist mais novo",
-      reg.some((x) => x.includes("npm run build -w site")), reg.join(" | "));
+      reg.some((x) => /^(npm|npm\\.cmd) run build -w site$/.test(x)), reg.join(" | "));
   }
 
   sec("B1 — upstream precisa ser origin/<branch>");
