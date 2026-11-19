@@ -382,7 +382,7 @@ try {
   {
     const cmd = process.platform === "win32" ? "npm.cmd" : "npm";
     const versao = executarReal(cmd, ["--version"], { cwd: RAIZ, timeoutMs: 30_000 });
-    t("npm --version executa pelo executor real", versao.code === 0 && /^\\d+\\./.test(String(versao.stdout).trim()), `code=${versao.code} out=${String(versao.stdout).trim()} err=${String(versao.stderr).slice(0, 160)}`);
+    t("npm --version executa pelo executor real", versao.code === 0 && /^\d+\./.test(String(versao.stdout).trim()), `code=${versao.code} out=${String(versao.stdout).trim()} err=${String(versao.stderr).slice(0, 160)}`);
     if (process.platform === "win32") {
       const negado = executarReal("npm.cmd", ["install", "pacote-malicioso"], { cwd: RAIZ, timeoutMs: 30_000 });
       t("argumentos npm fora da allowlist são rejeitados", negado.code !== 0 && negado.stderr.includes("nao permitidos"));
