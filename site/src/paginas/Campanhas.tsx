@@ -68,7 +68,7 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
         // alvo — para jogador/espectador (ou campanha fora do escopo do
         // usuário) o backend responderia 403; nem oferecemos a ação.
         const alvo = campanhas.find((c) => c.id === pacote.campanhaId);
-        if (!alvo || alvo.meuPapel !== "mestre") { setErro(msgErro); return; }
+        if (!alvo || alvo.meuPapel !== "mestre" || alvo.meuStatus !== "ativo") { setErro(msgErro); return; }
         setImportPendente({ pacote, msgErro });
         return;
       }
