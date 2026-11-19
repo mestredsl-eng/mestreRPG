@@ -53,12 +53,22 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
     }
   };
 
+  // Issue #162: pacotes externos têm __xp/__pontos descartados — avisa o mestre.
+  const avisarDescarteProtegido = (d?: { personagensAfetados: number; xpSaldoDescartado: number; xpHistoricoDescartado: number; xpFinanciadoDescartado: number; pontosBonusDescartado: number; pontosHistoricoDescartado: number; selosDescartados: number }) => {
+    if (!d || d.personagensAfetados === 0) return;
+    notificar(
+      `Importação descartou dados protegidos de ${d.personagensAfetados} personagem(ns): saldo/histórico/financiado de XP, pontos bônus e selos não são importados de pacotes externos.`,
+      "aviso",
+    );
+  };
+
   const importar = async (arquivo: File) => {
     try {
       const pacote = JSON.parse(await arquivo.text()) as PacoteCampanha;
       if (pacote?.versao !== 1 || !pacote.estado) throw new Error("Arquivo não é um pacote de campanha válido.");
       try {
-        await api.importarCampanha(pacote, "nova");
+        const resp = await api.importarCampanha(pacote, "nova");
+        avisarDescarteProtegido(resp.dadosProtegidosDescartados);
         notificar("Campanha importada.", "sucesso");
       } catch (e) {
         const msgErro = e instanceof Error ? e.message : "Erro ao importar";
@@ -77,7 +87,8 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
     if (!importPendente || ocupado) return;
     setOcupado(true);
     try {
-      await api.importarCampanha(importPendente.pacote, "substituir", importPendente.pacote.campanhaId);
+      const resp = await api.importarCampanha(importPendente.pacote, "substituir", importPendente.pacote.campanhaId);
+      avisarDescarteProtegido(resp.dadosProtegidosDescartados);
       setImportPendente(null);
       notificar("Campanha substituída pelo pacote importado.", "sucesso");
       void carregar();

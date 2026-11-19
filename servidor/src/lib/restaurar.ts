@@ -8,6 +8,8 @@ import {
   financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
 } from "../db/schema.js";
 import type { EstadoCampanha } from "./estado.js";
+import { lerXp, CHAVE_XP } from "./progressao.js";
+import { lerPontos, CHAVE_PONTOS } from "./pontos.js";
 
 const db = getDb();
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -16,6 +18,91 @@ const CAMPOS_CAMPANHA = ["name", "description", "system", "summary", "status", "
 export interface ResultadoRestauracao {
   arquivosRecuperados: number;
   arquivosAusentes: string[];
+  /** Issue #162: metadados econômicos protegidos descartados de um
+   *  pacote externo (sempre presente; zerado em restauração interna). */
+  dadosProtegidosDescartados: DescarteProtegido;
+}
+
+/**
+ * Relatório do que a política de importação externa removeu de
+ * `characters.data` (Issue #162). Zeros quando nada foi descartado.
+ */
+export interface DescarteProtegido {
+  personagensAfetados: number;
+  xpSaldoDescartado: number;
+  xpHistoricoDescartado: number;
+  xpFinanciadoDescartado: number;
+  pontosBonusDescartado: number;
+  pontosHistoricoDescartado: number;
+  selosDescartados: number;
+}
+
+export function descarteProtegidoVazio(): DescarteProtegido {
+  return {
+    personagensAfetados: 0,
+    xpSaldoDescartado: 0,
+    xpHistoricoDescartado: 0,
+    xpFinanciadoDescartado: 0,
+    pontosBonusDescartado: 0,
+    pontosHistoricoDescartado: 0,
+    selosDescartados: 0,
+  };
+}
+
+/**
+ * Política explícita de confiança na entrada de estado (Issue #162):
+ *
+ * - `pacoteExterno: false` — snapshot interno criado pelo próprio
+ *   servidor (restauração de ponto de recuperação): `__xp` e
+ *   `__pontos` são dados legítimos e passam intactos.
+ * - `pacoteExterno: true` — pacote JSON fornecido ao endpoint de
+ *   importação: proveniência não verificável, então as chaves
+ *   reservadas de XP e pontos são DESCARTADAS por inteiro:
+ *     __xp.saldo / __xp.historico / __xp.financiado
+ *     __pontos.bonus / __pontos.historico / __pontos.selo
+ *   O ledger não é recriado nem migrado — a ficha importada simplesmente
+ *   não carrega esses metadados (saldo 0, sem selo, sem financiado), o
+ *   que a recoloca sob as regras normais de aprovação/concessão.
+ *   Os demais dados funcionais da ficha são preservados.
+ *
+ * `__arquivamento` já era sanitizado em qualquer origem
+ * (sanitizarArquivamento). `__hp`, `__vitalidade`, `__retrato` e
+ * `__npcVisivel` mantêm o comportamento anterior nesta etapa.
+ */
+function dadosObjeto(v: unknown): Record<string, unknown> | null {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v);
+      return p && typeof p === "object" && !Array.isArray(p) ? p as Record<string, unknown> : null;
+    } catch { return null; }
+  }
+  return null;
+}
+
+/** Remove as chaves reservadas de um personagem e acumula métricas. */
+function aplicarPoliticaImportacao(row: Record<string, unknown>, acum: DescarteProtegido) {
+  const data = dadosObjeto(row.data);
+  if (!data) return;
+  const brutoXp = data[CHAVE_XP];
+  const brutoPts = data[CHAVE_PONTOS];
+  if (brutoXp === undefined && brutoPts === undefined) return;
+  if (brutoXp !== undefined) {
+    const xp = lerXp(data);
+    acum.xpSaldoDescartado += xp.saldo;
+    acum.xpHistoricoDescartado += xp.historico.length;
+    acum.xpFinanciadoDescartado += Object.keys(xp.financiado ?? {}).length;
+    delete data[CHAVE_XP];
+  }
+  if (brutoPts !== undefined) {
+    const pts = lerPontos(data);
+    acum.pontosBonusDescartado += pts.bonus;
+    acum.pontosHistoricoDescartado += pts.historico.length;
+    if (pts.selo) acum.selosDescartados++;
+    delete data[CHAVE_PONTOS];
+  }
+  acum.personagensAfetados++;
+  row.data = data;
 }
 
 function reviverDatas(row: Record<string, unknown>, cols: Record<string, { dataType: string }>) {
@@ -91,9 +178,20 @@ export function normalizarNumerosSessao(rows: unknown[] | undefined) {
   return rows;
 }
 
-/** Insere todas as entidades do estado na ordem de dependência (restauração e importação). */
-export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
-  for (const r of (dados.characters ?? []) as Record<string, unknown>[]) sanitizarArquivamento(r);
+export interface OpcoesEstado {
+  /** true = pacote JSON externo (importação); false = snapshot interno. */
+  pacoteExterno: boolean;
+}
+
+/** Insere todas as entidades do estado na ordem de dependência (restauração e importação).
+ *  Retorna o relatório de metadados protegidos descartados (zerado quando
+ *  `pacoteExterno` é false ou nada foi encontrado). */
+export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: OpcoesEstado): DescarteProtegido {
+  const descarte = descarteProtegidoVazio();
+  for (const r of (dados.characters ?? []) as Record<string, unknown>[]) {
+    sanitizarArquivamento(r);
+    if (opts.pacoteExterno) aplicarPoliticaImportacao(r, descarte);
+  }
   inserir(tx, memberships, dados.memberships);
   inserir(tx, invitations, dados.invitations);
   inserir(tx, sheetTemplates, dados.sheetTemplates);
@@ -117,6 +215,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
   inserir(tx, folders, dados.folders);
   inserir(tx, files, dados.files);
   inserir(tx, noteAttachments, dados.noteAttachments);
+  return descarte;
 }
 
 /**
@@ -124,7 +223,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
  * Transacional no banco; arquivos físicos movidos para a lixeira e recuperados
  * em seguida (best-effort, nunca deixa registros apontando para caminho inválido).
  */
-export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }> } = {}): Promise<ResultadoRestauracao> {
+export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }>; pacoteExterno: boolean }): Promise<ResultadoRestauracao> {
   // ids necessários para deletes com FK indireta (calculados antes da transação)
   const charIds = (await db.select({ id: characters.id }).from(characters).where(eq(characters.campaignId, campaignId))).map((r) => r.id);
   const tplIds = (await db.select({ id: sheetTemplates.id }).from(sheetTemplates).where(eq(sheetTemplates.campaignId, campaignId))).map((r) => r.id);
@@ -146,6 +245,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     }
   };
 
+  let descarteImportacao = descarteProtegidoVazio();
   db.transaction((tx) => {
     const limpar = (tabela: Parameters<typeof tx.delete>[0], where: unknown) =>
       tx.delete(tabela).where(where as never).run();
@@ -183,7 +283,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     tx.update(campaigns).set(upd).where(eq(campaigns.id, campaignId)).run();
 
     // reinsere na ordem de dependência (datas voltam de ISO string para Date)
-    inserirEstado(tx, dados);
+    descarteImportacao = inserirEstado(tx, dados, { pacoteExterno: opts.pacoteExterno });
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----
@@ -211,5 +311,5 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     else arquivosAusentes.push(f.fileName ?? f.id);
   }
 
-  return { arquivosRecuperados, arquivosAusentes };
+  return { arquivosRecuperados, arquivosAusentes, dadosProtegidosDescartados: descarteImportacao };
 }

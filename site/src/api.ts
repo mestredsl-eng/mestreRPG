@@ -479,7 +479,15 @@ export const api = {
     return corpo as PacoteCampanha;
   },
   importarCampanha: (pacote: PacoteCampanha, modo: "nova" | "substituir", campaignId?: string) =>
-    requisicao<{ ok: boolean; campaignId: string; modo: string; arquivosGravados?: number }>(`/campaigns/importar`, {
+    requisicao<{
+      ok: boolean; campaignId: string; modo: string; arquivosGravados?: number;
+      /** Issue #162: metadados protegidos (__xp/__pontos) descartados de pacote externo. */
+      dadosProtegidosDescartados?: {
+        personagensAfetados: number; xpSaldoDescartado: number; xpHistoricoDescartado: number;
+        xpFinanciadoDescartado: number; pontosBonusDescartado: number; pontosHistoricoDescartado: number;
+        selosDescartados: number;
+      };
+    }>(`/campaigns/importar`, {
       method: "POST",
       body: JSON.stringify({ pacote, modo, campaignId, confirmacao: modo === "substituir" ? "SUBSTITUIR" : undefined }),
     }),

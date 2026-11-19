@@ -165,7 +165,8 @@ jobs:
             teste-regras.mjs \
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
-            teste-defeitos-mesa.mjs
+            teste-defeitos-mesa.mjs \
+            teste-importacao-integridade.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"

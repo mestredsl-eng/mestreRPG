@@ -151,7 +151,7 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapelAuth("mestre"), limit
 
     let resultado;
     try {
-      resultado = await restaurarEstado(cid, dados);
+      resultado = await restaurarEstado(cid, dados, { pacoteExterno: false });
       commitado = true;
     } catch (e) {
       await liberarBarreiraRestauracao(cid, restoreId, "falha");
