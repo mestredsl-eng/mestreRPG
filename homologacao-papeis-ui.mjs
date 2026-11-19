@@ -5,6 +5,7 @@
 // administrativos só porque componentes invisíveis montaram.
 import { chromium } from "playwright";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -206,6 +207,37 @@ try {
       await page.waitForTimeout(400);
       const opcoesM = await page.getByLabel("Visibilidade da anotação").locator("option").allTextContents();
       t("flag off: mestre mantém 4 opções de visibilidade", opcoesM.length === 4, JSON.stringify(opcoesM));
+      await page.context().close();
+    }
+  }
+  sec("Importar campanha — substituição só para mestre (Issue #157)");
+  {
+    const pacoteSub = {
+      versao: 1, exportadoEm: new Date().toISOString(), campanhaId: campId,
+      estado: { campanha: { name: "Qualquer" }, memberships: [], characters: [], files: [] },
+      arquivos: {},
+    };
+    const arqPacote = join(DIR, "pacote-substituir.json");
+    writeFileSync(arqPacote, JSON.stringify(pacoteSub));
+    {
+      const page = await novoContexto();
+      await login(page, "jogador_ui", "senha-jogador-123");
+      await page.getByRole("button", { name: "Campanhas" }).click();
+      await page.getByText("Minhas campanhas").waitFor({ timeout: 10000 });
+      await page.locator('input[type="file"][accept*="json"]').setInputFiles(arqPacote);
+      await page.waitForTimeout(2500);
+      t("jogador: erro de campanha existente exibido", await temTexto(page, "Já existe"));
+      t("jogador: modal Substituir NÃO oferecido", !(await temTexto(page, "Deseja SUBSTITUIR")));
+      await page.context().close();
+    }
+    {
+      const page = await novoContexto();
+      await login(page, "mestre_teste", "senha-forte-123");
+      await page.getByRole("button", { name: "Campanhas" }).click();
+      await page.getByText("Minhas campanhas").waitFor({ timeout: 10000 });
+      await page.locator('input[type="file"][accept*="json"]').setInputFiles(arqPacote);
+      await page.waitForTimeout(2500);
+      t("mestre: modal Substituir oferecido", await temTexto(page, "Deseja SUBSTITUIR"));
       await page.context().close();
     }
   }

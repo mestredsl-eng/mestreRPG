@@ -64,6 +64,11 @@ export default function Campanhas({ aoAbrir }: { aoAbrir: (id: string) => void }
         const msgErro = e instanceof Error ? e.message : "Erro ao importar";
         // identificador já existente → oferece substituição explícita (exige ser mestre da campanha)
         if (!msgErro.includes("Já existe")) throw e;
+        // Issue #157: a substituição só existe para o mestre da campanha
+        // alvo — para jogador/espectador (ou campanha fora do escopo do
+        // usuário) o backend responderia 403; nem oferecemos a ação.
+        const alvo = campanhas.find((c) => c.id === pacote.campanhaId);
+        if (!alvo || alvo.meuPapel !== "mestre") { setErro(msgErro); return; }
         setImportPendente({ pacote, msgErro });
         return;
       }
