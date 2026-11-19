@@ -216,6 +216,46 @@ try {
     }
     setCfg(ids.camp, "financeiro", { casasDecimais: 2 });
   }
+
+  // ===== 5. Legado: amountCents normalizado na resposta =====
+  sec("GET /financeiro normaliza amountCents de transações legadas");
+  {
+    // Transações antigas: amount em unidades monetárias (REAL) e
+    // amount_cents NULL. A resposta deve expor amountCents pela política
+    // canônica Math.round(amount * 10 ** casas) — a mesma das escritas —
+    // sem reescrever o valor persistido.
+    const casos = [
+      [10.235, 2], [2.675, 2], [-0.125, 2], [0.35, 1],
+      [0.12345, 4], [-0.12345, 4], [-10.235, 2], [7, 0],
+    ];
+    for (const [amount, casas] of casos) {
+      setCfg(ids.camp, "financeiro", { casasDecimais: casas });
+      const desc = `legado-${amount}@${casas}`;
+      const txId = crypto.randomUUID();
+      const w = abrirDb(BANCO);
+      try {
+        w.prepare(`
+          insert into money_transactions
+            (id, character_id, campaign_id, kind, amount, currency, account, description,
+             amount_cents, created_by, created_at)
+          values (?, ?, ?, ?, ?, 'BRL', 'especie', ?, null, ?, ?)
+        `).run(txId, ids.charJ, ids.camp, amount < 0 ? "saida" : "entrada", amount, desc, cenario.adminId, Date.now());
+      } finally { w.close(); }
+      const fin = await req(BASE, "GET", `/characters/${ids.charJ}/financeiro`, { cookie: cj1 });
+      const tx = fin.json?.historico?.find((h) => h.id === txId);
+      const esperadoCents = Math.round(amount * 10 ** casas);
+      t(`legado ${desc}: amountCents canônico ${esperadoCents}`,
+        tx && tx.amountCents === esperadoCents, JSON.stringify(tx));
+      t(`legado ${desc}: amount bruto preservado na resposta`,
+        tx && Math.abs(tx.amount - amount) < 1e-9, JSON.stringify(tx?.amount));
+      const gravado = comDb(BANCO, (db) => db.prepare(
+        "select amount, amount_cents from money_transactions where id=?").get(txId));
+      t(`legado ${desc}: banco não reescrito (amount_cents NULL)`,
+        gravado && gravado.amount_cents === null && Math.abs(gravado.amount - amount) < 1e-9,
+        JSON.stringify(gravado));
+    }
+    setCfg(ids.camp, "financeiro", { casasDecimais: 2 });
+  }
 } finally {
   await encerrarServidor(proc);
   limparDir(DIR);
