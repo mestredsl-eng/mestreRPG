@@ -366,11 +366,22 @@ async function executarRollback(estado, opts = {}) {
     return { ok: false, motivo: "falha-reset-rollback" };
   }
 
-  // restaura dependencias da versao anterior quando o lockfile mudou
+  // Restaura dependencias e artefatos compilados da versao anterior.
+  // O site/dist e ignorado pelo Git: um build da versao nova pode ter
+  // deixado arquivos parciais/mais recentes. O .bat compara timestamps
+  // de site/src e dist e nao conhece vite.config.ts; portanto nao podemos
+  // declarar rollback concluido sem reconstruir explicitamente ambos os
+  // workspaces ja no codigo restaurado.
   if (estado.depsMudaram) {
     if (!npmCi(opts, executar, repoDir, log)) {
       return { ok: false, motivo: "npm-ci-pos-rollback-falhou", revertido: true };
     }
+  }
+  if (!buildServidor(opts, executar, repoDir, log)) {
+    return { ok: false, motivo: "build-servidor-pos-rollback-falhou", revertido: true };
+  }
+  if (!buildSite(opts, executar, repoDir, log, true)) {
+    return { ok: false, motivo: "build-site-pos-rollback-falhou", revertido: true };
   }
   if (opts.stateFile) { try { rmSync(opts.stateFile, { force: true }); } catch { /* ok */ } }
   return { ok: true, shaAnterior: estado.shaAnterior };

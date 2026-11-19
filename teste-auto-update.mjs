@@ -280,20 +280,69 @@ try {
     t("estado de rollback removido", !existsSync(st));
   }
   {
-    // 13: build do servidor falha
+    // 13: build do servidor falha uma vez; depois do reset, a versao
+    // restaurada precisa recompilar servidor E frontend antes do codigo 0.
     const c = criarRepo("c13");
     publicar(c);
     const shaAnt = head(c.local);
+    let falhouServidor = false, buildsSite = 0;
     const exec = (cmd, args, opcoes = {}) => {
       if (cmd === "npm" || cmd === "npm.cmd") {
-        if (args.includes("build")) return { code: 2, stdout: "", stderr: "tsc fake error" };
+        if (args[0] === "run" && args[1] === "build" && args[3] === "servidor" && !falhouServidor) {
+          falhouServidor = true;
+          return { code: 2, stdout: "", stderr: "tsc fake error" };
+        }
+        if (args[0] === "run" && args[1] === "build" && args[3] === "site") buildsSite++;
         return { code: 0, stdout: "", stderr: "" };
       }
       return executarReal(cmd, args, opcoes);
     };
     const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
-    t("build falhou → rollback → boot segue local", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("build do servidor falhou → rollback + rebuild completo da versao local", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("frontend da versao restaurada foi recompilado", buildsSite === 1, `buildsSite=${buildsSite}`);
     t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+
+  sec("17. Falha no build do site depois do pull — rollback recompila versao antiga");
+  {
+    const c = criarRepo("c18-site-rollback");
+    publicar(c, "config-site", { "site/vite.config.ts": "export default { define: { __NOVO__: true } };\\n" });
+    const shaAnt = head(c.local);
+    let buildsSite = 0;
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") {
+        if (args[0] === "run" && args[1] === "build" && args[3] === "site") {
+          buildsSite++;
+          if (buildsSite === 1) return { code: 2, stdout: "", stderr: "vite build falhou uma vez" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
+    t("build site falhou e rollback foi reconstruido antes do codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("build site executado de novo sobre a versao antiga", buildsSite === 2, `buildsSite=${buildsSite}`);
+    t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    const c = criarRepo("c19-site-rollback-falha");
+    publicar(c, "config-site", { "site/vite.config.ts": "export default { define: { __NOVO__: true } };\\n" });
+    const shaAnt = head(c.local);
+    let buildsSite = 0;
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") {
+        if (args[0] === "run" && args[1] === "build" && args[3] === "site") {
+          buildsSite++;
+          return { code: 2, stdout: "", stderr: "vite build falha persistentemente" };
+        }
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
+    t("build da versao antiga tambem falhou → exit 1", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
+    t("segunda tentativa de build site foi exigida", buildsSite === 2, `buildsSite=${buildsSite}`);
+    t("codigo permanece na revisao antiga, sem falso sucesso", head(c.local) === shaAnt);
   }
 
   sec("15. Alteracao local surgida durante a tentativa de rollback");
@@ -487,9 +536,13 @@ try {
     const shaAnt = head(c.local);
     const dirEstado = join(c.base, "estado-e-diretorio");
     mkdirSync(dirEstado, { recursive: true });
+    let falhouBuildInicial = false;
     const exec = (cmd, args, opcoes = {}) => {
       if (cmd === "npm" || cmd === "npm.cmd") {
-        if (args.includes("build")) return { code: 2, stdout: "", stderr: "build fake" };
+        if (args.includes("build") && !falhouBuildInicial) {
+          falhouBuildInicial = true;
+          return { code: 2, stdout: "", stderr: "build fake" };
+        }
         return { code: 0, stdout: "", stderr: "" };
       }
       return executarReal(cmd, args, opcoes);
