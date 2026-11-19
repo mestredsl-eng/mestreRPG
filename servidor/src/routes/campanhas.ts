@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";
@@ -234,7 +234,7 @@ campanhasRouter.patch(
       ? { ...permissoesAtuais, ...Object.fromEntries(Object.entries(body.data.permissions).filter(([, v]) => v !== undefined)) }
       : permissoesAtuais;
 
-    await db
+    const atualizacao = await db
       .update(memberships)
       .set({
         role: novoPapel,
@@ -243,7 +243,25 @@ campanhasRouter.patch(
         updatedAt: new Date(),
         ...(novoStatus === "ativo" && !alvo.joinedAt ? { joinedAt: new Date() } : {}),
       })
-      .where(eq(memberships.id, alvo.id));
+      .where(and(
+        eq(memberships.id, alvo.id),
+        sql`NOT (
+          memberships.role = 'mestre'
+          AND memberships.status = 'ativo'
+          AND (${novoPapel} <> 'mestre' OR ${novoStatus} <> 'ativo')
+          AND (
+            SELECT count(*)
+            FROM memberships m2
+            WHERE m2.campaign_id = ${req.params.campaignId}
+              AND m2.role = 'mestre'
+              AND m2.status = 'ativo'
+          ) <= 1
+        )`
+      ));
+    if (atualizacao.changes === 0) {
+      res.status(400).json({ erro: "A campanha precisa de ao menos um mestre. Transfira a titularidade primeiro." });
+      return;
+    }
 
     // Status não-ativo (bloqueado/pendente/removido): derruba o acesso em tempo real
     if (novoStatus !== "ativo") {
@@ -281,10 +299,27 @@ campanhasRouter.delete(
       res.status(400).json({ erro: "Não é possível remover o único mestre da campanha." });
       return;
     }
-    await db
+    const remocao = await db
       .update(memberships)
       .set({ status: "removido", updatedAt: new Date() })
-      .where(eq(memberships.id, alvo.id));
+      .where(and(
+        eq(memberships.id, alvo.id),
+        sql`NOT (
+          memberships.role = 'mestre'
+          AND memberships.status = 'ativo'
+          AND (
+            SELECT count(*)
+            FROM memberships m2
+            WHERE m2.campaign_id = ${req.params.campaignId}
+              AND m2.role = 'mestre'
+              AND m2.status = 'ativo'
+          ) <= 1
+        )`
+      ));
+    if (remocao.changes === 0) {
+      res.status(400).json({ erro: "Não é possível remover o único mestre da campanha." });
+      return;
+    }
     await expulsarMembroDaCampanha(req.params.campaignId, alvo.userId);
     notificarPermissaoAtualizada(req.params.campaignId, {
       userId: alvo.userId, role: alvo.role, status: "removido", permissions: alvo.permissions,

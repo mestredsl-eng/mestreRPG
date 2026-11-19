@@ -28,7 +28,7 @@ const ESTRUTURA = {
     id: "s1", titulo: "Personagem", ordem: 0,
     campos: [
       { id: "f-forca", label: "Força", tipo: "inteiro", semantico: "atributo", regra: { kind: "atributo", key: "forca" } },
-      { id: "f-habs", label: "Habilidades", tipo: "selecao_multipla", semantico: "habilidade", regraKind: "habilidade" },
+      { id: "f-habs", label: "Habilidades", tipo: "selecao_nivel", semantico: "habilidade", regraKind: "habilidade" },
     ],
   }],
   pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
@@ -57,16 +57,35 @@ try {
   await req(BASE, "PUT", `/campaigns/${ids.camp}/sheet-templates/${tid}/versions/${vid}`, { cookie: ids.cm, body: { estrutura: ESTRUTURA } });
   await req(BASE, "POST", `/campaigns/${ids.camp}/sheet-templates/${tid}/publish`, { cookie: ids.cm, body: { versionId: vid } });
   const pj = await req(BASE, "POST", `/campaigns/${ids.camp}/characters`, {
-    cookie: ids.j1.cookie, body: { name: "Herói Prog", templateVersionId: vid, data: {} },
+    cookie: ids.j1.cookie,
+    // Níveis iniciais ≥1: fora de "poder" o XP não adquire do zero
+    // (aquisicao_nao_permitida) e selecao_nivel aceita {key, nivel}.
+    body: {
+      name: "Herói Prog", templateVersionId: vid,
+      data: { "f-forca": 1, "f-habs": [{ key: "manipulacao", nivel: 1 }] },
+    },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   t("personagem criado", !!CHAR, JSON.stringify(pj.json).slice(0, 150));
 
-  // XP inicial via API (5): manipulação custa 3, força custa 2
+  // Ciclo real de selo: o mestre aprova (aplica __pontos.selo via
+  // comSeloPontos), o XP é concedido com o selo existente e a ficha é
+  // reaberta pelo fluxo real do mestre — o selo é preservado e a
+  // ficha volta a ser editável para as compras do jogador.
+  const ap = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: ids.cm, body: { status: "aprovada" } });
+  t("ficha aprovada — selo de pontos aplicado", ap.status === 200, `status=${ap.status} ${JSON.stringify(ap.json).slice(0, 200)}`);
+
+  // XP concedido DEPOIS do selo (ficha aprovada — ação do mestre).
   const xp0 = await req(BASE, "POST", `/characters/${CHAR}/xp`, {
     cookie: ids.cm, body: { acao: "conceder", quantidade: 5, motivo: "sessão inaugural" },
   });
-  t("XP concedido via API", xp0.status === 200 && xp0.json?.xp?.saldo === 5, `status=${xp0.status}`);
+  t("XP concedido via API com selo", xp0.status === 200 && xp0.json?.xp?.saldo === 5, `status=${xp0.status}`);
+
+  // Reabertura real pelo mestre: aprovada → reaberta preserva o selo.
+  const re = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: ids.cm, body: { status: "reaberta" } });
+  t("ficha reaberta pelo mestre", re.status === 200, `status=${re.status} ${JSON.stringify(re.json).slice(0, 200)}`);
+  const det = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: ids.j1.cookie });
+  t("selo preservado após reabertura", det.json?.ficha?.pontosBonus?.selado === true, `selado=${det.json?.pontosBonus?.selado} status=${det.status}`);
 
   const browser = await chromium.launch();
   const errosUi = [];
@@ -124,8 +143,8 @@ try {
     await pg.waitForFunction(() => document.querySelector(".progressao-xp")?.textContent?.includes("saldo 0"), null, { timeout: 15000 }).catch(() => {});
     await pg.waitForTimeout(800);
 
-    // agora qualquer compra falha por saldo — Manipulação já está nv.1 e
-    // a seleção simples não avança; Força nv.1 → nv.2 custa 2 XP
+    // agora qualquer compra falha por saldo — Manipulação já está nv.2 e
+    // Força nv.2 → nv.3 custa 2 XP
     const saldoTxt = await pg.locator(".progressao-xp .progresso-saldo").textContent();
     t("saldo zerou após duas compras", /^\s*0\s*XP/.test(saldoTxt ?? ""), saldoTxt);
     const linhaForca2 = painel.locator("tr", { hasText: "Força" });
@@ -226,7 +245,7 @@ try {
     // Outra sessão (mestre via API) compra nível de Força com XP —
     // o snapshot do jogador fica desatualizado.
     const compraApi = await req(BASE, "POST", `/characters/${CHAR}/comprar-ponto`, {
-      cookie: ids.cm, body: { kind: "atributo", key: "forca", nivelAlvo: 2 },
+      cookie: ids.cm, body: { kind: "atributo", key: "forca", nivelAlvo: 3 },
     });
     t("compra XP por outra sessão → 200", compraApi.status === 200, `status=${compraApi.status} ${JSON.stringify(compraApi.json).slice(0, 200)}`);
     // Jogador salva com o formulário antigo → 409 + sincronização.
@@ -234,15 +253,15 @@ try {
     await pg.waitForTimeout(1500);
     const corpoFicha = await pg.locator("body").textContent();
     t("conflito 409 exibido ao usuário", /alterada|sincronizado|atualize|não foi possível/i.test(corpoFicha ?? ""), corpoFicha?.slice(0, 300));
-    // Formulário resincronizado com o estado do servidor (Força=2).
+    // Formulário resincronizado com o estado do servidor (Força=3).
     const valorNovo = (await campoForca.textContent().catch(() => null))?.trim() ?? null;
-    t("campo Força resincronizado com o servidor", valorNovo === "2", `antes=${valorAntigo} depois=${valorNovo}`);
+    t("campo Força resincronizado com o servidor", valorNovo === "3", `antes=${valorAntigo} depois=${valorNovo}`);
     // Novo salvamento com base atual funciona e preserva o nível pago.
     await pg.getByRole("button", { name: "Salvar", exact: true }).first().click();
     await pg.waitForTimeout(1500);
     const pgProg = await req(BASE, "GET", `/characters/${CHAR}/progressao`, { cookie: ids.j1.cookie });
     const elForca = (pgProg.json?.disponiveis ?? []).find((d) => d.key === "forca");
-    t("nível comprado por XP permanece após salvar", elForca?.nivelAtual === 2, `nivel=${elForca?.nivelAtual}`);
+    t("nível comprado por XP permanece após salvar", elForca?.nivelAtual === 3, `nivel=${elForca?.nivelAtual}`);
     await ctx.close();
   }
 

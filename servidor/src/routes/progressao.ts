@@ -23,6 +23,7 @@ import {
   type Visibilidade,
   type EditavelPor,
 } from "../lib/ficha.js";
+import { pontosSelados } from "../lib/pontos.js";
 import { audit } from "../lib/audit.js";
 import { emitirCampanha } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -167,7 +168,8 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
     | { tipo: "ok"; saldo: number; historico: unknown[] }
     | { tipo: "ausente" }
     | { tipo: "sem_permissao" }
-    | { tipo: "negativo"; saldo: number };
+    | { tipo: "negativo"; saldo: number }
+    | { tipo: "nao_selada" };
 
   const resultado = db.transaction((tx): Resultado => {
     // Revalidação transacional do papel — vínculo pode ter sido
@@ -184,6 +186,10 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
     if (!atual || atual.campaignId !== p.campaignId) return { tipo: "ausente" };
     if (atual.status === "arquivado") return { tipo: "sem_permissao" };
     const dados = (atual.data ?? {}) as Record<string, unknown>;
+    // Issue #152: concessao de XP exige ficha selada — verificada sobre
+    // os dados frescos da transacao, nunca o snapshot da pre-carga.
+    // "remover" e ajuste administrativo de saldo e segue permitido.
+    if (body.data.acao === "conceder" && !pontosSelados(dados)) return { tipo: "nao_selada" };
     const saldoAtual = lerXp(dados).saldo;
     if (saldoAtual + delta < 0) return { tipo: "negativo", saldo: saldoAtual };
     const { dados: novosDados, estado } = aplicarXp(dados, delta, {
@@ -200,6 +206,10 @@ progressaoRouter.post("/:characterId/xp", requireLeasePersonagem(), async (req, 
   if (resultado.tipo === "sem_permissao") { res.status(403).json({ erro: "Sem permissão para alterar XP deste personagem" }); return; }
   if (resultado.tipo === "negativo") {
     res.status(400).json({ erro: `Remoção excede o saldo de XP (saldo ${resultado.saldo})`, codigo: "xp_negativo" });
+    return;
+  }
+  if (resultado.tipo === "nao_selada") {
+    res.status(403).json({ erro: "Ficha sem selo de pontos — XP só pode ser concedido em ficha selada", codigo: "ficha_nao_selada" });
     return;
   }
 
@@ -304,6 +314,15 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
     if (!atual || atual.campaignId !== p.campaignId) return { tipo: "ausente" };
     if (atual.status === "arquivado") {
       return { tipo: "falha", status: 403, corpo: { erro: "Personagem arquivado — restaure-o antes de alterar" } };
+    }
+    // Issue #152: compra de nivel exige ficha selada — sobre os dados
+    // frescos da transacao, nunca o status nem o snapshot pre-carregado.
+    if (!pontosSelados((atual.data ?? {}) as Record<string, unknown>)) {
+      return {
+        tipo: "falha",
+        status: 403,
+        corpo: { erro: "Ficha sem selo de pontos — XP só pode ser gasto em ficha selada", codigo: "ficha_nao_selada" },
+      };
     }
     // Revalidação de vínculo/papel/propriedade DENTRO da transação:
     // mestre pela role atual; jogador somente se for o dono da ficha.

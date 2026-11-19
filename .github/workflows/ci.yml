@@ -281,6 +281,7 @@ jobs:
             homologacao-retratos.mjs \
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
+            homologacao-papeis-ui.mjs \
             auditoria-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi

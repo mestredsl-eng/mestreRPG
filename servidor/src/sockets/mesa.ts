@@ -15,6 +15,7 @@ import { resumoVitalidade } from "../lib/vida.js";
 import { calcularIniciativa, INICIATIVA_DADOS_MAX, type ResultadoIniciativa } from "../lib/iniciativa.js";
 import { avaliarD10, type AvaliacaoDadoD10 } from "../lib/d10.js";
 import { npcFichaVisivel } from "../lib/npc-visibility.js";
+import { inferirGeneroVozDaFicha } from "../lib/voz.js";
 import {
   lerVtt, nevoaPadrao, tracoRevelarValido, donosDosTokens,
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
@@ -215,6 +216,7 @@ async function registrarChat(
     campaignId: string; sessionId?: string | null; authorId?: string | null;
     kind?: string; content: string; visibility?: string;
     recipients?: string[]; clientId?: string;
+    speakerCharacterId?: string | null; speakerName?: string | null; speakerGender?: "feminina" | "masculina" | null;
   }
 ) {
   const id = opts.clientId && /^[0-9a-f-]{36}$/i.test(opts.clientId) ? opts.clientId : randomUUID();
@@ -239,7 +241,11 @@ async function registrarChat(
         id, campaignId: opts.campaignId, sessionId: opts.sessionId ?? null,
         authorId: opts.authorId ?? null, kind: opts.kind ?? "texto",
         content: opts.content, visibility: opts.visibility ?? "publica",
-        recipients: opts.recipients ?? null, createdAt: new Date(),
+        recipients: opts.recipients ?? null,
+        speakerCharacterId: opts.speakerCharacterId ?? null,
+        speakerName: opts.speakerName ?? null,
+        speakerGender: opts.speakerGender ?? null,
+        createdAt: new Date(),
       });
     } catch (e) {
       if (String(e).includes("UNIQUE")) {
@@ -756,6 +762,7 @@ function socket_handlers(
     on(socket, "mesa:mensagem", async (payload: {
       sessionId?: string; content?: string; clientId?: string;
       visibilidade?: "publica" | "privada" | "secreta"; destinatarioUserId?: string; tipo?: "texto" | "acao";
+      speakerCharacterId?: string; speakerNarrator?: boolean; speakerNarratorGender?: "feminina" | "masculina";
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       if (!u || !payload?.sessionId || !payload.content?.trim()) { cb?.({ ok: false, erro: "Dados inválidos" }); return; }
@@ -788,11 +795,45 @@ function socket_handlers(
         recipients = [payload.destinatarioUserId];
       }
 
+      let speakerCharacterId: string | null = null;
+      let speakerName: string | null = null;
+      let speakerGender: "feminina" | "masculina" | null = null;
+      if (payload.speakerNarrator === true) {
+        if (ctx.papel !== "mestre" || payload.speakerCharacterId) {
+          cb?.({ ok: false, erro: "Somente o mestre pode falar como narrador" }); return;
+        }
+        if (payload.speakerNarratorGender !== "feminina" && payload.speakerNarratorGender !== "masculina") {
+          cb?.({ ok: false, erro: "Selecione a voz do narrador" }); return;
+        }
+        speakerName = "Narrador";
+        speakerGender = payload.speakerNarratorGender;
+      } else if (payload.speakerCharacterId) {
+        const [personagem] = await db.select().from(characters)
+          .where(and(eq(characters.id, payload.speakerCharacterId), eq(characters.campaignId, ctx.sessao.campaignId)))
+          .limit(1);
+        if (!personagem || personagem.status === "arquivado") {
+          cb?.({ ok: false, erro: "Personagem de fala não encontrado ou arquivado" }); return;
+        }
+        if (ctx.papel !== "mestre" && (ctx.papel !== "jogador" || personagem.isNpc || personagem.membershipId !== ctx.membership.id)) {
+          cb?.({ ok: false, erro: "Você não pode falar como este personagem" }); return;
+        }
+        speakerCharacterId = personagem.id;
+        speakerName = personagem.name;
+        if (personagem.templateVersionId) {
+          const [versao] = await db.select({ structure: sheetVersions.structure })
+            .from(sheetVersions).where(eq(sheetVersions.id, personagem.templateVersionId)).limit(1);
+          speakerGender = inferirGeneroVozDaFicha(versao?.structure, personagem.data);
+        }
+      } else if (payload.speakerNarratorGender !== undefined) {
+        cb?.({ ok: false, erro: "Gênero de narrador sem identidade de narrador" }); return;
+      }
+
       const msg = await registrarChat(io, {
         campaignId: ctx.sessao.campaignId, sessionId: ctx.sessao.id, authorId: u.id,
         kind: payload.tipo === "acao" ? "acao" : "texto",
         content: payload.content.trim().slice(0, 4000),
         visibility, recipients, clientId: payload.clientId,
+        speakerCharacterId, speakerName, speakerGender,
       });
       cb?.({ ok: true, id: msg?.id });
     });

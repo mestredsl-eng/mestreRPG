@@ -267,6 +267,29 @@ try {
   t("duas sessões ativas do mesmo mestre", !!idSessA && !!idSessB && idSessA !== idSessB,
     JSON.stringify({ a: sessA.status, b: sessB.status }));
   const ctxIso = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  // Mock local de SpeechSynthesis para provar a fila sem depender do áudio
+  // ou das vozes instaladas no runner. Cada aba mantém sua própria lista.
+  await ctxIso.addInitScript(() => {
+    const calls = [];
+    const voices = [
+      { name: "Microsoft Júlia Desktop", lang: "pt-BR", default: true, localService: true, voiceURI: "julia" },
+      { name: "Microsoft João Desktop", lang: "pt-BR", default: false, localService: true, voiceURI: "joao" },
+    ];
+    Object.defineProperty(window, "__mestreVoiceCalls", { configurable: true, value: calls });
+    class UtteranceMock {
+      constructor(text) { this.text = text; this.voice = null; this.lang = ""; this.rate = 1; this.pitch = 1; this.onend = null; this.onerror = null; }
+    }
+    Object.defineProperty(window, "SpeechSynthesisUtterance", { configurable: true, value: UtteranceMock });
+    Object.defineProperty(window, "speechSynthesis", {
+      configurable: true,
+      value: {
+        getVoices: () => voices,
+        speak: (utterance) => calls.push({ text: utterance.text, voice: utterance.voice?.name ?? null }),
+        cancel: () => {},
+        resume: () => {},
+      },
+    });
+  });
   const pgA = await ctxIso.newPage(), pgB = await ctxIso.newPage();
   vigiar(pgA, "isoA"); vigiar(pgB, "isoB");
   await login(pgA, "mestre_teste", "senha-forte-123");
@@ -276,6 +299,12 @@ try {
   await Promise.all([irMesa(pgA), irMesa(pgB)]);
   await abrirSessao(pgA, "Sessão Alfa");
   await abrirSessao(pgB, "Sessão Beta");
+  // Ativação explícita em ambas as abas: a mensagem de Alfa não pode
+  // acionar SpeechSynthesis na aba Beta do mesmo usuário.
+  await Promise.all([
+    pgA.getByRole("button", { name: "Ativar voz" }).click(),
+    pgB.getByRole("button", { name: "Ativar voz" }).click(),
+  ]);
 
   // 1) rolagem LIVRE privada na sessão A — pela UI real (checkbox Privada)
   await pgA.locator(".abas-dados button", { hasText: "Rolagem e dano" }).click();
@@ -321,14 +350,26 @@ try {
     window.__mesaSocket.emit("mesa:mensagem", {
       sessionId: sessId, content: cid, clientId: crypto.randomUUID(),
       visibilidade: "privada", destinatarioUserId: uid, tipo: "texto",
+      speakerNarrator: true, speakerNarratorGender: "feminina",
     }, res);
   }), { sessId: idSessA, uid: c.adminId, cid: "msg-privada-sessao-A" });
-  t("mensagem privada da sessão A aceita pelo servidor", msgPriv?.ok === true, JSON.stringify(msgPriv).slice(0, 140));
-  await pgA.locator(".chat-msg", { hasText: "msg-privada-sessao-A" }).waitFor({ timeout: 10000 });
-  t("sessão A exibe a mensagem privada", true);
+  t("mensagem privada narrada da sessão A aceita pelo servidor", msgPriv?.ok === true, JSON.stringify(msgPriv).slice(0, 140));
+  const mensagemA = pgA.locator(".chat-msg", { hasText: "msg-privada-sessao-A" });
+  await mensagemA.waitFor({ timeout: 10000 });
+  t("sessão A exibe a mensagem privada como Narrador",
+    await mensagemA.locator(".chat-autor").textContent() === "Narrador");
+  await pgA.waitForFunction(
+    (texto) => window.__mestreVoiceCalls?.some((fala) => fala.text.includes(texto)),
+    "msg-privada-sessao-A",
+    { timeout: 10000 },
+  );
+  t("sessão A enfileira a fala de Narrador com voz feminina",
+    await pgA.evaluate(() => window.__mestreVoiceCalls.some((fala) => fala.text.includes("msg-privada-sessao-A") && fala.voice === "Microsoft Júlia Desktop")));
   await pgA.waitForTimeout(800);
-  t("sessão B NÃO exibe mensagem privada da sessão A",
+  t("sessão B NÃO exibe a mensagem privada da sessão A",
     await pgB.locator(".chat-msg", { hasText: "msg-privada-sessao-A" }).count() === 0);
+  t("sessão B NÃO enfileira nem narra a mensagem privada da sessão A",
+    await pgB.evaluate(() => window.__mestreVoiceCalls.filter((fala) => fala.text.includes("msg-privada-sessao-A")).length === 0));
 
   // 4) decisão PRIVADA de teste na sessão A — a sessão B tem um teste
   //    PÚBLICO próprio pendente; a decisão da sessão A não pode
