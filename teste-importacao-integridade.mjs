@@ -69,6 +69,12 @@ try {
     em: AGORA, tipo: "concessao", quantidade: qtd, motivo: "teste",
     autorId: null, autorNome: null, saldoResultante: saldo, ...extra,
   });
+  // evento de compra legítimo: débito exato do custo, transição +1 nível
+  const evCompra = (campoId, nivelAnterior, custoXp, saldo) => ({
+    em: AGORA, tipo: "compra", quantidade: -custoXp, motivo: `Compra ${campoId}`,
+    autorId: null, autorNome: null, saldoResultante: saldo,
+    compra: { kind: "campo", key: campoId, nome: "Talento", campoId, nivelAnterior, nivelNovo: nivelAnterior + 1, custoXp },
+  });
   // cadeia válida: n eventos de +1 → saldo final = n (âncora zero)
   const ledgerN = (n) => ({
     saldo: n,
@@ -82,10 +88,11 @@ try {
   };
 
   const membershipId = jogadores.jogador1.membershipId;
-  const inserirPersonagem = (nome, data) => {
+  const membMestreId = c.membMestre;
+  const inserirPersonagem = (nome, data, isNpc = 0) => {
     const id = randomUUID();
     dbw.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, campId, membershipId, tpl.id, nome, JSON.stringify(data), "{}", "aprovada", 0, Date.now(), Date.now());
+      .run(id, campId, isNpc ? membMestreId : membershipId, tpl.id, nome, JSON.stringify(data), "{}", isNpc ? "aprovada" : "aprovada", isNpc, Date.now(), Date.now());
     return id;
   };
 
@@ -131,13 +138,37 @@ try {
   ids.xpValidoAutor = inserirPersonagem("ATQ xp autoria", {
     for: 5,
     __xp: {
-      saldo: 3,
+      saldo: 4,
       historico: [
         evXp(3, 3, { autorId: adminId, autorNome: "Nome Falso" }),
-        evXp(0, 3, { autorId: "usuario-inexistente", autorNome: "Fantasma" }),
+        evXp(1, 4, { autorId: "usuario-inexistente", autorNome: "Fantasma" }),
       ],
     },
   });
+  // --- regressões B1: validação estrita de eventos XP ---
+  ids.xpQtdZero = inserirPersonagem("ATQ xp qtd zero", {
+    for: 5,
+    __xp: { saldo: 5, historico: [evXp(5, 5), { ...evXp(1, 6), quantidade: 0, saldoResultante: 6 }] },
+  });
+  ids.xpSaldoNeg = inserirPersonagem("ATQ xp saldo negativo", {
+    for: 5,
+    __xp: { saldo: 0, historico: [evXp(5, -5)] },
+  });
+  ids.xpCompraSemObjeto = inserirPersonagem("ATQ xp compra s/ objeto", {
+    for: 5,
+    __xp: { saldo: 7, historico: [evXp(10, 10), { ...evXp(-3, 7), tipo: "compra" }] },
+  });
+  ids.xpCompraTransicao = inserirPersonagem("ATQ xp compra transição", {
+    for: 5,
+    __xp: {
+      saldo: 7,
+      historico: [
+        evXp(10, 10),
+        { ...evCompra("tal", 0, 3, 7), compra: { kind: "campo", key: "tal", nome: "Talento", campoId: "tal", nivelAnterior: 0, nivelNovo: 2, custoXp: 3 } },
+      ],
+    },
+  });
+  ids.xpHistoricoAusente = inserirPersonagem("ATQ xp histórico ausente", { for: 5, __xp: { saldo: 0 } });
 
   // --- casos __pontos ---
   ids.seloForjado = inserirPersonagem("ATQ selo forjado", {
@@ -164,14 +195,31 @@ try {
   });
 
   // --- casos financiado (campo "tal" = 3, custoProgressivo [1,1,1]) ---
+  // B2: cada índice financiado exige evento de compra correspondente
+  // na cadeia retida (campoId + nivelAnterior == índice).
+  const ledgerComprasTal = {
+    saldo: 4,
+    historico: [
+      evXp(10, 10),
+      evCompra("tal", 0, 2, 8),
+      evCompra("tal", 1, 2, 6),
+      evCompra("tal", 2, 2, 4),
+    ],
+  };
   ids.finOk = inserirPersonagem("ATQ fin ok", {
-    for: 5, tal: 3, __xp: { ...ledgerCustom([10]), financiado: { tal: [0, 1] } },
+    for: 5, tal: 3, __xp: { ...ledgerComprasTal, financiado: { tal: [0, 1] } },
   });
   ids.finInvalido = inserirPersonagem("ATQ fin inválido", {
     for: 5, tal: 3, __xp: { ...ledgerCustom([10]), financiado: { tal: "legado-x", fantasma: [0] } },
   });
   ids.finLegado = inserirPersonagem("ATQ fin legado", {
-    for: 5, tal: 3, __xp: { ...ledgerCustom([10]), financiado: { tal: 2 } }, // → índices [1,2]
+    for: 5, tal: 3, __xp: { ...ledgerComprasTal, financiado: { tal: 2 } }, // → índices [1,2], ambos comprovados
+  });
+  ids.finSemProva = inserirPersonagem("ATQ fin sem prova", {
+    for: 5, tal: 3, __xp: { ...ledgerCustom([10]), financiado: { tal: [0, 1, 2] } }, // sem eventos de compra
+  });
+  ids.xpCompraValida = inserirPersonagem("ATQ xp compra válida", {
+    for: 5, tal: 3, __xp: { ...ledgerComprasTal },
   });
 
   // --- casos vida/retrato/npc ---
@@ -179,6 +227,45 @@ try {
   ids.hpOk = inserirPersonagem("ATQ hp ok", { for: 5, __hp: { atual: 80, historico: [] } });
   ids.vitFora = inserirPersonagem("ATQ vitalidade fora", { for: 5, __vitalidade: { nivel: 99, nivelManual: 50, historico: [{ em: AGORA, nivelAnterior: 0, nivelNovo: 99, motivo: null, autorId: null, autorNome: null }] } });
   ids.vitOk = inserirPersonagem("ATQ vitalidade ok", { for: 5, __vitalidade: { nivel: 1 } });
+  // B3: histórico de vitalidade com campos arbitrários/ inválidos —
+  // whitelist deve reconstruir só o que é comprovável
+  ids.vitHist = inserirPersonagem("ATQ vitalidade hist", {
+    for: 5,
+    __vitalidade: {
+      nivel: 1, nivelManual: 1, campoExtra: "hack",
+      historico: [
+        { em: AGORA, nivelAnterior: 0, nivelNovo: 1, motivo: "ok", autorId: null, autorNome: null, origem: "manual", senha: "x" },
+        { em: AGORA, nivelAnterior: 0, nivelNovo: 2, motivo: "forjado", autorId: null, autorNome: null, origem: "hack" },
+        { em: AGORA, nivelAnterior: 1, nivelNovo: 1, motivo: "conv falsa", autorId: null, autorNome: null, origem: "conversao-ferimento" },
+        { em: AGORA, nivelAnterior: 0, nivelNovo: 2, motivo: "limiar ruim", autorId: null, autorNome: null, origem: "manual", limiares: [{ ate: 150, nivel: 2 }] },
+      ],
+    },
+  });
+  // B3 + privacidade: NPC com vitalidade forjada fora da escala —
+  // a leitura pública do jogador não pode exibir penalidade amplificada
+  ids.npcVitForjado = inserirPersonagem("ATQ npc vitalidade forjada", {
+    for: 5,
+    __npcVisivel: { visivel: true },
+    __vitalidade: {
+      nivel: 99, nivelManual: 99,
+      historico: [{ em: AGORA, nivelAnterior: 0, nivelNovo: 2, motivo: null, autorId: null, autorNome: null, origem: "conversao-ferimento", limiares: [{ ate: 100, nivel: 2 }] }],
+    },
+    __hp: { atual: 9999, historico: [{ em: AGORA, tipo: "inicial", quantidade: 9999, motivo: null, autorId: null, autorNome: null, extra: "x" }] },
+  }, 1);
+  // B4: histórico de HP com eventos inválidos — whitelist + contagem
+  ids.hpHist = inserirPersonagem("ATQ hp histórico", {
+    for: 5,
+    __hp: {
+      atual: 50,
+      historico: [
+        { em: AGORA, tipo: "inicial", quantidade: 150, motivo: "HP inicial", autorId: null, autorNome: null },
+        { em: "data-ruim", tipo: "dano", quantidade: -10, motivo: null, autorId: null, autorNome: null },
+        { em: AGORA, tipo: "explosao", quantidade: -50, motivo: null, autorId: null, autorNome: null },
+        { em: AGORA, tipo: "dano", quantidade: "cem", motivo: null, autorId: null, autorNome: null },
+        { em: AGORA, tipo: "recuperacao", quantidade: 20, motivo: "cura", autorId: "ninguem", autorNome: "Fantasma", extra: "x" },
+      ],
+    },
+  });
   ids.retratoAlheio = inserirPersonagem("ATQ retrato alheio", { for: 5, __retrato: { tipo: "arquivo", arquivoId: "arquivo-de-outro-lugar" } });
   ids.retratoOk = inserirPersonagem("ATQ retrato ok", { for: 5, __retrato: { tipo: "arquivo", arquivoId: fileId } });
   ids.npcMalformado = inserirPersonagem("ATQ npc malformado", { for: 5, isNpcFlag: true, __npcVisivel: { visivel: "sim" } });
@@ -241,13 +328,15 @@ try {
   const cidNova = impNova.json?.campaignId;
   const saneNova = impNova.json?.saneamento;
   check(!!saneNova && saneNova.origem === "externa", "saneamento origem externa presente");
-  check(saneNova?.totais?.ledgersXpInvalidos >= 3, `totais ledgers inválidos ${saneNova?.totais?.ledgersXpInvalidos}`);
+  check(saneNova?.totais?.ledgersXpInvalidos >= 6, `totais ledgers inválidos ${saneNova?.totais?.ledgersXpInvalidos}`);
   check(saneNova?.totais?.selosRemovidos >= 1, "selo removido contabilizado");
   check(saneNova?.totais?.bonusAjustados >= 3, `bônus ajustados ${saneNova?.totais?.bonusAjustados}`);
-  check(saneNova?.totais?.hpCorrigidos >= 1 && saneNova?.totais?.vitalidadeCorrigidas >= 1, "hp/vitalidade corrigidos");
+  check(saneNova?.totais?.hpCorrigidos >= 1 && (saneNova?.totais?.vitalidadeCorrigidas >= 1 || saneNova?.totais?.vitalidadeRemovidas >= 1), "hp/vitalidade saneados");
   check(saneNova?.totais?.retratoRemovido !== undefined || saneNova?.totais?.retratosRemovidos >= 1, "retrato removido contabilizado");
   check(saneNova?.totais?.npcVisivelRemovidos >= 1, "npcVisivel removido contabilizado");
-  check(saneNova?.totais?.financiadoRejeitados >= 2, `financiado rejeitados ${saneNova?.totais?.financiadoRejeitados}`);
+  check(saneNova?.totais?.financiadoRejeitados >= 4, `financiado rejeitados ${saneNova?.totais?.financiadoRejeitados}`);
+  check(saneNova?.totais?.hpHistoricoDescartados >= 3, `hp histórico descartados ${saneNova?.totais?.hpHistoricoDescartados}`);
+  check(saneNova?.totais?.vitalidadeHistoricoDescartados >= 2, `vitalidade histórico descartados ${saneNova?.totais?.vitalidadeHistoricoDescartados}`);
 
   const personagemNa = (nome) => comDb(banco, (db) => {
     const r = db.prepare("select id,data from characters where campaign_id=? and name=?").get(cidNova, nome);
@@ -277,6 +366,17 @@ try {
   p = personagemNa("ATQ xp autoria");
   check(p?.data.__xp?.historico[0]?.autorNome === "Mestre Teste", "autorNome resolvido pelo banco");
   check(p?.data.__xp?.historico[1]?.autorId === null && p?.data.__xp?.historico[1]?.autorNome === null, "autor desconhecido limpo");
+  // --- B1: eventos XP estritos ---
+  p = personagemNa("ATQ xp qtd zero");
+  check(p?.data.__xp?.saldo === 5 && p.data.__xp.historico.length === 1, "B1: quantidade zero descartada");
+  p = personagemNa("ATQ xp saldo negativo");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: saldoResultante negativo rejeitado");
+  p = personagemNa("ATQ xp compra s/ objeto");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: compra sem objeto invalida ledger");
+  p = personagemNa("ATQ xp compra transição");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: transição de nível incoerente rejeitada");
+  p = personagemNa("ATQ xp histórico ausente");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: histórico ausente não vira vazio confiável");
 
   // --- asserts persistidos: __pontos ---
   p = personagemNa("ATQ selo forjado");
@@ -301,6 +401,10 @@ try {
   check(p?.data.__xp?.financiado === undefined, "financiado inválido rejeitado por inteiro");
   p = personagemNa("ATQ fin legado");
   check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[1,2]", "legado numérico convertido em índices");
+  p = personagemNa("ATQ fin sem prova");
+  check(p?.data.__xp?.financiado === undefined, "B2: índices sem evento de compra rejeitados");
+  p = personagemNa("ATQ xp compra válida");
+  check(p?.data.__xp?.saldo === 4 && p.data.__xp.historico.length === 4 && p.data.__xp.historico[1]?.compra?.campoId === "tal", "compra legítima preservada íntegra");
 
   // --- asserts persistidos: vida/retrato/npc ---
   p = personagemNa("ATQ hp alto");
@@ -308,9 +412,17 @@ try {
   p = personagemNa("ATQ hp ok");
   check(p?.data.__hp?.atual === 80, "HP válido preservado");
   p = personagemNa("ATQ vitalidade fora");
-  check(p?.data.__vitalidade?.nivel === 2 && p.data.__vitalidade.nivelManual === 2, "vitalidade fora da escala corrigida");
+  check(p?.data.__vitalidade === undefined, "B3: vitalidade fora da escala removida (fallback conservador)");
   p = personagemNa("ATQ vitalidade ok");
   check(p?.data.__vitalidade?.nivel === 1, "vitalidade válida preservada");
+  p = personagemNa("ATQ vitalidade hist");
+  check(p?.data.__vitalidade?.nivel === 1 && p.data.__vitalidade.nivelManual === 1, "B3: nível válido preservado");
+  check(p?.data.__vitalidade?.campoExtra === undefined, "B3: campo arbitrário removido");
+  check(p?.data.__vitalidade?.historico?.length === 1, "B3: eventos inválidos de vitalidade descartados");
+  check(p?.data.__vitalidade?.historico?.[0]?.senha === undefined && p?.data.__vitalidade?.historico?.[0]?.origem === "manual", "B3: whitelist remove campos arbitrários do evento");
+  p = personagemNa("ATQ hp histórico");
+  check(p?.data.__hp?.historico?.length === 2, "B4: eventos de HP inválidos descartados");
+  check(p?.data.__hp?.historico?.[1]?.autorId === null && p?.data.__hp?.historico?.[1]?.autorNome === null && p?.data.__hp?.historico?.[1]?.extra === undefined, "B4: autoria forjada limpa e whitelist aplicada");
   p = personagemNa("ATQ retrato alheio");
   check(p?.data.__retrato === undefined, "retrato para arquivo inexistente removido");
   p = personagemNa("ATQ retrato ok");
@@ -319,6 +431,14 @@ try {
   check(p?.data.__npcVisivel === undefined, "npcVisivel malformado removido");
   p = personagemNa("ATQ npc ok");
   check(p?.data.__npcVisivel?.visivel === true, "npcVisivel válido preservado");
+  p = personagemNa("ATQ npc vitalidade forjada");
+  check(p?.data.__vitalidade === undefined, "B3: vitalidade forjada de NPC removida no banco");
+  check(p?.data.__hp?.atual === 150, "B3: HP forjado de NPC limitado ao máximo");
+  check(p?.data.__npcVisivel?.visivel === true, "B3: npcVisivel válido preservado para leitura pública");
+  // leitura pública do jogador: vitalidade forjada NÃO pode aparecer
+  const leituraNpc = await req(base, "GET", `/characters/${p.id}`, { cookie: jogadores.jogador1.cookie });
+  check(leituraNpc.status === 200, `GET NPC público ${leituraNpc.status}`);
+  check(leituraNpc.json?.ficha?.vida?.vitalidade?.nivel === 0, `B3: vitalidade pública do NPC não amplificada (nivel=${leituraNpc.json?.ficha?.vida?.vitalidade?.nivel})`);
 
   // --- consequência econômica via calcularPontos (banco persistido) ---
   const calcNa = (nome) => comDb(banco, (db) => {
@@ -328,9 +448,11 @@ try {
   const ptsOk = calcNa("ATQ fin ok");
   const ptsInv = calcNa("ATQ fin inválido");
   const ptsLeg = calcNa("ATQ fin legado");
-  check(ptsOk.pools[0]?.gastos === 1, `financiado [0,1] → só transição 2→3 custa (gastos=${ptsOk.pools[0]?.gastos})`);
+  const ptsSemProva = calcNa("ATQ fin sem prova");
+  check(ptsOk.pools[0]?.gastos === 1, `financiado [0,1] comprovado → só transição 2→3 custa (gastos=${ptsOk.pools[0]?.gastos})`);
   check(ptsInv.pools[0]?.gastos === 3, `financiado rejeitado → custo integral (gastos=${ptsInv.pools[0]?.gastos})`);
-  check(ptsLeg.pools[0]?.gastos === 1, `legado→[1,2] → transição 0→1 custa (gastos=${ptsLeg.pools[0]?.gastos})`);
+  check(ptsLeg.pools[0]?.gastos === 1, `legado→[1,2] comprovados → transição 0→1 custa (gastos=${ptsLeg.pools[0]?.gastos})`);
+  check(ptsSemProva.pools[0]?.gastos === 3, `B2: sem prova de compra → custo integral (gastos=${ptsSemProva.pools[0]?.gastos})`);
 
   // ---------- importação modo "substituir" (mesmos ids, campanha original) ----------
   const impSub = await req(base, "POST", "/campaigns/importar", {

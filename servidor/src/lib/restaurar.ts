@@ -100,15 +100,16 @@ export function normalizarNumerosSessao(rows: unknown[] | undefined) {
 const repVazio = (): SaneamentoPersonagem => ({
   personagemId: "", nome: null, eventosXpDescartados: 0, ledgerXpInvalidado: false,
   financiadoRejeitados: 0, seloRemovido: false, bonusAjustado: false,
-  pontosHistoricoDescartados: 0, hpCorrigido: false, hpRemovido: false,
-  vitalidadeCorrigida: false, vitalidadeRemovida: false,
+  pontosHistoricoDescartados: 0, hpHistoricoDescartados: 0, hpCorrigido: false, hpRemovido: false,
+  vitalidadeHistoricoDescartados: 0, vitalidadeCorrigida: false, vitalidadeRemovida: false,
   retratoRemovido: false, npcVisivelRemovido: false,
 });
 
 function acumulou(r: SaneamentoPersonagem): boolean {
   return r.eventosXpDescartados > 0 || r.ledgerXpInvalidado || r.financiadoRejeitados > 0 ||
     r.seloRemovido || r.bonusAjustado || r.pontosHistoricoDescartados > 0 ||
-    r.hpCorrigido || r.hpRemovido || r.vitalidadeCorrigida || r.vitalidadeRemovida ||
+    r.hpHistoricoDescartados > 0 || r.hpCorrigido || r.hpRemovido ||
+    r.vitalidadeHistoricoDescartados > 0 || r.vitalidadeCorrigida || r.vitalidadeRemovida ||
     r.retratoRemovido || r.npcVisivelRemovido;
 }
 
@@ -148,8 +149,10 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
       if (rep.seloRemovido) t.selosRemovidos++;
       if (rep.bonusAjustado) t.bonusAjustados++;
       t.pontosHistoricoDescartados += rep.pontosHistoricoDescartados;
+      t.hpHistoricoDescartados += rep.hpHistoricoDescartados;
       if (rep.hpCorrigido) t.hpCorrigidos++;
       if (rep.hpRemovido) t.hpRemovidos++;
+      t.vitalidadeHistoricoDescartados += rep.vitalidadeHistoricoDescartados;
       if (rep.vitalidadeCorrigida) t.vitalidadeCorrigidas++;
       if (rep.vitalidadeRemovida) t.vitalidadeRemovidas++;
       if (rep.retratoRemovido) t.retratosRemovidos++;
