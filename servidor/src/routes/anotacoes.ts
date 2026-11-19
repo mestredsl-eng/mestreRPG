@@ -163,21 +163,33 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
   const body = notaSchema.partial().safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
   const d = somenteEnviados(body.data, req.body);
+  const papel = req.membership!.role;
+  const ehMestre = papel === "mestre";
+  // Paridade com POST: não-mestre nunca promove nota a kind "mestre".
+  if (!ehMestre && d.kind === "mestre") {
+    res.status(403).json({ erro: "Só o mestre cria anotações do mestre" }); return;
+  }
+  // Issue #171: com compartilhamento desligado, o PATCH só é válido se a
+  // visibilidade EFETIVA (enviada ou atual) for "privada" — cobre edição
+  // de conteúdo, recipients e qualquer campo sem visibility explícita.
+  // Editar nota compartilhada exige rebaixá-la para privada no mesmo PATCH.
+  if (!ehMestre) {
+    const visEfetiva = d.visibility ?? n.visibility;
+    if (visEfetiva !== "privada") {
+      const regras = await carregarRegras(req.params.campaignId);
+      if (!regras.config.notas?.jogadorCompartilha) {
+        res.status(403).json({ erro: "Compartilhamento não permitido nesta campanha" }); return;
+      }
+    }
+  }
   // revalida personagem ao trocar characterId
   if (d.characterId && d.characterId !== n.characterId) {
     const [char] = await db.select().from(characters).where(and(eq(characters.id, d.characterId), eq(characters.campaignId, req.params.campaignId))).limit(1);
     if (!char) { res.status(400).json({ erro: "Personagem não encontrado" }); return; }
     if (char.status === "arquivado") { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de vincular anotações" }); return; }
-    if (req.membership!.role !== "mestre") {
+    if (!ehMestre) {
       const [md] = await db.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (md?.userId !== req.usuario!.id) { res.status(403).json({ erro: "Diário pertence a outro jogador" }); return; }
-    }
-  }
-  // mudar visibilidade para compartilhada exige a mesma regra da criação
-  if (req.membership!.role !== "mestre" && d.visibility && d.visibility !== "privada") {
-    const regras = await carregarRegras(req.params.campaignId);
-    if (!regras.config.notas?.jogadorCompartilha) {
-      res.status(403).json({ erro: "Compartilhamento não permitido nesta campanha" }); return;
     }
   }
   let recips: string[] | null | undefined;
