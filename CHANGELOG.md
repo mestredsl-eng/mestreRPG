@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+## [1.0.0.5] - 2026-11-19
+
+### Novidades
+
+- **Personagens para jogadores e mestres:** a aba Personagens deixa de aparecer para espectadores, evitando navegação para uma área que não faz parte de seu papel na campanha.
+- **Controle de compartilhamento no Diário:** quando o mestre desativa `jogadorCompartilha`, jogadores passam a criar e editar notas somente como privadas; ao editar uma nota compartilhada, a interface avisa e a rebaixa para privada. O mestre mantém as opções completas de visibilidade.
+
+### Testes e validação
+
+- **Auditoria adversarial da PR #168:** aprovada no SHA `e93a05ec87cdd0f970701b8d35dda981f3d97db3`.
+- **`homologacao-papeis-ui.mjs`: 49/49; `teste-diario.mjs`: 43/43; `homologacao-busca-filtros.mjs`: 43/43.**
+- **CI #667:** servidor/build e homologações Playwright concluídos com sucesso; Mestre Voice #22 e Assistente de Desenvolvimento #482 também concluídos com sucesso no SHA auditado.
+- **Integração:** PR #168 integrada por merge commit `88a6ccd65d3b5573d822447994e346f72d4d7209`.
+
+### Débitos conhecidos
+
+- PATCH de anotação sem `visibility` ainda permite editar conteúdo de nota previamente compartilhada quando `jogadorCompartilha=false`.
+- PATCH de `recipients` sem `visibility` ainda permite alterar destinatários de nota selecionada sem passar pelo gate. Ambos foram classificados como P3 e registrados na PR para correção posterior.
+
 ## [1.0.0.4] - 2026-11-17
 
 ### Novidades
