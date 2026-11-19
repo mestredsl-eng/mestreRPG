@@ -36,6 +36,11 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [filtroImportantes, setFiltroImportantes] = useState(false);
   const [filtroData, setFiltroData] = useState("");
   const [form, setForm] = useState({ title: "", content: "", category: "livre", characterId: "", important: false, visibility: "privada" as Anotacao["visibility"], recipients: [] as string[] });
+  // Issue #163 N3: config.notas.jogadorCompartilha — quando o mestre
+  // desliga, o jogador só pode usar visibilidade "privada" (o backend
+  // responde 403 para qualquer compartilhamento).
+  const [jogadorCompartilha, setJogadorCompartilha] = useState(true);
+  const compartilhamentoBloqueado = papel === "jogador" && !jogadorCompartilha;
 
   // Geração da carga: respostas de requisições antigas (ex.: troca de aba
   // ou invalidação durante um fetch em andamento) não sobrescrevem o estado.
@@ -64,13 +69,14 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
     api.listarPersonagens(campaignId).then((r) => setPersonagens(r.personagens.filter((p) => p.ehEu || souMestre))).catch(() => {});
     api.listarMembros(campaignId).then((r) => setMembros(r.membros.filter((m) => m.status === "ativo" && m.userId !== undefined))).catch(() => {});
     api.listarArquivos(campaignId).then((r) => setArquivos(r.arquivos.filter((a) => a.status === "aprovado"))).catch(() => {});
+    api.obterRegras(campaignId).then((r) => setJogadorCompartilha(r.config.notas?.jogadorCompartilha !== false)).catch(() => {});
   }, [campaignId, souMestre]);
 
   const abrirEdicao = (n: Anotacao | null) => {
     setEditando(n);
     setNovo(n === null);
     setForm(n
-      ? { title: n.title, content: n.content, category: n.category ?? "livre", characterId: n.characterId ?? "", important: !!n.important, visibility: n.visibility, recipients: (n.recipients ?? []) as string[] }
+      ? { title: n.title, content: n.content, category: n.category ?? "livre", characterId: n.characterId ?? "", important: !!n.important, visibility: compartilhamentoBloqueado ? "privada" : n.visibility, recipients: (n.recipients ?? []) as string[] }
       : { title: "", content: "", category: aba === "mestre" ? "planejamento" : "livre", characterId: "", important: false, visibility: "privada", recipients: [] });
   };
 
@@ -164,11 +170,14 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
                 </select>
               </span>
             )}
-            <select value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value as Anotacao["visibility"] })}>
-              {VISIBILIDADES.map((v) => <option key={v.v} value={v.v}>{v.l}</option>)}
+            <select aria-label="Visibilidade da anotação" value={form.visibility} onChange={(e) => setForm({ ...form, visibility: e.target.value as Anotacao["visibility"] })}>
+              {(compartilhamentoBloqueado ? VISIBILIDADES.filter((v) => v.v === "privada") : VISIBILIDADES).map((v) => <option key={v.v} value={v.v}>{v.l}</option>)}
             </select>
             <label><input type="checkbox" checked={form.important} onChange={(e) => setForm({ ...form, important: e.target.checked })} /> Importante</label>
           </div>
+          {compartilhamentoBloqueado && editando && editando.visibility !== "privada" && (
+            <p className="dica">O mestre não permite compartilhamento nesta campanha — ao salvar, esta anotação volta a ser "Somente eu".</p>
+          )}
           {form.visibility === "selecionada" && (
             <div className="linha">
               {membros.map((m) => (
