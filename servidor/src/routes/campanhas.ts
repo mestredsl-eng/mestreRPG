@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, desc, inArray } from "drizzle-orm";
+import { and, eq, desc, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { randomBytes, createHash } from "node:crypto";
 import { getDb } from "../db/index.js";

@@ -399,10 +399,17 @@ try {
     insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at)
     values (?,?,?,?,?,?,?,?,?)
   `).run(mBob, campCarol.json.campanha.id, idDe("bob"), "mestre", "ativo", JSON.stringify({}), agoraCorrida, agoraCorrida, agoraCorrida);
+  const mestresAntesCorrida = dbCampCorrida.prepare(`
+    select count(*) n from memberships
+    where campaign_id=? and role='mestre' and status='ativo'
+  `).get(campCarol.json.campanha.id).n;
   dbCampCorrida.close();
+  t("corrida: Alice e Bob são exatamente os 2 mestres ativos", mestresAntesCorrida === 2, `mestres=${mestresAntesCorrida}`);
   const [delMestreAlice, delMestreBob] = await Promise.all([
-    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieCarol }),
-    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieCarol }),
+    // Alice e Bob são os dois mestres ativos e cada um usa sua própria sessão
+    // de mestre para remover o vínculo do outro, reproduzindo a corrida real.
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieAlice }),
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieBob }),
   ]);
   const stMestres = [delMestreAlice.status, delMestreBob.status].sort((a, b) => a - b);
   t("corrida: uma remoção do último mestre passa e a outra é recusada",
