@@ -60,12 +60,135 @@ async function registrarMov(page, conta, tipo, valor, desc) {
 }
 const saldoTag = (page) => page.locator(".tag", { hasText: "Carteira" }).first().textContent().catch(() => "");
 
+function configurarCasasDecimais(campId, casas) {
+  const db = abrirDb(BANCO);
+  try {
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+    if (!rs) throw new Error("rule_set ativo não encontrado para configurar casas decimais");
+    const cfg = JSON.parse(rs.config || "{}");
+    cfg.financeiro = { ...(cfg.financeiro ?? {}), casasDecimais: casas };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+  } finally { db.close(); }
+}
+
+function inserirTransacaoLegada({ characterId, campaignId, createdBy }, amount, description, extra = {}) {
+  const db = abrirDb(BANCO);
+  try {
+    db.prepare(`
+      insert into money_transactions
+        (id, character_id, campaign_id, kind, amount, currency, account, description,
+         amount_cents, request_id, balance_before_cents, balance_after_cents, created_by, created_at)
+      values (?, ?, ?, ?, ?, 'BRL', 'especie', ?, null, ?, null, null, ?, ?)
+    `).run(crypto.randomUUID(), characterId, campaignId, extra.kind ?? (amount < 0 ? "saida" : "entrada"), amount, description, extra.requestId ?? null, createdBy, Date.now());
+  } finally { db.close(); }
+}
+
+async function testarHistoricoLegado(ids, casos, modo) {
+  const viewport = modo === "desktop" ? { width: 1366, height: 900 } : { width: 390, height: 844 };
+  const contexto = await browser.newContext({ viewport });
+  const page = await contexto.newPage();
+  try {
+    // Uma sessão por viewport evita que a própria homologação dispare
+    // dezenas de logins e acione limitadores de autenticação.
+    await login(page, "jogador_um", "senha-jogador-123");
+    for (const caso of casos) {
+      const prefixo = `Legado ${modo} ${caso.casas} casas ${caso.positivo}/${caso.negativo}`;
+      const descricaoPositiva = `${prefixo} positivo`;
+      const descricaoNegativa = `${prefixo} negativo`;
+      configurarCasasDecimais(ids.campId, caso.casas);
+      inserirTransacaoLegada(ids, caso.positivo, descricaoPositiva);
+      inserirTransacaoLegada(ids, caso.negativo, descricaoNegativa);
+
+      // Remonta a página para buscar novamente a configuração e o histórico.
+      await page.goto(BASE);
+      await page.getByText("Servidor online").waitFor({ timeout: 15000 });
+      await irCampanha(page);
+      await abrirPersonagem(page, "Heroína Um");
+      await abaPatrimonio(page, "Dinheiro");
+
+      // Política canônica do servidor: amountCents = Math.round(amount *
+      // 10 ** casas) e a UI formata (cents / 10 ** casas) com `casas`
+      // decimais. O esperado NÃO é toFixed() sobre o REAL bruto — ele
+      // diverge do contrato (ex.: 10.235 → "10.23" vs canônico "10.24";
+      // -0.125 → "-0.13" vs canônico "-0.12").
+      const esperadoLegado = (v, casas) => {
+        const cents = Math.round(v * 10 ** casas);
+        return (cents / 10 ** casas).toFixed(casas);
+      };
+      const esperadoPositivo = esperadoLegado(caso.positivo, caso.casas);
+      const esperadoNegativo = esperadoLegado(caso.negativo, caso.casas);
+      if (modo === "desktop") {
+        const linhaPositiva = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoPositiva }).first();
+        const linhaNegativa = page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricaoNegativa }).first();
+        await linhaPositiva.waitFor({ state: "visible", timeout: 8000 });
+        await linhaNegativa.waitFor({ state: "visible", timeout: 8000 });
+        const valorPositivo = linhaPositiva.locator("td").nth(5);
+        const valorNegativo = linhaNegativa.locator("td").nth(5);
+        t(`${prefixo}: valor positivo correto no desktop`, (await valorPositivo.innerText()).trim() === esperadoPositivo, await valorPositivo.innerText());
+        t(`${prefixo}: valor negativo correto no desktop`, (await valorNegativo.innerText()).trim() === esperadoNegativo, await valorNegativo.innerText());
+        t(`${prefixo}: negativo recebe classe de erro no desktop`, (await valorNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
+      } else {
+        const cartaoPositivo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoPositiva }).first();
+        const cartaoNegativo = page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricaoNegativa }).first();
+        await cartaoPositivo.waitFor({ state: "visible", timeout: 8000 });
+        await cartaoNegativo.waitFor({ state: "visible", timeout: 8000 });
+        const campoPositivo = cartaoPositivo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+        const campoNegativo = cartaoNegativo.locator(".registro-campo").filter({ hasText: "Valor" }).first().locator("span").last();
+        t(`${prefixo}: valor positivo correto no mobile`, (await campoPositivo.innerText()).trim() === esperadoPositivo, await campoPositivo.innerText());
+        t(`${prefixo}: valor negativo correto no mobile`, (await campoNegativo.innerText()).trim() === esperadoNegativo, await campoNegativo.innerText());
+        t(`${prefixo}: negativo recebe classe de erro no mobile`, (await campoNegativo.getAttribute("class"))?.split(/\s+/).includes("erro"));
+      }
+    }
+  } finally {
+    await contexto.close();
+  }
+}
+
+
+// Modal de estorno sobre transacao legada (amount REAL, amount_cents
+// NULL): o GET normaliza amountCents e o modal deve exibir o valor
+// canonico — nunca "—" — em desktop e mobile.
+async function testarModalEstornoLegado(ids, modo) {
+  const viewport = modo === "desktop" ? { width: 1366, height: 900 } : { width: 390, height: 844 };
+  const contexto = await browser.newContext({ viewport });
+  const page = await contexto.newPage();
+  const requestId = `legado-estorno-${modo}`;
+  const descricao = `Legado estorno ${modo}`;
+  const amount = 10.235;
+  try {
+    inserirTransacaoLegada(ids, amount, descricao, { kind: "compra", requestId });
+    await login(page, "jogador_um", "senha-jogador-123");
+    await irCampanha(page);
+    await abrirPersonagem(page, "Heroína Um");
+    await abaPatrimonio(page, "Dinheiro");
+
+    // amountCents canonico: Math.round(10.235 * 100) = 1024 -> "10.24".
+    const esperado = (Math.abs(Math.round(amount * 100)) / 100).toFixed(2);
+    const gatilho = modo === "desktop"
+      ? page.locator(".tabela-responsiva tbody tr").filter({ hasText: descricao }).first().getByRole("button", { name: "Estornar" })
+      : page.locator(".cartoes-registro .registro-cartao").filter({ hasText: descricao }).first().getByRole("button", { name: "Estornar operação" });
+    await gatilho.waitFor({ state: "visible", timeout: 8000 });
+    await gatilho.click();
+    await page.locator(".modal").waitFor({ timeout: 8000 });
+    const modalTxt = await page.locator(".modal").innerText();
+    t(`modal estorno ${modo}: valor legado normalizado visivel`,
+      modalTxt.includes(`de ${esperado}?`) && !modalTxt.includes("de —?"),
+      modalTxt.slice(0, 200));
+    t(`modal estorno ${modo}: nao exibe "—" no lugar do valor`,
+      /Estornar a compra de \d/.test(modalTxt), modalTxt.slice(0, 200));
+    await page.locator(".modal").getByRole("button", { name: "Cancelar" }).click();
+    await page.locator(".modal").waitFor({ state: "hidden", timeout: 5000 }).catch(() => undefined);
+  } finally {
+    await contexto.close();
+  }
+}
+
 try {
   await prepararBanco(BANCO);
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO);
-  cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
+  const heroinaId = cenario.novoPersonagem(cenario.jogadores.jogador1.membershipId, "Heroína Um");
   browser = await chromium.launch();
 
   const ctxJ = await browser.newContext({ viewport: { width: 1366, height: 900 } });
@@ -101,6 +224,29 @@ try {
   t("histórico mostra Bônus e Compra", histTxt.includes("Bônus da sessão") && histTxt.includes("Compra de suprimentos"));
   t("histórico mostra saldo após (120)", /120/.test(histTxt));
   await shot(pgJ, "02-historico-saldos");
+
+  sec("2.1 Histórico legado: escala configurada e sinal (desktop + mobile)");
+  const idsLegado = { campId: cenario.campId, campaignId: cenario.campId, characterId: heroinaId, createdBy: cenario.adminId };
+  const casosLegado = [
+    { casas: 0, positivo: 42, negativo: -3 },
+    { casas: 1, positivo: 42.5, negativo: -3.5 },
+    { casas: 2, positivo: 42.25, negativo: -3.75 },
+    { casas: 3, positivo: 42.125, negativo: -3.875 },
+    { casas: 4, positivo: 42.0625, negativo: -3.9375 },
+    // Casos que distinguem Math.round canônico de toFixed() sobre o REAL:
+    // 10.235 → "10.24" (toFixed daria "10.23"); -0.125 → "-0.12"
+    // (toFixed daria "-0.13"); 0.35@1 → "0.4"; -0.12345@4 → "-0.1234".
+    { casas: 1, positivo: 0.35, negativo: -0.35 },
+    { casas: 2, positivo: 10.235, negativo: -0.125 },
+    { casas: 4, positivo: 0.12345, negativo: -0.12345 },
+  ];
+  await testarHistoricoLegado(idsLegado, casosLegado, "desktop");
+  await testarHistoricoLegado(idsLegado, casosLegado, "mobile");
+  configurarCasasDecimais(cenario.campId, 2);
+
+  sec("2.2 Modal de estorno — transação legada normalizada (desktop + mobile)");
+  await testarModalEstornoLegado(idsLegado, "desktop");
+  await testarModalEstornoLegado(idsLegado, "mobile");
 
   sec("3. Transferência de item entre personagens (UI, mestre)");
   // Jogador só enxerga o próprio personagem — transferência é visão do mestre.
