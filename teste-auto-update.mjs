@@ -348,7 +348,7 @@ try {
     // reforco explicito: fetch/pull acontecem normalmente
     const cOk = criarRepo("b1-ok");
     publicar(cOk);
-    const rOk = await verificarAtualizacao({ cwd: cOk.local, executar: execReal, log: silencioso });
+    const rOk = await verificarAtualizacao({ ...opcoesRepo(cOk), executar: execReal, log: silencioso });
     t("upstream origin/main → permitido", rOk.atualizou === true, rOk.motivo);
 
     // upstream apontando para OUTRO remoto → bloqueado antes de qualquer fetch
@@ -360,7 +360,7 @@ try {
     gitSetup(["update-ref", "refs/remotes/outro/main", "HEAD"], cOut.local);
     gitSetup(["branch", "--set-upstream-to=outro/main"], cOut.local);
     const regOut = [];
-    const rOut = await verificarAtualizacao({ cwd: cOut.local, executar: executarHibrido({ registro: regOut }), log: silencioso });
+    const rOut = await verificarAtualizacao({ ...opcoesRepo(cOut), executar: executarHibrido({ registro: regOut }), log: silencioso });
     t("upstream outro-remoto/main → upstream-invalido", rOut.atualizou === false && rOut.motivo === "upstream-invalido", `${rOut.motivo} up=${rOut.upstream}`);
     t("nenhum fetch/pull com upstream estranho", !regOut.some((x) => x.includes("fetch") || x.includes("pull")), regOut.join(" | "));
 
@@ -373,7 +373,7 @@ try {
     gitSetup(["update-ref", "refs/remotes/fork/main", "HEAD"], cFork.local);
     gitSetup(["branch", "--set-upstream-to=fork/main"], cFork.local);
     const regFork = [];
-    const rFork = await verificarAtualizacao({ cwd: cFork.local, executar: executarHibrido({ registro: regFork }), log: silencioso });
+    const rFork = await verificarAtualizacao({ ...opcoesRepo(cFork), executar: executarHibrido({ registro: regFork }), log: silencioso });
     t("upstream de fork → upstream-invalido", rFork.atualizou === false && rFork.motivo === "upstream-invalido", rFork.motivo);
     t("nenhum fetch/pull com upstream de fork", !regFork.some((x) => x.includes("fetch") || x.includes("pull")), regFork.join(" | "));
   }
