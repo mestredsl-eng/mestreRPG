@@ -1,0 +1,37 @@
+name: Mestre Voice
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "servidor/src/db/schema.ts"
+      - "servidor/src/sockets/mesa.ts"
+      - "servidor/src/lib/voz.ts"
+      - "servidor/testes/mestre-voice.test.ts"
+      - "servidor/migrations/**"
+      - "site/src/api.ts"
+      - "site/src/lib/mestreVoice.ts"
+      - "site/testes/mestre-voice.test.ts"
+      - "site/src/paginas/Mesa.tsx"
+      - "site/src/estilos.css"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  voz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build e typecheck dos workspaces
+        run: npm run build
+      - name: Testes de inferência de gênero vocal
+        run: npx tsx servidor/testes/mestre-voice.test.ts
+      - name: Testes da fila local e seleção de voz
+        run: npx tsx site/testes/mestre-voice.test.ts
