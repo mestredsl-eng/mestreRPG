@@ -23,6 +23,7 @@ const RAIZ_REPO = dirname(fileURLToPath(import.meta.url));
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
 const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 0017
+const ID_NOVIDADE_1006 = "00000000-0000-4000-8000-000000000106"; // seed da v1.0.6 (Issue #171)
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -48,6 +49,14 @@ const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 let proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
 await esperarSaudavel(BASE, proc);
+// Remove o seed da v1.0.6 para que os contadores cubram apenas as
+// publicações criadas nesta suíte. A migration é testada adiante em um
+// banco legado separado, sem remover o registro de instalações reais.
+{
+  const db = abrirDb(BANCO);
+  db.prepare("delete from novidades where id=?").run(ID_NOVIDADE_1006);
+  db.close();
+}
 
 const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Novidades", jogadores: { a: "usuario_a", b: "usuario_b" } });
 const M = cenario.cookieMestre;
@@ -492,7 +501,22 @@ sec("Migration em banco existente preserva dados");
     const ts = db2.prepare("select name from sqlite_master where type='table'").all().map((r) => r.name);
     t("novidades criadas no upgrade", ts.includes("novidades") && ts.includes("novidade_leituras"));
     t("dados preservados", db2.prepare("select count(*) c from users").get().c === antes.users && db2.prepare("select count(*) c from campaigns").get().c === antes.campaigns);
+
+    const anuncio = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1006);
+    t("migration 0029 publica a correção v1.0.6 na Central de Novidades",
+      anuncio?.versao === "1.0.6" && anuncio?.categoria === "correcao" && anuncio?.estado === "publicada" && !!anuncio?.publicado_em,
+      JSON.stringify(anuncio));
     db2.close();
+
+    // A instrução de seed também é segura em reexecução: o ID estável e
+    // INSERT OR IGNORE impedem uma segunda publicação duplicada.
+    {
+      const db3 = new Database(BANCO_VELHO);
+      db3.exec(readFileSync(join(MIGRATIONS, "0029_release_1006_diario_permissoes_news.sql"), "utf8"));
+      const quantidadeAnuncios = db3.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1006).c;
+      t("seed da Central de Novidades é idempotente", quantidadeAnuncios === 1, String(quantidadeAnuncios));
+      db3.close();
+    }
   } finally {
     limparDir(RAIZ2);
   }
