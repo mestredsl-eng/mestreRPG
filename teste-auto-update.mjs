@@ -6,7 +6,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   verificarAtualizacao, executarBoot, reverterAtualizacao,
   executarReal, normalizarUrlRepo, REPO_OFICIAL,
@@ -392,6 +392,61 @@ try {
     const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
     t("lockfile inalterado → npm ci pulado", b.codigo === 0 && !reg.some((x) => x.includes(" ci")), reg.join(" | "));
     t("build ainda executado", reg.some((x) => x.includes("build")));
+  }
+
+  sec("Extra — lockfile aninhado dispara npm ci");
+  {
+    const c = criarRepo("c20-nested-lock");
+    publicar(c, "lockfile-site", { "site/package-lock.json": '{"lockfileVersion":3,"packages":{}}\\n' });
+    mkdirSync(join(c.local, "node_modules"), { recursive: true });
+    const reg = [];
+    const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
+    t("site/package-lock.json alterado → npm ci executado", b.codigo === 0 && reg.some((x) => x.endsWith(" ci")), reg.join(" | "));
+  }
+
+  sec("Extra — ambiente GIT_* herdado não redireciona o repositório");
+  {
+    const c = criarRepo("c21-env-git");
+    const r = executarReal("git", ["rev-parse", "--show-toplevel"], {
+      cwd: c.local,
+      env: {
+        GIT_DIR: c.origin,
+        GIT_WORK_TREE: c.origin,
+        GIT_INDEX_FILE: join(c.base, "indice-externo"),
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "core.worktree",
+        GIT_CONFIG_VALUE_0: c.origin,
+      },
+    });
+    const raizRetornada = String(r.stdout).trim().replace(/\\\\/g, "/").toLowerCase();
+    const raizEsperada = c.local.replace(/\\\\/g, "/").toLowerCase();
+    t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === raizEsperada, `code=${r.code} raiz=${raizRetornada}`);
+  }
+
+  sec("Extra — recuperação manual pelo arquivo de estado");
+  {
+    const c = criarRepo("c22-state-recovery");
+    const shaAnterior = head(c.local);
+    publicar(c, "atualizacao-persistida");
+    const v = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
+    const shaNovo = head(c.local);
+    const st = estado(c.base);
+    writeFileSync(st, JSON.stringify({
+      shaAnterior, shaNovo, repoDir: c.local, depsMudaram: true, branch: "main",
+      em: new Date().toISOString(),
+    }, null, 2));
+    const reg = [];
+    const rb = await reverterAtualizacao({
+      ...opcoesRepo(c), stateFile: st,
+      executar: executarHibrido({ registro: reg }), log: silencioso,
+    });
+    t("estado persistido válido → rollback manual concluído", v.atualizou === true && rb.ok === true, JSON.stringify({ v, rb }));
+    t("recuperação manual restaura SHA anterior", head(c.local) === shaAnterior);
+    t("arquivo de estado é removido após recuperação", !existsSync(st));
+    t("recuperação manual reinstala deps e recompila ambos workspaces",
+      reg.some((x) => x.endsWith(" ci")) &&
+      reg.some((x) => x.includes("build -w servidor")) &&
+      reg.some((x) => x.includes("build -w site")), reg.join(" | "));
   }
 
   sec("Extra — config do site força rebuild mesmo com dist mais recente");

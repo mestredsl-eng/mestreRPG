@@ -36,7 +36,16 @@ const GIT_ENV = {
 
 /** Execucao real de comandos. Injetavel nos testes. */
 export function executarReal(cmd, args, { cwd, env, timeoutMs } = {}) {
+  // O updater não herda variáveis GIT_* do processo pai: GIT_DIR,
+  // GIT_WORK_TREE, GIT_INDEX_FILE e GIT_CONFIG_* podem redirecionar
+  // comandos para outro repositório ou alterar sua configuração. Mantemos
+  // somente as duas variáveis operacionais que este fluxo controla.
   const ambiente = { ...process.env, ...(env ?? {}) };
+  for (const chave of Object.keys(ambiente)) {
+    if (/^GIT_/i.test(chave)) delete ambiente[chave];
+  }
+  ambiente.GIT_TERMINAL_PROMPT = env?.GIT_TERMINAL_PROMPT ?? GIT_ENV.GIT_TERMINAL_PROMPT;
+  ambiente.GIT_SSH_COMMAND = env?.GIT_SSH_COMMAND ?? GIT_ENV.GIT_SSH_COMMAND;
   const npmWindows = process.platform === "win32" && (cmd === "npm" || cmd === "npm.cmd");
 
   // npm no Windows e um .cmd, que nao pode ser iniciado diretamente por
@@ -211,7 +220,8 @@ export async function verificarAtualizacao(opts = {}) {
     }
     const arquivosMudados = String(diffArquivos.stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     const depsMudaram = arquivosMudados.some((p) =>
-      p === "package-lock.json" || p === "package.json" || p.endsWith("/package.json")
+      p === "package-lock.json" || p.endsWith("/package-lock.json") ||
+      p === "package.json" || p.endsWith("/package.json")
     ) || !existsSync(join(repoDir, "node_modules"));
     // O timestamp de site/src não detecta mudanças em vite.config.ts,
     // index.html, tsconfig ou package.json. Qualquer mudança no workspace
