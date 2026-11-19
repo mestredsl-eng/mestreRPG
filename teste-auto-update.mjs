@@ -345,11 +345,15 @@ try {
   sec("Extra — config do site força rebuild mesmo com dist mais recente");
   {
     const c = criarRepo("c17");
-    // O bundle/dist é posterior ao fonte, então a regra antiga por mtime
-    // pularia o build. Alterar apenas vite.config.ts deve forçar o build.
+    // O clone local já tem um dist rastreado, com mtime posterior ao src.
+    // Só o commit remoto altera vite.config.ts: o rebuild deve ser forçado
+    // pelo diff do workspace, não pela comparação de timestamps.
+    c.commit(c.local, "dist existente", {
+      "site/dist/index.html": "<html>bundle antigo</html>\\n",
+    });
+    gitSetup(["push", "origin", "main"], c.local);
     publicar(c, "config-site", {
-      "site/vite.config.ts": "export default { define: { __TESTE__: true } };\n",
-      "site/dist/index.html": "<html>bundle antigo</html>\n",
+      "site/vite.config.ts": "export default { define: { __TESTE__: true } };\\n",
     });
     const dist = join(c.local, "site", "dist", "index.html");
     const futuro = new Date(Date.now() + 60_000);
