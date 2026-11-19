@@ -397,7 +397,7 @@ try {
   sec("Extra — lockfile aninhado dispara npm ci");
   {
     const c = criarRepo("c20-nested-lock");
-    publicar(c, "lockfile-site", { "site/package-lock.json": '{"lockfileVersion":3,"packages":{}}\\n' });
+    publicar(c, "lockfile-site", { "site/package-lock.json": '{"lockfileVersion":3,"packages":{}}' });
     mkdirSync(join(c.local, "node_modules"), { recursive: true });
     const reg = [];
     const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
@@ -418,8 +418,8 @@ try {
         GIT_CONFIG_VALUE_0: c.origin,
       },
     });
-    const raizRetornada = String(r.stdout).trim().replace(/\\\\/g, "/").toLowerCase();
-    const raizEsperada = c.local.replace(/\\\\/g, "/").toLowerCase();
+    const raizRetornada = resolve(String(r.stdout).trim()).toLowerCase();
+    const raizEsperada = resolve(c.local).toLowerCase();
     t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === raizEsperada, `code=${r.code} raiz=${raizRetornada}`);
   }
 
