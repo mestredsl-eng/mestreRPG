@@ -1134,10 +1134,19 @@ patrimonioRouter.get("/financeiro", async (req, res) => {
   const historico = await db.select().from(moneyTransactions)
     .where(eq(moneyTransactions.characterId, a.personagem.id))
     .orderBy(desc(moneyTransactions.createdAt)).limit(100);
+  const casas = config.financeiro.casasDecimais;
   res.json({
     config: config.financeiro,
-    contas: contas.map((c) => ({ ...c, saldo: deCentavos(c.balanceCents, config.financeiro.casasDecimais) })),
-    historico,
+    contas: contas.map((c) => ({ ...c, saldo: deCentavos(c.balanceCents, casas) })),
+    historico: historico.map((t) => ({
+      ...t,
+      // Transações legadas guardam apenas `amount` em unidades monetárias
+      // (REAL), sem amount_cents. A resposta preenche amountCents pela
+      // MESMA política das escritas (paraCentavos) — somente leitura;
+      // o valor persistido nunca é reescrito. O cliente formata sempre
+      // a partir do inteiro escalado, sem um segundo arredondamento.
+      amountCents: t.amountCents ?? (Number.isFinite(t.amount) ? paraCentavos(t.amount, casas) : null),
+    })),
   });
 });
 

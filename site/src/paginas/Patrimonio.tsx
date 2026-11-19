@@ -1020,6 +1020,21 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
   const fmt = (unidades: number | null | undefined) =>
     unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
 
+  // amountCents chega sempre escalado pelo servidor — inclusive para
+  // transações legadas, que o GET /financeiro normaliza na resposta com a
+  // mesma política das escritas (Math.round(valor * 10 ** casas)). O
+  // cliente não mantém um segundo caminho de arredondamento: toFixed()
+  // sobre o REAL bruto diverge do contrato canônico (ex.: 10.235 → 10.23
+  // vs 10.24) e não pode ser usado aqui.
+  const valorTransacao = (t: TransacaoFinanceira) => fmt(t.amountCents);
+  const transacaoNegativa = (t: TransacaoFinanceira) => (t.amountCents ?? 0) < 0;
+  // Modal de estorno: mesmo amountCents já normalizado pelo servidor —
+  // transações legadas chegam com o inteiro canônico preenchido pelo
+  // GET, então o valor nunca cai em "—" por causa do REAL bruto. O "—"
+  // só aparece quando nem o legado nem o cents existem de fato.
+  const valorTransacaoAbs = (t: TransacaoFinanceira) =>
+    t.amountCents != null ? fmt(Math.abs(t.amountCents)) : "—";
+
   // Rótulos amigáveis dos tipos de movimentação.
   const ROTULO_KIND: Record<string, string> = {
     entrada: "Entrada", saida: "Saída", ajuste: "Ajuste", compra: "Compra",
@@ -1072,7 +1087,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
               <td>{t.description ?? "—"}</td>
               <td>{t.account ?? "—"}</td>
               <td>{t.counterparty ?? "—"}</td>
-              <td className={t.amountCents !== null && t.amountCents < 0 ? "erro" : "online"}>{t.amountCents !== null ? fmt(t.amountCents) : fmt(t.amount * 100)}</td>
+              <td className={transacaoNegativa(t) ? "erro" : "online"}>{valorTransacao(t)}</td>
               <td>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</td>
               {!somenteLeitura && (
                 <td>{podeEstornar(t) && <button type="button" className="secundario" onClick={() => setEstornando(t)}>Estornar</button>}</td>
@@ -1092,7 +1107,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
             {t.counterparty && <div className="registro-campo"><span className="registro-rotulo">Contraparte</span><span>{t.counterparty}</span></div>}
             <div className="registro-campo">
               <span className="registro-rotulo">Valor</span>
-              <span className={t.amountCents !== null && t.amountCents < 0 ? "erro" : "online"}>{t.amountCents !== null ? fmt(t.amountCents) : fmt(t.amount * 100)}</span>
+              <span className={transacaoNegativa(t) ? "erro" : "online"}>{valorTransacao(t)}</span>
             </div>
             <div className="registro-campo"><span className="registro-rotulo">Saldo após</span><span>{t.balanceAfterCents !== null ? fmt(t.balanceAfterCents) : "—"}</span></div>
             {podeEstornar(t) && (
@@ -1107,7 +1122,7 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
       {estornando && (
         <ModalConfirmar
           titulo="Estornar operação"
-          mensagem={`Estornar a ${rotuloKind(estornando.kind).toLowerCase()} de ${estornando.amountCents !== null ? fmt(Math.abs(estornando.amountCents)) : "—"}? O saldo será revertido na mesma conta e o item correspondente será devolvido/removido do inventário. O histórico original será preservado.`}
+          mensagem={`Estornar a ${rotuloKind(estornando.kind).toLowerCase()} de ${valorTransacaoAbs(estornando)}? O saldo será revertido na mesma conta e o item correspondente será devolvido/removido do inventário. O histórico original será preservado.`}
           rotuloConfirmar="Estornar"
           perigo
           ocupado={ocupadoEstorno}
