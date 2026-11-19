@@ -23,16 +23,49 @@ const RAIZ_REPO = dirname(fileURLToPath(import.meta.url));
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
 const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 0017
+const ID_NOVIDADE_1005 = "00000000-0000-4000-8000-000000000105";
+const ID_NOVIDADE_XP_1005 = "00000000-0000-4000-8000-000000000106";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
+
+// As migrations 0028 e 0029 são somente de dados; ainda assim precisam manter a
+// cadeia de snapshots do Drizzle completa para a próxima db:generate/up.
+// Seu snapshot replica o esquema 0027 e aponta prevId para o snapshot pai.
+{
+  const meta = join(MIGRATIONS, "meta");
+  const anterior = JSON.parse(readFileSync(join(meta, "0027_snapshot.json"), "utf8"));
+  const atual = JSON.parse(readFileSync(join(meta, "0028_snapshot.json"), "utf8"));
+  const semIdentidade = ({ id, prevId, ...schema }) => schema;
+  t("snapshot 0028 encadeia em 0027 com UUID próprio",
+    atual.prevId === anterior.id && atual.id !== anterior.id && /^[0-9a-f-]{36}$/i.test(atual.id),
+    `prevId=${atual.prevId} anterior=${anterior.id}`);
+  t("snapshot 0028 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(atual)) === JSON.stringify(semIdentidade(anterior)));
+  const snapshotXp = JSON.parse(readFileSync(join(meta, "0029_snapshot.json"), "utf8"));
+  t("snapshot 0029 encadeia em 0028 com UUID próprio",
+    snapshotXp.prevId === atual.id && snapshotXp.id !== atual.id && /^[0-9a-f-]{36}$/i.test(snapshotXp.id),
+    `prevId=${snapshotXp.prevId} anterior=${atual.id}`);
+  t("snapshot 0029 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshotXp)) === JSON.stringify(semIdentidade(atual)));
+}
 
 // ---------- banco limpo com todas as migrations (cenário principal) ----------
 const DIR = dirTeste("novidades");
 const BANCO = join(DIR, "banco", "mestre-rpg.db");
 mkdirSync(dirname(BANCO), { recursive: true });
 await prepararBanco(BANCO);
+
+// A migration de release v1.0.5 publica um registro fixo na Central. Os
+// cenários CRUD abaixo precisam começar com a central vazia, pois testam
+// apenas as publicações criadas nesta suíte. A migration é testada adiante
+// em um banco legado separado, sem remover o registro de instalações reais.
+{
+  const db = abrirDb(BANCO);
+  db.prepare("delete from novidades where id in (?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005);
+  db.close();
+}
 
 sec("Migration em banco limpo");
 {
@@ -488,10 +521,27 @@ sec("Migration em banco existente preserva dados");
     const mig = spawnSync("node", [MIGRADOR], { env: { ...process.env, MESTRE_BANCO: BANCO_VELHO }, encoding: "utf8" });
     t("migrate em banco existente -> exit 0", mig.status === 0, (mig.stderr ?? "").slice(-300));
 
-    const db2 = new Database(BANCO_VELHO, { readonly: true });
+    const db2 = new Database(BANCO_VELHO);
     const ts = db2.prepare("select name from sqlite_master where type='table'").all().map((r) => r.name);
     t("novidades criadas no upgrade", ts.includes("novidades") && ts.includes("novidade_leituras"));
     t("dados preservados", db2.prepare("select count(*) c from users").get().c === antes.users && db2.prepare("select count(*) c from campaigns").get().c === antes.campaigns);
+
+    const anuncio = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1005);
+    t("migration 0028 publica a correção v1.0.5 na Central de Novidades",
+      anuncio?.versao === "1.0.5" && anuncio?.categoria === "correcao" && anuncio?.estado === "publicada" && !!anuncio?.publicado_em,
+      JSON.stringify(anuncio));
+
+    // A instrução de seed também é segura em reexecução: o ID estável e
+    // INSERT OR IGNORE impedem uma segunda publicação duplicada.
+    const anuncioXp = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_XP_1005);
+    t("migration 0029 publica integridade XP v1.0.5 na Central",
+      anuncioXp?.versao === "1.0.5" && anuncioXp?.categoria === "correcao" && anuncioXp?.estado === "publicada" && !!anuncioXp?.publicado_em,
+      JSON.stringify(anuncioXp));
+    db2.exec(readFileSync(join(MIGRATIONS, "0028_release_1005_campaign_substitution_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0029_release_1005_xp_import_integrity_news.sql"), "utf8"));
+    const quantidadeAnuncios = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1005).c;
+    const quantidadeXp = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_XP_1005).c;
+    t("seeds da Central de Novidades são idempotentes", quantidadeAnuncios === 1 && quantidadeXp === 1, `campanha=${quantidadeAnuncios} xp=${quantidadeXp}`);
     db2.close();
   } finally {
     limparDir(RAIZ2);
