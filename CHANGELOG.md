@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.0.0.6] - 2026-11-19
+
+### Correções e permissões
+
+- **Edição de anotações respeita o compartilhamento da campanha:** com `jogadorCompartilha` desligado, o jogador só pode alterar anotações cuja visibilidade efetiva continue `privada`. Antes, um PATCH apenas de conteúdo ou de destinatários sobre nota pública ou selecionada contornava a restrição, e um jogador podia promover a própria nota a `kind: "mestre"`.
+- **Downgrade controlado preservado:** o jogador ainda pode tornar uma nota compartilhada privada no mesmo PATCH, e o servidor limpa os destinatários ao fazer isso.
+- **Paridade com a criação:** a mesma regra de `kind`/`visibility` aplicada no POST agora vale para o PATCH; mestres permanecem isentos e a propriedade da nota continua obrigatória.
+- **Registro na Central de Novidades:** a migration `0029_release_1006_diario_permissoes_news.sql` publica esta correção na categoria `correcao`, versão `1.0.6`.
+
 ## [1.0.0.4] - 2026-11-17
 
 ### Novidades
