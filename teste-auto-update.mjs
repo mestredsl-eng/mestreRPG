@@ -89,7 +89,7 @@ function executarHibrido({ npmHandler, registro } = {}) {
 }
 const execReal = (cmd, args, opcoes = {}) => executarReal(cmd, args, { cwd: opcoes.cwd, env: opcoes.env, timeoutMs: opcoes.timeoutMs });
 const estado = (dir) => join(dir, "estado-update.json");
-const opcoesRepo = (c, extra = {}) => ({ cwd: c.local, urlOficial: c.origin, ...extra });
+const opcoesRepo = (c, extra = {}) => ({ cwd: c.local, urlOficial: String(c.origin).replace(/\\/g, "/"), ...extra });
 const logSilencio = [];
 const log = (m) => logSilencio.push(m);
 
