@@ -344,7 +344,11 @@ async function executarRollback(estado, opts = {}) {
   }
   const top = git(["rev-parse", "--show-toplevel"]);
   const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
-  if (estado.repoDir && resolve(estado.repoDir) !== resolve(repoDir)) {
+  const caminhoCanonico = (p) => {
+    const valor = resolve(p);
+    return process.platform === "win32" ? valor.toLowerCase() : valor;
+  };
+  if (estado.repoDir && caminhoCanonico(estado.repoDir) !== caminhoCanonico(repoDir)) {
     return { ok: false, motivo: "repositorio-divergente" };
   }
   // Não mover outra branch caso alguém troque HEAD durante deps/build.

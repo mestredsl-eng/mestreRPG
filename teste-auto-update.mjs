@@ -418,9 +418,10 @@ try {
         GIT_CONFIG_VALUE_0: c.origin,
       },
     });
-    const raizRetornada = resolve(String(r.stdout).trim()).toLowerCase();
-    const raizEsperada = resolve(c.local).toLowerCase();
-    t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === raizEsperada, `code=${r.code} raiz=${raizRetornada}`);
+    const canonizar = (p) => resolve(String(p).trim()).split(String.fromCharCode(92)).join("/").toLowerCase();
+    const raizRetornada = canonizar(r.stdout);
+    const raizEsperada = canonizar(c.local);
+    t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === raizEsperada, `code=${r.code} retorno=${raizRetornada} esperado=${raizEsperada}`);
   }
 
   sec("Extra — recuperação manual pelo arquivo de estado");
@@ -432,7 +433,7 @@ try {
     const shaNovo = head(c.local);
     const st = estado(c.base);
     writeFileSync(st, JSON.stringify({
-      shaAnterior, shaNovo, repoDir: c.local, depsMudaram: true, branch: "main",
+      shaAnterior, shaNovo, repoDir: v.repoDir, depsMudaram: true, branch: "main",
       em: new Date().toISOString(),
     }, null, 2));
     const reg = [];
