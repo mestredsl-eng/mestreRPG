@@ -602,6 +602,11 @@ export function resumoProgressao(
       motivo = "Elemento sem campo de nível disponível na ficha";
     } else if (el.definition.disponivel === false) {
       motivo = "Elemento desativado nesta campanha";
+    } else if (el.kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+      // Issue #152 M1: espelha simularCompraNivel — fora de "poder",
+      // o elemento precisa de nível atual; o motivo vem antes do
+      // cálculo de preço para GET nunca divergir do POST.
+      motivo = `${el.name} precisa de nível atual para evoluir por XP — somente poderes podem ser adquiridos do zero`;
     } else {
       const preco = precoProximoNivel(estrutura, dados, regras, el, vinculo, nivelAtual, nivelAlvo);
       precoProximo = preco.preco;

@@ -1329,6 +1329,34 @@ try {
     t("S21. comprar em aprovada sem selo → 403 ficha_nao_selada", bU.status === 403 && bU.json?.codigo === "ficha_nao_selada", `status=${bU.status} ${JSON.stringify(bU.json).slice(0, 200)}`);
     const rU = await darXp(CHU2, M, { acao: "remover", quantidade: 3, motivo: "ajuste admin" });
     t("S22. remover XP em aprovada sem selo → 200 (isento)", rU.status === 200 && rU.json?.xp?.saldo === 7, `status=${rU.status} saldo=${rU.json?.xp?.saldo}`);
+
+    // A6) reaberta e bloqueada COM selo válido (gerado pelo fluxo real
+    // de aprovação): o selo é o critério de elegibilidade ao XP — o
+    // status sozinho não bloqueia concessão/compra do mestre. Em
+    // "reaberta" o jogador volta a editar; em "bloqueada" a trava de
+    // campo (campoEditavelPor) segue valendo para o jogador, mas o
+    // mestre opera normalmente.
+    const CHRE = await novoSel("Selo Reaberta", { "f-forca": 1 });
+    const apRE = await req(BASE, "PATCH", `/characters/${CHRE}`, { cookie: M, body: { status: "aprovada" } });
+    t("S23. aprovar gera selo legítimo → 200", apRE.status === 200, `status=${apRE.status}`);
+    const reb = await req(BASE, "PATCH", `/characters/${CHRE}`, { cookie: M, body: { status: "reaberta" } });
+    t("S24. reabrir ficha aprovada → 200", reb.status === 200, `status=${reb.status}`);
+    const cRE = await darXp(CHRE, M, { acao: "conceder", quantidade: 10, motivo: "reaberta" });
+    t("S25. conceder XP em reaberta selada → 200", cRE.status === 200 && cRE.json?.xp?.saldo === 10, `status=${cRE.status} saldo=${cRE.json?.xp?.saldo}`);
+    const bRE = await comprar(CHRE, J1, { kind: "atributo", key: "forca", nivelAlvo: 2 });
+    t("S26. reaberta selada → jogador compra → 200", bRE.status === 200, `status=${bRE.status} ${JSON.stringify(bRE.json).slice(0, 200)}`);
+
+    const CHBL = await novoSel("Selo Bloqueada", { "f-forca": 1 });
+    const apBL = await req(BASE, "PATCH", `/characters/${CHBL}`, { cookie: M, body: { status: "aprovada" } });
+    t("S27. aprovar gera selo legítimo → 200", apBL.status === 200, `status=${apBL.status}`);
+    const bl = await req(BASE, "PATCH", `/characters/${CHBL}`, { cookie: M, body: { status: "bloqueada" } });
+    t("S28. bloquear ficha → 200", bl.status === 200, `status=${bl.status}`);
+    const cBL = await darXp(CHBL, M, { acao: "conceder", quantidade: 10, motivo: "bloqueada" });
+    t("S29. conceder XP em bloqueada selada → 200", cBL.status === 200 && cBL.json?.xp?.saldo === 10, `status=${cBL.status} saldo=${cBL.json?.xp?.saldo}`);
+    const bBLm = await comprar(CHBL, M, { kind: "atributo", key: "forca", nivelAlvo: 2 });
+    t("S30. bloqueada selada → mestre compra → 200", bBLm.status === 200, `status=${bBLm.status} ${JSON.stringify(bBLm.json).slice(0, 200)}`);
+    const bBLj = await comprar(CHBL, J1, { kind: "atributo", key: "forca", nivelAlvo: 3 });
+    t("S31. bloqueada selada → jogador segue travado por campo (403)", bBLj.status === 403, `status=${bBLj.status} ${JSON.stringify(bBLj.json).slice(0, 200)}`);
   }
 
   // ---------- Issue #152 B: kinds elegíveis vs proibidos -------------
@@ -1370,9 +1398,16 @@ try {
       const el = dispK.find((d) => d.kind === k && d.key === `k_${k}`);
       t(`K-get ${k}: proibido não comprável`, el?.compravel === false && el?.precoProximo === null && !!el?.motivo, `el=${JSON.stringify(el)}`);
     }
-    for (const k of KINDS_OK) {
+    // M1 (GET×POST): fora de "poder", nível 0 não pode ser comprado —
+    // o GET deve coincidir com o POST (aquisicao_nao_permitida):
+    // compravel:false, precoProximo:null e motivo explicativo.
+    for (const k of KINDS_OK.filter((x) => x !== "poder")) {
       const el = dispK.find((d) => d.kind === k && d.key === `k_${k}`);
-      t(`K-get ${k}: permitido com preço`, el?.precoProximo === 1, `el=${JSON.stringify(el)}`);
+      t(`K-get ${k}: nível 0 não comprável (GET×POST)`, el?.compravel === false && el?.precoProximo === null && /nível atual/.test(el?.motivo ?? ""), `el=${JSON.stringify(el)}`);
+    }
+    {
+      const elP = dispK.find((d) => d.kind === "poder" && d.key === "k_poder");
+      t("K-get poder: nível 0 segue comprável do zero", elP?.compravel === true && elP?.precoProximo === 1, `el=${JSON.stringify(elP)}`);
     }
 
     const antesK = await progressaoDe(CHK, J1);
