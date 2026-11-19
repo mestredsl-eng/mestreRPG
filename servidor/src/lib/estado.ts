@@ -3,6 +3,9 @@ import { resolve, sep } from "node:path";
 import { eq, inArray, getTableColumns } from "drizzle-orm";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
+  assinarLedgerXp, obterChaveAssinatura, impressaoDigitalRegras, type ContextoAssinatura,
+} from "./assinatura-xp.js";
+import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
   financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
@@ -110,6 +113,24 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     try {
       arquivos[f.id] = { conteudo: readFileSync(caminho).toString("base64"), mimeType: f.mimeType ?? null };
     } catch { /* arquivo físico ausente — metadados ainda exportados */ }
+  }
+
+  // Issue #162/B1-B2: assina o ledger XP de cada personagem — o pacote
+  // não pode ser sua própria autoridade. A chave fica em server_settings
+  // (não exportada); a assinatura cobre personagem, ledger integral e a
+  // impressão digital das regras do pacote.
+  const chave = await obterChaveAssinatura(db);
+  const ctxAss: ContextoAssinatura = {
+    chave,
+    regrasFp: impressaoDigitalRegras(estado.ruleSets, estado.ruleDefinitions),
+  };
+  for (const row of estado.characters ?? []) {
+    const data = row.data as Record<string, unknown> | null;
+    const xp = data && typeof data === "object" ? data.__xp : null;
+    if (!xp || typeof xp !== "object" || Array.isArray(xp)) continue;
+    const xpObj = xp as Record<string, unknown>;
+    const { sig: _antiga, ...xpSem } = xpObj;
+    xpObj.sig = assinarLedgerXp(ctxAss, String(row.id), xpSem);
   }
   return { versao: 1, exportadoEm: new Date().toISOString(), campanhaId: campaignId, estado, arquivos };
 }
