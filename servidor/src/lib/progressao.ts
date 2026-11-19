@@ -598,10 +598,12 @@ export function resumoProgressao(
       // Issue #152: kind proibido nunca calcula preco nem aparece
       // compravel, mesmo que tenha vinculo e custo configurado.
       motivo = `"${el.name}" nao pode evoluir por XP (tipo ${el.kind})`;
+    } else if (el.definition.disponivel === false) {
+      // Espelha simularCompraNivel: indisponível tem precedência
+      // sobre vínculo e aquisição inicial.
+      motivo = "Elemento desativado nesta campanha";
     } else if (!vinculo) {
       motivo = "Elemento sem campo de nível disponível na ficha";
-    } else if (el.definition.disponivel === false) {
-      motivo = "Elemento desativado nesta campanha";
     } else if (el.kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
       // Issue #152 M1: espelha simularCompraNivel — fora de "poder",
       // o elemento precisa de nível atual; o motivo vem antes do
@@ -677,6 +679,19 @@ export function simularCompraNivel(
   }
 
   const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
+
+  const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtro || filtro(v.campo));
+  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtro);
+  const semVinculo = vinculosAutorizados.length === 0;
+  if (!vinculo) {
+    return {
+      ok: false,
+      erro: semVinculo
+        ? `"${elemento.name}" não está vinculado a nenhum campo da ficha`
+        : `"${elemento.name}" não pode expressar o nível ${nivelAlvo} nos campos da ficha`,
+      codigo: "sem_vinculo",
+    };
+  }
   if (kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
     return {
       ok: false,
@@ -691,19 +706,6 @@ export function simularCompraNivel(
       erro: `A compra avança exatamente um nível por vez (atual ${nivelAtual}, alvo ${nivelAlvo})`,
       codigo: "salto_nivel",
       detalhes: { nivelAtual, nivelAlvo },
-    };
-  }
-
-  const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtro || filtro(v.campo));
-  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtro);
-  const semVinculo = vinculosAutorizados.length === 0;
-  if (!vinculo) {
-    return {
-      ok: false,
-      erro: semVinculo
-        ? `"${elemento.name}" não está vinculado a nenhum campo da ficha`
-        : `"${elemento.name}" não pode expressar o nível ${nivelAlvo} nos campos da ficha`,
-      codigo: "sem_vinculo",
     };
   }
   if (vinculo.modo === "binario" && nivelAtual >= 1) {

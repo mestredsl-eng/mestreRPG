@@ -68,19 +68,24 @@ try {
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   t("personagem criado", !!CHAR, JSON.stringify(pj.json).slice(0, 150));
 
-  // Selo legítimo via fluxo real: aprova (aplica __pontos.selo) e
-  // devolve — a ficha volta a ser editável pelo jogador com o selo
-  // preservado, habilitando concessão e compra de XP.
+  // Ciclo real de selo: o mestre aprova (aplica __pontos.selo via
+  // comSeloPontos), o XP é concedido com o selo existente e a ficha é
+  // reaberta pelo fluxo real do mestre — o selo é preservado e a
+  // ficha volta a ser editável para as compras do jogador.
   const ap = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: ids.cm, body: { status: "aprovada" } });
   t("ficha aprovada — selo de pontos aplicado", ap.status === 200, `status=${ap.status} ${JSON.stringify(ap.json).slice(0, 200)}`);
-  const dv = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: ids.cm, body: { status: "devolvida" } });
-  t("ficha devolvida — editável com selo preservado", dv.status === 200, `status=${dv.status}`);
 
-  // XP inicial via API (5): manipulação custa 3, força custa 2
+  // XP concedido DEPOIS do selo (ficha aprovada — ação do mestre).
   const xp0 = await req(BASE, "POST", `/characters/${CHAR}/xp`, {
     cookie: ids.cm, body: { acao: "conceder", quantidade: 5, motivo: "sessão inaugural" },
   });
-  t("XP concedido via API", xp0.status === 200 && xp0.json?.xp?.saldo === 5, `status=${xp0.status}`);
+  t("XP concedido via API com selo", xp0.status === 200 && xp0.json?.xp?.saldo === 5, `status=${xp0.status}`);
+
+  // Reabertura real pelo mestre: aprovada → reaberta preserva o selo.
+  const re = await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: ids.cm, body: { status: "reaberta" } });
+  t("ficha reaberta pelo mestre", re.status === 200, `status=${re.status} ${JSON.stringify(re.json).slice(0, 200)}`);
+  const det = await req(BASE, "GET", `/characters/${CHAR}`, { cookie: ids.j1.cookie });
+  t("selo preservado após reabertura", det.json?.ficha?.pontosBonus?.selado === true, `selado=${det.json?.pontosBonus?.selado} status=${det.status}`);
 
   const browser = await chromium.launch();
   const errosUi = [];

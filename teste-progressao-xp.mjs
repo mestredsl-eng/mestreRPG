@@ -1448,6 +1448,31 @@ try {
     t("K-buy poder 1→2 em selecao_nivel → 200", rp2.status === 200, `status=${rp2.status} ${JSON.stringify(rp2.json).slice(0, 200)}`);
   }
 
+  // ---------- Issue #152 D: precedência sem_vinculo × aquisição --------
+  sec("Issue #152 — kind permitido sem vínculo → sem_vinculo");
+  {
+    // O template principal não tem campo para talento/pericia/etc.:
+    // um elemento permitido sem vínculo autorizado deve responder
+    // sem_vinculo (não aquisicao_nao_permitida), mesmo em nível 0.
+    await elemento(CID, M, "talento", "tal_sem_vinculo", "Talento Sem Vínculo", { custoPontos: 1, disponivel: true });
+    const pV = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+      cookie: J1, body: { name: "Sem Vinculo", templateVersionId: vid, data: {} },
+    });
+    const CHV = pV.json?.personagem?.id ?? pV.json?.id;
+    t("V0. personagem sem vínculo criado", !!CHV, `id=${CHV}`);
+    selar(CHV);
+    await darXp(CHV, M, { acao: "conceder", quantidade: 50, motivo: "fundo sem vinculo" });
+
+    const antesV = await progressaoDe(CHV, J1);
+    const rv = await comprar(CHV, J1, { kind: "talento", key: "tal_sem_vinculo", nivelAlvo: 1 });
+    t("V1. permitido sem vínculo em nível 0 → sem_vinculo", rv.status === 400 && rv.json?.codigo === "sem_vinculo", `status=${rv.status} codigo=${rv.json?.codigo} ${JSON.stringify(rv.json).slice(0, 200)}`);
+    const depoisV = await progressaoDe(CHV, J1);
+    t("V2. rejeição sem_vinculo não altera saldo nem histórico", depoisV.json?.xp?.saldo === antesV.json?.xp?.saldo && depoisV.json?.xp?.historico?.length === antesV.json?.xp?.historico?.length, `saldo=${depoisV.json?.xp?.saldo}`);
+    // O elemento não tem campo na ficha — o nível permanece inexistente.
+    const fV = await fichaDe(CHV, J1);
+    t("V3. ficha sem nível do elemento após rejeição", !(fV?.data && JSON.stringify(fV.data).includes("tal_sem_vinculo")), "sem chave de nível");
+  }
+
   // ---------- Issue #152 C: config.poderes × compra -------------------
   sec("Issue #152 — poderes: limites, contrapartida e obrigações");
   {
