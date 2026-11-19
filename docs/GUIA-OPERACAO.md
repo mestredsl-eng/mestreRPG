@@ -121,12 +121,37 @@ Apenas o **administrador global** restaura. Backups nunca são servidos publicam
 ## 10. Atualizar para uma versão nova
 
 1. **Backup manual** (painel → Backups) ou confirme o automático mais recente.
-2. Atualize o código (`git pull` ou nova pasta).
+2. Atualize o código — em clones Git, o `iniciar-mestre-rpg.bat` já faz isso automaticamente e com segurança (ver §10.1); manualmente, use `git pull` ou uma nova pasta.
 3. `npm install` (se as dependências mudaram).
 4. `npm run db:migrate` — migrações são **aditivas** (drizzle-kit, `servidor/migrations/0000…0017`) e não apagam dados.
 5. Suba normalmente (`iniciar-mestre-rpg.bat` já compila, migra e restaura pendências).
 
 **Nunca apague durante a atualização:** `banco/`, `arquivos/`, `backups/`, `configuracao/`, `logs/`. Esses diretórios contêm todos os dados — o código pode ser substituído inteiro sem perda.
+
+### 10.1 Atualização automática no boot (Issue #155)
+
+O `iniciar-mestre-rpg.bat` executa `node scripts/auto-update.mjs` **depois** de verificar que a porta 3001 está livre e **antes** de instalar dependências, compilar, restaurar e migrar. Se já houver um servidor rodando, nenhuma operação Git acontece — a segunda instância é encerrada como antes.
+
+**Quando a atualização é tentada** — todas as condições precisam valer:
+
+- `git` está instalado e a pasta contém um repositório (`.git`); instalações ZIP sem `.git` pulam silenciosamente.
+- A URL **efetiva** de `origin` (consultada com `git remote get-url --all origin`, que expande regras `url.*.insteadOf`) precisa ser exatamente uma única URL do repositório oficial `github.com/mestredsl-eng/mestreRPG`; origem múltipla ou reescrita para outro destino é rejeitada.
+- A branch atual tem upstream configurado **e exatamente `origin/<branch-da-branch-atual>`** — upstream de outro remoto ou de fork cancela a atualização, mesmo com `origin` oficial (sem upstream, nada é adivinhado).
+- `git status --porcelain` está limpo — qualquer alteração local, rastreada ou não, adia a atualização. Nada é descartado, escondido (stash) ou limpo automaticamente.
+- O `fetch` (não interativo, `GIT_TERMINAL_PROMPT=0`, timeout de 30 s) funciona — sem rede, autenticação ou dentro do timeout, o boot segue com a versão local.
+- HEAD está apenas atrás do upstream — divergência cancela a atualização.
+
+**Quando há commits novos:** o script mostra a quantidade, executa **somente `git pull --ff-only`** (nunca merge, rebase, force ou stash) e registra o SHA anterior. Se `package-lock.json`/`package.json` mudaram (ou `node_modules` não existe), roda `npm ci` e recompila servidor e frontend. Com lockfile inalterado, pula o `npm ci` e só recompila.
+
+**Se algo falhar depois do pull** (npm ci ou build), o script tenta um **rollback seguro**: só executa `git reset --hard <SHA-anterior>` se a árvore continuar limpa, o HEAD for exatamente o commit obtido pelo pull e a branch atual ainda for a mesma que recebeu a atualização — alterações locais ou troca de branch durante o processo bloqueiam o rollback. Depois do rollback, as dependências da versão anterior são reinstaladas e o boot normal prossegue com o código local. Se nem isso for possível com segurança, o `.bat` para com instruções de recuperação manual — nenhum comando destrutivo é tentado por conta própria.
+
+**Instalações sem `.git` (ZIP):** o script detecta a ausência de repositório e segue direto para o fluxo normal — atualizações manuais continuam sendo "substituir a pasta" conforme a seção 10.
+
+**Sem rede:** o fetch falha rápido (sem prompt de credencial), um aviso é exibido no console e o servidor sobe normalmente com a versão local. Para atualizar depois, basta ter rede e executar o `.bat` novamente.
+
+**Como identificar falhas de atualização:** procure linhas `[auto-update]` no console do `.bat`. Mensagens como "alterações locais detectadas", "falha ao buscar atualizações" ou "divergiu do remoto" indicam que a versão local foi mantida de propósito — revise com `git status`/`git pull` manual se quiser atualizar.
+
+**Recuperação após falha de build/rollback:** com o servidor parado, rode `git status` para confirmar que não há alterações inesperadas, `git log --oneline -3` para ver o HEAD, e `npm ci && npm run build` para reconstruir. Se o HEAD ficou no commit novo com build quebrado e a árvore limpa, `git reset --hard <SHA-anterior>` (mostrado no log `[auto-update]`) retorna ao estado anterior — o SHA anterior também fica registrado temporariamente fora do repositório pelo próprio script.
 
 ## 11. Migrations
 

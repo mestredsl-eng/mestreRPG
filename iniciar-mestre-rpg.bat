@@ -61,6 +61,29 @@ if not errorlevel 1 (
     exit /b 0
 )
 
+rem ---------- Atualizacao automatica via Git (Issue #155) ----------
+rem Executa SOMENTE depois da checagem da porta 3001 acima: se ja ha
+rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
+rem O script e conservador: sem git, sem .git (instalacao ZIP), remoto
+rem diferente do oficial, arvore suja, sem upstream, sem rede, branch
+rem divergente ou falha de build/dependencias, ele apenas avisa e o
+rem boot segue com a versao local. So retorna erro quando nem um
+rem rollback seguro pode ser garantido — nesse caso nada e executado
+rem alem do reset --hard verificado (arvore limpa + HEAD no commit do
+rem pull). Nunca usa stash, clean, merge, rebase ou force.
+rem Documentacao: docs/GUIA-OPERACAO.md e README.md ("Atualizacao").
+if not exist scripts\auto-update.mjs goto :sem_auto_update
+node scripts\auto-update.mjs
+if errorlevel 1 (
+    echo [ERRO] A atualizacao automatica falhou de forma irrecuperavel.
+    echo        Nenhuma alteracao local foi descartada. Siga as
+    echo        instrucoes exibidas acima e a secao "Atualizacao
+    echo        automatica" do docs\GUIA-OPERACAO.md.
+    pause
+    exit /b 1
+)
+:sem_auto_update
+
 if not exist node_modules (
     echo [INFO] Instalando dependencias pela primeira vez...
     rem npm ci e reproduzivel - respeita package-lock; se falhar, tenta npm install
