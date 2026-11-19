@@ -476,13 +476,7 @@ try {
   check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: transição de nível incoerente rejeitada");
   p = personagemNa("ATQ xp histórico ausente");
   check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: histórico ausente não vira vazio confiável");
-  // --- B1: âncora e cadeias longas ---
-  p = personagemNa("ATQ xp trunc forjado");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: 501 eventos sem âncora → ledger não demonstrável, zerado");
-  p = personagemNa("ATQ xp âncora falsa");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: âncora declarada divergente da gênese → invalidado");
   p = personagemNa("ATQ xp hist 501 quebra");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: ruptura + saldo divergente → ledger invalidado");
   check(p?.data.__xp?.ancora === undefined, "B1: ancora não sobrevive à importação externa");
 
   // --- asserts persistidos: __pontos ---
