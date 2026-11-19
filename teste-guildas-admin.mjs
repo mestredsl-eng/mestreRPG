@@ -384,6 +384,55 @@ try {
   const candCarolComum = await req(base, "GET", `/guildas/${guildA}/campanhas-candidatas`, { cookie: cookieCarol2 });
   t("membro comum NAO lista candidatas (403)", candCarolComum.status === 403, String(candCarolComum.status));
 
+  sec("Campanhas — corrida do último mestre ativo");
+  const dbCampCorrida = abrirDb(BANCO);
+  const mCarol = dbCampCorrida.prepare("select id from memberships where campaign_id=? and user_id=?").get(campCarol.json.campanha.id, idDe("carol"));
+  const mAlice = crypto.randomUUID();
+  const mBob = crypto.randomUUID();
+  const agoraCorrida = Date.now();
+  dbCampCorrida.prepare("update memberships set role='jogador', status='ativo', updated_at=? where id=?").run(agoraCorrida, mCarol.id);
+  dbCampCorrida.prepare(`
+    insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at)
+    values (?,?,?,?,?,?,?,?,?)
+  `).run(mAlice, campCarol.json.campanha.id, idDe("alice"), "mestre", "ativo", JSON.stringify({}), agoraCorrida, agoraCorrida, agoraCorrida);
+  dbCampCorrida.prepare(`
+    insert into memberships (id,campaign_id,user_id,role,status,permissions,joined_at,created_at,updated_at)
+    values (?,?,?,?,?,?,?,?,?)
+  `).run(mBob, campCarol.json.campanha.id, idDe("bob"), "mestre", "ativo", JSON.stringify({}), agoraCorrida, agoraCorrida, agoraCorrida);
+  const mestresAntesCorrida = dbCampCorrida.prepare(`
+    select count(*) n from memberships
+    where campaign_id=? and role='mestre' and status='ativo'
+  `).get(campCarol.json.campanha.id).n;
+  dbCampCorrida.close();
+  t("corrida: Alice e Bob são exatamente os 2 mestres ativos", mestresAntesCorrida === 2, `mestres=${mestresAntesCorrida}`);
+  // As sessões criadas no setup foram revogadas quando as contas passaram
+  // pelo ciclo de bloqueio/desbloqueio nas seções anteriores. Gere sessões
+  // novas agora, com as contas ativas, para testar somente a corrida.
+  const cookieAliceCorrida = sessaoDb(idDe("alice"));
+  const cookieBobCorrida = sessaoDb(idDe("bob"));
+  const [delMestreAlice, delMestreBob] = await Promise.all([
+    // Cada mestre usa sua própria sessão para remover o vínculo do outro.
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieAliceCorrida }),
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieBobCorrida }),
+  ]);
+  const stMestres = [delMestreAlice.status, delMestreBob.status];
+  const sucessos = stMestres.filter((status) => status === 200).length;
+  const recusasEsperadas = stMestres.filter((status) => status === 400 || status === 403).length;
+  // A segunda autorização pode ocorrer antes ou depois do primeiro DELETE:
+  // 400 é a guarda do último mestre; 403 é válido se o vínculo do requisitante
+  // já tiver sido removido quando requirePapel executar. O invariante final
+  // abaixo é a garantia de segurança, não um código HTTP específico.
+  t("corrida: uma remoção passa e a concorrente é recusada",
+    sucessos === 1 && recusasEsperadas === 1,
+    JSON.stringify({ alice: delMestreAlice.status, bob: delMestreBob.status }));
+  const dbCampDepois = abrirDb(BANCO);
+  const mestresRestantes = dbCampDepois.prepare(`
+    select count(*) n from memberships
+    where campaign_id=? and role='mestre' and status='ativo'
+  `).get(campCarol.json.campanha.id).n;
+  dbCampDepois.close();
+  t("corrida: campanha termina com exatamente 1 mestre ativo", mestresRestantes === 1, `restantes=${mestresRestantes}`);
+
   sec("Auditoria");
   const db2 = abrirDb(BANCO);
   const audits = db2.prepare("select action from audit_logs").all().map((r) => r.action);
