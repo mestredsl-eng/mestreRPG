@@ -3,7 +3,7 @@
 // (teste-base.mjs) — nunca copia banco/mestre-rpg.db.
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, req,
+  criarCenario, req, abrirDb,
   encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
@@ -129,8 +129,19 @@ try {
   }
 
   // ===== Concorrência: equip × transfer na mesma pilha =====
+  let cfgPermOriginal = null;
   sec("Concorrência equip × transfer");
   {
+    // Issue #165: a transferência agora exige jogadorRemoveItens na
+    // origem e jogadorAdicionaItens no destino (personagem do mestre).
+    // Habilita só neste bloco — o restante da suíte depende dos defaults.
+    const wPerm = abrirDb(BANCO);
+    const rsPerm = wPerm.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(ids.camp);
+    cfgPermOriginal = rsPerm.config;
+    const cfgPerm = JSON.parse(cfgPermOriginal || "{}");
+    cfgPerm.patrimonio = { ...(cfgPerm.patrimonio ?? {}), jogadorAdicionaItens: true, jogadorRemoveItens: true };
+    wPerm.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfgPerm), rsPerm.id);
+    wPerm.close();
     const arco = await novoItem(cj, ids.charJ, "Arco", 3);
     const destino = ids.charM; // mestre recebe unidade do jogador? transferir exige acesso ao destino — mestre na mesma campanha
     const eqAntes = await nEquip(BASE, cj, ids.charJ);
@@ -147,6 +158,11 @@ try {
   }
 
   // ===== Persistência após reinício =====
+  { const wR = abrirDb(BANCO);
+    const rsR = wR.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(ids.camp);
+    wR.prepare("update rule_sets set config=? where id=?").run(cfgPermOriginal, rsR.id);
+    wR.close(); }
+
   sec("Persistência após reinício");
   {
     // deixa um equipamento ativo antes de reiniciar

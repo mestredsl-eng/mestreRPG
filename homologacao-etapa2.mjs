@@ -41,8 +41,8 @@ try {
         { nome: "Machucado", penalidadeDados: 1, bloqueiaAcoes: false },
         { nome: "Incapacitado", penalidadeDados: 0, bloqueiaAcoes: true },
       ] },
-      financeiro: { casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "EUR", nome: "Euro" }] },
-      patrimonio: { jogadorCriaContas: true, jogadorCompraVenda: true, jogadorPix: true },
+      financeiro: { casasDecimais: 2, moedaPrincipal: "BRL", moedas: [{ codigo: "EUR", nome: "Euro" }], jogadorCompraVenda: true, jogadorPix: true },
+      patrimonio: { jogadorCriaContas: true, jogadorAdicionaItens: true, jogadorRemoveItens: true },
     },
   });
   ids = {

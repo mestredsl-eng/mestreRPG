@@ -192,6 +192,123 @@ try {
     const rUp = await req(BASE, "PATCH", `/characters/${PJ1}/inventario/${itemEstoque}`, { cookie: J1, body: { quantity: qtdAtual + 1 } });
     t("incremento com adicionaItens=off → 403", rUp.status === 403, rUp.status);
   }
+
+  // ================= FASE E — transferência de inventário (correção #165) =================
+  // Regra do backend: origem exige jogadorRemoveItens; destino de OUTRO
+  // jogador exige jogadorAdicionaItens; destino do mesmo usuário segue as
+  // regras de propriedade; mestre faz bypass total.
+  sec("E. Transferência de item — origem removeItens, destino adicionaItens");
+  const PJ1B = c.novoPersonagem(c.jogadores.j1.membershipId, "PJ J1 B");
+  const transferir = (itemId, destinoId, qtd, cookie = J1) =>
+    req(BASE, "POST", `/characters/${PJ1}/inventario/${itemId}/transferir`, {
+      cookie,
+      body: { destinoCharacterId: destinoId, ...(qtd !== undefined ? { quantidade: qtd } : {}) },
+    });
+  const qtdDe = async (charId, itemId, cookie = CM) => {
+    const inv = await req(BASE, "GET", `/characters/${charId}/inventario`, { cookie });
+    const it = (inv.json?.itens ?? []).find((i) => i.id === itemId);
+    return it ? it.quantity : null;
+  };
+  const itensDe = async (charId, cookie = CM) => {
+    const inv = await req(BASE, "GET", `/characters/${charId}/inventario`, { cookie });
+    return inv.json?.itens ?? [];
+  };
+
+  // Personagem de OUTRA campanha para o teste de isolamento.
+  const camp2 = await req(BASE, "POST", "/campaigns", { cookie: CM, body: { name: "Campanha Isolada" } });
+  const camp2Id = camp2.json?.campanha?.id;
+  let pjFora = null;
+  if (camp2Id) {
+    const w = abrirDb(BANCO);
+    try {
+      let mem2 = w.prepare("select id from memberships where campaign_id=? and user_id=?").get(camp2Id, c.adminId)?.id;
+      if (!mem2) {
+        mem2 = crypto.randomUUID(); const ag = Date.now();
+        w.prepare("insert into memberships (id,campaign_id,user_id,role,permissions,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','{}','ativo',?,?,?)")
+          .run(mem2, camp2Id, c.adminId, ag, ag, ag);
+      }
+      pjFora = crypto.randomUUID(); const ag = Date.now();
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pjFora, camp2Id, mem2, null, "PJ Fora", "{}", "{}", "aprovada", 0, ag, ag);
+    } finally { w.close(); }
+  }
+  t("fixture: personagem de outra campanha criado", !!pjFora);
+
+  // E1 — origem sem removeItens: transferência total bloqueada, nada muda.
+  {
+    setPerm({ ...TODAS, removeItens: false, adicionaItens: true });
+    const it = await novoItem(8);
+    const antes2 = await itensDe(PJ2);
+    const r = await transferir(it, PJ2);
+    t("E1 origem removeItens=off → 403", r.status === 403, r.status);
+    t("E1 origem preserva quantidade 8", (await qtdDe(PJ1, it, J1)) === 8);
+    t("E1 destino não recebeu item", !(await itensDe(PJ2)).some((i) => i.id === it) && (await itensDe(PJ2)).length === antes2.length);
+  }
+
+  // E2 — origem ok, destino de outro jogador sem adicionaItens: 403 nos dois lados.
+  {
+    setPerm({ ...TODAS, removeItens: true, adicionaItens: false });
+    const it = await novoItem(8);
+    const r = await transferir(it, PJ2);
+    t("E2 destino outro jogador adicionaItens=off → 403", r.status === 403, r.status);
+    t("E2 origem preserva quantidade 8", (await qtdDe(PJ1, it, J1)) === 8);
+    t("E2 destino sem item transferido", !(await itensDe(PJ2)).some((i) => i.data?.transferidoDe === PJ1 && i.name.startsWith("Item ")));
+  }
+
+  // E3 — destino do MESMO jogador (PJ1B): só removeItens importa.
+  {
+    setPerm({ ...TODAS, removeItens: true, adicionaItens: false });
+    const it = await novoItem(5);
+    const r = await transferir(it, PJ1B, 2);
+    t("E3 destino mesmo proprietário → 200 com adicionaItens=off", r.status === 200, r.status);
+    t("E3 origem ficou com 3", (await qtdDe(PJ1, it, J1)) === 3);
+    const invB = await itensDe(PJ1B, J1);
+    t("E3 destino mesmo dono recebeu 2", invB.some((i) => i.quantity === 2 && i.data?.transferidoDe === PJ1));
+  }
+
+  // E4 — destino outro jogador COM adicionaItens: parcial e total permitidos.
+  {
+    setPerm({ ...TODAS });
+    const itP = await novoItem(10);
+    const rP = await transferir(itP, PJ2, 4);
+    t("E4 parcial → 200", rP.status === 200, rP.status);
+    t("E4 origem 10→6", (await qtdDe(PJ1, itP, J1)) === 6);
+    const itT = await novoItem(7);
+    const rT = await transferir(itT, PJ2);
+    t("E4 total → 200", rT.status === 200, rT.status);
+    t("E4 origem sem o item (total)", (await qtdDe(PJ1, itT, J1)) === null);
+    const inv2 = await itensDe(PJ2);
+    t("E4 destino recebeu o item total", inv2.some((i) => i.id !== itT && i.quantity === 7 && i.data?.transferidoDe === PJ1));
+  }
+
+  // E5 — mestre com tudo desligado: bypass administrativo total.
+  {
+    setPerm(NENHUMA);
+    const it = await novoItem(4);
+    const r = await transferir(it, PJ2, 4, CM);
+    t("E5 mestre com tudo off → 200", r.status === 200, r.status);
+    t("E5 origem zerou o item", (await qtdDe(PJ1, it)) === null);
+  }
+
+  // E6 — destino em OUTRA campanha: rejeitado antes de qualquer mutação.
+  {
+    setPerm(TODAS);
+    const it = await novoItem(3);
+    const r = await transferir(it, pjFora);
+    t("E6 destino outra campanha → 400", r.status === 400, r.status);
+    t("E6 origem preserva 3", (await qtdDe(PJ1, it, J1)) === 3);
+  }
+
+  // E7 — campanha legada (sem chaves): defaults do schema valem —
+  // removeItens=false bloqueia jogador, mestre segue livre.
+  {
+    definirCfg(null, null);
+    const it = await novoItem(6);
+    const r = await transferir(it, PJ2);
+    t("E7 legada: jogador removeItens default off → 403", r.status === 403, r.status);
+    const rM = await transferir(it, PJ2, undefined, CM);
+    t("E7 legada: mestre transfere → 200", rM.status === 200, rM.status);
+  }
 } finally {
   if (proc) await encerrarServidor(proc);
   limparDir(DIR);
