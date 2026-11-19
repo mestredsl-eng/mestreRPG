@@ -49,15 +49,16 @@ interface ConfigPermissoes {
 export default function Patrimonio({ characterId, campaignId, souMestre, somenteLeitura = false }: Props) {
   const [aba, setAba] = useState<Aba>("inventario");
   const [erro, setErro] = useState<string | null>(null);
-  // null enquanto as regras não chegam (ou se a busca falhar): fail-closed
-  // para jogadores — nenhuma ação granular aparece até a config confirmar.
+  // Regras granulares: fail-closed — `null` durante o carregamento inicial
+  // E durante recarregamentos por `regras:atualizadas`: enquanto a config
+  // nova não confirma, nenhum controle dependente de autorização aparece.
   const [permissoes, setPermissoes] = useState<PermissoesPatrimonio | null>(null);
   const recarregarRef = useRef<{ fn?: () => Promise<void> }>({}).current;
 
-  useEffect(() => {
-    let vivo = true;
-    api.obterRegras(campaignId).then((r) => {
-      if (!vivo) return;
+  const carregarPermissoes = useCallback(async () => {
+    setPermissoes(null);
+    try {
+      const r = await api.obterRegras(campaignId);
       const cfg = (r.config ?? {}) as unknown as ConfigPermissoes;
       const pat = cfg.patrimonio ?? {};
       const fin = cfg.financeiro ?? {};
@@ -70,9 +71,10 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
         compraVenda: fin.jogadorCompraVenda ?? PERMISSOES_PADRAO.compraVenda,
         pix: fin.jogadorPix ?? PERMISSOES_PADRAO.pix,
       });
-    }).catch(() => undefined);
-    return () => { vivo = false; };
+    } catch { /* permanece null → fail-closed */ }
   }, [campaignId]);
+
+  useEffect(() => { void carregarPermissoes(); }, [carregarPermissoes]);
 
   const avisoErro = (e: unknown) => setErro(e instanceof Error ? e.message : "Erro");
 
@@ -80,14 +82,20 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
     const aoMudar = () => recarregarRef.fn?.();
+    // Qualquer alteração de regras (inclusive permissões granulares)
+    // dispara refetch fail-closed — a UI nunca exibe controle cuja
+    // autorização ainda não foi reconfirmada pelo servidor.
+    const aoRegras = () => void carregarPermissoes();
     socket.on("patrimonio:atualizado", aoMudar);
     socket.on("inventario:atualizado", aoMudar);
+    socket.on("regras:atualizadas", aoRegras);
     return () => {
       socket.off("patrimonio:atualizado", aoMudar);
       socket.off("inventario:atualizado", aoMudar);
+      socket.off("regras:atualizadas", aoRegras);
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId]);
+  }, [campaignId, recarregarRef, carregarPermissoes]);
 
   const abas: [Aba, string][] = [
     ["inventario", "Inventário"],

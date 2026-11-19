@@ -447,6 +447,55 @@ try {
     await ctx.close();
   }
 
+  // ================================================================
+  // FASE 14 — Atualização ao vivo: regras:atualizadas sem reload (P2)
+  // O jogador permanece com o Patrimônio aberto enquanto o mestre
+  // altera permissões pelo painel de Regras. Revogação E concessão
+  // devem refletir na UI sem recarregar a página.
+  // ================================================================
+  sec("14. Atualização ao vivo — revogação e concessão sem reload");
+  {
+    definirCfg(TODAS);
+    const { ctx, page } = await sessao("jogador", { width: 1366, height: 900 });
+    await irCampanha(page);
+    await abrirPersonagem(page, "PJ Um");
+    await abaPatrimonio(page, "Inventário");
+    t("ao-vivo: Vender presente (tudo on)", (await contar(page, "Vender")) > 0);
+
+    const m = await sessao("mestre", { width: 1366, height: 900 });
+    await irCampanha(m.page);
+    await m.page.locator(".abas button", { hasText: "Regras" }).first().click();
+    await m.page.locator(".abas button", { hasText: "Pontuação" }).first().click();
+    await m.page.waitForTimeout(800);
+    const chk = (rotulo) => m.page.locator("label.checkbox", { hasText: rotulo }).locator("input[type=checkbox]");
+
+    // REVOGAÇÃO: desliga compraVenda pelo painel real do mestre
+    await chk("Jogador registra compra e venda").uncheck();
+    await m.page.getByRole("button", { name: "Salvar configuração" }).click();
+    await page.waitForFunction(() =>
+      ![...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Vender"),
+      null, { timeout: 12000 }).catch(() => {});
+    t("ao-vivo: revogação — Vender some sem reload", (await contar(page, "Vender")) === 0);
+    t("ao-vivo: revogação — Comprar… some sem reload", (await contar(page, "Comprar…")) === 0);
+    t("ao-vivo: revogação — Estornar some sem reload", (await contar(page, "Estornar compra")) === 0);
+
+    // CONCESSÃO: religa pelo mesmo painel
+    await chk("Jogador registra compra e venda").check();
+    await m.page.getByRole("button", { name: "Salvar configuração" }).click();
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Vender"),
+      null, { timeout: 12000 }).catch(() => {});
+    t("ao-vivo: concessão — Vender volta sem reload", (await contar(page, "Vender")) > 0);
+    t("ao-vivo: concessão — Comprar… volta sem reload", (await contar(page, "Comprar…")) === 1);
+    await shot(page, "ao-vivo-apos-concessao");
+
+    // Troca de aba e volta: permissões continuam corretas (estado novo)
+    await abaPatrimonio(page, "Dinheiro");
+    t("ao-vivo: concessão — Registrar presente no Dinheiro", (await page.locator("button", { hasText: "Registrar" }).count()) === 1);
+    await ctx.close();
+    await m.ctx.close();
+  }
+
   definirCfg(TODAS);
 } catch (e) {
   fail++;

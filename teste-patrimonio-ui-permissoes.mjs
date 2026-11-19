@@ -9,6 +9,10 @@ import { readFileSync } from "node:fs";
 const src = readFileSync("site/src/paginas/Patrimonio.tsx", "utf8");
 const checks = [
   ["permissoes inicia null (fail-closed no carregamento)", /useState<PermissoesPatrimonio \| null>\(null\)/],
+  ["escuta regras:atualizadas", /socket\.on\("regras:atualizadas", aoRegras\)/],
+  ["refetch de permissões via carregarPermissoes", /const aoRegras = \(\) => void carregarPermissoes\(\)/],
+  ["remove listener regras:atualizadas no cleanup", /socket\.off\("regras:atualizadas", aoRegras\)/],
+  ["fail-closed durante refetch (null antes do fetch)", /setPermissoes\(null\)/],
   ["compra/venda usa permissoes.compraVenda", /permissoes\?\.compraVenda === true/],
   ["estorno usa permissoes.compraVenda", /!somenteLeitura && \(souMestre \|\| permissoes\?\.compraVenda === true\) &&/],
   ["não usa fallback antigo de jogadorCompraVenda", !src.includes("fin?.config.jogadorCompraVenda") && !src.includes("cfg.jogadorCompraVenda")],
