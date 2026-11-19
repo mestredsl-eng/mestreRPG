@@ -6,8 +6,13 @@ import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
   financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
+  users,
 } from "../db/schema.js";
 import type { EstadoCampanha } from "./estado.js";
+import {
+  montarContextoSaneamento, relatorioSaneamentoVazio, sanearPersonagemImportado,
+  type OrigemEstado, type RelatorioSaneamento, type SaneamentoPersonagem, type TotaisSaneamento,
+} from "./saneamento-importacao.js";
 
 const db = getDb();
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -16,6 +21,7 @@ const CAMPOS_CAMPANHA = ["name", "description", "system", "summary", "status", "
 export interface ResultadoRestauracao {
   arquivosRecuperados: number;
   arquivosAusentes: string[];
+  saneamento: RelatorioSaneamento;
 }
 
 function reviverDatas(row: Record<string, unknown>, cols: Record<string, { dataType: string }>) {
@@ -91,9 +97,65 @@ export function normalizarNumerosSessao(rows: unknown[] | undefined) {
   return rows;
 }
 
-/** Insere todas as entidades do estado na ordem de dependência (restauração e importação). */
-export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
-  for (const r of (dados.characters ?? []) as Record<string, unknown>[]) sanitizarArquivamento(r);
+const repVazio = (): SaneamentoPersonagem => ({
+  personagemId: "", nome: null, eventosXpDescartados: 0, ledgerXpInvalidado: false,
+  financiadoRejeitados: 0, seloRemovido: false, bonusAjustado: false,
+  pontosHistoricoDescartados: 0, hpCorrigido: false, hpRemovido: false,
+  vitalidadeCorrigida: false, vitalidadeRemovida: false,
+  retratoRemovido: false, npcVisivelRemovido: false,
+});
+
+function acumulou(r: SaneamentoPersonagem): boolean {
+  return r.eventosXpDescartados > 0 || r.ledgerXpInvalidado || r.financiadoRejeitados > 0 ||
+    r.seloRemovido || r.bonusAjustado || r.pontosHistoricoDescartados > 0 ||
+    r.hpCorrigido || r.hpRemovido || r.vitalidadeCorrigida || r.vitalidadeRemovida ||
+    r.retratoRemovido || r.npcVisivelRemovido;
+}
+
+/**
+ * Insere todas as entidades do estado na ordem de dependência
+ * (restauração e importação). `origem` é explícita e o padrão é
+ * "externa": qualquer chamador novo é tratado como pacote não
+ * confiável até provar o contrário. Snapshots criados pelo servidor
+ * passam "interna" e preservam os metadados reservados integralmente.
+ * Retorna o RelatorioSaneamento (vazio quando origem="interna").
+ */
+export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado } = {}): RelatorioSaneamento {
+  const origem: OrigemEstado = opts.origem ?? "externa";
+  const rel = relatorioSaneamentoVazio(origem);
+  const chars = (dados.characters ?? []) as Record<string, unknown>[];
+  for (const r of chars) sanitizarArquivamento(r);
+
+  if (origem === "externa" && chars.length) {
+    // autoria: autorId precisa existir nesta instalação para manter o nome
+    const autores = new Map<string, string | null>();
+    for (const u of tx.select({ id: users.id, displayName: users.displayName, username: users.username }).from(users).all()) {
+      autores.set(u.id, u.displayName ?? u.username ?? null);
+    }
+    const ctx = montarContextoSaneamento(dados, autores);
+    for (const row of chars) {
+      const rep = repVazio();
+      rep.personagemId = String(row.id ?? "");
+      rep.nome = typeof row.name === "string" ? row.name : null;
+      sanearPersonagemImportado(row, ctx, rep);
+      if (!acumulou(rep)) continue;
+      rel.personagens.push(rep);
+      const t = rel.totais as TotaisSaneamento;
+      t.personagensAfetados++;
+      t.eventosXpDescartados += rep.eventosXpDescartados;
+      if (rep.ledgerXpInvalidado) t.ledgersXpInvalidos++;
+      t.financiadoRejeitados += rep.financiadoRejeitados;
+      if (rep.seloRemovido) t.selosRemovidos++;
+      if (rep.bonusAjustado) t.bonusAjustados++;
+      t.pontosHistoricoDescartados += rep.pontosHistoricoDescartados;
+      if (rep.hpCorrigido) t.hpCorrigidos++;
+      if (rep.hpRemovido) t.hpRemovidos++;
+      if (rep.vitalidadeCorrigida) t.vitalidadeCorrigidas++;
+      if (rep.vitalidadeRemovida) t.vitalidadeRemovidas++;
+      if (rep.retratoRemovido) t.retratosRemovidos++;
+      if (rep.npcVisivelRemovido) t.npcVisivelRemovidos++;
+    }
+  }
   inserir(tx, memberships, dados.memberships);
   inserir(tx, invitations, dados.invitations);
   inserir(tx, sheetTemplates, dados.sheetTemplates);
@@ -117,6 +179,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
   inserir(tx, folders, dados.folders);
   inserir(tx, files, dados.files);
   inserir(tx, noteAttachments, dados.noteAttachments);
+  return rel;
 }
 
 /**
@@ -124,7 +187,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha) {
  * Transacional no banco; arquivos físicos movidos para a lixeira e recuperados
  * em seguida (best-effort, nunca deixa registros apontando para caminho inválido).
  */
-export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }> } = {}): Promise<ResultadoRestauracao> {
+export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }>; origem?: OrigemEstado } = {}): Promise<ResultadoRestauracao> {
   // ids necessários para deletes com FK indireta (calculados antes da transação)
   const charIds = (await db.select({ id: characters.id }).from(characters).where(eq(characters.campaignId, campaignId))).map((r) => r.id);
   const tplIds = (await db.select({ id: sheetTemplates.id }).from(sheetTemplates).where(eq(sheetTemplates.campaignId, campaignId))).map((r) => r.id);
@@ -146,6 +209,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     }
   };
 
+  let saneamento = relatorioSaneamentoVazio(opts.origem ?? "externa");
   db.transaction((tx) => {
     const limpar = (tabela: Parameters<typeof tx.delete>[0], where: unknown) =>
       tx.delete(tabela).where(where as never).run();
@@ -183,7 +247,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     tx.update(campaigns).set(upd).where(eq(campaigns.id, campaignId)).run();
 
     // reinsere na ordem de dependência (datas voltam de ISO string para Date)
-    inserirEstado(tx, dados);
+    saneamento = inserirEstado(tx, dados, { origem: opts.origem });
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----
@@ -211,5 +275,5 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     else arquivosAusentes.push(f.fileName ?? f.id);
   }
 
-  return { arquivosRecuperados, arquivosAusentes };
+  return { arquivosRecuperados, arquivosAusentes, saneamento };
 }

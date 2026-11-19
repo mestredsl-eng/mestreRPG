@@ -14,6 +14,7 @@ import { audit } from "../lib/audit.js";
 import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
+import type { RelatorioSaneamento } from "../lib/saneamento-importacao.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 
 const db = getDb();
@@ -132,7 +133,7 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
       let resultado;
       try {
-        resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos });
+        resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos, origem: "externa" });
         commitado = true;
       } catch (e) {
         await liberarBarreiraRestauracao(cid, restoreId, "falha");
@@ -220,6 +221,7 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
   }
 
   const precisaMembroExtra = !(estado.memberships as { userId: string }[]).some((m) => m.userId === req.usuario!.id);
+  let saneamento: RelatorioSaneamento | null = null;
   try {
     db.transaction((tx) => {
       const { id: _i, ownerId: _o, createdAt: _c, updatedAt: _u, ...campos } = camposCampanha;
@@ -229,7 +231,9 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
         guildId: guildIdValido,
         createdAt: new Date(), updatedAt: new Date(),
       } as never).run();
-      inserirEstado(tx, estado);
+      // pacote externo: origem "externa" — metadados reservados passam
+      // por validação/saneamento e o relatório vai para resposta+auditoria
+      saneamento = inserirEstado(tx, estado, { origem: "externa" });
       // garante o importador como mestre mesmo que o pacote não o tenha
       if (precisaMembroExtra) {
         tx.insert(memberships).values({
@@ -252,6 +256,6 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
   for (const m of membrosImportados) {
     notificarPermissaoAtualizada(cid, { userId: m.userId, role: m.role, status: m.status, permissions: m.permissions });
   }
-  await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados: gravados.size });
-  res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados: gravados.size });
+  await audit(req, "campanha.importada", { campaignId: cid, arquivosGravados: gravados.size, saneamento });
+  res.status(201).json({ ok: true, campaignId: cid, modo, arquivosGravados: gravados.size, saneamento });
 });

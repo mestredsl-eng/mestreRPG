@@ -60,7 +60,9 @@ export const colunaTabelaSchema = z.object({
 });
 
 export const campoSchema = z.object({
-  id: z.string().min(1).max(80),
+  // IDs começando por "__" são reservados a metadados internos do
+  // servidor (ledger XP, pontos, HP...) — nunca podem ser IDs de campo.
+  id: z.string().min(1).max(80).refine((v) => !v.startsWith("__"), "ID de campo não pode começar com '__'"),
   label: z.string().min(1).max(160),
   descricao: z.string().max(2000).optional(),
   tipo: z.enum(TIPOS_CAMPO),

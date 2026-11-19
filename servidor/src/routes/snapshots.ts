@@ -151,7 +151,10 @@ snapshotsRouter.post("/:snapshotId/restaurar", requirePapelAuth("mestre"), limit
 
     let resultado;
     try {
-      resultado = await restaurarEstado(cid, dados);
+      // snapshot criado pelo próprio servidor: origem interna confiável —
+      // metadados reservados (XP, pontos, selo, HP...) são preservados
+      // integralmente, sem saneamento de importação.
+      resultado = await restaurarEstado(cid, dados, { origem: "interna" });
       commitado = true;
     } catch (e) {
       await liberarBarreiraRestauracao(cid, restoreId, "falha");
