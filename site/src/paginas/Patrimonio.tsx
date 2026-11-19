@@ -22,10 +22,55 @@ interface Props {
 
 type Aba = "inventario" | "equipamentos" | "veiculos" | "dinheiro" | "catalogo";
 
+// Permissões granulares de patrimônio/financeiro (Issue #165). Os defaults
+// espelham o schema do backend (servidor/src/lib/regras.ts): campanhas antigas
+// sem as chaves recebem estes valores ao serem carregadas.
+interface PermissoesPatrimonio {
+  adicionaItens: boolean;
+  removeItens: boolean;
+  editaEquipamentos: boolean;
+  editaVeiculos: boolean;
+  criaContas: boolean;
+  compraVenda: boolean;
+  pix: boolean;
+}
+const PERMISSOES_PADRAO: PermissoesPatrimonio = {
+  adicionaItens: true, removeItens: false, editaEquipamentos: true,
+  editaVeiculos: true, criaContas: true, compraVenda: true, pix: true,
+};
+interface ConfigPermissoes {
+  patrimonio?: Partial<{
+    jogadorAdicionaItens: boolean; jogadorRemoveItens: boolean;
+    jogadorEditaEquipamentos: boolean; jogadorEditaVeiculos: boolean; jogadorCriaContas: boolean;
+  }>;
+  financeiro?: { jogadorCompraVenda?: boolean; jogadorPix?: boolean };
+}
+
 export default function Patrimonio({ characterId, campaignId, souMestre, somenteLeitura = false }: Props) {
   const [aba, setAba] = useState<Aba>("inventario");
   const [erro, setErro] = useState<string | null>(null);
+  const [permissoes, setPermissoes] = useState<PermissoesPatrimonio>(PERMISSOES_PADRAO);
   const recarregarRef = useRef<{ fn?: () => Promise<void> }>({}).current;
+
+  useEffect(() => {
+    let vivo = true;
+    api.obterRegras(campaignId).then((r) => {
+      if (!vivo) return;
+      const cfg = (r.config ?? {}) as unknown as ConfigPermissoes;
+      const pat = cfg.patrimonio ?? {};
+      const fin = cfg.financeiro ?? {};
+      setPermissoes({
+        adicionaItens: pat.jogadorAdicionaItens ?? PERMISSOES_PADRAO.adicionaItens,
+        removeItens: pat.jogadorRemoveItens ?? PERMISSOES_PADRAO.removeItens,
+        editaEquipamentos: pat.jogadorEditaEquipamentos ?? PERMISSOES_PADRAO.editaEquipamentos,
+        editaVeiculos: pat.jogadorEditaVeiculos ?? PERMISSOES_PADRAO.editaVeiculos,
+        criaContas: pat.jogadorCriaContas ?? PERMISSOES_PADRAO.criaContas,
+        compraVenda: fin.jogadorCompraVenda ?? PERMISSOES_PADRAO.compraVenda,
+        pix: fin.jogadorPix ?? PERMISSOES_PADRAO.pix,
+      });
+    }).catch(() => undefined);
+    return () => { vivo = false; };
+  }, [campaignId]);
 
   const avisoErro = (e: unknown) => setErro(e instanceof Error ? e.message : "Erro");
 
@@ -59,19 +104,20 @@ export default function Patrimonio({ characterId, campaignId, souMestre, somente
         ))}
       </div>
       {erro && <p className="erro">{erro}</p>}
-      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "equipamentos" && <Equipamentos characterId={characterId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "veiculos" && <Veiculos characterId={characterId} campaignId={campaignId} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
-      {aba === "catalogo" && <Catalogo campaignId={campaignId} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "inventario" && <Inventario characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "equipamentos" && <Equipamentos characterId={characterId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "veiculos" && <Veiculos characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "dinheiro" && <Dinheiro characterId={characterId} campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} permissoes={permissoes} aoErro={avisoErro} recarregarRef={recarregarRef} />}
+      {aba === "catalogo" && <Catalogo campaignId={campaignId} souMestre={souMestre} somenteLeitura={somenteLeitura} aoErro={avisoErro} recarregarRef={recarregarRef} />}
     </section>
   );
 }
 
 // ================= INVENTÁRIO =================
 
-function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
   characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean;
+  permissoes: PermissoesPatrimonio;
   aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
@@ -153,8 +199,18 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
     (!busca || i.name.toLowerCase().includes(busca.toLowerCase()) || (i.description ?? "").toLowerCase().includes(busca.toLowerCase()))
   );
 
+  // Issue #165: cada ação consulta a permissão granular exata. O mestre
+  // mantém capacidade administrativa; somenteLeitura continua barreira total.
+  const podeAdicionar = souMestre || permissoes.adicionaItens;
+  const podeRemover = souMestre || permissoes.removeItens;
+  const podeEquiparItem = souMestre || permissoes.editaEquipamentos;
+  const podeTransferir = souMestre || permissoes.removeItens;
+  const podeAjustarQuantidade = (atual: number, novoQ: number) =>
+    novoQ < atual ? podeRemover : podeAdicionar; // PATCH: redução→removeItens, demais→adicionaItens
+
   const submeterNovo = async (e: FormEvent) => {
     e.preventDefault();
+    if (!podeAdicionar) { aoErro(new Error("Adicionar itens não é permitido nesta campanha.")); return; }
     try {
       await api.adicionarItem(characterId, novo);
       setNovo({ name: "", quantity: 1 });
@@ -219,7 +275,7 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
         <datalist id="cats-inv">{categorias.map((c) => <option key={c} value={c} />)}</datalist>
         <input placeholder="Peso (kg)" type="number" min="0" step="any" value={novo.weight ?? ""} onChange={(e) => setNovo({ ...novo, weight: e.target.value === "" ? undefined : Number(e.target.value) })} style={{ width: 110 }} />
         <input placeholder="Local" value={novo.location ?? ""} onChange={(e) => setNovo({ ...novo, location: e.target.value })} />
-        <button type="submit" disabled={!!(novo.regra && dispDe(novo.regra) && !dispDe(novo.regra)!.ok)}>Adicionar</button>
+        <button type="submit" disabled={!podeAdicionar || !!(novo.regra && dispDe(novo.regra) && !dispDe(novo.regra)!.ok)}>Adicionar</button>
         {podeOperar && <button type="button" className="secundario" onClick={() => setComprando(true)}>Comprar…</button>}
       </form>
       )}
@@ -245,10 +301,18 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
                 {qtd(item, item.data) > 0 && <span className="tag">{fmtMoeda(qtd(item, item.data))}</span>}
               </td>
               <td>
-                {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
+                {somenteLeitura || !(podeAdicionar || podeRemover) ? <span>{item.quantity}</span> : editando === item.id ? (
                   <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 70 }} aria-label="Quantidade"
                     onBlur={async (e) => {
                       const q = Number(e.target.value);
+                      if (q === item.quantity) { setEditando(null); return; }
+                      if (!podeAjustarQuantidade(item.quantity, q)) {
+                        setEditando(null);
+                        aoErro(new Error(q > item.quantity
+                          ? "Aumentar a quantidade exige permissão de adicionar itens."
+                          : "Diminuir a quantidade exige permissão de remover itens."));
+                        return;
+                      }
                       try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
                       catch (err) { aoErro(err); }
                     }} />
@@ -261,16 +325,16 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
               <td>{item.location ?? "—"}</td>
               <td className="linha">
                 {!somenteLeitura && <>
-                <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+                {podeEquiparItem && <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>}
                 {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
                 {podeOperar && compraSemPagamento(item) && (
                   <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
                 )}
-                <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
+                {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                   await api.transferirItem(characterId, item.id, dest, q);
                   await carregar();
-                }} aoErro={aoErro} />
-                <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
+                }} aoErro={aoErro} />}
+                {podeRemover && <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>}
                 </>}
               </td>
             </tr>
@@ -291,10 +355,18 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
             {item.description && <p className="meta">{item.description}</p>}
             <div className="registro-campo">
               <span className="registro-rotulo">Qtd</span>
-              {somenteLeitura ? <span>{item.quantity}</span> : editando === item.id ? (
+              {somenteLeitura || !(podeAdicionar || podeRemover) ? <span>{item.quantity}</span> : editando === item.id ? (
                 <input type="number" min="0.01" step="any" defaultValue={item.quantity} style={{ width: 90 }} aria-label="Quantidade"
                   onBlur={async (e) => {
                     const q = Number(e.target.value);
+                    if (q === item.quantity) { setEditando(null); return; }
+                    if (!podeAjustarQuantidade(item.quantity, q)) {
+                      setEditando(null);
+                      aoErro(new Error(q > item.quantity
+                        ? "Aumentar a quantidade exige permissão de adicionar itens."
+                        : "Diminuir a quantidade exige permissão de remover itens."));
+                      return;
+                    }
                     try { await api.atualizarItem(characterId, item.id, { quantity: q }); setEditando(null); await carregar(); }
                     catch (err) { aoErro(err); }
                   }} />
@@ -307,16 +379,16 @@ function Inventario({ characterId, campaignId, souMestre, somenteLeitura = false
             <div className="registro-campo"><span className="registro-rotulo">Local</span><span>{item.location ?? "—"}</span></div>
             {!somenteLeitura && (
             <div className="registro-acoes">
-              <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>
+              {podeEquiparItem && <button className="secundario" title="Equipar" onClick={() => { void equiparUnidade(item.id); }}>Equipar</button>}
               {podeOperar && <button className="secundario" onClick={() => setVendendo(item)}>Vender</button>}
               {podeOperar && compraSemPagamento(item) && (
                 <button className="secundario" onClick={() => setEstornandoItem(item)}>Estornar compra</button>
               )}
-              <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
+              {podeTransferir && <TransferirButton item={item} personagens={personagens} proprioId={characterId} souMestre={souMestre} onTransfer={async (dest, q) => {
                 await api.transferirItem(characterId, item.id, dest, q);
                 await carregar();
-              }} aoErro={aoErro} />
-              <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>
+              }} aoErro={aoErro} />}
+              {podeRemover && <button className="perigo" onClick={() => setConfirmandoItem(item)}>×</button>}
             </div>
             )}
           </div>
@@ -728,11 +800,13 @@ function ModalVenda({ characterId, item, fin, aoErro, aoOk, aoFechar }: {
 
 // ================= EQUIPAMENTOS =================
 
-function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarRef }: {
-  characterId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
+function Equipamentos({ characterId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
+  characterId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Equipamento[]>([]);
+  const podeEditar = souMestre || permissoes.editaEquipamentos;
   const [slots, setSlots] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [nome, setNome] = useState("");
@@ -763,7 +837,7 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
           return <span key={s} className="tag">{s}: {ocupado?.name ?? "—"}</span>;
         })}
       </div>
-      {!somenteLeitura && (
+      {!somenteLeitura && podeEditar && (
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try {
@@ -791,7 +865,7 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
               <td>{eq.slot ?? "—"}</td>
               <td>{eq.equipped ? "Equipado" : "Guardado"}</td>
               <td>
-                {!somenteLeitura && (eq.equipped
+                {!somenteLeitura && podeEditar && (eq.equipped
                   ? <button className="secundario" onClick={async () => { try { await api.desequipar(characterId, eq.id); await carregar(); } catch (e) { aoErro(e); } }}>Desequipar</button>
                   : <button className="secundario" onClick={async () => {
                       try {
@@ -813,8 +887,9 @@ function Equipamentos({ characterId, somenteLeitura = false, aoErro, recarregarR
 
 // ================= VEÍCULOS =================
 
-function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
+function Veiculos({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [lista, setLista] = useState<Veiculo[]>([]);
@@ -825,6 +900,10 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
   const [novo, setNovo] = useState<VeiculoInput>({ name: "", kind: "carro" });
   const [confirmandoVeiculo, setConfirmandoVeiculo] = useState<Veiculo | null>(null);
   const [ocupadoVeiculo, setOcupadoVeiculo] = useState(false);
+  const podeEditar = souMestre || permissoes.editaVeiculos;
+  // Backend: DELETE /veiculos/:id usa jogadorRemoveItens (remoção), enquanto
+  // criar/editar usa jogadorEditaVeiculos — a UI espelha essa distinção.
+  const podeRemover = souMestre || permissoes.removeItens;
 
   const carregar = useCallback(async () => {
     try {
@@ -868,7 +947,7 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
           {TIPOS.map((t) => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
-      {!somenteLeitura && (
+      {!somenteLeitura && podeEditar && (
       <form className="formulario" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try { await api.adicionarVeiculo(characterId, novo); setNovo({ name: "", kind: "carro" }); await carregar(); }
@@ -939,7 +1018,7 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
               <td>{v.year ?? "—"}</td>
               <td>{v.plate ?? "—"}</td>
               <td>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</td>
-              <td>{!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}</td>
+              <td>{!somenteLeitura && podeRemover && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}</td>
             </tr>
           ))}
           {lista.length === 0 && <tr><td colSpan={7} className="meta">Nenhum veículo.</td></tr>}
@@ -955,7 +1034,7 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
             <div className="registro-campo"><span className="registro-rotulo">Placa</span><span>{v.plate ?? "—"}</span></div>
             <div className="registro-campo"><span className="registro-rotulo">Posse</span><span>{v.ownership === "compartilhado" ? "Compartilhado" : "Propriedade"}</span></div>
             <div className="registro-acoes">
-              {!somenteLeitura && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}
+              {!somenteLeitura && podeRemover && <button className="perigo" onClick={() => setConfirmandoVeiculo(v)}>×</button>}
             </div>
           </div>
         ))}
@@ -986,8 +1065,9 @@ function Veiculos({ characterId, campaignId, somenteLeitura = false, aoErro, rec
 
 // ================= DINHEIRO =================
 
-function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
-  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
+function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, permissoes, aoErro, recarregarRef }: {
+  characterId: string; campaignId: string; souMestre: boolean; somenteLeitura?: boolean; permissoes: PermissoesPatrimonio;
+  aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [fin, setFin] = useState<Financeiro | null>(null);
@@ -1016,6 +1096,15 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
 
   if (!fin) return <p className="meta">Carregando…</p>;
   const cfg = fin.config;
+  // Issue #165: permissões granulares — criar conta, movimentar (compra/venda),
+  // PIX entre personagens e transferência entre contas próprias são independentes.
+  const podeCriarConta = souMestre || permissoes.criaContas;
+  const podeMovimentar = souMestre || permissoes.compraVenda;
+  const podePix = souMestre || permissoes.pix;
+  const podeMesmaConta = souMestre || permissoes.compraVenda;
+  const mostrarTransferir = souMestre ||
+    (podeMesmaConta && fin.contas.length > 0) ||
+    (podePix && contasOutros.length > 0);
   // O backend escala os inteiros financeiros por 10 ** casasDecimais (não sempre por 100).
   const fmt = (unidades: number | null | undefined) =>
     unidades === null || unidades === undefined ? "—" : (unidades / 10 ** cfg.casasDecimais).toFixed(cfg.casasDecimais);
@@ -1071,9 +1160,9 @@ function Dinheiro({ characterId, campaignId, souMestre, somenteLeitura = false, 
       </div>
 
       {!somenteLeitura && <>
-      <NovaConta characterId={characterId} cfg={cfg} aoErro={aoErro} aoOk={carregar} />
-      <Movimentar characterId={characterId} contas={fin.contas} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
-      <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />
+      {podeCriarConta && <NovaConta characterId={characterId} cfg={cfg} aoErro={aoErro} aoOk={carregar} />}
+      {podeMovimentar && <Movimentar characterId={characterId} contas={fin.contas} souMestre={souMestre} aoErro={aoErro} aoOk={carregar} />}
+      {mostrarTransferir && <Transferir characterId={characterId} contas={fin.contas} contasOutros={contasOutros} souMestre={souMestre} podePix={podePix} podeMesmaConta={podeMesmaConta} aoErro={aoErro} aoOk={carregar} />}
       </>}
 
       <h4>Histórico financeiro</h4>
@@ -1205,9 +1294,10 @@ function Movimentar({ characterId, contas, souMestre, aoErro, aoOk }: {
   );
 }
 
-function Transferir({ characterId, contas, contasOutros, souMestre, aoErro, aoOk }: {
+function Transferir({ characterId, contas, contasOutros, souMestre, podePix, podeMesmaConta, aoErro, aoOk }: {
   characterId: string; contas: ContaFinanceira[]; contasOutros: { conta: ContaFinanceira; personagem: string }[];
-  souMestre: boolean; aoErro: (e: unknown) => void; aoOk: () => Promise<void>;
+  souMestre: boolean; podePix: boolean; podeMesmaConta: boolean;
+  aoErro: (e: unknown) => void; aoOk: () => Promise<void>;
 }) {
   const [aberto, setAberto] = useState(false);
   const [origem, setOrigem] = useState("");
@@ -1233,12 +1323,16 @@ function Transferir({ characterId, contas, contasOutros, souMestre, aoErro, aoOk
           </select>
           <select value={destino} onChange={(e) => setDestino(e.target.value)} required>
             <option value="">Para…</option>
+            {podeMesmaConta && (
             <optgroup label="Minhas contas">
               {contas.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}
             </optgroup>
+            )}
+            {podePix && (
             <optgroup label="Outros personagens">
               {contasOutros.map((o) => <option key={o.conta.id} value={o.conta.id}>{o.personagem} — {o.conta.name} ({o.conta.currency})</option>)}
             </optgroup>
+            )}
           </select>
           <input placeholder="Valor" type="number" min="0.01" step="0.01" value={valor || ""} onChange={(e) => setValor(Number(e.target.value))} required style={{ width: 100 }} />
           <input placeholder="Descrição" value={descricao} onChange={(e) => setDescricao(e.target.value)} />
@@ -1252,8 +1346,8 @@ function Transferir({ characterId, contas, contasOutros, souMestre, aoErro, aoOk
 
 // ================= CATÁLOGO (mestre) =================
 
-function Catalogo({ campaignId, aoErro, recarregarRef }: {
-  campaignId: string; aoErro: (e: unknown) => void;
+function Catalogo({ campaignId, souMestre, somenteLeitura = false, aoErro, recarregarRef }: {
+  campaignId: string; souMestre: boolean; somenteLeitura?: boolean; aoErro: (e: unknown) => void;
   recarregarRef: { fn?: () => Promise<void> };
 }) {
   const [itens, setItens] = useState<ItemCatalogo[]>([]);
@@ -1297,6 +1391,7 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
       <div className="linha">
         <input placeholder="Buscar…" value={busca} onChange={(e) => setBusca(e.target.value)} />
       </div>
+      {souMestre && !somenteLeitura && (
       <form className="formulario linha" onSubmit={async (e: FormEvent) => {
         e.preventDefault();
         try {
@@ -1387,6 +1482,7 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
         <button type="submit">{editandoId ? "Salvar alterações" : "Adicionar ao catálogo"}</button>
         {editandoId && <button type="button" className="secundario" onClick={cancelarEdicaoCatalogo}>Cancelar edição</button>}
       </form>
+      )}
       <table className="tabela">
         <thead><tr><th>Item</th><th>Categoria</th><th>Descrição</th><th>Vínculo Acervo</th><th></th></tr></thead>
         <tbody>
@@ -1402,8 +1498,10 @@ function Catalogo({ campaignId, aoErro, recarregarRef }: {
               <td>{i.description ?? "—"}</td>
               <td>{vinculo ?? "Manual"}</td>
               <td className="linha">
-                <button className="secundario" onClick={() => editarItemCatalogo(i)}>Editar</button>
-                <button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button>
+                {souMestre && !somenteLeitura && <>
+                  <button className="secundario" onClick={() => editarItemCatalogo(i)}>Editar</button>
+                  <button className="perigo" onClick={() => setConfirmandoItem(i)}>×</button>
+                </>}
               </td>
             </tr>
           );})}
