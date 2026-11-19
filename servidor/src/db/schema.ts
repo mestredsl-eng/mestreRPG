@@ -488,6 +488,11 @@ export const chatMessages = sqliteTable("chat_messages", {
   content: text("content").notNull(),
   visibility: text("visibility").notNull().default("publica"),
   recipients: text("recipients", { mode: "json" }), // ids de usuários/memberships para privadas
+  // Identidade vocal não substitui author_id, preservado para auditoria.
+  // Sem FK intencional: o histórico sobrevive à remoção do personagem.
+  speakerCharacterId: text("speaker_character_id"),
+  speakerName: text("speaker_name"),
+  speakerGender: text("speaker_gender"), // feminina|masculina|null
   createdAt: createdAt(),
 }, (t) => [index("chat_campaign_idx").on(t.campaignId, t.createdAt)]);
 

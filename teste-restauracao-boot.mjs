@@ -91,6 +91,12 @@ function rebaixarSchema(arquivoDb) {
     if (colsCamp.has("guild_id")) db.exec("alter table campaigns drop column guild_id");
     const colsAudit = new Set(db.pragma("table_info(audit_logs)").map((c) => c.name));
     if (colsAudit.has("guild_id")) db.exec("alter table audit_logs drop column guild_id");
+    // Migration 0027 acrescenta metadados vocais ao chat; remova-os ao
+    // construir um backup anterior a essa migration, antes de reexecutá-la.
+    const colsChat = new Set(db.pragma("table_info(chat_messages)").map((c) => c.name));
+    for (const coluna of ["speaker_character_id", "speaker_name", "speaker_gender"]) {
+      if (colsChat.has(coluna)) db.exec("alter table chat_messages drop column " + coluna);
+    }
     const jt = db.prepare("select name from sqlite_master where type='table' and name like '%migration%'").all()
       .map((r) => r.name)[0];
     if (jt) {
