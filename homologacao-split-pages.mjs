@@ -62,7 +62,9 @@ async function login(page, user, senha) {
   await page.getByRole("button", { name: "Campanhas" }).waitFor({ timeout: 15000 });
 }
 async function aba(page, nome) {
-  await page.getByRole("button", { name: nome, exact: true }).click();
+  // O botão "Novidades" pode exibir o badge de não lidas, alterando o nome
+  // acessível ("Novidades 2") — casa pelo prefixo da aba dentro do nav.
+  await page.locator(".topo nav").getByRole("button", { name: new RegExp(`^${nome}`) }).click();
 }
 const chunksDe = (set, prefixo) => [...set].filter((c) => c.startsWith(prefixo));
 
