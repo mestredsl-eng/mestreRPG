@@ -405,15 +405,25 @@ try {
   `).get(campCarol.json.campanha.id).n;
   dbCampCorrida.close();
   t("corrida: Alice e Bob são exatamente os 2 mestres ativos", mestresAntesCorrida === 2, `mestres=${mestresAntesCorrida}`);
+  // As sessões criadas no setup foram revogadas quando as contas passaram
+  // pelo ciclo de bloqueio/desbloqueio nas seções anteriores. Gere sessões
+  // novas agora, com as contas ativas, para testar somente a corrida.
+  const cookieAliceCorrida = sessaoDb(idDe("alice"));
+  const cookieBobCorrida = sessaoDb(idDe("bob"));
   const [delMestreAlice, delMestreBob] = await Promise.all([
-    // Alice e Bob são os dois mestres ativos e cada um usa sua própria sessão
-    // de mestre para remover o vínculo do outro, reproduzindo a corrida real.
-    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieAlice }),
-    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieBob }),
+    // Cada mestre usa sua própria sessão para remover o vínculo do outro.
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mBob}`, { cookie: cookieAliceCorrida }),
+    req(base, "DELETE", `/campaigns/${campCarol.json.campanha.id}/members/${mAlice}`, { cookie: cookieBobCorrida }),
   ]);
-  const stMestres = [delMestreAlice.status, delMestreBob.status].sort((a, b) => a - b);
-  t("corrida: uma remoção do último mestre passa e a outra é recusada",
-    stMestres[0] === 200 && stMestres[1] === 400,
+  const stMestres = [delMestreAlice.status, delMestreBob.status];
+  const sucessos = stMestres.filter((status) => status === 200).length;
+  const recusasEsperadas = stMestres.filter((status) => status === 400 || status === 403).length;
+  // A segunda autorização pode ocorrer antes ou depois do primeiro DELETE:
+  // 400 é a guarda do último mestre; 403 é válido se o vínculo do requisitante
+  // já tiver sido removido quando requirePapel executar. O invariante final
+  // abaixo é a garantia de segurança, não um código HTTP específico.
+  t("corrida: uma remoção passa e a concorrente é recusada",
+    sucessos === 1 && recusasEsperadas === 1,
     JSON.stringify({ alice: delMestreAlice.status, bob: delMestreBob.status }));
   const dbCampDepois = abrirDb(BANCO);
   const mestresRestantes = dbCampDepois.prepare(`
