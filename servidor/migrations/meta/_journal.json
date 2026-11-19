@@ -211,6 +211,13 @@
       "when": 1795121000000,
       "tag": "0029_release_1005_xp_import_integrity_news",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1795131371412,
+      "tag": "0030_release_1006_auto_update_news",
+      "breakpoints": true
     }
   ]
 }

@@ -47,6 +47,8 @@ try {
       .run("00000000-0000-4000-8000-000000000105");
     db.prepare("delete from novidades where id=?")
       .run("00000000-0000-4000-8000-000000000106");
+    db.prepare("delete from novidades where id=?")
+      .run("00000000-0000-4000-8000-000000000107");
     db.close();
   }
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
