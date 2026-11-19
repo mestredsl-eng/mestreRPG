@@ -755,6 +755,34 @@ try {
   check(aposRound.__xp?.saldo === 777 && aposRound.__xp.historico.length === 1, "roundtrip: ledger válido preservado");
   check(aposRound.__pontos?.selo === null && aposRound.__pontos.bonus === -50, "roundtrip: selo fora, bônus mantido");
 
+  // ---------- replay entre personagens: assinatura A não autentica B ----------
+  // Copia o objeto __xp COMPLETO (inclusive sig) de um personagem para outro.
+  // A assinatura precisa falhar apenas no alvo B por causa do UUID vinculado.
+  const pacoteReplay = JSON.parse(JSON.stringify(pacoteRound));
+  const ledgerOrigemReplay = (pacoteReplay.estado.characters ?? []).find((r) => r.id === idSnap);
+  const ledgerAlvoReplay = (pacoteReplay.estado.characters ?? []).find((r) => r.name === "ATQ xp compra válida");
+  check(
+    !!ledgerOrigemReplay?.data?.__xp?.sig && !!ledgerAlvoReplay?.data,
+    "replay: pacote contém ledger assinado de A e personagem B",
+  );
+  if (ledgerOrigemReplay?.data?.__xp?.sig && ledgerAlvoReplay?.data) {
+    check(ledgerOrigemReplay.id !== ledgerAlvoReplay.id, "replay: UUIDs de A e B são distintos");
+    ledgerAlvoReplay.data.__xp = JSON.parse(JSON.stringify(ledgerOrigemReplay.data.__xp));
+    const impReplay = await req(base, "POST", "/campaigns/importar", {
+      cookie: cookieMestre,
+      body: { pacote: pacoteReplay, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+    });
+    check(impReplay.status === 200, `replay: substituir pacote adulterado ${impReplay.status}`);
+    if (impReplay.status === 200) {
+      const aDepoisReplay = personagemOrig("ATQ xp válido");
+      const bDepoisReplay = personagemOrig("ATQ xp compra válida");
+      check(aDepoisReplay?.data.__xp?.saldo === 777 && aDepoisReplay.data.__xp.historico.length === 1,
+        "replay: ledger original de A continua válido");
+      check(bDepoisReplay?.data.__xp?.saldo === 0 && bDepoisReplay.data.__xp.historico.length === 0,
+        "replay: ledger assinado copiado de A para B é invalidado");
+    }
+  }
+
   // ---------- campoSchema: id reservado ----------
   check(!campoSchema.safeParse({ id: "__xp", label: "x", tipo: "inteiro" }).success, "campoSchema rejeita id '__xp'");
   check(!campoSchema.safeParse({ id: "__for", label: "x", tipo: "inteiro" }).success, "campoSchema rejeita id '__for'");
