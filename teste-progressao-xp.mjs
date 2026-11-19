@@ -1345,6 +1345,8 @@ try {
     t("S25. conceder XP em reaberta selada → 200", cRE.status === 200 && cRE.json?.xp?.saldo === 10, `status=${cRE.status} saldo=${cRE.json?.xp?.saldo}`);
     const bRE = await comprar(CHRE, J1, { kind: "atributo", key: "forca", nivelAlvo: 2 });
     t("S26. reaberta selada → jogador compra → 200", bRE.status === 200, `status=${bRE.status} ${JSON.stringify(bRE.json).slice(0, 200)}`);
+    const fRE2 = await fichaDe(CHRE, J1);
+    t("S26a. selo segue selado após compra em reaberta", fRE2?.ficha?.pontosBonus?.selado === true, `selado=${fRE2?.ficha?.pontosBonus?.selado}`);
 
     const CHBL = await novoSel("Selo Bloqueada", { "f-forca": 1 });
     const apBL = await req(BASE, "PATCH", `/characters/${CHBL}`, { cookie: M, body: { status: "aprovada" } });
@@ -1355,8 +1357,15 @@ try {
     t("S29. conceder XP em bloqueada selada → 200", cBL.status === 200 && cBL.json?.xp?.saldo === 10, `status=${cBL.status} saldo=${cBL.json?.xp?.saldo}`);
     const bBLm = await comprar(CHBL, M, { kind: "atributo", key: "forca", nivelAlvo: 2 });
     t("S30. bloqueada selada → mestre compra → 200", bBLm.status === 200, `status=${bBLm.status} ${JSON.stringify(bBLm.json).slice(0, 200)}`);
+    const antesBL = await progressaoDe(CHBL, J1);
+    const fBL = await fichaDe(CHBL, J1);
     const bBLj = await comprar(CHBL, J1, { kind: "atributo", key: "forca", nivelAlvo: 3 });
     t("S31. bloqueada selada → jogador segue travado por campo (403)", bBLj.status === 403, `status=${bBLj.status} ${JSON.stringify(bBLj.json).slice(0, 200)}`);
+    const depoisBL = await progressaoDe(CHBL, J1);
+    const fBL2 = await fichaDe(CHBL, J1);
+    t("S31a. rejeição em bloqueada não altera saldo nem histórico", depoisBL.json?.xp?.saldo === antesBL.json?.xp?.saldo && depoisBL.json?.xp?.historico?.length === antesBL.json?.xp?.historico?.length, `saldo=${depoisBL.json?.xp?.saldo}`);
+    t("S31b. nível de Força inalterado após rejeição", JSON.stringify(fBL2?.ficha?.campos?.["f-forca"]) === JSON.stringify(fBL?.ficha?.campos?.["f-forca"]), "campo estável");
+    t("S31c. selo preservado em bloqueada", fBL2?.ficha?.pontosBonus?.selado === true, `selado=${fBL2?.ficha?.pontosBonus?.selado}`);
   }
 
   // ---------- Issue #152 B: kinds elegíveis vs proibidos -------------
