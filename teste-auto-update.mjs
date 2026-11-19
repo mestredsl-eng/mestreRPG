@@ -654,7 +654,15 @@ try {
     t("rollback falhou → codigo 1 (integridade nao garantida)", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
   }
 } finally {
-  rmSync(RAIZ, { recursive: true, force: true });
+  for (let i = 0; i < 3; i++) {
+    try {
+      rmSync(RAIZ, { recursive: true, force: true });
+      break;
+    } catch (e) {
+      if (i === 2) console.error(`limpeza temporária falhou: ${e.message}`);
+      else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 400);
+    }
+  }
 }
 
 console.log(`\n${pass} ok / ${fail} falhas`);
