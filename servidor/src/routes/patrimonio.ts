@@ -1197,6 +1197,15 @@ patrimonioRouter.post("/financeiro/contas", async (req, res) => {
   const limiteCreditoCents = body.data.creditLimitReais !== undefined
     ? paraCentavos(body.data.creditLimitReais, cfg.casasDecimais)
     : 0;
+  // Issue #165 (P2): abrir conta já com saldo ou limite de crédito
+  // positivo equivale a registrar valor — exige também
+  // jogadorCompraVenda, não apenas jogadorCriaContas. O mestre é isento;
+  // valores nunca são zerados silenciosamente e a rejeição acontece
+  // antes de qualquer INSERT (conta e lançamento de abertura são
+  // atômicos na transação abaixo).
+  if (!a.ehMestre && (saldoInicial > 0 || limiteCreditoCents > 0) && !cfg.jogadorCompraVenda) {
+    res.status(403).json({ erro: "Criar conta com saldo ou limite positivo exige permissão de compra/venda nesta campanha" }); return;
+  }
   // A política vale também para a abertura da conta: saldo negativo não
   // pode entrar por um atalho que contorne as validações de movimentação.
   const pisoInicial = cfg.permitirSaldoNegativo

@@ -90,7 +90,7 @@ try {
     addVeic: () => req(BASE, "POST", `/characters/${PJ1}/veiculos`, { cookie: J1, body: { name: "Veic J1", kind: "carro" } }),
     updVeic: () => req(BASE, "PATCH", `/characters/${PJ1}/veiculos/${veicEstoque}`, { cookie: J1, body: { name: "Veic Editado" } }),
     delVeic: async () => { const id = (await req(BASE, "POST", `/characters/${PJ1}/veiculos`, { cookie: CM, body: { name: "Veic del", kind: "carro" } })).json.id; return req(BASE, "DELETE", `/characters/${PJ1}/veiculos/${id}`, { cookie: J1 }); },
-    addConta: () => req(BASE, "POST", `/characters/${PJ1}/financeiro/contas`, { cookie: J1, body: { type: "especie", name: "Conta J1", balanceReais: 10 } }),
+    addConta: () => req(BASE, "POST", `/characters/${PJ1}/financeiro/contas`, { cookie: J1, body: { type: "especie", name: "Conta J1" } }),
     movEntrada: () => req(BASE, "POST", `/characters/${PJ1}/financeiro/movimentar`, { cookie: J1, body: { accountId: contaA, tipo: "entrada", valor: 10, descricao: "t", requestId: crypto.randomUUID() } }),
     compra: () => req(BASE, "POST", `/characters/${PJ1}/financeiro/operacao`, { cookie: J1, body: { tipo: "compra", accountId: contaA, valor: 10, descricao: "t", item: { name: "Item compra", quantity: 1 }, requestId: crypto.randomUUID() } }),
     pix: () => req(BASE, "POST", `/characters/${PJ1}/financeiro/transferir`, { cookie: J1, body: { origemAccountId: contaA, destinoAccountId: contaJ2, valor: 10, descricao: "pix", requestId: crypto.randomUUID() } }),
@@ -308,6 +308,49 @@ try {
     t("E7 legada: jogador removeItens default off → 403", r.status === 403, r.status);
     const rM = await transferir(it, PJ2, undefined, CM);
     t("E7 legada: mestre transfere → 200", rM.status === 200, rM.status);
+  }
+
+  // ================= FASE F — criação de conta com saldo/limite (P2 #165) =================
+  // Regra: conta vazia exige só jogadorCriaContas; saldo ou limite
+  // positivo exigem também jogadorCompraVenda. Rejeição antes de INSERT.
+  sec("F. POST /financeiro/contas — saldo/limite positivo exige compraVenda");
+  const finPJ1 = async () => (await req(BASE, "GET", `/characters/${PJ1}/financeiro`, { cookie: CM })).json;
+  const criarContaBody = (body, cookie = J1) =>
+    req(BASE, "POST", `/characters/${PJ1}/financeiro/contas`, { cookie, body });
+
+  {
+    setPerm({ ...TODAS, compraVenda: false });
+    const antes = await finPJ1();
+    const nContas = antes.contas.length, nTx = antes.historico.length;
+    const r1 = await criarContaBody({ type: "especie", name: "Conta Saldo+", balanceReais: 50 });
+    t("F1 saldo+ sem compraVenda → 403", r1.status === 403, r1.status);
+    const r2 = await criarContaBody({ type: "cartao_credito", name: "Cartão Limite+", creditLimitReais: 500 });
+    t("F2 limite+ sem compraVenda → 403", r2.status === 403, r2.status);
+    const depois = await finPJ1();
+    t("F3 rejeições não criaram conta", depois.contas.length === nContas, `antes=${nContas} depois=${depois.contas.length}`);
+    t("F4 rejeições não geraram transação", depois.historico.length === nTx, `antes=${nTx} depois=${depois.historico.length}`);
+    const r3 = await criarContaBody({ type: "especie", name: "Conta Zero", balanceReais: 0 });
+    t("F5 saldo zero explícito → 201", r3.status === 201, r3.status);
+    const r4 = await criarContaBody({ type: "especie", name: "Conta Vazia" });
+    t("F6 saldo omitido → 201", r4.status === 201, r4.status);
+  }
+  {
+    setPerm(TODAS);
+    const r = await criarContaBody({ type: "especie", name: "Conta Saldo+ OK", balanceReais: 50 });
+    t("F7 saldo+ com compraVenda → 201", r.status === 201, r.status);
+    const r2 = await criarContaBody({ type: "cartao_credito", name: "Cartão Limite+ OK", creditLimitReais: 500 });
+    t("F8 limite+ com compraVenda → 201", r2.status === 201, r2.status);
+  }
+  {
+    setPerm({ ...TODAS, compraVenda: false });
+    const r = await criarContaBody({ type: "especie", name: "Conta Mestre Saldo+", balanceReais: 50 }, CM);
+    t("F9 mestre com compraVenda=off → 201", r.status === 201, r.status);
+  }
+  {
+    definirCfg(null, null); // legada: defaults do schema (criaContas+compraVenda true)
+    const r = await criarContaBody({ type: "especie", name: "Conta Legada Saldo+", balanceReais: 50 });
+    t("F10 legada: saldo+ → 201 (defaults permitem)", r.status === 201, r.status);
+    setPerm(TODAS);
   }
 } finally {
   if (proc) await encerrarServidor(proc);
