@@ -438,8 +438,11 @@ try {
     });
     const canonizar = (p) => resolve(String(p).trim()).split(String.fromCharCode(92)).join("/").toLowerCase();
     const raizRetornada = canonizar(r.stdout);
-    const raizEsperada = canonizar(c.local);
-    t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === raizEsperada, `code=${r.code} retorno=${raizRetornada} esperado=${raizEsperada}`);
+    // O tmpdir do runner Windows pode usar nome curto 8.3 (RUNNER~1)
+    // enquanto o Git sempre devolve o caminho longo — comparar com a
+    // resposta do próprio Git evita falso negativo por forma do caminho.
+    const esperada = canonizar(executarReal("git", ["rev-parse", "--show-toplevel"], { cwd: c.local }).stdout);
+    t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === esperada, `code=${r.code} retorno=${raizRetornada} esperado=${esperada}`);
   }
 
   sec("Extra — recuperação manual pelo arquivo de estado");
