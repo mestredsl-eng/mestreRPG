@@ -159,6 +159,7 @@ jobs:
             teste-sessoes-conta.mjs \
             teste-prerequisitos-patrimonio.mjs \
             teste-patrimonio-permissoes.mjs \
+            teste-patrimonio-ui-permissoes.mjs \
             teste-escopo-cruzado.mjs \
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
