@@ -13,8 +13,15 @@ const VISIBILIDADES = [
 ] as const;
 
 export default function Diario({ campaignId, campanha }: { campaignId: string; campanha: CampanhaResumo }) {
-  const souMestre = campanha.meuPapel === "mestre";
+  const papel = campanha.meuPapel;
+  const souMestre = papel === "mestre";
   const [aba, setAba] = useState<"diario" | "mestre">("diario");
+  // Espelha POST /anotacoes: mestre escreve os dois kinds; jogador só
+  // "diario"; espectador não cria nem edita anotações.
+  const membroAtivo = campanha.meuStatus === "ativo";
+  const podeEscrever = membroAtivo && (aba === "mestre"
+    ? souMestre
+    : papel === "mestre" || papel === "jogador");
   const [anotacoes, setAnotacoes] = useState<Anotacao[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
@@ -180,7 +187,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
         </div>
       )}
 
-      {!novo && !editando && (
+      {!novo && !editando && podeEscrever && (
         <button className="secundario" onClick={() => abrirEdicao(null)}>
           {aba === "mestre" ? "Nova anotação do mestre" : "Nova anotação"}
         </button>
