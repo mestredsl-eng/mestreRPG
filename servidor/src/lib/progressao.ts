@@ -53,6 +53,24 @@ import {
 
 export const CHAVE_XP = "__xp";
 
+/** Kinds elegiveis a evolucao por XP (Issue #152): somente elementos
+ *  de progressao da ficha. Itens, veiculos, dinheiro, conhecimentos e
+ *  os kinds estruturais (caracteristica/profissao/vantagem) nao evoluem
+ *  por XP. */
+export const KINDS_COMPRAVEIS_XP: ReadonlySet<string> = new Set([
+  "atributo",
+  "talento",
+  "habilidade",
+  "especializacao",
+  "defeito",
+  "disciplina",
+  "pericia",
+  "poder",
+]);
+
+/** Unico kind que pode ser adquirido do zero (nivel 0->1) por XP. */
+const KIND_AQUISICAO_ZERO_XP = "poder";
+
 // ---------- Estado __xp ----------
 
 export type TipoEventoXp = "concessao" | "remocao" | "compra" | "ajuste";
@@ -576,7 +594,11 @@ export function resumoProgressao(
     let precoProximo: number | null = null;
     let compravel = false;
     let motivo: string | undefined;
-    if (!vinculo) {
+    if (!KINDS_COMPRAVEIS_XP.has(el.kind)) {
+      // Issue #152: kind proibido nunca calcula preco nem aparece
+      // compravel, mesmo que tenha vinculo e custo configurado.
+      motivo = `"${el.name}" nao pode evoluir por XP (tipo ${el.kind})`;
+    } else if (!vinculo) {
       motivo = "Elemento sem campo de nível disponível na ficha";
     } else if (el.definition.disponivel === false) {
       motivo = "Elemento desativado nesta campanha";
@@ -641,8 +663,23 @@ export function simularCompraNivel(
   if (elemento.definition.disponivel === false) {
     return { ok: false, erro: `"${elemento.name}" está desativado nesta campanha`, codigo: "indisponivel" };
   }
+  if (!KINDS_COMPRAVEIS_XP.has(kind)) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" não pode evoluir por XP (tipo ${kind})`,
+      codigo: "kind_nao_elegivel",
+    };
+  }
 
   const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
+  if (kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" precisa de nível atual para evoluir por XP — somente poderes podem ser adquiridos do zero`,
+      codigo: "aquisicao_nao_permitida",
+      detalhes: { nivelAtual, nivelAlvo },
+    };
+  }
   if (nivelAlvo !== nivelAtual + 1) {
     return {
       ok: false,
