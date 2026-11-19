@@ -371,12 +371,18 @@ export async function reverterAtualizacao(opts = {}) {
   return executarRollback(estado, { ...opts, cwd: repoDir, stateFile: arquivo });
 }
 
-function instrucaoRecuperacao(log) {
+function instrucaoRecuperacao(log, branchOriginal) {
   log("[auto-update] RECUPERACAO MANUAL NECESSARIA:");
   log("  1. Verifique 'git status' — nenhuma alteracao local foi descartada.");
-  log("  2. Para voltar a versao anterior: git reset --hard <SHA-ANTERIOR> (somente com arvore limpa).");
-  log("  3. Rode 'npm ci' e 'npm run build' manualmente.");
-  log("  4. Detalhes em docs/GUIA-OPERACAO.md — secao 'Atualizacao automatica'.");
+  if (branchOriginal) {
+    log(`  2. Confira 'git branch --show-current': a branch original era '${branchOriginal}'. Se estiver em outra branch, NAO execute reset nela.`);
+    log("  3. Só na branch original e com a arvore limpa, avalie o reset para <SHA-ANTERIOR>.");
+  } else {
+    log("  2. Confirme manualmente a branch original antes de qualquer reset.");
+    log("  3. Só com a branch original e arvore limpa, avalie o reset para <SHA-ANTERIOR>.");
+  }
+  log("  4. Rode 'npm ci' e 'npm run build' manualmente.");
+  log("  5. Detalhes em docs/GUIA-OPERACAO.md — secao 'Atualizacao automatica'.");
 }
 
 /**
@@ -413,7 +419,7 @@ export async function executarBoot(opts = {}) {
       return { codigo: 0, atualizou: false, revertido: true, motivo: v.motivo };
     }
     log(`[auto-update] Rollback NAO foi possivel com seguranca (${rb.motivo}).`);
-    instrucaoRecuperacao(log);
+    instrucaoRecuperacao(log, v.rollback.branch);
     return { codigo: 1, atualizou: true, revertido: false, motivo: rb.motivo };
   }
 
@@ -486,7 +492,7 @@ export async function executarBoot(opts = {}) {
         return { codigo: 0, atualizou: false, revertido: true, shaAnterior: v.shaAnterior };
       }
       log(`[auto-update] Rollback NAO foi possivel com seguranca (${rb.motivo}).`);
-      instrucaoRecuperacao(log);
+      instrucaoRecuperacao(log, estadoMemoria.branch);
       return { codigo: 1, atualizou: true, revertido: false, motivo: rb.motivo };
     }
   }

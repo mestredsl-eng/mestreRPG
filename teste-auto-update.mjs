@@ -478,12 +478,14 @@ try {
       if (cmd === "git" && args[0] === "reset") resets++;
       return executarReal(cmd, args, opcoes);
     };
-    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
+    const logs = [];
+    const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: (m) => logs.push(m), stateFile: estado(c.base) });
     const branchAtual = String(git(["symbolic-ref", "--quiet", "--short", "HEAD"], c.local).stdout).trim();
     const shaNovo = String(git(["rev-parse", "HEAD"], c.local).stdout).trim();
     t("branch alterada → rollback bloqueia e retorna 1", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
     t("rollback não executa reset na branch externa", resets === 0, `resets=${resets}`);
     t("branch externa permanece no SHA do pull", branchAtual === "branch-externa" && shaNovo !== shaAnterior, `${branchAtual} ${shaNovo}`);
+    t("recuperação manual alerta para a branch original", logs.some((m) => m.includes("branch original era 'main'")));
   }
   {
     // rollback que FALHA (git reset retorna erro) → codigo 1
