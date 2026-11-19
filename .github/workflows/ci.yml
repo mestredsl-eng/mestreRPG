@@ -172,6 +172,18 @@ jobs:
             echo "===== $s ====="; node "$s"
           done
 
+  auto_update_windows:
+    name: Auto-update — Windows (npm.cmd + Git)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Testes do auto-update e execução real de npm.cmd
+        run: node teste-auto-update.mjs
+
   navegador:
     name: Navegador — homologações Playwright
     runs-on: ubuntu-latest

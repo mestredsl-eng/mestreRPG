@@ -36,10 +36,26 @@ const GIT_ENV = {
 
 /** Execucao real de comandos. Injetavel nos testes. */
 export function executarReal(cmd, args, { cwd, env, timeoutMs } = {}) {
-  const executavel = process.platform === "win32" && cmd === "npm" ? "npm.cmd" : cmd;
-  const r = spawnSync(executavel, args, {
+  const ambiente = { ...process.env, ...(env ?? {}) };
+  const npmWindows = process.platform === "win32" && (cmd === "npm" || cmd === "npm.cmd");
+
+  // npm no Windows e um .cmd, que nao pode ser iniciado diretamente por
+  // spawnSync sem terminal. Invoca o ComSpec explicitamente e restringe
+  // os argumentos a comandos fixos usados por este updater; nao aceita
+  // texto livre/metacaracteres de shell.
+  const npmArgsPermitidos = Array.isArray(args) && (
+    (args.length === 1 && (args[0] === "ci" || args[0] === "--version")) ||
+    (args.length === 4 && args[0] === "run" && args[1] === "build" && args[2] === "-w" && (args[3] === "servidor" || args[3] === "site"))
+  );
+  if (npmWindows && !npmArgsPermitidos) {
+    return { code: 1, stdout: "", stderr: "Argumentos npm nao permitidos pelo auto-update." };
+  }
+
+  const executavel = npmWindows ? (ambiente.ComSpec ?? ambiente.COMSPEC ?? "cmd.exe") : cmd;
+  const argumentos = npmWindows ? ["/d", "/s", "/c", `npm.cmd ${args.join(" ")}`] : args;
+  const r = spawnSync(executavel, argumentos, {
     cwd,
-    env: { ...process.env, ...(env ?? {}) },
+    env: ambiente,
     encoding: "utf8",
     timeout: timeoutMs,
     windowsHide: true,
