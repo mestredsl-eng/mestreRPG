@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "../auth";
 import { useNotificar } from "../Notificacoes";
 import { api, type SessaoConta } from "../api";
+import PreferenciasVisuais from "./PreferenciasVisuais";
 
 function descreverNavegador(userAgent: string | null): string {
   if (!userAgent) return "Dispositivo desconhecido";
@@ -174,6 +175,8 @@ export default function Conta() {
           </>
         )}
       </section>
+
+      {usuario && <PreferenciasVisuais usuario={usuario} recarregar={recarregar} />}
 
       <section className="cartao">
         <h2>Alterar senha</h2>

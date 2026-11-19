@@ -1,3 +1,5 @@
+import type { PreferenciasVisuais } from "./temasVisuais";
+
 const API_BASE = "/api";
 
 export interface HealthStatus {
@@ -27,6 +29,8 @@ export interface Usuario {
     dados?: { corExterna: string; corInterna: string };
     temaMesa?: string;
     visibilidade?: { aparencia?: boolean; bandeja?: boolean; rolagens?: boolean };
+    /** Preferências visuais da conta (Issue #132) — objeto completo das seis dimensões. */
+    visual?: PreferenciasVisuais;
   } & Record<string, unknown>;
 }
 
@@ -175,6 +179,13 @@ export const api = {
     requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
       method: "PATCH",
       body: JSON.stringify({ visibilidade }),
+    }),
+
+  /** Preferências visuais (Issue #132) — envia o objeto `visual` completo; o servidor preserva as demais chaves. */
+  atualizarPreferenciasVisuais: (visual: PreferenciasVisuais) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ visual }),
     }),
 
   // Administração (somente admin)
