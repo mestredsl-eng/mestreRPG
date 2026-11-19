@@ -435,49 +435,23 @@ try {
     return r ? { id: r.id, data: JSON.parse(r.data) } : null;
   });
 
-  // --- asserts persistidos: __xp ---
-  let p = personagemNa("ATQ saldo sem histórico");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "saldo sem histórico invalidado");
-  p = personagemNa("ATQ saldo divergente");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "saldo divergente invalidado");
-  p = personagemNa("ATQ cadeia quebra");
-  check(p?.data.__xp?.saldo === 10 && p.data.__xp.historico.length === 1, "quebra: prefixo demonstrável mantido");
-  p = personagemNa("ATQ divergência final");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "divergência final invalidada");
-  p = personagemNa("ATQ histórico 499");
-  check(p?.data.__xp?.historico.length === 499 && p.data.__xp.saldo === 499, "499 eventos preservados");
-  p = personagemNa("ATQ histórico 500");
-  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 500, "500 eventos preservados");
-  p = personagemNa("ATQ histórico 501");
-  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 501, "B1: 501 legítimo → últimos 500 + âncora, saldo do último evento");
-  check(p?.data.__xp?.ancora === 1, `B1: âncora calculada do primeiro retido (ancora=${p?.data.__xp?.ancora})`);
-  p = personagemNa("ATQ xp trunc forjado");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: 501 eventos sem âncora zero → saldo inicial arbitrário rejeitado");
-  p = personagemNa("ATQ xp âncora falsa");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: âncora declarada divergente rejeitada");
-  p = personagemNa("ATQ xp hist 501 quebra");
-  check(p?.data.__xp?.historico.length === 300 && p.data.__xp.saldo === 300, "B1: ruptura em histórico longo mantém só prefixo demonstrável");
-  p = personagemNa("ATQ eventos inválidos");
-  check(p?.data.__xp?.historico.length === 3 && p.data.__xp.saldo === 5, "eventos inválidos descartados, cadeia válida mantida");
-  p = personagemNa("ATQ xp válido");
-  check(p?.data.__xp?.saldo === 5 && p.data.__xp.historico.length === 3, "ledger legítimo preservado");
+  // --- asserts persistidos: __xp (modo nova = ids remapeados →
+  // assinaturas inválidas → proveniência externa NÃO demonstrável →
+  // fail-closed: TODO ledger XP zerado, mesmo os estruturalmente
+  // perfeitos. É o comportamento correto: pacote de outra instalação
+  // não pode provar autoria do ledger. A preservação de ledgers
+  // legítimos é assertada no modo "substituir" (ids intactos). ---
+  let p = personagemNa("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: ledger sem proveniência → zerado (fail-closed)");
   check(p?.data.for === 5, "campos normais preservados");
-  p = personagemNa("ATQ xp autoria");
-  check(p?.data.__xp?.historico[0]?.autorNome === "Mestre Teste", "autorNome resolvido pelo banco");
-  check(p?.data.__xp?.historico[1]?.autorId === null && p?.data.__xp?.historico[1]?.autorNome === null, "autor desconhecido limpo");
-  // --- B1: eventos XP estritos ---
-  p = personagemNa("ATQ xp qtd zero");
-  check(p?.data.__xp?.saldo === 5 && p.data.__xp.historico.length === 1, "B1: quantidade zero descartada");
-  p = personagemNa("ATQ xp saldo negativo");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: saldoResultante negativo rejeitado");
-  p = personagemNa("ATQ xp compra s/ objeto");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: compra sem objeto invalida ledger");
-  p = personagemNa("ATQ xp compra transição");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: transição de nível incoerente rejeitada");
-  p = personagemNa("ATQ xp histórico ausente");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: histórico ausente não vira vazio confiável");
+  p = personagemNa("ATQ histórico 501");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0 && p.data.__xp.ancora === undefined, "B1: 501 eventos sem assinatura → zerado");
   p = personagemNa("ATQ xp hist 501 quebra");
-  check(p?.data.__xp?.ancora === undefined, "B1: ancora não sobrevive à importação externa");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: ruptura sem assinatura → zerado");
+  p = personagemNa("ATQ saldo sem histórico");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "saldo sem histórico zerado");
+  p = personagemNa("ATQ xp autoria");
+  check(p?.data.__xp?.historico.length === 0, "B1: autoria forjada some com o ledger não demonstrável");
 
   // --- asserts persistidos: __pontos ---
   p = personagemNa("ATQ selo forjado");
@@ -495,26 +469,16 @@ try {
   p = personagemNa("ATQ pontos hist 201");
   check(p?.data.__pontos?.historico.length === 200, "histórico de pontos limitado a 200");
 
-  // --- asserts persistidos: financiado ---
+  // --- asserts persistidos: financiado (modo nova → sem proveniência,
+  // TODO financiado é descartado junto com o ledger) ---
   p = personagemNa("ATQ fin ok");
-  check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[0,1]", "financiado válido preservado");
-  p = personagemNa("ATQ fin inválido");
-  check(p?.data.__xp?.financiado === undefined, "financiado inválido rejeitado por inteiro");
+  check(p?.data.__xp?.financiado === undefined && p.data.__xp.saldo === 0, "B2: financiado sem proveniência descartado");
   p = personagemNa("ATQ fin legado");
-  check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[1,2]", "legado numérico convertido em índices");
-  p = personagemNa("ATQ fin sem prova");
-  check(p?.data.__xp?.financiado === undefined, "B2: índices sem evento de compra rejeitados");
-  // --- B2: custo/campo/elemento/nível têm que bater com as regras reais ---
+  check(p?.data.__xp?.financiado === undefined, "B2: legado sem proveniência descartado");
   p = personagemNa("ATQ fin custo inventado");
-  check(p?.data.__xp?.saldo === 8 && p.data.__xp.financiado === undefined, "B2: custoXp divergente do preço real → sem prova");
-  p = personagemNa("ATQ fin outro campo");
-  check(p?.data.__xp?.saldo === 9 && p.data.__xp.financiado === undefined, "B2: compra de outro campo não financia");
-  p = personagemNa("ATQ fin key fantasma");
-  check(p?.data.__xp?.saldo === 9 && p.data.__xp.financiado === undefined, "B2: kind/key inexistente na biblioteca → sem prova");
-  p = personagemNa("ATQ fin nível falso");
-  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0 && p.data.__xp.financiado === undefined, "B2: transição falsificada invalida o ledger");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.financiado === undefined, "B2: custo inventado → ledger zerado sem prova");
   p = personagemNa("ATQ xp compra válida");
-  check(p?.data.__xp?.saldo === 7 && p.data.__xp.historico.length === 4 && p.data.__xp.historico[1]?.compra?.campoId === "tal", "compra legítima preservada íntegra");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "B1: compra legítima sem assinatura → zerada");
 
   // --- asserts persistidos: vida/retrato/npc ---
   p = personagemNa("ATQ hp alto");
@@ -569,23 +533,14 @@ try {
   check(leituraLim.status === 200, `GET NPC limiares ${leituraLim.status}`);
   check(leituraLim.json?.ficha?.vida?.vitalidade?.nivel === 1, `B3: leitura pública de NPC não amplificada por limiares forjados (nivel=${leituraLim.json?.ficha?.vida?.vitalidade?.nivel})`);
 
-  // --- consequência econômica via calcularPontos (banco persistido) ---
-  const calcNa = (nome) => comDb(banco, (db) => {
-    const row = db.prepare("select c.data, sv.structure from characters c join sheet_versions sv on sv.id=c.template_version_id where c.campaign_id=? and c.name=?").get(cidNova, nome);
+  // --- consequência econômica via calcularPontos (modo nova: SEM
+  // proveniência → todo financiado descartado → custo integral) ---
+  const calcNa = (nome, alvo = cidNova) => comDb(banco, (db) => {
+    const row = db.prepare("select c.data, sv.structure from characters c join sheet_versions sv on sv.id=c.template_version_id where c.campaign_id=? and c.name=?").get(alvo, nome);
     return calcularPontos(JSON.parse(row.structure), JSON.parse(row.data));
   });
-  const ptsOk = calcNa("ATQ fin ok");
-  const ptsInv = calcNa("ATQ fin inválido");
-  const ptsLeg = calcNa("ATQ fin legado");
-  const ptsSemProva = calcNa("ATQ fin sem prova");
-  const ptsCustoInv = calcNa("ATQ fin custo inventado");
-  const ptsOutroCampo = calcNa("ATQ fin outro campo");
-  const ptsKeyFantasma = calcNa("ATQ fin key fantasma");
-  check(ptsOk.pools[0]?.gastos === 1, `financiado [0,1] comprovado → só transição 2→3 custa (gastos=${ptsOk.pools[0]?.gastos})`);
-  check(ptsInv.pools[0]?.gastos === 3, `financiado rejeitado → custo integral (gastos=${ptsInv.pools[0]?.gastos})`);
-  check(ptsLeg.pools[0]?.gastos === 1, `legado→[1,2] comprovados → transição 0→1 custa (gastos=${ptsLeg.pools[0]?.gastos})`);
-  check(ptsSemProva.pools[0]?.gastos === 3, `B2: sem prova de compra → custo integral (gastos=${ptsSemProva.pools[0]?.gastos})`);
-  check(ptsCustoInv.pools[0]?.gastos === 3 && ptsOutroCampo.pools[0]?.gastos === 3 && ptsKeyFantasma.pools[0]?.gastos === 3, "B2: custo/campo/elemento forjados → custo integral em calcularPontos");
+  check(calcNa("ATQ fin ok").pools[0]?.gastos === 3, "B1/B2: sem proveniência → financiado descartado → custo integral");
+  check(calcNa("ATQ fin legado").pools[0]?.gastos === 3, "B1/B2: legado sem prova → custo integral");
 
   // ---------- importação modo "substituir" (mesmos ids, campanha original) ----------
   const impSub = await req(base, "POST", "/campaigns/importar", {
@@ -600,14 +555,151 @@ try {
     const r = db.prepare("select id,data from characters where campaign_id=? and name=?").get(campId, nome);
     return r ? { id: r.id, data: JSON.parse(r.data) } : null;
   });
+
+  // --- caminho CONFIÁVEL (assinatura válida, ids intactos): a
+  // validação estrutural continua valendo — forjas sem cadeia real
+  // caem; ledgers legítimos e compras provadas são preservados ---
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 5 && p.data.__xp.historico.length === 3, "substituir: ledger legítimo assinado preservado");
   p = personagemOrig("ATQ saldo sem histórico");
-  check(p?.data.__xp?.saldo === 0, "substituir: saldo forjado zerado no banco");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: saldo sem histórico zerado");
+  p = personagemOrig("ATQ saldo divergente");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: saldo divergente zerado");
+  p = personagemOrig("ATQ cadeia quebra");
+  check(p?.data.__xp?.saldo === 10 && p.data.__xp.historico.length === 1, "substituir: quebra → prefixo demonstrável");
+  p = personagemOrig("ATQ divergência final");
+  check(p?.data.__xp?.saldo === 0, "substituir: divergência final zerada");
+  p = personagemOrig("ATQ histórico 499");
+  check(p?.data.__xp?.historico.length === 499 && p.data.__xp.saldo === 499, "substituir: 499 preservados");
+  p = personagemOrig("ATQ histórico 500");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 500, "substituir: 500 preservados");
+  p = personagemOrig("ATQ histórico 501");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 501 && p.data.__xp.ancora === 1, "substituir: 501 → 500 + âncora=1");
+  p = personagemOrig("ATQ xp trunc forjado");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: 501 sem âncora zero → rejeitado");
+  p = personagemOrig("ATQ xp âncora falsa");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: âncora divergente rejeitada");
+  p = personagemOrig("ATQ xp hist 501 quebra");
+  check(p?.data.__xp?.historico.length === 300 && p.data.__xp.saldo === 300, "substituir: ruptura longa → prefixo 300");
+  p = personagemOrig("ATQ eventos inválidos");
+  check(p?.data.__xp?.historico.length === 3 && p.data.__xp.saldo === 5, "substituir: eventos inválidos descartados");
+  p = personagemOrig("ATQ xp autoria");
+  check(p?.data.__xp?.historico[0]?.autorNome === "Mestre Teste" && p?.data.__xp?.historico[1]?.autorId === null, "substituir: autoria resolvida/limpa");
+  p = personagemOrig("ATQ xp qtd zero");
+  check(p?.data.__xp?.saldo === 5 && p.data.__xp.historico.length === 1, "substituir: quantidade zero descartada");
+  p = personagemOrig("ATQ xp histórico ausente");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: histórico ausente não vira vazio");
+  p = personagemOrig("ATQ xp compra válida");
+  check(p?.data.__xp?.saldo === 7 && p.data.__xp.historico.length === 4, "substituir: compra legítima preservada");
+  p = personagemOrig("ATQ fin ok");
+  check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[0,1]", "substituir: financiado comprovado preservado");
+  p = personagemOrig("ATQ fin legado");
+  check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[1,2]", "substituir: legado→índices comprovados");
+  p = personagemOrig("ATQ fin sem prova");
+  check(p?.data.__xp?.financiado === undefined, "substituir: sem prova de compra → rejeitado");
+  p = personagemOrig("ATQ fin custo inventado");
+  check(p?.data.__xp?.saldo === 8 && p.data.__xp.financiado === undefined, "substituir: custoXp divergente → sem prova");
+  p = personagemOrig("ATQ fin outro campo");
+  check(p?.data.__xp?.saldo === 9 && p.data.__xp.financiado === undefined, "substituir: compra de outro campo → sem prova");
+  p = personagemOrig("ATQ fin key fantasma");
+  check(p?.data.__xp?.saldo === 9 && p.data.__xp.financiado === undefined, "substituir: kind/key inexistente → sem prova");
+  p = personagemOrig("ATQ fin nível falso");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.financiado === undefined, "substituir: transição falsificada → ledger cai");
   p = personagemOrig("ATQ selo forjado");
   check(p?.data.__pontos?.selo === null, "substituir: selo removido no banco");
   p = personagemOrig("ATQ histórico 501");
   check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 501, "substituir: 501 → 500 no banco");
   p = personagemOrig("ATQ fin inválido");
   check(p?.data.__xp?.financiado === undefined, "substituir: financiado rejeitado no banco");
+
+  // consequência econômica no caminho confiável
+  check(calcNa("ATQ fin ok", campId).pools[0]?.gastos === 1, "substituir: financiado [0,1] → só 2→3 custa");
+  check(calcNa("ATQ fin legado", campId).pools[0]?.gastos === 1, "substituir: legado [1,2] → só 0→1 custa");
+  check(calcNa("ATQ fin sem prova", campId).pools[0]?.gastos === 3, "substituir: sem prova → custo integral");
+  check(calcNa("ATQ fin custo inventado", campId).pools[0]?.gastos === 3, "substituir: custo inventado → custo integral");
+
+  // ---------- ataques à autenticidade (B1/B2) ----------
+  // 1) pacote com TODOS os sigs removidos → proveniência zero → fail-closed
+  const pacoteSemSig = JSON.parse(JSON.stringify(pacoteOriginal));
+  for (const row of pacoteSemSig.estado.characters ?? []) {
+    if (row.data?.__xp && typeof row.data.__xp === "object") delete row.data.__xp.sig;
+  }
+  const impSemSig = await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteSemSig, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  check(impSemSig.status === 200, `importar sem assinatura ${impSemSig.status}`);
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "ATAQUE: sig removido → ledger zerado");
+  p = personagemOrig("ATQ fin ok");
+  check(p?.data.__xp?.financiado === undefined, "ATAQUE: financiado sem sig descartado");
+
+  // 2) adultera UM evento depois da exportação → só aquele ledger cai
+  const pacoteEvento = JSON.parse(JSON.stringify(pacoteOriginal));
+  const alvoEv = (pacoteEvento.estado.characters ?? []).find((r) => r.name === "ATQ xp válido");
+  alvoEv.data.__xp.historico[0].saldoResultante = 999;
+  const impEv = await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteEvento, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  check(impEv.status === 200, `importar evento adulterado ${impEv.status}`);
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "ATAQUE: evento adulterado → ledger zerado");
+  p = personagemOrig("ATQ fin ok");
+  check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[0,1]", "ATAQUE: ledger não tocado permanece assinado");
+
+  // 3) adultera a ÂNCORA depois da exportação → assinatura quebra
+  const pacoteAncora = JSON.parse(JSON.stringify(pacoteOriginal));
+  const alvoAnc = (pacoteAncora.estado.characters ?? []).find((r) => r.name === "ATQ histórico 501");
+  alvoAnc.data.__xp.ancora = 42;
+  await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteAncora, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  p = personagemOrig("ATQ histórico 501");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "ATAQUE: âncora adulterada → ledger zerado");
+
+  // 4) adultera regra E custo da compra simultaneamente → fp muda →
+  // TODAS as assinaturas invalidam (o pacote não prova as próprias regras)
+  const pacoteRegra = JSON.parse(JSON.stringify(pacoteOriginal));
+  const defRegra = (pacoteRegra.estado.ruleDefinitions ?? [])[0];
+  if (defRegra) defRegra.definition = { ...(defRegra.definition ?? {}), custoProgressivo: [0, 0, 0] };
+  const compraRegra = (pacoteRegra.estado.characters ?? []).find((r) => r.name === "ATQ xp compra válida");
+  if (compraRegra) for (const ev of compraRegra.data.__xp?.historico ?? []) {
+    if (ev.compra) ev.compra.custoXp = 0;
+    if (ev.tipo === "compra") ev.quantidade = 0;
+  }
+  await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteRegra, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "ATAQUE: regra adulterada → todas as assinaturas caem");
+  p = personagemOrig("ATQ fin ok");
+  check(p?.data.__xp?.financiado === undefined, "ATAQUE: financiado cai junto com a regra adulterada");
+
+  // 5) instalação sem chave confiável: rotaciona a chave do servidor —
+  // assinaturas antigas não verificam mais (outro "servidor")
+  {
+    const w = abrirDb(banco);
+    w.prepare("delete from server_settings where key='exportacao.chave.xp'").run();
+    w.close();
+  }
+  const impRot = await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: pacoteOriginal, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  check(impRot.status === 200, `importar com chave rotacionada ${impRot.status}`);
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "ATAQUE: chave diversa → proveniência não verificável → zerado");
+  // restaura pacote íntegro para os testes seguintes (re-assinado com a nova chave)
+  const exp3 = await req(base, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
+  await req(base, "POST", "/campaigns/importar", {
+    cookie: cookieMestre,
+    body: { pacote: exp3.json, modo: "substituir", campaignId: campId, confirmacao: "SUBSTITUIR" },
+  });
+  p = personagemOrig("ATQ xp válido");
+  check(p?.data.__xp?.saldo === 0, "pós-rotação: estado zerado permanece até novo export legítimo");
 
   // ---------- snapshot interno: preservação integral ----------
   // semeia metadados "confiáveis" direto no banco (como o servidor faria),

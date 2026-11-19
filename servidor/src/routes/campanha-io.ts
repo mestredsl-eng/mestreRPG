@@ -14,6 +14,7 @@ import { audit } from "../lib/audit.js";
 import { emitirCampanha, iniciarBarreiraRestauracao, liberarBarreiraRestauracao, notificarPermissaoAtualizada, reconciliarMembrosAposRestauracao, pausaTesteEmit } from "../lib/io.js";
 import { exportarCampanha, exportarPacote, type EstadoCampanha, type PacoteExportacao } from "../lib/estado.js";
 import { restaurarEstado, inserirEstado } from "../lib/restaurar.js";
+import { obterChaveAssinatura } from "../lib/assinatura-xp.js";
 import type { RelatorioSaneamento } from "../lib/saneamento-importacao.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 
@@ -221,6 +222,9 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
   }
 
   const precisaMembroExtra = !(estado.memberships as { userId: string }[]).some((m) => m.userId === req.usuario!.id);
+  // B1: chave de assinatura da instalação para verificar proveniência
+  // do ledger XP — fora da transação (get-or-create em server_settings).
+  const chaveAssinatura = await obterChaveAssinatura(db);
   let saneamento: RelatorioSaneamento | null = null;
   try {
     db.transaction((tx) => {
@@ -232,8 +236,9 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
         createdAt: new Date(), updatedAt: new Date(),
       } as never).run();
       // pacote externo: origem "externa" — metadados reservados passam
-      // por validação/saneamento e o relatório vai para resposta+auditoria
-      saneamento = inserirEstado(tx, estado, { origem: "externa" });
+      // por validação/saneamento e o relatório vai para resposta+auditoria.
+      // B1: chave de assinatura buscada antes da transação (get-or-create).
+      saneamento = inserirEstado(tx, estado, { origem: "externa", chaveAssinatura });
       // garante o importador como mestre mesmo que o pacote não o tenha
       if (precisaMembroExtra) {
         tx.insert(memberships).values({

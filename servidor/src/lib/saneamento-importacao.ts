@@ -30,6 +30,9 @@ import {
 import { CHAVE_PONTOS } from "./pontos.js";
 import { CHAVE_NPC_VISIVEL } from "./npc-visibility.js";
 import { retratoGaleriaPorId } from "./retratos.js";
+import {
+  impressaoDigitalRegras, verificarLedgerXp, type ContextoAssinatura,
+} from "./assinatura-xp.js";
 
 // mesma chave usada pelas rotas de retrato (personagens.ts)
 const CHAVE_RETRATO = "__retrato";
@@ -106,6 +109,9 @@ export interface ContextoSaneamento {
   arquivosIds: Set<string>;
   /** userId → nome de exibição (autoria forjada é limpa) */
   autores: Map<string, string | null>;
+  /** B1: contexto de verificação HMAC do ledger — null quando a
+   *  instalação não tem chave (toda proveniência externa falha). */
+  assinatura: ContextoAssinatura | null;
 }
 
 const TIPOS_NUMERICOS = new Set(["inteiro", "decimal", "moeda"]);
@@ -195,13 +201,30 @@ function eventoXpValido(e: unknown): e is Record<string, unknown> {
   return true;
 }
 
-function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: SaneamentoPersonagem, estrutura: EstruturaFicha | null) {
+function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: SaneamentoPersonagem, estrutura: EstruturaFicha | null, personagemId: string) {
   const bruto = obj(data[CHAVE_XP]);
   if (bruto === null) {
     if (data[CHAVE_XP] !== undefined) {
       delete data[CHAVE_XP];
       rep.ledgerXpInvalidado = true;
     }
+    return;
+  }
+
+  // B1: PROVENIÊNCIA antes de qualquer validação interna. O pacote
+  // controla âncora, eventos, saldos, financiamentos e as próprias
+  // regras — uma cadeia coerente pode ser 100% fabricada. Somente a
+  // assinatura HMAC emitida pelo servidor na exportação (chave em
+  // server_settings, nunca exportada) distingue legítimo de forjado.
+  // Sem assinatura válida: fail-closed — saldo zerado, histórico e
+  // financiamentos descartados. Dados normais da ficha não são tocados.
+  const confiavel = ctx.assinatura !== null &&
+    verificarLedgerXp(ctx.assinatura, personagemId, bruto);
+  if (!confiavel) {
+    rep.ledgerXpInvalidado = true;
+    const finSemProva = obj(bruto.financiado);
+    if (finSemProva) rep.financiadoRejeitados += Object.keys(finSemProva).length;
+    data[CHAVE_XP] = { saldo: 0, historico: [] };
     return;
   }
 
@@ -599,7 +622,7 @@ export function sanearPersonagemImportado(
   const templateVersionId = (row as Record<string, unknown>).templateVersionId;
   const estrutura = estruturaDoPersonagem(ctx, templateVersionId);
 
-  sanearXp(data, ctx, rep, estrutura);
+  sanearXp(data, ctx, rep, estrutura, String(row.id ?? ""));
   sanearPontos(data, ctx, rep);
   sanearHp(data, ctx, rep, estrutura);
   sanearVitalidade(data, ctx, rep);
@@ -614,8 +637,10 @@ export function montarContextoSaneamento(
     ruleDefinitions?: ({ ruleSetId?: string } & Record<string, unknown>)[];
     sheetVersions?: { id?: string; structure?: unknown }[];
     files?: { id?: string }[];
+    campanha?: Record<string, unknown>;
   },
   autores: Map<string, string | null>,
+  opts: { chaveAssinatura?: Buffer | null } = {},
 ): ContextoSaneamento {
   const rsAtivo = (dados.ruleSets ?? []).find((r) => r.isActive);
   let config: ConfigRegras;
@@ -651,11 +676,23 @@ export function montarContextoSaneamento(
       estruturas.set(v.id, null);
     }
   }
+  // B1: proveniência do ledger — a assinatura HMAC cobre personagem,
+  // ledger integral e a impressão digital das regras DO PACOTE. Sem
+  // chave de instalação não há como distinguir pacote legítimo de
+  // fabricado: fail-closed.
+  const chave = opts.chaveAssinatura ?? null;
+  const assinatura: ContextoAssinatura | null = chave
+    ? {
+        chave,
+        regrasFp: impressaoDigitalRegras(dados.ruleSets, dados.ruleDefinitions),
+      }
+    : null;
   return {
     config,
     regras,
     estruturas,
     arquivosIds: new Set((dados.files ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string")),
     autores,
+    assinatura,
   };
 }

@@ -9,6 +9,7 @@ import {
   users,
 } from "../db/schema.js";
 import type { EstadoCampanha } from "./estado.js";
+import { obterChaveAssinatura } from "./assinatura-xp.js";
 import {
   montarContextoSaneamento, relatorioSaneamentoVazio, sanearPersonagemImportado,
   type OrigemEstado, type RelatorioSaneamento, type SaneamentoPersonagem, type TotaisSaneamento,
@@ -121,7 +122,7 @@ function acumulou(r: SaneamentoPersonagem): boolean {
  * passam "interna" e preservam os metadados reservados integralmente.
  * Retorna o RelatorioSaneamento (vazio quando origem="interna").
  */
-export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado } = {}): RelatorioSaneamento {
+export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado; chaveAssinatura?: Buffer | null } = {}): RelatorioSaneamento {
   const origem: OrigemEstado = opts.origem ?? "externa";
   const rel = relatorioSaneamentoVazio(origem);
   const chars = (dados.characters ?? []) as Record<string, unknown>[];
@@ -133,7 +134,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
     for (const u of tx.select({ id: users.id, displayName: users.displayName, username: users.username }).from(users).all()) {
       autores.set(u.id, u.displayName ?? u.username ?? null);
     }
-    const ctx = montarContextoSaneamento(dados, autores);
+    const ctx = montarContextoSaneamento(dados, autores, { chaveAssinatura: opts.chaveAssinatura ?? null });
     for (const row of chars) {
       const rep = repVazio();
       rep.personagemId = String(row.id ?? "");
@@ -213,6 +214,11 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
   };
 
   let saneamento = relatorioSaneamentoVazio(opts.origem ?? "externa");
+  // B1: a verificação de proveniência do ledger exige a chave de
+  // assinatura da instalação — buscada FORA da transação (get-or-create).
+  const chaveAssinatura = (opts.origem ?? "externa") === "externa"
+    ? await obterChaveAssinatura(db)
+    : null;
   db.transaction((tx) => {
     const limpar = (tabela: Parameters<typeof tx.delete>[0], where: unknown) =>
       tx.delete(tabela).where(where as never).run();
@@ -250,7 +256,7 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     tx.update(campaigns).set(upd).where(eq(campaigns.id, campaignId)).run();
 
     // reinsere na ordem de dependência (datas voltam de ISO string para Date)
-    saneamento = inserirEstado(tx, dados, { origem: opts.origem });
+    saneamento = inserirEstado(tx, dados, { origem: opts.origem, chaveAssinatura });
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----
