@@ -18,7 +18,10 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [aba, setAba] = useState<"diario" | "mestre">("diario");
   // Espelha POST /anotacoes: mestre escreve os dois kinds; jogador só
   // "diario"; espectador não cria nem edita anotações.
-  const podeEscrever = aba === "mestre" ? souMestre : papel !== "espectador";
+  const membroAtivo = campanha.meuStatus === "ativo";
+  const podeEscrever = membroAtivo && (aba === "mestre"
+    ? souMestre
+    : papel === "mestre" || papel === "jogador");
   const [anotacoes, setAnotacoes] = useState<Anotacao[]>([]);
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [membros, setMembros] = useState<Membro[]>([]);
