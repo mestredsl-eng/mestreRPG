@@ -515,7 +515,7 @@ type LinhaRuleDef = typeof ruleDefinitions.$inferSelect;
 
 /** Monta o RegrasCampanha a partir das linhas já lidas (compartilhado
  *  entre a carga assíncrona e a síncrona/transacional). */
-function montarRegrasCampanha(rs: LinhaRuleSet, defs: LinhaRuleDef[]): RegrasCampanha {
+export function montarRegrasCampanha(rs: LinhaRuleSet, defs: LinhaRuleDef[]): RegrasCampanha {
   const elementos = new Map<string, ElementoRegra>();
   const porKind = new Map<string, ElementoRegra[]>();
   for (const d of defs) {

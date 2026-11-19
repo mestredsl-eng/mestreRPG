@@ -19,11 +19,17 @@
  */
 
 import { todosCampos, estruturaFichaSchema, type CampoDef, type EstruturaFicha } from "./ficha.js";
-import { configRegrasSchema, type ConfigRegras } from "./regras.js";
+import {
+  configRegrasSchema, montarRegrasCampanha,
+  type ConfigRegras, type RegrasCampanha,
+} from "./regras.js";
 import { hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "./vida.js";
-import { CHAVE_XP } from "./progressao.js";
+import {
+  CHAVE_XP, KINDS_COMPRAVEIS_XP, precoProximoNivel, vinculosElemento,
+} from "./progressao.js";
 import { CHAVE_PONTOS } from "./pontos.js";
 import { CHAVE_NPC_VISIVEL } from "./npc-visibility.js";
+import { retratoGaleriaPorId } from "./retratos.js";
 
 // mesma chave usada pelas rotas de retrato (personagens.ts)
 const CHAVE_RETRATO = "__retrato";
@@ -91,6 +97,9 @@ export function relatorioSaneamentoVazio(origem: OrigemEstado): RelatorioSaneame
 
 export interface ContextoSaneamento {
   config: ConfigRegras;
+  /** regras vigentes do pacote (ruleset ativo + biblioteca de elementos)
+   *  — usadas para provar compras de XP contra custo e vínculo reais. */
+  regras: RegrasCampanha;
   /** templateVersionId → estrutura parseada (null = estrutura inválida/ausente) */
   estruturas: Map<string, EstruturaFicha | null>;
   /** ids de files do pacote (retrato precisa apontar para um deles) */
@@ -145,6 +154,9 @@ function sanearAutor(e: Record<string, unknown>, ctx: ContextoSaneamento) {
       e.autorId = null;
       e.autorNome = null;
     }
+  } else {
+    // nome sem id verificável não é autoria confiável
+    e.autorNome = null;
   }
 }
 
@@ -218,23 +230,32 @@ function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
     validos.push(ev);
   }
 
-  const truncado = validos.length > MAX_XP_HISTORICO;
-  if (truncado) {
-    rep.eventosXpDescartados += validos.length - MAX_XP_HISTORICO;
-    validos.splice(0, validos.length - MAX_XP_HISTORICO);
+  // B1: âncora verificável do saldo inicial. O servidor grava `ancora`
+  // quando trunca o histórico no teto de persistência; pacotes antigos
+  // sem o campo são tratados como completos desde o zero. Um valor
+  // presente mas inválido torna o ledger não demonstrável.
+  const ancoraBruta = bruto.ancora === undefined || bruto.ancora === null
+    ? 0
+    : num(bruto.ancora);
+  if (ancoraBruta === null || ancoraBruta < 0) {
+    rep.ledgerXpInvalidado = true;
+    const finBrutoInv = obj(bruto.financiado);
+    if (finBrutoInv) rep.financiadoRejeitados += Object.keys(finBrutoInv).length;
+    data[CHAVE_XP] = { saldo: 0, historico: [] };
+    return;
   }
 
-  // cadeia de saldos: cada saldoResultante deve ser o anterior + delta.
-  // Histórico completo (não truncado) ancora no zero: o primeiro evento
-  // precisa nascer de saldo 0. Histórico truncado ancora no primeiro
-  // evento retido (o prefixo anterior não é verificável).
+  // B1: validar a cadeia INTEGRAL recebida ANTES de qualquer limite de
+  // armazenamento. O primeiro evento precisa nascer exatamente da
+  // âncora declarada — sem isso, 501 eventos fabricados a partir de um
+  // saldo inicial falso seriam "coerentes". Ruptura descarta apenas o
+  // sufixo não demonstrável; o prefixo válido é preservado.
   let eventosFinais = validos;
+  let ancoraFinal = ancoraBruta;
   if (validos.length) {
     let quebra = -1;
-    if (!truncado) {
-      const primeiro = xpNum(num(validos[0].saldoResultante)! - num(validos[0].quantidade)!);
-      if (primeiro !== 0) quebra = 0;
-    }
+    const primeiro = xpNum(num(validos[0].saldoResultante)! - num(validos[0].quantidade)!);
+    if (xpNum(primeiro) !== xpNum(ancoraBruta)) quebra = 0;
     if (quebra < 0) {
       for (let i = 1; i < validos.length; i++) {
         const esperado = xpNum(xpNum(num(validos[i - 1].saldoResultante)!) + xpNum(num(validos[i].quantidade)!));
@@ -245,6 +266,20 @@ function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
       rep.eventosXpDescartados += validos.length - quebra;
       eventosFinais = validos.slice(0, quebra);
     }
+  }
+
+  // Só DEPOIS de demonstrada a cadeia é que o teto de armazenamento
+  // (MAX_XP_HISTORICO) é aplicado — retendo os últimos eventos e
+  // carregando a nova âncora calculada do primeiro retido. Histórico
+  // legítimo com mais de 500 eventos é preservado; truncamento forjado
+  // já foi rejeitado pela âncora acima.
+  if (eventosFinais.length > MAX_XP_HISTORICO) {
+    const retidos = eventosFinais.slice(-MAX_XP_HISTORICO);
+    rep.eventosXpDescartados += eventosFinais.length - retidos.length;
+    eventosFinais = retidos;
+    ancoraFinal = xpNum(
+      num(eventosFinais[0].saldoResultante)! - num(eventosFinais[0].quantidade)!,
+    );
   }
 
   // saldo demonstrável: último saldoResultante da cadeia retida;
@@ -260,20 +295,45 @@ function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
   }
 
   // ---- financiado: só campos numéricos existentes na ficha, e cada
-  // índice precisa de PROVA: um evento de compra retido na cadeia com
-  // campoId + nivelAnterior == índice (B2). Sem histórico demonstrável
-  // nenhuma transição é considerada paga por XP.
+  // índice precisa de PROVA COMPLETA: um evento de compra retido na
+  // cadeia cujo kind/key existem na biblioteca do pacote, cujo kind é
+  // elegível a XP, cujo campoId corresponde a um vínculo modo "nivel"
+  // do elemento e cujo custoXp é IGUAL ao preço recalculado pelas
+  // regras vigentes para a transição nivelAnterior→nivelNovo (B2).
+  // Compra com metadados ou custo inventados não financia nada.
+  // Sem histórico demonstrável (ou sem estrutura da ficha) nenhuma
+  // transição é considerada paga por XP.
   const finBruto = obj(bruto.financiado);
   const finValido: Record<string, number[]> = {};
   if (finBruto && !saldoOk) rep.financiadoRejeitados += Object.keys(finBruto).length;
   if (finBruto && saldoOk) {
-    // provas: transições i→i+1 compradas com XP, extraídas da cadeia retida
     const provas = new Set<string>();
-    for (const ev of eventosFinais) {
-      if (ev.tipo !== "compra") continue;
-      const cp = obj(ev.compra);
-      if (cp && typeof cp.campoId === "string" && Number.isInteger(cp.nivelAnterior)) {
-        provas.add(`${cp.campoId}|${cp.nivelAnterior}`);
+    if (estrutura) {
+      for (const ev of eventosFinais) {
+        if (ev.tipo !== "compra") continue;
+        const cp = obj(ev.compra);
+        if (!cp) continue;
+        const { kind, key, campoId } = cp;
+        const na = cp.nivelAnterior, nn = cp.nivelNovo, cx = num(cp.custoXp);
+        if (typeof kind !== "string" || typeof key !== "string" || typeof campoId !== "string") continue;
+        if (!KINDS_COMPRAVEIS_XP.has(kind)) continue;
+        if (!Number.isInteger(na) || !Number.isInteger(nn) || cx === null) continue;
+        const elemento = ctx.regras.elementos.get(`${kind}:${key}`);
+        if (!elemento || elemento.definition.disponivel === false) continue;
+        // o campo financiado precisa ser o campo que ESTE elemento
+        // realmente expressa em modo "nivel" — sem vínculo, a compra
+        // não pode ter escrito naquele campo.
+        const vinculo = vinculosElemento(estrutura, kind, key)
+          .find((v) => v.campo.id === campoId && v.modo === "nivel");
+        if (!vinculo) continue;
+        // custo tem que bater com o preço das regras vigentes para a
+        // mesma transição — custo inventado não gera prova.
+        const preco = precoProximoNivel(
+          estrutura, data, ctx.regras, elemento, vinculo,
+          na as number, nn as number,
+        );
+        if (preco.preco === null || xpNum(preco.preco) !== xpNum(cx)) continue;
+        provas.add(`${campoId}|${na}`);
       }
     }
     const porId = new Map<string, CampoDef>();
@@ -308,6 +368,9 @@ function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
   }
 
   const novoXp: Record<string, unknown> = { saldo: saldoOk ? saldoComprovado : 0, historico: saldoOk ? eventosFinais : [] };
+  // âncora > 0 só existe quando o histórico foi truncado pelo teto —
+  // preserva a origem verificável do primeiro evento retido (B1).
+  if (saldoOk && eventosFinais.length && ancoraFinal > 0) novoXp.ancora = ancoraFinal;
   if (saldoOk && Object.keys(finValido).length) novoXp.financiado = finValido;
   data[CHAVE_XP] = novoXp;
 }
@@ -406,24 +469,13 @@ function sanearHp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
   data[CHAVE_HP] = { atual, historico };
 }
 
-const EVENTO_VIT_KEYS = ["em", "nivelAnterior", "nivelNovo", "motivo", "autorId", "autorNome", "origem", "limiares"];
+// `limiares` NÃO entra na whitelist: é snapshot da config do servidor
+// que alimenta a leitura pública de NPC (teto de exibição). Um pacote
+// externo nunca podefornecer esse snapshot — evento de conversão
+// importado fica sem limiares e a leitura cai no fallback conservador
+// (só o piso manual). Nunca validar "dentro da faixa" e preservar.
+const EVENTO_VIT_KEYS = ["em", "nivelAnterior", "nivelNovo", "motivo", "autorId", "autorNome", "origem"];
 const ORIGENS_VIT = new Set(["manual", "conversao-ferimento"]);
-
-function limiaresVitValidos(v: unknown, total: number): { ate: number; nivel: number }[] | null {
-  if (!Array.isArray(v)) return null;
-  const out: { ate: number; nivel: number }[] = [];
-  const vistos = new Set<number>();
-  for (const l of v) {
-    const o = obj(l);
-    const ate = o ? num(o.ate) : null;
-    const nivel = o ? o.nivel : null;
-    if (ate === null || ate < 0 || ate > 100 || vistos.has(ate)) return null;
-    if (!Number.isInteger(nivel) || (nivel as number) < 0 || (nivel as number) >= total) return null;
-    vistos.add(ate);
-    out.push({ ate, nivel: nivel as number });
-  }
-  return out;
-}
 
 function eventoVitalidadeValido(e: unknown, total: number): e is Record<string, unknown> {
   const o = obj(e);
@@ -436,7 +488,6 @@ function eventoVitalidadeValido(e: unknown, total: number): e is Record<string, 
   // conversão automática só sobe — coerência com a regra de produção
   if (o.origem === "conversao-ferimento" && (nn as number) <= (na as number)) return false;
   if (o.motivo !== undefined && o.motivo !== null && typeof o.motivo !== "string") return false;
-  if (o.limiares !== undefined && limiaresVitValidos(o.limiares, total) === null) return false;
   return true;
 }
 
@@ -470,9 +521,7 @@ function sanearVitalidade(data: Record<string, unknown>, ctx: ContextoSaneamento
         const o = obj(e)!;
         const ev: Record<string, unknown> = {};
         for (const k of EVENTO_VIT_KEYS) {
-          if (o[k] === undefined) continue;
-          if (k === "limiares") { ev[k] = limiaresVitValidos(o[k], total); continue; }
-          ev[k] = o[k];
+          if (o[k] !== undefined) ev[k] = o[k];
         }
         sanearAutor(ev, ctx);
         historico.push(ev);
@@ -486,11 +535,24 @@ function sanearVitalidade(data: Record<string, unknown>, ctx: ContextoSaneamento
     }
   }
 
+  // alteradoPor é userId: resolve contra usuários locais — id
+  // desconhecido ou tipo inválido é limpo (autoria forjada não entra).
+  const ap = bruto.alteradoPor;
+  let alteradoPor: string | null | undefined;
+  if (typeof ap === "string" && ap) {
+    alteradoPor = ctx.autores.has(ap) ? ap : null;
+    if (alteradoPor === null) rep.vitalidadeCorrigida = true;
+  } else if (ap === null) {
+    alteradoPor = null;
+  } else if (ap !== undefined) {
+    rep.vitalidadeCorrigida = true;
+  }
+
   data[CHAVE_VITALIDADE] = {
     nivel: nivelBruto,
     ...(nivelManual !== undefined ? { nivelManual } : {}),
     ...(typeof bruto.alteradoEm === "string" && dataValida(bruto.alteradoEm) ? { alteradoEm: bruto.alteradoEm } : {}),
-    ...(typeof bruto.alteradoPor === "string" || bruto.alteradoPor === null ? { alteradoPor: bruto.alteradoPor } : {}),
+    ...(alteradoPor !== undefined ? { alteradoPor } : {}),
     ...(historico ? { historico } : {}),
   };
 }
@@ -502,6 +564,8 @@ function sanearRetrato(data: Record<string, unknown>, ctx: ContextoSaneamento, r
   const bruto = obj(data[CHAVE_RETRATO]);
   const arquivoId = bruto && typeof bruto.arquivoId === "string" ? bruto.arquivoId : null;
   if (bruto && bruto.tipo === "arquivo" && arquivoId && ctx.arquivosIds.has(arquivoId)) return;
+  // galeria: só id presente no catálogo oficial do servidor
+  if (bruto && bruto.tipo === "galeria" && typeof bruto.id === "string" && retratoGaleriaPorId(bruto.id)) return;
   delete data[CHAVE_RETRATO];
   rep.retratoRemovido = true;
 }
@@ -546,7 +610,8 @@ export function sanearPersonagemImportado(
 /** Monta o contexto a partir do EstadoCampanha + usuários do banco. */
 export function montarContextoSaneamento(
   dados: {
-    ruleSets?: { config?: unknown; isActive?: boolean }[];
+    ruleSets?: ({ id?: string; config?: unknown; isActive?: boolean })[];
+    ruleDefinitions?: ({ ruleSetId?: string } & Record<string, unknown>)[];
     sheetVersions?: { id?: string; structure?: unknown }[];
     files?: { id?: string }[];
   },
@@ -560,6 +625,22 @@ export function montarContextoSaneamento(
   } catch {
     config = configRegrasSchema.parse({});
   }
+  // B2: regras completas (elementos kind:key) montadas das linhas do
+  // pacote — mesma fonte usada pelo motor de progression real. Se a
+  // montagem falhar, o mapa fica vazio e todo `financiado` é rejeitado
+  // (fail-closed: sem prova de custo, nada é considerado pago por XP).
+  let regras: RegrasCampanha;
+  try {
+    const defs = (dados.ruleDefinitions ?? []).filter((d) => d.ruleSetId === rsAtivo?.id);
+    regras = rsAtivo
+      ? montarRegrasCampanha(
+          rsAtivo as unknown as Parameters<typeof montarRegrasCampanha>[0],
+          defs as unknown as Parameters<typeof montarRegrasCampanha>[1],
+        )
+      : { ruleSetId: null, config, elementos: new Map(), porKind: new Map() };
+  } catch {
+    regras = { ruleSetId: rsAtivo?.id ?? null, config, elementos: new Map(), porKind: new Map() };
+  }
   const estruturas = new Map<string, EstruturaFicha | null>();
   for (const v of dados.sheetVersions ?? []) {
     if (typeof v.id !== "string") continue;
@@ -572,6 +653,7 @@ export function montarContextoSaneamento(
   }
   return {
     config,
+    regras,
     estruturas,
     arquivosIds: new Set((dados.files ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string")),
     autores,

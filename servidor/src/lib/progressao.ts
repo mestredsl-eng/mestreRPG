@@ -99,6 +99,12 @@ export interface EventoXp {
 export interface EstadoXp {
   saldo: number;
   historico: EventoXp[];
+  /** Saldo anterior ao primeiro evento retido quando o histórico foi
+   *  truncado pelo teto MAX_HISTORICO (Issue #162/B1): sem ele, o
+   *  primeiro saldoResultante retido não tem âncora verificável e um
+   *  pacote importado poderia declarar um saldo inicial arbitrário.
+   *  0/ausente = histórico completo desde o zero. */
+  ancora?: number;
   /** Níveis financiados por XP por campo da ficha (BUG_0001): impede
    *  que o orçamento de pontos de criação cobre de novo esses níveis
    *  e permite reconciliar reduções/manutenção.
@@ -141,9 +147,11 @@ export function lerXp(dados: Record<string, unknown>): EstadoXp {
       }
     }
   }
+  const ancoraBruta = num((bruto as { ancora?: unknown }).ancora);
   return {
     saldo: saldoBruto === null ? 0 : xpNum(saldoBruto),
     historico,
+    ...(ancoraBruta !== null && ancoraBruta >= 0 ? { ancora: xpNum(ancoraBruta) } : {}),
     financiado: Object.keys(financiado).length ? financiado : undefined,
   };
 }
@@ -164,20 +172,29 @@ export function aplicarXp(
 ): { dados: Record<string, unknown>; estado: EstadoXp } {
   const estado = lerXp(dados);
   const saldo = xpNum(estado.saldo + delta);
+  const historicoNovo = [
+    ...estado.historico,
+    {
+      em: new Date().toISOString(),
+      tipo: evento.tipo,
+      quantidade: xpNum(delta),
+      motivo: evento.motivo?.trim() || null,
+      autorId: evento.autorId,
+      autorNome: evento.autorNome,
+      saldoResultante: saldo,
+    },
+  ];
+  const truncado = historicoNovo.length > MAX_HISTORICO;
+  const historico = historicoNovo.slice(-MAX_HISTORICO);
+  // B1: ao truncar, grava a âncora = saldo anterior ao primeiro evento
+  // retido — sem ela a cadeia perde a origem verificável na importação.
+  const ancora = truncado
+    ? xpNum(num(historico[0].saldoResultante)! - num(historico[0].quantidade)!)
+    : estado.ancora;
   const novo: EstadoXp = {
     saldo,
-    historico: [
-      ...estado.historico,
-      {
-        em: new Date().toISOString(),
-        tipo: evento.tipo,
-        quantidade: xpNum(delta),
-        motivo: evento.motivo?.trim() || null,
-        autorId: evento.autorId,
-        autorNome: evento.autorNome,
-        saldoResultante: saldo,
-      },
-    ].slice(-MAX_HISTORICO),
+    historico,
+    ...(ancora !== undefined && ancora > 0 ? { ancora } : {}),
     financiado: estado.financiado,
   };
   return { dados: { ...dados, [CHAVE_XP]: novo }, estado: novo };
