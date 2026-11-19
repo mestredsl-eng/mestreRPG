@@ -21,6 +21,7 @@ import {
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
   type TokenVtt, type VttState,
 } from "../lib/vtt.js";
+import { calibracaoValida } from "../lib/regua.js";
 import {
   criarLimitadorSocket, chaveSocket, LIMITES_SOCKET_MESA,
   type AcaoMesaLimitada, type LimitadorSocket,
@@ -500,10 +501,11 @@ function socket_handlers(
       return { ok: true, userId: uid, personagemId: pid, personagemNpc };
     }
 
-    /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover", mapa?} — somente mestre. */
+    /** mesa:vtt:mapa {sessionId, acao:"definir"|"remover"|"calibrar", mapa?, regua?} — somente mestre. */
     on(socket, "mesa:vtt:mapa", async (payload: {
       sessionId?: string; acao?: string;
       mapa?: { fileId?: string; nome?: string; largura?: number; altura?: number } | null;
+      regua?: unknown;
     }, cb?: (r: unknown) => void) => {
       const u = usuario();
       const sessionId = payload?.sessionId;
@@ -524,6 +526,20 @@ function socket_handlers(
         const vtt = await lerVtt(sessionId);
         if (payload.acao === "remover") {
           vtt.mapa = null;
+        } else if (payload.acao === "calibrar") {
+          // Régua de distância (Issue #125): calibração da sessão gravada
+          // em vtt_state.regua. `regua: null` remove a calibração; valor
+          // presente precisa passar na validação estrita (unidade ≤24,
+          // números finitos positivos). A medição nunca trafega — só a
+          // configuração, que é compartilhada por definição.
+          if (payload.regua === null) {
+            vtt.regua = null;
+          } else if (calibracaoValida(payload.regua)) {
+            const c = payload.regua;
+            vtt.regua = { unidade: c.unidade.trim(), distanciaReferencia: c.distanciaReferencia, valorReferencia: c.valorReferencia };
+          } else {
+            cb?.({ ok: false, erro: "Calibração da régua inválida" }); return;
+          }
         } else if (payload.acao === "definir") {
           const m = payload.mapa;
           if (!m || typeof m.fileId !== "string" || !m.fileId || m.fileId.length > 100) {
@@ -539,11 +555,16 @@ function socket_handlers(
           const ehImagem = (arq.mimeType ?? "").startsWith("image/")
             || /\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(arq.fileName);
           if (!ehImagem) { cb?.({ ok: false, erro: "O mapa precisa ser uma imagem" }); return; }
+          // dimensões intrínsecas da imagem (Issue #125): só positivas e
+          // finitas; par incompleto/inválido é descartado (tabuleiro cai
+          // na geometria aproximada do cliente em vez de distorcer).
+          const dimOk = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v) && v > 0;
+          const lw = dimOk(m.largura) ? m.largura : undefined;
+          const ht = dimOk(m.altura) ? m.altura : undefined;
           vtt.mapa = {
             fileId: m.fileId,
             nome: typeof m.nome === "string" ? m.nome.slice(0, 140) : "Mapa",
-            largura: typeof m.largura === "number" && Number.isFinite(m.largura) ? m.largura : undefined,
-            altura: typeof m.altura === "number" && Number.isFinite(m.altura) ? m.altura : undefined,
+            ...(lw !== undefined && ht !== undefined ? { largura: lw, altura: ht } : {}),
           };
         } else {
           cb?.({ ok: false, erro: "Ação inválida" }); return;
