@@ -25,6 +25,21 @@ const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
 const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 0017
 const ID_NOVIDADE_1005 = "00000000-0000-4000-8000-000000000105";
 
+// A migration 0028 é somente de dados; ainda assim precisa manter a
+// cadeia de snapshots do Drizzle completa para a próxima db:generate/up.
+// Seu snapshot replica o esquema 0027 e aponta prevId para o snapshot pai.
+{
+  const meta = join(MIGRATIONS, "meta");
+  const anterior = JSON.parse(readFileSync(join(meta, "0027_snapshot.json"), "utf8"));
+  const atual = JSON.parse(readFileSync(join(meta, "0028_snapshot.json"), "utf8"));
+  const semIdentidade = ({ id, prevId, ...schema }) => schema;
+  t("snapshot 0028 encadeia em 0027 com UUID próprio",
+    atual.prevId === anterior.id && atual.id !== anterior.id && /^[0-9a-f-]{36}$/i.test(atual.id),
+    `prevId=${atual.prevId} anterior=${anterior.id}`);
+  t("snapshot 0028 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(atual)) === JSON.stringify(semIdentidade(anterior)));
+}
+
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
