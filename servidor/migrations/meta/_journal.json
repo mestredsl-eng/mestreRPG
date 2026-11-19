@@ -204,6 +204,13 @@
       "when": 1795120096025,
       "tag": "0028_release_1005_campaign_substitution_news",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1795121000000,
+      "tag": "0029_release_1005_xp_import_integrity_news",
+      "breakpoints": true
     }
   ]
 }

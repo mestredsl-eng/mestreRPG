@@ -4,6 +4,13 @@
 
 ## [1.0.0.5] - 2026-11-19
 
+### Integridade de importações e progressão XP
+
+- **Ledger XP autenticado:** exportações assinam o ledger de cada personagem com HMAC-SHA256 e chave específica da instalação, cobrindo personagem, saldo, histórico, âncora, financiamentos e impressão digital das regras.
+- **Importação externa fail-closed:** ledger sem assinatura válida perde saldo, histórico e financiamentos; metadados reservados de XP, pontos, HP e vitalidade são validados e saneados. Restaurações de snapshots internos preservam os metadados confiáveis.
+- **Campos reservados protegidos:** IDs de campos iniciados por `__` são rejeitados para impedir colisões com metadados internos.
+- **Registro na Central de Novidades:** migration `0029_release_1005_xp_import_integrity_news.sql`, com seed idempotente próprio, publica esta entrega na versão `1.0.5`.
+
 ### Correções e permissões
 
 - **Substituição de campanha restrita ao mestre ativo:** a interface só oferece o modal de substituição quando a campanha importada já pertence ao usuário e a associação dele está com papel `mestre` e status `ativo`.
