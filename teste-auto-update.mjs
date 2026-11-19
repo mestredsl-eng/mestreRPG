@@ -314,6 +314,123 @@ try {
     t("lockfile inalterado → npm ci pulado", b.codigo === 0 && !reg.some((x) => x.includes(" ci")), reg.join(" | "));
     t("build ainda executado", reg.some((x) => x.includes("build")));
   }
+
+  sec("B1 — upstream precisa ser origin/<branch>");
+  {
+    // upstream valido (origin/main) ja e o padrao de todos os cenarios —
+    // reforco explicito: fetch/pull acontecem normalmente
+    const cOk = criarRepo("b1-ok");
+    publicar(cOk);
+    const rOk = await verificarAtualizacao({ cwd: cOk.local, executar: execReal, log: silencioso });
+    t("upstream origin/main → permitido", rOk.atualizou === true, rOk.motivo);
+
+    // upstream apontando para OUTRO remoto → bloqueado antes de qualquer fetch
+    const cOut = criarRepo("b1-outro");
+    publicar(cOut);
+    const outro = join(cOut.base, "outro.git");
+    gitSetup(["init", "--bare", "-b", "main", outro], cOut.base);
+    gitSetup(["remote", "add", "outro", outro], cOut.local);
+    gitSetup(["update-ref", "refs/remotes/outro/main", "HEAD"], cOut.local);
+    gitSetup(["branch", "--set-upstream-to=outro/main"], cOut.local);
+    const regOut = [];
+    const rOut = await verificarAtualizacao({ cwd: cOut.local, executar: executarHibrido({ registro: regOut }), log: silencioso });
+    t("upstream outro-remoto/main → upstream-invalido", rOut.atualizou === false && rOut.motivo === "upstream-invalido", `${rOut.motivo} up=${rOut.upstream}`);
+    t("nenhum fetch/pull com upstream estranho", !regOut.some((x) => x.includes("fetch") || x.includes("pull")), regOut.join(" | "));
+
+    // upstream de fork → bloqueado
+    const cFork = criarRepo("b1-fork");
+    publicar(cFork);
+    const fork = join(cFork.base, "fork.git");
+    gitSetup(["init", "--bare", "-b", "main", fork], cFork.base);
+    gitSetup(["remote", "add", "fork", fork], cFork.local);
+    gitSetup(["update-ref", "refs/remotes/fork/main", "HEAD"], cFork.local);
+    gitSetup(["branch", "--set-upstream-to=fork/main"], cFork.local);
+    const regFork = [];
+    const rFork = await verificarAtualizacao({ cwd: cFork.local, executar: executarHibrido({ registro: regFork }), log: silencioso });
+    t("upstream de fork → upstream-invalido", rFork.atualizou === false && rFork.motivo === "upstream-invalido", rFork.motivo);
+    t("nenhum fetch/pull com upstream de fork", !regFork.some((x) => x.includes("fetch") || x.includes("pull")), regFork.join(" | "));
+  }
+
+  sec("B2 — excecoes e falhas pos-pull");
+  {
+    // excecao INESPERADA (throw) no npm ci → rollback → boot segue local;
+    // o npm ci pos-rollback funciona (excecao foi pontual)
+    const c = criarRepo("b2-throw");
+    publicar(c);
+    const shaAnt = head(c.local);
+    let throwou = false;
+    const execThrow = (cmd, args, opcoes = {}) => {
+      if (!throwou && (cmd === "npm" || cmd === "npm.cmd")) { throwou = true; throw new Error("npm explodiu"); }
+      if (cmd === "npm" || cmd === "npm.cmd") return { code: 0, stdout: "", stderr: "" };
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ cwd: c.local, executar: execThrow, log: silencioso, stateFile: estado(c.base) });
+    t("excecao no npm ci → rollback → codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    // excecao PERSISTENTE (todo npm lanca, inclusive pos-rollback) →
+    // deps nao podem ser garantidas → codigo 1, nunca sucesso falso
+    const c = criarRepo("b2-throwall");
+    publicar(c);
+    const execThrowAll = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") throw new Error("npm sempre explode");
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ cwd: c.local, executar: execThrowAll, log: silencioso, stateFile: estado(c.base) });
+    t("excecao persistente → codigo 1 (sem sucesso falso)", b.codigo === 1, JSON.stringify(b));
+  }
+  {
+    // excecao DENTRO do verificar, apos o pull (git diff lanca) →
+    // verificar devolve rollback → boot reverte → codigo 0
+    const c = criarRepo("b2-pospull");
+    publicar(c);
+    const shaAnt = head(c.local);
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "git" && args[0] === "diff") throw new Error("git diff explodiu");
+      if (cmd === "npm" || cmd === "npm.cmd") return { code: 0, stdout: "", stderr: "" };
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    t("excecao pos-pull no verificar → rollback → codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    // falha de PERSISTENCIA do estado (stateFile e um diretorio) →
+    // boot continua protegido em memoria; falha de build → rollback ok
+    const c = criarRepo("b2-state");
+    publicar(c);
+    const shaAnt = head(c.local);
+    const dirEstado = join(c.base, "estado-e-diretorio");
+    mkdirSync(dirEstado, { recursive: true });
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") {
+        if (args.includes("build")) return { code: 2, stdout: "", stderr: "build fake" };
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      return executarReal(cmd, args, opcoes);
+    };
+    const logs = [];
+    const b = await executarBoot({ cwd: c.local, executar: exec, log: (m) => logs.push(m), stateFile: dirEstado });
+    t("falha ao gravar estado nao impede rollback em memoria", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
+    t("aviso de falha de persistencia emitido", logs.some((m) => m.includes("estado de rollback")), logs.join(" | "));
+    t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+  }
+  {
+    // rollback que FALHA (git reset retorna erro) → codigo 1
+    const c = criarRepo("b2-resetfail");
+    publicar(c);
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "npm" || cmd === "npm.cmd") {
+        if (args.includes("build")) return { code: 2, stdout: "", stderr: "build fake" };
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (cmd === "git" && args[0] === "reset") return { code: 1, stdout: "", stderr: "reset negado" };
+      return executarReal(cmd, args, opcoes);
+    };
+    const b = await executarBoot({ cwd: c.local, executar: exec, log: silencioso, stateFile: estado(c.base) });
+    t("rollback falhou → codigo 1 (integridade nao garantida)", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
+  }
 } finally {
   rmSync(RAIZ, { recursive: true, force: true });
 }

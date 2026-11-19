@@ -115,10 +115,19 @@ export async function verificarAtualizacao(opts = {}) {
   if (ref.code !== 0) return pular("head-detached", { repoDir });
   const branch = String(ref.stdout).trim().replace(/^refs\/heads\//, "");
 
-  // 5. upstream configurado — nao adivinhar branch
+  // 5. upstream configurado — nao adivinhar branch E nao aceitar
+  //    upstream de outro remoto/fork: validar 'origin' nao valida o
+  //    upstream. Exigimos exatamente origin/<branch-atual>; qualquer
+  //    outra configuracao cancela a atualizacao (B1).
   const up = git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]);
   if (up.code !== 0) return pular("sem-upstream", { repoDir, branch });
-  const upstream = String(up.stdout).trim();
+  const upstreamBruto = String(up.stdout).trim();
+  const upstream = upstreamBruto.startsWith("refs/remotes/")
+    ? upstreamBruto.slice("refs/remotes/".length)
+    : upstreamBruto;
+  if (upstream !== `origin/${branch}`) {
+    return pular("upstream-invalido", { repoDir, branch, upstream });
+  }
 
   // 6. arvore limpa — qualquer alteracao (rastreada ou nao) aborta so a
   //    atualizacao; proibido stash/clean/reset preventivo.
@@ -140,36 +149,58 @@ export async function verificarAtualizacao(opts = {}) {
   if (nBehind === 0) return pular("sem-atualizacao", { repoDir, branch, commits: 0 });
   if (nAhead > 0) return pular("divergente", { repoDir, branch, commits: nBehind });
 
-  // 9. pull exclusivamente fast-forward; SHA anterior registrado antes
+  // 9. pull exclusivamente fast-forward; SHA anterior registrado antes.
+  //    A partir daqui qualquer excecao inesperada pode deixar o HEAD
+  //    atualizado sem deps/build — devolvemos `rollback` para o boot
+  //    tentar a reversao controlada em vez de propagar erro (B2).
   const shaAnterior = String(git(["rev-parse", "HEAD"]).stdout).trim();
-  log(`[auto-update] ${nBehind} commit(s) novo(s) em ${upstream} — aplicando fast-forward...`);
-  const pull = git(["pull", "--ff-only"], tPull);
-  if (pull.code !== 0) {
-    const headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim();
-    if (headAgora !== shaAnterior) {
-      return pular("estado-incerto-pos-pull", { repoDir, branch, shaAnterior, detalhe: String(pull.stderr).trim().slice(0, 300) });
+  try {
+    log(`[auto-update] ${nBehind} commit(s) novo(s) em ${upstream} — aplicando fast-forward...`);
+    const pull = git(["pull", "--ff-only"], tPull);
+    if (pull.code !== 0) {
+      const headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim();
+      if (headAgora !== shaAnterior) {
+        return pular("estado-incerto-pos-pull", {
+          repoDir, branch, shaAnterior,
+          rollback: { shaAnterior, shaNovo: headAgora, repoDir, depsMudaram: true },
+          detalhe: String(pull.stderr).trim().slice(0, 300),
+        });
+      }
+      return pular("falha-pull", { repoDir, branch, shaAnterior, detalhe: String(pull.stderr).trim().slice(0, 300) });
     }
-    return pular("falha-pull", { repoDir, branch, shaAnterior, detalhe: String(pull.stderr).trim().slice(0, 300) });
+
+    const shaNovo = String(git(["rev-parse", "HEAD"]).stdout).trim();
+    const anc = git(["merge-base", "--is-ancestor", shaAnterior, shaNovo]);
+    if (shaNovo === shaAnterior || anc.code !== 0) {
+      return pular("pull-nao-foi-ff", {
+        repoDir, branch, shaAnterior, shaNovo,
+        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true },
+      });
+    }
+    const commits = git(["rev-list", "--count", `${shaAnterior}..${shaNovo}`]);
+    const nCommits = commits.code === 0 ? Number(String(commits.stdout).trim()) : nBehind;
+
+    // dependencias mudaram? (lockfile ou package.json) ou node_modules ausente
+    const diffDeps = git(["diff", "--name-only", shaAnterior, shaNovo, "--", "package-lock.json", "package.json"]);
+    const depsMudaram = (diffDeps.code === 0 && String(diffDeps.stdout).trim() !== "")
+      || !existsSync(join(repoDir, "node_modules"));
+
+    return {
+      atualizou: true, motivo: "atualizado", repoDir, branch,
+      shaAnterior, shaNovo, commits: Number.isFinite(nCommits) ? nCommits : nBehind,
+      depsMudaram,
+    };
+  } catch (e) {
+    // excecao apos (ou durante) o pull: HEAD pode estar atualizado.
+    // Rollback so e tentado pelo boot com as mesmas garantias de sempre.
+    let headAgora = "";
+    try { headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim(); } catch { /* ignora */ }
+    return pular("erro-inesperado-pos-pull", {
+      repoDir, branch, shaAnterior,
+      rollback: { shaAnterior, shaNovo: headAgora || shaAnterior, repoDir, depsMudaram: true },
+      detalhe: String(e?.message ?? e).slice(0, 300),
+    });
   }
-
-  const shaNovo = String(git(["rev-parse", "HEAD"]).stdout).trim();
-  const anc = git(["merge-base", "--is-ancestor", shaAnterior, shaNovo]);
-  if (shaNovo === shaAnterior || anc.code !== 0) {
-    return pular("pull-nao-foi-ff", { repoDir, branch, shaAnterior, shaNovo });
-  }
-  const commits = git(["rev-list", "--count", `${shaAnterior}..${shaNovo}`]);
-  const nCommits = commits.code === 0 ? Number(String(commits.stdout).trim()) : nBehind;
-
-  // dependencias mudaram? (lockfile ou package.json) ou node_modules ausente
-  const diffDeps = git(["diff", "--name-only", shaAnterior, shaNovo, "--", "package-lock.json", "package.json"]);
-  const depsMudaram = (diffDeps.code === 0 && String(diffDeps.stdout).trim() !== "")
-    || !existsSync(join(repoDir, "node_modules"));
-
-  return {
-    atualizou: true, motivo: "atualizado", repoDir, branch,
-    shaAnterior, shaNovo, commits: Number.isFinite(nCommits) ? nCommits : nBehind,
-    depsMudaram,
-  };
 }
 
 /** Arquivo de estado do rollback (fora do repo — nunca suja a arvore). */
@@ -249,34 +280,34 @@ function buildSite(opts, executar, cwd, log) {
 }
 
 /**
- * Rollback orientado pelo SHA anterior. So executa `git reset --hard`
- * quando TODAS as garantias valem: estado registrado, arvore limpa e
- * HEAD exatamente no commit obtido pelo pull (nada de sobrescrever
- * alteracoes locais surgidas durante o processo).
+ * Nucleo do rollback: executa `git reset --hard <shaAnterior>` somente
+ * quando TODAS as garantias valem — estado com SHA anterior e SHA do
+ * pull registrados, arvore limpa e HEAD exatamente no commit obtido
+ * pelo pull (nada de sobrescrever alteracoes locais surgidas durante
+ * o processo). Usado tanto pelo estado em memoria do boot quanto pelo
+ * arquivo de estado (reverterAtualizacao).
  */
-export async function reverterAtualizacao(opts = {}) {
+async function executarRollback(estado, opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const executar = opts.executar ?? executarReal;
   const log = opts.log ?? (() => {});
   const envGit = { ...GIT_ENV, ...(opts.envGit ?? {}) };
   const git = (args, repoDir = cwd) => executar("git", args, { cwd: repoDir, env: envGit, timeoutMs: TIMEOUT_GIT_MS });
 
-  const top = git(["rev-parse", "--show-toplevel"]);
-  const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
-  const arquivo = caminhoEstado(opts, repoDir);
-  const estado = lerEstado(arquivo);
   if (!estado?.shaAnterior || !estado?.shaNovo) {
     return { ok: false, motivo: "sem-estado-de-atualizacao" };
   }
+  const top = git(["rev-parse", "--show-toplevel"]);
+  const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
   if (estado.repoDir && resolve(estado.repoDir) !== resolve(repoDir)) {
     return { ok: false, motivo: "repositorio-divergente" };
   }
 
-  const status = git(["status", "--porcelain"]);
+  const status = git(["status", "--porcelain"], repoDir);
   if (status.code !== 0 || String(status.stdout).trim() !== "") {
     return { ok: false, motivo: "arvore-suja-rollback-bloqueado" };
   }
-  const head = String(git(["rev-parse", "HEAD"]).stdout).trim();
+  const head = String(git(["rev-parse", "HEAD"], repoDir).stdout).trim();
   if (head !== estado.shaNovo) {
     return { ok: false, motivo: "head-diferente-do-pull", head };
   }
@@ -297,8 +328,27 @@ export async function reverterAtualizacao(opts = {}) {
       return { ok: false, motivo: "npm-ci-pos-rollback-falhou", revertido: true };
     }
   }
-  try { rmSync(arquivo, { force: true }); } catch { /* estado obsoleto nao impede o boot */ }
+  if (opts.stateFile) { try { rmSync(opts.stateFile, { force: true }); } catch { /* ok */ } }
   return { ok: true, shaAnterior: estado.shaAnterior };
+}
+
+/**
+ * Rollback orientado pelo SHA anterior, a partir do arquivo de estado
+ * gravado pelo boot (recuperacao manual/persistencia entre processos).
+ */
+export async function reverterAtualizacao(opts = {}) {
+  const cwd = opts.cwd ?? process.cwd();
+  const executar = opts.executar ?? executarReal;
+  const envGit = { ...GIT_ENV, ...(opts.envGit ?? {}) };
+  const git = (args, repoDir = cwd) => executar("git", args, { cwd: repoDir, env: envGit, timeoutMs: TIMEOUT_GIT_MS });
+  const top = git(["rev-parse", "--show-toplevel"]);
+  const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
+  const arquivo = caminhoEstado(opts, repoDir);
+  const estado = lerEstado(arquivo);
+  if (!estado?.shaAnterior || !estado?.shaNovo) {
+    return { ok: false, motivo: "sem-estado-de-atualizacao" };
+  }
+  return executarRollback(estado, { ...opts, cwd: repoDir, stateFile: arquivo });
 }
 
 function instrucaoRecuperacao(log) {
@@ -319,7 +369,34 @@ export async function executarBoot(opts = {}) {
   const executar = opts.executar ?? executarReal;
   const log = opts.log ?? ((m) => console.log(m));
 
-  const v = await verificarAtualizacao({ ...opts, cwd, executar, log });
+  let v;
+  try {
+    v = await verificarAtualizacao({ ...opts, cwd, executar, log });
+  } catch (e) {
+    // excecao ANTES do pull nao pode ter atualizado o HEAD — boot local
+    log(`[auto-update] Erro inesperado na verificacao: ${String(e?.message ?? e).slice(0, 200)} — seguindo com a versao local.`);
+    return { codigo: 0, atualizou: false, motivo: "erro-verificacao" };
+  }
+
+  // pull aplicado mas pos-pull falhou dentro do verificar (ou estado
+  // incerto): tentar rollback controlado; nunca sair 0 sem integridade.
+  if (v.rollback) {
+    let rb;
+    try {
+      rb = await executarRollback(v.rollback, { ...opts, cwd: v.repoDir ?? cwd, executar, log });
+    } catch (e) {
+      log(`[auto-update] Excecao durante o rollback: ${String(e?.message ?? e).slice(0, 200)}`);
+      rb = { ok: false, motivo: "excecao-rollback" };
+    }
+    if (rb.ok) {
+      log(`[auto-update] Rollback concluido — boot segue com a versao local (${v.rollback.shaAnterior.slice(0, 12)}).`);
+      return { codigo: 0, atualizou: false, revertido: true, motivo: v.motivo };
+    }
+    log(`[auto-update] Rollback NAO foi possivel com seguranca (${rb.motivo}).`);
+    instrucaoRecuperacao(log);
+    return { codigo: 1, atualizou: true, revertido: false, motivo: rb.motivo };
+  }
+
   if (!v.atualizou) {
     const msgs = {
       "git-indisponivel": "Git nao encontrado — seguindo com a versao local.",
@@ -327,6 +404,7 @@ export async function executarBoot(opts = {}) {
       "remoto-desconhecido": `Remoto 'origin' nao e o repositorio oficial (${v.remoto ?? "?"}) — atualizacao ignorada.`,
       "head-detached": "HEAD destacado — atualizacao ignorada.",
       "sem-upstream": "Branch sem upstream configurado — atualizacao ignorada.",
+      "upstream-invalido": `Upstream '${v.upstream ?? "?"}' nao e 'origin/${v.branch}' — atualizacao ignorada (remoto nao oficial).`,
       "arvore-suja": "Alteracoes locais detectadas — atualizacao adiada para nao conflitar; revise e rode 'git pull' manualmente se quiser.",
       "falha-fetch": "Falha ao buscar atualizacoes (sem rede ou autenticacao) — seguindo com a versao local.",
       "falha-pull": "Nao foi possivel aplicar o pull --ff-only — seguindo com a versao local.",
@@ -345,20 +423,44 @@ export async function executarBoot(opts = {}) {
   log(`[auto-update] Atualizacao aplicada: ${v.commits} commit(s) (${v.shaAnterior.slice(0, 12)} → ${v.shaNovo.slice(0, 12)}, branch ${v.branch}).`);
   const repoDir = v.repoDir;
   const arquivo = caminhoEstado(opts, repoDir);
-  gravarEstado(arquivo, {
+  // SHA anterior e SHA do pull ficam registrados em memoria para o
+  // rollback; a persistencia em arquivo e best-effort (B2) — sua
+  // falha nao pode impedir a protecao dentro deste processo.
+  const estadoMemoria = {
     shaAnterior: v.shaAnterior, shaNovo: v.shaNovo, repoDir,
-    depsMudaram: v.depsMudaram, branch: v.branch, em: new Date().toISOString(),
-  });
+    depsMudaram: v.depsMudaram, branch: v.branch,
+  };
+  try {
+    gravarEstado(arquivo, { ...estadoMemoria, em: new Date().toISOString() });
+  } catch (e) {
+    log(`[auto-update] Aviso: nao foi possivel gravar o estado de rollback em disco (${String(e?.message ?? e).slice(0, 120)}) — a reversao continua protegida em memoria.`);
+  }
 
-  // deps → build servidor → build site; qualquer falha tenta rollback
+  const tentarRollback = () => executarRollback(estadoMemoria, { ...opts, cwd: repoDir, executar, log, stateFile: arquivo });
+
+  // deps → build servidor → build site; qualquer falha ou excecao
+  // tenta rollback — excecao pos-pull NUNCA retorna sucesso (B2).
   const etapas = [];
   if (v.depsMudaram) etapas.push(["dependencias", () => npmCi(opts, executar, repoDir, log)]);
   etapas.push(["build-servidor", () => buildServidor(opts, executar, repoDir, log)]);
   etapas.push(["build-site", () => buildSite(opts, executar, repoDir, log)]);
 
-  for (const [nome, fn] of etapas) {
-    if (!fn()) {
-      const rb = await reverterAtualizacao({ ...opts, cwd: repoDir, executar, log });
+  for (const [, fn] of etapas) {
+    let okEtapa;
+    try {
+      okEtapa = fn();
+    } catch (e) {
+      log(`[auto-update] Excecao inesperada em etapa de build/deps: ${String(e?.message ?? e).slice(0, 200)}`);
+      okEtapa = false;
+    }
+    if (!okEtapa) {
+      let rb;
+      try {
+        rb = await tentarRollback();
+      } catch (e) {
+        log(`[auto-update] Excecao durante o rollback: ${String(e?.message ?? e).slice(0, 200)}`);
+        rb = { ok: false, motivo: "excecao-rollback" };
+      }
       if (rb.ok) {
         log(`[auto-update] Rollback concluido — boot segue com a versao local (${v.shaAnterior.slice(0, 12)}).`);
         return { codigo: 0, atualizou: false, revertido: true, shaAnterior: v.shaAnterior };
@@ -377,7 +479,11 @@ export async function executarBoot(opts = {}) {
 const ehCli = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (ehCli) {
   executarBoot({ cwd: process.cwd() }).then((r) => process.exit(r.codigo)).catch((e) => {
+    // excecao que escapou do fluxo: nao da para garantir integridade —
+    // bloqueia o boot em vez de subir possivelmente sobre codigo
+    // atualizado sem deps/build (B2).
     console.error(`[auto-update] Erro inesperado: ${e?.message ?? e}`);
-    process.exit(0); // falha interna nunca impede o boot
+    console.error("[auto-update] Verifique 'git status' e docs/GUIA-OPERACAO.md — secao 'Atualizacao automatica'.");
+    process.exit(1);
   });
 }
