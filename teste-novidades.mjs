@@ -35,6 +35,16 @@ const BANCO = join(DIR, "banco", "mestre-rpg.db");
 mkdirSync(dirname(BANCO), { recursive: true });
 await prepararBanco(BANCO);
 
+// A migration de release v1.0.5 publica um registro fixo na Central. Os
+// cenários CRUD abaixo precisam começar com a central vazia, pois testam
+// apenas as publicações criadas nesta suíte. A migration é testada adiante
+// em um banco legado separado, sem remover o registro de instalações reais.
+{
+  const db = abrirDb(BANCO);
+  db.prepare("delete from novidades where id=?").run(ID_NOVIDADE_1005);
+  db.close();
+}
+
 sec("Migration em banco limpo");
 {
   const db = new Database(BANCO, { readonly: true });
