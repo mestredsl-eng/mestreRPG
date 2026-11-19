@@ -836,6 +836,10 @@ export interface ConfigRegras {
   dados?: {
     d10SucessoMinimo: number;
   };
+  notas?: {
+    jogadorCompartilha: boolean;
+    espectadorLeCompartilhadas: boolean;
+  };
 }
 
 export interface RegrasCampanha {

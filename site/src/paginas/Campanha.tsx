@@ -38,6 +38,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const [ocupado, setOcupado] = useState(false);
 
   const souMestre = campanha?.meuPapel === "mestre";
+  // Personagens exige mestre/jogador no backend (GET /characters → 403
+  // para espectador): a aba e a página só existem para quem pode ler.
+  const vePersonagens = campanha?.meuPapel !== "espectador";
 
   const carregar = useCallback(async () => {
     try {
@@ -178,7 +181,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         <div className="abas">
           <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}>Informações</button>
           <button className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}>Mesa</button>
-          <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>
+          {vePersonagens && <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>}
           <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}>Diário</button>
           <button className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}>Histórico</button>
           <button className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}>Arquivos</button>
@@ -194,7 +197,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       </section>
 
       {aba === "mesa" && <Mesa campaignId={id} campanha={campanha} />}
-      {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
+      {aba === "personagens" && vePersonagens && <Personagens campaignId={id} campanha={campanha} />}
       {aba === "diario" && <Diario campaignId={id} campanha={campanha} />}
       {aba === "historico" && <Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} />}
       {aba === "arquivos" && <Arquivos campaignId={id} campanha={campanha} />}
