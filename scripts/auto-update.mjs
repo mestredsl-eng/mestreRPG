@@ -198,24 +198,32 @@ export async function verificarAtualizacao(opts = {}) {
     const commits = git(["rev-list", "--count", `${shaAnterior}..${shaNovo}`]);
     const nCommits = commits.code === 0 ? Number(String(commits.stdout).trim()) : nBehind;
 
-    // dependencias mudaram? (lockfile ou package.json) ou node_modules ausente
-    const diffDeps = git(["diff", "--name-only", shaAnterior, shaNovo, "--", "package-lock.json", "package.json"]);
-    if (diffDeps.code !== 0) {
-      // Depois do pull, não presumir que deps ficaram iguais quando o
-      // diagnóstico falha: marcar como potencialmente alteradas e reverter.
+    // Diagnóstico único de todos os caminhos alterados. Falha aqui é
+    // estado desconhecido pós-pull: rollback, nunca presumir que build/deps
+    // ficaram inalterados.
+    const diffArquivos = git(["diff", "--name-only", shaAnterior, shaNovo]);
+    if (diffArquivos.code !== 0) {
       return pular("falha-diagnostico-dependencias", {
         repoDir, branch, shaAnterior, shaNovo,
         rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true, branch },
-        detalhe: String(diffDeps.stderr).trim().slice(0, 300),
+        detalhe: String(diffArquivos.stderr).trim().slice(0, 300),
       });
     }
-    const depsMudaram = String(diffDeps.stdout).trim() !== ""
-      || !existsSync(join(repoDir, "node_modules"));
+    const arquivosMudados = String(diffArquivos.stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const depsMudaram = arquivosMudados.some((p) =>
+      p === "package-lock.json" || p === "package.json" || p.endsWith("/package.json")
+    ) || !existsSync(join(repoDir, "node_modules"));
+    // O timestamp de site/src não detecta mudanças em vite.config.ts,
+    // index.html, tsconfig ou package.json. Qualquer mudança no workspace
+    // site/ (ou na configuração/lockfile da raiz) exige rebuild do bundle.
+    const siteMudou = arquivosMudados.some((p) =>
+      p.startsWith("site/") || p === "package.json" || p === "package-lock.json"
+    );
 
     return {
       atualizou: true, motivo: "atualizado", repoDir, branch,
       shaAnterior, shaNovo, commits: Number.isFinite(nCommits) ? nCommits : nBehind,
-      depsMudaram,
+      depsMudaram, siteMudou,
     };
   } catch (e) {
     // excecao apos (ou durante) o pull: HEAD pode estar atualizado.
@@ -295,8 +303,8 @@ function sitePrecisaBuild(cwd) {
   return tSrc > maisRecente(dist);
 }
 
-function buildSite(opts, executar, cwd, log) {
-  if (!sitePrecisaBuild(cwd)) { log("[auto-update] Frontend ja esta atualizado — pulando build do site."); return true; }
+function buildSite(opts, executar, cwd, log, forcar = false) {
+  if (!forcar && !sitePrecisaBuild(cwd)) { log("[auto-update] Frontend ja esta atualizado — pulando build do site."); return true; }
   log("[auto-update] Compilando frontend...");
   const r = executar(npmCmd(), ["run", "build", "-w", "site"], { cwd, timeoutMs: TIMEOUT_BUILD_MS });
   if (r.code !== 0) {
@@ -485,7 +493,7 @@ export async function executarBoot(opts = {}) {
   const etapas = [];
   if (v.depsMudaram) etapas.push(["dependencias", () => npmCi(opts, executar, repoDir, log)]);
   etapas.push(["build-servidor", () => buildServidor(opts, executar, repoDir, log)]);
-  etapas.push(["build-site", () => buildSite(opts, executar, repoDir, log)]);
+  etapas.push(["build-site", () => buildSite(opts, executar, repoDir, log, v.siteMudou)]);
 
   for (const [, fn] of etapas) {
     let okEtapa;

@@ -4,7 +4,7 @@
 // bare repo em disco. npm/build sao interceptados por executor falso.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -340,6 +340,30 @@ try {
     const b = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso, stateFile: estado(c.base) });
     t("lockfile inalterado → npm ci pulado", b.codigo === 0 && !reg.some((x) => x.includes(" ci")), reg.join(" | "));
     t("build ainda executado", reg.some((x) => x.includes("build")));
+  }
+
+  sec("Extra — config do site força rebuild mesmo com dist mais recente");
+  {
+    const c = criarRepo("c17");
+    // O bundle/dist é posterior ao fonte, então a regra antiga por mtime
+    // pularia o build. Alterar apenas vite.config.ts deve forçar o build.
+    publicar(c, "config-site", {
+      "site/vite.config.ts": "export default { define: { __TESTE__: true } };\n",
+      "site/dist/index.html": "<html>bundle antigo</html>\n",
+    });
+    const dist = join(c.local, "site", "dist", "index.html");
+    const futuro = new Date(Date.now() + 60_000);
+    utimesSync(dist, futuro, futuro);
+    const reg = [];
+    const b = await executarBoot({
+      ...opcoesRepo(c),
+      executar: executarHibrido({ registro: reg }),
+      log: silencioso,
+      stateFile: estado(c.base),
+    });
+    t("config do site atualizada → boot completo com código 0", b.codigo === 0 && b.atualizou === true, JSON.stringify(b));
+    t("vite.config alterado força npm run build -w site apesar do dist mais novo",
+      reg.some((x) => x.includes("npm run build -w site")), reg.join(" | "));
   }
 
   sec("B1 — upstream precisa ser origin/<branch>");
