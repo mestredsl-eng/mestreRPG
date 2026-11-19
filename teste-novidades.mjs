@@ -23,6 +23,7 @@ const RAIZ_REPO = dirname(fileURLToPath(import.meta.url));
 const MIGRADOR = join(RAIZ_REPO, "servidor/dist/db/migrate.js");
 const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
 const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 0017
+const ID_NOVIDADE_1005 = "00000000-0000-4000-8000-000000000105";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -488,10 +489,21 @@ sec("Migration em banco existente preserva dados");
     const mig = spawnSync("node", [MIGRADOR], { env: { ...process.env, MESTRE_BANCO: BANCO_VELHO }, encoding: "utf8" });
     t("migrate em banco existente -> exit 0", mig.status === 0, (mig.stderr ?? "").slice(-300));
 
-    const db2 = new Database(BANCO_VELHO, { readonly: true });
+    const db2 = new Database(BANCO_VELHO);
     const ts = db2.prepare("select name from sqlite_master where type='table'").all().map((r) => r.name);
     t("novidades criadas no upgrade", ts.includes("novidades") && ts.includes("novidade_leituras"));
     t("dados preservados", db2.prepare("select count(*) c from users").get().c === antes.users && db2.prepare("select count(*) c from campaigns").get().c === antes.campaigns);
+
+    const anuncio = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1005);
+    t("migration 0028 publica a correção v1.0.5 na Central de Novidades",
+      anuncio?.versao === "1.0.5" && anuncio?.categoria === "correcao" && anuncio?.estado === "publicada" && !!anuncio?.publicado_em,
+      JSON.stringify(anuncio));
+
+    // A instrução de seed também é segura em reexecução: o ID estável e
+    // INSERT OR IGNORE impedem uma segunda publicação duplicada.
+    db2.exec(readFileSync(join(MIGRATIONS, "0028_release_1005_campaign_substitution_news.sql"), "utf8"));
+    const quantidadeAnuncios = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1005).c;
+    t("seed da Central de Novidades é idempotente", quantidadeAnuncios === 1, String(quantidadeAnuncios));
     db2.close();
   } finally {
     limparDir(RAIZ2);

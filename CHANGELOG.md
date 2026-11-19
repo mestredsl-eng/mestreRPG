@@ -8,6 +8,7 @@
 
 - **Substituição de campanha restrita ao mestre ativo:** a interface só oferece o modal de substituição quando a campanha importada já pertence ao usuário e a associação dele está com papel `mestre` e status `ativo`.
 - **Falha fechada para associações não ativas:** jogador, espectador, mestre pendente, bloqueado ou removido e usuário sem vínculo recebem a mensagem de campanha existente sem receber a ação de substituição. A autorização do servidor permanece obrigatória e retorna 403 para esses cenários.
+- **Registro na Central de Novidades:** a migration `0028_release_1005_campaign_substitution_news.sql` publica esta correção para os usuários da instalação, na categoria `correcao`, versão `1.0.5`; o seed usa ID estável e é idempotente.
 
 ### Testes
 
