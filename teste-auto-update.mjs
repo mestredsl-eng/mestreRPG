@@ -13,7 +13,25 @@ import {
 } from "./scripts/auto-update.mjs";
 
 let pass = 0, fail = 0;
-const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
+const anotarErro = (msg) => {
+  if (!process.env.GITHUB_ACTIONS) return;
+  const m = String(msg).replace(/%/g, "%25").replace(/\r/g, "%0D").replace(/\n/g, "%0A");
+  console.log(`::error::${m.slice(0, 1800)}`);
+};
+const t = (n, c, extra = "") => {
+  if (c) { pass++; console.log("  ok", n); }
+  else { fail++; console.log("  FALHOU", n, extra); anotarErro(`FALHOU ${n} — ${extra}`); }
+};
+process.on("uncaughtException", (e) => {
+  anotarErro(`excecao nao tratada: ${e?.stack ?? e}`);
+  console.error(e);
+  process.exit(1);
+});
+process.on("unhandledRejection", (e) => {
+  anotarErro(`rejeicao nao tratada: ${e?.stack ?? e}`);
+  console.error(e);
+  process.exit(1);
+});
 const sec = (n) => console.log("\n== " + n + " ==");
 const silencioso = () => {};
 
