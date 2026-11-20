@@ -302,16 +302,15 @@ function registrarOperacao(
   // Débito nunca excede saldo; crédito nunca excede a capacidade
   // quando ela é conhecida (capacidadeMax resolvida pelo chamador
   // a partir da versão da ficha — nunca inventada aqui).
+  // IMPORTANTE (R1/P1): mesmo quando o delta efetivo é 0 (saldo no
+  // teto), a operação DEVE gravar usos[usoId] — caso contrário um
+  // retry posterior, após a capacidade liberar espaço, creditaria
+  // de novo o mesmo requestId. O uso é registrado sempre; o delta
+  // efetivo (possivelmente 0) vai para o histórico.
   let delta = params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
     const espaco = Math.max(0, params.capacidadeMax - estado.saldo);
     if (delta > espaco) delta = espaco;
-    if (delta <= 0) {
-      // Já na capacidade: registra o uso como no-op auditável? Não —
-      // recuperação sem efeito não deve poluir o ledger; o chamador
-      // decide a mensagem. Retornamos sucesso sem mutação.
-      return { ok: true, dados, estado, jaRegistrado: true };
-    }
   }
   if (delta < 0 && -delta > estado.saldo) {
     return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
@@ -370,7 +369,11 @@ function aplicarDeltaComEstado(
     ...(estado.capacidade !== undefined ? { capacidade: estado.capacidade } : {}),
     usos: estado.usos,
     historico,
-    ...(ancora !== undefined && ancora > 0
+    // R2/P2: a âncora é persistida sempre que o truncamento a
+    // produziu — inclusive quando o valor correto é 0 (saldo que
+    // cresceu de zero dentro da janela). Omitir 0 apagaria a prova
+    // de que o histórico foi truncado.
+    ...(ancora !== undefined && ancora >= 0
       ? { ancora }
       : estado.ancora !== undefined
         ? { ancora: estado.ancora }
@@ -700,19 +703,72 @@ export function resolverCapacidadeSangue(
   }
 
   // Bônus de Qualidade (Chacra) — ponto de extensão preparado para
-  // D3: só computa quando campoId + coeficiente estão configurados.
+  // D3: só computa quando `bonusQualidade` está configurado.
+  // R3/P2: configuração ATIVA de bônus é validada de forma
+  // fail-closed — coeficiente deve ser finito e >= 0, campoId é
+  // obrigatório e deve existir na estrutura DESTA versão de ficha,
+  // modo "mapa" exige `mapa`, e o valor extraído não pode ser
+  // negativo. Qualquer violação torna a capacidade indisponível
+  // para o personagem (sem inventar bônus nem reduzir a base).
   let bonus = 0;
   const bq = cfgCap.bonusQualidade;
-  if (bq?.campoId && typeof bq.coeficiente === "number" && Number.isFinite(bq.coeficiente)) {
-    const campoBonus = campoDaEstrutura(estrutura, bq.campoId);
-    if (campoBonus) {
-      const modoBonus = bq.modo ?? modoInferido(campoBonus);
-      const nBonus = numeroDoCampo(campoBonus, dados[bq.campoId], modoBonus, bq.mapa);
-      if (nBonus !== null) bonus = nBonus * bq.coeficiente;
+  const bqAtivo =
+    bq !== undefined &&
+    (bq.campoId !== undefined ||
+      bq.coeficiente !== undefined ||
+      bq.modo !== undefined ||
+      bq.mapa !== undefined);
+  if (bqAtivo) {
+    const configInvalida = (): ResolucaoCapacidade => ({
+      disponivel: false,
+      motivo: "config_invalida",
+      capacidade: null,
+      detalhe: { campoId, bruto, modo },
+    });
+    if (
+      typeof bq?.coeficiente !== "number" ||
+      !Number.isFinite(bq.coeficiente) ||
+      bq.coeficiente < 0 ||
+      typeof bq?.campoId !== "string" ||
+      bq.campoId.length === 0
+    ) {
+      return configInvalida();
     }
+    const campoBonus = campoDaEstrutura(estrutura, bq.campoId);
+    if (!campoBonus) {
+      return { disponivel: false, motivo: "campo_inexistente", capacidade: null };
+    }
+    const modoBonus = bq.modo ?? modoInferido(campoBonus);
+    if (modoBonus === "mapa" && bq.mapa === undefined) {
+      return configInvalida();
+    }
+    const nBonus = numeroDoCampo(campoBonus, dados[bq.campoId], modoBonus, bq.mapa);
+    if (nBonus !== null) {
+      if (!Number.isFinite(nBonus) || nBonus < 0) {
+        return {
+          disponivel: false,
+          motivo: "valor_invalido",
+          capacidade: null,
+          detalhe: { campoId: bq.campoId, bruto: dados[bq.campoId], modo: modoBonus },
+        };
+      }
+      bonus = nBonus * bq.coeficiente;
+    }
+    // nBonus === null → personagem sem a qualidade selecionada:
+    // bônus zero, não é erro.
   }
 
   const capacidade = base + bonus;
+  // R3/P2: a capacidade final precisa ser finita e não negativa —
+  // defesa final mesmo que base ou bônus cheguem corrompidos.
+  if (!Number.isFinite(capacidade) || capacidade < 0) {
+    return {
+      disponivel: false,
+      motivo: "valor_invalido",
+      capacidade: null,
+      detalhe: { campoId, bruto, modo },
+    };
+  }
   return {
     disponivel: true,
     capacidade,
@@ -807,8 +863,26 @@ export function validarVinculosSangue(
     erros.push(`campoNaturezaId "${config.campoNaturezaId}" não existe na estrutura`);
   }
   const bq = config.capacidade?.bonusQualidade;
-  if (bq?.campoId && !mapa.has(bq.campoId)) {
-    erros.push(`capacidade.bonusQualidade.campoId "${bq.campoId}" não existe na estrutura`);
+  if (bq !== undefined) {
+    const bqAtivo =
+      bq.campoId !== undefined ||
+      bq.coeficiente !== undefined ||
+      bq.modo !== undefined ||
+      bq.mapa !== undefined;
+    if (bqAtivo) {
+      if (typeof bq.campoId !== "string" || bq.campoId.length === 0) {
+        erros.push("capacidade.bonusQualidade.campoId é obrigatório quando o bônus está configurado");
+      } else if (!mapa.has(bq.campoId)) {
+        erros.push(`capacidade.bonusQualidade.campoId "${bq.campoId}" não existe na estrutura`);
+      }
+      if (
+        typeof bq.coeficiente !== "number" ||
+        !Number.isFinite(bq.coeficiente) ||
+        bq.coeficiente < 0
+      ) {
+        erros.push("capacidade.bonusQualidade.coeficiente deve ser número finito >= 0");
+      }
+    }
   }
   return erros;
 }

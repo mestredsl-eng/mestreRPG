@@ -375,9 +375,6 @@ describe("resolverCapacidadeSangue — por versão da ficha", () => {
     const dados = { cap: 5, nat: "Humano", qual: [{ key: "chacra", nivel: 3 }] };
     // sem bonusQualidade → capacidade = base
     assert.equal(resolverCapacidadeSangue(e, dados, cfg).capacidade, 5);
-    // com campoId mas sem coeficiente → ainda sem bônus
-    const cfgSemCoef: ConfigSangue = { ...cfg, capacidade: { bonusQualidade: { campoId: "qual" } } };
-    assert.equal(resolverCapacidadeSangue(e, dados, cfgSemCoef).capacidade, 5);
     // com coeficiente configurado → aplica somaNiveis × coef
     const cfgCom: ConfigSangue = {
       ...cfg,
@@ -459,5 +456,217 @@ describe("resolverSanguePersonagem + validarVinculosSangue", () => {
       e,
     );
     assert.equal(erros.length, 2);
+  });
+});
+
+// ---------- regressões da revisão PR #194 (R1/R2/R3) ----------
+
+describe("regressão R1 — recuperação no teto mantém idempotência", () => {
+  const teto = { saldo: 5, usos: {}, historico: [] };
+
+  it("usoId recuperar:<uuid> é gravado mesmo com delta efetivo 0", () => {
+    const r = registrarRecuperacaoSangue({ [CHAVE_SANGUE]: teto }, {
+      ...AUTOR, requestId: REQ1, quantidade: 2, habilitada: true, capacidadeMax: 5,
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.saldo, 5);
+    const uso = r.estado.usos[`recuperar:${REQ1}`];
+    assert.ok(uso, "ledger deve registrar a operação mesmo sem crédito");
+    assert.equal(uso.tipo, "recuperacao");
+    assert.equal(uso.quantidade, 2);
+    // o efeito real (0) fica visível no histórico de exibição
+    assert.equal(r.estado.historico.at(-1)?.quantidade, 0);
+  });
+
+  it("retry do mesmo requestId após liberar capacidade não credita de novo", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: teto };
+    const p = { ...AUTOR, requestId: REQ1, quantidade: 2, habilitada: true, capacidadeMax: 5 };
+    const r1 = registrarRecuperacaoSangue(dados, p);
+    assert.equal(r1.ok, true);
+    if (r1.ok) dados = r1.dados;
+    // gasta 3 → saldo 2 (espaço liberado)
+    const gasto = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 3 });
+    assert.equal(gasto.ok, true);
+    if (gasto.ok) dados = gasto.dados;
+    const r2 = registrarRecuperacaoSangue(dados, p);
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 2, "retry não pode creditar novamente");
+    }
+  });
+});
+
+describe("regressão R2 — âncora histórica zero é persistida", () => {
+  function dadosComHistorico(quantidadeAncora: number): Record<string, unknown> {
+    // 505 eventos; após um append, slice(-500) retém a partir do
+    // índice 6 — cujo primeiro evento tem origem = quantidadeAncora
+    // menos o próprio delta. Montamos para que origem === 0.
+    const evs: Array<Record<string, unknown>> = [];
+    for (let i = 1; i <= 505; i++) {
+      const ehRetidoInicial = i === 7; // vira historico[0] após slice
+      evs.push({
+        em: new Date().toISOString(),
+        tipo: "ajuste",
+        quantidade: ehRetidoInicial ? quantidadeAncora : 1,
+        motivo: null,
+        autorId: null,
+        autorNome: null,
+        saldoResultante: ehRetidoInicial ? quantidadeAncora : i,
+      });
+    }
+    return { [CHAVE_SANGUE]: { saldo: 100, usos: {}, historico: evs } };
+  }
+
+  it("primeiro evento retido com origem 0 → ancora === 0 explícita", () => {
+    const r = registrarAjusteSangue(dadosComHistorico(7), { ...AUTOR, delta: 0.5, motivo: "x" });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.historico.length, MAX_HISTORICO_SANGUE);
+    const primeiro = r.estado.historico[0];
+    assert.equal(primeiro.saldoResultante - primeiro.quantidade, 0);
+    assert.equal(r.estado.ancora, 0, "âncora zero não pode ser omitida");
+  });
+
+  it("truncamento progressivo atualiza a âncora", () => {
+    let dados = dadosComHistorico(7);
+    const r1 = registrarAjusteSangue(dados, { ...AUTOR, delta: 0.5, motivo: "x" });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.equal(r1.estado.ancora, 0);
+    // novo ciclo de truncamento: a âncora avança para a nova origem
+    const evs = r1.estado.historico;
+    const dados2: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        saldo: r1.estado.saldo,
+        usos: r1.estado.usos,
+        historico: [...evs, ...evs.map((e) => ({ ...e }))],
+      },
+    };
+    const r2 = registrarAjusteSangue(dados2, { ...AUTOR, delta: 0.5, motivo: "y" });
+    assert.equal(r2.ok, true);
+    if (!r2.ok) return;
+    assert.equal(r2.estado.historico.length, MAX_HISTORICO_SANGUE);
+    const p = r2.estado.historico[0];
+    assert.equal(r2.estado.ancora, p.saldoResultante - p.quantidade);
+    assert.equal(typeof r2.estado.ancora, "number");
+  });
+});
+
+describe("regressão R3 — bônus de qualidade fail-closed", () => {
+  const e = estruturaBase();
+  const dados = { cap: 5, nat: "Humano", qual: [{ key: "chacra", nivel: 2 }] };
+
+  function cfgComBônus(bq: NonNullable<NonNullable<ConfigSangue["capacidade"]>["bonusQualidade"]>): ConfigSangue {
+    return { ...configBase(), capacidade: { bonusQualidade: bq } };
+  }
+
+  it("coeficiente negativo, NaN ou Infinity → config_invalida", () => {
+    for (const coeficiente of [-5, NaN, Infinity, -0.1]) {
+      const r = resolverCapacidadeSangue(e, dados, cfgComBônus({ campoId: "qual", coeficiente, modo: "somaNiveis" }));
+      assert.equal(r.disponivel, false, `coeficiente ${coeficiente} não pode ser aceito`);
+      assert.equal(r.motivo, "config_invalida");
+    }
+  });
+
+  it("campoId de bônus inexistente → campo_inexistente", () => {
+    const r = resolverCapacidadeSangue(e, dados, cfgComBônus({ campoId: "fantasma", coeficiente: 1 }));
+    assert.equal(r.disponivel, false);
+    assert.equal(r.motivo, "campo_inexistente");
+  });
+
+  it("configuração parcial (campoId sem coeficiente ou vice-versa) → config_invalida", () => {
+    assert.equal(
+      resolverCapacidadeSangue(e, dados, cfgComBônus({ campoId: "qual" })).motivo,
+      "config_invalida",
+    );
+    assert.equal(
+      resolverCapacidadeSangue(e, dados, cfgComBônus({ coeficiente: 1 })).motivo,
+      "config_invalida",
+    );
+  });
+
+  it("modo mapa sem mapa → config_invalida", () => {
+    const campoUnico = estruturaBase();
+    campoUnico.secoes[0].campos.push({
+      id: "bonus_sel", label: "Bônus", tipo: "selecao_unica", semantico: "vantagem", padrao: "", opcoes: ["A"],
+    } as EstruturaFicha["secoes"][number]["campos"][number]);
+    const r = resolverCapacidadeSangue(
+      campoUnico,
+      { ...dados, bonus_sel: "A" },
+      cfgComBônus({ campoId: "bonus_sel", coeficiente: 1, modo: "mapa" }),
+    );
+    assert.equal(r.disponivel, false);
+    assert.equal(r.motivo, "config_invalida");
+  });
+
+  it("capacidade final negativa (mapa com valor negativo) → valor_invalido", () => {
+    const eMapa = estruturaBase();
+    eMapa.secoes[0].campos[0] = {
+      ...eMapa.secoes[0].campos[0], tipo: "selecao_unica", opcoes: ["Ruim"],
+    };
+    const cfg: ConfigSangue = {
+      ...configBase(),
+      capacidade: { modo: "mapa", mapa: { Ruim: -10 } },
+    };
+    const r = resolverCapacidadeSangue(eMapa, { cap: "Ruim", nat: "Humano" }, cfg);
+    assert.equal(r.disponivel, false);
+    assert.equal(r.motivo, "valor_invalido");
+  });
+
+  it("validarVinculosSangue rejeita coeficiente inválido e campoId ausente", () => {
+    const base = configBase();
+    assert.ok(
+      validarVinculosSangue(cfgComBônus({ campoId: "qual", coeficiente: -1 }), e).length > 0,
+    );
+    assert.ok(
+      validarVinculosSangue(cfgComBônus({ campoId: "qual" }), e).length > 0,
+    );
+    assert.ok(
+      validarVinculosSangue(cfgComBônus({ campoId: "fantasma", coeficiente: 1 }), e).length > 0,
+    );
+    assert.deepEqual(validarVinculosSangue(cfgComBônus({ campoId: "qual", coeficiente: 1 }), e), []);
+    assert.ok(base);
+  });
+});
+
+describe("robustez numérica — entradas não finitas e listas parciais", () => {
+  it("quantidade NaN/Infinity/negativa/zero recusada nas três operações", () => {
+    const dados = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    for (const q of [NaN, Infinity, -1, 0]) {
+      assert.equal(
+        registrarRecuperacaoSangue(dados, { ...AUTOR, requestId: REQ1, quantidade: q, habilitada: true }).ok,
+        false,
+        `recuperar quantidade ${q}`,
+      );
+    }
+    assert.equal(registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: NaN }).ok, false);
+    assert.equal(registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: Infinity }).ok, false);
+    assert.equal(
+      registrarAtivacaoSangue(dados, { ...AUTOR, poderKey: "p", custo: NaN, requestId: REQ2 }).ok,
+      false,
+    );
+  });
+
+  it("saldo/capacidade não finitos ou negativos no ledger → inválido", () => {
+    assert.equal(lerSangue({ [CHAVE_SANGUE]: { saldo: NaN, usos: {}, historico: [] } }).valido, false);
+    assert.equal(lerSangue({ [CHAVE_SANGUE]: { saldo: 1, capacidade: Infinity, usos: {}, historico: [] } }).valido, false);
+    assert.equal(lerSangue({ [CHAVE_SANGUE]: { saldo: 1, capacidade: -2, usos: {}, historico: [] } }).valido, false);
+  });
+
+  it("somaNiveis tolera itens parcialmente malformados (comportamento documentado)", () => {
+    const e = estruturaBase();
+    e.secoes[0].campos[0] = { ...e.secoes[0].campos[0], tipo: "selecao_nivel" };
+    const cfg: ConfigSangue = { ...configBase(), capacidade: { modo: "somaNiveis" } };
+    const r = resolverCapacidadeSangue(e, {
+      cap: [{ key: "a", nivel: 2 }, "lixo", { key: "b" }, null, { key: "c", nivel: "x" }],
+      nat: "Humano",
+    }, cfg);
+    // soma apenas os itens bem-formados — decisão de endurecer fica
+    // registrada para revisão; itens inválidos não são silenciosamente
+    // somados como nível.
+    assert.equal(r.disponivel, true);
+    assert.equal(r.capacidade, 2);
   });
 });
