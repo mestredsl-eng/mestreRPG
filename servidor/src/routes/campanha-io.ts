@@ -137,8 +137,9 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
         resultado = await restaurarEstado(cid, estado, {
           gravarArquivos: pacote.arquivos,
           origem: "externa",
-          // C3: envelope do pacote vincula o payload v2 (pacote.campanhaId
-          // === cid já foi validado acima)
+          // C3: envelope do pacote — contexto de proveniência da cadeia
+          // validada na importação (pacote.campanhaId === cid já foi
+          // verificado acima)
           campanhaIdOrigem: pacote.campanhaId,
         });
         commitado = true;

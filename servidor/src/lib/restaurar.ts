@@ -159,7 +159,8 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
     }
     const ctx = montarContextoSaneamento(dados, autores, {
       chaveAssinatura: opts.chaveAssinatura ?? null,
-      // C3: envelope do pacote — vincula o payload v2 à campanha de origem
+      // C3: envelope do pacote — contexto de proveniência da cadeia
+      // (NÃO assinado); validado contra sheetTemplates.campaignId
       campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
     });
     for (const row of chars) {

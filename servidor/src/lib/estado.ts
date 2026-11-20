@@ -125,7 +125,8 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     chave,
     regrasFp: impressaoDigitalRegras(estado.ruleSets, estado.ruleDefinitions),
     // Issue #186/C3: a campanha de origem é o envelope do pacote —
-    // vinculada ao payload v2 (CT11). Em "nova" o id é preservado; em
+    // contexto de proveniência validado na importação (NÃO entra no
+    // payload canônico assinado). Em "nova" o id é preservado; em
     // "substituir" pacote.campanhaId === campaignId (validado na rota).
     campanhaIdOrigem: campaignId,
   };
@@ -179,7 +180,8 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     const sangue = data.__sangue;
     // C3: personagem com ledger Sangue recebe assinatura CONJUNTA v2
     // (`__sangue_sig`, propriedade irmã do ledger) cobrindo XP+Sangue+
-    // regras+personagem+campanha de origem. O `sig` v1 residual de
+    // regrasFp+fichaFp — a cadeia até a campanha de origem é validada
+    // como proveniência, não assinada. O `sig` v1 residual de
     // `__xp` é removido — nunca coexistem credenciais de transporte.
     if (sangue !== undefined && sangue !== null) {
       const fichaFp = fichaFpExport(row);
