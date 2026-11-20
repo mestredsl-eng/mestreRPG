@@ -78,6 +78,10 @@ export async function obterChaveAssinatura(db: Db): Promise<Buffer> {
 export interface ContextoAssinatura {
   chave: Buffer;
   regrasFp: string;
+  /** Issue #186/C3: campanha de origem do pacote (envelope
+   *  `pacote.campanhaId`) — integra o payload v2. Ausente/nula torna
+   *  qualquer verificação v2 impossível (fail-closed). */
+  campanhaIdOrigem?: string | null;
 }
 
 function payloadAssinatura(
@@ -118,6 +122,58 @@ export function verificarLedgerXp(
   if (typeof sig !== "string" || !sig.startsWith("v1.")) return false;
   const { sig: _s, ...xpSem } = xpComAssinatura;
   const esperado = assinarLedgerXp(ctx, personagemId, xpSem);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(esperado);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/** Projeção do ledger XP para assinatura: remove SOMENTE a propriedade
+ *  `sig` de nível raiz — campos `sig` legítimos aninhados permanecem
+ *  autenticados. `undefined`/ausente → null canônico. */
+export function xpSemAssinaturaRaiz(xp: unknown): unknown {
+  if (xp === undefined) return null;
+  if (!xp || typeof xp !== "object" || Array.isArray(xp)) return xp;
+  const { sig: _s, ...resto } = xp as Record<string, unknown>;
+  return resto;
+}
+
+function payloadAssinaturaV2(
+  ctx: ContextoAssinatura,
+  p: { personagemId: string; xp: unknown; sangue: unknown },
+): string {
+  return jsonCanonico({
+    v: 2,
+    personagemId: p.personagemId,
+    campanhaIdOrigem: ctx.campanhaIdOrigem ?? null,
+    xp: p.xp ?? null,
+    sangue: p.sangue ?? null,
+    regras: ctx.regrasFp,
+  });
+}
+
+/** Assinatura conjunta XP+Sangue (Issue #186/C3). Retorna "v2.<hmac-hex>".
+ *  `xp`/`sangue` são os VALORES dos ledgers já projetados (xp sem `sig`
+ *  raiz); `data.__sangue_sig` é propriedade irmã e nunca entra no payload. */
+export function assinarPacoteV2(
+  ctx: ContextoAssinatura,
+  p: { personagemId: string; xp: unknown; sangue: unknown },
+): string {
+  return `v2.${createHmac("sha256", ctx.chave).update(payloadAssinaturaV2(ctx, p)).digest("hex")}`;
+}
+
+/** Verifica `data.__sangue_sig` contra o snapshot original dos ledgers.
+ *  Qualquer divergência — xp, sangue, regras, personagem, campanha de
+ *  origem ou chave — reprova. Não faz fallback para v1. */
+export function verificarAssinaturaV2(
+  ctx: ContextoAssinatura,
+  personagemId: string,
+  sig: unknown,
+  xpSemAssinatura: unknown,
+  sangue: unknown,
+): boolean {
+  if (typeof sig !== "string" || !sig.startsWith("v2.")) return false;
+  if (!ctx.campanhaIdOrigem) return false;
+  const esperado = assinarPacoteV2(ctx, { personagemId, xp: xpSemAssinatura, sangue });
   const a = Buffer.from(sig);
   const b = Buffer.from(esperado);
   return a.length === b.length && timingSafeEqual(a, b);

@@ -3,7 +3,8 @@ import { resolve, sep } from "node:path";
 import { eq, inArray, getTableColumns } from "drizzle-orm";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  assinarLedgerXp, obterChaveAssinatura, impressaoDigitalRegras, type ContextoAssinatura,
+  assinarLedgerXp, assinarPacoteV2, obterChaveAssinatura, impressaoDigitalRegras,
+  xpSemAssinaturaRaiz, type ContextoAssinatura,
 } from "./assinatura-xp.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
@@ -123,10 +124,32 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
   const ctxAss: ContextoAssinatura = {
     chave,
     regrasFp: impressaoDigitalRegras(estado.ruleSets, estado.ruleDefinitions),
+    // Issue #186/C3: a campanha de origem é o envelope do pacote —
+    // vinculada ao payload v2 (CT11). Em "nova" o id é preservado; em
+    // "substituir" pacote.campanhaId === campaignId (validado na rota).
+    campanhaIdOrigem: campaignId,
   };
   for (const row of estado.characters ?? []) {
     const data = row.data as Record<string, unknown> | null;
-    const xp = data && typeof data === "object" ? data.__xp : null;
+    if (!data || typeof data !== "object") continue;
+    const xp = data.__xp;
+    const sangue = data.__sangue;
+    // C3: personagem com ledger Sangue recebe assinatura CONJUNTA v2
+    // (`__sangue_sig`, propriedade irmã do ledger) cobrindo XP+Sangue+
+    // regras+personagem+campanha de origem. O `sig` v1 residual de
+    // `__xp` é removido — nunca coexistem credenciais de transporte.
+    if (sangue !== undefined && sangue !== null) {
+      const xpSem = xpSemAssinaturaRaiz(xp);
+      data.__sangue_sig = assinarPacoteV2(ctxAss, {
+        personagemId: String(row.id),
+        xp: xpSem,
+        sangue,
+      });
+      if (xp && typeof xp === "object" && !Array.isArray(xp)) {
+        delete (xp as Record<string, unknown>).sig;
+      }
+      continue;
+    }
     if (!xp || typeof xp !== "object" || Array.isArray(xp)) continue;
     const xpObj = xp as Record<string, unknown>;
     const { sig: _antiga, ...xpSem } = xpObj;

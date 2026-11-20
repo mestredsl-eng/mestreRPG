@@ -134,7 +134,13 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
       let resultado;
       try {
-        resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos, origem: "externa" });
+        resultado = await restaurarEstado(cid, estado, {
+          gravarArquivos: pacote.arquivos,
+          origem: "externa",
+          // C3: envelope do pacote vincula o payload v2 (pacote.campanhaId
+          // === cid já foi validado acima)
+          campanhaIdOrigem: pacote.campanhaId,
+        });
         commitado = true;
       } catch (e) {
         await liberarBarreiraRestauracao(cid, restoreId, "falha");
@@ -238,7 +244,11 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       // pacote externo: origem "externa" — metadados reservados passam
       // por validação/saneamento e o relatório vai para resposta+auditoria.
       // B1: chave de assinatura buscada antes da transação (get-or-create).
-      saneamento = inserirEstado(tx, estado, { origem: "externa", chaveAssinatura });
+      saneamento = inserirEstado(tx, estado, {
+        origem: "externa",
+        chaveAssinatura,
+        campanhaIdOrigem: pacote.campanhaId,
+      });
       // garante o importador como mestre mesmo que o pacote não o tenha
       if (precisaMembroExtra) {
         tx.insert(memberships).values({
