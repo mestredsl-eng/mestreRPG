@@ -248,19 +248,27 @@ try {
   }
 
   // ---------- G. rate limit vttSync — cota por usuário, não por socket ----------
+  let sA2;
   sec("G. Rate limit mesa:vtt:sincronizar — compartilhado entre sockets do mesmo usuário");
   {
-    const sA2 = conectar(c.jogadores.jogador1.cookie);
+    sA2 = conectar(c.jogadores.jogador1.cookie);
     await pronto(sA2);
     const rEntra = await emitirCb(sA2, "mesa:entrar", { sessionId: sid });
     t("segundo socket do j1 entra", rEntra?.ok === true);
-    // rajada no socket 1 drena o burst (12) — cota por userId
-    const rajada = await Promise.all(Array.from({ length: 16 }, () => sincronizar(sA)));
-    const limitados = rajada.filter((r) => r?.codigo === "RATE_LIMITED");
-    t("rajada gera RATE_LIMITED com retryAfterMs > 0",
-      limitados.length > 0 && limitados.every((r) => typeof r.retryAfterMs === "number" && r.retryAfterMs > 0),
-      `limitados=${limitados.length}/16`);
-    // o segundo socket do MESMO usuário divide a mesma cota
+    // drena a cota do usuário j1 em lotes até a primeira rejeição —
+    // sincronizações aceitas são pesadas (comLockVtt + consultas) e a
+    // reposição de 16/s não acompanha uma rajada; a rejeição prova o
+    // bucket vazio NO MOMENTO, sem depender de sleeps frágeis.
+    let primeiroLimitado = null;
+    for (let lote = 0; lote < 12 && !primeiroLimitado; lote++) {
+      const rs = await Promise.all(Array.from({ length: 10 }, () => sincronizar(sA)));
+      primeiroLimitado = rs.find((r) => r?.codigo === "RATE_LIMITED") ?? null;
+    }
+    t("rajada acima do burst gera RATE_LIMITED com retryAfterMs > 0",
+      !!primeiroLimitado && typeof primeiroLimitado.retryAfterMs === "number" && primeiroLimitado.retryAfterMs > 0,
+      primeiroLimitado ? `retryAfterMs=${primeiroLimitado.retryAfterMs}` : "sem rejeição");
+    // o segundo socket do MESMO usuário divide a mesma cota — com o
+    // bucket acabado de esvaziar, a próxima sync dele é rejeitada
     const rA2 = await sincronizar(sA2);
     t("segundo socket do mesmo usuário também recebe RATE_LIMITED",
       rA2?.codigo === "RATE_LIMITED" && typeof rA2?.retryAfterMs === "number" && rA2.retryAfterMs > 0,
@@ -271,6 +279,44 @@ try {
     t("sync legítimo após reposição da cota → ok", rOk?.ok === true, JSON.stringify(rOk).slice(0, 140));
     t("HP atualizado continua chegando no sync", tok(rOk?.vtt, "tkpj1-aa11")?.vida?.hp?.atual === 110,
       JSON.stringify(tok(rOk?.vtt, "tkpj1-aa11")?.vida));
+  }
+
+  // ---------- H. K=4 — duas sessões × duas abas do mesmo usuário ----------
+  sec("H. Uso legítimo contínuo K=4 por 30s — zero RATE_LIMITED");
+  {
+    // sessão B real; j1 entra com 2 sockets em cada sessão (K=4 total)
+    const sess2 = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa Vida B" } });
+    const sid2 = sess2.json?.sessao?.id ?? sess2.json?.id;
+    t("segunda sessão criada", !!sid2);
+    const sB1 = conectar(c.jogadores.jogador1.cookie);
+    const sB2 = conectar(c.jogadores.jogador1.cookie);
+    await Promise.all([pronto(sB1), pronto(sB2)]);
+    const [e1, e2, e3, e4] = await Promise.all([
+      emitirCb(sA, "mesa:entrar", { sessionId: sid }),
+      emitirCb(sA2, "mesa:entrar", { sessionId: sid }),
+      emitirCb(sB1, "mesa:entrar", { sessionId: sid2 }),
+      emitirCb(sB2, "mesa:entrar", { sessionId: sid2 }),
+    ]);
+    t("quatro sockets do mesmo usuário entram (2 sessões)", e1?.ok && e2?.ok && e3?.ok && e4?.ok);
+
+    // cada socket sincroniza a cada ~255ms por 30s → ~15,7 sync/s
+    // agregados (≈ debounce de 250ms × 4 abas) — dentro da taxa
+    // sustentada de 16/s; o burst de 48 absorve o jitter inicial.
+    let limitados = 0, oks = 0, outros = 0;
+    const t0 = Date.now();
+    const alvoDe = (s) => (s === sB1 || s === sB2 ? sid2 : sid);
+    const loops = [sA, sA2, sB1, sB2].map((s) => (async () => {
+      const sidAlvo = alvoDe(s);
+      while (Date.now() - t0 < 30000) {
+        const r = await emitirCb(s, "mesa:vtt:sincronizar", { sessionId: sidAlvo });
+        if (r?.codigo === "RATE_LIMITED") limitados++;
+        else if (r?.ok) oks++;
+        else outros++;
+        await dormir(255);
+      }
+    })());
+    await Promise.all(loops);
+    t("30s K=4 sem RATE_LIMITED", limitados === 0, `limitados=${limitados} oks=${oks} outros=${outros}`);
   }
 } catch (e) {
   fail++;

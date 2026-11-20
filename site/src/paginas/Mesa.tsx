@@ -1806,6 +1806,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       const espera = retryAfterDoAck(r);
       if (espera !== null && tentativas < MAX_TENTATIVAS) {
         tentativas += 1;
+        // no máximo UMA tentativa pendente: uma atualização nova
+        // substitui a espera anterior (mantém só a mais recente)
         if (retryTimer) clearTimeout(retryTimer);
         retryTimer = setTimeout(() => {
           retryTimer = null;
@@ -1814,7 +1816,13 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       }
     };
     const solicitar = () => {
-      getSocket().volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
+      const sock = getSocket();
+      // nunca reenviar com o socket desconectado — o próximo evento
+      // de atualização agenda uma nova tentativa quando voltar
+      if (!sock.connected) return;
+      // uma nova solicitação substitui qualquer retry pendente
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      sock.volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
     };
     const sincronizar = () => {
       if (timer) clearTimeout(timer);

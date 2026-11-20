@@ -123,6 +123,70 @@ async function main() {
     }
   });
 
+  await teste("vttSync é independente das mutações VTT e do chat", async () => {
+    const l = criarLimitadorSocket({ nome: "t", ...LIMITES_SOCKET_MESA.vttSync });
+    // esgota vttToken, vttNevoa e chat do usuário — vttSync segue intacto
+    for (let i = 0; i < LIMITES_SOCKET_MESA.vttToken.capacidade; i++) {
+      l.consumir(chaveSocket("u1", "vttToken"));
+    }
+    for (let i = 0; i < LIMITES_SOCKET_MESA.vttNevoa.capacidade; i++) {
+      l.consumir(chaveSocket("u1", "vttNevoa"));
+    }
+    for (let i = 0; i < LIMITES_SOCKET_MESA.chat.capacidade; i++) {
+      l.consumir(chaveSocket("u1", "chat"));
+    }
+    // vttSync tem bucket próprio: nada foi consumido dele ainda
+    for (let i = 0; i < LIMITES_SOCKET_MESA.vttSync.capacidade; i++) {
+      assert.equal(l.consumir(chaveSocket("u1", "vttSync")).permitido, true, `sync ${i}`);
+    }
+    const r = l.consumir(chaveSocket("u1", "vttSync"));
+    assert.equal(r.permitido, false);
+    assert.ok(r.retryAfterMs > 0);
+    // e o flood de sync não tocou as cotas das mutações (já vazias)
+    assert.equal(l.consumir(chaveSocket("u1", "vttToken")).permitido, false);
+  });
+
+  await teste("vttSync: duas abas do mesmo usuário dividem a cota", async () => {
+    const l = criarLimitadorSocket({ nome: "t", capacidade: 3, porSegundo: 100 });
+    // "aba 1" consome 2 dos 3 tokens
+    assert.equal(l.consumir(chaveSocket("userA", "vttSync")).permitido, true);
+    assert.equal(l.consumir(chaveSocket("userA", "vttSync")).permitido, true);
+    // "aba 2" (outro socket, MESMO userId) só tem 1 restante
+    assert.equal(l.consumir(chaveSocket("userA", "vttSync")).permitido, true);
+    const r = l.consumir(chaveSocket("userA", "vttSync"));
+    assert.equal(r.permitido, false);
+    assert.ok(r.retryAfterMs > 0, "RATE_LIMITED traz retryAfterMs positivo");
+    // usuário diferente tem cota própria
+    assert.equal(l.consumir(chaveSocket("userB", "vttSync")).permitido, true);
+    // após a janela de reposição a sincronização volta
+    await dormir(60);
+    assert.equal(l.consumir(chaveSocket("userA", "vttSync")).permitido, true);
+  });
+
+  await teste("cota vttSync vigente suporta K=4 abas no ritmo do debounce", async () => {
+    // burst 48 + reposição 16/s: 4 abas a ~4 sync/s consomem ~16/s —
+    // exatamente a taxa sustentada; o burst absorve o jitter inicial.
+    const cfg = LIMITES_SOCKET_MESA.vttSync;
+    assert.equal(cfg.capacidade, 48);
+    assert.equal(cfg.porSegundo, 16);
+    const l = criarLimitadorSocket({ nome: "t", ...cfg });
+    // amostra real de 6s: a cada ~250ms, 4 "abas" (mesmo userId —
+    // sockets distintos compartilham a chave) consomem 1 token cada.
+    // O relógio é real: a reposição acontece de verdade.
+    const ABAS = 4;
+    let consumidos = 0;
+    const fim = Date.now() + 6000;
+    while (Date.now() < fim) {
+      for (let aba = 0; aba < ABAS; aba++) {
+        const r = l.consumir(chaveSocket("userK4", "vttSync"));
+        assert.equal(r.permitido, true, `RATE_LIMITED no uso legítimo K=4 (consumidos=${consumidos})`);
+        consumidos++;
+      }
+      await dormir(250);
+    }
+    assert.ok(consumidos >= 80, `consumidos=${consumidos} em 6s (~16/s esperado)`);
+  });
+
   await teste("reiniciar zera os buckets", async () => {
     const l = criarLimitadorSocket({ nome: "t", capacidade: 1, porSegundo: 0.001 });
     assert.equal(l.consumir("u:x").permitido, true);

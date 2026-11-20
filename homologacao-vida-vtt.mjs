@@ -280,6 +280,79 @@ try {
   await irRegrasPontuacao(pgM);
   t("checkbox permanece desmarcado após reload", !(await pgM.getByLabel(/Compartilhar vida \(HP e vitalidade\)/).isChecked()));
 
+  // ---------- callback atrasado A→B não contamina a sessão atual ----------
+  sec("Callback atrasado de sincronização não aplica estado de sessão trocada");
+  {
+    const sessB = await req(BASE, "POST", `/campaigns/${c.campId}/sessoes`, { cookie: c.cookieMestre, body: { name: "Mesa Vida B" } });
+    const sidB = sessB.json?.sessao?.id ?? sessB.json?.id;
+    t("sessão B criada", !!sidB);
+    await emitirCb(sM, "mesa:entrar", { sessionId: sidB });
+    t("token Zé (PJ1) criado na sessão B",
+      (await emitirCb(sM, "mesa:vtt:token", {
+        sessionId: sidB, acao: "criar",
+        token: { id: "tkze-bb77", nome: "Zé", cor: "#22aa55", x: 0.3, y: 0.3, personagemId: PJ1, userId: ids.j1 },
+      }))?.ok === true);
+
+    // atrasa deterministicamente o ACK de mesa:vtt:sincronizar da
+    // sessão A — socket.volatile retorna o próprio socket, então
+    // interceptar emit cobre volatile.emit. A resposta do servidor é
+    // real; só a entrega do callback ao componente é retardada.
+    await pgA.evaluate((sidA) => {
+      const sock = window.__mesaSocket;
+      if (!sock || sock.__syncDelayPatched) return;
+      const emitirOriginal = sock.emit.bind(sock);
+      sock.__syncDelayPatched = true;
+      sock.emit = (ev, p, cb) => {
+        if (ev === "mesa:vtt:sincronizar" && p?.sessionId === sidA && typeof cb === "function") {
+          return emitirOriginal(ev, p, (...args) => setTimeout(() => cb(...args), 4000));
+        }
+        return emitirOriginal(ev, p, cb);
+      };
+    }, sid);
+
+    // a sessão B precisa de mapa para renderizar o tabuleiro — o
+    // mestre abre a sessão e faz o upload real
+    await irMesa(pgM);
+    await abrirSessao(pgM, "Mesa Vida B");
+    await pgM.locator(".mesa-vtt input[type=file]").setInputFiles(PNG_PATH);
+    await pgM.locator(".vtt-tabuleiro").waitFor({ timeout: 15000 });
+
+    // dispara personagens:atualizados → o cliente da sessão A agenda
+    // a sincronização (~250ms) cujo ACK chegará ~2,5s depois
+    const rHp2 = await req(BASE, "POST", `/characters/${PJ1}/hp`, { cookie: c.cookieMestre, body: { acao: "dano", quantidade: 5, motivo: "callback atrasado" } });
+    t("POST /hp dispara atualização", rHp2.status === 200, `status=${rHp2.status}`);
+
+    // troca para a sessão B ANTES do ACK atrasado de A chegar
+    await pgA.getByRole("button", { name: "Sair da mesa" }).click();
+    await irMesa(pgA);
+    await abrirSessao(pgA, "Mesa Vida B");
+    await pgA.locator(".vtt-tabuleiro").waitFor({ timeout: 15000 });
+    t("sessão B carregada com exatamente 1 token",
+      await pgA.locator(".vtt-token").count() === 1,
+      `tokens=${await pgA.locator(".vtt-token").count()}`);
+
+    // o ACK atrasado de A dispara aqui — não pode aplicar o vtt de A
+    await pgA.waitForTimeout(4600);
+    t("estado da sessão B intacto após ACK atrasado de A",
+      await pgA.locator(".vtt-token").count() === 1
+      && await pgA.locator(".vtt-token", { hasText: "AN" }).count() === 0
+      && await pgA.locator(".vtt-token", { hasText: "BE" }).count() === 0,
+      `tokens=${await pgA.locator(".vtt-token").allTextContents().then((a) => a.join("|"))}`);
+
+    // o fluxo de B continua: a vida do próprio personagem chega pelo
+    // canal correto da sessão B (PJ1: 110 − 5 = 105)
+    try {
+      await pgA.waitForFunction(() => {
+        const el = document.querySelector(".vtt-token");
+        return el?.querySelector(".vtt-token-hp")?.getAttribute("title") === "HP 105/150";
+      }, null, { timeout: 12000 });
+      t("sessão B segue sincronizando vida correta (105/150)", true);
+    } catch {
+      const title = await pgA.locator(".vtt-token .vtt-token-hp").getAttribute("title").catch(() => "ausente");
+      t("sessão B segue sincronizando vida correta (105/150)", false, title);
+    }
+  }
+
   await ctxM.close(); await ctxA.close(); await ctxB.close(); await ctxE.close();
   sM.close();
 
