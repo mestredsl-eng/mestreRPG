@@ -9,10 +9,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const {
-  caminhoCanonico, instalacaoId, dirEstado, gravarJsonAtomico, lerEstado,
+  caminhoCanonico, instalacaoId, dirEstado, diretorioBaseEstado, gravarJsonAtomico, lerEstado,
   gravarEstado, lerJournal, lerConsentimento, gravarConsentimento,
-  provarInstalacaoNova, avaliarBoot, PROTOCOLO_VERSAO,
+  gravarReciboInstalacao, lerReciboInstalacao, provarInstalacaoNova, avaliarBoot, PROTOCOLO_VERSAO,
 } = await import("./scripts/estado-externo.mjs");
+const bootLock = await import("./scripts/boot-lock.mjs");
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => {
@@ -34,6 +35,12 @@ t("instalacaoId estável para mesmo caminho", instalacaoId(repo) === instalacaoI
 t("instalacaoId diverge para caminho diferente", instalacaoId(repo) !== instalacaoId(join(TMP, "outro")));
 t("dirEstado honra MESTRE_STATE_DIR/<id>", dirEstado(repo, env).startsWith(STATE));
 t("dirEstado isola por instalação", dirEstado(repo, env) !== dirEstado(join(TMP, "outro"), env));
+t("dirEstado NÃO cria o diretório (verificação sem efeito colateral)",
+  !existsSync(dirEstado(repo, env)));
+t("diretorioBaseEstado == boot-lock (mesma convenção)",
+  diretorioBaseEstado(process.env) === bootLock.diretorioBaseEstado());
+t("instalacaoId == boot-lock.instalacaoId", instalacaoId(repo) === bootLock.instalacaoId(repo));
+t("caminhoCanonico == boot-lock.caminhoCanonicoRepo", caminhoCanonico(repo) === bootLock.caminhoCanonicoRepo(repo));
 
 // ---------- escrita atômica + leitura ----------
 const arq = join(dirEstado(repo, env), "journal.json");
@@ -77,17 +84,36 @@ gravarConsentimento(repo, "aceito", { instalacaoId: "outra-inst" });
 t("consentimento divergente → divergente", lerConsentimento(repo).status === "divergente");
 rmSync(join(repo, "configuracao", "auto-update.json"), { force: true });
 
-// ---------- instalação nova vs ambíguo ----------
+// ---------- recibo de instalação (prova independente) ----------
 const repoNovo = join(TMP, "repo-novo");
 mkdirSync(join(repoNovo, "scripts"), { recursive: true });
-// sem banco, sem state dir → prova de nova (state dir pode ter sido criado por dirEstado — a prova olha marcador+banco)
-const provaNova = provarInstalacaoNova(repoNovo);
-t("repo sem banco e sem marcador → instalação nova provável", provaNova.nova === true, JSON.stringify(provaNova));
-
-// com banco → não é nova
-mkdirSync(join(repoNovo, "banco"), { recursive: true });
-writeFileSync(join(repoNovo, "banco", "mestre-rpg.db"), "x");
-t("repo com banco → não é instalação nova", provarInstalacaoNova(repoNovo).nova === false);
+const envNovo = { MESTRE_STATE_DIR: join(TMP, "state-novo") };
+// sem recibo → NÃO é prova de instalação nova (ausência de banco/state
+// não é recibo; manifesto/tracked/código N tampouco)
+const provaSem = provarInstalacaoNova(repoNovo, envNovo);
+t("sem recibo → não é instalação nova", provaSem.nova === false, JSON.stringify(provaSem));
+t("sem recibo → motivo sem-recibo-valido", /sem-recibo-valido/.test(provaSem.motivo ?? ""), provaSem.motivo);
+// recibo corrompido → não prova
+gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { lixo: true });
+writeFileSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), "{ quebrado");
+t("recibo corrompido → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
+rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
+// recibo de OUTRA instalação → divergente, não prova
+gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), {
+  protocoloVersao: PROTOCOLO_VERSAO, instalacaoId: "deadbeef", repoCanon: "x", tipo: "instalacao-inicial",
+});
+t("recibo divergente → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
+rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
+// recibo válido → prova
+gravarReciboInstalacao(repoNovo, envNovo);
+t("recibo válido → instalação comprovada", provarInstalacaoNova(repoNovo, envNovo).nova === true);
+t("lerReciboInstalacao ok", lerReciboInstalacao(repoNovo, envNovo).status === "ok");
+// protocolo incompatível no recibo → não prova
+gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), {
+  protocoloVersao: 999, instalacaoId: instalacaoId(repoNovo), repoCanon: caminhoCanonico(repoNovo), tipo: "instalacao-inicial",
+});
+t("recibo protocolo incompatível → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
+rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
 
 // ---------- avaliarBoot ----------
 // repo limpo sem manifesto → seguro
@@ -96,12 +122,18 @@ mkdirSync(join(repoBoot, "scripts"), { recursive: true });
 const envBoot = { MESTRE_STATE_DIR: join(TMP, "state-boot") };
 t("boot sem manifesto → seguro", avaliarBoot(repoBoot, envBoot).seguroIniciar === true);
 
-// com manifesto e sem prova de nova → ambíguo → bloqueia
+// com manifesto e sem recibo → ambíguo → bloqueia (mesmo com banco)
 writeFileSync(join(repoBoot, "scripts", "protocolo-auto-update.json"), "{}");
 mkdirSync(join(repoBoot, "banco"), { recursive: true });
 writeFileSync(join(repoBoot, "banco", "mestre-rpg.db"), "x");
 const amb = avaliarBoot(repoBoot, envBoot);
 t("manifesto + banco sem state → estado-ambiguo bloqueia", amb.seguroIniciar === false && amb.motivo === "estado-ambiguo", amb.motivo);
+
+// com recibo válido → não é ambíguo
+gravarReciboInstalacao(repoBoot, envBoot);
+const comRecibo = avaliarBoot(repoBoot, envBoot);
+t("manifesto + recibo → não bloqueia por ambiguidade", comRecibo.motivo !== "estado-ambiguo", comRecibo.motivo);
+rmSync(join(dirEstado(repoBoot, envBoot), "instalacao-recibo.json"), { force: true });
 
 // journal corrompido → bloqueia
 gravarEstado(repoBoot, "atualizacao-ultima.json", { fase: "pull-planejado" }, envBoot);

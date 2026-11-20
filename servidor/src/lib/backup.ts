@@ -7,7 +7,8 @@ import { backups, serverSettings } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { log } from "./logs.js";
 import { config } from "../config.js";
-import { dirsProtegidosBackup, normDir, protegerBackupContraRetencao } from "./protecao-backup.js";
+import { dirsProtegidosBackup, normDir, protegerBackupContraRetencao, desprotegerBackupContraRetencao, referenciadoPorJournal } from "./protecao-backup.js";
+import { validarBackup } from "./validar-backup.js";
 
 const db = getDb();
 
@@ -137,7 +138,11 @@ function sha256Arquivo(caminho: string): string {
   return createHash("sha256").update(readFileSync(caminho)).digest("hex");
 }
 
-/** Copia consistente do SQLite via API de backup do better-sqlite3. */
+/** Copia consistente do SQLite via API de backup do better-sqlite3.
+ *  O destino pode ficar em modo WAL com -wal/-shm residuais: consolidamos
+ *  com wal_checkpoint(TRUNCATE) e removemos os sidecars para que o
+ *  snapshot seja UM arquivo autocontido — hasheável e restaurável sem
+ *  depender de arquivos não declarados no manifesto. */
 async function copiarBanco(destino: string) {
   const sqliteOrigem = new Database(CAMINHOS.banco, { readonly: true });
   try {
@@ -145,6 +150,17 @@ async function copiarBanco(destino: string) {
   } finally {
     sqliteOrigem.close();
   }
+  const dest = new Database(destino);
+  try {
+    dest.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    // journal_mode=DELETE: o snapshot vira autocontido — nenhuma
+    // abertura posterior (readonly inclusive) recria -wal/-shm, e o
+    // inventário do manifesto permanece estável.
+    dest.exec("PRAGMA journal_mode=DELETE");
+  } finally {
+    dest.close();
+  }
+  for (const suf of ["-wal", "-shm"]) rmSync(destino + suf, { force: true });
 }
 
 function verificarBanco(caminho: string): { ok: boolean; integridade?: string } {
@@ -175,43 +191,12 @@ function copiarArquivos(origem: string, destino: string, raiz: string, manifesto
   }
 }
 
-/** Valida o manifesto de um backup de forma integral e obrigatória:
- *  manifesto presente, parseável, com versão compatível, e TODOS os
- *  itens registrados (banco, configuração, arquivos) conferem
- *  tamanho+SHA-256. Retorna lista de problemas (vazia = válido).
- *  Manifesto ausente/incompleto/incompatível ⇒ problemas não-vazio. */
+/** Validação integral obrigatória do backup (manifesto v2 + inventário
+ *  real × declarado + tamanho/SHA-256 + integridade SQLite + rejeição de
+ *  traversal/symlinks). Delega ao módulo neutro validar-backup.ts —
+ *  o mesmo validador usado pelo restaurador offline. */
 export function validarManifestoBackup(dir: string): string[] {
-  const problemas: string[] = [];
-  const manPath = join(dir, "manifesto.json");
-  if (!existsSync(manPath)) return ["manifesto.json ausente"];
-  let man: {
-    manifestoVersao?: number; banco?: { size?: number; sha256?: string };
-    configuracao?: { size?: number; sha256?: string } | null;
-    arquivos?: Record<string, { size: number; sha256: string }>;
-  };
-  try {
-    man = JSON.parse(readFileSync(manPath, "utf-8"));
-  } catch (e) {
-    return [`manifesto.json ilegível: ${String(e)}`];
-  }
-  if (man.manifestoVersao !== 2) problemas.push(`manifestoVersao incompatível: ${man.manifestoVersao ?? "ausente"}`);
-  const confere = (rel: string, meta: { size?: number; sha256?: string } | undefined, rotulo: string) => {
-    if (!meta || typeof meta.size !== "number" || typeof meta.sha256 !== "string") {
-      problemas.push(`${rotulo}: entrada ausente/incompleta no manifesto`);
-      return;
-    }
-    const p = join(dir, ...rel.split("/"));
-    if (!existsSync(p)) { problemas.push(`${rotulo}: arquivo ausente (${rel})`); return; }
-    const st = statSync(p);
-    if (st.size !== meta.size) { problemas.push(`${rotulo}: tamanho diverge (${st.size} != ${meta.size})`); return; }
-    if (sha256Arquivo(p) !== meta.sha256) problemas.push(`${rotulo}: sha256 diverge`);
-  };
-  confere("mestre-rpg.db", man.banco, "banco");
-  if (man.configuracao) confere("configuracao/servidor.json", man.configuracao, "configuracao");
-  for (const [rel, meta] of Object.entries(man.arquivos ?? {})) {
-    confere(rel, meta, `arquivos/${rel}`);
-  }
-  return problemas;
+  return validarBackup(dir).problemas;
 }
 
 /** Cria backup completo: banco (consistente), arquivos, config e manifesto.
@@ -257,6 +242,8 @@ export async function criarBackup(
   }
 
   // 3) configurações (sem segredos — servidor.json não contém credenciais)
+  //    Absência intencional é representada explicitamente: configuracao=null.
+  manifesto.configuracao = null;
   try {
     const cfgSrc = resolve(RAIZ, "configuracao", "servidor.json");
     if (existsSync(cfgSrc)) {
@@ -382,65 +369,97 @@ export async function verificarBackup(id: string): Promise<{ ok: boolean; detalh
   // validação integral do manifesto — obrigatória para backups novos
   // (manifestoVersao 2). Backups antigos sem o campo novo caem na
   // verificação legada de arquivos apenas.
-  const manPath = join(b.filePath, "manifesto.json");
-  if (existsSync(manPath)) {
-    try {
-      const man = JSON.parse(readFileSync(manPath, "utf-8")) as { manifestoVersao?: number; arquivos?: Record<string, { size: number; sha256: string }> };
-      if (man.manifestoVersao === 2) {
-        const problemas = validarManifestoBackup(b.filePath);
-        if (problemas.length) { detalhes.push(...problemas.slice(0, 5)); return { ok: false, detalhes }; }
-        detalhes.push("manifesto v2 ok");
-      } else {
-        let ok = 0, falhas = 0;
-        for (const [rel, meta] of Object.entries(man.arquivos ?? {})) {
-          const p = join(b.filePath, ...rel.split("/"));
-          if (!existsSync(p) || statSync(p).size !== meta.size || sha256Arquivo(p) !== meta.sha256) falhas++;
-          else ok++;
-        }
-        detalhes.push(`arquivos: ${ok} ok, ${falhas} com problema`);
-        if (falhas) return { ok: false, detalhes };
-      }
-    } catch (e) { detalhes.push(`manifesto ilegível: ${String(e)}`); return { ok: false, detalhes }; }
-  } else {
-    detalhes.push("manifesto.json ausente");
-    return { ok: false, detalhes };
-  }
+  // validação integral obrigatória — manifesto v2 + inventário real +
+  // hashes + integridade (mesmo validador do restaurador offline).
+  const v = validarBackup(b.filePath);
+  if (!v.ok) { detalhes.push(...v.problemas.slice(0, 5)); return { ok: false, detalhes }; }
+  detalhes.push("backup íntegro (manifesto v2 + inventário + integridade)");
   return { ok: true, detalhes };
 }
 
-/** Preparação de restauração: backup de segurança + marca pendente (offline aplica). */
+/** Preparação de restauração: backup de segurança + proteção do alvo
+ *  contra retenção + flag pendente (offline aplica).
+ *  Ordem obrigatória (fail-closed):
+ *   1. validação integral do alvo (mesmo validador do restaurador);
+ *   2. PROTEÇÃO do alvo contra retenção — se falhar, o pedido é
+ *      rejeitado ANTES de qualquer flag;
+ *   3. backup de segurança do estado atual;
+ *   4. flag restauracao_pendente — se a gravação falhar, o marker só é
+ *      removido depois de consultar o estado persistido (flag +
+ *      journals), nunca uma proteção ainda necessária.
+ *  Não existe transação entre marker (state dir) e flag (banco): a
+ *  ordem proteção→flag elimina a janela "flag sem proteção"; a janela
+ *  "marker sem flag" é inofensiva (over-protection até expirar). */
 export async function prepararRestauracao(backupId: string, usuarioId: string) {
   const todos = await db.select().from(backups);
   const alvo = todos.find((b) => b.id === backupId && !b.campaignId);
   if (!alvo) return { erro: "Backup não encontrado", status: 404 };
-  if (!existsSync(join(alvo.filePath, "mestre-rpg.db"))) return { erro: "Backup incompleto (banco ausente)", status: 400 };
-  const integ = verificarBanco(join(alvo.filePath, "mestre-rpg.db"));
-  if (!integ.ok) return { erro: `Backup corrompido: ${integ.integridade}`, status: 400 };
-  // manifesto obrigatório: ausente rejeita; v2 exige validação integral
-  const manPath = join(alvo.filePath, "manifesto.json");
-  if (!existsSync(manPath)) return { erro: "Backup sem manifesto.json — rejeitado", status: 400 };
-  try {
-    const man = JSON.parse(readFileSync(manPath, "utf-8")) as { manifestoVersao?: number };
-    if (man.manifestoVersao === 2) {
-      const problemas = validarManifestoBackup(alvo.filePath);
-      if (problemas.length) return { erro: `Manifesto inválido: ${problemas[0]}`, status: 400 };
-    }
-  } catch {
-    return { erro: "Manifesto ilegível — rejeitado", status: 400 };
+  // validação integral: integridade + manifesto v2 + inventário + hashes
+  const v = validarBackup(alvo.filePath);
+  if (!v.ok) return { erro: `Backup inválido: ${v.problemas[0]}`, status: 400 };
+
+  // 2) proteção do alvo ANTES da flag — sem ela o backup poderia ser
+  //    rotacionado entre o pedido e a aplicação offline.
+  const protegido = await protegerBackupContraRetencao(alvo.filePath, "restauracao_pendente");
+  if (!protegido) {
+    return { erro: "Não foi possível proteger o backup contra retenção — pedido rejeitado", status: 503 };
   }
 
-  // backup de segurança do estado atual antes de qualquer restauração
-  const seguranca = await criarBackup("pre_restauracao", `Segurança antes de restaurar ${backupId}`);
+  // só remove a proteção do alvo se NADA persistido ainda a referencia
+  // (nem flag no banco, nem journal no state dir). Incerto → mantém.
+  const desprotegerSeDesnecessario = async () => {
+    try {
+      const [flag] = await db.select().from(serverSettings).where(eq(serverSettings.key, "restauracao_pendente")).limit(1);
+      const refFlag = typeof flag?.value === "string"
+        ? (JSON.parse(flag.value) as { filePath?: string }).filePath
+        : (flag?.value as { filePath?: string } | undefined)?.filePath;
+      if (refFlag === alvo.filePath) return; // flag ainda aponta para o alvo
+      const refJournal = await referenciadoPorJournal(alvo.filePath);
+      if (refJournal !== false) return; // journal referencia OU verificação inconclusiva
+      await desprotegerBackupContraRetencao(alvo.filePath);
+    } catch (e) {
+      log("erro", "falha ao avaliar desproteção do backup alvo", { backupId, erro: String(e) });
+    }
+  };
 
-  await db.insert(serverSettings).values({
-    key: "restauracao_pendente", value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date(),
-  }).onConflictDoUpdate({ target: serverSettings.key, set: { value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date() } });
+  // 3) backup de segurança do estado atual antes de qualquer restauração
+  let seguranca;
+  try {
+    seguranca = await criarBackup("pre_restauracao", `Segurança antes de restaurar ${backupId}`);
+  } catch (e) {
+    await desprotegerSeDesnecessario();
+    return { erro: `Falha ao criar backup de segurança: ${String(e)}`, status: 500 };
+  }
 
-  // O alvo da restauração fica imune à retenção até a aplicação concluir
-  // (o restaurador remove a proteção ao terminar). Falha aqui não aborta
-  // o pedido — vira warning, mas o alvo pode ser rotacionado antes do boot.
-  const protegido = await protegerBackupContraRetencao(alvo.filePath, "restauracao_pendente");
-  if (!protegido) log("erro", "não foi possível proteger backup alvo contra retenção", { backupId });
+  // flag anterior (se houver) — para desproteção do alvo substituído
+  const [flagAnterior] = await db.select().from(serverSettings).where(eq(serverSettings.key, "restauracao_pendente")).limit(1);
+  const filePathAnterior = typeof flagAnterior?.value === "string"
+    ? (JSON.parse(flagAnterior.value) as { filePath?: string }).filePath
+    : (flagAnterior?.value as { filePath?: string } | undefined)?.filePath;
+
+  // 4) flag pendente — estado intermediário tratado consultando o
+  //    persistido antes de mexer no marker.
+  try {
+    await db.insert(serverSettings).values({
+      key: "restauracao_pendente", value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date(),
+    }).onConflictDoUpdate({ target: serverSettings.key, set: { value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date() } });
+  } catch (e) {
+    await desprotegerSeDesnecessario();
+    return { erro: `Falha ao registrar restauração pendente: ${String(e)}`, status: 500 };
+  }
+
+  // flag gravada: se a anterior apontava outro backup, remove a proteção
+  // antiga SOMENTE se nenhum journal ainda a referencia (a flag já não).
+  if (filePathAnterior && filePathAnterior !== alvo.filePath) {
+    try {
+      const ref = await referenciadoPorJournal(filePathAnterior);
+      if (ref === false) await desprotegerBackupContraRetencao(filePathAnterior);
+      // ref null → inconclusivo → mantém proteção (nunca remove o que
+      // ainda pode ser necessário para recuperação)
+    } catch (e) {
+      log("erro", "falha ao desproteger backup anterior", { filePath: filePathAnterior, erro: String(e) });
+    }
+  }
 
   return { ok: true, seguranca, arquivoPath: alvo.filePath };
 }

@@ -6,14 +6,16 @@
 // Estado simulado injetando restauracao-externa.json como ficaria após
 // uma queda real; o restaurador deve completar apenas o pendente.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { dirTeste, abrirDb } from "./teste-base.mjs";
 
 const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
-const { instalacaoId, dirEstado } = await import("./scripts/estado-externo.mjs");
+const { instalacaoId, dirEstado, gravarReciboInstalacao } = await import("./scripts/estado-externo.mjs");
+const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -79,6 +81,15 @@ function criarBackupDir(raiz, marcador) {
   writeFileSync(join(dir, "arquivos", "campanha.txt"), `conteudo-${marcador}`);
   mkdirSync(join(dir, "configuracao"), { recursive: true });
   writeFileSync(join(dir, "configuracao", "servidor.json"), `{"porta":${marcador === "novo" ? 4001 : 4000}}`);
+  // manifesto v2 completo — o restaurador valida integralmente o backup
+  const meta = (p) => ({ size: statSync(p).size, sha256: sha256(p) });
+  writeFileSync(join(dir, "manifesto.json"), JSON.stringify({
+    manifestoVersao: 2,
+    criadoEm: new Date().toISOString(),
+    banco: meta(join(dir, "mestre-rpg.db")),
+    configuracao: meta(join(dir, "configuracao", "servidor.json")),
+    arquivos: { "arquivos/campanha.txt": meta(join(dir, "arquivos", "campanha.txt")) },
+  }, null, 2));
   return dir;
 }
 /** Monta um lado/pre_restore_<ts> coerente com as flags tinha*. */
@@ -117,15 +128,33 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 {
   const raiz = novoRaiz();
   const r = rodar(raiz);
-  t("banco inexistente → exit 0 (instalação inicial)", r.code === 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  t("banco inexistente SEM recibo → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  t("motivo: estado ambíguo/sem recibo", /recibo|amb[ií]guo/i.test(r.saida), r.saida.slice(0, 250));
   rmSync(raiz, { recursive: true, force: true });
 }
 {
   const raiz = novoRaiz();
-  // banco vazio (0 tabelas) = prova de inicial
+  // banco inexistente COM recibo durável → instalação comprovada → exit 0
+  gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
+  const r = rodar(raiz);
+  t("banco inexistente COM recibo → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  // banco vazio (0 tabelas) SEM recibo → bloqueia
   abrirDb(dbVivo(raiz)).close();
   const r = rodar(raiz);
-  t("banco vazio (0 tabelas) → exit 0", r.code === 0, `code=${r.code}`);
+  t("banco vazio SEM recibo → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  // banco vazio COM recibo → instalação comprovada → exit 0
+  abrirDb(dbVivo(raiz)).close();
+  gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
+  const r = rodar(raiz);
+  t("banco vazio COM recibo → exit 0", r.code === 0, `code=${r.code}`);
   rmSync(raiz, { recursive: true, force: true });
 }
 {
@@ -269,6 +298,48 @@ sec("W15d — queda durante preservação (sem preRestoreDir) refaz preservaçã
   t("retomada de preservação → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 300)}`);
   t("journal concluído", lerJournal(raiz)?.fase === "concluido", lerJournal(raiz)?.fase);
   t("pre_restore criado", existsSync(lerJournal(raiz)?.preRestoreDir ?? ""));
+  rmSync(raiz, { recursive: true, force: true });
+}
+
+sec("W15e — DB ausente + journal pendente: retomada NÃO é ignorada");
+{
+  const raiz = novoRaiz();
+  const bk = criarBackupDir(raiz, "novo5");
+  // journal de aplicação pendente, mas o arquivo do banco vivo sumiu
+  // (ex.: exclusão externa no meio da troca) — o restaurador NÃO pode
+  // dar fast-path de "nada a restaurar": deve retomar pelo journal.
+  const lado = criarLado(raiz, "pre_restore_teste5");
+  gravarJournal(raiz, {
+    fase: "substituicao-iniciada", backupDir: bk, preRestoreDir: lado,
+    tinhaArquivos: true, tinhaCfg: false,
+    componentes: componentes({ sidecars: "concluido" }),
+  });
+  const r = rodar(raiz);
+  t("DB ausente + journal pendente → retomada (exit 0)", r.code === 0, `code=${r.code} ${r.saida.slice(0, 300)}`);
+  t("banco recriado a partir do backup", valorBanco(raiz) === "novo5", `valor=${valorBanco(raiz)}`);
+  t("journal → concluido", lerJournal(raiz)?.fase === "concluido", lerJournal(raiz)?.fase);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  // journal pendente de ROLLBACK + DB ausente → retoma rollback e
+  // restaura o banco preservado em `lado`.
+  const bk = criarBackupDir(raiz, "novo6");
+  const lado = criarLado(raiz, "pre_restore_teste6", { dbSrc: null });
+  // lado precisa de um banco preservado válido
+  const dbLado = abrirDb(join(lado, "mestre-rpg.db"));
+  dbLado.exec("create table marcador (value text)");
+  dbLado.prepare("insert into marcador values ('preservado')").run();
+  dbLado.close();
+  gravarJournal(raiz, {
+    fase: "rollback-iniciado", preRestoreDir: lado, backupDir: bk,
+    tinhaArquivos: false, tinhaCfg: false,
+    componentes: componentes({}),
+  });
+  const r = rodar(raiz);
+  t("DB ausente + rollback pendente → retoma rollback (exit != 0)", r.code !== 0, `code=${r.code}`);
+  t("banco preservado restaurado", valorBanco(raiz) === "preservado", `valor=${valorBanco(raiz)}`);
+  t("journal → rollback-concluido", lerJournal(raiz)?.fase === "rollback-concluido", lerJournal(raiz)?.fase);
   rmSync(raiz, { recursive: true, force: true });
 }
 

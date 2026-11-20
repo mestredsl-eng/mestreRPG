@@ -11,11 +11,12 @@
 //  - qualquer falha desfaz banco E arquivos/config e sai com código != 0;
 //  - sucesso só é declarado após confirmar que a flag foi removida do banco
 //    restaurado; falha na limpeza dispara rollback completo.
-import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { adquirirTravaRestauracao, aguardarGateTrava, TravaIndisponivel } from "./trava-instancia.js";
+import { validarBackup } from "../lib/validar-backup.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // RAIZ = raiz de DADOS (MESTRE_HOME em testes/sandbox). REPO_ROOT é a
@@ -162,6 +163,8 @@ function verificarBancoEmUso(): VerificacaoBanco {
 
 /** Remove a flag de restauração pendente do banco em DB_VIVA e CONFIRMA a remoção. */
 function limparFlag() {
+  // Sem arquivo de banco não existe flag — nada a confirmar.
+  if (!existsSync(DB_VIVA)) return;
   const d = new Database(DB_VIVA);
   try {
     d.prepare("delete from server_settings where key='restauracao_pendente'").run();
@@ -188,6 +191,7 @@ interface EeModulo {
   lerJournal(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): {
     status: string; dados?: Record<string, unknown>; quarentena?: string | null;
   };
+  provarInstalacaoNova(repoDir: string, env?: NodeJS.ProcessEnv): { nova: boolean; motivo?: string };
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -260,17 +264,10 @@ async function checkpoint(componente: Componente, estado: string) {
 }
 
 async function principal() {
-  // 0) primeira instalação: banco/ pode não existir — cria o diretório pai
-  //    do caminho efetivamente configurado (nada fora de MESTRE_*).
-  if (!existsSync(DB_VIVA)) {
-    mkdirSync(dirname(DB_VIVA), { recursive: true });
-    log(`Banco inexistente em ${DB_VIVA} — nada a restaurar (instalação limpa).`);
-    return;
-  }
-
-  // Journal externo: avaliação ANTES de qualquer decisão — ele é a fonte
-  // de verdade para aplicação/rollback interrompidos, mesmo quando a flag
-  // no banco já não existe (o banco pode ter sido substituído).
+  // 0) JOURNAL EXTERNO PRIMEIRO — antes de qualquer fast path por
+  //    ausência do banco. O journal é a fonte de verdade para
+  //    aplicação/rollback interrompidos: um journal pendente NUNCA pode
+  //    ser ignorado só porque DB_VIVA não existe no disco.
   const jr = await lerJournalRest();
   if (jr.status !== "ausente" && jr.status !== "ok") {
     log(`ERRO: journal externo de restauração ${jr.status} — abortando por segurança (estado preservado em quarentena).`);
@@ -281,6 +278,22 @@ async function principal() {
   const retomarRollback = faseJournal.startsWith("rollback");
   const retomarAplicacao = journalPendente && !retomarRollback;
 
+  // 0b) banco ausente: só é "nada a restaurar" com recibo durável de
+  //     instalação. Com journal pendente, segue para retomada — o
+  //     backupDir/preRestoreDir vêm do journal, não do banco.
+  const dbExiste = existsSync(DB_VIVA);
+  if (!dbExiste && !journalPendente) {
+    const mod = await estadoExterno();
+    const prova = mod.provarInstalacaoNova(REPO_ROOT, process.env);
+    if (!prova.nova) {
+      log(`ERRO: banco inexistente, sem journal e sem recibo de instalação verificável (${prova.motivo ?? "sem prova"}) — estado ambíguo, restauração abortada por segurança.`);
+      process.exit(2);
+    }
+    mkdirSync(dirname(DB_VIVA), { recursive: true });
+    log("Banco inexistente — instalação inicial comprovada por recibo; nada a restaurar.");
+    return;
+  }
+
   // 1) lê a flag pendente e fecha a conexão ANTES de mexer nos arquivos
   //    (Windows trava arquivo aberto). FAIL-CLOSED: qualquer erro de
   //    leitura/SQL/corrupção aborta — nunca classificado como ausência.
@@ -289,7 +302,9 @@ async function principal() {
   //    estado preservado (o journal é a fonte de verdade).
   let pendente: { filePath?: string } | null = null;
   let forcarRollback = retomarRollback;
-  if (!retomarRollback) {
+  // Sem arquivo de banco não há flag a ler — journal pendente segue
+  // adiante com backupDir/preRestoreDir do próprio journal.
+  if (dbExiste && !retomarRollback) {
     let db: Database.Database | null = null;
     try {
       db = new Database(DB_VIVA);
@@ -308,11 +323,20 @@ async function principal() {
         const total = (db.prepare("select count(*) as c from sqlite_master where type='table'").get() as { c: number }).c;
         if (total === 0) {
           db.close();
-          if (!journalPendente) {
-            log("Banco vazio — instalação inicial, nada a restaurar.");
+          if (journalPendente) {
+            forcarRollback = true; // journal pendente + banco vazio = inesperado
+          } else {
+            // Banco vazio (0 tabelas) só é instalação inicial COM recibo
+            // durável — banco vazio sozinho não prova nada.
+            const mod = await estadoExterno();
+            const prova = mod.provarInstalacaoNova(REPO_ROOT, process.env);
+            if (!prova.nova) {
+              log(`ERRO: banco vazio sem recibo de instalação verificável (${prova.motivo ?? "sem prova"}) — estado ambíguo, restauração abortada por segurança.`);
+              process.exit(2);
+            }
+            log("Banco vazio — instalação inicial comprovada por recibo; nada a restaurar.");
             return;
           }
-          forcarRollback = true; // journal pendente + banco vazio = inesperado
         } else {
           const temSettings = db.prepare("select name from sqlite_master where type='table' and name='server_settings'").get();
           if (!temSettings) {
@@ -378,45 +402,21 @@ async function principal() {
     process.exit(2);
   }
 
-  // 2) valida o banco do backup antes de tocar em qualquer coisa
-  //    (somente na aplicação — rollback usa o estado preservado `lado`).
+  // 2) validação integral do backup que SERÁ aplicado, antes de tocar
+  //    no estado vivo — manifesto v2, inventário real × declarado,
+  //    tamanho+SHA-256, integridade SQLite, tipos de arquivo e rejeição
+  //    de symlinks/traversal. Mesmo validador de backup.ts/verificarBackup
+  //    (módulo neutro, sem banco/locks). Não confiamos em validação
+  //    anterior da API: o backup é revalidado aqui, offline.
+  //    (somente na aplicação — rollback usa o estado preservado `lado`,
+  //    que é artefato nosso e não passa por manifesto).
   const dirArqBackup = join(String(backupDir), "arquivos");
   const dirCfgBackup = join(String(backupDir), "configuracao");
   const cfgBackup = join(dirCfgBackup, "servidor.json");
   if (!forcarRollback) {
-    const dbBackup = join(String(backupDir), "mestre-rpg.db");
-    if (!existsSync(dbBackup)) {
-      log("ERRO: backup sem mestre-rpg.db — restauração cancelada.");
-      if (journalPendente) forcarRollback = true;
-      else { limparFlag(); process.exit(2); }
-    }
-    let integ = "erro";
-    try {
-      const chk = new Database(dbBackup, { readonly: true });
-      integ = String(chk.pragma("integrity_check", { simple: true }));
-      chk.close();
-    } catch (e) {
-      integ = `exceção: ${e}`;
-    }
-    if (integ !== "ok") {
-      log(`ERRO: backup corrompido (${String(integ).slice(0, 120)}) — restauração cancelada.`);
-      if (journalPendente) forcarRollback = true;
-      else { limparFlag(); process.exit(2); }
-    }
-
-    // 2b) validação estrutural ANTES de tocar em qualquer arquivo vivo:
-    //     ausência é intencional (snapshot sem aquele conteúdo); tipo
-    //     errado ou link simbólico tornam o backup inválido.
-    const lst = (p: string) => { try { return lstatSync(p); } catch { return null; } };
-    const problemas: string[] = [];
-    const stArq = lst(dirArqBackup);
-    if (stArq && (stArq.isSymbolicLink() || !stArq.isDirectory())) problemas.push("backup/arquivos não é diretório real");
-    const stCfgDir = lst(dirCfgBackup);
-    if (stCfgDir && (stCfgDir.isSymbolicLink() || !stCfgDir.isDirectory())) problemas.push("backup/configuracao não é diretório");
-    const stCfg = lst(cfgBackup);
-    if (stCfg && (stCfg.isSymbolicLink() || !stCfg.isFile())) problemas.push("backup/configuracao/servidor.json não é arquivo regular");
-    if (problemas.length) {
-      log(`ERRO: estrutura inválida no backup (${problemas.join("; ")}) — restauração cancelada.`);
+    const v = validarBackup(String(backupDir));
+    if (!v.ok) {
+      log(`ERRO: backup inválido (${v.problemas.slice(0, 3).join("; ")}) — restauração cancelada antes de tocar no estado vivo.`);
       if (journalPendente) forcarRollback = true;
       else { limparFlag(); process.exit(2); }
     }

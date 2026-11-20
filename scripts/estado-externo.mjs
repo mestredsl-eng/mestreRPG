@@ -1,15 +1,18 @@
 // Estado externo durável por instalação — Issue #155 (contrato de recuperação).
 //
 // Localização canônica (nunca dentro do worktree — sobrevive a
-// `git reset --hard`, restauração de banco/arquivos/config e rotação de logs):
+// `git reset --hard`, restauração de banco/arquivos/config e rotação de logs).
+// Convenção IDÊNTICA ao Boot Lock (#189) — os dois lados devem produzir o
+// mesmo diretório para a mesma instalação:
 //   MESTRE_STATE_DIR definido  → <MESTRE_STATE_DIR>/<instalacaoId>/
 //   MESTRE_HOME definido       → <MESTRE_HOME>/state/<instalacaoId>/  (sandbox/testes)
 //   Windows                    → %LOCALAPPDATA%\MestreRPG\state\<instalacaoId>\
-//   demais                    → $XDG_STATE_HOME/mestre-rpg/<instalacaoId>/
-//                               ou ~/.mestre-rpg/<instalacaoId>/
+//   Linux c/ XDG               → $XDG_STATE_HOME/mestre-rpg/state/<instalacaoId>/
+//   Linux s/ XDG               → ~/.local/state/mestre-rpg/state/<instalacaoId>/
 //
 // instalacaoId = SHA-256 do caminho canônico real (realpath) do repositório,
-// normalizado (caixa baixa no Windows). Mesma convenção do Boot Lock (#189).
+// normalizado (caixa baixa no Windows) — delega a scripts/boot-lock.mjs
+// para garantir resultado idêntico (caminhoCanonicoRepo/instalacaoId).
 //
 // Três conceitos separados por desenho:
 //   - consentimento  → configuracao/auto-update.json (preferência local,
@@ -23,51 +26,70 @@
 //     interpretado como ausência);
 //   - protocoloVersao desconhecida → "incompativel";
 //   - instalacaoId/repoCanon divergentes → "identidade-divergente";
-//   - ausência só é legítima quando comprovadamente instalação nova —
-//     caso ambíguo deve bloquear o fluxo mutável (ver avaliarBoot).
+//   - ausência só é legítima com recibo durável de instalação
+//     (instalacao-recibo.json) — sem recibo verificável, o caso é ambíguo
+//     e o fluxo mutável deve bloquear.
+//
+// Recibo de instalação: gravado UMA vez por um caminho de bootstrap
+// confiável (updater/.bat/instalador — integração pendente, Etapa 5).
+// Vinculado a instalacaoId+repoCanon+protocoloVersao; sua ausência NÃO
+// pode ser contornada por manifesto versionado, arquivo tracked, código N,
+// ausência de banco ou ausência do próprio state dir.
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync,
-  realpathSync, renameSync, rmSync, writeSync,
+  renameSync, rmSync, writeSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { caminhoCanonicoRepo, instalacaoId as instalacaoIdBoot } from "./boot-lock.mjs";
 
 export const PROTOCOLO_VERSAO = 1;
 export const ARQUIVO_CONSENTIMENTO = "auto-update.json";
 export const ARQUIVO_MANIFESTO_PROTOCOLO = "protocolo-auto-update.json";
+export const ARQUIVO_RECIBO_INSTALACAO = "instalacao-recibo.json";
+export const JOURNAL_UPDATE = "atualizacao-ultima.json";
+export const JOURNAL_RESTAURACAO = "restauracao-externa.json";
 
-/** Caminho canônico do repositório: realpath resolve junctions, 8.3 e
- *  diferenças de caixa; fallback para resolve(). Idêntico ao boot-lock. */
+/** Caminho canônico do repositório — delega ao boot-lock (mesma regra:
+ *  realpath nativo, caixa baixa no Windows, fallback para resolve). */
 export function caminhoCanonico(dir) {
-  const abs = resolve(dir);
-  try {
-    const real = realpathSync.native ? realpathSync.native(abs) : realpathSync(abs);
-    return process.platform === "win32" ? real.toLowerCase() : real;
-  } catch {
-    return process.platform === "win32" ? abs.toLowerCase() : abs;
-  }
+  return caminhoCanonicoRepo(dir);
 }
 
-/** Identidade da instalação: SHA-256 do caminho canônico normalizado. */
+/** Identidade da instalação: SHA-256 do caminho canônico normalizado.
+ *  Idêntica à do Boot Lock por construção (mesma função). */
 export function instalacaoId(repoDir) {
-  return createHash("sha256").update(caminhoCanonico(repoDir)).digest("hex");
+  return instalacaoIdBoot(repoDir);
 }
 
-/** Diretório de estado da instalação (cria se necessário). */
+/** Base do estado por usuário — espelha boot-lock.diretorioBaseEstado()
+ *  com `env` injetável para testes. Manter sincronizado com o boot-lock;
+ *  teste-estado-externo.mjs compara os dois resultados. */
+export function diretorioBaseEstado(env = process.env) {
+  const override = (env.MESTRE_STATE_DIR ?? "").trim();
+  if (override) return override;
+  if (process.platform === "win32") {
+    const local = env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    return join(local, "MestreRPG", "state");
+  }
+  const xdg = (env.XDG_STATE_HOME ?? "").trim();
+  const base = xdg || join(homedir(), ".local", "state");
+  return join(base, "mestre-rpg", "state");
+}
+
+/** Diretório de estado da instalação — RESOLUÇÃO PURA, sem efeito
+ *  colateral: NÃO cria o diretório. Escritas passam por
+ *  gravarJsonAtomico (que cria o pai na hora de gravar); leituras e
+ *  verificações nunca produzem efeitos. */
 export function dirEstado(repoDir, env = process.env) {
   const id = instalacaoId(repoDir);
-  let base;
-  if (env.MESTRE_STATE_DIR) base = join(resolve(env.MESTRE_STATE_DIR), id);
-  else if (env.MESTRE_HOME) base = join(resolve(env.MESTRE_HOME), "state", id);
-  else if (process.platform === "win32") {
-    const local = env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
-    base = join(local, "MestreRPG", "state", id);
-  } else {
-    base = join(env.XDG_STATE_HOME ?? join(homedir(), ".mestre-rpg"), "mestre-rpg", id);
+  // MESTRE_HOME é override de sandbox/testes (o servidor de dados vive
+  // fora do worktree real); MESTRE_STATE_DIR tem precedência.
+  if ((env.MESTRE_HOME ?? "").trim() && !(env.MESTRE_STATE_DIR ?? "").trim()) {
+    return join(resolve(env.MESTRE_HOME), "state", id);
   }
-  mkdirSync(base, { recursive: true });
-  return base;
+  return join(resolve(diretorioBaseEstado(env)), id);
 }
 
 /** Caminho do arquivo de consentimento (dentro do repo, gitignored). */
@@ -106,6 +128,13 @@ export function colocarEmQuarentena(caminho, motivo = "corrompido") {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const destino = `${caminho}.quarentena-${motivo}-${ts}`;
   try { renameSync(caminho, destino); return destino; } catch { return null; }
+}
+
+/** Leitura NÃO destrutiva de JSON (sem quarentena) — para verificações
+ *  que não podem produzir efeitos colaterais. */
+function lerJsonCru(caminho) {
+  try { return JSON.parse(readFileSync(caminho, "utf8")); }
+  catch { return undefined; }
 }
 
 /**
@@ -193,20 +222,52 @@ export function gravarConsentimento(repoDir, consentimento, dadosExtra = {}) {
   return registro;
 }
 
+// ---------- recibo durável de instalação (Correção 1) ----------
+// ÚNICA prova aceita de "instalação já inicializada": um recibo gravado
+// por um caminho de bootstrap confiável, vinculado à identidade desta
+// instalação. NÃO são recibo: manifesto versionado, arquivo tracked,
+// código N, ausência de banco, ausência do state dir ou do protocolo.
+// A escrita é responsabilidade do integrador (updater/.bat/instalador —
+// Etapa 5, PENDENTE); até lá nenhuma instalação nova é comprovada e o
+// caso ambíguo permanece bloqueado (fail-closed).
+
+/** Grava o recibo de instalação inicializada. Chamar UMA vez, somente
+ *  após a instalação ser comprovadamente concluída e validada. */
+export function gravarReciboInstalacao(repoDir, env = process.env, dadosExtra = {}) {
+  return gravarEstado(repoDir, ARQUIVO_RECIBO_INSTALACAO, {
+    tipo: "instalacao-inicial",
+    criadoEm: new Date().toISOString(),
+    ...dadosExtra,
+  }, env);
+}
+
+/** Lê o recibo sem efeitos colaterais. Retorno:
+ *  { status: "ok", dados } | { status: "ausente" } |
+ *  { status: "corrompido"|"invalido"|"divergente" } (motivo, sem quarentena). */
+export function lerReciboInstalacao(repoDir, env = process.env) {
+  const caminho = join(dirEstado(repoDir, env), ARQUIVO_RECIBO_INSTALACAO);
+  if (!existsSync(caminho)) return { status: "ausente" };
+  const dados = lerJsonCru(caminho);
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
+  if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
+  if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
+  if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
+  if (dados.tipo !== "instalacao-inicial") return { status: "invalido" };
+  return { status: "ok", dados };
+}
+
 /**
- * Prova de instalação nova: state dir nunca criado E nenhum sinal de uso
- * prévio da instalação (banco de dados existente). Sem essa prova, a
- * ausência de estado é AMBÍGUA → o chamador deve bloquear o fluxo mutável.
- * Limite residual documentado: instalação que rodou N mas nunca criou o
- * banco e perdeu o state dir é indistinguível de instalação nova.
+ * Prova de instalação já inicializada — SOMENTE por recibo durável
+ * independente e verificável. Sem recibo válido, nada mais prova:
+ * ausência de banco, ausência de state dir, manifesto versionado,
+ * arquivo tracked ou código N são explicitamente NÃO-recibos.
+ * A verificação é livre de efeitos colaterais (não cria diretórios,
+ * não move arquivos para quarentena).
  */
-export function provarInstalacaoNova(repoDir) {
-  const dir = dirEstado(repoDir);
-  const marcador = join(dir, "protocolo-ativo.json");
-  if (existsSync(marcador)) return { nova: false, motivo: "protocolo-ja-ativado" };
-  const banco = join(repoDir, "banco", "mestre-rpg.db");
-  if (existsSync(banco)) return { nova: false, motivo: "banco-existente" };
-  return { nova: true };
+export function provarInstalacaoNova(repoDir, env = process.env) {
+  const r = lerReciboInstalacao(repoDir, env);
+  if (r.status === "ok") return { nova: true, recibo: r.dados };
+  return { nova: false, motivo: `sem-recibo-valido (${r.status})` };
 }
 
 /**
@@ -218,25 +279,26 @@ export function provarInstalacaoNova(repoDir) {
  */
 export function avaliarBoot(repoDir, env = process.env) {
   const dir = dirEstado(repoDir, env);
-  const journal = lerJournal(repoDir, "atualizacao-ultima.json", env);
+  const journal = lerJournal(repoDir, JOURNAL_UPDATE, env);
   if (journal.status !== "ausente" && journal.status !== "ok") {
     return { seguroIniciar: false, motivo: `journal-${journal.status}`, detalhes: journal };
   }
   if (journal.status === "ok" && journal.dados?.fase && journal.dados.fase !== "concluido") {
     return { seguroIniciar: false, motivo: "recuperacao-pendente", detalhes: journal.dados };
   }
-  const restauracao = lerJournal(repoDir, "restauracao-externa.json", env);
+  const restauracao = lerJournal(repoDir, JOURNAL_RESTAURACAO, env);
   if (restauracao.status !== "ausente" && restauracao.status !== "ok") {
     return { seguroIniciar: false, motivo: `restauracao-${restauracao.status}`, detalhes: restauracao };
   }
   if (restauracao.status === "ok" && restauracao.dados?.fase && !["concluido", "concluido-com-flag"].includes(restauracao.dados.fase)) {
     return { seguroIniciar: false, motivo: "restauracao-em-andamento", detalhes: restauracao.dados };
   }
-  // Ambiguidade de estado: marcador de protocolo no repo existe mas o
-  // state dir nunca foi ativado → não é comprovadamente instalação nova.
+  // Ambiguidade de estado: o repo carrega o manifesto do protocolo N,
+  // mas não há recibo durável de instalação — não é comprovadamente
+  // instalação nova NEM comprovadamente estado perdido: bloqueia.
   const manifesto = caminhoManifestoProtocolo(repoDir);
   if (existsSync(manifesto)) {
-    const prova = provarInstalacaoNova(repoDir);
+    const prova = provarInstalacaoNova(repoDir, env);
     if (!prova.nova) {
       return { seguroIniciar: false, motivo: "estado-ambiguo", detalhes: prova };
     }

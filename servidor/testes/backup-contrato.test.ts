@@ -110,6 +110,7 @@ describe("backup pré-migration — manifesto v2 e proteção (W16)", () => {
     const envOriginal = process.env.MESTRE_STATE_DIR;
     const bloqueio = join(TMP, "state", "arquivo-bloqueante");
     process.env.MESTRE_STATE_DIR = bloqueio;
+    mkdirSync(dirname(bloqueio), { recursive: true });
     writeFileSync(bloqueio, "não é diretório");
     try {
       const r = await criarBackup("pre_update", "sem protecao", { proteger: true });
