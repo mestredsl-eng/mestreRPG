@@ -1068,15 +1068,8 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
 
       <h4>Patrimônio e permissões do jogador</h4>
       <p className="dica">Ações que os jogadores podem executar no patrimônio e no dinheiro. O mestre sempre mantém acesso administrativo. Campanhas antigas sem estas chaves usam os valores padrão indicados.</p>
+      <h5>Patrimônio</h5>
       <div className="grade-form">
-        <label className="checkbox">
-          <input type="checkbox" checked={finPerm.jogadorCompraVenda} onChange={(e) => setFinPerm("jogadorCompraVenda", e.target.checked)} />
-          Jogador registra compra e venda
-        </label>
-        <label className="checkbox">
-          <input type="checkbox" checked={finPerm.jogadorPix} onChange={(e) => setFinPerm("jogadorPix", e.target.checked)} />
-          Jogador faz PIX fictício entre personagens
-        </label>
         <label className="checkbox">
           <input type="checkbox" checked={patPerm.jogadorAdicionaItens} onChange={(e) => setPatPerm("jogadorAdicionaItens", e.target.checked)} />
           Jogador adiciona itens ao inventário
@@ -1096,6 +1089,17 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
         <label className="checkbox">
           <input type="checkbox" checked={patPerm.jogadorCriaContas} onChange={(e) => setPatPerm("jogadorCriaContas", e.target.checked)} />
           Jogador cria contas financeiras
+        </label>
+      </div>
+      <h5>Financeiro</h5>
+      <div className="grade-form">
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorCompraVenda} onChange={(e) => setFinPerm("jogadorCompraVenda", e.target.checked)} />
+          Jogador registra compra e venda
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorPix} onChange={(e) => setFinPerm("jogadorPix", e.target.checked)} />
+          Jogador faz PIX fictício entre personagens
         </label>
       </div>
 
