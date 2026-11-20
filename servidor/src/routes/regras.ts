@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { createHash } from "node:crypto";
-import { and, asc, eq, isNotNull, isNull, like, or } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, like, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
-import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions, ruleBooks, ruleBookItems, campaignRuleBooks } from "../db/schema.js";
+import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions, sheetTemplates, ruleBooks, ruleBookItems, campaignRuleBooks } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import {
@@ -240,16 +240,25 @@ async function errosVinculosSangueCampanha(
   campaignId: string,
 ): Promise<string[]> {
   const sang = config.sangue;
+  const bq = sang?.capacidade?.bonusQualidade;
   const temVinculo = !!(
     sang?.campoCapacidadeId ||
     sang?.campoNaturezaId ||
-    sang?.capacidade?.bonusQualidade?.campoId
+    (bq && Object.values(bq).some((v) => v !== undefined))
   );
   if (!sang?.habilitado && !temVinculo) return [];
+  // Personagens arquivados são somente-leitura e fora da ficha ativa —
+  // não restringem a configuração. Demais status (rascunho, aprovação,
+  // bloqueada) e NPCs continuam contando: são fail-closed enquanto a
+  // decisão de NPCs (D11) está pendente.
   const vinculos = await db
     .select({ templateVersionId: characters.templateVersionId })
     .from(characters)
-    .where(and(eq(characters.campaignId, campaignId), isNotNull(characters.templateVersionId)));
+    .where(and(
+      eq(characters.campaignId, campaignId),
+      isNotNull(characters.templateVersionId),
+      ne(characters.status, "arquivado"),
+    ));
   const ids = [...new Set(vinculos.map((c) => c.templateVersionId).filter((v): v is string => !!v))];
   if (!ids.length) {
     return ["config.sangue: nenhuma ficha publicada vinculada a personagens da campanha — vínculos não podem ser verificados"];
@@ -257,8 +266,25 @@ async function errosVinculosSangueCampanha(
   const estruturas = new Map<string, EstruturaFicha>();
   const erros: string[] = [];
   for (const vid of ids) {
-    const [v] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, vid)).limit(1);
-    const parse = estruturaFichaSchema.safeParse(v?.structure);
+    // Só conta como estrutura ATIVA a versão PUBLICADA de template da
+    // própria campanha ou modelo global (campaign_id NULL). Versão não
+    // publicada ou de template de outra campanha não é estrutura que a
+    // campanha efetivamente usa — é ignorada em vez de rejeitar a
+    // config (falso negativo) ou validá-la sem significado.
+    const [v] = await db
+      .select({
+        structure: sheetVersions.structure,
+        publishedAt: sheetVersions.publishedAt,
+        templateCampaignId: sheetTemplates.campaignId,
+      })
+      .from(sheetVersions)
+      .innerJoin(sheetTemplates, eq(sheetVersions.templateId, sheetTemplates.id))
+      .where(eq(sheetVersions.id, vid))
+      .limit(1);
+    if (!v?.publishedAt || (v.templateCampaignId !== null && v.templateCampaignId !== campaignId)) {
+      continue;
+    }
+    const parse = estruturaFichaSchema.safeParse(v.structure);
     if (!parse.success) {
       erros.push(`config.sangue: estrutura da ficha ${vid} inválida — vínculos não podem ser verificados`);
       continue;
@@ -266,6 +292,9 @@ async function errosVinculosSangueCampanha(
     estruturas.set(vid, parse.data);
   }
   if (erros.length) return erros;
+  if (estruturas.size === 0) {
+    return ["config.sangue: nenhuma ficha publicada vinculada a personagens da campanha — vínculos não podem ser verificados"];
+  }
   return errosVinculosSangueConfig(config, estruturas);
 }
 

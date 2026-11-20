@@ -219,6 +219,76 @@ try {
     const r2 = await putCfg(c3.campId, c3.cookieMestre, { sangue: { habilitado: false } });
     t("sangue desabilitado sem ficha → 200", r2.status === 200, `status=${r2.status}`);
   }
+
+  sec("11. Escopo — versão publicada, campanha do template, status do personagem");
+  {
+    // estrutura propositalmente INCOMPATÍVEL: não tem o campo "cap"
+    const estruturaIncompativel = () => ({
+      versao: 1,
+      secoes: [{ id: "s1", titulo: "X", ordem: 0, campos: [{ id: "zzz", label: "Z", tipo: "inteiro", semantico: "livre" }] }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    });
+    // adiciona personagem com versão customizada à campanha
+    const addPersonagem = (campId, { status = "aprovada", publicado = true, templateCampId = undefined } = {}) => {
+      const db = abrirDb(BANCO); const agora = Date.now();
+      try {
+        const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
+        const tplCamp = templateCampId === undefined ? campId : templateCampId;
+        db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+          .run(tplId, tplCamp, "Ficha escopo", null, c.adminId, agora, agora);
+        db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+          .run(verId, tplId, JSON.stringify(estruturaIncompativel()), publicado ? agora : null, agora);
+        db.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
+        const mid = db.prepare("select id from memberships where campaign_id=? limit 1").get(campId).id;
+        const pid = crypto.randomUUID();
+        db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(pid, campId, mid, verId, "Herói Escopo", "{}", "{}", status, 0, agora, agora);
+        return verId;
+      } finally { db.close(); }
+    };
+    const cfgValida = { sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor" } } };
+
+    // A) versão NÃO publicada não restringe a config
+    const cA = await novaCenarioExtra(c, { rotulo: "naopub" });
+    addPersonagem(cA.campId, { publicado: false });
+    const rA = await putCfg(cA.campId, cA.cookieMestre, cfgValida);
+    t("versão unpublished ignorada → config válida 200", rA.status === 200, `status=${rA.status} ${JSON.stringify(rA.json).slice(0, 160)}`);
+
+    // B) versão de template de OUTRA campanha não restringe
+    const cB = await novaCenarioExtra(c, { rotulo: "crosscamp" });
+    addPersonagem(cB.campId, { templateCampId: c.campId }); // template da campanha principal
+    const rB = await putCfg(cB.campId, cB.cookieMestre, cfgValida);
+    t("versão de outra campanha ignorada → 200", rB.status === 200, `status=${rB.status} ${JSON.stringify(rB.json).slice(0, 160)}`);
+
+    // C) personagem arquivado não restringe
+    const cC = await novaCenarioExtra(c, { rotulo: "arquivado" });
+    addPersonagem(cC.campId, { status: "arquivado" });
+    const rC = await putCfg(cC.campId, cC.cookieMestre, cfgValida);
+    t("personagem arquivado ignorado → 200", rC.status === 200, `status=${rC.status} ${JSON.stringify(rC.json).slice(0, 160)}`);
+
+    // D) bônus de qualidade parcial → 400 (par campoId+coeficiente exigido)
+    const parciais = [
+      ["só campoId", { campoId: "qual" }],
+      ["só coeficiente", { coeficiente: 1 }],
+      ["só modo", { modo: "mapa" }],
+    ];
+    for (const [nome, bq] of parciais) {
+      const r = await putCfg(cA.campId, cA.cookieMestre, {
+        sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: bq } },
+      });
+      t(`400: bonusQualidade ${nome}`, r.status === 400, `status=${r.status}`);
+    }
+    // objeto vazio não tem chave definida → bloco inativo → aceito
+    const rVazio = await putCfg(cA.campId, cA.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: {} } },
+    });
+    t("bonusQualidade {} inativo → 200", rVazio.status === 200, `status=${rVazio.status}`);
+    // bônus completo válido → aceito (qual é selecao_nivel na estrutura custom)
+    const rFull = await putCfg(cA.campId, cA.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: { campoId: "qual", coeficiente: 1, modo: "somaNiveis" } } },
+    });
+    t("bonusQualidade completo válido → 200", rFull.status === 200, `status=${rFull.status} ${JSON.stringify(rFull.json).slice(0, 160)}`);
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 600));

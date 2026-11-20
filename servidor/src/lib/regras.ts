@@ -395,12 +395,24 @@ export function errosVinculosSangueConfig(
   const erros: string[] = [];
   const sang = config.sangue;
   if (!sang) return erros;
+  // Qualquer chave definida em bonusQualidade torna o bloco ATIVO para
+  // a C2 — parcial (só campoId, só coeficiente, só modo/mapa) é config
+  // inválida que mataria a capacidade em runtime. O par campoId +
+  // coeficiente finito é exigido aqui, antes de validar os vínculos.
+  const bq = sang.capacidade?.bonusQualidade;
+  const bqAtivo = !!bq && Object.values(bq).some((v) => v !== undefined);
   const temVinculo = !!(
     sang.campoCapacidadeId ||
     sang.campoNaturezaId ||
-    sang.capacidade?.bonusQualidade?.campoId
+    bqAtivo
   );
   if (!sang.habilitado && !temVinculo) return erros;
+  if (bqAtivo && (typeof bq!.campoId !== "string" || !bq!.campoId || typeof bq!.coeficiente !== "number" || !Number.isFinite(bq!.coeficiente))) {
+    erros.push(
+      "config.sangue.capacidade.bonusQualidade: exige campoId e coeficiente numérico finito quando qualquer opção é definida",
+    );
+    return erros;
+  }
   if (estruturas.size === 0) {
     erros.push(
       "config.sangue: nenhuma estrutura de ficha ativa verificável — vínculos não podem ser validados",
