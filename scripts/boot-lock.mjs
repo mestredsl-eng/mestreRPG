@@ -15,19 +15,21 @@
 //     120s; se o servidor responder, sai com código 20 ("outra instância
 //     assumiu") sem executar nada mutável; se não responder, aborta.
 //   Recuperação de lock obsoleto — SERIALIZADA por mutex `.recover`:
-//     1. o recuperante cria `<lock>.recover` atomicamente ('wx');
+//     1. o recuperante cria `<lock>.recover` atomicamente ('wx') com um
+//        nonce único — SOMENTE criação, nunca reivindicação;
 //     2. DENTRO da seção crítica relê o lock principal do zero e
 //        revalida: metadados íntegros, mesmo host/repo e pidVivo=false;
 //     3. só então renomeia o lock obsoleto para quarentena, revalida o
 //        arquivo CAPTURADO (pid+ts idênticos ao validado) e o remove;
-//     4. libera o mutex e tenta o 'wx' de novo.
-//     Como toda mutação do lock principal por terceiros exige o mesmo
-//     mutex, nenhum processo consegue renomear/remover um lock criado
-//     por outro DEPOIS da leitura — a revalidação acontece dentro da
-//     seção crítica, não antes. Se a prova de exclusividade falhar em
-//     qualquer ponto (mutex ocupado, captura divergente, restore
-//     impossível), o resultado é fail-closed: aguardar/abortar, nunca
-//     assumir.
+//     4. libera o mutex COM prova de ownership (pid + nonce) e retenta
+//        o 'wx'.
+//     Como o mutex `.recover` NUNCA é reivindicado — um `.recover`
+//     existente, mesmo com pid morto, é fail-closed com instrução de
+//     remoção manual — não existe caminho de código que renomeie ou
+//     remova o mutex de outro processo. Se a prova de exclusividade
+//     falhar (mutex ocupado, captura divergente, restore impossível),
+//     o resultado é fail-closed: aguardar/abortar, nunca assumir, e o
+//     arquivo capturado é PRESERVADO como evidência.
 //   Metadados inválidos, hostname divergente ou pid não verificável →
 //     fail-closed: nunca assume o lock, apenas aguarda/aborta.
 //   liberar — somente o processo proprietário (mesmo pid E host E repo
@@ -36,7 +38,7 @@
 // Códigos de saída do CLI: 0 = lock adquirido; 20 = servidor de outra
 // instância respondeu (boot deve encerrar sem erro); 1 = abortar.
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync, linkSync, openSync, readFileSync,
   realpathSync, renameSync, rmSync, writeSync,
@@ -149,56 +151,57 @@ async function aguardarOuAbortar({ fetchHealth, healthUrl, timeoutEspera, interv
 
 /**
  * Tenta entrar na seção crítica de recuperação criando `<lock>.recover`
- * com 'wx'. O pid gravado é o DESTE processo node (process.pid) — o
- * mutex só precisa de uma identidade viva durante a seção.
- * Retorno: { ok:true } — seção nossa; { ok:false, ocupado:true } —
- * alguém está recuperando ou o mutex é de pid vivo (tratar lock como
- * ocupado); { ok:false, fatal:true } — fail-closed.
+ * com 'wx'. O mutex NUNCA é reivindicado: se `.recover` já existe —
+ * vivo, obsoleto ou corrompido — o resultado é fail-closed. Um mutex
+ * com pid morto só pode significar crash no meio da seção crítica
+ * (janela de microssegundos); exigir remoção manual é o preço de não
+ * existir primitiva de mutex com staleness segura no Windows sem deps.
+ * O pid gravado é o DESTE processo node (process.pid) e o nonce é
+ * único por tentativa — a liberação exige os dois.
+ * Retorno: { ok:true, recPath, nonce } — seção nossa;
+ *          { ok:false, ocupado:true, motivo, pid? } — outro recuperante
+ *            vivo ou sendo tratado: tratar lock como ocupado;
+ *          { ok:false, fatal:true, motivo } — fail-closed.
  */
 function entrarSecaoRecuperacao({ lockPath, repoDir, host, pidVivo, log }) {
   const recPath = lockPath + SUFIXO_MUTEX;
-  const metaRec = { v: VERSAO_LOCK, pid: process.pid, host, repo: repoDir, ts: Date.now() };
-  for (let i = 0; i < MAX_TENTATIVAS; i++) {
-    try {
-      gravarLockAtomic(recPath, metaRec);
-      return { ok: true, recPath };
-    } catch (e) {
-      if (e && e.code !== "EEXIST") return { ok: false, fatal: true, motivo: `falha-criar-mutex:${e.code ?? e.message}` };
+  const nonce = randomUUID();
+  const metaRec = { v: VERSAO_LOCK, pid: process.pid, host, repo: repoDir, ts: Date.now(), nonce };
+  try {
+    gravarLockAtomic(recPath, metaRec);
+    return { ok: true, recPath, nonce };
+  } catch (e) {
+    if (!e || e.code !== "EEXIST") {
+      return { ok: false, fatal: true, motivo: `falha-criar-mutex:${e?.code ?? e?.message}` };
     }
-    const rec = lerLock(recPath);
-    if (!rec || rec.host !== host || rec.repo !== repoDir) {
-      return { ok: false, fatal: true, motivo: "mutex-invalido" };
-    }
-    if (pidVivo(rec.pid)) {
-      return { ok: false, ocupado: true, motivo: "mutex-ocupado", pid: rec.pid };
-    }
-    // Mutex obsoleto: reivindica por rename e REVALIDA o capturado —
-    // se for um mutex novo (outro recuperante), restaura sem clobber.
-    const claim = `${recPath}.stale-${process.pid}-${Date.now()}`;
-    try {
-      renameSync(recPath, claim);
-    } catch {
-      continue; // outro processo moveu primeiro — reavalia
-    }
-    const cap = lerLock(claim);
-    if (!cap || cap.pid !== rec.pid || cap.ts !== rec.ts) {
-      // Capturamos um mutex MAIS NOVO de outro recuperante — devolve.
-      try {
-        restaurarAtomico(claim, recPath);
-      } catch {
-        try { rmSync(claim, { force: true }); } catch { /* ok */ }
-        return { ok: false, fatal: true, motivo: "falha-restaurar-mutex" };
-      }
-      return { ok: false, ocupado: true, motivo: "mutex-ocupado" };
-    }
-    try { rmSync(claim, { force: true }); } catch { /* ok */ }
-    // mutex obsoleto removido — retenta a criação
   }
-  return { ok: false, fatal: true, motivo: "falha-recuperar-mutex" };
+  const rec = lerLock(recPath);
+  if (!rec || rec.host !== host || rec.repo !== repoDir || typeof rec.nonce !== "string") {
+    return { ok: false, fatal: true, motivo: "mutex-invalido" };
+  }
+  if (pidVivo(rec.pid)) {
+    return { ok: false, ocupado: true, motivo: "mutex-ocupado", pid: rec.pid };
+  }
+  // Mutex obsoleto ou de processo morto: NÃO reivindicar — abortar com
+  // instrução de intervenção manual. O arquivo é preservado intacto.
+  return {
+    ok: false,
+    fatal: true,
+    motivo: "mutex-obsoleto",
+    instrucao: `Remova manualmente o arquivo de recuperação residual: ${recPath} e tente novamente.`,
+  };
 }
 
-function sairSecaoRecuperacao(recPath) {
-  try { rmSync(recPath, { force: true }); } catch { /* ok */ }
+/** Libera o mutex SOMENTE se o arquivo atual ainda for o nosso —
+ *  mesmo pid e mesmo nonce. Se outro processo substituiu o arquivo,
+ *  não removemos nada (fail-closed por preservação). */
+function sairSecaoRecuperacao(recPath, nonce) {
+  const atual = lerLock(recPath);
+  if (atual && atual.pid === process.pid && atual.nonce === nonce) {
+    try { rmSync(recPath, { force: true }); } catch { /* ok */ }
+    return;
+  }
+  // Ausente ou de outro dono: nada a liberar — preserva evidência.
 }
 
 /**
@@ -230,8 +233,9 @@ function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log }) {
     try {
       restaurarAtomico(quarentena, lockPath);
     } catch {
-      try { rmSync(quarentena, { force: true }); } catch { /* ok */ }
-      log("[boot-lock] Não foi possível restaurar lock capturado — abortando por segurança.");
+      // NUNCA remover o capturado: ele é a evidência do lock de outro
+      // dono. Preserva o arquivo de quarentena e aborta fail-closed.
+      log("[boot-lock] Não foi possível restaurar lock capturado — quarentena preservada, abortando por segurança.");
       return "fatal";
     }
     return "ocupado";
@@ -300,7 +304,7 @@ export async function adquirirLock(opts = {}) {
     const secao = entrarSecaoRecuperacao({ lockPath, repoDir, host, pidVivo, log });
     if (secao.ok) {
       const resultado = reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log });
-      sairSecaoRecuperacao(secao.recPath);
+      sairSecaoRecuperacao(secao.recPath, secao.nonce);
       if (resultado === "removido") continue; // lock obsoleto eliminado — retenta 'wx'
       if (resultado === "fatal") {
         return { codigo: 1, motivo: "falha-recuperacao-lock", lockPath };
@@ -309,6 +313,7 @@ export async function adquirirLock(opts = {}) {
       return aguardarOuAbortar({ fetchHealth, healthUrl, timeoutEspera, intervalo, log, lockPath, motivo: "lock-ocupado" });
     }
     if (secao.fatal) {
+      if (secao.instrucao) log(`[boot-lock] ${secao.instrucao}`);
       return { codigo: 1, motivo: secao.motivo ?? "falha-mutex-recuperacao", lockPath };
     }
     // mutex ocupado por recuperante vivo → o lock está sendo tratado;

@@ -145,14 +145,44 @@ try {
 
   // ---------- mutex .recover ocupado por pid vivo → fail-closed ----------
   writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
-  writeFileSync(lock1 + ".recover", JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco))));
+  writeFileSync(lock1 + ".recover", JSON.stringify({ ...META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco)), nonce: "n-vivo" }));
   const r8 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
     pid: process.pid, pidVivo: (p) => p === process.pid, // só o pid do mutex "vive"
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
   t("mutex ocupado → trata como ocupado e aborta", r8.codigo === 1 && /lock-sendo-recuperado/.test(r8.motivo), `${r8.codigo} ${r8.motivo}`);
-  rmSync(lock1 + ".recover", { force: true });
+
+  // ---------- mutex .recover OBSOLETO → NUNCA reivindicado ----------
+  // Interleaving P1/P2/P3 da auditoria: antes, um recuperante podia
+  // renomear o mutex NOVO de outro. Agora não existe caminho de código
+  // que reivindique .recover — o resultado é sempre fail-closed com
+  // intervenção manual, e ambos os arquivos ficam preservados intactos.
+  const recPath1 = lock1 + ".recover";
+  const recObsoleto = JSON.stringify({ ...META(pidMorto(), hostname(), caminhoCanonicoRepo(repoComEspaco)), nonce: "n-velho" });
+  writeFileSync(recPath1, recObsoleto);
+  const lockAntes = readFileSync(lock1, "utf8");
+  const r9 = await adquirirLock({
+    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    pid: process.pid, pidVivo: () => false, // nada vivo: lock E mutex obsoletos
+    fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5,
+    log: (m) => { if (/Remova manualmente/.test(m)) globalThis.__instrucaoVista = true; },
+  });
+  t("mutex obsoleto → aborta fail-closed (codigo 1)", r9.codigo === 1 && r9.motivo === "mutex-obsoleto", `${r9.codigo} ${r9.motivo}`);
+  t("instrução de remoção manual emitida", globalThis.__instrucaoVista === true);
+  t("mutex obsoleto preservado byte-a-byte", readFileSync(recPath1, "utf8") === recObsoleto);
+  t("lock principal preservado durante aborto", readFileSync(lock1, "utf8") === lockAntes);
+
+  // mutex corrompido → fail-closed, preservado
+  writeFileSync(recPath1, "{lixo");
+  const r10 = await adquirirLock({
+    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    pid: process.pid, pidVivo: () => false,
+    fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
+  });
+  t("mutex corrompido → fail-closed", r10.codigo === 1 && /mutex/.test(r10.motivo), `${r10.codigo} ${r10.motivo}`);
+  t("mutex corrompido preservado", readFileSync(recPath1, "utf8") === "{lixo");
+  rmSync(recPath1, { force: true });
   rmSync(lock1, { force: true });
 
   // ---------- CONCORRÊNCIA REAL: processos Node separados ----------
@@ -191,6 +221,28 @@ try {
     t(`rodada ${rodada + 1}: lock final é de pid vivo válido`, metaR && Number.isInteger(metaR.pid) && metaR.pid > 0);
   }
   liberarLock({ cwd: repoConc, lockPath: lockConc, pid: process.pid, host: hostname() });
+
+  // ---------- INTERLEAVING P1/P2/P3 — mutex obsoleto jamais reivindicado ----------
+  // Reproduz o cenário da auditoria: lock principal obsoleto + mutex
+  // .recover obsoleto presentes, 4 processos concorrentes. Com a correção
+  // não existe código que reivindique .recover — todo processo deve
+  // abortar fail-closed e AMBOS os arquivos devem permanecer intactos.
+  // Sem barreira de código necessária: a janela perigosa foi eliminada
+  // estruturalmente; o teste prova preservação sob concorrência real.
+  rmSync(lockConc, { force: true });
+  rmSync(lockConc + ".recover", { force: true });
+  const lockStaleConc = JSON.stringify(META(pidMorto(), hostname(), caminhoCanonicoRepo(repoConc)));
+  const recStaleConc = JSON.stringify({ ...META(pidMorto(), hostname(), caminhoCanonicoRepo(repoConc)), nonce: "n-velho" });
+  writeFileSync(lockConc, lockStaleConc);
+  writeFileSync(lockConc + ".recover", recStaleConc);
+  rs = await spawnWorkers(repoConc, 4);
+  cs = codigos(rs);
+  t("mutex obsoleto + 4 processos: nenhum adquire", cs.every((c) => c !== 0), JSON.stringify(cs));
+  t("todos abortam por mutex obsoleto/inválido", rs.every((r) => /mutex/.test(r.out)), rs.map((r) => r.out.trim()).join(" | "));
+  t("lock principal preservado após corrida", readFileSync(lockConc, "utf8") === lockStaleConc);
+  t("mutex .recover preservado após corrida", readFileSync(lockConc + ".recover", "utf8") === recStaleConc);
+  rmSync(lockConc + ".recover", { force: true });
+  rmSync(lockConc, { force: true });
 
   // ---------- CLI real: adquirir/liberar ----------
   rmSync(lockConc, { force: true });
