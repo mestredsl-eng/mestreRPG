@@ -51,26 +51,20 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Impede segunda instancia: verifica se a porta 3001 ja responde
-rem (127.0.0.1 evita ambiguidade de IPv6/localhost; -Proxy $null ignora proxy do sistema)
-powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Proxy $null http://127.0.0.1:3001/api/health).StatusCode } catch { exit 1 }" >nul 2>nul
-if not errorlevel 1 (
-    echo [AVISO] Ja existe um servidor respondendo em http://localhost:3001
-    echo         Se desejar reiniciar, feche a janela anterior ou use parar-mestre-rpg.bat
-    pause
-    exit /b 0
-)
-
 rem ---------- Lock de boot (Issue #155) ----------
 rem Garante que apenas UM processo execute auto-update, npm ci, builds,
-rem restauracao, migrations e o servidor neste diretorio. O lock e
-rem adquirido pelo cmd.exe deste script e cobre TODO o ciclo; se outra
-rem instancia valida estiver subindo, aguardamos o health por ate
-rem 120s — se o servidor responder, este boot encerra sem duplicar.
-rem Codigo 20 = servidor de outra instancia respondeu (sai sem erro);
-rem codigo 1 = aborta; 0 = lock adquirido e boot prossegue.
-rem O lock e OBRIGATORIO: sem o arquivo ou sem codigo 0/20, o boot
-rem aborta — nenhuma etapa mutavel roda sem exclusividade.
+rem restauracao, migrations e o servidor neste diretorio. O helper
+rem resolve a porta efetiva do servidor (mesma precedencia de
+rem servidor/src/config.ts: configuracao/servidor.json > MESTRE_PORTA
+rem > 3001), sonda /api/health ANTES de adquirir o lock — se ja ha
+rem servidor no ar, sai com codigo 20 sem tocar em nada — e so depois
+rem adquire o lock pelo cmd.exe deste script, cobrindo TODO o ciclo.
+rem Se outra instancia valida estiver subindo, aguardamos o health
+rem por ate 120s — se o servidor responder, este boot encerra sem
+rem duplicar. Codigo 20 = servidor de outra instancia respondeu
+rem (sai sem erro); codigo 1 = aborta; 0 = lock adquirido e boot
+rem prossegue. O lock e OBRIGATORIO: sem o arquivo ou sem codigo
+rem 0/20, o boot aborta — nenhuma etapa mutavel roda sem exclusividade.
 if not exist scripts\boot-lock.mjs (
     echo [ERRO] scripts\boot-lock.mjs ausente — inicializacao abortada.
     echo        Restaure o arquivo ou use uma versao completa do projeto.
@@ -89,7 +83,7 @@ if not %errorlevel%==0 (
 )
 
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------
-rem Executa SOMENTE depois da checagem da porta 3001 acima: se ja ha
+rem Executa SOMENTE depois da sonda de health do lock acima: se ja ha
 rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
 rem O script e conservador: sem git, sem .git (instalacao ZIP), remoto
 rem diferente do oficial, arvore suja, sem upstream, sem rede, branch

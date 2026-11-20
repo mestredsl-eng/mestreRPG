@@ -4,16 +4,17 @@
 // (pid+host+repo), fail-closed para metadados inválidos/host divergente,
 // concorrência REAL entre processos Node separados e a fiação do .bat.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir, hostname } from "node:os";
-import { join, dirname, resolve } from "node:path";
+import { join, dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const RAIZ = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(RAIZ, "scripts", "boot-lock.mjs");
 const BAT = join(RAIZ, "iniciar-mestre-rpg.bat");
 
-const { adquirirLock, liberarLock, caminhoLock, caminhoCanonicoRepo } =
+const { adquirirLock, liberarLock, caminhoLock, caminhoCanonicoRepo, diretorioLocks, resolverPortaServidor } =
   await import("./scripts/boot-lock.mjs");
 
 let pass = 0, fail = 0;
@@ -50,7 +51,7 @@ process.exit(0);
 function spawnWorkers(cwd, n) {
   return Promise.all(Array.from({ length: n }, () => new Promise((res) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", WORKER, cwd], {
-      env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "500" },
+      env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "500", MESTRE_PORTA: "39991" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "", err = "";
@@ -65,7 +66,7 @@ try {
   // ---------- aquisição básica ----------
   const lock1 = caminhoLock(repoComEspaco, TMP);
   const r1 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
@@ -76,7 +77,7 @@ try {
   // lock ocupado por pid vivo → aguarda health → timeout → aborta
   const t0 = Date.now();
   const r2 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 120, intervaloEsperaMs: 10, log: () => {},
   });
@@ -84,20 +85,20 @@ try {
   t("espera respeitou a janela (~120ms)", Date.now() - t0 >= 100, String(Date.now() - t0));
 
   const r3 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchSempre,
     timeoutEsperaMs: 500, intervaloEsperaMs: 5, log: () => {},
   });
   t("lock ocupado + servidor no ar → codigo 20", r3.codigo === 20, String(r3.codigo));
 
   // ---------- liberação somente pelo proprietário (pid+host+repo) ----------
-  const relErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: 999999 });
+  const relErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: 999999 });
   t("liberação por pid estranho é recusada", relErrado.ok === false, relErrado.motivo);
   t("lock continua existindo após recusa", existsSync(lock1));
-  const relHostErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: "HOST-FALSO" });
+  const relHostErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: "HOST-FALSO" });
   t("liberação por host divergente (pid coincidente) é recusada", relHostErrado.ok === false, relHostErrado.motivo);
   t("lock continua existindo após recusa de host", existsSync(lock1));
-  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
+  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
   t("proprietário (pid+host+repo) libera o lock", relCerto.ok === true, relCerto.motivo);
   t("arquivo removido após liberação", !existsSync(lock1));
 
@@ -105,14 +106,14 @@ try {
   writeFileSync(lock1, JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   const repoB = join(TMP, "outra instalacao");
   mkdirSync(repoB, { recursive: true });
-  const relRepoB = liberarLock({ cwd: repoB, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
+  const relRepoB = liberarLock({ cwd: repoB, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
   t("liberação com repo divergente é recusada", relRepoB.ok === false && existsSync(lock1), relRepoB.motivo);
   rmSync(lock1, { force: true });
 
   // ---------- metadados inválidos → fail-closed ----------
   writeFileSync(lock1, "{json corrompido");
   const r5 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -123,7 +124,7 @@ try {
   writeFileSync(lock1, JSON.stringify(META(morto, "OUTRA-MAQUINA-XYZ", caminhoCanonicoRepo(repoComEspaco))));
   const antes = readFileSync(lock1, "utf8");
   const r6 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, host: hostname(), pidVivo: () => false,
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -132,7 +133,7 @@ try {
   // ---------- recuperação de lock obsoleto (sequencial) ----------
   writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   const r7 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: (p) => p !== morto, fetchHealth: fetchNunca,
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
@@ -141,13 +142,13 @@ try {
   t("novo lock tem pid do novo proprietário", metaNovo.pid === process.pid);
   // mutex liberado após a seção
   t("mutex .recover liberado após recuperação", !existsSync(lock1 + ".recover"));
-  liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
+  liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
 
   // ---------- mutex .recover ocupado por pid vivo → fail-closed ----------
   writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   writeFileSync(lock1 + ".recover", JSON.stringify({ ...META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco)), nonce: "n-vivo" }));
   const r8 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: (p) => p === process.pid, // só o pid do mutex "vive"
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -163,7 +164,7 @@ try {
   writeFileSync(recPath1, recObsoleto);
   const lockAntes = readFileSync(lock1, "utf8");
   const r9 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: () => false, // nada vivo: lock E mutex obsoletos
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5,
     log: (m) => { if (/Remova manualmente/.test(m)) globalThis.__instrucaoVista = true; },
@@ -176,7 +177,7 @@ try {
   // mutex corrompido → fail-closed, preservado
   writeFileSync(recPath1, "{lixo");
   const r10 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
     pid: process.pid, pidVivo: () => false,
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -185,11 +186,96 @@ try {
   rmSync(recPath1, { force: true });
   rmSync(lock1, { force: true });
 
+  // ---------- lock PERSISTENTE (não tmpdir) + isolamento ----------
+  const dirLocksProd = diretorioLocks();
+  const lockProd = caminhoLock(repoComEspaco); // sem dirBase → produção
+  t("diretório de locks padrão é persistente, fora do tmpdir",
+    dirname(lockProd) === resolve(dirLocksProd) && !dirname(lockProd).startsWith(resolve(tmpdir())),
+    `${dirname(lockProd)} vs tmpdir ${tmpdir()}`);
+  t("diretório padrão contém MestreRPG/locks",
+    /MestreRPG[\\/]locks$/.test(dirLocksProd), dirLocksProd);
+  const repoIsoA = join(TMP, "iso A"); const repoIsoB = join(TMP, "iso B");
+  mkdirSync(repoIsoA, { recursive: true }); mkdirSync(repoIsoB, { recursive: true });
+  t("locks isolados por instalação", caminhoLock(repoIsoA, TMP) !== caminhoLock(repoIsoB, TMP));
+  t("mesmo repo → mesmo lock (idempotente)", caminhoLock(repoIsoA, TMP) === caminhoLock(repoIsoA, TMP));
+  t("nome do lock usa SHA-256 (64 hex no input, 16 no nome)",
+    /^mestre-boot-lock-[0-9a-f]{16}\.json$/.test(lockProd.split(sep).pop()));
+
+  // ---------- porta efetiva = mesma precedência de config.ts ----------
+  const repoPorta = join(TMP, "repo porta");
+  mkdirSync(join(repoPorta, "configuracao"), { recursive: true });
+  const cfgPorta = join(repoPorta, "configuracao", "servidor.json");
+  const envAntigo = process.env.MESTRE_PORTA;
+  const definirEnv = (v) => { if (v === undefined) delete process.env.MESTRE_PORTA; else process.env.MESTRE_PORTA = v; };
+
+  definirEnv("1111");
+  writeFileSync(cfgPorta, JSON.stringify({ porta: 4567 }));
+  t("servidor.json prevalece sobre MESTRE_PORTA", resolverPortaServidor(repoPorta).porta === 4567);
+  writeFileSync(cfgPorta, JSON.stringify({ host: "x" })); // sem porta → env
+  t("JSON sem 'porta' → usa MESTRE_PORTA", resolverPortaServidor(repoPorta).porta === 1111);
+  writeFileSync(cfgPorta, "{invalido");
+  t("JSON inválido → padrão (env)", resolverPortaServidor(repoPorta).porta === 1111);
+  definirEnv(undefined);
+  writeFileSync(cfgPorta, "{invalido");
+  rmSync(cfgPorta, { force: true }); // ausente → 3001
+  t("JSON ausente + sem env → 3001", resolverPortaServidor(repoPorta).porta === 3001);
+  definirEnv("abc"); // Number('abc')||3001 → 3001
+  t("MESTRE_PORTA inválida → 3001", resolverPortaServidor(repoPorta).porta === 3001);
+  definirEnv(undefined);
+  writeFileSync(cfgPorta, JSON.stringify({ porta: "abc" }));
+  t("porta inválida no JSON → aborta (não assume 3001)", resolverPortaServidor(repoPorta).ok === false);
+  writeFileSync(cfgPorta, JSON.stringify({ porta: 70000 }));
+  t("porta fora de faixa → aborta", resolverPortaServidor(repoPorta).ok === false);
+  definirEnv(envAntigo);
+
+  // servidor ativo na porta efetiva + lock apagado → codigo 20, sem lock
+  writeFileSync(cfgPorta, JSON.stringify({ porta: 4599 }));
+  let urlVista = "";
+  const rPorta = await adquirirLock({
+    cwd: repoPorta, dirLocks: TMP, pid: process.pid,
+    pidVivo: () => true, fetchHealth: async (u) => { urlVista = u; return true; },
+    timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
+  });
+  t("health na porta efetiva → codigo 20 antes de adquirir", rPorta.codigo === 20, `${rPorta.codigo} ${rPorta.motivo}`);
+  t("health usou a porta do servidor.json", urlVista === "http://127.0.0.1:4599/api/health", urlVista);
+  t("nenhum lock criado quando servidor já responde", !existsSync(caminhoLock(repoPorta, TMP)));
+
+  // ---------- rename: ENOENT retenta, EACCES/EPERM é fatal ----------
+  const repoRen = join(TMP, "repo rename");
+  mkdirSync(repoRen, { recursive: true });
+  const lockRen = caminhoLock(repoRen, TMP);
+  const mortoRen = pidMorto();
+  const metaStaleRen = JSON.stringify(META(mortoRen, hostname(), caminhoCanonicoRepo(repoRen)));
+  const pidVivoRen = (p) => p !== mortoRen;
+  writeFileSync(lockRen, metaStaleRen);
+  const rEnoent = await adquirirLock({
+    cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid,
+    pidVivo: pidVivoRen, fetchHealth: fetchNunca,
+    // ENOENT real: o arquivo sumiu entre a leitura e o rename
+    renomear: (src) => { rmSync(src, { force: true }); const e = new Error("gone"); e.code = "ENOENT"; throw e; },
+    timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
+  });
+  t("rename ENOENT → tratado como sumiu, retenta e adquire", rEnoent.codigo === 0, `${rEnoent.codigo} ${rEnoent.motivo}`);
+  liberarLock({ cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid, host: hostname() });
+
+  writeFileSync(lockRen, metaStaleRen);
+  const rEacces = await adquirirLock({
+    cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid,
+    pidVivo: pidVivoRen, fetchHealth: fetchNunca,
+    renomear: () => { const e = new Error("denied"); e.code = "EACCES"; throw e; },
+    timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
+  });
+  t("rename EACCES → fatal fail-closed", rEacces.codigo === 1 && /falha-recuperacao/.test(rEacces.motivo), `${rEacces.codigo} ${rEacces.motivo}`);
+  t("lock original preservado após EACCES", readFileSync(lockRen, "utf8") === metaStaleRen);
+  rmSync(lockRen, { force: true });
+
   // ---------- CONCORRÊNCIA REAL: processos Node separados ----------
   // Repo dedicado para não colidir com locks de função acima.
   const repoConc = join(TMP, "repo concorrencia");
   mkdirSync(repoConc, { recursive: true });
-  const lockConc = caminhoLock(repoConc); // tmpdir real — mesmo que o CLI usa
+  const lockConc = caminhoLock(repoConc); // dirLocks padrão de produção — mesmo que o CLI usa
+  // Porta morta garantida: health-first não pode trombar servidor real do usuário
+  process.env.MESTRE_PORTA = "39991";
   rmSync(lockConc, { force: true });
   rmSync(lockConc + ".recover", { force: true });
 
@@ -248,7 +334,7 @@ try {
   rmSync(lockConc, { force: true });
   const cliA = spawnSync(process.execPath, [SCRIPT, "adquirir"], {
     cwd: repoConc, encoding: "utf8", timeout: 15000,
-    env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "300" },
+    env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "300", MESTRE_PORTA: "39991" },
   });
   t("CLI adquirir → exit 0", cliA.status === 0, `${cliA.status} ${cliA.stderr} ${cliA.stdout}`);
   const cliMeta = JSON.parse(readFileSync(lockConc, "utf8"));
@@ -257,14 +343,15 @@ try {
   t("CLI liberar → exit 0 (mesmo ppid+host+repo)", cliLib.status === 0, `${cliLib.status} ${cliLib.stderr}`);
   t("lock real removido", !existsSync(lockConc));
 
-  // ---------- .bat: sem bypass, cobertura de liberação ----------
+  // ---------- .bat: estrutural + comportamental real ----------
   const bat = readFileSync(BAT, "utf8");
-  const iPorta = bat.indexOf("Invoke-WebRequest");
   const iAdq = bat.indexOf("boot-lock.mjs adquirir");
   const iUpd = bat.indexOf("auto-update.mjs");
   const iStart = bat.indexOf("npm run start");
-  t(".bat adquire lock após check de porta e antes do updater",
-    iPorta > -1 && iAdq > iPorta && iUpd > iAdq, `porta=${iPorta} adq=${iAdq} upd=${iUpd}`);
+  t(".bat: aquisição do lock antes do updater e antes do start",
+    iAdq > -1 && iUpd > iAdq && iStart > iUpd, `adq=${iAdq} upd=${iUpd} start=${iStart}`);
+  t(".bat não duplica check fixo de porta (sonda na porta efetiva é do helper)",
+    !/Invoke-WebRequest[^\n]*3001/.test(bat));
   t(".bat NÃO tem bypass sem-lock (goto :sem_boot_lock removido)",
     !/goto\s+:sem_boot_lock/.test(bat));
   t(".bat aborta se boot-lock.mjs ausente", /boot-lock\.mjs ausente/.test(bat));
@@ -275,7 +362,122 @@ try {
     /errorlevel%==20 exit \/b 0/.test(bat));
 
   // lock não fica dentro do worktree (não pode sujar git status)
-  t("lock fica fora do repositório (tmpdir)", !caminhoLock(repoComEspaco).startsWith(resolve(repoComEspaco)));
+  t("lock fica fora do repositório", !caminhoLock(repoComEspaco).startsWith(resolve(repoComEspaco)));
+
+  // ---------- .bat COMPORTAMENTAL (cmd.exe real, raiz descartável) ----------
+  if (process.platform === "win32") {
+    const stubBin = join(TMP, "stub-bin");
+    mkdirSync(stubBin, { recursive: true });
+    // npm stub: sempre falha rápido → .bat cai no caminho de erro e libera
+    writeFileSync(join(stubBin, "npm.cmd"), "@echo off\r\nexit /b 1\r\n");
+    const PATH_STUB = stubBin + ";" + (process.env.PATH ?? ""); // PATH do Windows usa ';'
+
+    function prepararRaizBat(nome, { comHelper = true, helperRuim = false } = {}) {
+      const dir = join(TMP, "bat-" + nome);
+      mkdirSync(join(dir, "scripts"), { recursive: true });
+      // cmd.exe exige CRLF — o arquivo no repo pode estar em LF (autocrlf)
+      writeFileSync(join(dir, "iniciar-mestre-rpg.bat"),
+        readFileSync(BAT, "utf8").replace(/\r?\n/g, "\r\n"));
+      if (comHelper) {
+        if (helperRuim) {
+          writeFileSync(join(dir, "scripts", "boot-lock.mjs"), "process.exit(3);\n");
+        } else {
+          copyFileSync(SCRIPT, join(dir, "scripts", "boot-lock.mjs"));
+        }
+      }
+      // auto-update stub: grava marcador e dorme (segura o lock p/ teste de corrida)
+      writeFileSync(join(dir, "scripts", "auto-update.mjs"),
+        `import { appendFileSync } from "node:fs";\n` +
+        `appendFileSync(${JSON.stringify(join(dir, "marker.txt").replace(/\\/g, "/"))}, "run\\n");\n` +
+        `await new Promise(r => setTimeout(r, Number(process.env.MESTRE_STUB_AUTO_SLEEP ?? 0)));\n`);
+      const la = join(dir, "localappdata"); // LOCALAPPDATA isolado por teste
+      const env = {
+        ...process.env,
+        PATH: PATH_STUB,
+        LOCALAPPDATA: la,
+        MESTRE_BOOT_LOCK_TIMEOUT_MS: "800",
+        MESTRE_PORTA: "39992", // porta morta — sem servidor real
+      };
+      delete env.MESTRE_STUB_AUTO_SLEEP;
+      return { dir, la, env, marker: join(dir, "marker.txt") };
+    }
+
+    function rodarBat(ctx, extraEnv = {}) {
+      return spawnSync("cmd.exe", ["/d", "/c", "iniciar-mestre-rpg.bat"], {
+        cwd: ctx.dir, env: { ...ctx.env, ...extraEnv },
+        encoding: "utf8", timeout: 90000,
+      });
+    }
+    // Variante assíncrona: spawnSync congelaria o event loop e o servidor
+    // HTTP de teste não responderia à sonda de health.
+    function rodarBatAsync(ctx, extraEnv = {}) {
+      return new Promise((res2) => {
+        const p = spawn("cmd.exe", ["/d", "/c", "iniciar-mestre-rpg.bat"], {
+          cwd: ctx.dir, env: { ...ctx.env, ...extraEnv },
+          stdio: ["ignore", "pipe", "pipe"], // stdin fechado: 'pause' não trava
+        });
+        let out = "";
+        p.stdout.on("data", (d) => { out += d; });
+        p.stderr.on("data", (d) => { out += d; });
+        p.on("close", (code) => res2({ status: code, stdout: out, stderr: "" }));
+      });
+    }
+    const lockBat = (ctx) => caminhoLock(ctx.dir, join(ctx.la, "MestreRPG", "locks"));
+
+    // a) helper ausente → aborta sem rodar nada
+    let ctx = prepararRaizBat("sem-helper", { comHelper: false });
+    let r = rodarBat(ctx);
+    t(".bat sem boot-lock.mjs → exit 1", r.status === 1, `status=${r.status}`);
+    t(".bat sem helper → mensagem clara", /ausente/.test(r.stdout + r.stderr), (r.stdout + r.stderr).slice(0, 200));
+    t(".bat sem helper → updater NÃO rodou", !existsSync(ctx.marker));
+
+    // b) helper falha (exit 3) → aborta
+    ctx = prepararRaizBat("helper-ruim", { helperRuim: true });
+    r = rodarBat(ctx);
+    t(".bat com helper falhando → exit 1", r.status === 1, `status=${r.status}`);
+    t(".bat helper falho → updater NÃO rodou", !existsSync(ctx.marker));
+
+    // c) caminho de falha: updater roda, npm falha → lock liberado
+    ctx = prepararRaizBat("falha-npm");
+    r = rodarBat(ctx);
+    t(".bat com npm falhando → exit 1", r.status === 1, `status=${r.status}`);
+    t(".bat falha → auto-update executou (marker)", existsSync(ctx.marker));
+    t(".bat falha → lock LIBERADO", !existsSync(lockBat(ctx)), lockBat(ctx));
+
+    // d) servidor ativo na porta efetiva (servidor.json) → exit 0, sem updater
+    ctx = prepararRaizBat("ja-no-ar");
+    mkdirSync(join(ctx.dir, "configuracao"), { recursive: true });
+    const srv = createServer((req, res) => { res.writeHead(200); res.end("ok"); });
+    await new Promise((res2) => srv.listen(0, "127.0.0.1", res2));
+    const portaSrv = srv.address().port;
+    writeFileSync(join(ctx.dir, "configuracao", "servidor.json"), JSON.stringify({ porta: portaSrv }));
+    ctx.env.MESTRE_PORTA = "39992"; // env ignorada: JSON prevalece
+    try {
+      r = await rodarBatAsync(ctx);
+      t(".bat com servidor na porta do JSON → exit 0", r.status === 0, `status=${r.status} ${r.stdout.slice(-300)}`);
+      t(".bat servidor ativo → updater NÃO rodou", !existsSync(ctx.marker));
+      t(".bat servidor ativo → nenhum lock criado", !existsSync(lockBat(ctx)));
+    } finally {
+      await new Promise((res2) => srv.close(res2));
+    }
+
+    // e) duas inicializações simultâneas → updater roda UMA vez
+    ctx = prepararRaizBat("corrida");
+    const rodarAsync = () => new Promise((res2) => {
+      const p = spawn("cmd.exe", ["/d", "/c", "iniciar-mestre-rpg.bat"], {
+        cwd: ctx.dir, env: { ...ctx.env, MESTRE_STUB_AUTO_SLEEP: "3000" },
+        stdio: ["ignore", "ignore", "ignore"], // stdin fechado: 'pause' não trava
+      });
+      p.on("close", (code) => res2(code));
+    });
+    const [c1, c2] = await Promise.all([rodarAsync(), rodarAsync()]);
+    const runs = existsSync(ctx.marker) ? readFileSync(ctx.marker, "utf8").trim().split("\n").length : 0;
+    t(".bat concorrente: auto-update executou exatamente 1 vez", runs === 1, `runs=${runs}`);
+    t(".bat concorrente: locks liberados ao final", !existsSync(lockBat(ctx)), "");
+    t(".bat concorrente: um boot abortou (exit≠0)", [c1, c2].some((c) => c !== 0), `${c1},${c2}`);
+  } else {
+    t(".bat comportamental (requer Windows)", false, "plataforma " + process.platform);
+  }
 } finally {
   try { rmSync(TMP, { recursive: true, force: true }); } catch { /* ok */ }
 }

@@ -6,11 +6,23 @@
 // migrations e o próprio servidor — no MESMO diretório de instalação.
 //
 // Protocolo:
-//   adquirir — criação atômica (open 'wx') de um arquivo de lock FORA
-//     do worktree (tmpdir), chaveado pelo caminho canônico real do
-//     repositório. Metadados: pid do processo proprietário (o cmd.exe
-//     do .bat, ou seja process.ppid do node auxiliar), hostname e
-//     caminho canônico.
+//   adquirir — ANTES de tocar no lock, resolve a porta efetiva do
+//     servidor com a MESMA precedência de servidor/src/config.ts
+//     (configuracao/servidor.json > MESTRE_PORTA > 3001) e sonda
+//     /api/health: se já responde, sai com código 20 sem adquirir nada
+//     — cobre o caso do lock ter sido apagado externamente.
+//   Depois: criação atômica (open 'wx') de um arquivo de lock FORA
+//     do worktree, em diretório PERSISTENTE por usuário:
+//       Windows:   %LOCALAPPDATA%\MestreRPG\locks\
+//       demais:    $XDG_STATE_HOME/mestre-rpg/locks/ ou
+//                  ~/.local/state/mestre-rpg/locks/
+//     (tmpdir é volátil — Storage Sense poderia apagar o lock durante
+//     um boot longo e permitir segunda instância). Chave: SHA-256 do
+//     caminho canônico real da instalação. Metadados: pid do processo
+//     proprietário (o cmd.exe do .bat, ou seja process.ppid do node
+//     auxiliar), hostname e caminho canônico.
+//     ATENÇÃO: %LOCALAPPDATA% é por usuário — duas contas Windows
+//     distintas NÃO compartilham exclusão mútua na mesma instalação.
 //   Ocupado por pid VIVO na mesma máquina → aguarda /api/health por até
 //     120s; se o servidor responder, sai com código 20 ("outra instância
 //     assumiu") sem executar nada mutável; se não responder, aborta.
@@ -40,11 +52,11 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import {
-  closeSync, linkSync, openSync, readFileSync,
+  closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync,
   realpathSync, renameSync, rmSync, writeSync,
 } from "node:fs";
-import { tmpdir, hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { hostname, homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSAO_LOCK = 1;
@@ -66,12 +78,54 @@ export function caminhoCanonicoRepo(dir) {
   }
 }
 
+/** Diretório persistente de locks — por usuário, fora do worktree e
+ *  fora do tmpdir volátil. Injetável APENAS em testes via dirBase. */
+export function diretorioLocks() {
+  if (process.platform === "win32") {
+    const base = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    return join(base, "MestreRPG", "locks");
+  }
+  const xdg = (process.env.XDG_STATE_HOME ?? "").trim();
+  const base = xdg || join(homedir(), ".local", "state");
+  return join(base, "mestre-rpg", "locks");
+}
+
 /** Arquivo de lock por instalação — fora do worktree para nunca sujar
  *  `git status` (o updater exige árvore limpa). */
-export function caminhoLock(dir, baseTmp = tmpdir()) {
+export function caminhoLock(dir, dirBase = diretorioLocks()) {
   const canon = caminhoCanonicoRepo(dir);
-  const hash = createHash("sha1").update(canon).digest("hex").slice(0, 16);
-  return join(baseTmp, `mestre-boot-lock-${hash}.json`);
+  const hash = createHash("sha256").update(canon).digest("hex").slice(0, 16);
+  return join(dirBase, `mestre-boot-lock-${hash}.json`);
+}
+
+/**
+ * Porta efetiva do servidor — MESMA precedência de
+ * servidor/src/config.ts:
+ *   padrão = Number(MESTRE_PORTA) || 3001
+ *   se configuracao/servidor.json existe e é JSON válido →
+ *     json.porta ?? padrao.porta  (a porta do JSON prevalece)
+ *   JSON ausente ou inválido → padrão.
+ * Fail-closed: porta resolvida que não for inteiro 1..65535 é erro —
+ * nunca assumir 3001 silenciosamente.
+ * Retorno: { ok:true, porta, origem } ou { ok:false, motivo }.
+ */
+export function resolverPortaServidor(cwd) {
+  const padrao = Number(process.env.MESTRE_PORTA) || PORTA_PADRAO;
+  const origemPadrao = Number(process.env.MESTRE_PORTA) ? "MESTRE_PORTA" : "padrao";
+  const arquivo = join(cwd, "configuracao", "servidor.json");
+  let json = null;
+  try {
+    if (existsSync(arquivo)) json = JSON.parse(readFileSync(arquivo, "utf8"));
+  } catch {
+    json = null; // inválido → padrão (config.ts avisa e usa padrões)
+  }
+  const temJson = json && typeof json === "object" && json.porta != null;
+  const porta = temJson ? json.porta : padrao;
+  const origem = temJson ? "servidor.json" : origemPadrao;
+  if (!Number.isInteger(porta) || porta < 1 || porta > 65535) {
+    return { ok: false, motivo: `porta-invalida:${origem}=${String(json?.porta ?? process.env.MESTRE_PORTA)}` };
+  }
+  return { ok: true, porta, origem };
 }
 
 /** pid vivo? kill(pid,0) lança ESRCH quando não existe; EPERM e demais
@@ -211,7 +265,7 @@ function sairSecaoRecuperacao(recPath, nonce) {
  *   "ocupado"  — lock agora pertence a processo vivo/inválido
  *   "fatal"    — fail-closed
  */
-function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log }) {
+function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log, renomear = renameSync }) {
   // Releitura OBRIGATÓRIA dentro da seção: a leitura anterior pode ter
   // envelhecido — outro processo pode ter reivindicado e recriado.
   const fresco = lerLock(lockPath);
@@ -221,9 +275,14 @@ function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log }) {
   }
   const quarentena = `${lockPath}.quar-${process.pid}-${Date.now()}`;
   try {
-    renameSync(lockPath, quarentena);
-  } catch {
-    return "removido"; // sumiu entre leitura e rename — retenta
+    renomear(lockPath, quarentena);
+  } catch (e) {
+    // Somente ENOENT prova que o arquivo sumiu → retenta a aquisição.
+    // EACCES/EPERM/EBUSY e demais falhas são fail-closed: não fingir
+    // sucesso nem tratar como "removido".
+    if (e && e.code === "ENOENT") return "removido";
+    log(`[boot-lock] Falha ao mover lock obsoleto para quarentena (${e?.code ?? e?.message}) — fail-closed.`);
+    return "fatal";
   }
   // Revalida o arquivo CAPTURADO: deve ser exatamente o obsoleto lido.
   const cap = lerLock(quarentena);
@@ -256,20 +315,44 @@ function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log }) {
 export async function adquirirLock(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const repoDir = caminhoCanonicoRepo(cwd);
-  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.tmp ?? tmpdir());
+  // dirLocks é injetável SOMENTE para testes — produção usa o diretório
+  // persistente por usuário (LOCALAPPDATA/XDG_STATE_HOME).
+  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.dirLocks);
   const pidDono = opts.pid ?? process.ppid; // cmd.exe do .bat, não este node
   const host = opts.host ?? hostname();
   const pidVivo = opts.pidVivo ?? pidVivoReal;
   const fetchHealth = opts.fetchHealth ?? saudeReal;
   const envTimeout = Number(process.env.MESTRE_BOOT_LOCK_TIMEOUT_MS);
-  const healthUrl = opts.healthUrl
-    ?? `http://127.0.0.1:${process.env.MESTRE_PORTA ?? PORTA_PADRAO}/api/health`;
   const timeoutEspera = opts.timeoutEsperaMs
     ?? (Number.isFinite(envTimeout) && envTimeout > 0 ? envTimeout : TIMEOUT_ESPERA_MS);
   const intervalo = opts.intervaloEsperaMs ?? INTERVALO_ESPERA_MS;
   const log = opts.log ?? (() => {});
+  const renomear = opts.renomear ?? renameSync; // seam de teste apenas
+
+  // Porta efetiva = mesma resolução do servidor (config.ts). Inválida
+  // ou ambígua → aborta; nunca assumir 3001 silenciosamente.
+  const porta = resolverPortaServidor(repoDir);
+  if (!porta.ok) {
+    return { codigo: 1, motivo: porta.motivo, lockPath };
+  }
+  const healthUrl = opts.healthUrl
+    ?? `http://127.0.0.1:${porta.porta}/api/health`;
+
+  // Cria o diretório de locks com segurança antes de qualquer escrita.
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+  } catch (e) {
+    return { codigo: 1, motivo: `falha-criar-dir-locks:${e?.code ?? e?.message}`, lockPath };
+  }
 
   const meta = { v: VERSAO_LOCK, pid: pidDono, host, repo: repoDir, ts: Date.now() };
+
+  // Instância já ativa? Sonda o health na porta EFETIVA antes de tentar
+  // lock — cobre servidor no ar com lock apagado externamente.
+  if (await fetchHealth(healthUrl)) {
+    log("[boot-lock] /api/health já responde — outra instância está ativa.");
+    return { codigo: 20, motivo: "servidor-ja-no-ar", lockPath, porta: porta.porta };
+  }
 
   for (let tentativa = 0; tentativa < MAX_TENTATIVAS; tentativa++) {
     try {
@@ -303,7 +386,7 @@ export async function adquirirLock(opts = {}) {
     // Candidato a obsoleto — recuperação SERIALIZADA por mutex .recover.
     const secao = entrarSecaoRecuperacao({ lockPath, repoDir, host, pidVivo, log });
     if (secao.ok) {
-      const resultado = reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log });
+      const resultado = reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log, renomear });
       sairSecaoRecuperacao(secao.recPath, secao.nonce);
       if (resultado === "removido") continue; // lock obsoleto eliminado — retenta 'wx'
       if (resultado === "fatal") {
@@ -331,7 +414,7 @@ export async function adquirirLock(opts = {}) {
 export function liberarLock(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const repoDir = caminhoCanonicoRepo(cwd);
-  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.tmp ?? tmpdir());
+  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.dirLocks);
   const pidDono = opts.pid ?? process.ppid;
   const host = opts.host ?? hostname();
 
