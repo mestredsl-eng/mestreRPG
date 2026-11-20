@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.0.0.7] - 2026-11-20
+
+### Novidades
+
+- **Patrimônio com permissões granulares (PR #177):** a campanha configura sete permissões separadas — itens, equipamentos, veículos, contas, compra, venda e PIX fictício — e o painel de Regras atualiza cada alteração em tempo real para todos os jogadores.
+- **Régua de distância na Mesa Virtual (PR #178):** o mestre mede distâncias entre dois pontos do tabuleiro ou do mapa, com calibração exclusiva do mestre, suporte a mouse e toque, ajuste de proporção do mapa e encaixe por hit-test que não conflita com o pincel de desenho.
+- **Registro na Central de Novidades:** a migration `0031_release_1007_patrimonio_regua_news.sql` publica esta entrega na categoria `novidade`, versão `1.0.7`, com seed idempotente por ID estável.
+
 ## [1.0.0.6] - 2026-11-19
 
 ### Correções e permissões
