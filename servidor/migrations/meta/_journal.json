@@ -218,6 +218,13 @@
       "when": 1795148331452,
       "tag": "0030_release_1006_diario_permissoes_news",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1795212981626,
+      "tag": "0031_release_1007_patrimonio_regua_news",
+      "breakpoints": true
     }
   ]
 }

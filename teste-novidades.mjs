@@ -26,6 +26,7 @@ const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 001
 const ID_NOVIDADE_1005 = "00000000-0000-4000-8000-000000000105";
 const ID_NOVIDADE_XP_1005 = "00000000-0000-4000-8000-000000000106";
 const ID_NOVIDADE_DIARIO_1006 = "00000000-0000-4000-8000-000000000107"; // seed da v1.0.6 (Issue #171)
+const ID_NOVIDADE_1007 = "00000000-0000-4000-8000-000000000108"; // seed da v1.0.7 (PRs #177/#178)
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -56,6 +57,12 @@ const sec = (n) => console.log("\n== " + n + " ==");
     `prevId=${snapshotNews.prevId} anterior=${snapshotXp.id}`);
   t("snapshot 0030 preserva o mesmo esquema (migration só de dados)",
     JSON.stringify(semIdentidade(snapshotNews)) === JSON.stringify(semIdentidade(snapshotXp)));
+  const snapshot1007 = JSON.parse(readFileSync(join(meta, "0031_snapshot.json"), "utf8"));
+  t("snapshot 0031 encadeia em 0030 com UUID próprio",
+    snapshot1007.prevId === snapshotNews.id && snapshot1007.id !== snapshotNews.id && /^[0-9a-f-]{36}$/i.test(snapshot1007.id),
+    `prevId=${snapshot1007.prevId} anterior=${snapshotNews.id}`);
+  t("snapshot 0031 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshot1007)) === JSON.stringify(semIdentidade(snapshotNews)));
 }
 
 // ---------- banco limpo com todas as migrations (cenário principal) ----------
@@ -70,7 +77,7 @@ await prepararBanco(BANCO);
 // em um banco legado separado, sem remover o registro de instalações reais.
 {
   const db = abrirDb(BANCO);
-  db.prepare("delete from novidades where id in (?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006);
+  db.prepare("delete from novidades where id in (?,?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006, ID_NOVIDADE_1007);
   db.close();
 }
 
@@ -93,7 +100,7 @@ await esperarSaudavel(BASE, proc);
 // banco legado separado, sem remover o registro de instalações reais.
 {
   const db = abrirDb(BANCO);
-  db.prepare("delete from novidades where id in (?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006);
+  db.prepare("delete from novidades where id in (?,?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006, ID_NOVIDADE_1007);
   db.close();
 }
 
@@ -558,13 +565,20 @@ sec("Migration em banco existente preserva dados");
       anuncioDiario?.versao === "1.0.6" && anuncioDiario?.categoria === "correcao" && anuncioDiario?.estado === "publicada" && !!anuncioDiario?.publicado_em,
       JSON.stringify(anuncioDiario));
 
+    const anuncio1007 = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1007);
+    t("migration 0031 publica Patrimônio+Régua v1.0.7 na Central",
+      anuncio1007?.versao === "1.0.7" && anuncio1007?.categoria === "novidade" && anuncio1007?.estado === "publicada" && !!anuncio1007?.publicado_em,
+      JSON.stringify(anuncio1007));
+
     db2.exec(readFileSync(join(MIGRATIONS, "0028_release_1005_campaign_substitution_news.sql"), "utf8"));
     db2.exec(readFileSync(join(MIGRATIONS, "0029_release_1005_xp_import_integrity_news.sql"), "utf8"));
     db2.exec(readFileSync(join(MIGRATIONS, "0030_release_1006_diario_permissoes_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0031_release_1007_patrimonio_regua_news.sql"), "utf8"));
     const quantidadeAnuncios = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1005).c;
     const quantidadeXp = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_XP_1005).c;
     const quantidadeDiario = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_DIARIO_1006).c;
-    t("seeds da Central de Novidades são idempotentes", quantidadeAnuncios === 1 && quantidadeXp === 1 && quantidadeDiario === 1, `campanha=${quantidadeAnuncios} xp=${quantidadeXp} diario=${quantidadeDiario}`);
+    const quantidade1007 = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1007).c;
+    t("seeds da Central de Novidades são idempotentes", quantidadeAnuncios === 1 && quantidadeXp === 1 && quantidadeDiario === 1 && quantidade1007 === 1, `campanha=${quantidadeAnuncios} xp=${quantidadeXp} diario=${quantidadeDiario} v1007=${quantidade1007}`);
     db2.close();
   } finally {
     limparDir(RAIZ2);
