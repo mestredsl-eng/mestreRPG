@@ -490,7 +490,11 @@ try {
     t(".bat concorrente: locks liberados ao final", !existsSync(lockBat(ctx)), "");
     t(".bat concorrente: um boot abortou (exit≠0)", [c1, c2].some((c) => c !== 0), `${c1},${c2}`);
   } else {
-    t(".bat comportamental (requer Windows)", false, "plataforma " + process.platform);
+    // Skip explícito: cmd.exe não existe no Ubuntu — o teste
+    // comportamental do .bat é obrigatório apenas no job Windows.
+    // Não incrementa fail; todos os testes portáveis do helper
+    // continuam executando nesta plataforma.
+    console.log("skip .bat comportamental — cmd.exe não se aplica a " + process.platform);
   }
 } finally {
   try { rmSync(TMP, { recursive: true, force: true }); } catch { /* ok */ }
