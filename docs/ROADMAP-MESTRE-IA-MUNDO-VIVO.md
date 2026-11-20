@@ -204,3 +204,86 @@ A sequência inicial proposta é:
 4. Depois da fundação, detalhar o Criador de Campanhas revisável e aprovado por humano.
 
 A Fase 0 continua sem autorização para começar implementação até liberação explícita da coordenação. D10 e estabilização da linha 1.x permanecem prioritários; a versão 2.0 evoluirá lentamente, sem ser esquecida e sem competir com a entrega jogável atual.
+
+## Especificação complementar — configuração da campanha e mundo inicial
+
+### Configuração obrigatória de início
+
+A campanha no modo IA terá uma etapa obrigatória de configuração antes de iniciar qualquer simulação. O mestre revisa e confirma as regras que governarão o mundo. A configuração é salva junto à campanha existente, com histórico e auditoria de alterações.
+
+Parâmetros mínimos:
+
+- **Dinheiro/economia:** taxas ou multiplicadores separados para rendimentos, salários, recompensas, preços, serviços, comércio e recursos encontrados. Cada taxa deve indicar claramente quais operações afeta.
+- **XP/progressão:** ritmo de concessão e recompensas, limites por sessão/ciclo e velocidade de progressão. Concessões e compras deverão passar pelos serviços de XP e motor de regras já existentes; a IA não escreve saldo nem níveis diretamente.
+- **Dificuldade:** presets editáveis e parâmetros separados para investigação, testes, sobrevivência, combate/conflitos e comportamento tático. A dificuldade ajusta preparação, informação, recursos e desafios, sem duplicar regras no prompt.
+- **Mundo/localidades:** recursos, serviços, pontos de interesse, zonas seguras/perigosas, clima/eventos, rotas, transporte, densidade de população, facções e locais secretos.
+- **População e NPCs:** densidade e quantidade de NPCs, incluindo civis, serviços, figuras importantes e ameaças; definir limites de memória e simulação.
+- **Squads IA:** quantidade de squads no início, número de personagens por squad, composição/arquetipos, papel, facção, recursos/equipamentos, objetivo, autonomia e localização inicial. Configurar limites máximos, squads de reserva e regras para criar novos grupos.
+- **Conflitos e consequências:** habilitar/configurar PVP, NPC vs NPC, guerras, mortes, ferimentos permanentes, roubo e efeitos econômicos.
+- **Conteúdo 18+:** temas, intensidade, proibições e limites dos participantes.
+
+A interface apresentará um resumo e uma prévia do mundo, mapa, localidades, população e squads, além de estimativa de carga e custo de IA. Presets serão apenas ponto de partida, sempre editável. Mudanças pós-início deverão gerar histórico e não poderão alterar retroativamente eventos ocorridos.
+
+### Mapa inicial deliberadamente compacto
+
+A primeira campanha do Mundo Vivo começa com uma área fixa e limitada:
+
+- Uma grande cidade fictícia, inspirada na escala/densidade/variedade de Nova York, sem copiar sua geografia ou identidade.
+- Quatro ilhas pequenas.
+- Uma ilha média.
+- Rotas de transporte e conexões coerentes entre cidade e ilhas.
+
+A cidade terá distritos e bairros com funções distintas (residencial, comercial, industrial, institucional, portuária, entretenimento, áreas degradadas e locais secretos). As ilhas terão identidades, recursos, serviços e ganchos próprios. Continentes e outras cidades ficam fora do primeiro escopo.
+
+### Tokens apenas em batalha; cenas sem turnos
+
+No modo Mestre IA, tokens serão utilizados somente quando houver batalha/conflito com necessidade de posicionamento tático. Exploração, viagens, investigação, conversas, cotidiano e demais cenas usam localização narrativa, descrições e estado do personagem, sem tokens obrigatórios.
+
+O modo IA não usará a fila de turnos, passagem de turno ou ampulheta da Mesa como estrutura geral. O fluxo é contínuo, orientado a cenas e intenções dos jogadores. A batalha precisará de um modelo de resolução fluida (como janelas de ação simultâneas ou sequência narrativa) sem depender da fila tradicional. Apesar disso, rolagens, dano, HP, Vitalidade e efeitos continuam passando pelo servidor e pelas regras autoritativas existentes. A forma exata da resolução de batalha será definida em proposta técnica antes de codificar.
+
+### Congelamento e retomada do mundo
+
+Deve existir um estado operacional explícito **Congelado/Ativo** para o mundo.
+
+Congelar:
+1. Bloqueia o início de novas simulações/ciclos.
+2. Finaliza ou cancela ações em andamento com consistência transacional.
+3. Persiste eventos, estado de NPCs e squads, economia, inventário, missões, localizações, relógio lógico e filas pendentes.
+4. Grava checkpoint consistente e mantém ledger/event log para recuperação.
+5. Pausa workers e agendamentos; nada avança enquanto congelado.
+6. Só então autoriza o desligamento controlado do servidor.
+
+Descongelar:
+1. Recupera o último checkpoint consistente.
+2. Reprocessa eventos pendentes de modo idempotente.
+3. Restaura estado e relógio lógico sem duplicar pagamentos, XP, ações ou consequências.
+4. Mantém o mundo congelado até a recuperação ser concluída e a liberação ser explícita.
+5. Retoma a partir do mesmo instante lógico. Tempo com o servidor desligado não avança o mundo por padrão.
+
+Também deve haver recuperação de encerramento inesperado. Autosave/debounce sozinho não é critério suficiente; será preciso checkpoint consistente e processamento durável de eventos/tarefas, reutilizando e ampliando a infraestrutura atual somente quando necessário.
+
+### Classificação adulta permanente (18+)
+
+O Mundo Vivo é exclusivamente 18+. A campanha será marcada como adulta desde a criação; convite, entrada e telas relevantes exibem essa classificação, e cada participante deverá confirmar maioridade antes de entrar. A arquitetura de acesso/participantes ainda deverá ser definida na Fase 0.
+
+A IA precisa conseguir conduzir RPG com temas adultos como violência, horror, crime, linguagem adulta e sexualidade entre personagens adultos, obedecendo a uma configuração de intensidade e limites dos participantes (temas permitidos, proibidos, linhas e véus). O grupo poderá interromper, resumir ou retirar qualquer cena.
+
+Limites obrigatórios:
+- Qualquer conteúdo sexual ficcional envolve somente personagens inequivocamente adultos e consentimento no contexto.
+- Menores de idade não participam de conteúdo sexual em nenhuma circunstância.
+- Violência sexual, coerção e abuso, quando existirem como tema narrativo, nunca serão erotizados; por padrão serão não gráficos e poderão ser completamente excluídos.
+- O mestre e os participantes podem impor limites mais restritivos a qualquer momento; a IA os respeita imediatamente.
+- Ambientação 18+ não autoriza instruções de violência real nem elimina limites de segurança, consentimento, privacidade e legislação.
+- Cenas sensíveis podem ser sinalizadas e conduzidas por corte de cena/“fade to black”.
+
+### Critérios adicionais de aceite
+
+- Configuração inicial obrigatória e confirmação explícita antes de iniciar o mundo.
+- Taxas de dinheiro e XP, dificuldade, parâmetros do mundo/população e squads configuráveis e persistidos.
+- Prévia com mapa, localidades, população, quantidade/composição dos squads e estimativa operacional.
+- Mapa inicial limitado à metrópole fictícia + quatro ilhas pequenas + uma ilha média.
+- Tokens somente durante batalhas; nenhuma cena não combativa depende de tokens.
+- Nenhuma dependência da fila de turnos/ampulheta no modo IA; batalha fluida especificada sem resultados arbitrários.
+- Testes de congelar/descongelar, desligamento limpo/crash, recuperação, idempotência e ausência de avanço do relógio enquanto congelado.
+- Classificação 18+, confirmação de maioridade e limites de conteúdo maduro persistentes e respeitados.
+- Toda a experiência continua usando os registros, serviços, permissões, motor de regras e persistência do Mestre RPG atual.
