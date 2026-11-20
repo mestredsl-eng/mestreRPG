@@ -228,12 +228,21 @@ regrasRouter.post("/duplicar/:elementId", requirePapel("mestre"), async (req, re
 });
 
 /**
- * Coleta as estruturas de ficha efetivamente vinculadas a personagens da
- * campanha (characters.templateVersionId → sheet_versions.structure,
- * parseadas por estruturaFichaSchema) e delega a validação estrutural
- * pura de config.sangue. Se a config habilita Sangue ou declara
- * vínculos e NÃO há estrutura ativa verificável, falha fechado —
- * nunca aceita vínculo não verificado.
+ * Coleta as estruturas de ficha efetivamente vinculadas a personagens
+ * JOGADORES não arquivados da campanha
+ * (characters.templateVersionId → sheet_versions ⋈ sheet_templates) e
+ * delega a validação estrutural pura de config.sangue.
+ *
+ * Elegível: versão PUBLICADA (publishedAt) de template da própria
+ * campanha (campaign_id = campaignId) ou modelo global publicado
+ * (campaign_id NULL — a rota de personagens aceita templateVersionId
+ * global, então o vínculo é real). Versão não publicada e template de
+ * outra campanha são ignorados — não restringem nem são validados.
+ *
+ * Sem estruturas elegíveis não há vínculo a comparar: as checagens de
+ * nível de config (habilitado→campoCapacidadeId, par bonusQualidade)
+ * ainda rodam e a config sintaticamente válida é aceita; a resolução
+ * concreta por personagem segue fail-closed em C2 no uso.
  */
 async function errosVinculosSangueCampanha(
   config: ConfigRegras,

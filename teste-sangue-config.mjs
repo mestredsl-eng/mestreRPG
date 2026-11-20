@@ -221,6 +221,9 @@ try {
       sangue: { habilitado: true, campoCapacidadeId: "x", capacidade: { bonusQualidade: { campoId: "q" } } },
     });
     t("bonusQualidade parcial sem estrutura → 400", rBq.status === 400, `status=${rBq.status}`);
+    // readback: os 400 não persistiram nada — config segue default
+    const cfgApos400 = await getCfg(c3.campId, c3.cookieMestre);
+    t("readback: 400s não alteraram a config", cfgApos400?.sangue?.habilitado === false && cfgApos400?.sangue?.campoCapacidadeId == null);
     // sem estruturas elegíveis não há vínculo a comparar: config
     // sintaticamente válida é aceita e persistida
     const r = await putCfg(c3.campId, c3.cookieMestre, {
@@ -309,21 +312,33 @@ try {
     addPersonagem(cSoArq.campId, { status: "arquivado" });
     const rSoArqInv = await putCfg(cSoArq.campId, cSoArq.cookieMestre, { sangue: { habilitado: true } });
     t("só arquivados + config inválida → 400", rSoArqInv.status === 400, `status=${rSoArqInv.status}`);
+    const cfgSoArqApos400 = await getCfg(cSoArq.campId, cSoArq.cookieMestre);
+    t("readback só-arquivados: 400 não persistiu", cfgSoArqApos400?.sangue?.habilitado === false);
     const rSoArq = await putCfg(cSoArq.campId, cSoArq.cookieMestre, cfgValida);
     t("só arquivados → config válida 200", rSoArq.status === 200, `status=${rSoArq.status}`);
+    const cfgSoArq = await getCfg(cSoArq.campId, cSoArq.cookieMestre);
+    t("readback só-arquivados: 200 persistiu", cfgSoArq?.sangue?.habilitado === true && cfgSoArq?.sangue?.campoCapacidadeId === "cap");
     const cSoNpc = await novaCenarioExtra(c, { comFicha: false, rotulo: "so-npcs" });
     addPersonagem(cSoNpc.campId, { isNpc: 1 });
     const rSoNpcInv = await putCfg(cSoNpc.campId, cSoNpc.cookieMestre, {
       sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { bonusQualidade: { modo: "mapa" } } },
     });
     t("só NPCs + bonusQualidade parcial → 400", rSoNpcInv.status === 400, `status=${rSoNpcInv.status}`);
+    const cfgSoNpcApos400 = await getCfg(cSoNpc.campId, cSoNpc.cookieMestre);
+    t("readback só-NPCs: 400 não persistiu", cfgSoNpcApos400?.sangue?.habilitado === false);
     const rSoNpc = await putCfg(cSoNpc.campId, cSoNpc.cookieMestre, cfgValida);
     t("só NPCs → config válida 200", rSoNpc.status === 200, `status=${rSoNpc.status}`);
+    const cfgSoNpc = await getCfg(cSoNpc.campId, cSoNpc.cookieMestre);
+    t("readback só-NPCs: 200 persistiu", cfgSoNpc?.sangue?.habilitado === true && cfgSoNpc?.sangue?.campoCapacidadeId === "cap");
     const cVazia = await novaCenarioExtra(c, { comFicha: false, rotulo: "vazia" });
     const rVaziaInv = await putCfg(cVazia.campId, cVazia.cookieMestre, { sangue: { habilitado: true } });
     t("campanha vazia + config inválida → 400", rVaziaInv.status === 400, `status=${rVaziaInv.status}`);
+    const cfgVaziaApos400 = await getCfg(cVazia.campId, cVazia.cookieMestre);
+    t("readback vazia: 400 não persistiu", cfgVaziaApos400?.sangue?.habilitado === false);
     const rVazia = await putCfg(cVazia.campId, cVazia.cookieMestre, cfgValida);
     t("campanha vazia → config válida 200", rVazia.status === 200, `status=${rVazia.status}`);
+    const cfgVazia = await getCfg(cVazia.campId, cVazia.cookieMestre);
+    t("readback vazia: 200 persistiu", cfgVazia?.sangue?.habilitado === true && cfgVazia?.sangue?.campoCapacidadeId === "cap");
 
     // D) bônus de qualidade parcial → 400 (par campoId+coeficiente exigido)
     const parciais = [
