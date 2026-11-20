@@ -255,6 +255,7 @@ jobs:
             homologacao-patrimonio.mjs \
             homologacao-npc-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-patrimonio-permissoes.mjs \
             homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
