@@ -479,8 +479,18 @@ try {
     t("ao-vivo: revogação — Comprar… some sem reload", (await contar(page, "Comprar…")) === 0);
     t("ao-vivo: revogação — Estornar some sem reload", (await contar(page, "Estornar compra")) === 0);
 
-    // CONCESSÃO: religa pelo mesmo painel
-    await chk("Jogador registra compra e venda").check();
+    // CONCESSÃO: religa pelo mesmo painel. Recarrega a página do mestre
+    // antes — após o primeiro save o formulário pode ter sido resetado
+    // pelo refetch de regras:atualizadas, e um check() em estado velho
+    // enviaria a config anterior (revogada) de novo.
+    await m.page.reload();
+    await m.page.getByText("Servidor online").waitFor({ timeout: 15000 });
+    await irCampanha(m.page);
+    await m.page.locator(".abas button", { hasText: "Regras" }).first().click();
+    await m.page.locator(".abas button", { hasText: "Pontuação" }).first().click();
+    await m.page.waitForTimeout(800);
+    const chk2 = (rotulo) => m.page.locator("label.checkbox", { hasText: rotulo }).locator("input[type=checkbox]");
+    await chk2("Jogador registra compra e venda").check();
     await m.page.getByRole("button", { name: "Salvar configuração" }).click();
     await page.waitForFunction(() =>
       [...document.querySelectorAll("button")].some((b) => b.textContent?.trim() === "Vender"),
