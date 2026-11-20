@@ -117,6 +117,8 @@ Apenas o **administrador global** pode restaurar. Backups nunca são servidos pu
 
 Os dados (`banco/`, `arquivos/`, `backups/`, `configuracao/`) ficam fora do código — atualizar o programa nunca exige recriar campanhas.
 
+**Auto-update no boot:** em instalações via Git, o `iniciar-mestre-rpg.bat` verifica e aplica atualizações do repositório oficial automaticamente, com proteções e rollback (ver `docs/GUIA-OPERACAO.md` §10.1). Para desativar nesta instalação, defina `MESTRE_AUTO_UPDATE=0` como variável de ambiente (`set MESTRE_AUTO_UPDATE=0` no terminal antes de rodar o `.bat`, ou `setx MESTRE_AUTO_UPDATE 0` para valer em novos terminais); sem a variável ou com outro valor, o auto-update permanece habilitado e o boot continua normal em ambos os casos.
+
 ### Acesso externo via HTTPS (amigos pelo navegador)
 
 O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3001**. Para acesso externo, use um proxy reverso/túnel HTTPS de sua escolha (Cloudflare Tunnel, NetBird ingress, Caddy, nginx etc.) apontando para `http://localhost:3001` — o HTTPS **termina no proxy**; o backend continua HTTP interno.

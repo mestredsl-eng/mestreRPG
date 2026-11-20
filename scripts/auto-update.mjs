@@ -464,6 +464,15 @@ export async function executarBoot(opts = {}) {
   const executar = opts.executar ?? executarReal;
   const log = opts.log ?? ((m) => console.log(m));
 
+  // Kill-switch por configuracao (Issue #156): MESTRE_AUTO_UPDATE=0
+  // desativa o atualizador nesta instalacao. Verificado antes de
+  // qualquer operacao Git/npm — nenhum comando e executado neste
+  // caminho e o boot normal segue sem atualizacao.
+  if (String(process.env.MESTRE_AUTO_UPDATE ?? "").trim() === "0") {
+    log("[auto-update] Desativado por configuracao (MESTRE_AUTO_UPDATE=0) — seguindo com a versao local.");
+    return { codigo: 0, atualizou: false, motivo: "desativado-por-configuracao" };
+  }
+
   let v;
   try {
     v = await verificarAtualizacao({ ...opts, cwd, executar, log });

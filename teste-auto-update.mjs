@@ -701,6 +701,57 @@ try {
     const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
     t("rollback falhou → codigo 1 (integridade nao garantida)", b.codigo === 1 && b.revertido === false, JSON.stringify(b));
   }
+
+  sec("Kill-switch MESTRE_AUTO_UPDATE=0");
+  {
+    const envAnterior = process.env.MESTRE_AUTO_UPDATE;
+    try {
+      // env=0 com atualizacao disponivel → nenhum comando, HEAD intacto
+      const c = criarRepo("kill-off");
+      publicar(c);
+      const shaAnt = head(c.local);
+      process.env.MESTRE_AUTO_UPDATE = "0";
+      const regOff = [];
+      const logsOff = [];
+      const bOff = await executarBoot({
+        ...opcoesRepo(c),
+        executar: executarHibrido({ registro: regOff }),
+        log: (m) => logsOff.push(m),
+        stateFile: estado(c.base),
+      });
+      t("MESTRE_AUTO_UPDATE=0 → codigo 0", bOff.codigo === 0, JSON.stringify(bOff));
+      t("motivo desativado-por-configuracao", bOff.motivo === "desativado-por-configuracao", bOff.motivo);
+      t("nenhum comando git/npm executado", regOff.length === 0, regOff.join(" | "));
+      t("HEAD permaneceu inalterado", head(c.local) === shaAnt);
+      t("mensagem de desativacao registrada", logsOff.some((m) => m.includes("MESTRE_AUTO_UPDATE=0")));
+
+      // env=" 0 " (espacos) tambem desativa
+      process.env.MESTRE_AUTO_UPDATE = "  0  ";
+      const regEsp = [];
+      const bEsp = await executarBoot({ ...opcoesRepo(c), executar: executarHibrido({ registro: regEsp }), log: silencioso, stateFile: estado(c.base) });
+      t("valor ' 0 ' com espacos tambem desativa", bEsp.motivo === "desativado-por-configuracao" && regEsp.length === 0, bEsp.motivo);
+
+      // env ausente → atualizacao normal preservada
+      delete process.env.MESTRE_AUTO_UPDATE;
+      const c2 = criarRepo("kill-ausente");
+      publicar(c2);
+      const regOn = [];
+      const bOn = await executarBoot({ ...opcoesRepo(c2), executar: executarHibrido({ registro: regOn }), log: silencioso, stateFile: estado(c2.base) });
+      t("variavel ausente → atualizacao aplicada", bOn.codigo === 0 && bOn.atualizou === true, JSON.stringify(bOn));
+      t("pull executado sem a variavel", regOn.some((x) => x.includes(" pull")), regOn.join(" | "));
+
+      // env=1 → comportamento inalterado (atualiza)
+      process.env.MESTRE_AUTO_UPDATE = "1";
+      const c3 = criarRepo("kill-um");
+      publicar(c3);
+      const regUm = [];
+      const bUm = await executarBoot({ ...opcoesRepo(c3), executar: executarHibrido({ registro: regUm }), log: silencioso, stateFile: estado(c3.base) });
+      t("MESTRE_AUTO_UPDATE=1 → atualizacao normal", bUm.codigo === 0 && bUm.atualizou === true && regUm.some((x) => x.includes(" pull")), JSON.stringify(bUm));
+    } finally {
+      if (envAnterior === undefined) delete process.env.MESTRE_AUTO_UPDATE;
+      else process.env.MESTRE_AUTO_UPDATE = envAnterior;
+    }
+  }
 } finally {
   for (let i = 0; i < 3; i++) {
     try {

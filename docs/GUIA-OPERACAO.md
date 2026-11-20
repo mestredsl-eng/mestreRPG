@@ -132,6 +132,12 @@ Apenas o **administrador global** restaura. Backups nunca são servidos publicam
 
 O `iniciar-mestre-rpg.bat` executa `node scripts/auto-update.mjs` **depois** de verificar que a porta 3001 está livre e **antes** de instalar dependências, compilar, restaurar e migrar. Se já houver um servidor rodando, nenhuma operação Git acontece — a segunda instância é encerrada como antes.
 
+**Desativar o auto-update (Issue #156):** defina a variável de ambiente `MESTRE_AUTO_UPDATE=0` para desativar o atualizador nesta instalação. Ausente ou com qualquer outro valor (inclusive `1`), o comportamento é o descrito abaixo. Com `0`, o script registra `[auto-update] Desativado por configuracao` e o boot segue normalmente — sem `git fetch`, `git pull`, `npm ci` ou builds do updater; restauração, migrations e o servidor não são afetados.
+
+- **Temporário (só neste terminal):** `set MESTRE_AUTO_UPDATE=0` e execute `iniciar-mestre-rpg.bat` na mesma janela.
+- **Permanente para o usuário:** `setx MESTRE_AUTO_UPDATE 0` — vale para **novos** terminais/janelas (janelas já abertas não herdam a variável).
+- **Reativar:** remova a variável (`setx MESTRE_AUTO_UPDATE ""` não remove de forma confiável — prefira `reg delete "HKCU\Environment" /v MESTRE_AUTO_UPDATE /f` ou ajuste manualmente em *Variáveis de Ambiente*) ou simplesmente não a defina; o padrão é auto-update habilitado.
+
 **Quando a atualização é tentada** — todas as condições precisam valer:
 
 - `git` está instalado e a pasta contém um repositório (`.git`); instalações ZIP sem `.git` pulam silenciosamente.
