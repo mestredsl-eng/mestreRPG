@@ -1,9 +1,9 @@
 // Testes — Lock de boot por instalação (Issue #155).
-// Cobre: aquisição atômica concorrente, espera por health, abort por
-// timeout, liberação só pelo proprietário, recuperação de lock obsoleto
-// com prova de pid morto, fail-closed para metadados inválidos/host
-// divergente, caminhos com espaços e a fiação do .bat.
-import { spawnSync } from "node:child_process";
+// Cobre: aquisição atômica, corrida de recuperação de lock obsoleto
+// SERIALIZADA por mutex .recover, liberação só pelo proprietário
+// (pid+host+repo), fail-closed para metadados inválidos/host divergente,
+// concorrência REAL entre processos Node separados e a fiação do .bat.
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir, hostname } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -38,8 +38,31 @@ const fetchNunca = async () => false;
 const fetchSempre = async () => ({ ok: true });
 const META = (pid, host, repo) => ({ v: 1, pid, host, repo, ts: Date.now() });
 
+// Worker multiprocesso: node --input-type=module -e "<codigo>" <cwd>
+// Imprime "CODIGO=<n>". timeout de espera curto via env para não travar.
+const WORKER = `
+const m = await import(${JSON.stringify("file:///" + SCRIPT.replace(/\\/g, "/"))});
+const cwd = process.argv[1];
+const r = await m.adquirirLock({ cwd, timeoutEsperaMs: 500, intervaloEsperaMs: 25 });
+console.log("CODIGO=" + r.codigo + " MOTIVO=" + r.motivo);
+process.exit(0);
+`;
+function spawnWorkers(cwd, n) {
+  return Promise.all(Array.from({ length: n }, () => new Promise((res) => {
+    const p = spawn(process.execPath, ["--input-type=module", "-e", WORKER, cwd], {
+      env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "500" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let out = "", err = "";
+    p.stdout.on("data", (d) => { out += d; });
+    p.stderr.on("data", (d) => { err += d; });
+    p.on("close", (code) => res({ code, out, err }));
+  })));
+}
+const codigos = (rs) => rs.map((r) => (r.out.match(/CODIGO=(\d+)/) ?? [])[1]).filter(Boolean).map(Number);
+
 try {
-  // ---------- aquisição básica e concorrência ----------
+  // ---------- aquisição básica ----------
   const lock1 = caminhoLock(repoComEspaco, TMP);
   const r1 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
@@ -48,21 +71,18 @@ try {
   });
   t("primeira aquisição obtém lock (codigo 0)", r1.codigo === 0, String(r1.codigo));
   t("arquivo de lock existe", existsSync(lock1));
-
-  // lockPath custom deve coincidir com o canônico por repo
   t("caminho do lock é por repo canônico", caminhoLock(repoComEspaco, TMP) === lock1);
 
-  // segunda aquisição com pid "vivo" → aguarda health → timeout → aborta
+  // lock ocupado por pid vivo → aguarda health → timeout → aborta
   const t0 = Date.now();
   const r2 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 120, intervaloEsperaMs: 10, log: () => {},
   });
-  t("segunda aquisição concorrente aborta após timeout", r2.codigo === 1 && /timeout/.test(r2.motivo), `${r2.codigo} ${r2.motivo}`);
+  t("lock ocupado sem health aborta após timeout", r2.codigo === 1 && /timeout/.test(r2.motivo), `${r2.codigo} ${r2.motivo}`);
   t("espera respeitou a janela (~120ms)", Date.now() - t0 >= 100, String(Date.now() - t0));
 
-  // com health respondendo → código 20 (servidor de outra instância no ar)
   const r3 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchSempre,
@@ -70,28 +90,26 @@ try {
   });
   t("lock ocupado + servidor no ar → codigo 20", r3.codigo === 20, String(r3.codigo));
 
-  // ---------- liberação somente pelo proprietário ----------
+  // ---------- liberação somente pelo proprietário (pid+host+repo) ----------
   const relErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: 999999 });
   t("liberação por pid estranho é recusada", relErrado.ok === false, relErrado.motivo);
   t("lock continua existindo após recusa", existsSync(lock1));
-  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid });
-  t("proprietário libera o lock", relCerto.ok === true, relCerto.motivo);
+  const relHostErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: "HOST-FALSO" });
+  t("liberação por host divergente (pid coincidente) é recusada", relHostErrado.ok === false, relHostErrado.motivo);
+  t("lock continua existindo após recusa de host", existsSync(lock1));
+  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
+  t("proprietário (pid+host+repo) libera o lock", relCerto.ok === true, relCerto.motivo);
   t("arquivo removido após liberação", !existsSync(lock1));
 
-  // ---------- recuperação de lock obsoleto ----------
-  const morto = pidMorto();
-  writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
-  const r4 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
-    pid: process.pid, pidVivo: (p) => p !== morto, fetchHealth: fetchNunca,
-    timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
-  });
-  t("lock de pid morto é recuperado", r4.codigo === 0, `${r4.codigo} ${r4.motivo}`);
-  const metaNovo = JSON.parse(readFileSync(lock1, "utf8"));
-  t("novo lock tem pid do novo proprietário", metaNovo.pid === process.pid);
+  // liberação com repo divergente: lock gravado para repoA, liberar com cwd repoB
+  writeFileSync(lock1, JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco))));
+  const repoB = join(TMP, "outra instalacao");
+  mkdirSync(repoB, { recursive: true });
+  const relRepoB = liberarLock({ cwd: repoB, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
+  t("liberação com repo divergente é recusada", relRepoB.ok === false && existsSync(lock1), relRepoB.motivo);
+  rmSync(lock1, { force: true });
 
   // ---------- metadados inválidos → fail-closed ----------
-  liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid });
   writeFileSync(lock1, "{json corrompido");
   const r5 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
@@ -101,6 +119,7 @@ try {
   t("metadados inválidos bloqueiam (aguarda e aborta)", r5.codigo === 1 && /lock-invalido/.test(r5.motivo), `${r5.codigo} ${r5.motivo}`);
 
   // ---------- host divergente → nunca remove ----------
+  const morto = pidMorto();
   writeFileSync(lock1, JSON.stringify(META(morto, "OUTRA-MAQUINA-XYZ", caminhoCanonicoRepo(repoComEspaco))));
   const antes = readFileSync(lock1, "utf8");
   const r6 = await adquirirLock({
@@ -110,44 +129,96 @@ try {
   });
   t("host divergente não é removido nem assumido", r6.codigo === 1 && readFileSync(lock1, "utf8") === antes, `${r6.codigo}`);
 
-  // ---------- repo divergente no mesmo lockPath → não assume ----------
-  const repoB = join(TMP, "outra instalacao");
-  mkdirSync(repoB, { recursive: true });
-  writeFileSync(lock1, JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoB))));
+  // ---------- recuperação de lock obsoleto (sequencial) ----------
+  writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   const r7 = await adquirirLock({
     cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
-    pid: process.pid, pidVivo: () => false, fetchHealth: fetchNunca,
-    timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
+    pid: process.pid, pidVivo: (p) => p !== morto, fetchHealth: fetchNunca,
+    timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
-  t("lock de outro repo no mesmo path é tratado como ocupado", r7.codigo === 1, String(r7.codigo));
+  t("lock de pid morto é recuperado via seção crítica", r7.codigo === 0, `${r7.codigo} ${r7.motivo}`);
+  const metaNovo = JSON.parse(readFileSync(lock1, "utf8"));
+  t("novo lock tem pid do novo proprietário", metaNovo.pid === process.pid);
+  // mutex liberado após a seção
+  t("mutex .recover liberado após recuperação", !existsSync(lock1 + ".recover"));
+  liberarLock({ cwd: repoComEspaco, lockPath: lock1, tmp: TMP, pid: process.pid, host: hostname() });
 
-  // ---------- CLI real: adquirir/liberar via processo ----------
-  // Nota: o pid gravado pelo CLI é o ppid do node auxiliar — no .bat é o
-  // cmd.exe; num spawnSync de teste é ESTE processo (vivo durante todo o
-  // teste), então não dá para simular "dono morto" pelo CLI sem enfraquecer
-  // o mecanismo. Cobertura de stale/ocupado fica nos testes de função acima.
-  const lockReal = caminhoLock(repoComEspaco);
-  rmSync(lockReal, { force: true });
-  const cliA = spawnSync(process.execPath, [SCRIPT, "adquirir"], { cwd: repoComEspaco, encoding: "utf8", timeout: 15000 });
-  t("CLI adquirir → exit 0", cliA.status === 0, `${cliA.status} ${cliA.stderr}`);
-  const cliMeta = JSON.parse(readFileSync(lockReal, "utf8"));
+  // ---------- mutex .recover ocupado por pid vivo → fail-closed ----------
+  writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
+  writeFileSync(lock1 + ".recover", JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco))));
+  const r8 = await adquirirLock({
+    cwd: repoComEspaco, lockPath: lock1, tmp: TMP,
+    pid: process.pid, pidVivo: (p) => p === process.pid, // só o pid do mutex "vive"
+    fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
+  });
+  t("mutex ocupado → trata como ocupado e aborta", r8.codigo === 1 && /lock-sendo-recuperado/.test(r8.motivo), `${r8.codigo} ${r8.motivo}`);
+  rmSync(lock1 + ".recover", { force: true });
+  rmSync(lock1, { force: true });
+
+  // ---------- CONCORRÊNCIA REAL: processos Node separados ----------
+  // Repo dedicado para não colidir com locks de função acima.
+  const repoConc = join(TMP, "repo concorrencia");
+  mkdirSync(repoConc, { recursive: true });
+  const lockConc = caminhoLock(repoConc); // tmpdir real — mesmo que o CLI usa
+  rmSync(lockConc, { force: true });
+  rmSync(lockConc + ".recover", { force: true });
+
+  // 4 workers simultâneos, repo vazio → exatamente UM deve adquirir
+  let rs = await spawnWorkers(repoConc, 4);
+  let cs = codigos(rs);
+  t("4 processos simultâneos: exatamente um proprietário", cs.filter((c) => c === 0).length === 1, JSON.stringify(cs));
+  t("lock existe após corrida", existsSync(lockConc));
+  const metaConc = JSON.parse(readFileSync(lockConc, "utf8"));
+  t("metadados do vencedor são válidos", metaConc.v === 1 && Number.isInteger(metaConc.pid) && metaConc.host === hostname());
+
+  // segundo processo NÃO remove o lock ativo do vencedor
+  const antesLock = readFileSync(lockConc, "utf8");
+  rs = await spawnWorkers(repoConc, 2);
+  cs = codigos(rs);
+  t("processos subsequentes não assumem lock vivo", cs.every((c) => c !== 0), JSON.stringify(cs));
+  t("lock do vencedor permanece intacto", readFileSync(lockConc, "utf8") === antesLock);
+
+  // corrida de recuperação obsoleta: lock com pid morto + 4 workers
+  for (let rodada = 0; rodada < 3; rodada++) {
+    rmSync(lockConc, { force: true });
+    rmSync(lockConc + ".recover", { force: true });
+    writeFileSync(lockConc, JSON.stringify(META(pidMorto(), hostname(), caminhoCanonicoRepo(repoConc))));
+    rs = await spawnWorkers(repoConc, 4);
+    cs = codigos(rs);
+    t(`rodada ${rodada + 1}: exatamente um recupera o lock obsoleto`, cs.filter((c) => c === 0).length === 1, JSON.stringify(cs));
+    t(`rodada ${rodada + 1}: nenhum mutex residual`, !existsSync(lockConc + ".recover"), "");
+    const metaR = existsSync(lockConc) ? JSON.parse(readFileSync(lockConc, "utf8")) : null;
+    t(`rodada ${rodada + 1}: lock final é de pid vivo válido`, metaR && Number.isInteger(metaR.pid) && metaR.pid > 0);
+  }
+  liberarLock({ cwd: repoConc, lockPath: lockConc, pid: process.pid, host: hostname() });
+
+  // ---------- CLI real: adquirir/liberar ----------
+  rmSync(lockConc, { force: true });
+  const cliA = spawnSync(process.execPath, [SCRIPT, "adquirir"], {
+    cwd: repoConc, encoding: "utf8", timeout: 15000,
+    env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "300" },
+  });
+  t("CLI adquirir → exit 0", cliA.status === 0, `${cliA.status} ${cliA.stderr} ${cliA.stdout}`);
+  const cliMeta = JSON.parse(readFileSync(lockConc, "utf8"));
   t("CLI grava pid do processo pai (dono)", Number.isInteger(cliMeta.pid) && cliMeta.pid > 0, JSON.stringify(cliMeta));
-  const cliLib = spawnSync(process.execPath, [SCRIPT, "liberar"], { cwd: repoComEspaco, encoding: "utf8", timeout: 15000 });
-  t("CLI liberar → exit 0 (mesmo ppid = proprietário)", cliLib.status === 0, `${cliLib.status} ${cliLib.stderr}`);
-  t("lock real removido", !existsSync(lockReal));
+  const cliLib = spawnSync(process.execPath, [SCRIPT, "liberar"], { cwd: repoConc, encoding: "utf8", timeout: 15000 });
+  t("CLI liberar → exit 0 (mesmo ppid+host+repo)", cliLib.status === 0, `${cliLib.status} ${cliLib.stderr}`);
+  t("lock real removido", !existsSync(lockConc));
 
-  // ---------- .bat: ordenação e cobertura de liberação ----------
+  // ---------- .bat: sem bypass, cobertura de liberação ----------
   const bat = readFileSync(BAT, "utf8");
   const iPorta = bat.indexOf("Invoke-WebRequest");
   const iAdq = bat.indexOf("boot-lock.mjs adquirir");
   const iUpd = bat.indexOf("auto-update.mjs");
   const iStart = bat.indexOf("npm run start");
-  const iFim = bat.indexOf("boot-lock.mjs liberar", iStart);
   t(".bat adquire lock após check de porta e antes do updater",
     iPorta > -1 && iAdq > iPorta && iUpd > iAdq, `porta=${iPorta} adq=${iAdq} upd=${iUpd}`);
+  t(".bat NÃO tem bypass sem-lock (goto :sem_boot_lock removido)",
+    !/goto\s+:sem_boot_lock/.test(bat));
+  t(".bat aborta se boot-lock.mjs ausente", /boot-lock\.mjs ausente/.test(bat));
   const liberarCount = (bat.match(/boot-lock\.mjs liberar/g) ?? []).length;
   t(".bat libera o lock em todos os caminhos de falha + fim",
-    liberarCount >= 8, String(liberarCount)); // 7 falhas + 1 fim
+    liberarCount >= 8, String(liberarCount));
   t(".bat sai sem erro quando outra instância assume (codigo 20)",
     /errorlevel%==20 exit \/b 0/.test(bat));
 

@@ -69,7 +69,14 @@ rem instancia valida estiver subindo, aguardamos o health por ate
 rem 120s — se o servidor responder, este boot encerra sem duplicar.
 rem Codigo 20 = servidor de outra instancia respondeu (sai sem erro);
 rem codigo 1 = aborta; 0 = lock adquirido e boot prossegue.
-if not exist scripts\boot-lock.mjs goto :sem_boot_lock
+rem O lock e OBRIGATORIO: sem o arquivo ou sem codigo 0/20, o boot
+rem aborta — nenhuma etapa mutavel roda sem exclusividade.
+if not exist scripts\boot-lock.mjs (
+    echo [ERRO] scripts\boot-lock.mjs ausente — inicializacao abortada.
+    echo        Restaure o arquivo ou use uma versao completa do projeto.
+    pause
+    exit /b 1
+)
 node scripts\boot-lock.mjs adquirir
 if %errorlevel%==20 exit /b 0
 if not %errorlevel%==0 (
@@ -80,7 +87,6 @@ if not %errorlevel%==0 (
     pause
     exit /b 1
 )
-:sem_boot_lock
 
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------
 rem Executa SOMENTE depois da checagem da porta 3001 acima: se ja ha
