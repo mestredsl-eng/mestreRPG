@@ -164,3 +164,43 @@ As decisões acima devem ser resolvidas na Fase 0, antes de implementar grupos a
 6. Só então simulação ampliada de grupos, regiões e conflitos mistos.
 
 Essas decisões não alteram a prioridade da linha 1.x: o D10 e a estabilidade da mesa continuam à frente. O Mundo Vivo permanece como trilha planejada da versão 2.0, com implementação somente após liberação explícita da coordenação.
+
+## Complemento da Fase 0 — identidade de serviço, execução e provedor de IA
+
+A auditoria do código confirmou que a IA ainda não tem identidade técnica para agir na mesa. O fluxo Socket.IO resolve usuário autenticado, membership e papel por sessão (resolverCtx em sockets/mesa.ts). Uma IA não é um usuário humano e não deve receber uma conta-mestre compartilhada nem simular silenciosamente o mestre.
+
+### Identidade de serviço e autorização
+
+- Definir um principal interno não humano, com escopo explícito de campanha, agente/personagem e capacidades permitidas. A autorização deve ser verificada no servidor em cada ação e nunca depender apenas do prompt.
+- Diferenciar quatro identidades: usuário humano responsável/aprovador, agente de IA que propôs, NPC que aparece como autor/falante e principal de serviço que executa o comando autorizado.
+- A tabela audit_logs atual tem actor_id como FK para users.id; não representa diretamente um ator não humano. A Fase 0 deve propor uma extensão aditiva (por exemplo actor_type/agent_id/request_id), mantendo o usuário humano responsável quando existir, sem criar usuário fake nem perder a autoria da aprovação.
+- Snapshots também exigem createdBy ligado a users. Ações autônomas não devem criar snapshots fingindo autoria humana; definir a política de proprietário/aprovador para snapshots e ciclos.
+- A execução de serviço deve ser capability-based e least-privilege. Não dar à IA papel mestre geral. O mestre humano precisa pausar, aprovar, rejeitar e retomar a autonomia.
+
+### Separação entre handlers Socket.IO e serviços de aplicação
+
+Hoje autenticação, papel e lógica de ações estão acoplados aos handlers Socket.IO. Antes da IA, extrair funções de aplicação testáveis para chat, pedido/rolagem de teste D10 e aplicação de HP/dano. Os handlers de socket e as rotas REST devem chamar os mesmos serviços. A extração não pode alterar contratos, permissões, emissão de eventos, idempotência nem resultados; a suíte de regressão existente precisa provar paridade.
+
+### Provedor LLM, segredos e telemetria
+
+A auditoria confirmou que não existe cliente/SDK de provedor LLM nas dependências atuais do monorepo. A Fase 0 deve definir um contrato independente do provedor (ProvedorIA) e uma implementação fake/determinística para testes sem rede. Não escolher nem habilitar provedor real nesta etapa.
+
+Quando houver autorização para um provedor real, a chave deverá existir somente no servidor, fora do navegador, do repositório e dos logs. Antes disso, definir limites de contexto, retenção, consentimento, política de dados e como o custo será apresentado ao mestre.
+
+A telemetria deverá registrar metadados mínimos por chamada (campanha, agente, provedor/modelo quando houver, tokens de entrada/saída, latência, custo estimado, status, requestId e ciclo), sem armazenar prompts/respostas completos por padrão. Orçamento de IA deve ser separado do rate limit Socket.IO, que é por usuário/ação e em memória.
+
+### Scheduler, mundo entre sessões e PVP
+
+O autosave existente é um debounce de snapshot, não um worker nem uma fila durável. Ciclos do mundo exigem mecanismo persistente, idempotente, retomável após reinício, pausável por campanha e limitado por orçamento. A escolha entre ciclo disparado pelo mestre, fila persistente ou worker deve anteceder simulação autônoma.
+
+O motor atual tem rolagens, testes, iniciativa e aplicação de HP, mas não um resolvedor completo de combate automático. PVP entre grupos também exige política explícita de consentimento, limites, permissões e consequências permanentes; não pode ser decidido apenas por instruções narrativas ao modelo.
+
+### Backlog sequenciado da Fase 0 (planejamento; execução depende de liberação)
+
+A sequência inicial proposta é:
+1. Identidade de serviço, capacidades e projeção de contexto privado (Issue filha #A).
+2. Extração dos serviços internos de chat, D10 e HP com paridade dos handlers atuais (Issue filha #B).
+3. Interface ProvedorIA fake, telemetria e limites de orçamento sem provedor real (Issue filha #C).
+4. Depois da fundação, detalhar o Criador de Campanhas revisável e aprovado por humano.
+
+A Fase 0 continua sem autorização para começar implementação até liberação explícita da coordenação. D10 e estabilização da linha 1.x permanecem prioritários; a versão 2.0 evoluirá lentamente, sem ser esquecida e sem competir com a entrega jogável atual.
