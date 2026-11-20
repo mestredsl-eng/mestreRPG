@@ -10,6 +10,7 @@ on:
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
       - feat/issue-186-sangue-core
+      - feat/issue-127-token-vida
     types:
       - opened
       - synchronize
@@ -119,6 +120,20 @@ jobs:
           else
             echo "assinatura-v2.test.ts ausente nesta ref (pré-C3) — pulado"
           fi
+      - name: Testes unitários do ledger de Sangue (Issue #186 C2/C4)
+        run: |
+          if [ -f servidor/testes/sangue.test.ts ]; then
+            npx tsx --test servidor/testes/sangue.test.ts
+          else
+            echo "sangue.test.ts ausente nesta ref (pré-C2) — pulado"
+          fi
+      - name: Testes unitários da revinculação de ficha (Issue #186 C7)
+        run: |
+          if [ -f servidor/testes/revinculacao-ficha.test.ts ]; then
+            npx tsx --test servidor/testes/revinculacao-ficha.test.ts
+          else
+            echo "revinculacao-ficha.test.ts ausente nesta ref (pré-C7) — pulado"
+          fi
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
@@ -176,7 +191,9 @@ jobs:
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
             teste-defeitos-mesa.mjs \
-            teste-sangue-hmac-v2.mjs
+            teste-sangue-hmac-v2.mjs \
+            teste-sangue-config.mjs \
+            teste-d10-transacao.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
