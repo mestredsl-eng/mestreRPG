@@ -209,13 +209,26 @@ try {
     t("config rejeitada não persistiu", cfg2?.sangue?.habilitado !== true || cfg2?.sangue?.campoNaturezaId == null);
   }
 
-  sec("10. Campanha sem nenhuma ficha vinculada → fail-closed");
+  sec("10. Campanha sem nenhuma ficha vinculada — config válida aceita, inválida rejeitada");
   {
     const c3 = await novaCenarioExtra(c, { comFicha: false, rotulo: "sem-ficha" });
-    const r = await putCfg(c3.campId, c3.cookieMestre, {
-      sangue: { habilitado: true, campoCapacidadeId: "qualquer" },
+    // configs inválidas PRIMEIRO: o PUT é parcial e preserva campos —
+    // depois que campoCapacidadeId persistir, {habilitado:true} sozinho
+    // já seria válido pelo merge
+    const rInv = await putCfg(c3.campId, c3.cookieMestre, { sangue: { habilitado: true } });
+    t("habilitado sem campoCapacidadeId → 400", rInv.status === 400, `status=${rInv.status}`);
+    const rBq = await putCfg(c3.campId, c3.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "x", capacidade: { bonusQualidade: { campoId: "q" } } },
     });
-    t("sangue habilitado sem estrutura verificável → 400", r.status === 400, `status=${r.status}`);
+    t("bonusQualidade parcial sem estrutura → 400", rBq.status === 400, `status=${rBq.status}`);
+    // sem estruturas elegíveis não há vínculo a comparar: config
+    // sintaticamente válida é aceita e persistida
+    const r = await putCfg(c3.campId, c3.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "qualquer", capacidade: { modo: "valor" } },
+    });
+    t("sangue válido sem estrutura elegível → 200", r.status === 200, `status=${r.status}`);
+    const cfg = await getCfg(c3.campId, c3.cookieMestre);
+    t("config persistida sem estrutura", cfg?.sangue?.habilitado === true && cfg?.sangue?.campoCapacidadeId === "qualquer");
     const r2 = await putCfg(c3.campId, c3.cookieMestre, { sangue: { habilitado: false } });
     t("sangue desabilitado sem ficha → 200", r2.status === 200, `status=${r2.status}`);
   }
@@ -230,7 +243,8 @@ try {
     });
     // adiciona personagem com versão customizada à campanha
     // templateCampId: undefined→campanha; null→modelo global; outro id→cross-campaign
-    const addPersonagem = (campId, { status = "aprovada", publicado = true, templateCampId = undefined, isNpc = 0 } = {}) => {
+    // estrutura: null→incompatível (só "zzz"); passe estruturaCustom() p/ compatível
+    const addPersonagem = (campId, { status = "aprovada", publicado = true, templateCampId = undefined, isNpc = 0, estrutura = null } = {}) => {
       const db = abrirDb(BANCO); const agora = Date.now();
       try {
         const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
@@ -238,7 +252,7 @@ try {
         db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
           .run(tplId, tplCamp, "Ficha escopo", null, c.adminId, agora, agora);
         db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
-          .run(verId, tplId, JSON.stringify(estruturaIncompativel()), publicado ? agora : null, agora);
+          .run(verId, tplId, JSON.stringify(estrutura ?? estruturaIncompativel()), publicado ? agora : null, agora);
         db.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
         const mid = db.prepare("select id from memberships where campaign_id=? limit 1").get(campId).id;
         const pid = crypto.randomUUID();
@@ -261,11 +275,16 @@ try {
     const rB = await putCfg(cB.campId, cB.cookieMestre, cfgValida);
     t("versão de outra campanha ignorada → 200", rB.status === 200, `status=${rB.status} ${JSON.stringify(rB.json).slice(0, 160)}`);
 
-    // B2) template GLOBAL (campaign_id NULL) não é template da campanha
-    const cG = await novaCenarioExtra(c, { rotulo: "global" });
-    addPersonagem(cG.campId, { templateCampId: null });
+    // B2) template GLOBAL publicado PARTICIPA da validação (a rota de
+    // personagens aceita templateVersionId global — vínculo é real)
+    const cG = await novaCenarioExtra(c, { comFicha: false, rotulo: "global-ok" });
+    addPersonagem(cG.campId, { templateCampId: null, estrutura: estruturaCustom() });
     const rG = await putCfg(cG.campId, cG.cookieMestre, cfgValida);
-    t("template global excluído → 200", rG.status === 200, `status=${rG.status} ${JSON.stringify(rG.json).slice(0, 160)}`);
+    t("global publicada compatível → 200", rG.status === 200, `status=${rG.status} ${JSON.stringify(rG.json).slice(0, 160)}`);
+    const cG2 = await novaCenarioExtra(c, { comFicha: false, rotulo: "global-bad" });
+    addPersonagem(cG2.campId, { templateCampId: null }); // estrutura incompatível
+    const rG2 = await putCfg(cG2.campId, cG2.cookieMestre, cfgValida);
+    t("global publicada incompatível → 400", rG2.status === 400, `status=${rG2.status} ${JSON.stringify(rG2.json).slice(0, 160)}`);
 
     // C) personagem arquivado não restringe
     const cC = await novaCenarioExtra(c, { rotulo: "arquivado" });
@@ -284,6 +303,27 @@ try {
       sangue: { habilitado: true, campoCapacidadeId: "inexistente", capacidade: { modo: "valor" } },
     });
     t("jogador elegível continua validado → 400", rN2.status === 400, `status=${rN2.status}`);
+
+    // D2) campanhas SEM jogador elegível: só arquivados, só NPCs, vazia
+    const cSoArq = await novaCenarioExtra(c, { comFicha: false, rotulo: "so-arquivados" });
+    addPersonagem(cSoArq.campId, { status: "arquivado" });
+    const rSoArqInv = await putCfg(cSoArq.campId, cSoArq.cookieMestre, { sangue: { habilitado: true } });
+    t("só arquivados + config inválida → 400", rSoArqInv.status === 400, `status=${rSoArqInv.status}`);
+    const rSoArq = await putCfg(cSoArq.campId, cSoArq.cookieMestre, cfgValida);
+    t("só arquivados → config válida 200", rSoArq.status === 200, `status=${rSoArq.status}`);
+    const cSoNpc = await novaCenarioExtra(c, { comFicha: false, rotulo: "so-npcs" });
+    addPersonagem(cSoNpc.campId, { isNpc: 1 });
+    const rSoNpcInv = await putCfg(cSoNpc.campId, cSoNpc.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { bonusQualidade: { modo: "mapa" } } },
+    });
+    t("só NPCs + bonusQualidade parcial → 400", rSoNpcInv.status === 400, `status=${rSoNpcInv.status}`);
+    const rSoNpc = await putCfg(cSoNpc.campId, cSoNpc.cookieMestre, cfgValida);
+    t("só NPCs → config válida 200", rSoNpc.status === 200, `status=${rSoNpc.status}`);
+    const cVazia = await novaCenarioExtra(c, { comFicha: false, rotulo: "vazia" });
+    const rVaziaInv = await putCfg(cVazia.campId, cVazia.cookieMestre, { sangue: { habilitado: true } });
+    t("campanha vazia + config inválida → 400", rVaziaInv.status === 400, `status=${rVaziaInv.status}`);
+    const rVazia = await putCfg(cVazia.campId, cVazia.cookieMestre, cfgValida);
+    t("campanha vazia → config válida 200", rVazia.status === 200, `status=${rVazia.status}`);
 
     // D) bônus de qualidade parcial → 400 (par campoId+coeficiente exigido)
     const parciais = [

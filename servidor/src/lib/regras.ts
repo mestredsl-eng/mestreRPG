@@ -408,15 +408,11 @@ export function errosVinculosSangueConfig(
     bqAtivo
   );
   if (!sang.habilitado && !temVinculo) return erros;
+  // Checagens de nível de config SEMPRE executam — mesmo sem nenhuma
+  // estrutura elegível: config sintaticamente inválida nunca é salva.
   if (bqAtivo && (typeof bq!.campoId !== "string" || !bq!.campoId || typeof bq!.coeficiente !== "number" || !Number.isFinite(bq!.coeficiente))) {
     erros.push(
       "config.sangue.capacidade.bonusQualidade: exige campoId e coeficiente numérico finito quando qualquer opção é definida",
-    );
-    return erros;
-  }
-  if (estruturas.size === 0) {
-    erros.push(
-      "config.sangue: nenhuma estrutura de ficha ativa verificável — vínculos não podem ser validados",
     );
     return erros;
   }
@@ -424,6 +420,10 @@ export function errosVinculosSangueConfig(
     erros.push("config.sangue: habilitado exige campoCapacidadeId");
     return erros;
   }
+  // Sem estruturas elegíveis não há vínculo a comparar — a config
+  // sintaticamente válida é aceita; a resolução concreta por
+  // personagem continua fail-closed em C2 no uso.
+  if (estruturas.size === 0) return erros;
   for (const [versao, estrutura] of estruturas) {
     const prefixo = `config.sangue (ficha ${versao})`;
     errosVinculoCapacidade(

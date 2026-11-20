@@ -263,18 +263,16 @@ async function errosVinculosSangueCampanha(
       eq(characters.isNpc, false),
     ));
   const ids = [...new Set(vinculos.map((c) => c.templateVersionId).filter((v): v is string => !!v))];
-  if (!ids.length) {
-    return ["config.sangue: nenhuma ficha publicada vinculada a personagens da campanha — vínculos não podem ser verificados"];
-  }
   const estruturas = new Map<string, EstruturaFicha>();
   const erros: string[] = [];
   for (const vid of ids) {
-    // Só conta como estrutura ATIVA a versão PUBLICADA de template da
-    // PRÓPRIA campanha (sheet_templates.campaign_id = campaignId).
-    // Template global (campaign_id NULL) NÃO é template da campanha
-    // para este vínculo — excluído por decisão explícita. Versão não
-    // publicada ou de template de outra campanha/global tampouco
-    // participa: não restringe a config nem é validada sem significado.
+    // Estrutura elegível: versão PUBLICADA de template da própria
+    // campanha OU modelo global (campaign_id NULL — a rota de
+    // personagens aceita templateVersionId global publicada, então o
+    // vínculo é real). Template de OUTRA campanha e versão não
+    // publicada não participam: não restringem nem são validados sem
+    // significado. Sem estruturas elegíveis, errosVinculosSangueConfig
+    // ainda aplica as checagens de nível de config e aceita o resto.
     const [v] = await db
       .select({
         structure: sheetVersions.structure,
@@ -285,7 +283,7 @@ async function errosVinculosSangueCampanha(
       .innerJoin(sheetTemplates, eq(sheetVersions.templateId, sheetTemplates.id))
       .where(eq(sheetVersions.id, vid))
       .limit(1);
-    if (!v?.publishedAt || v.templateCampaignId !== campaignId) {
+    if (!v?.publishedAt || (v.templateCampaignId !== null && v.templateCampaignId !== campaignId)) {
       continue;
     }
     const parse = estruturaFichaSchema.safeParse(v.structure);
@@ -296,9 +294,6 @@ async function errosVinculosSangueCampanha(
     estruturas.set(vid, parse.data);
   }
   if (erros.length) return erros;
-  if (estruturas.size === 0) {
-    return ["config.sangue: nenhuma ficha publicada vinculada a personagens da campanha — vínculos não podem ser verificados"];
-  }
   return errosVinculosSangueConfig(config, estruturas);
 }
 
