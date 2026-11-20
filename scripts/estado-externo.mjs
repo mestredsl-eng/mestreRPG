@@ -5,7 +5,6 @@
 // Convenção IDÊNTICA ao Boot Lock (#189) — os dois lados devem produzir o
 // mesmo diretório para a mesma instalação:
 //   MESTRE_STATE_DIR definido  → <MESTRE_STATE_DIR>/<instalacaoId>/
-//   MESTRE_HOME definido       → <MESTRE_HOME>/state/<instalacaoId>/  (sandbox/testes)
 //   Windows                    → %LOCALAPPDATA%\MestreRPG\state\<instalacaoId>\
 //   Linux c/ XDG               → $XDG_STATE_HOME/mestre-rpg/state/<instalacaoId>/
 //   Linux s/ XDG               → ~/.local/state/mestre-rpg/state/<instalacaoId>/
@@ -26,9 +25,11 @@
 //     interpretado como ausência);
 //   - protocoloVersao desconhecida → "incompativel";
 //   - instalacaoId/repoCanon divergentes → "identidade-divergente";
-//   - ausência só é legítima com recibo durável de instalação
-//     (instalacao-recibo.json) — sem recibo verificável, o caso é ambíguo
-//     e o fluxo mutável deve bloquear.
+//   - ausência só é legítima para primeiro bootstrap mediante
+//     autorização de uso único (bootstrap-autorizacao.json) emitida
+//     por produtor confiável — sem ela, o caso é ambíguo e o fluxo
+//     mutável deve bloquear. Recibo permanente de instalação concluída
+//     NÃO autoriza banco ausente/vazio como primeira instalação.
 //
 // Recibo de instalação: gravado UMA vez por um caminho de bootstrap
 // confiável (updater/.bat/instalador — integração pendente, Etapa 5).
@@ -37,11 +38,11 @@
 // ausência de banco ou ausência do próprio state dir.
 import { createHash, randomBytes } from "node:crypto";
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync,
-  renameSync, rmSync, writeSync,
+  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
+  readFileSync, renameSync, rmSync, writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { caminhoCanonicoRepo, instalacaoId as instalacaoIdBoot } from "./boot-lock.mjs";
 
 export const PROTOCOLO_VERSAO = 1;
@@ -81,15 +82,13 @@ export function diretorioBaseEstado(env = process.env) {
 /** Diretório de estado da instalação — RESOLUÇÃO PURA, sem efeito
  *  colateral: NÃO cria o diretório. Escritas passam por
  *  gravarJsonAtomico (que cria o pai na hora de gravar); leituras e
- *  verificações nunca produzem efeitos. */
+ *  verificações nunca produzem efeitos.
+ *  Paridade EXATA com boot-lock.diretorioEstado(): mesmo base (somente
+ *  MESTRE_STATE_DIR|LOCALAPPDATA|XDG — MESTRE_HOME NÃO participa, pois
+ *  é raiz de DADOS, não de estado) e mesmo <instalacaoId>. Overrides de
+ *  teste: APENAS MESTRE_STATE_DIR (explícito e compatível). */
 export function dirEstado(repoDir, env = process.env) {
-  const id = instalacaoId(repoDir);
-  // MESTRE_HOME é override de sandbox/testes (o servidor de dados vive
-  // fora do worktree real); MESTRE_STATE_DIR tem precedência.
-  if ((env.MESTRE_HOME ?? "").trim() && !(env.MESTRE_STATE_DIR ?? "").trim()) {
-    return join(resolve(env.MESTRE_HOME), "state", id);
-  }
-  return join(resolve(diretorioBaseEstado(env)), id);
+  return join(diretorioBaseEstado(env), instalacaoId(repoDir));
 }
 
 /** Caminho do arquivo de consentimento (dentro do repo, gitignored). */
@@ -222,20 +221,34 @@ export function gravarConsentimento(repoDir, consentimento, dadosExtra = {}) {
   return registro;
 }
 
-// ---------- recibo durável de instalação (Correção 1) ----------
-// ÚNICA prova aceita de "instalação já inicializada": um recibo gravado
-// por um caminho de bootstrap confiável, vinculado à identidade desta
-// instalação. NÃO são recibo: manifesto versionado, arquivo tracked,
-// código N, ausência de banco, ausência do state dir ou do protocolo.
-// A escrita é responsabilidade do integrador (updater/.bat/instalador —
-// Etapa 5, PENDENTE); até lá nenhuma instalação nova é comprovada e o
-// caso ambíguo permanece bloqueado (fail-closed).
+// ---------- ciclo de vida do recibo/autorização de instalação ----------
+// Três estados distintos, nunca confundidos:
+//   1) PRIMEIRO BOOTSTRAP — autorizado por `bootstrap-autorizacao.json`,
+//      arquivo de USO ÚNICO gravado por um caminho de bootstrap
+//      confiável (produtor REAL pendente — Etapa 5). Consumido de forma
+//      durável (rename atômico) no ato da autorização: um crash não
+//      permite replay. Enquanto não existir produtor confiável, nenhum
+//      arquivo válido é escrito e DB ausente/vazio permanece bloqueado.
+//   2) INSTALAÇÃO CONCLUÍDA — `instalacao-recibo.json` permanente,
+//      gravado UMA vez após instalação comprovadamente concluída e
+//      validada. Prova que a instalação EXISTIU — NÃO autoriza banco
+//      ausente/vazio como "primeira instalação" (isso é "instalação
+//      existente cujo banco foi perdido" → bloqueio).
+//   3) BOOTSTRAP INTERROMPIDO — autorização consumida sem recibo
+//      permanente: estado ambíguo, exige intervenção.
+// NÃO são prova de nada: manifesto versionado, arquivo tracked, código
+// N, ausência de banco, ausência do state dir ou do protocolo.
 
-/** Grava o recibo de instalação inicializada. Chamar UMA vez, somente
+export const ARQUIVO_AUTORIZACAO_BOOTSTRAP = "bootstrap-autorizacao.json";
+const PREFIXO_AUTORIZACAO_CONSUMIDA = "bootstrap-autorizacao.consumida-";
+const TIPO_RECIBO_CONCLUIDA = "instalacao-concluida";
+const TIPO_AUTORIZACAO = "primeiro-bootstrap";
+
+/** Grava o recibo de instalação CONCLUÍDA. Chamar UMA vez, somente
  *  após a instalação ser comprovadamente concluída e validada. */
 export function gravarReciboInstalacao(repoDir, env = process.env, dadosExtra = {}) {
   return gravarEstado(repoDir, ARQUIVO_RECIBO_INSTALACAO, {
-    tipo: "instalacao-inicial",
+    tipo: TIPO_RECIBO_CONCLUIDA,
     criadoEm: new Date().toISOString(),
     ...dadosExtra,
   }, env);
@@ -243,7 +256,7 @@ export function gravarReciboInstalacao(repoDir, env = process.env, dadosExtra = 
 
 /** Lê o recibo sem efeitos colaterais. Retorno:
  *  { status: "ok", dados } | { status: "ausente" } |
- *  { status: "corrompido"|"invalido"|"divergente" } (motivo, sem quarentena). */
+ *  { status: "corrompido"|"incompativel"|"divergente"|"invalido" }. */
 export function lerReciboInstalacao(repoDir, env = process.env) {
   const caminho = join(dirEstado(repoDir, env), ARQUIVO_RECIBO_INSTALACAO);
   if (!existsSync(caminho)) return { status: "ausente" };
@@ -252,22 +265,103 @@ export function lerReciboInstalacao(repoDir, env = process.env) {
   if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
   if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
   if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
-  if (dados.tipo !== "instalacao-inicial") return { status: "invalido" };
+  if (dados.tipo !== TIPO_RECIBO_CONCLUIDA) return { status: "invalido" };
   return { status: "ok", dados };
 }
 
+/** Grava a autorização de primeiro bootstrap — SOMENTE o produtor
+ *  confiável futuro (instalador/.bat/updater, integração pendente).
+ *  Nenhum código de produção chama esta função hoje; ela existe para
+ *  definir o formato que o produtor deverá escrever. */
+export function gravarAutorizacaoBootstrap(repoDir, env = process.env, dadosExtra = {}) {
+  return gravarEstado(repoDir, ARQUIVO_AUTORIZACAO_BOOTSTRAP, {
+    tipo: TIPO_AUTORIZACAO,
+    emitidaEm: new Date().toISOString(),
+    ...dadosExtra,
+  }, env);
+}
+
+/** Lê a autorização SEM consumi-la (verificação não destrutiva). */
+export function lerAutorizacaoBootstrap(repoDir, env = process.env) {
+  const caminho = join(dirEstado(repoDir, env), ARQUIVO_AUTORIZACAO_BOOTSTRAP);
+  if (!existsSync(caminho)) return { status: "ausente" };
+  const dados = lerJsonCru(caminho);
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
+  if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
+  if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
+  if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
+  if (dados.tipo !== TIPO_AUTORIZACAO) return { status: "invalido" };
+  return { status: "ok", dados };
+}
+
+/** Diagnóstico NÃO destrutivo do estado de instalação — usado para
+ *  mensagens fail-closed e pela avaliação de boot. Retorno:
+ *  "primeiro-bootstrap"      → autorização válida ainda não consumida;
+ *  "instalacao-concluida"     → recibo permanente válido (banco ausente
+ *                               aqui significa BANCO PERDIDO, bloqueio);
+ *  "bootstrap-interrompido"   → autorização consumida sem recibo;
+ *  "desconhecido"             → nada que prove estado legítimo. */
+export function diagnosticarBootstrap(repoDir, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  const auth = lerAutorizacaoBootstrap(repoDir, env);
+  if (auth.status === "ok") return "primeiro-bootstrap";
+  const recibo = lerReciboInstalacao(repoDir, env);
+  if (recibo.status === "ok") return "instalacao-concluida";
+  let nomes = [];
+  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  catch { return "state-ilegivel"; }
+  if (nomes.some((n) => n.startsWith(PREFIXO_AUTORIZACAO_CONSUMIDA))) return "bootstrap-interrompido";
+  if (recibo.status !== "ausente") return `recibo-${recibo.status}`;
+  if (auth.status !== "ausente") return `autorizacao-${auth.status}`;
+  return "desconhecido";
+}
+
 /**
- * Prova de instalação já inicializada — SOMENTE por recibo durável
- * independente e verificável. Sem recibo válido, nada mais prova:
- * ausência de banco, ausência de state dir, manifesto versionado,
- * arquivo tracked ou código N são explicitamente NÃO-recibos.
- * A verificação é livre de efeitos colaterais (não cria diretórios,
- * não move arquivos para quarentena).
+ * Consome a autorização de primeiro bootstrap — USO ÚNICO e durável.
+ * O rename atômico acontece ANTES da validação do conteúdo: quem perde
+ * a corrida recebe ENOENT e ninguém reutiliza a autorização. O arquivo
+ * consumido é preservado como evidência (sem sufixo .json — não entra
+ * em varreduras de protocolo). Recibo permanente válido ⇒ instalação
+ * já concluída ⇒ autorização NÃO se aplica (replay impossível).
+ * Retorno: { autorizado:true, dados, consumido } |
+ *          { autorizado:false, motivo, consumido? }.
  */
-export function provarInstalacaoNova(repoDir, env = process.env) {
-  const r = lerReciboInstalacao(repoDir, env);
-  if (r.status === "ok") return { nova: true, recibo: r.dados };
-  return { nova: false, motivo: `sem-recibo-valido (${r.status})` };
+export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  const caminho = join(dir, ARQUIVO_AUTORIZACAO_BOOTSTRAP);
+  if (!existsSync(caminho)) {
+    return { autorizado: false, motivo: diagnosticarBootstrap(repoDir, env) };
+  }
+  // Recibo permanente válido ⇒ instalação concluída: autorização de
+  // primeiro bootstrap é irrelevante e NÃO é consumida (evidência fica).
+  if (lerReciboInstalacao(repoDir, env).status === "ok") {
+    return { autorizado: false, motivo: "instalacao-concluida" };
+  }
+  const consumido = join(
+    dir,
+    `${PREFIXO_AUTORIZACAO_CONSUMIDA}${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}`,
+  );
+  try {
+    renameSync(caminho, consumido);
+  } catch {
+    return { autorizado: false, motivo: diagnosticarBootstrap(repoDir, env) };
+  }
+  const dados = lerJsonCru(consumido);
+  const valido = dados && typeof dados === "object" && !Array.isArray(dados)
+    && dados.protocoloVersao === PROTOCOLO_VERSAO
+    && dados.instalacaoId === instalacaoId(repoDir)
+    && dados.repoCanon === caminhoCanonico(repoDir)
+    && dados.tipo === TIPO_AUTORIZACAO;
+  if (!valido) return { autorizado: false, motivo: "autorizacao-invalida", consumido };
+  return { autorizado: true, dados, consumido };
+}
+
+/** Estado de instalação conhecido para avaliação de boot: instalação
+ *  concluída (recibo) OU primeiro bootstrap autorizado e ainda não
+ *  consumido. Qualquer outro caso é ambíguo → fail-closed. */
+export function estadoInstalacaoConhecido(repoDir, env = process.env) {
+  const diag = diagnosticarBootstrap(repoDir, env);
+  return { conhecido: diag === "instalacao-concluida" || diag === "primeiro-bootstrap", motivo: diag };
 }
 
 /**
@@ -278,7 +372,6 @@ export function provarInstalacaoNova(repoDir, env = process.env) {
  * - recuperação pendente NUNCA é bloqueada por consentimento.
  */
 export function avaliarBoot(repoDir, env = process.env) {
-  const dir = dirEstado(repoDir, env);
   const journal = lerJournal(repoDir, JOURNAL_UPDATE, env);
   if (journal.status !== "ausente" && journal.status !== "ok") {
     return { seguroIniciar: false, motivo: `journal-${journal.status}`, detalhes: journal };
@@ -294,12 +387,12 @@ export function avaliarBoot(repoDir, env = process.env) {
     return { seguroIniciar: false, motivo: "restauracao-em-andamento", detalhes: restauracao.dados };
   }
   // Ambiguidade de estado: o repo carrega o manifesto do protocolo N,
-  // mas não há recibo durável de instalação — não é comprovadamente
-  // instalação nova NEM comprovadamente estado perdido: bloqueia.
+  // mas não há estado conhecido (recibo concluído ou autorização de
+  // bootstrap válida) — bloqueia.
   const manifesto = caminhoManifestoProtocolo(repoDir);
   if (existsSync(manifesto)) {
-    const prova = provarInstalacaoNova(repoDir, env);
-    if (!prova.nova) {
+    const prova = estadoInstalacaoConhecido(repoDir, env);
+    if (!prova.conhecido) {
       return { seguroIniciar: false, motivo: "estado-ambiguo", detalhes: prova };
     }
   }

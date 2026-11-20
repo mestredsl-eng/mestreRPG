@@ -16,11 +16,18 @@
 //   - proteção ativa enquanto houver journal ou flag dependente;
 //   - journal "concluido" deixa de proteger (validação final feita);
 //   - "rollback-concluido" MANTÉM proteção (a flag ainda exige recuperação);
-//   - marker expira em `ate` (default 30 dias) — não pode permanecer
-//     eternamente por ausência de integração com o updater;
+//   - NÃO existe expiração por tempo: um marker nunca perde proteção
+//     por idade — a janela entre a gravação do marker (preparar
+//     restauração) e o início do restaurador pode ser longa e o backup
+//     continua necessário. A remoção exige conclusão comprovada da
+//     operação E prova de que nenhum journal/flag ainda o referencia
+//     (ver desprotegerBackupContraRetencao);
 //   - o updater (Etapa 4, PENDENTE) deve chamar
 //     desprotegerBackupContraRetencao() ao concluir+validar; o
 //     restaurador já o faz ao concluir a aplicação.
+// Arquivos *.quarentena-* no state dir ou em protecao/ são registros do
+// protocolo postos em quarentena: a varredura NÃO os ignora — bloqueia
+// (resultado inconclusivo) até resolução explícita.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -29,7 +36,7 @@ import { RAIZ } from "../db/index.js";
 import { log } from "./logs.js";
 
 const PROTOCOLO_VERSAO = 1;
-const VALIDADE_MARKER_HORAS = 24 * 30; // 30 dias — bound contra markers eternos
+const MARCADOR_QUARENTENA = ".quarentena-";
 
 export function normDir(p: string): string {
   const r = resolve(p);
@@ -68,16 +75,19 @@ function idMarker(dirBackup: string): string {
 function ehNosso(j: unknown): j is Record<string, unknown> {
   if (!j || typeof j !== "object" || Array.isArray(j)) return false;
   const o = j as Record<string, unknown>;
-  return "fase" in o || "backupDir" in o || "preRestoreDir" in o ||
-    ("motivo" in o && "backupDir" in o) || "ate" in o;
+  return "fase" in o || "preRestoreDir" in o ||
+    ("backupDir" in o && "motivo" in o);
 }
 
 /** Valida campos de identidade/protocolo de um registro nosso.
- *  Retorna string de problema ou null. */
+ *  TODOS os registros do protocolo exigem protocoloVersao +
+ *  instalacaoId + repoCanon presentes e correspondentes — campo
+ *  ausente, inválido ou divergente é fail-closed. Retorna string de
+ *  problema ou null. */
 function problemaIdentidade(j: Record<string, unknown>, id: string, canon: string): string | null {
-  if (j.protocoloVersao !== PROTOCOLO_VERSAO) return `protocoloVersao incompatível (${String(j.protocoloVersao)})`;
-  if (typeof j.instalacaoId === "string" && j.instalacaoId !== id) return "instalacaoId divergente";
-  if (typeof j.repoCanon === "string" && j.repoCanon !== canon) return "repoCanon divergente";
+  if (j.protocoloVersao !== PROTOCOLO_VERSAO) return `protocoloVersao ausente/incompatível (${String(j.protocoloVersao)})`;
+  if (j.instalacaoId !== id) return "instalacaoId ausente/divergente";
+  if (j.repoCanon !== canon) return "repoCanon ausente/divergente";
   return null;
 }
 
@@ -101,7 +111,6 @@ async function varrerProtecao(): Promise<Varredura | null> {
     return null;
   }
   const protegidos = new Set<string>();
-  const agora = Date.now();
 
   const coletarJson = (arquivo: string, ehMarker: boolean): boolean => {
     let j: unknown;
@@ -114,11 +123,6 @@ async function varrerProtecao(): Promise<Varredura | null> {
       const o = j as Record<string, unknown>;
       const prob = problemaIdentidade(o, id, canon);
       if (prob) return false;
-      // marker expirado: remove e não protege (ciclo de vida limitado)
-      if (ehMarker && typeof o.ate === "string" && Date.parse(o.ate) < agora) {
-        try { rmSync(arquivo, { force: true }); } catch { /* best-effort */ }
-        return true;
-      }
       // journal concluído não protege mais; rollback-concluído mantém
       // (a flag de restauração continua pendente no banco restaurado).
       if (!ehMarker && (o.fase === "concluido" || o.fase === "concluido-com-flag")) return true;
@@ -130,14 +134,22 @@ async function varrerProtecao(): Promise<Varredura | null> {
     return true;
   };
 
+  // State dir AUSENTE é inconclusivo: não é possível provar que não
+  // existem journals/markers (diretório pode ter sido perdido/movido).
+  // Só é seguro enumerar quando o diretório existe de fato.
   let nomes: string[];
   try {
-    nomes = existsSync(dir) ? readdirSync(dir) : [];
+    if (!existsSync(dir)) return null;
+    nomes = readdirSync(dir);
   } catch {
-    return null; // state dir existe mas é ilegível → não prova ausência
+    return null; // state dir ilegível → não prova ausência
   }
+  // Quarentena de registros do protocolo: bloqueia até resolução
+  // explícita — um journal/marker quarentenado pode referenciar um
+  // backup que a retenção não pode tocar.
+  if (nomes.some((f) => f.includes(MARCADOR_QUARENTENA))) return null;
   for (const f of nomes) {
-    if (!f.endsWith(".json") || f.includes(".quarentena-")) continue;
+    if (!f.endsWith(".json")) continue;
     if (!coletarJson(join(dir, f), false)) return null;
   }
 
@@ -148,6 +160,7 @@ async function varrerProtecao(): Promise<Varredura | null> {
   } catch {
     return null;
   }
+  if (markers.some((f) => f.includes(MARCADOR_QUARENTENA))) return null;
   for (const f of markers) {
     if (!f.endsWith(".json")) continue;
     if (!coletarJson(join(protDir, f), true)) return null;
@@ -172,17 +185,29 @@ export async function referenciadoPorJournal(dirBackup: string): Promise<boolean
   const ee = await estadoExternoProt();
   if (!ee) return null;
   let dir: string;
-  try { dir = ee.dirEstado(RAIZ, process.env); } catch { return null; }
+  let id: string;
+  let canon: string;
+  try {
+    dir = ee.dirEstado(RAIZ, process.env);
+    id = ee.instalacaoId(RAIZ);
+    canon = ee.caminhoCanonico(RAIZ);
+  } catch { return null; }
+  // State dir ausente é inconclusivo — não prova ausência de journals.
+  if (!existsSync(dir)) return null;
   let nomes: string[];
-  try { nomes = existsSync(dir) ? readdirSync(dir) : []; } catch { return null; }
+  try { nomes = readdirSync(dir); } catch { return null; }
+  // Registro do protocolo em quarentena → não é possível provar que
+  // nada referencia o backup: inconclusivo.
+  if (nomes.some((f) => f.includes(MARCADOR_QUARENTENA))) return null;
   const alvo = normDir(dirBackup);
   for (const f of nomes) {
-    if (!f.endsWith(".json") || f.includes(".quarentena-")) continue;
+    if (!f.endsWith(".json")) continue;
     const arquivo = join(dir, f);
     let j: unknown;
     try { j = JSON.parse(readFileSync(arquivo, "utf8")); } catch { return null; }
     if (!ehNosso(j)) continue;
     const o = j as Record<string, unknown>;
+    if (problemaIdentidade(o, id, canon)) return null; // registro nosso com identidade ruim → inconclusivo
     if (o.fase === "concluido" || o.fase === "concluido-com-flag") continue;
     for (const k of ["backupDir", "preRestoreDir", "dir", "filePath"]) {
       const v2 = o[k];
@@ -193,12 +218,12 @@ export async function referenciadoPorJournal(dirBackup: string): Promise<boolean
 }
 
 /** Marca um diretório de backup como protegido contra retenção.
- *  Marker inclui validade (`ate`) — proteção não é eterna.
- *  opts.horasValidade: default 30 dias. Retorna false se não foi
- *  possível gravar. */
+ *  Sem expiração por tempo: a proteção só termina por conclusão
+ *  comprovada da operação (desprotegerBackupContraRetencao), nunca
+ *  por idade — a janela marker→restaurador pode ser longa.
+ *  Retorna false se não foi possível gravar. */
 export async function protegerBackupContraRetencao(
   dirBackup: string, motivo: string,
-  opts: { horasValidade?: number } = {},
 ): Promise<boolean> {
   const ee = await estadoExternoProt();
   if (!ee) return false;
@@ -206,16 +231,13 @@ export async function protegerBackupContraRetencao(
     const dir = ee.dirEstado(RAIZ, process.env);
     const protDir = join(dir, "protecao");
     mkdirSync(protDir, { recursive: true });
-    const horas = opts.horasValidade ?? VALIDADE_MARKER_HORAS;
-    const criadoEm = new Date();
     ee.gravarJsonAtomico(join(protDir, `${idMarker(dirBackup)}.json`), {
       protocoloVersao: PROTOCOLO_VERSAO,
       instalacaoId: ee.instalacaoId(RAIZ),
       repoCanon: ee.caminhoCanonico(RAIZ),
       backupDir: dirBackup,
       motivo,
-      criadoEm: criadoEm.toISOString(),
-      ate: new Date(criadoEm.getTime() + horas * 3600_000).toISOString(),
+      criadoEm: new Date().toISOString(),
     });
     return true;
   } catch {
@@ -223,16 +245,27 @@ export async function protegerBackupContraRetencao(
   }
 }
 
-/** Remove a proteção de um diretório (operação concluída e validada).
- *  O chamador é responsável por não remover proteção ainda necessária —
- *  use referenciadoPorJournal() antes quando houver dúvida. */
-export async function desprotegerBackupContraRetencao(dirBackup: string): Promise<void> {
+/** Remove a proteção de um diretório SOMENTE quando é comprovado que
+ *  nenhum journal do state dir ainda o referencia. Qualquer resultado
+ *  inconclusivo (state dir ausente/ilegível, quarentena, registro com
+ *  identidade ruim) ABORTA a remoção — nunca se remove proteção que
+ *  ainda pode ser necessária para recuperação.
+ *  Retorna true somente quando o marker foi removido (ou já não
+ *  existia) com prova de não-referência. */
+export async function desprotegerBackupContraRetencao(dirBackup: string): Promise<boolean> {
+  const ref = await referenciadoPorJournal(dirBackup);
+  if (ref !== false) {
+    if (ref === null) log("erro", "desproteção abortada: referência inconclusiva", { dir: dirBackup });
+    return false;
+  }
   const ee = await estadoExternoProt();
-  if (!ee) return;
+  if (!ee) return false;
   try {
     const dir = ee.dirEstado(RAIZ, process.env);
     rmSync(join(dir, "protecao", `${idMarker(dirBackup)}.json`), { force: true });
+    return true;
   } catch (e) {
     log("erro", "falha ao remover proteção de backup", { dir: dirBackup, erro: String(e) });
+    return false;
   }
 }

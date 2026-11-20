@@ -129,15 +129,19 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
   const raiz = novoRaiz();
   const r = rodar(raiz);
   t("banco inexistente SEM recibo → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
-  t("motivo: estado ambíguo/sem recibo", /recibo|amb[ií]guo/i.test(r.saida), r.saida.slice(0, 250));
+  t("motivo: sem autorização/estado ambíguo", /autoriza|bootstrap|recibo|amb[ií]guo|desconhecido/i.test(r.saida), r.saida.slice(0, 250));
   rmSync(raiz, { recursive: true, force: true });
 }
 {
   const raiz = novoRaiz();
-  // banco inexistente COM recibo durável → instalação comprovada → exit 0
+  // banco inexistente COM recibo permanente de instalação concluída →
+  // NÃO autoriza: é "instalação existente cujo banco foi perdido" →
+  // FAIL-CLOSED (autorização de primeiro bootstrap não existe —
+  // produtor confiável pendente).
   gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
   const r = rodar(raiz);
-  t("banco inexistente COM recibo → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  t("banco inexistente COM recibo → FAIL-CLOSED (banco perdido)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  t("motivo: sem autorização de bootstrap", /autoriza|bootstrap|perdido|amb[ií]guo/i.test(r.saida), r.saida.slice(0, 250));
   rmSync(raiz, { recursive: true, force: true });
 }
 {
@@ -150,11 +154,12 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 }
 {
   const raiz = novoRaiz();
-  // banco vazio COM recibo → instalação comprovada → exit 0
+  // banco vazio COM recibo permanente → idem: banco vazio não é prova
+  // de primeira instalação → FAIL-CLOSED.
   abrirDb(dbVivo(raiz)).close();
   gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
   const r = rodar(raiz);
-  t("banco vazio COM recibo → exit 0", r.code === 0, `code=${r.code}`);
+  t("banco vazio COM recibo → FAIL-CLOSED", r.code !== 0, `code=${r.code}`);
   rmSync(raiz, { recursive: true, force: true });
 }
 {
