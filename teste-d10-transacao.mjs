@@ -234,7 +234,66 @@ try {
     t("teste 'mestre' não vazou p/ sala", !rolagsJ.some((p) => p.testId === tidM));
   }
 
-  sec("8. Vitalidade — penalidade server-side e bloqueio");
+  sec("8. requestId — identidade por teste, nunca roll de outro teste");
+  {
+    const reqId = "req-compartilhado-" + crypto.randomUUID().slice(0, 8);
+    const tidA = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id, dados: 2, lados: 10 });
+    const tidB = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id, dados: 3, lados: 10 });
+    const antes = contarRolls(c.campId);
+    // mesmo requestId em DOIS testId diferentes → operações independentes
+    const [rA, rB] = await Promise.all([
+      emitir(sockJ, "mesa:teste:rolar", { testId: tidA, requestId: reqId }),
+      emitir(sockJb, "mesa:teste:rolar", { testId: tidB, requestId: reqId }),
+    ]);
+    t("mesmo requestId, testId diferentes → ambos rolam", rA?.ok === true && rB?.ok === true && rA?.dados && rB?.dados,
+      `rA=${JSON.stringify(rA)?.slice(0, 100)} rB=${JSON.stringify(rB)?.slice(0, 100)}`);
+    t("rolls distintos (ids diferentes)", rA?.id && rB?.id && rA.id !== rB.id, `${rA?.id} vs ${rB?.id}`);
+    t("2 rolls persistidos", contarRolls(c.campId) === antes + 2, `antes=${antes} depois=${contarRolls(c.campId)}`);
+    const rowA = testeRow(tidA), rowB = testeRow(tidB);
+    t("ambos testes rolados com rollIds distintos", rowA?.status === "rolado" && rowB?.status === "rolado" && rowA.roll_id !== rowB.roll_id);
+    // requestId persistido é composto por teste — nunca o valor cru do cliente
+    const rollsReq = abrirDb(BANCO).prepare("select request_id, reason from rolls where campaign_id=? and request_id is not null order by created_at desc limit 2").all(c.campId);
+    t("request_id persistido é chave composta do teste", rollsReq.every((r) => r.request_id.startsWith("teste:")), JSON.stringify(rollsReq));
+    // retry do MESMO teste com mesmo requestId → jaRolado, sem novo roll
+    // (aguarda refill do bucket testeRolar — cota é por usuário)
+    await sono(1200);
+    const rRetry = await emitir(sockJ, "mesa:teste:rolar", { testId: tidA, requestId: reqId });
+    t("retry mesmo teste+requestId → jaRolado", rRetry?.ok === true && rRetry?.jaRolado === true, JSON.stringify(rRetry));
+    t("retry não cria roll", contarRolls(c.campId) === antes + 2);
+    // terceiro teste com o MESMO requestId compartilhado → operação
+    // independente (a chave persistida é composta por testId)
+    await sono(1200);
+    const tidC = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id, dados: 2, lados: 10 });
+    const rC = await emitir(sockJ, "mesa:teste:rolar", { testId: tidC, requestId: reqId });
+    t("mesmo requestId em 3º testId → rola independente", rC?.ok === true && rC?.dados && rC?.jaRolado !== true, JSON.stringify(rC).slice(0, 120));
+    t("roll do 3º teste é novo (não reutiliza A nem B)", rC?.id && rC.id !== rA?.id && rC.id !== rB?.id);
+  }
+
+  sec("9. Sessão encerrada entre pré-carga e commit → aborta");
+  {
+    const tid = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id, dados: 2, lados: 10 });
+    const antes = contarRolls(c.campId);
+    await sono(1200); // refill do bucket testeRolar
+    writeFileSync(FLAG, tid);
+    const pendente = emitir(sockJ, "mesa:teste:rolar", { testId: tid });
+    for (let i = 0; i < 100 && !existsSync(FLAG + ".pausado"); i++) await sono(50);
+    // encerra a sessão durante a pausa
+    const dbE = abrirDb(BANCO);
+    dbE.prepare("update sessions set status='encerrada' where id=?").run(SID);
+    dbE.close();
+    rmSync(FLAG);
+    const r = await pendente;
+    t("ACK rejeita sessão encerrada", r?.ok === false, JSON.stringify(r));
+    t("sem roll gravado", contarRolls(c.campId) === antes);
+    t("teste segue pendente", testeRow(tid)?.status === "pendente");
+    rmSync(FLAG + ".pausado", { force: true });
+    // reabre a sessão para não afetar nada depois
+    const dbR = abrirDb(BANCO);
+    dbR.prepare("update sessions set status='ativa' where id=?").run(SID);
+    dbR.close();
+  }
+
+  sec("10. Vitalidade — penalidade server-side e bloqueio");
   {
     const tidF = novoTeste(c, { sessionId: SID, characterId: charFerido, userId: c.jogadores.jogador1.id, dados: 4, lados: 10 });
     const rF = await emitir(sockJ, "mesa:teste:rolar", { testId: tidF });

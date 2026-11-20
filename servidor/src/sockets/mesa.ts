@@ -1184,7 +1184,17 @@ function socket_handlers(
       const fingerprintRegras = impressaoDigitalRegras(regras);
 
       await pausaTesteEmit(JSON.stringify(payload));
-      const rollId = payload.requestId ?? randomUUID();
+      // Identidade da rolagem ≠ chave de idempotência do cliente:
+      // rollId é sempre UUID próprio (dois testId com o mesmo
+      // requestId NÃO podem colidir na PK). A idempotência do caminho
+      // de teste é garantida por tests.status (pendente→rolado dentro
+      // da tx); requestId é persistido como chave COMPOSTA por teste
+      // para não colidir no UNIQUE (campaign_id, request_id) nem
+      // devolver roll de outro teste.
+      const rollId = randomUUID();
+      const requestIdPersistido = payload.requestId
+        ? `teste:${payload.testId}:${payload.requestId}`
+        : null;
       const agora = new Date();
 
       // ---------- FASE 2 — transação SQLite síncrona ----------
@@ -1200,6 +1210,7 @@ function socket_handlers(
         | { tipo: "jaRolado"; status: string }
         | { tipo: "naoEncontrado" } | { tipo: "semPermissao" } | { tipo: "donoPerdido" }
         | { tipo: "arquivado" } | { tipo: "visibilidade" }
+        | { tipo: "sessaoInvalida" } | { tipo: "personagemInvalido" }
         | { tipo: "bloqueado"; nomePersonagem: string; nomeVitalidade: string }
         | { tipo: "regrasMudaram" };
       type VitalidadeRoll = { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean };
@@ -1220,11 +1231,24 @@ function socket_handlers(
           }
           if (tTx.status !== "pendente") return { tipo: "jaRolado", status: tTx.status };
 
+          // sessão relida sob a tx: precisa existir, pertencer à
+          // campanha do teste e não estar encerrada
+          const [sTx] = tx.select().from(sessions).where(eq(sessions.id, tTx.sessionId)).limit(1).all();
+          if (!sTx || sTx.campaignId !== tTx.campaignId || sTx.status === "encerrada") {
+            return { tipo: "sessaoInvalida" };
+          }
+
+          // personagem precisa existir, pertencer à MESMA campanha do
+          // teste e não estar arquivado
           const [cTx] = tx.select().from(characters).where(eq(characters.id, tTx.characterId)).limit(1).all();
-          if (cTx?.status === "arquivado") return { tipo: "arquivado" };
-          const [mdTx] = cTx
-            ? tx.select().from(memberships).where(eq(memberships.id, cTx.membershipId)).limit(1).all()
-            : [undefined];
+          if (!cTx || cTx.campaignId !== tTx.campaignId) return { tipo: "personagemInvalido" };
+          if (cTx.status === "arquivado") return { tipo: "arquivado" };
+          // membership do dono: mesma campanha do teste, status ativo —
+          // membership inativa/removida ou de outra campanha não
+          // confere titularidade
+          const [mdTx] = tx.select().from(memberships)
+            .where(and(eq(memberships.id, cTx.membershipId), eq(memberships.campaignId, tTx.campaignId), eq(memberships.status, "ativo")))
+            .limit(1).all();
           const ehDonoTx = mdTx?.userId === u.id;
           if (papelTx !== "mestre" && !ehDonoTx) return { tipo: "donoPerdido" };
           if (papelTx !== "mestre" && classeVisibilidadeTeste(tTx.visibility) === "mestre") return { tipo: "visibilidade" };
@@ -1270,20 +1294,27 @@ function socket_handlers(
             dice: [{ sides: tTx.diceSides, count: countFinal }] as never,
             results: { dados: resultados, total, soma: total, vitalidade, d10, campo: campoDoSkillRef(tTx.skillRef) } as never,
             reason: `teste:${tTx.id}`, visibility: tTx.visibility,
-            requestId: payload.requestId ?? null, createdAt: agora,
+            requestId: requestIdPersistido, createdAt: agora,
           }).run();
           tx.update(tests).set({ status: "rolado", rollId, updatedAt: agora }).where(eq(tests.id, tTx.id)).run();
 
           return {
-            tipo: "ok", rollId, teste: tTx, characterName: cTx?.name, papel: papelTx,
+            tipo: "ok", rollId, teste: tTx, characterName: cTx.name, papel: papelTx,
             donoUserId: mdTx?.userId, resultados, total, countFinal, vitalidade, d10,
           };
         });
       } catch (e) {
-        if (String(e).includes("UNIQUE") && payload.requestId) {
-          const [ex] = await db.select().from(rolls).where(and(eq(rolls.campaignId, teste.campaignId), eq(rolls.requestId, payload.requestId))).limit(1);
-          cb?.({ ok: true, rollId: ex?.id, duplicado: true });
-          return;
+        // UNIQUE só pode vir de rolls_request_idx (campaign_id,
+        // request_id) — a chave já é composta por teste, então o roll
+        // encontrado é necessariamente DESTE teste; reason é
+        // conferida como segunda trava contra qualquer divergência.
+        if (String(e).includes("UNIQUE") && requestIdPersistido) {
+          const [ex] = await db.select().from(rolls).where(and(
+            eq(rolls.campaignId, teste.campaignId),
+            eq(rolls.requestId, requestIdPersistido),
+            eq(rolls.reason, `teste:${payload.testId}`),
+          )).limit(1);
+          if (ex) { cb?.({ ok: true, rollId: ex.id, duplicado: true }); return; }
         }
         // falha dentro da transação → rollback total já garantido;
         // responde erro no ACK em vez de derrubar o handler sem resposta
@@ -1299,6 +1330,8 @@ function socket_handlers(
       if (txRes.tipo === "semPermissao") { cb?.({ ok: false, erro: "Sem permissão nesta campanha" }); return; }
       if (txRes.tipo === "donoPerdido") { cb?.({ ok: false, erro: "Só o dono do personagem ou o mestre rolam" }); return; }
       if (txRes.tipo === "arquivado") { cb?.({ ok: false, erro: "Personagem arquivado não pode rolar testes" }); return; }
+      if (txRes.tipo === "sessaoInvalida") { cb?.({ ok: false, erro: "Sessão encerrada ou inválida" }); return; }
+      if (txRes.tipo === "personagemInvalido") { cb?.({ ok: false, erro: "Personagem inválido para este teste" }); return; }
       if (txRes.tipo === "visibilidade") { cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" }); return; }
       if (txRes.tipo === "bloqueado") {
         cb?.({ ok: false, erro: `Ação bloqueada: ${txRes.nomePersonagem} está ${txRes.nomeVitalidade} e não pode agir normalmente` });
