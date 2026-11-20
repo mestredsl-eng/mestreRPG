@@ -247,10 +247,12 @@ async function errosVinculosSangueCampanha(
     (bq && Object.values(bq).some((v) => v !== undefined))
   );
   if (!sang?.habilitado && !temVinculo) return [];
-  // Personagens arquivados são somente-leitura e fora da ficha ativa —
-  // não restringem a configuração. Demais status (rascunho, aprovação,
-  // bloqueada) e NPCs continuam contando: são fail-closed enquanto a
-  // decisão de NPCs (D11) está pendente.
+  // Elegíveis: personagens JOGADORES não arquivados. Arquivados são
+  // somente-leitura; NPCs (is_npc) ficam de fora porque a decisão de
+  // Sangue em NPC é pendente (D11) — nenhum dos dois pode bloquear a
+  // configuração de Sangue dos jogadores. Demais status (rascunho,
+  // aprovação, bloqueada etc.) continuam validados: ficha existente
+  // em uso potencial.
   const vinculos = await db
     .select({ templateVersionId: characters.templateVersionId })
     .from(characters)
@@ -258,6 +260,7 @@ async function errosVinculosSangueCampanha(
       eq(characters.campaignId, campaignId),
       isNotNull(characters.templateVersionId),
       ne(characters.status, "arquivado"),
+      eq(characters.isNpc, false),
     ));
   const ids = [...new Set(vinculos.map((c) => c.templateVersionId).filter((v): v is string => !!v))];
   if (!ids.length) {
@@ -267,10 +270,11 @@ async function errosVinculosSangueCampanha(
   const erros: string[] = [];
   for (const vid of ids) {
     // Só conta como estrutura ATIVA a versão PUBLICADA de template da
-    // própria campanha ou modelo global (campaign_id NULL). Versão não
-    // publicada ou de template de outra campanha não é estrutura que a
-    // campanha efetivamente usa — é ignorada em vez de rejeitar a
-    // config (falso negativo) ou validá-la sem significado.
+    // PRÓPRIA campanha (sheet_templates.campaign_id = campaignId).
+    // Template global (campaign_id NULL) NÃO é template da campanha
+    // para este vínculo — excluído por decisão explícita. Versão não
+    // publicada ou de template de outra campanha/global tampouco
+    // participa: não restringe a config nem é validada sem significado.
     const [v] = await db
       .select({
         structure: sheetVersions.structure,
@@ -281,7 +285,7 @@ async function errosVinculosSangueCampanha(
       .innerJoin(sheetTemplates, eq(sheetVersions.templateId, sheetTemplates.id))
       .where(eq(sheetVersions.id, vid))
       .limit(1);
-    if (!v?.publishedAt || (v.templateCampaignId !== null && v.templateCampaignId !== campaignId)) {
+    if (!v?.publishedAt || v.templateCampaignId !== campaignId) {
       continue;
     }
     const parse = estruturaFichaSchema.safeParse(v.structure);

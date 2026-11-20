@@ -240,11 +240,12 @@ export const configRegrasSchema = z.object({
           // campanha; o servidor nunca assume nomes).
           mapa: z.record(z.string().min(1).max(120), z.number().nonnegative()).optional(),
           // Bônus opcional por Qualidade (ponto de extensão da D3):
-          // coeficiente positivo da campanha — nunca inventado.
+          // coeficiente da campanha — nunca inventado. Alinhado à C2:
+          // finito >= 0 (zero é no-op válido); NaN/Infinity rejeitados.
           bonusQualidade: z
             .object({
               campoId: z.string().max(80).optional(),
-              coeficiente: z.number().positive().optional(),
+              coeficiente: z.number().nonnegative().optional(),
               modo: z.enum(["valor", "somaNiveis", "mapa"]).optional(),
               mapa: z.record(z.string().min(1).max(120), z.number().nonnegative()).optional(),
             })

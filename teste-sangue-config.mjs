@@ -229,7 +229,8 @@ try {
       pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
     });
     // adiciona personagem com versão customizada à campanha
-    const addPersonagem = (campId, { status = "aprovada", publicado = true, templateCampId = undefined } = {}) => {
+    // templateCampId: undefined→campanha; null→modelo global; outro id→cross-campaign
+    const addPersonagem = (campId, { status = "aprovada", publicado = true, templateCampId = undefined, isNpc = 0 } = {}) => {
       const db = abrirDb(BANCO); const agora = Date.now();
       try {
         const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
@@ -242,7 +243,7 @@ try {
         const mid = db.prepare("select id from memberships where campaign_id=? limit 1").get(campId).id;
         const pid = crypto.randomUUID();
         db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
-          .run(pid, campId, mid, verId, "Herói Escopo", "{}", "{}", status, 0, agora, agora);
+          .run(pid, campId, mid, verId, "Herói Escopo", "{}", "{}", status, isNpc, agora, agora);
         return verId;
       } finally { db.close(); }
     };
@@ -260,24 +261,50 @@ try {
     const rB = await putCfg(cB.campId, cB.cookieMestre, cfgValida);
     t("versão de outra campanha ignorada → 200", rB.status === 200, `status=${rB.status} ${JSON.stringify(rB.json).slice(0, 160)}`);
 
+    // B2) template GLOBAL (campaign_id NULL) não é template da campanha
+    const cG = await novaCenarioExtra(c, { rotulo: "global" });
+    addPersonagem(cG.campId, { templateCampId: null });
+    const rG = await putCfg(cG.campId, cG.cookieMestre, cfgValida);
+    t("template global excluído → 200", rG.status === 200, `status=${rG.status} ${JSON.stringify(rG.json).slice(0, 160)}`);
+
     // C) personagem arquivado não restringe
     const cC = await novaCenarioExtra(c, { rotulo: "arquivado" });
     addPersonagem(cC.campId, { status: "arquivado" });
     const rC = await putCfg(cC.campId, cC.cookieMestre, cfgValida);
     t("personagem arquivado ignorado → 200", rC.status === 200, `status=${rC.status} ${JSON.stringify(rC.json).slice(0, 160)}`);
 
+    // C2) NPC incompatível não restringe (D11 pendente); jogador elegível segue validado
+    const cN = await novaCenarioExtra(c, { rotulo: "npc" });
+    addPersonagem(cN.campId, { isNpc: 1 });
+    const rN = await putCfg(cN.campId, cN.cookieMestre, cfgValida);
+    t("NPC incompatível ignorado → 200", rN.status === 200, `status=${rN.status} ${JSON.stringify(rN.json).slice(0, 160)}`);
+    // e o jogador elegível da mesma campanha continua sendo validado:
+    // config com campo inexistente na estrutura custom → 400
+    const rN2 = await putCfg(cN.campId, cN.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "inexistente", capacidade: { modo: "valor" } },
+    });
+    t("jogador elegível continua validado → 400", rN2.status === 400, `status=${rN2.status}`);
+
     // D) bônus de qualidade parcial → 400 (par campoId+coeficiente exigido)
     const parciais = [
       ["só campoId", { campoId: "qual" }],
       ["só coeficiente", { coeficiente: 1 }],
       ["só modo", { modo: "mapa" }],
+      ["só mapa", { mapa: { Alfa: 2 } }],
+      ["coeficiente NaN", { campoId: "qual", coeficiente: "NaN" }],
+      ["coeficiente Infinity", { campoId: "qual", coeficiente: 1e999 }],
+      ["coeficiente negativo", { campoId: "qual", coeficiente: -1 }],
     ];
+    const cfgAntes = await getCfg(cA.campId, cA.cookieMestre);
     for (const [nome, bq] of parciais) {
       const r = await putCfg(cA.campId, cA.cookieMestre, {
         sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: bq } },
       });
       t(`400: bonusQualidade ${nome}`, r.status === 400, `status=${r.status}`);
     }
+    // nenhum 400 persistiu alteração
+    const cfgDepois = await getCfg(cA.campId, cA.cookieMestre);
+    t("400s de bonusQualidade não alteraram a config", JSON.stringify(cfgDepois?.sangue) === JSON.stringify(cfgAntes?.sangue));
     // objeto vazio não tem chave definida → bloco inativo → aceito
     const rVazio = await putCfg(cA.campId, cA.cookieMestre, {
       sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: {} } },
@@ -288,6 +315,11 @@ try {
       sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: { campoId: "qual", coeficiente: 1, modo: "somaNiveis" } } },
     });
     t("bonusQualidade completo válido → 200", rFull.status === 200, `status=${rFull.status} ${JSON.stringify(rFull.json).slice(0, 160)}`);
+    // coeficiente 0 é no-op válido (C2 aceita >= 0)
+    const rZero = await putCfg(cA.campId, cA.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor", bonusQualidade: { campoId: "qual", coeficiente: 0, modo: "somaNiveis" } } },
+    });
+    t("bonusQualidade coeficiente 0 → 200 (alinhado à C2)", rZero.status === 200, `status=${rZero.status} ${JSON.stringify(rZero.json).slice(0, 160)}`);
   }
 } catch (e) {
   fail++;
