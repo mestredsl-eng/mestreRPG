@@ -3,8 +3,8 @@ import { resolve, sep } from "node:path";
 import { eq, inArray, getTableColumns } from "drizzle-orm";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  assinarLedgerXp, assinarPacoteV2, obterChaveAssinatura, impressaoDigitalRegras,
-  xpSemAssinaturaRaiz, type ContextoAssinatura,
+  assinarLedgerXp, assinarPacoteV2, obterChaveAssinatura, impressaoDigitalFicha,
+  impressaoDigitalRegras, xpSemAssinaturaRaiz, type ContextoAssinatura,
 } from "./assinatura-xp.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
@@ -129,6 +129,16 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     // "substituir" pacote.campanhaId === campaignId (validado na rota).
     campanhaIdOrigem: campaignId,
   };
+  // C3: insumos do fichaFp — config.sangue do ruleset ativo (bruto,
+  // antes de qualquer parse) e a estrutura publicada EXATA de cada
+  // templateVersion. Ambos vêm das mesmas linhas exportadas, então a
+  // importação reproduz o fingerprint sobre o pacote recebido.
+  const rsAtivoExport = (estado.ruleSets ?? []).find((r) => r.isActive);
+  const configSangueExport =
+    (rsAtivoExport?.config as Record<string, unknown> | undefined)?.sangue ?? null;
+  const estruturaPorVersao = new Map(
+    (estado.sheetVersions ?? []).map((v) => [v.id, v.structure]),
+  );
   for (const row of estado.characters ?? []) {
     const data = row.data as Record<string, unknown> | null;
     if (!data || typeof data !== "object") continue;
@@ -140,10 +150,17 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     // `__xp` é removido — nunca coexistem credenciais de transporte.
     if (sangue !== undefined && sangue !== null) {
       const xpSem = xpSemAssinaturaRaiz(xp);
+      const tvId = (row as { templateVersionId?: unknown }).templateVersionId ?? null;
+      const fichaFp = impressaoDigitalFicha({
+        templateVersionId: tvId,
+        estrutura: typeof tvId === "string" ? estruturaPorVersao.get(tvId) ?? null : null,
+        configSangue: configSangueExport,
+      });
       data.__sangue_sig = assinarPacoteV2(ctxAss, {
         personagemId: String(row.id),
         xp: xpSem,
         sangue,
+        fichaFp,
       });
       if (xp && typeof xp === "object" && !Array.isArray(xp)) {
         delete (xp as Record<string, unknown>).sig;

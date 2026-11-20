@@ -31,8 +31,8 @@ import { CHAVE_PONTOS } from "./pontos.js";
 import { CHAVE_NPC_VISIVEL } from "./npc-visibility.js";
 import { retratoGaleriaPorId } from "./retratos.js";
 import {
-  impressaoDigitalRegras, verificarAssinaturaV2, verificarLedgerXp, xpSemAssinaturaRaiz,
-  type ContextoAssinatura,
+  impressaoDigitalFicha, impressaoDigitalRegras, verificarAssinaturaV2, verificarLedgerXp,
+  xpSemAssinaturaRaiz, type ContextoAssinatura,
 } from "./assinatura-xp.js";
 import { CHAVE_SANGUE } from "./sangue.js";
 
@@ -64,7 +64,11 @@ export interface SaneamentoPersonagem {
   // Issue #186/C3: ledger Sangue
   sangueRemovido: boolean;
   sangueAutenticado: boolean;
-  assinaturaConjuntaRejeitada: boolean;
+  /** C3: Sangue existia mas sua prova falhou (v2 inválida/prefixo
+   *  desconhecido) — distinto de "removido por falta de assinatura". */
+  sangueInvalido: boolean;
+  /** motivo legível do descarte (sem segredos) */
+  motivoSangue: string | null;
 }
 
 export interface TotaisSaneamento {
@@ -85,7 +89,7 @@ export interface TotaisSaneamento {
   npcVisivelRemovidos: number;
   sanguesRemovidos: number;
   sanguesAutenticados: number;
-  assinaturasConjuntasRejeitadas: number;
+  sanguesInvalidos: number;
 }
 
 export interface RelatorioSaneamento {
@@ -103,7 +107,7 @@ export function relatorioSaneamentoVazio(origem: OrigemEstado): RelatorioSaneame
       pontosHistoricoDescartados: 0, hpHistoricoDescartados: 0, hpCorrigidos: 0, hpRemovidos: 0,
       vitalidadeHistoricoDescartados: 0, vitalidadeCorrigidas: 0, vitalidadeRemovidas: 0,
       retratosRemovidos: 0, npcVisivelRemovidos: 0,
-      sanguesRemovidos: 0, sanguesAutenticados: 0, assinaturasConjuntasRejeitadas: 0,
+      sanguesRemovidos: 0, sanguesAutenticados: 0, sanguesInvalidos: 0,
     },
     personagens: [],
   };
@@ -120,6 +124,12 @@ export interface ContextoSaneamento {
   estruturas: Map<string, EstruturaFicha | null>;
   /** ids de files do pacote (retrato precisa apontar para um deles) */
   arquivosIds: Set<string>;
+  /** C3: `config.sangue` BRUTO do ruleset ativo do pacote — insumo do
+   *  fichaFp (mesma serialização usada na exportação). */
+  configSanguePacote: unknown;
+  /** C3: templateVersionId → `structure` BRUTA do pacote — a estrutura
+   *  publicada exata que entra no fichaFp (não a versão parseada). */
+  estruturasBrutas: Map<string, unknown>;
   /** userId → nome de exibição (autoria forjada é limpa) */
   autores: Map<string, string | null>;
   /** B1: contexto de verificação HMAC do ledger — null quando a
@@ -666,8 +676,19 @@ export function sanearPersonagemImportado(
   //      cobre Sangue) — descartado e registrado.
   const temSangue = data[CHAVE_SANGUE] !== undefined && data[CHAVE_SANGUE] !== null;
   const marcador = data[CHAVE_SANGUE_SIG];
+  // fichaFp reproduzido do pacote: templateVersionId da linha +
+  // estrutura publicada BRUTA daquela versão + config.sangue do ruleset
+  // ativo — mesma cadeia usada na exportação.
+  const fichaFp = impressaoDigitalFicha({
+    templateVersionId: templateVersionId ?? null,
+    estrutura: typeof templateVersionId === "string"
+      ? ctx.estruturasBrutas.get(templateVersionId) ?? null
+      : null,
+    configSangue: ctx.configSanguePacote ?? null,
+  });
   let v2Ok = false;
   let v2Invalido = false;
+  let motivoInvalido: string | null = null;
   if (typeof marcador === "string" && marcador.length > 0) {
     if (temSangue) {
       if (marcador.startsWith("v2.")) {
@@ -675,21 +696,24 @@ export function sanearPersonagemImportado(
         const { sig: _sx, ...xpSem } = xpBruto ?? {};
         v2Ok = ctx.assinatura !== null && verificarAssinaturaV2(
           ctx.assinatura, personagemId, marcador,
-          xpBruto ? xpSem : null, data[CHAVE_SANGUE],
+          xpBruto ? xpSem : null, data[CHAVE_SANGUE], fichaFp,
         );
-        if (!v2Ok) v2Invalido = true;
+        if (!v2Ok) { v2Invalido = true; motivoInvalido = "assinatura_invalida"; }
       } else {
         v2Invalido = true;
+        motivoInvalido = "prefixo_desconhecido";
       }
     } else {
       // órfão: credencial sem ledger — descartada, XP segue o fluxo v1
       rep.sangueRemovido = true;
+      rep.motivoSangue = "marcador_orfao";
     }
   }
 
   if (v2Invalido) {
-    rep.assinaturaConjuntaRejeitada = true;
+    rep.sangueInvalido = true;
     rep.sangueRemovido = true;
+    rep.motivoSangue = motivoInvalido;
     delete data[CHAVE_SANGUE];
     // rejeição conjunta: XP perde a confiança MESMO com __xp.sig v1
     // residual — forcarSemConfianca bloqueia qualquer fallback.
@@ -707,6 +731,7 @@ export function sanearPersonagemImportado(
       // v1 (ou ausência de assinatura) não cobre Sangue: descarte + registro
       delete data[CHAVE_SANGUE];
       rep.sangueRemovido = true;
+      rep.motivoSangue = "sem_assinatura_v2";
     }
     sanearXp(data, ctx, rep, estrutura, personagemId);
   }
@@ -757,8 +782,12 @@ export function montarContextoSaneamento(
     regras = { ruleSetId: rsAtivo?.id ?? null, config, elementos: new Map(), porKind: new Map() };
   }
   const estruturas = new Map<string, EstruturaFicha | null>();
+  const estruturasBrutas = new Map<string, unknown>();
   for (const v of dados.sheetVersions ?? []) {
     if (typeof v.id !== "string") continue;
+    // C3: guarda a estrutura BRUTA para o fichaFp — a versão parseada
+    // pode divergir da serialização original do pacote.
+    estruturasBrutas.set(v.id, v.structure);
     try {
       const parsed = typeof v.structure === "string" ? JSON.parse(v.structure) : v.structure;
       estruturas.set(v.id, estruturaFichaSchema.parse(parsed ?? {}));
@@ -783,6 +812,9 @@ export function montarContextoSaneamento(
     config,
     regras,
     estruturas,
+    configSanguePacote:
+      (rsAtivo?.config as Record<string, unknown> | undefined)?.sangue ?? null,
+    estruturasBrutas,
     arquivosIds: new Set((dados.files ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string")),
     autores,
     assinatura,

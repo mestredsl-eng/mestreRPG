@@ -137,9 +137,27 @@ export function xpSemAssinaturaRaiz(xp: unknown): unknown {
   return resto;
 }
 
+/** Impressão digital da ficha para o payload v2 (Issue #186/C3):
+ *  templateVersionId + estrutura publicada EXATA da versão +
+ *  `config.sangue` do ruleset ativo. Adultrar qualquer um invalida a
+ *  assinatura conjunta. */
+export function impressaoDigitalFicha(p: {
+  templateVersionId: unknown;
+  estrutura: unknown;
+  configSangue: unknown;
+}): string {
+  return createHash("sha256")
+    .update(jsonCanonico({
+      templateVersionId: p.templateVersionId ?? null,
+      estrutura: p.estrutura ?? null,
+      configSangue: p.configSangue ?? null,
+    }))
+    .digest("hex");
+}
+
 function payloadAssinaturaV2(
   ctx: ContextoAssinatura,
-  p: { personagemId: string; xp: unknown; sangue: unknown },
+  p: { personagemId: string; xp: unknown; sangue: unknown; fichaFp: string },
 ): string {
   return jsonCanonico({
     v: 2,
@@ -147,7 +165,8 @@ function payloadAssinaturaV2(
     campanhaIdOrigem: ctx.campanhaIdOrigem ?? null,
     xp: p.xp ?? null,
     sangue: p.sangue ?? null,
-    regras: ctx.regrasFp,
+    regrasFp: ctx.regrasFp,
+    fichaFp: p.fichaFp,
   });
 }
 
@@ -156,7 +175,7 @@ function payloadAssinaturaV2(
  *  raiz); `data.__sangue_sig` é propriedade irmã e nunca entra no payload. */
 export function assinarPacoteV2(
   ctx: ContextoAssinatura,
-  p: { personagemId: string; xp: unknown; sangue: unknown },
+  p: { personagemId: string; xp: unknown; sangue: unknown; fichaFp: string },
 ): string {
   return `v2.${createHmac("sha256", ctx.chave).update(payloadAssinaturaV2(ctx, p)).digest("hex")}`;
 }
@@ -170,10 +189,11 @@ export function verificarAssinaturaV2(
   sig: unknown,
   xpSemAssinatura: unknown,
   sangue: unknown,
+  fichaFp: string,
 ): boolean {
   if (typeof sig !== "string" || !sig.startsWith("v2.")) return false;
   if (!ctx.campanhaIdOrigem) return false;
-  const esperado = assinarPacoteV2(ctx, { personagemId, xp: xpSemAssinatura, sangue });
+  const esperado = assinarPacoteV2(ctx, { personagemId, xp: xpSemAssinatura, sangue, fichaFp });
   const a = Buffer.from(sig);
   const b = Buffer.from(esperado);
   return a.length === b.length && timingSafeEqual(a, b);

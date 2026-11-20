@@ -119,7 +119,7 @@ const repVazio = (): SaneamentoPersonagem => ({
   pontosHistoricoDescartados: 0, hpHistoricoDescartados: 0, hpCorrigido: false, hpRemovido: false,
   vitalidadeHistoricoDescartados: 0, vitalidadeCorrigida: false, vitalidadeRemovida: false,
   retratoRemovido: false, npcVisivelRemovido: false,
-  sangueRemovido: false, sangueAutenticado: false, assinaturaConjuntaRejeitada: false,
+  sangueRemovido: false, sangueAutenticado: false, sangueInvalido: false, motivoSangue: null,
 });
 
 function acumulou(r: SaneamentoPersonagem): boolean {
@@ -128,7 +128,7 @@ function acumulou(r: SaneamentoPersonagem): boolean {
     r.hpHistoricoDescartados > 0 || r.hpCorrigido || r.hpRemovido ||
     r.vitalidadeHistoricoDescartados > 0 || r.vitalidadeCorrigida || r.vitalidadeRemovida ||
     r.retratoRemovido || r.npcVisivelRemovido ||
-    r.sangueRemovido || r.sangueAutenticado || r.assinaturaConjuntaRejeitada;
+    r.sangueRemovido || r.sangueAutenticado || r.sangueInvalido || r.motivoSangue !== null;
 }
 
 /**
@@ -187,7 +187,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
       if (rep.npcVisivelRemovido) t.npcVisivelRemovidos++;
       if (rep.sangueRemovido) t.sanguesRemovidos++;
       if (rep.sangueAutenticado) t.sanguesAutenticados++;
-      if (rep.assinaturaConjuntaRejeitada) t.assinaturasConjuntasRejeitadas++;
+      if (rep.sangueInvalido) t.sanguesInvalidos++;
     }
   }
   inserir(tx, memberships, dados.memberships);
