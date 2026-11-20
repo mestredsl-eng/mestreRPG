@@ -851,6 +851,9 @@ export interface ConfigRegras {
     jogadorCompartilha: boolean;
     espectadorLeCompartilhadas: boolean;
   };
+  vtt?: {
+    vidaCompartilhada: boolean;
+  };
 }
 
 export interface RegrasCampanha {
@@ -1130,10 +1133,15 @@ export interface Sessao {
   createdAt: string;
 }
 
+export interface VidaTokenVtt {
+  hp: { atual: number; maximo: number } | null;
+  vitalidade: { nivel: number; nome: string } | null;
+}
 export interface TokenVtt {
   id: string; nome: string; cor: string; x: number; y: number;
   personagemId?: string | null; userId?: string | null; ativo: boolean;
   oculto?: boolean;
+  vida?: VidaTokenVtt | null;
 }
 export interface PontoNevoa { x: number; y: number }
 export interface TracoNevoa { id: string; raioX: number; raioY: number; pontos: PontoNevoa[] }

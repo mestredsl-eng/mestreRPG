@@ -1025,6 +1025,17 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
       </div>
       <p className="dica">Usado pelo lançador D10 da mesa: resultados iguais ou acima desse valor contam como sucesso.</p>
 
+      <h4>Mesa Virtual (VTT)</h4>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={form.vtt?.vidaCompartilhada === true}
+          onChange={(e) => setForm((f) => ({ ...f, vtt: { vidaCompartilhada: e.target.checked } }))}
+        />
+        Compartilhar vida (HP e vitalidade) nos tokens para jogadores e espectadores
+      </label>
+      <p className="dica">Desligado (padrão): cada jogador vê a vida apenas do próprio personagem; o mestre vê todos os tokens. Ligado: a vida aparece em todo token revelado — para NPCs e fichas de terceiros o cálculo usa somente os campos visíveis ao leitor, sem vazar atributos privados. A vida nunca é gravada no estado do VTT: é derivada a cada envio.</p>
+
       <h4>Transferência entre reservas</h4>
       <label className="checkbox">
         <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />

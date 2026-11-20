@@ -1777,6 +1777,68 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     return () => { socket.off("mesa:vtt", aoVtt); };
   }, [sessionId]);
 
+  // HP/vitalidade mudam sem emitir mesa:vtt (rotas de personagem emitem
+  // personagens:atualizados; regras emitem regras:atualizadas). Em vez
+  // de confiar em payload, o cliente pede releitura autoritativa —
+  // o servidor devolve o VTT já filtrado por papel com a vida correta.
+  // RATE_LIMITED é transitório: agenda UMA nova tentativa após
+  // retryAfterMs (limitada), coalescida com os gatilhos de evento —
+  // nunca loop nem tempestade de retries. Erros de autorização/sessão
+  // encerrada não são repetidos.
+  const sessaoVttRef = useRef<string | null>(null);
+  useEffect(() => { sessaoVttRef.current = sessionId ?? null; }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || encerrada) return;
+    const sessaoDestaVez = sessionId;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let tentativas = 0;
+    const MAX_TENTATIVAS = 3;
+    const aplicarSeAtual = (r: { ok?: boolean; papel?: string; vtt?: VttState; codigo?: string; retryAfterMs?: number } | undefined) => {
+      // callback atrasado não pode aplicar o estado de uma sessão já trocada
+      if (sessaoVttRef.current !== sessaoDestaVez) return;
+      if (r?.ok && r.vtt) {
+        tentativas = 0;
+        sincronizarAutoritativo(r.vtt);
+        setVtt(r.vtt);
+        return;
+      }
+      const espera = retryAfterDoAck(r);
+      if (espera !== null && tentativas < MAX_TENTATIVAS) {
+        tentativas += 1;
+        // no máximo UMA tentativa pendente: uma atualização nova
+        // substitui a espera anterior (mantém só a mais recente)
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          solicitar();
+        }, Math.max(espera, 50));
+      }
+    };
+    const solicitar = () => {
+      const sock = getSocket();
+      // nunca reenviar com o socket desconectado — o próximo evento
+      // de atualização agenda uma nova tentativa quando voltar
+      if (!sock.connected) return;
+      // uma nova solicitação substitui qualquer retry pendente
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      sock.volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
+    };
+    const sincronizar = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(solicitar, 250);
+    };
+    const socket = getSocket();
+    socket.on("personagens:atualizados", sincronizar);
+    socket.on("regras:atualizadas", sincronizar);
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
+      socket.off("personagens:atualizados", sincronizar);
+      socket.off("regras:atualizadas", sincronizar);
+    };
+  }, [sessionId, encerrada]);
+
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
   const inicialConteudoRef = useRef<string | null>(null);
@@ -2557,7 +2619,26 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
                 onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
-              >{tk.nome.slice(0, 2).toUpperCase()}</button>
+              >
+                {tk.nome.slice(0, 2).toUpperCase()}
+                {tk.vida?.hp && (
+                  <span
+                    className="vtt-token-hp"
+                    title={`HP ${tk.vida.hp.atual}/${tk.vida.hp.maximo}`}
+                  >
+                    <span
+                      className="vtt-token-hp-fill"
+                      style={{ width: `${Math.max(0, Math.min(100, (tk.vida.hp.atual / Math.max(1, tk.vida.hp.maximo)) * 100))}%` }}
+                    />
+                  </span>
+                )}
+                {tk.vida?.vitalidade && tk.vida.vitalidade.nivel > 0 && (
+                  <span
+                    className="vtt-token-vit"
+                    title={`Vitalidade: ${tk.vida.vitalidade.nome} (nível ${tk.vida.vitalidade.nivel})`}
+                  >{tk.vida.vitalidade.nivel}</span>
+                )}
+              </button>
             );
           })}
           {medida && dimsMapa && (() => {

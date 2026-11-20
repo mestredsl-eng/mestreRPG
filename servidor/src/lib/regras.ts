@@ -213,6 +213,14 @@ export const configRegrasSchema = z.object({
         .default([]),
     })
     .default({ habilitada: false, limiares: [] }),
+  // Mesa virtual: indicadores de vida nos tokens.
+  // vidaCompartilhada=false (padrão): jogador/espectador veem vida só do
+  // próprio personagem; mestre vê todos os tokens que recebe.
+  // true: vida visível em todo token revelado (NPC calculado sobre a
+  // visão filtrada dos campos — nunca vaza atributo privado).
+  vtt: z
+    .object({ vidaCompartilhada: z.boolean().default(false) })
+    .default({ vidaCompartilhada: false }),
   // Lançador de dados (D10): meta mínima que conta como sucesso.
   dados: z
     .object({
