@@ -1,6 +1,6 @@
 # Homologação independente — Issue #155, Etapas 1–3 (PR #193)
 
-- **Produção testada (atual):** `fc219f1b5b0dc687a4050fd8ff5357ae1d939c8d` (HEAD de `fix/issue-155-pr193-fail-closed`), que contém `d822f0e1b9aa9030534716bb4a665fc8042c3293` — merge `11d9247` nesta branch.
+- **Produção testada (atual):** `2d814cabc60123c77df6a675ffad6382622574d8` (HEAD de `fix/issue-155-pr193-fail-closed`), que contém `fc219f1b5b0dc687a4050fd8ff5357ae1d939c8d` e `d822f0e1b9aa9030534716bb4a665fc8042c3293` — merges `11d9247` e `5884113` nesta branch. `2d814ca` altera apenas fixtures de teste do próprio Pai (`teste-atualizacao-instalacao.mjs`, `teste-trava-instancia.mjs`); nenhum código de produção mudou desde `fc219f1`.
 - **Base histórica:** `30c348f1f19c2996fbb237d467ec5113c9cc81ab` — os 2 FAILs de recibo encontrados nela foram corrigidos pelo Pai em d822f0e e revalidados.
 - **Ambiente:** Windows (MINGW64/NT 10.0), Node v26.13.0. Sem runner Linux nem Node 20/22 → Fase 7 NOT EXECUTED.
 - **Execução:** LOCAL. Fixtures 100% descartáveis em `%TEMP%`; banco/instalação reais nunca tocados. State dir isolado por fixture (`MESTRE_STATE_DIR=<raiz>/state`).
@@ -35,7 +35,7 @@
 
 `teste-estado-externo.mjs` e `teste-restauracao-journal.mjs` também receberam ajustes do próprio Pai — merges preservaram ambas as frentes.
 
-## Resultados atuais (contra fc219f1, exit codes reais)
+## Resultados atuais (contra 2d814ca mergeado, exit codes reais — reexecução pós-merge)
 
 | Suíte | Comando | Exit | Resultado |
 |---|---|---|---|
@@ -49,7 +49,7 @@
 
 ### Histórico (não é homologação atual)
 
-Contra `30c348f` (commit `3382f41`): estado 48/0, journal 35/2 (FAIL-1 recibo+DB ausente, FAIL-2 recibo+DB vazio — ambos corrigidos pelo Pai), boot 121/0, backup-contrato 40/40. Contra `d822f0e` (commit `0f75826`): estado 58/0, journal 51/0, boot 136/0, backup-contrato 42/42. Esses números não devem ser lidos como resultado de fc219f1.
+Contra `30c348f` (commit `3382f41`): estado 48/0, journal 35/2 (FAIL-1 recibo+DB ausente, FAIL-2 recibo+DB vazio — ambos corrigidos pelo Pai), boot 121/0, backup-contrato 40/40. Contra `d822f0e` (commit `0f75826`): estado 58/0, journal 51/0, boot 136/0, backup-contrato 42/42. Contra `fc219f1` (commit `dbe7965`): estado 58/0, journal 51/0, boot 236/0, backup-contrato 43/43, boot-lock 88/88. Nenhum desses números deve ser lido como resultado da árvore final `5884113`+.
 
 ## Classe B — interrupção real (processo filho + SIGKILL)
 
@@ -62,7 +62,7 @@ Contra `30c348f` (commit `3382f41`): estado 48/0, journal 35/2 (FAIL-1 recibo+DB
 
 ## FAIL / BLOCKED / NOT EXECUTED
 
-- **FAIL:** nenhum na execução verde final.
+- **FAIL:** nenhum na execução verde final. Observação: uma execução intermediária de `backup-contrato` registrou 1 falha transitória não identificada (provável timing Windows); reexecução imediata → 43/43, exit 0.
 - **Instabilidade ambiental (não é defeito de contrato):** `gravarJsonAtomico` usa `renameSync` sem retry; em Windows, rename transitório `EPERM` (provável scanner de arquivos) já derrubou o filho restaurador em ~1 de cada 12 cenários Classe B em 2 de 4 execuções. Experimento isolado: 200.000 renames com 180k leituras concorrentes → 0 falhas, logo leituras do teste não são a causa. **Recomendação ao Pai:** retry com backoff em EPERM/EBUSY/EACCES dentro de `gravarJsonAtomico`. Todas as asserções de recuperação passaram mesmo nas execuções com crash — o journal `rollback-*` retomou corretamente.
 - **BLOCKED:** produtor confiável de `bootstrap-autorizacao.json` (instalador/.bat/updater) — integração pendente (Etapa 5); testes usam o writer do formato, provando o contrato mas **sem** declarar bootstrap real homologado ponta a ponta.
 - **NOT EXECUTED:** ramos Linux (XDG_STATE_HOME, `~/.local/state`) — sem runner Linux. Node 20/22 — indisponíveis. `teste-servidor.mjs` — sem cópia consistente descartável de banco.
