@@ -266,6 +266,7 @@ jobs:
             homologacao-busca-filtros.mjs \
             teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
+            homologacao-vida-vtt.mjs \
             homologacao-nevoa.mjs \
             homologacao-guildas.mjs \
             homologacao-sessoes.mjs \
@@ -275,6 +276,7 @@ jobs:
             homologacao-responsavel-guilda.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
+            teste-vtt-vida.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \

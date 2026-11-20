@@ -851,6 +851,9 @@ export interface ConfigRegras {
     jogadorCompartilha: boolean;
     espectadorLeCompartilhadas: boolean;
   };
+  vtt?: {
+    vidaCompartilhada: boolean;
+  };
 }
 
 export interface RegrasCampanha {
