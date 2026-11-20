@@ -1,14 +1,13 @@
 # Matriz de homologação E2E — Issue #155 (auto-update seguro no boot)
 
-**Status:** esqueleto operacional — documento de planejamento de homologação.
-**Escopo:** somente documentação. Nenhum procedimento aqui foi executado; nenhum resultado é declarado.
-**Data de referência do código:** SHA `7ce5b99bb20a0f951ffe5b70a96fe46ee5a157a0` (`feat/issue-155-startup-auto-update`, HEAD da PR #176 em 2026-11-20).
+**Status:** matriz alinhada ao contrato congelado W0–W16 + registro de execução.
+**Escopo:** documentação de homologação e implementação dos testes executáveis.
+**Base de código de referência (N-1):** `7ce5b99bb20a0f951ffe5b70a96fe46ee5a157a0` (`feat/issue-155-startup-auto-update`, PR #176).
 
-> **Nota de proveniência:** este documento foi produzido a partir das descrições do contrato consolidado
-> recebidas na coordenação (W0–W12) e do adendo W13–W16. O texto integral do contrato W0–W12 **não estava
-> acessível** nas PRs/issues/branches no momento da redação; os cenários W1–W7 estão estruturados como
-> procedimentos provisórios a confirmar contra o contrato antes da execução. Itens cuja pré-condição de
-> implementação não existe no código estão marcados **BLOCKED — dependência**, nunca PASS.
+> **Contrato:** o Mestre congelou a revisão integral do contrato #155. As definições
+> W0–W16 abaixo seguem o texto congelado recebido na coordenação. Itens cuja
+> implementação não existe no código estão marcados **BLOCKED — dependência**,
+> nunca PASS. Nenhum teste planejado é apresentado como aprovado.
 
 ---
 
@@ -17,264 +16,264 @@
 | Artefato | Referência |
 |---|---|
 | Updater / `.bat` legados (N-1) | `7ce5b99bb20a0f951ffe5b70a96fe46ee5a157a0` — PR #176 |
-| Boot Lock (N candidato) | PR #189 head `f22effdd8904711a9be728f631b645239ebef727`, base `28e742d03752b68a88f3d7e4154cd168e978faad` — **Draft, não integrado** |
-| Hardening árvore suja / buffer | PR #188, base `fix/issue-155-status-hardening` — **Draft** |
-| CI da suíte | `.github/workflows/ci.yml` @ `7ce5b99` + PR #190 (Draft, somente CI) |
-| Restauração pendente | `servidor/src/db/aplicar-restauracao.ts` — flag `restauracao_pendente` na tabela `server_settings` **do próprio banco** |
-| Trava de instância | `servidor/src/db/trava-instancia.ts` — SQLite `BEGIN EXCLUSIVE`, pertence ao processo servidor, **não** substitui o Boot Lock do `.bat` |
+| `.bat` extraído para W0/W9/W10 | `git show 7ce5b99:iniciar-mestre-rpg.bat` — byte-a-byte, nunca cópia de trabalho nem simulação textual |
+| Boot Lock (N candidato) | PR #189 head `f22effdd8904711a9be728f631b645239ebef727` — **Draft, não integrado** |
+| Hardening árvore suja / buffer | PR #188 (`fix/issue-155-status-hardening`) — **Draft** |
+| Restauração pendente | `servidor/src/db/aplicar-restauracao.ts` — flag `restauracao_pendente` em `server_settings` **do próprio banco** |
+| Trava de instância | `servidor/src/db/trava-instancia.ts` — SQLite `BEGIN EXCLUSIVE`, processo servidor, **não** substitui Boot Lock |
 | Config de porta | `servidor/src/config.ts` — `configuracao/servidor.json:porta` prevalece sobre `MESTRE_PORTA` |
+| Backup | `servidor/src/lib/backup.ts` — `manifesto.json` com sha256/tamanho dos arquivos de campanha; **sem** sha256 de banco/config |
 
 ## 2. Regras transversais de evidência
 
-Nenhum W pode ser declarado PASS sem registrar, na ata de execução (§7):
+Nenhum W é PASS sem registrar na ata (§8): SHA efetivamente testado (head ou merge ref — declarar qual), SO+versão, `node --version`, comando exato, exit code, log integral/artifact, estado persistente antes/depois (HEAD, branch, `git status --porcelain`, estado externo, `__drizzle_migrations`, `restauracao_pendente`, `backups/`, locks, processos), decisão justificada e limpeza.
 
-1. **SHA efetivamente testado** — saída de `git rev-parse HEAD` colada no log; se o checkout foi de merge ref (`refs/pull/N/merge`), declarar explicitamente que se testou o merge, nunca o head.
-2. **SO e versão** — `winver`/`[System.Environment]::OSVersion` no Windows; `lsb_release -a` no Ubuntu.
-3. **Versão do Node** — `node --version` (projeto declara 20+; CI usa 22; evidência local anterior foi Node 26 — repetir em 20 e 22).
-4. **Comando exato** executado e **código de saída**.
-5. **Logs integrais relevantes** — saída do `.bat`/helper, `git log --oneline -3`, `git status --porcelain`, `PRAGMA integrity_check`, `SELECT` no journal `__drizzle_migrations`, listagem de `backups/`.
-6. **Conferência de estado persistente** — HEAD, branch, arquivos externos, banco, locks, logs. Exit code 0 sozinho **não** é prova.
-7. **Limpeza** — todo fixture em diretório descartável criado pelo teste (`mkdtemp`/pasta dedicada); nunca apontar testes destrutivos para `banco/`, `backups/` ou `configuracao/` da instalação real.
+Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é prova de integridade do banco real. Teste estrutural/textual **não** é execução comportamental do `.bat`.
 
-### Legenda de classificação por teste
+### Legenda
 
-- **[HOJE]** — executável com o código existente no SHA de referência.
-- **[CORREÇÃO]** — exige alteração de produto/teste ainda não implementada; homologar só depois do merge da correção.
-- **[INTEGRAÇÃO]** — só pode ser homologado após a integração coordenada (#188 → #189 → branch #176) que forma a versão N.
-- **[CONTRATO]** — depende de decisão/contrato do Pai ainda não congelado.
-
-### Estado persistente a conferir em toda interrupção/retomada
-
-Antes e depois de cada crash simulado, registrar: `git rev-parse HEAD`, `git branch --show-current`, `git status --porcelain`, conteúdo do estado externo (caminho, identidade, fase), `server_settings`/`__drizzle_migrations` do banco, existência de `restauracao_pendente`, `backups/pre_restore_*`, locks (`boot-lock`, `trava-instancia`), e processos node/cmd remanescentes.
+- **[HOJE]** — executável com código existente no SHA de referência.
+- **[CORREÇÃO]** — exige alteração de produto/teste ainda não implementada.
+- **[INTEGRAÇÃO]** — só após integração coordenada (#188 → #189 → branch #176) que forma N.
+- **[CONTRATO]** — depende de decisão do contrato ainda não implementada.
 
 ---
 
-## 3. Matriz W0–W16
+## 3. Matriz W0–W16 (contrato congelado)
 
-### W0 — `.bat` legado real na primeira transição (N-1 → N)
+### W0 — `.bat` legado real e pull que altera o próprio `.bat`
 
-- **Objetivo/risco:** provar o comportamento real do `cmd.exe` executando o `.bat` **extraído do SHA N-1**, inclusive quando a atualização remota modifica o próprio `iniciar-mestre-rpg.bat` no meio da execução (cauda do batch já foi lida/parcialmente interpretada). Risco: a versão nova do `.bat` entrar em vigor com parsing/offset inconsistente, ou a cauda legada continuar executando etapas sobre código novo.
-- **Classificação:** [HOJE] para a parte de observação do `.bat` N-1; [INTEGRAÇÃO] para a versão N com handoff `:_fase2` (que não existe em `7ce5b99` — verificado: o `.bat` nessa revisão não contém handoff, despacho de fase nem boot lock).
-- **Pré-condições:** Windows real; clone descartável do repo; remote "origin" controlado pelo teste (clone local ou `file://`) na revisão N-1 `7ce5b99`; remoto contém commit N que altera `iniciar-mestre-rpg.bat`.
-- **Fixture:** `mktemp`-style dir (ex.: `%TEMP%\w0-<ts>`); `git clone` do fixture; `configuracao/servidor.json` e `banco/` mínimos; `MESTRE_AUTO_UPDATE` ausente (comportamento default) e depois `=0` como controle.
-- **Preparação/comandos:**
-  1. Extrair o `.bat` legado: `git show 7ce5b99:iniciar-mestre-rpg.bat > iniciar-mestre-rpg.bat` no clone descartável (garante byte-a-byte o arquivo da revisão, não uma cópia de trabalho).
-  2. Configurar `origin` do clone para um bare repo cujo HEAD inclui o commit N que modifica o `.bat`.
-  3. Executar `cmd /c iniciar-mestre-rpg.bat` com log em arquivo (`> w0.log 2>&1`) e marcar timestamps por linha se possível.
-- **Ponto de interrupção/injeção:** a atualização acontece dentro de `node scripts\auto-update.mjs` (após a checagem de porta 3001 e antes de npm/build/restore/migrate). A "injeção" é o próprio conteúdo do commit N — o `.bat` em disco é substituído pelo pull enquanto o `cmd.exe` já o está interpretando.
-- **Resultado esperado (a confirmar na execução — não presumir):** documentar se o `cmd.exe` continua a cauda do arquivo antigo (bytes já lidos em buffer) ou relê o arquivo; se etapas pós-update (npm ci, builds, `aplicar-restauracao`, `db:migrate`, `npm run start`) executam sobre código N; se há linha de cauda corrompida/duplicada.
-- **PASS:** log completo capturado e comportamento descrito com evidência; nenhuma alegação de "recuperação garantida" sem prova. **FAIL:** `.bat` novo executado com offset errado de forma imprevisível **sem** que isso esteja documentado como limitação aceita; boot sobre estado inconsistente sem abort. **BLOCKED:** se a versão N com handoff não estiver integrada — W0 passa a observar apenas o legado e o cenário "handoff" fica [INTEGRAÇÃO].
-- **Logs/artefatos:** `w0.log` integral; `git log --oneline` antes/depois; diff do `.bat` entre revisões; lista de processos ao final.
-- **Limpeza:** apagar o diretório do fixture inteiro; o bare repo de teste pode ser reutilizado entre execuções se desejado.
-- **CI ou Windows real:** **Windows real obrigatório** — `cmd.exe` batch parsing não é reproduzível em CI Linux de forma fiel; o job `windows-latest` pode hospedar uma versão automatizada, mas a primeira homologação deve ser manual com captura de tela/log.
+- **Objetivo/risco:** observar o comportamento real do `cmd.exe` sobre o `.bat` extraído de `7ce5b99` quando o pull substitui o próprio script em execução — parsing/offset da cauda.
+- **Classe:** [HOJE] para observação do legado; a versão N com handoff é [INTEGRAÇÃO].
+- **Pré-condições:** Windows real; clone descartável; remote controlado (`file://`/bare) cujo HEAD contém commit que modifica `iniciar-mestre-rpg.bat`.
+- **Fixture:** diretório temporário dedicado; `git clone`; `git show 7ce5b99:iniciar-mestre-rpg.bat` para garantir o arquivo da revisão; `configuracao/servidor.json` e `banco/` mínimos na fixture.
+- **Preparação:** bare repo "origin" com N-1 + commit que altera o `.bat`; clone na revisão N-1; executar `cmd /c iniciar-mestre-rpg.bat` com log integral.
+- **Injeção:** o próprio pull dentro de `node scripts\auto-update.mjs`.
+- **Esperado:** documentar com evidência se o `cmd.exe` relê ou usa cauda em buffer; quais etapas pós-update executam sobre código novo; presença/ausência de corrupção de parsing. **Não presumir** recuperação garantida.
+- **PASS:** comportamento capturado em log integral e descrito objetivamente. **FAIL:** resultado imprevisível não documentado como limitação aceita / boot sobre estado inconsistente sem abort. **BLOCKED:** versão N com handoff ainda não integrada (então o cenário fica restrito ao legado).
+- **Artefatos:** log integral do `.bat`, `git log`, diff do `.bat` entre revisões.
+- **Limpeza:** remover diretório do fixture e bare repo.
+- **CI/Windows:** Windows real obrigatório (parsing de batch não é fiel em Linux); job `windows-latest` pode automatizar a primeira prova, mas homologação inicial é manual.
 
-### W1–W7 — handoffs, concorrência, interrupções, retomada e integridade (procedimentos provisórios)
+### W1 — `.bat` N e handoff para fase 2 nova
 
-> **[PENDENTE — CONTRATO]** O rótulo e o cenário exato de cada W1–W7 devem ser conferidos no contrato consolidado antes da execução. Os itens abaixo são a estrutura mínima derivada das descrições recebidas ("handoffs, concorrência, interrupções, retomada, estado externo corrompido e integridade") e das correções exigidas nas revisões do contrato (itens A–H do comentário de consistência final da PR #176). Não executar como se fossem o contrato literal.
+- **Objetivo/risco:** provar o handoff `call "%~f0" :_fase2` do `.bat` N: fase 1 (até updater) → reentrada na fase 2 sem readquirir Boot Lock, com o mesmo owner até o servidor encerrar.
+- **Classe:** [INTEGRAÇÃO] — o handoff não existe em `7ce5b99` (verificado).
+- **Pré-condições:** versão N com `.bat` de duas fases + Boot Lock integrado (#189 corrigido: storage fora de tmpdir, porta efetiva espelhando `config.ts`).
+- **Fixture:** clone descartável da versão N; remote controlado.
+- **Injeção:** nenhuma falha — boot limpo observando a sequência de fases nos logs.
+- **Esperado:** ordem executável real: Node → porta efetiva → Boot Lock único → recuperação externa → updater → handoff fase 2 → etapas restantes → servidor; lock adquirido uma única vez; `git rev-parse HEAD` e identidade de fase nos logs.
+- **PASS:** sequência observada confere com a máquina de fases; sem dupla aquisição de lock. **FAIL:** readquirir lock, pular recuperação, ordem divergente. **BLOCKED:** enquanto N não existir.
+- **CI/Windows:** Windows real.
 
-**W1 — Handoff N-1 → N (primeira transição, estado externo).**
-- Objetivo: provar o que acontece na janela entre o pull que instala N e o primeiro boot que executa o código N (estado externo, consentimento, fases).
-- Pré-condições: N-1 = `7ce5b99`; N = branch com consentimento + estado durável + Boot Lock integrado [INTEGRAÇÃO].
-- Fixture: clone descartável com remote controlado; forçar pull N-1→N.
-- Interrupção: kill -9 / fechamento de janela em cada fronteira: pós-pull/pré-persistência de estado, pós-npm-ci, pós-build, pré-restore, pós-restore, pré-migrate, pós-migrate, pré-start.
-- Esperado: estado externo persistido identifica fase e identidade (`instalacaoId`/repo canônico — contrato [CONTRATO]); retomada N+1 obedece à máquina de estados; nada de fase presumida.
-- PASS: retomada converge para boot íntegro ou aborta com instrução; estado persistente confere com a fase real. FAIL: boot silencioso sobre estado parcial. BLOCKED: sem implementação do estado durável/consentimento.
-- Classificação: [INTEGRAÇÃO]+[CONTRATO].
+### W2 — Interrupção entre updater e fase 2
 
-**W2 — Concorrência de boots na transição N-1→N.**
-- Objetivo: dois `iniciar-mestre-rpg.bat` simultâneos antes de qualquer servidor no ar. N-1 não tem Boot Lock — o check de porta 3001 não protege a janela pré-servidor.
-- Fixture: clone descartável; dois processos `cmd` iniciados juntos (script de spawn duplo).
-- Esperado: documentar a corrida real (dois updates Git/npm concorrentes?) — o contrato assume Boot Lock só em N; a transição N-1→N está explicitamente sobdescrita e deve ser reportada como risco residual se não houver mitigação.
-- PASS/FAIL: conforme contrato definir "vitória única" ou "risco aceito documentado". BLOCKED se exigir Boot Lock em N-1 (impossível sem reescrever o legado).
-- Classificação: [INTEGRAÇÃO]+[CONTRATO].
+- **Objetivo/risco:** crash/kill na janela entre o fim do updater (fase 1) e o início da fase 2 — estado persistido deve permitir retomada determinística.
+- **Classe:** [INTEGRAÇÃO]+[CONTRATO].
+- **Fixture:** clone da versão N; kill -9/`taskkill` entre o retorno do updater e a reentrada `:_fase2`.
+- **Esperado:** estado externo registra fase "pós-updater"; próximo boot retoma na fase 2 sem repetir updater/pull; nenhuma etapa duplicada com efeito colateral.
+- **PASS:** retomada converge ou aborta com instrução; estado persistente = fase real. **FAIL:** re-executa pull ou pula etapas. **BLOCKED:** depende de W1 implementado.
+- **CI/Windows:** Windows real prioritário.
 
-**W3 — Interrupção durante o pull / janela pull→state.**
-- Objetivo: kill entre `git pull --ff-only` retornar e a persistência do estado (best-effort em N-1). HEAD=N sem marcador → indistinguível de "update completo".
-- Fixture: clone com remote controlado; injeção de kill via wrapper do `node scripts/auto-update.mjs` ou `taskkill` temporizado.
-- Esperado: documentar que N-1 não tem como distinguir; em N, o protocolo deve gravar intenção **antes** do pull (fase pré-pull persistida).
-- PASS: N retoma/aborta conforme fase persistida; N-1: risco residual declarado. FAIL: estado parcial silencioso. BLOCKED: depende de W1.
-- Classificação: [CORREÇÃO]+[INTEGRAÇÃO].
+### W3 — Dois boots simultâneos em N
 
-**W4 — Retomada e rollback Git (falhas pós-pull de deps/build).**
-- Objetivo: cobrir os três resultados do rollback: sucesso comprovado (árvore limpa + HEAD=shaNovo + ancestralidade + mesma branch + rebuild concluído), falha comprovada → exit 1 com instruções, e exceção inesperada → nunca exit 0.
-- Fixture: clone descartável; injetar falha de `npm ci`/build via PATH fake ou pacote quebrado no commit N; `stateFile` isolado por cenário.
-- Interrupção: falhas determinísticas (não crash) + kill durante `executarRollback`.
-- Esperado: rollback só retorna sucesso após rebuild servidor+site na revisão restaurada; falha de diagnóstico de deps = estado desconhecido → rollback; `reverterAtualizacao` manual via arquivo de estado.
-- PASS: `git rev-parse HEAD`=shaAnterior, árvore limpa, `site/dist` reconstruído, exit 0 somente com rollback comprovado; exit 1 com instruções caso contrário. FAIL: exit 0 sem rollback ou reset em branch/árvore errada. Reuso: `teste-auto-update.mjs` cobre a lógica unitária [REUSO]; este W é a prova E2E no `.bat` real.
-- Classificação: [HOJE] para N-1 (rollback interno já existe); [INTEGRAÇÃO] para o fluxo completo N.
+- **Objetivo/risco:** dois `iniciar-mestre-rpg.bat` concorrentes em N — provar exclusão mútua do Boot Lock corrigido (#189: `.recover` nunca reivindicado, storage persistente, porta efetiva).
+- **Classe:** [INTEGRAÇÃO]. **Não declarar aprovado com o helper antigo** — a correção de storage/porta da #189 precisa estar integrada.
+- **Fixture:** clone da versão N; script que dispara dois `cmd` juntos; log por processo.
+- **Esperado:** exatamente um proprietário do lock; o segundo aguarda health até 120s ou aborta; nenhum Git/npm/build duplo.
+- **PASS:** um único boot owner observado; locks e logs conferem. **FAIL:** dupla execução de etapas mutáveis. **BLOCKED:** #189 não integrada / storage ainda em tmpdir.
+- **CI/Windows:** Windows real; `teste-boot-lock.mjs` cobre a lógica do helper, mas W3 é a prova E2E do `.bat` duplo.
 
-**W5 — Estado externo corrompido / identidade divergente.**
-- Objetivo: state file/consentimento com JSON inválido, `instalacaoId` divergente, repo canônico divergente, versão de schema desconhecida.
-- Fixture: editar o arquivo de estado/consentimento externo entre boots (caminho TBD pelo contrato — fora do worktree).
-- Esperado (contrato revisado, comentário "Auditoria de consistência final"): divergência de identidade = **estado inválido → quarentena + boot bloqueado para inspeção, sem reset** — não "ausente".
-- PASS: comportamento documentado e fail-closed conforme contrato; FAIL: tratar divergência como ausente e seguir. BLOCKED: [CONTRATO] — localização/escrita atômica do estado externo indefinidas.
-- Classificação: [CONTRATO].
+### W4 — Retomada após pull limpo sem journal
 
-**W6 — Integridade do banco na transição.**
-- Objetivo: provar separação rollback-Git × proteção-dados: falha em `aplicar-restauracao` ou `db:migrate` no `.bat` **aborta o boot sem presumir rollback Git**; o updater N-1 só faz rollback Git/rebuild nas falhas internas de deps/build.
-- Fixture: clone descartável; forçar `db:migrate` falho (migration inválida em banco de teste) e `aplicar-restauracao` com flag pendente corrompida.
-- Esperado: exit ≠0, banco preservado, `pre_restore_*` intacto, nenhuma reversão Git automática. PASS: abort com instrução correta. FAIL: boot prossegue sobre estado incerto ou Git revertido indevidamente.
-- Classificação: [HOJE] — comportamento do `.bat` N-1 observável hoje.
+- **Objetivo/risco:** pull fast-forward concluído com sucesso mas **sem** journal/estado por fase (simulando N-1 ou perda de estado): o próximo boot não pode presumir fase; deve reconstruir conservadoramente.
+- **Classe:** [INTEGRAÇÃO]+[CONTRATO] (depende de como N trata estado ausente após ativação do protocolo — W13-related).
+- **Fixture:** clone N-1; forçar pull limpo e remover/omitir estado externo antes do próximo boot.
+- **Esperado:** comportamento documentado do contrato para "estado inesperadamente ausente" — fail-closed ou reconstrução explícita; nunca presunção silenciosa de fase.
+- **PASS:** comportamento conforme contrato, com evidência. **FAIL:** boot presume "tudo concluído" sem prova. **BLOCKED:** definição de estado-ausente no contrato.
+- **CI/Windows:** Windows real para `.bat`; lógica em CI.
 
-**W7 — Retomada pós-crash com estado persistido (máquina de fases N).**
-- Objetivo: cada fase durável (pré-pull, pós-pull, pós-npm-ci, pós-builds, pós-restore, pós-migrate) tem marcador; crash em cada fronteira retoma ou aborta deterministicamente.
-- Fixture: clone descartável; kill -9 em cada fronteira; reiniciar `.bat`.
-- Esperado: fase persistida = fase real; nunca duas execuções da mesma etapa sem idempotência comprovada; `seguroIniciar` só marca `validado` quando **todas** as dimensões tiverem prova de conclusão ou justificativa durável de não aplicabilidade.
-- PASS: matriz fase×crash executada com ata por célula. FAIL: qualquer célula com resultado divergente do contrato. BLOCKED: [CONTRATO]+[CORREÇÃO] — máquina de fases e `seguroIniciar` não implementados.
-- Classificação: [INTEGRAÇÃO]+[CONTRATO].
+### W5 — Interrupções em cada fase do protocolo externo
 
-### W8 — Migration legada concluída + ausência de proveniência/backup (mecanismo legado)
+- **Objetivo/risco:** kill em **cada** fase persistida do estado externo (não sóUpdater): pré-pull, pós-pull, pós-npm-ci, pós-builds, pós-restore, pós-migrate, pré-start — retomada ou abort determinístico por fase.
+- **Classe:** [INTEGRAÇÃO]+[CONTRATO].
+- **Fixture:** clone N; injeção de kill por fase (wrapper ou `taskkill` temporizado); estado externo legível entre execuções.
+- **Esperado:** matriz fase×crash completa; `seguroIniciar`/`validado` só com prova de conclusão ou justificativa durável por dimensão.
+- **PASS:** cada célula da matriz com resultado conforme contrato. **FAIL:** qualquer célula divergente. **BLOCKED:** máquina de fases não implementada.
+- **CI/Windows:** Windows real prioritário (fsync/locks/SQLite WAL).
 
-- **Objetivo/risco:** demonstrar que, no mecanismo **legado** (N-1), uma migration concluída seguida de queda **não deixa** proveniência nem backup pré-migration recuperável — ou seja, provar a **lacuna**, não inventar recuperação.
-- **Classificação:** [HOJE] — observável no código atual.
-- **Fatores verificados no código:** `aplicar-restauracao.ts` só age sobre flag `restauracao_pendente`; `db:migrate` roda direto no `.bat` sem backup prévio; `backup.ts` gera `manifesto.json` com sha256/tamanho dos arquivos de campanha + `criadoEm` + `versao`, mas **sem** SHA-256 do banco nem da config; `aplicar-restauracao` faz `integrity_check` + checks estruturais, **sem** revalidar hashes do manifesto.
-- **Fixture:** clone descartável; banco de teste com migration pendente; kill após `db:migrate` retornar e antes de `npm run start`.
-- **Interrupção:** entre o fim de `call npm run db:migrate -w servidor` e `call npm run start -w servidor` (linhas finais do `.bat` N-1).
-- **Resultado esperado:** documentar que não existe marcador de "migration aplicada nesta sessão", nem backup automático pré-migration, nem journal externo de fases — o próximo boot não tem como distinguir "migration concluída na sessão anterior" de estado normal. **A lacuna confirmada é o resultado PASS deste teste.**
-- **PASS:** lacuna reproduzida e descrita com evidência (ausência de artefatos + comportamento do próximo boot). **FAIL:** se o teste "provar" recuperação automática que o código não tem — isso seria fabricação. **BLOCKED:** não aplicável.
-- **Logs:** saída do `.bat` nas duas execuções; `ls backups/`; `SELECT` em `__drizzle_migrations`; `PRAGMA integrity_check`.
-- **Limpeza:** fixture descartável.
-- **CI/Windows:** lógica pode rodar em Ubuntu para a parte de inspeção de artefatos; a execução do `.bat` real exige Windows.
+### W6 — Smoke HTTP em cópia vazia
 
-### W9 — Queda depois do pull e antes da cauda do `.bat`
+- **Objetivo/risco:** provar que o smoke de validação funciona em **cópia descartável** com config e banco isolados — e delimitar o que ele **não** prova.
+- **Fatores verificados:** `configuracao/servidor.json:porta` prevalece sobre `MESTRE_PORTA`; fixture precisa de config própria com porta livre ou override de teste; nunca editar config real.
+- **Classe:** [HOJE] para a mecânica do smoke isolado.
+- **Fixture:** `xcopy`/clone da instalação para `%TEMP%\w6-*`; `servidor.json` com porta livre; banco vazio do fixture.
+- **Esperado:** servidor filho sobe, `/api/health` responde, processo encerrado limpo. **Registrar explicitamente:** smoke em cópia vazia prova disponibilidade HTTP do build, **não** integridade do banco real (isso é W12).
+- **PASS:** health 200 + encerramento limpo + isolamento comprovado (porta/config/banco do fixture). **FAIL:** smoke toca instalação real ou é reportado como prova de dados.
+- **CI/Windows:** CI possível com config/porta efêmeras; homologação inicial Windows.
 
-- **Objetivo/risco:** janela específica entre o retorno de `node scripts\auto-update.mjs` (pull+builds internos concluídos ou rollback feito) e a continuação do `.bat` legado (npm ci do `.bat`, rebuild servidor/site do `.bat`, restore, migrate, start). **Distinto** de queda durante o pull (W3) e de queda após migration (W8/W10).
-- **Classificação:** [HOJE] para observação; [INTEGRAÇÃO] para a versão com fases.
-- **Fixture:** clone descartável; injeção de kill logo após o step do auto-update (ex.: wrapper que encerra o `cmd` quando o updater retorna, ou `taskkill` no PID do cmd).
-- **Interrupção:** imediatamente após `node scripts\auto-update.mjs` retornar 0 e antes do primeiro `call npm`/`node` seguinte.
-- **Esperado:** HEAD=N, builds do updater concluídos, mas etapas do `.bat` (npm ci se node_modules ausente, build servidor, build site por timestamp, restore, migrate, start) **não executadas**. Próximo boot: updater vê "sem atualização" (HEAD já em N), `.bat` reexecuta suas etapas — documentar se a reexecução é idempotente (build por timestamp, migrate idempotente, restore sem flag = no-op).
-- **PASS:** próximo boot converge para servidor íntegro **ou** aborta com instrução; nenhuma etapa duplicada com efeito colateral. FAIL: estado parcial silencioso. BLOCKED: se a idempotência não puder ser verificada sem implementação nova.
-- **CI/Windows:** Windows real para o `.bat`; inspeções podem ser Ubuntu.
+### W7 — State corrompido ou divergente
 
-### W10 — Fluxo completo com `.bat` legado e comportamento do próximo boot
+- **Objetivo/risco:** estado externo com JSON inválido, versão de schema desconhecida, `instalacaoId` divergente, repo canônico divergente, fase impossível.
+- **Classe:** [CONTRATO]+[CORREÇÃO]. Contrato revisado: divergência de identidade = **estado inválido → quarentena + boot bloqueado para inspeção, sem reset** — não "ausente".
+- **Fixture:** clone N; editar/remover campos do estado externo entre boots.
+- **Esperado:** cada corrupção → comportamento documentado (quarentena/bloqueio/instrução); nunca reset cego.
+- **PASS:** matriz corrupção×comportamento conforme contrato. **FAIL:** divergência tratada como ausente ou reset automático. **BLOCKED:** estado externo não implementado.
+- **CI/Windows:** lógica em CI quando implementado.
 
-- **Objetivo/risco:** reproduzir o ciclo completo N-1 (update → cauda legada → migrate → queda antes do servidor) e verificar o que o **próximo boot** faz — cobrindo a proveniência/ausência de backup do mecanismo legado de forma integrada.
-- **Relação com W8:** W8 isola a **prova da lacuna** (migration concluída sem proveniência); W10 executa o **fluxo completo** com o `.bat` extraído de `7ce5b99` e observa o boot seguinte. Se a execução demonstrar que ambos são materialmente o mesmo teste, **recomenda-se consolidá-los** — registrar a decisão no contrato em vez de apagar cobertura silenciosamente.
-- **Classificação:** [HOJE].
-- **Fixture/Preparação:** como W8, com `.bat` extraído via `git show 7ce5b99:iniciar-mestre-rpg.bat`.
-- **Interrupção:** kill antes de `npm run start` (após migrate).
-- **Esperado:** próximo boot executa updater (sem update → segue), etapas do `.bat`, restore (sem flag → no-op), migrate (nada pendente → no-op), start. Documentar ausência de qualquer verificação de "estado deixado pela sessão anterior".
-- **PASS:** comportamento do próximo boot documentado com logs; lacuna W8 confirmada em contexto real. **CI/Windows:** Windows real.
+### W8 — Ausência de proveniência backup↔migration no mecanismo legado
 
-### W11 — Helper ausente na versão N (fail-closed do Boot Lock)
+- **Objetivo/risco:** **demonstrar a lacuna**: no legado (N-1), migration concluída seguida de queda não deixa proveniência nem backup pré-migration recuperável. O resultado esperado pode ser a confirmação da lacuna — não inventar recuperação.
+- **Classe:** [HOJE].
+- **Fatores verificados:** `.bat` roda `node servidor\dist\db\aplicar-restauracao.js` e depois `call npm run db:migrate -w servidor` sem backup prévio; `backup.ts` tem `manifesto.json` (sha256 de arquivos de campanha, `criadoEm`, `versao`) **sem** sha256 de banco/config; `aplicar-restauracao` não revalida hashes do manifesto.
+- **Fixture:** clone descartável do repo em `7ce5b99`; banco de teste com migration pendente; executar etapas equivalentes ao `.bat` (ou o `.bat` real com build prévio) até migrate.
+- **Interrupção:** após `db:migrate` retornar e antes de `npm run start`.
+- **Esperado:** ausência de marcador de sessão, de backup pré-migration e de journal externo; próximo boot não distingue "migration recém-aplicada" de estado normal. **PASS = lacuna reproduzida com evidência.**
+- **Logs:** saída das duas execuções, `ls backups/`, `SELECT` em `__drizzle_migrations`, `PRAGMA integrity_check`.
+- **CI/Windows:** inspeções em CI; `.bat` real em Windows.
 
-- **Objetivo/risco:** provar que, quando `scripts\boot-lock.mjs` está ausente na versão instalada, **npm, builds, restauração e migrations não são executados** — e que não existe bypass silencioso.
-- **Base factual (PR #189):** o `.bat` da #189 aborta se `scripts/boot-lock.mjs` não existir ou se o helper retornar código inesperado; exit 20 = "outra instância assumiu" → `exit /b 0` limpo; demais não-zero → abort.
-- **Classificação:** [INTEGRAÇÃO] — exige a versão N com Boot Lock; em `7ce5b99` o `.bat` **não** tem essa verificação (não existe `boot-lock` na árvore).
-- **Fixture:** clone descartável da versão N; remover `scripts/boot-lock.mjs` do worktree **depois** do pull (simulando versão que perdeu o helper) — ou montar a versão N sem o arquivo.
-- **Interrupção/injeção:** ausência do arquivo no momento da chamada `node scripts\boot-lock.mjs adquirir`.
-- **Esperado:** abort antes de qualquer `npm`/build/restore/migrate; log explícito; exit code conforme contrato (não-zero, distinto de 20). **Verificar também**: não há caminho `goto` alternativo que pule a verificação; `errorlevel` é lido corretamente em `cmd.exe` real.
-- **PASS:** nenhuma etapa proibida executada (conferir por log e por ausência de efeitos: `node_modules` não criado, `dist/` não tocado, banco não migrado). FAIL: qualquer bypass ou execução parcial. BLOCKED: [INTEGRAÇÃO].
-- **CI/Windows:** Windows real obrigatório para `cmd.exe`; o teste estrutural existente (`teste-boot-lock.mjs`) é só textual — este W exige execução comportamental.
+### W9 — Queda real da cauda N-1 antes da migration
 
-### W12 — Smoke isolado, integridade real e journal de migrations
+- **Objetivo/risco:** reprodução do ponto de queda real da transição legada: morte do processo **depois** do updater retornar e **antes** de `db:migrate` (cauda do `.bat`: npm ci restante, builds por timestamp, restore, migrate, start).
+- **Distinção obrigatória:** ≠ queda durante o pull (W4/W5 do updater) e ≠ queda após migration (W10).
+- **Classe:** [HOJE] para observação do legado.
+- **Fixture:** clone descartável; `.bat` extraído de `7ce5b99`; remote controlado com update disponível.
+- **Injeção:** `taskkill` no PID do `cmd.exe` (ou do node servidor se já iniciado) temporizado para a janela pós-updater/pré-migrate — ex.: wrapper que monitora o log do `.bat` e mata ao ver a linha "Aplicando migracoes" **antes** dela executar, ou kill após "Verificando restauracao pendente".
+- **Esperado:** HEAD=N, updater concluído, etapas da cauda não executadas; próximo boot: updater "sem atualização", `.bat` reexecuta cauda — documentar idempotência real (build por timestamp, migrate idempotente, restore sem flag = no-op).
+- **PASS:** próximo boot converge para servidor íntegro ou aborta com instrução; sem efeito colateral duplicado. **FAIL:** estado parcial silencioso.
+- **CI/Windows:** Windows real.
+
+### W10 — Queda após migration legada e antes do servidor
+
+- **Objetivo/risco:** ciclo completo com `.bat` legado (extraído de `7ce5b99`) até `db:migrate` concluída, kill antes de `npm run start`, e verificação do **próximo boot** — integrando a prova de lacuna de W8 em fluxo real.
+- **Relação com W8:** W8 isola a ausência de proveniência; W10 executa o fluxo completo. Se a execução demonstrar equivalência material, recomendar consolidação **sem apagar cobertura silenciosamente** — registrar decisão no contrato.
+- **Classe:** [HOJE].
+- **Fixture/Preparação:** como W9.
+- **Interrupção:** após `call npm run db:migrate` retornar 0 e antes de `call npm run start -w servidor`.
+- **Esperado:** próximo boot executa updater (sem update), cauda do `.bat`, restore (sem flag → no-op), migrate (nada pendente), start; **sem** qualquer verificação de "estado deixado pela sessão anterior" — documentar.
+- **PASS:** comportamento do próximo boot documentado com logs; lacuna W8 confirmada em contexto. **CI/Windows:** Windows real.
+
+### W11 — Helper de Boot Lock ausente em N
+
+- **Objetivo/risco:** provar fail-closed: `scripts\boot-lock.mjs` ausente na versão N → npm, builds, restauração e migrations **não executam**; sem bypass silencioso.
+- **Base factual (#189):** `.bat` aborta se helper ausente ou retorno inesperado; exit 20 = outra instância assumiu → `exit /b 0`; demais ≠0 → abort.
+- **Classe:** [INTEGRAÇÃO] — em `7ce5b99` não existe `boot-lock` no `.bat`.
+- **Fixture:** clone da versão N; remover `scripts/boot-lock.mjs` após checkout (ou versão N sem o arquivo).
+- **Injeção:** ausência do arquivo na chamada `node scripts\boot-lock.mjs adquirir`.
+- **Esperado:** abort antes de qualquer `npm`/build/restore/migrate; log explícito; exit ≠0 e ≠20; nenhuma rota alternativa (`goto`) contorna a verificação.
+- **PASS:** zero etapas proibidas (conferir log + ausência de efeitos: `node_modules`/`dist/`/banco intocados). **FAIL:** bypass ou execução parcial. **BLOCKED:** #189 não integrada.
+- **CI/Windows:** Windows real obrigatório — o teste existente é estrutural/textual, W11 exige execução comportamental do `cmd.exe`.
+
+### W12 — Comparação smoke isolado × integridade real × journal real
 
 - **Objetivo/risco:** separar três provas que não podem ser confundidas:
-  1. **Smoke HTTP em diretório descartável** — subir o servidor filho em cópia isolada (config e banco próprios), bater em `/api/health`, encerrar. `MESTRE_PORTA` **não basta**: `configuracao/servidor.json:porta` prevalece sobre a env (verificado em `servidor/src/config.ts`) — a fixture precisa de config própria com porta livre ou override explícito de teste. Nunca editar o config real do usuário.
-  2. **Integridade real do banco** — `PRAGMA integrity_check` + `PRAGMA foreign_key_check` no banco restaurado/migrado da fixture, não no banco de produção.
-  3. **Journal de migrations real** — `SELECT` em `__drizzle_migrations` conferindo IDs aplicados vs. journal do código; prova de que o lote pendente foi aplicado atomicamente (drizzle-orm 0.45.4 executa o lote pendente em transação única).
-  4. **Smoke em cópia consistente dos dados reais** — somente se autorizado, sobre snapshot/bak da instalação real copiado para diretório descartável; banco vazio **não** prova integridade de dados reais.
-- **Classificação:** itens 1–3 [HOJE] em fixture; item 4 depende de autorização/fixture de dados reais [CONTRATO].
-- **PASS:** cada prova com seu próprio artefato; o smoke HTTP nunca é apresentado como prova de integridade do banco. FAIL: smoke com banco vazio reportado como "dados reais íntegros".
-- **CI/Windows:** itens 1–3 podem rodar em CI (ubuntu + windows-latest); item 4 exige estação de homologação.
+  1. **Smoke HTTP isolado** (W6): disponibilidade do build em cópia vazia — prova HTTP, não dados.
+  2. **Integridade real do banco:** `PRAGMA integrity_check` + `foreign_key_check` no banco restaurado/migrado do fixture; journal `__drizzle_migrations` real (lote pendente atômico — drizzle-orm 0.45.4).
+  3. **Smoke em cópia consistente de dados reais:** somente com autorização, sobre snapshot da instalação real em diretório descartável.
+- **Classe:** itens 1–2 [HOJE] em fixture; item 3 [CONTRATO] (autorização/fixture de dados reais).
+- **PASS:** cada prova com artefato próprio; smoke vazio **nunca** reportado como integridade de dados reais. **FAIL:** conflação das provas.
+- **CI/Windows:** CI para 1–2; estação de homologação para 3.
 
-### W13 — Sentinela: instalação nova × instalação N que perdeu o diretório externo
+### W13 — Instalação nova × perda inesperada de state externo
 
-- **Objetivo/risco:** distinguir "primeira instalação legítima" (nunca teve estado externo — deve inicializar normalmente) de "instalação N que **perdeu inesperadamente** o diretório externo" (estado sumiu depois de existir — pode indicar perda/corrupção e deve bloquear). A ambiguidade entre os dois casos não pode ser resolvida silenciosamente.
-- **Classificação:** [CONTRATO]+[CORREÇÃO] — exige marcador de "estado externo já foi inicializado" persistido em local distinto do diretório externo (ex.: flag no banco ou no worktree), senão os dois casos são indistinguíveis por construção.
-- **Fixture:** (a) clone novo sem estado externo → boot deve prosseguir criando estado; (b) instalação N com estado criado, depois diretório externo removido → boot deve bloquear ou exigir confirmação conforme contrato.
-- **PASS:** os dois cenários produzem comportamentos **diferentes e documentados**; ambiguidade → bloqueio. FAIL: instalação N com estado perdido tratado como nova (reset silencioso) ou instalação nova bloqueada injustamente.
-- **CI/Windows:** lógica testável em CI quando implementada; depende de decisão de design [CONTRATO].
+- **Objetivo/risco:** distinguir primeira instalação legítima (sem estado externo → inicializa) de instalação N que **perdeu** o diretório externo (estado existia e sumiu → ambíguo, deve bloquear). Exige marcador de "estado já inicializado" em local distinto.
+- **Classe:** [CONTRATO]+[CORREÇÃO] — sem marcador persistente fora do diretório externo, os dois casos são indistinguíveis por construção.
+- **Fixture:** (a) clone novo sem estado → boot normal; (b) instalação N com estado criado → remover diretório externo → próximo boot.
+- **Esperado:** comportamentos diferentes e documentados; ambiguidade → bloqueio. **FAIL:** estado perdido tratado como instalação nova (reset silencioso) ou instalação nova bloqueada.
+- **CI/Windows:** CI quando implementado; depende de decisão de design.
 
 ### W14 — Fail-open do detector de restauração pendente
 
-- **Objetivo/risco:** provar que **nenhum erro de consulta pode virar "nada a restaurar" com sucesso**. Cenários: banco inexistente legítimo (primeiro boot — deve criar); banco existente **sem** `server_settings`; falha de `prepare`/`get`; corrupção que permite abertura parcial; erro de I/O na leitura.
-- **Fatores verificados:** `aplicar-restauracao.ts` lê `select value from server_settings where key='restauracao_pendente'`; ausência de linha → "Nenhuma restauração pendente" e return 0. A questão é se **erro** (não ausência) também retorna sucesso — hoje o código distingue `row` ausente de exceção, mas o contrato exige prova de que exceção/erro de I/O **aborta**, não segue.
-- **Fixture:** clones/bancos descartáveis manipulados: (a) sem `banco/mestre-rpg.db`; (b) banco criado sem a tabela `server_settings`; (c) `server_settings` corrompida/truncada; (d) permissão de leitura revogada no arquivo; (e) `-wal`/`-shm` em estado inconsistente.
-- **Esperado:** banco inexistente legítimo → cria e segue; banco existente com qualquer falha de consulta → **exit ≠0 e boot abortado**; nunca "nada a restaurar" por erro.
-- **PASS:** matriz de cenários × exit codes conforme tabela do contrato; FAIL: qualquer erro de consulta retornando 0 com boot prosseguindo. **Nota:** se o código atual tratar exceção como ausência, W14 é [CORREÇÃO] até o fix; registrar como achado.
-- **CI/Windows:** executável em CI (script node direto, sem `.bat`) — candidato a suíte automatizada.
+- **Objetivo/risco:** **nenhum erro de consulta pode virar "nada a restaurar" com sucesso**. Cenários: banco inexistente legítimo (primeiro boot → cria); banco existente **sem** `server_settings`; falha de `prepare`/`get`; corrupção com abertura parcial; erro de I/O.
+- **Fatores verificados:** `aplicar-restauracao.ts` retorna sucesso quando a linha `restauracao_pendente` está ausente; exceção de query é caminho distinto — a prova exige demonstrar que exceção/erro **aborta**, não segue.
+- **Classe:** [HOJE] para observação do comportamento atual; [CORREÇÃO] se erro for tratado como ausência.
+- **Fixture:** bancos descartáveis: (a) sem `banco/mestre-rpg.db`; (b) banco sem `server_settings`; (c) tabela corrompida/truncada; (d) permissão de leitura revogada; (e) `-wal`/`-shm` inconsistentes.
+- **Esperado:** inexistente legítimo → cria e segue; banco existente com qualquer falha → exit ≠0 e boot abortado.
+- **PASS:** matriz cenário×exit conforme contrato. **FAIL:** erro de consulta retornando 0 com boot prosseguindo. Registrar achado se o código atual falhar.
+- **CI/Windows:** executável em CI (node direto, sem `.bat`) — candidato a suíte automatizada.
 
-### W15 — Restauração interrompida em cada subetapa
+### W15 — Restauração interrompida: aplicação e rollback por componente
 
-- **Objetivo/risco:** queda durante `aplicar-restauracao` em cada fronteira: preservação (`pre_restore_*`), substituição do arquivo do banco, sidecars (`-wal`/`-shm`), arquivos da campanha, configuração, limpeza da flag `restauracao_pendente` e rollback interno do restaurador.
-- **Verificado no código:** a flag vive **dentro do banco** (`server_settings`), e a aplicação troca o arquivo do banco — ou seja, a flag pode estar no banco **antigo** ou no **restaurado** conforme o ponto do crash; a remoção é confirmada por re-leitura. Não existe journal externo de subetapas hoje.
-- **Classificação:** **BLOCKED — dependência** enquanto não existir journal externo de restauração e protocolo de retomada. Marcar o teste inteiro BLOCKED, não FAIL.
-- **Fixture (quando implementado):** clone descartável com flag `restauracao_pendente` apontando para backup válido; kill -9/`taskkill` em cada fronteira; reiniciar `node servidor\dist\db\aplicar-restauracao.js`.
-- **Esperado:** retomada por journal externo converge para estado íntegro ou aborta com instrução; integridade final conferida por `PRAGMA integrity_check` + presença/ausência correta da flag.
-- **PASS:** matriz fronteira×resultado completa. FAIL: dupla aplicação, flag órfã, banco híbrido. **Hoje:** documentar como lacuna — crash no meio da restauração deixa estado indeterminado sem retomada automática.
-- **CI/Windows:** Windows real prioritário (semântica de arquivo aberto/lock do SQLite no Windows); parte da lógica em CI.
+- **Objetivo/risco:** kill durante `aplicar-restauracao` em **cada** fronteira — preservação (`pre_restore_*`), substituição do banco, sidecars (`-wal`/`-shm`), arquivos da campanha, configuração, limpeza da flag e **durante o rollback interno** do restaurador. Não basta testar falha tratada.
+- **Fatores verificados:** flag `restauracao_pendente` vive **dentro do banco** (`server_settings`) e a aplicação troca o arquivo do banco — a flag pode estar no banco antigo ou no restaurado; remoção confirmada por re-leitura; **não existe journal externo de subetapas** hoje.
+- **Classe:** **BLOCKED — dependência** até existir journal externo + protocolo de retomada. Não executar como PASS; homologar prontidão quando implementado.
+- **Fixture (quando implementado):** clone com flag apontando para backup válido; kill em cada fronteira; reinvocar `node servidor\dist\db\aplicar-restauracao.js`.
+- **Esperado:** retomada por journal converge para íntegro ou aborta com instrução; `PRAGMA integrity_check` + flag correta ao final.
+- **CI/Windows:** Windows real prioritário.
 
-### W16 — Backup crítico: manifesto e retenção transacional
+### W16 — Manifesto obrigatório e proteção do backup transacional
 
-- **Objetivo/risco:** provar que backup inválido **falha** e que retenção não remove backups em uso.
-- **Fatores verificados:** `backup.ts` gera `manifesto.json` com `arquivos{rel:{size,sha256}}`, `criadoEm`, `versao`; `verificarBackup` valida hashes dos arquivos do manifesto (verificação online separada); `aplicar-restauracao` **não** revalida hashes do manifesto — manifesto **sem** SHA-256 do banco e da config; `pre_restore_*` é estado anterior à intenção, não backup pós-restore.
-- **Cenários:**
-  1. Manifesto ausente → deve falhar.
-  2. Manifesto incompleto (faltam entradas) → deve falhar.
-  3. Manifesto inválido (hash divergente de arquivo do manifesto) → `verificarBackup` falha; documentar que `aplicar-restauracao` offline **não** cobre isso hoje [lacuna].
-  4. Metadados de banco/config: **inexistentes hoje** → [CONTRATO/CORREÇÃO] — o contrato exige `db.sha256`/`config.sha256` (ou equivalente) validados antes de aceitar o backup.
-  5. Retenção: backups transacionais (em uso por restauração pendente ou marcados como críticos) **não podem** ser removidos pela rotina de retenção antes da conclusão — verificar política de retenção existente e se ela consulta flags/manifestos.
-- **Classificação:** cenários 1–3 parcialmente [HOJE] (verificar comportamento real); 4–5 [CORREÇÃO]+[CONTRATO].
-- **PASS:** cada cenário com resultado conforme contrato; FAIL: backup inválido aceito ou remoção de backup transacional. BLOCKED: enquanto metadados de banco/config e política de retenção não existirem.
-- **CI/Windows:** lógica em CI; manipulação de `backups/` só em fixture.
+- **Objetivo/risco:** backup inválido **falha**; backup referenciado por journal/flag ativa **não é removido pela retenção** antes da conclusão.
+- **Fatores verificados:** `manifesto.json` tem sha256/tamanho dos arquivos de campanha — **sem** sha256 de banco/config; `verificarBackup` valida hashes (online); `aplicar-restauracao` offline **não** revalida; política de retenção existente precisa ser conferida se consulta flags.
+- **Cenários:** manifesto ausente → falha; incompleto → falha; hash divergente → `verificarBackup` falha (documentar que restore offline não cobre); metadados banco/config → [CORREÇÃO]; retenção vs. backup transacional → provar não-remoção.
+- **Classe:** 1–3 [HOJE] parcial; 4–5 [CORREÇÃO]+[CONTRATO].
+- **PASS:** cada cenário conforme contrato. **FAIL:** backup inválido aceito ou remoção de backup transacional. **BLOCKED:** metadados/retenção até implementação.
+- **CI/Windows:** lógica em CI; `backups/` só em fixture.
 
 ---
 
-## 4. Bloqueios e dependências (obrigatório)
+## 4. Bloqueios e dependências
 
 | # | Bloqueio | Afeta | Estado |
 |---|---|---|---|
-| B1 | Flag `aplicar-restauracao` = retomada após crash | W15 | **Não implementada** — flag existe (`server_settings.restauracao_pendente`), mas não há journal externo nem retomada por subetapa; não afirmar retomada sem código |
-| B2 | Identidade/localização/escrita atômica do estado externo | W1, W5, W13 | **Contrato pendente** — caminho, schema, `instalacaoId`, repo canônico e atomicidade indefinidos |
-| B3 | Estado corrompido/divergente/ausente-pós-ativação | W5, W13 | Contrato exige quarentena+bloqueio para divergência; não tratar como ausente |
-| B4 | Consentimento persistente por instalação + kill-switch | W1, W7 | `MESTRE_AUTO_UPDATE=0` existe (kill-switch); consentimento opt-in **não implementado**; `=1` não força update |
-| B5 | `seguroIniciar` — prova por dimensão | W7 | Conceito citado no contrato; implementação e dimensões a confirmar |
-| B6 | Boot Lock na versão N | W2, W7, W11 | #189 Draft, não integrada; pré-condição de release: storage fora de tmpdir + porta efetiva espelhando `config.ts` + CI verde |
-| B7 | Máquina de fases durável (state por fase) | W1–W4, W7 | Não implementada; N-1 só tem state best-effort pós-pull |
-| B8 | Backup pré-migration + manifesto estendido (db/config sha256) + verificação de hashes no restore offline | W8, W10, W16 | Parcial: `backup.ts` tem manifesto de arquivos; db/config sem hash; restore offline não revalida |
+| B1 | Flag/journal de `aplicar-restauracao` retomável | W15 | Inexistente — flag existe, journal externo e retomada não |
+| B2 | Estado externo: identidade, localização, escrita atômica, máquina de fases | W1–W5, W7, W13 | Contrato congelado; implementação pendente |
+| B3 | Divergência de identidade = quarentena+bloqueio | W7, W13 | Regra definida; código pendente |
+| B4 | Consentimento opt-in persistente + kill-switch | W1, W5 | `MESTRE_AUTO_UPDATE=0` existe; consentimento não implementado |
+| B5 | `seguroIniciar` por dimensão | W5 | Conceito no contrato; implementação a confirmar |
+| B6 | Boot Lock corrigido (#189: storage persistente + porta efetiva) integrado a N | W1–W3, W11 | #189 Draft; não integrada |
+| B7 | Handoff `:_fase2` no `.bat` N | W1, W2 | Não existe em `7ce5b99` |
+| B8 | Backup pré-migration + manifesto estendido (db/config sha256) + revalidação no restore | W8, W10, W16 | Parcional hoje |
 | B9 | Journal externo de restauração | W15 | Inexistente |
-| B10 | Versão/artefatos provisórios 1.0.6/0030/UUID…0107 | Todos | Realocar conforme sequência coordenada (#172 1.0.6, #176 1.0.7, #177 1.0.8, #178 1.0.9, #179 1.0.10) — reconfirmar antes de cada UP |
-| B11 | Issue #156 / rollout | W0–W16 | Kill-switch é freio de incidente, não consentimento nem staged rollout; auditoria #156 vale só para o banco local examinado |
+| B10 | Versionamento provisório 1.0.6/0030/UUID…0107 | Todos | Realocar na sequência coordenada |
+| B11 | Issue #156 / rollout | Todos | Kill-switch ≠ consentimento; auditoria #156 só vale para o banco local |
 
-## 5. O que pode rodar em CI × o que exige Windows/intervenção real
+## 5. CI × Windows real × intervenção
 
 | Categoria | Itens |
 |---|---|
-| **CI hoje (ubuntu/windows-latest)** | Lógica de `auto-update.mjs` (`teste-auto-update.mjs`), inspeções de artefatos/DB em fixtures, W14 (script node direto), partes não-`.bat` de W8/W9/W10/W16 |
-| **Windows real obrigatório** | W0 (`.bat` legado + cauda), W9/W10 (interrupção do `.bat`), W11 (execução comportamental do `.bat` + `cmd.exe`), W15 (locks/arquivos SQLite no Windows), qualquer cenário com `cmd /c iniciar-mestre-rpg.bat` |
-| **Intervenção humana** | Primeira homologação de W0/W11 com captura de tela; W13 se exigir decisão de UX; smoke em cópia de dados reais (W12.4) |
-| **BLOCKED até implementação** | W5, W7, W13, W15, partes de W16 — não agendar execução, agendar **revisão de prontidão** |
+| **CI hoje** | Lógica de `auto-update.mjs`, W14 (node direto), inspeções de artefatos/DB em fixtures, partes não-`.bat` de W6/W8/W9/W10/W12/W16 |
+| **Windows real obrigatório** | W0, W1–W3, W5, W9–W11, W15 — qualquer execução de `cmd /c iniciar-mestre-rpg.bat`, locks, WAL, parsing de batch |
+| **Intervenção humana** | Primeira homologação de W0/W11 com captura; W13 se exigir UX; W12.3 com dados reais |
+| **BLOCKED até implementação** | W1–W5, W7, W11, W13, W15 e partes de W16 — agendar revisão de prontidão, não execução |
 
-## 6. Divergências e lacunas do contrato encontradas
+## 6. Divergências do contrato encontradas
 
-1. **W8 × W10** — sobreposição parcial: W8 prova a lacuna (sem proveniência/backup no legado); W10 reproduz o fluxo completo. Recomendação: manter ambos se W10 agregar observação do próximo boot; consolidar se a execução mostrar equivalência — registrar no contrato, não apagar cobertura.
-2. **Reset de árvore suja na retomada** — o contrato revisado exige fail-closed para qualquer árvore suja (inclusive HEAD=shaAnterior); pertinência ao `diffNameOnly` não prova origem. Qualquer procedimento de W que presuma reset automático em árvore suja está **divergente** e deve ser corrigido.
-3. **Falha de migration ≠ rollback Git** — `.bat` N-1 aborta em `aplicar-restauracao`/`db:migrate` sem rollback Git; updater só reverte em falhas internas de deps/build. W4/W6 devem refletir essa separação.
-4. **Backup antes de migration mesmo sem state** — fase 2 deve detectar migrations pendentes (journal × aplicados) **antes** de migrar; descobrir delta depois é tarde.
-5. **Smoke `/api/health`** — exige servidor ativo; contrato exige smoke temporário controlado ou outra validação executável; `MESTRE_PORTA` não prevalece sobre `servidor.json:porta` — fixture precisa de config isolada.
-6. **Boot Lock em tmpdir()** — cleaner externo pode remover lock ativo; porta customizada não coberta pelo check fixo 3001; condição de release documentada no contrato.
-7. **`restauracao_pendente` dentro do banco** — a flag viaja com o arquivo de banco trocado; a semântica "flag pendente" após crash parcial é ambígua (flag pode estar no banco antigo ou no restaurado). W15 precisa tratar isso explicitamente.
+1. **W8×W10** — sobreposição parcial; recomendação de consolidação condicionada à execução, sem apagar cobertura.
+2. **Árvore suja na retomada** — fail-closed para qualquer sujeira (inclusive HEAD=shaAnterior); `diffNameOnly` não prova origem.
+3. **Migration falha ≠ rollback Git** — `.bat` aborta sem reverter Git; updater só reverte em falhas internas de deps/build.
+4. **Backup antes de migration mesmo sem state** — fase 2 detecta migrations pendentes (journal × aplicados) **antes** de migrar.
+5. **`MESTRE_PORTA` ≠ `servidor.json:porta`** — smoke isolado exige config própria.
+6. **`restauracao_pendente` dentro do banco** — flag viaja com o arquivo trocado; ambiguidade pós-crash parcial afeta W15.
+7. **Boot Lock em tmpdir()** — cleaner externo pode remover lock ativo; porta customizada fora do check fixo 3001.
 
-## 7. Ata de execução (template obrigatório por W)
+## 7. Ambiente de homologação local (esta estação)
+
+- SO: Windows (verificar `winver` no registro da ata); Node observado: **v26.13.0** — projeto declara 20+; evidência em Node 20/22 pendente (CI ou instalação dedicada).
+- Git: 2.55.0.windows.3.
+- Regra: nenhum teste toca `banco/`, `backups/`, `configuracao/` ou `%TEMP%` fora de diretórios criados pelo próprio teste.
+
+## 8. Ata de execução (template)
 
 ```
-W__: ____________________   Data: ________  Executor: ________
-SHA testado: ____________________  (ref: head / merge / legado extraído)
-SO: ____________________  Node: ________  Comando: ____________________
-Exit code: ________
-Logs/artefatos anexados: ____________________
-Estado persistente antes: HEAD=___ branch=___ porcelain=<vazio|...> state=<...> db=<...> locks=<...>
-Estado persistente depois: HEAD=___ branch=___ porcelain=<...> state=<...> db=<...> locks=<...>
-Resultado observado: ____________________
-Critério de aceite aplicado: ____________________
-Decisão: PASS / FAIL / BLOCKED — justificativa: ____________________
-Limpeza executada: ____________________
+W__: ______  Data: ______  Executor: ______
+SHA testado: ______ (head / merge ref / .bat legado extraído de 7ce5b99)
+SO: ______  Node: ______  Comando: ______  Exit: ______
+Logs/artefatos: ______
+Estado antes: HEAD=___ branch=___ porcelain=<...> state=<...> db=<...> locks=<...>
+Estado depois: HEAD=___ branch=___ porcelain=<...> state=<...> db=<...> locks=<...>
+Observado: ______  Critério aplicado: ______
+Decisão: aprovado / reprovado / bloqueado / não executado — justificativa: ______
+Limpeza: ______
 ```
 
-## 8. Declaração de honestidade
+## 9. Declaração de honestidade
 
-- Este documento **não declara nenhum W executado**. Todos os procedimentos são planejamento.
-- Onde o código atual não oferece a capacidade testada, o item está marcado BLOCKED/CORREÇÃO/INTEGRAÇÃO — não PASS.
-- Qualquer execução futura deve anexar SHA, SO, Node, comando, exit code e logs conforme §2 e §7.
-- Dúvidas de mapeamento W1–W7 devem ser resolvidas contra o contrato consolidado **antes** da execução; este esqueleto não substitui o contrato.
+- Nenhum W é declarado executado neste documento; itens sem implementação estão BLOCKED/CORREÇÃO/INTEGRAÇÃO.
+- Resultados de execução futura serão registrados em §10 com evidências verificáveis.
+
+## 10. Registro de execuções
+
+| W | Data | SHA | SO/Node | Comando | Exit | Decisão | Artefato |
+|---|---|---|---|---|---|---|---|
+| — | — | — | — | nenhuma execução registrada ainda | — | — | — |
