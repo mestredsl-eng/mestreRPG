@@ -797,6 +797,10 @@ function socket_handlers(
       const u = usuario();
       const sessionId = payload?.sessionId;
       if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      // cota ANTES de comLockVtt/resolverCtx: a sincronização faz
+      // releituras e consultas caras — sem limite, um flood por socket
+      // esgota a fila VTT para todos os participantes.
+      if (!consumirOuRecusar(socket, "vttSync", cb)) return;
       await comLockVtt(async () => {
         const ctx = await resolverCtx(socket, sessionId);
         if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }

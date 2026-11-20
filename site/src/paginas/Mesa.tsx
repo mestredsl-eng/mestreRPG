@@ -1781,25 +1781,51 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // personagens:atualizados; regras emitem regras:atualizadas). Em vez
   // de confiar em payload, o cliente pede releitura autoritativa —
   // o servidor devolve o VTT já filtrado por papel com a vida correta.
+  // RATE_LIMITED é transitório: agenda UMA nova tentativa após
+  // retryAfterMs (limitada), coalescida com os gatilhos de evento —
+  // nunca loop nem tempestade de retries. Erros de autorização/sessão
+  // encerrada não são repetidos.
+  const sessaoVttRef = useRef<string | null>(null);
+  useEffect(() => { sessaoVttRef.current = sessionId ?? null; }, [sessionId]);
   useEffect(() => {
     if (!sessionId || encerrada) return;
+    const sessaoDestaVez = sessionId;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let tentativas = 0;
+    const MAX_TENTATIVAS = 3;
+    const aplicarSeAtual = (r: { ok?: boolean; papel?: string; vtt?: VttState; codigo?: string; retryAfterMs?: number } | undefined) => {
+      // callback atrasado não pode aplicar o estado de uma sessão já trocada
+      if (sessaoVttRef.current !== sessaoDestaVez) return;
+      if (r?.ok && r.vtt) {
+        tentativas = 0;
+        sincronizarAutoritativo(r.vtt);
+        setVtt(r.vtt);
+        return;
+      }
+      const espera = retryAfterDoAck(r);
+      if (espera !== null && tentativas < MAX_TENTATIVAS) {
+        tentativas += 1;
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          solicitar();
+        }, Math.max(espera, 50));
+      }
+    };
+    const solicitar = () => {
+      getSocket().volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
+    };
     const sincronizar = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        getSocket().volatile.emit("mesa:vtt:sincronizar", { sessionId }, (r: { ok?: boolean; papel?: string; vtt?: VttState }) => {
-          if (r?.ok && r.vtt) {
-            sincronizarAutoritativo(r.vtt);
-            setVtt(r.vtt);
-          }
-        });
-      }, 250);
+      timer = setTimeout(solicitar, 250);
     };
     const socket = getSocket();
     socket.on("personagens:atualizados", sincronizar);
     socket.on("regras:atualizadas", sincronizar);
     return () => {
       if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
       socket.off("personagens:atualizados", sincronizar);
       socket.off("regras:atualizadas", sincronizar);
     };

@@ -246,6 +246,32 @@ try {
     // Desfaz a névoa para não afetar outras verificações.
     await emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelarTudo" });
   }
+
+  // ---------- G. rate limit vttSync — cota por usuário, não por socket ----------
+  sec("G. Rate limit mesa:vtt:sincronizar — compartilhado entre sockets do mesmo usuário");
+  {
+    const sA2 = conectar(c.jogadores.jogador1.cookie);
+    await pronto(sA2);
+    const rEntra = await emitirCb(sA2, "mesa:entrar", { sessionId: sid });
+    t("segundo socket do j1 entra", rEntra?.ok === true);
+    // rajada no socket 1 drena o burst (12) — cota por userId
+    const rajada = await Promise.all(Array.from({ length: 16 }, () => sincronizar(sA)));
+    const limitados = rajada.filter((r) => r?.codigo === "RATE_LIMITED");
+    t("rajada gera RATE_LIMITED com retryAfterMs > 0",
+      limitados.length > 0 && limitados.every((r) => typeof r.retryAfterMs === "number" && r.retryAfterMs > 0),
+      `limitados=${limitados.length}/16`);
+    // o segundo socket do MESMO usuário divide a mesma cota
+    const rA2 = await sincronizar(sA2);
+    t("segundo socket do mesmo usuário também recebe RATE_LIMITED",
+      rA2?.codigo === "RATE_LIMITED" && typeof rA2?.retryAfterMs === "number" && rA2.retryAfterMs > 0,
+      JSON.stringify(rA2).slice(0, 140));
+    // cota reposta → sincronização legítima volta e HP segue correto
+    await dormir(1600);
+    const rOk = await sincronizar(sA);
+    t("sync legítimo após reposição da cota → ok", rOk?.ok === true, JSON.stringify(rOk).slice(0, 140));
+    t("HP atualizado continua chegando no sync", tok(rOk?.vtt, "tkpj1-aa11")?.vida?.hp?.atual === 110,
+      JSON.stringify(tok(rOk?.vtt, "tkpj1-aa11")?.vida));
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 800));

@@ -114,7 +114,7 @@ async function main() {
   await teste("LIMITES_SOCKET_MESA cobre todas as ações de escrita previstas", () => {
     const esperadas: AcaoMesaLimitada[] = [
       "chat", "rolagem", "testePedir", "testeRolar", "testeDecidir", "turno",
-      "entrar", "vttMapa", "vttToken", "vttNevoa",
+      "entrar", "vttMapa", "vttToken", "vttNevoa", "vttSync",
     ];
     for (const acao of esperadas) {
       const cfg = LIMITES_SOCKET_MESA[acao];
