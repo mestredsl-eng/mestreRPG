@@ -1770,6 +1770,34 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     return () => { socket.off("mesa:vtt", aoVtt); };
   }, [sessionId]);
 
+  // HP/vitalidade mudam sem emitir mesa:vtt (rotas de personagem emitem
+  // personagens:atualizados; regras emitem regras:atualizadas). Em vez
+  // de confiar em payload, o cliente pede releitura autoritativa —
+  // o servidor devolve o VTT já filtrado por papel com a vida correta.
+  useEffect(() => {
+    if (!sessionId || encerrada) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const sincronizar = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        getSocket().volatile.emit("mesa:vtt:sincronizar", { sessionId }, (r: { ok?: boolean; papel?: string; vtt?: VttState }) => {
+          if (r?.ok && r.vtt) {
+            sincronizarAutoritativo(r.vtt);
+            setVtt(r.vtt);
+          }
+        });
+      }, 250);
+    };
+    const socket = getSocket();
+    socket.on("personagens:atualizados", sincronizar);
+    socket.on("regras:atualizadas", sincronizar);
+    return () => {
+      if (timer) clearTimeout(timer);
+      socket.off("personagens:atualizados", sincronizar);
+      socket.off("regras:atualizadas", sincronizar);
+    };
+  }, [sessionId, encerrada]);
+
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
   const inicialConteudoRef = useRef<string | null>(null);
@@ -2304,7 +2332,26 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
                 onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
-              >{tk.nome.slice(0, 2).toUpperCase()}</button>
+              >
+                {tk.nome.slice(0, 2).toUpperCase()}
+                {tk.vida?.hp && (
+                  <span
+                    className="vtt-token-hp"
+                    title={`HP ${tk.vida.hp.atual}/${tk.vida.hp.maximo}`}
+                  >
+                    <span
+                      className="vtt-token-hp-fill"
+                      style={{ width: `${Math.max(0, Math.min(100, (tk.vida.hp.atual / Math.max(1, tk.vida.hp.maximo)) * 100))}%` }}
+                    />
+                  </span>
+                )}
+                {tk.vida?.vitalidade && tk.vida.vitalidade.nivel > 0 && (
+                  <span
+                    className="vtt-token-vit"
+                    title={`Vitalidade: ${tk.vida.vitalidade.nome} (nível ${tk.vida.vitalidade.nivel})`}
+                  >{tk.vida.vitalidade.nivel}</span>
+                )}
+              </button>
             );
           })}
         </div>

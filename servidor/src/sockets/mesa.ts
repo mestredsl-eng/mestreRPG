@@ -21,6 +21,8 @@ import {
   vttParaDestinatario, VTT_MAX_BYTES, VTT_MAX_NOME, VTT_MAX_TOKENS, NEVOA_MAX_TRAÇOS,
   type TokenVtt, type VttState,
 } from "../lib/vtt.js";
+import { prepararVidaVtt, vidaNoEstado } from "../lib/vtt-vida.js";
+import type { PapelVtt } from "../lib/vtt.js";
 import {
   criarLimitadorSocket, chaveSocket, LIMITES_SOCKET_MESA,
   type AcaoMesaLimitada, type LimitadorSocket,
@@ -373,9 +375,11 @@ function socket_handlers(
         // desligada, tokens ocultos (NPCs não revelados) e tokens do
         // próprio jogador — o atalho "névoa off → estado completo"
         // vazaria tokens ocultos para não-mestres.
-        const vttEu = papel === "mestre"
+        const visaoEntrar = papel === "mestre"
           ? vttEntrar
           : vttParaDestinatario(vttEntrar, papel as "jogador" | "espectador", uF.id, donos);
+        const ctxVidaEntrar = await prepararVidaVtt(sessionId, vttEntrar.tokens);
+        const vttEu = vidaNoEstado(ctxVidaEntrar, visaoEntrar, papel as PapelVtt, uF.id, ctxF.membership.id, donos);
         socket.emit("mesa:vtt", { sessionId, vtt: vttEu });
         const podeEnviar = papel !== "espectador" || permissoesDe(ctxF.membership).enviarMensagens === true;
         cb?.({
@@ -424,21 +428,24 @@ function socket_handlers(
       const sockets = [...io.sockets.sockets.values()].filter((s) => s.rooms.has(room));
       if (!sockets.length) return;
       const donos = await donosDosTokens(sessionId, vtt.tokens);
+      const ctxVida = await prepararVidaVtt(sessionId, vtt.tokens);
       await Promise.all(sockets.map(async (s) => {
         const u = s.data.usuario as Usuario | undefined;
         if (!u) return;
         const ctx = await resolverCtx(s, sessionId);
         if ("erro" in ctx || ctx.sessao.status === "encerrada") return;
-        s.emit("mesa:vtt", { sessionId, vtt: vttParaDestinatario(vtt, ctx.papel, u.id, donos) });
+        const visao = vttParaDestinatario(vtt, ctx.papel, u.id, donos);
+        s.emit("mesa:vtt", { sessionId, vtt: vidaNoEstado(ctxVida, visao, ctx.papel, u.id, ctx.membership.id, donos) });
       }));
     };
     /** Visão VTT do próprio requisitante (ACKs e mesa:entrar). */
-    const vttParaUsuario = async (sessionId: string, vtt: VttState, papel: string, userId: string): Promise<VttState> => {
+    const vttParaUsuario = async (sessionId: string, vtt: VttState, papel: string, userId: string, membershipId?: string): Promise<VttState> => {
       // Mesma regra do mesa:entrar — névoa desligada NÃO libera tokens
       // ocultos para não-mestres; o filtro canônico decide tudo.
-      if (papel === "mestre") return vtt;
       const donos = await donosDosTokens(sessionId, vtt.tokens);
-      return vttParaDestinatario(vtt, papel as "jogador" | "espectador", userId, donos);
+      const visao = papel === "mestre" ? vtt : vttParaDestinatario(vtt, papel as "jogador" | "espectador", userId, donos);
+      const ctxVida = await prepararVidaVtt(sessionId, vtt.tokens);
+      return vidaNoEstado(ctxVida, visao, papel as PapelVtt, userId, membershipId, donos);
     };
 
     const posicaoValida = (x: unknown, y: unknown): x is number =>
@@ -555,7 +562,7 @@ function socket_handlers(
         // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
         await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
-        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u!.id) });
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u!.id, ctx.membership.id) });
       });
     });
 
@@ -590,7 +597,7 @@ function socket_handlers(
           if (!ehMestre) { cb?.({ ok: false, erro: "Somente o mestre cria tokens" }); return; }
           // idempotência: se o cliente reenviou um criar com id já existente, não duplica
           if (typeof t.id === "string" && vtt.tokens.some((x) => x.id === t.id)) {
-            cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id), idempotente: true }); return;
+            cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id, ctx.membership.id), idempotente: true }); return;
           }
           if (vtt.tokens.length >= VTT_MAX_TOKENS) { cb?.({ ok: false, erro: `Limite de ${VTT_MAX_TOKENS} tokens por sessão atingido` }); return; }
           if (!posicaoValida(t.x, t.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
@@ -662,7 +669,7 @@ function socket_handlers(
         // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
         await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
-        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id, ctx.membership.id) });
       });
     });
 
@@ -726,7 +733,7 @@ function socket_handlers(
         // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: vttState persistido
         await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
         await emitirVtt(sessionId, vtt);
-        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id) });
+        cb?.({ ok: true, vtt: await vttParaUsuario(sessionId, vtt, ctx.papel, u.id, ctx.membership.id) });
       });
     });
 
@@ -754,7 +761,30 @@ function socket_handlers(
         const ctxF = await resolverCtx(socket, sessionId);
         if ("erro" in ctxF) { cb?.({ ok: false, erro: ctxF.erro }); return; }
         if (ctxF.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
-        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id) });
+        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id, ctxF.membership.id) });
+      });
+    });
+
+    /**
+     * mesa:vtt:sincronizar {sessionId} — releitura autoritativa do VTT
+     * completo (mapa+tokens+névoa+vida) para o requisitante. Usado pelo
+     * cliente quando personagens:atualizados/regras:atualizadas podem ter
+     * alterado HP/vitalidade sem emitir mesa:vtt. Não modifica estado.
+     */
+    on(socket, "mesa:vtt:sincronizar", async (payload: { sessionId?: string },
+      cb?: (r: unknown) => void) => {
+      const u = usuario();
+      const sessionId = payload?.sessionId;
+      if (!u || !sessionId) { cb?.({ ok: false, erro: "Não autenticado" }); return; }
+      await comLockVtt(async () => {
+        const ctx = await resolverCtx(socket, sessionId);
+        if ("erro" in ctx) { cb?.({ ok: false, erro: ctx.erro }); return; }
+        if (ctx.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        const vtt = await lerVtt(sessionId);
+        const ctxF = await resolverCtx(socket, sessionId);
+        if ("erro" in ctxF) { cb?.({ ok: false, erro: ctxF.erro }); return; }
+        if (ctxF.sessao.status === "encerrada") { cb?.({ ok: false, erro: "Sessão encerrada" }); return; }
+        cb?.({ ok: true, papel: ctxF.papel, vtt: await vttParaUsuario(sessionId, vtt, ctxF.papel, u.id, ctxF.membership.id) });
       });
     });
 

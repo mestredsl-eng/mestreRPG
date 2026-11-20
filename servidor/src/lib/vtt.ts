@@ -13,6 +13,9 @@ export interface TokenVtt {
   // Token oculto nunca é entregue a não-mestres — independente da névoa.
   // Usado para NPCs/inimigos que o mestre só exibe como alvo quando decide.
   oculto?: boolean;
+  // Vida (HP/condição) derivada por destinatário — NUNCA persistida em
+  // vtt_state; anexada somente nas cópias filtradas entregues ao cliente.
+  vida?: import("./vtt-vida.js").VidaToken | null;
 }
 export interface MapaVtt { fileId: string; nome: string; largura?: number; altura?: number }
 export interface PontoNevoa { x: number; y: number }
@@ -122,7 +125,15 @@ export function vttDeTexto(raw: unknown, sessionId: string): VttState {
     && (tk as TokenVtt).x >= 0 && (tk as TokenVtt).x <= 1
     && (tk as TokenVtt).y >= 0 && (tk as TokenVtt).y <= 1
     && typeof (tk as TokenVtt).cor === "string"
-    && ((tk as TokenVtt).oculto === undefined || typeof (tk as TokenVtt).oculto === "boolean"));
+    && ((tk as TokenVtt).oculto === undefined || typeof (tk as TokenVtt).oculto === "boolean"))
+    // reconstrução campo a campo: `vida` e quaisquer campos extras nunca
+    // sobrevivem à leitura do estado persistido.
+    .map((tk) => ({
+      id: tk.id, nome: tk.nome, cor: tk.cor, x: tk.x, y: tk.y, ativo: tk.ativo !== false,
+      personagemId: typeof tk.personagemId === "string" ? tk.personagemId : null,
+      userId: typeof tk.userId === "string" ? tk.userId : null,
+      oculto: tk.oculto === true ? true : undefined,
+    }));
   const mp = o?.mapa as { fileId?: unknown; nome?: unknown; largura?: unknown; altura?: unknown } | null | undefined;
   const mapa = mp && typeof mp === "object" && typeof mp.fileId === "string"
     ? {
@@ -260,14 +271,16 @@ export function vttParaDestinatario(
  * já filtrado para o requisitante; null quando não há estado.
  */
 export async function vttStateFiltradoHttp(
-  sessao: { id: string; vttState: unknown }, papel: PapelVtt, userId: string
+  sessao: { id: string; campaignId?: string | null; vttState: unknown },
+  papel: PapelVtt, userId: string, membershipId?: string
 ): Promise<unknown> {
   const raw = sessao.vttState;
   if (raw == null || raw === "") return raw ?? null;
   const vtt = vttDeTexto(typeof raw === "string" ? raw : JSON.stringify(raw), sessao.id);
-  // Não-mestre SEMPRE passa pelo filtro canônico: com a névoa desligada
-  // o estado cru vazaria tokens ocultos (NPCs não revelados).
-  if (papel === "mestre") return raw;
   const donos = await donosDosTokens(sessao.id, vtt.tokens);
-  return JSON.stringify(vttParaDestinatario(vtt, papel, userId, donos));
+  const visao = papel === "mestre" ? vtt : vttParaDestinatario(vtt, papel, userId, donos);
+  // vida derivada por destinatário — mesmo cálculo do canal socket.
+  const { prepararVidaVtt, vidaNoEstado } = await import("./vtt-vida.js");
+  const ctxVida = await prepararVidaVtt(sessao.id, vtt.tokens);
+  return JSON.stringify(vidaNoEstado(ctxVida, visao, papel, userId, membershipId, donos));
 }
