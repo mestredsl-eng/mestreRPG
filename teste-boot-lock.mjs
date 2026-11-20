@@ -14,7 +14,7 @@ const RAIZ = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = join(RAIZ, "scripts", "boot-lock.mjs");
 const BAT = join(RAIZ, "iniciar-mestre-rpg.bat");
 
-const { adquirirLock, liberarLock, caminhoLock, caminhoCanonicoRepo, diretorioLocks, resolverPortaServidor } =
+const { adquirirLock, liberarLock, caminhoLock, caminhoCanonicoRepo, diretorioBaseEstado, diretorioEstado, instalacaoId, resolverPortaServidor } =
   await import("./scripts/boot-lock.mjs");
 
 let pass = 0, fail = 0;
@@ -24,6 +24,7 @@ const t = (n, c, extra = "") => {
 };
 
 const TMP = join(tmpdir(), `boot-lock-teste-${Date.now().toString(36)}`);
+const STATE_WORKERS = join(TMP, "state-workers"); // MESTRE_STATE_DIR isolado dos workers
 mkdirSync(TMP, { recursive: true });
 const repoComEspaco = join(TMP, "instalacao com espacos");
 mkdirSync(repoComEspaco, { recursive: true });
@@ -51,7 +52,7 @@ process.exit(0);
 function spawnWorkers(cwd, n) {
   return Promise.all(Array.from({ length: n }, () => new Promise((res) => {
     const p = spawn(process.execPath, ["--input-type=module", "-e", WORKER, cwd], {
-      env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "500", MESTRE_PORTA: "39991" },
+      env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "500", MESTRE_PORTA: "39991", MESTRE_STATE_DIR: STATE_WORKERS },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "", err = "";
@@ -65,8 +66,9 @@ const codigos = (rs) => rs.map((r) => (r.out.match(/CODIGO=(\d+)/) ?? [])[1]).fi
 try {
   // ---------- aquisição básica ----------
   const lock1 = caminhoLock(repoComEspaco, TMP);
+  mkdirSync(dirname(lock1), { recursive: true });
   const r1 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
@@ -77,7 +79,7 @@ try {
   // lock ocupado por pid vivo → aguarda health → timeout → aborta
   const t0 = Date.now();
   const r2 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 120, intervaloEsperaMs: 10, log: () => {},
   });
@@ -85,20 +87,20 @@ try {
   t("espera respeitou a janela (~120ms)", Date.now() - t0 >= 100, String(Date.now() - t0));
 
   const r3 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid + 1, pidVivo: () => true, fetchHealth: fetchSempre,
     timeoutEsperaMs: 500, intervaloEsperaMs: 5, log: () => {},
   });
   t("lock ocupado + servidor no ar → codigo 20", r3.codigo === 20, String(r3.codigo));
 
   // ---------- liberação somente pelo proprietário (pid+host+repo) ----------
-  const relErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: 999999 });
+  const relErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, stateBase: TMP, pid: 999999 });
   t("liberação por pid estranho é recusada", relErrado.ok === false, relErrado.motivo);
   t("lock continua existindo após recusa", existsSync(lock1));
-  const relHostErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: "HOST-FALSO" });
+  const relHostErrado = liberarLock({ cwd: repoComEspaco, lockPath: lock1, stateBase: TMP, pid: process.pid, host: "HOST-FALSO" });
   t("liberação por host divergente (pid coincidente) é recusada", relHostErrado.ok === false, relHostErrado.motivo);
   t("lock continua existindo após recusa de host", existsSync(lock1));
-  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
+  const relCerto = liberarLock({ cwd: repoComEspaco, lockPath: lock1, stateBase: TMP, pid: process.pid, host: hostname() });
   t("proprietário (pid+host+repo) libera o lock", relCerto.ok === true, relCerto.motivo);
   t("arquivo removido após liberação", !existsSync(lock1));
 
@@ -106,14 +108,14 @@ try {
   writeFileSync(lock1, JSON.stringify(META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   const repoB = join(TMP, "outra instalacao");
   mkdirSync(repoB, { recursive: true });
-  const relRepoB = liberarLock({ cwd: repoB, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
+  const relRepoB = liberarLock({ cwd: repoB, lockPath: lock1, stateBase: TMP, pid: process.pid, host: hostname() });
   t("liberação com repo divergente é recusada", relRepoB.ok === false && existsSync(lock1), relRepoB.motivo);
   rmSync(lock1, { force: true });
 
   // ---------- metadados inválidos → fail-closed ----------
   writeFileSync(lock1, "{json corrompido");
   const r5 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: () => true, fetchHealth: fetchNunca,
     timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -124,7 +126,7 @@ try {
   writeFileSync(lock1, JSON.stringify(META(morto, "OUTRA-MAQUINA-XYZ", caminhoCanonicoRepo(repoComEspaco))));
   const antes = readFileSync(lock1, "utf8");
   const r6 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, host: hostname(), pidVivo: () => false,
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -133,7 +135,7 @@ try {
   // ---------- recuperação de lock obsoleto (sequencial) ----------
   writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   const r7 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: (p) => p !== morto, fetchHealth: fetchNunca,
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
@@ -142,13 +144,13 @@ try {
   t("novo lock tem pid do novo proprietário", metaNovo.pid === process.pid);
   // mutex liberado após a seção
   t("mutex .recover liberado após recuperação", !existsSync(lock1 + ".recover"));
-  liberarLock({ cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP, pid: process.pid, host: hostname() });
+  liberarLock({ cwd: repoComEspaco, lockPath: lock1, stateBase: TMP, pid: process.pid, host: hostname() });
 
   // ---------- mutex .recover ocupado por pid vivo → fail-closed ----------
   writeFileSync(lock1, JSON.stringify(META(morto, hostname(), caminhoCanonicoRepo(repoComEspaco))));
   writeFileSync(lock1 + ".recover", JSON.stringify({ ...META(process.pid, hostname(), caminhoCanonicoRepo(repoComEspaco)), nonce: "n-vivo" }));
   const r8 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: (p) => p === process.pid, // só o pid do mutex "vive"
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -164,7 +166,7 @@ try {
   writeFileSync(recPath1, recObsoleto);
   const lockAntes = readFileSync(lock1, "utf8");
   const r9 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: () => false, // nada vivo: lock E mutex obsoletos
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5,
     log: (m) => { if (/Remova manualmente/.test(m)) globalThis.__instrucaoVista = true; },
@@ -177,7 +179,7 @@ try {
   // mutex corrompido → fail-closed, preservado
   writeFileSync(recPath1, "{lixo");
   const r10 = await adquirirLock({
-    cwd: repoComEspaco, lockPath: lock1, dirLocks: TMP,
+    cwd: repoComEspaco, lockPath: lock1, stateBase: TMP,
     pid: process.pid, pidVivo: () => false,
     fetchHealth: fetchNunca, timeoutEsperaMs: 60, intervaloEsperaMs: 5, log: () => {},
   });
@@ -186,20 +188,29 @@ try {
   rmSync(recPath1, { force: true });
   rmSync(lock1, { force: true });
 
-  // ---------- lock PERSISTENTE (não tmpdir) + isolamento ----------
-  const dirLocksProd = diretorioLocks();
-  const lockProd = caminhoLock(repoComEspaco); // sem dirBase → produção
-  t("diretório de locks padrão é persistente, fora do tmpdir",
-    dirname(lockProd) === resolve(dirLocksProd) && !dirname(lockProd).startsWith(resolve(tmpdir())),
-    `${dirname(lockProd)} vs tmpdir ${tmpdir()}`);
-  t("diretório padrão contém MestreRPG/locks",
-    /MestreRPG[\\/]locks$/.test(dirLocksProd), dirLocksProd);
+  // ---------- lock PERSISTENTE (não tmpdir) + convenção de estado ----------
+  const baseProd = diretorioBaseEstado();
+  const lockProd = caminhoLock(repoComEspaco); // sem base → produção
+  const idProd = instalacaoId(repoComEspaco);
+  t("diretório de estado padrão é persistente, fora do tmpdir",
+    diretorioEstado(repoComEspaco) === join(baseProd, idProd) &&
+    !diretorioEstado(repoComEspaco).startsWith(resolve(tmpdir())),
+    `${diretorioEstado(repoComEspaco)}`);
+  t("base padrão Windows contém MestreRPG/state",
+    process.platform !== "win32" || /MestreRPG[\\/]state$/.test(resolve(baseProd)), baseProd);
+  t("instalacaoId é SHA-256 completo (64 hex)", /^[0-9a-f]{64}$/.test(idProd), idProd);
+  t("lock fica em <estado>/<instalacaoId>/mestre-boot-lock.json",
+    lockProd === join(diretorioEstado(repoComEspaco), "mestre-boot-lock.json"));
+  // Override MESTRE_STATE_DIR
+  const stateAntigo = process.env.MESTRE_STATE_DIR;
+  process.env.MESTRE_STATE_DIR = join(TMP, "state-override");
+  t("MESTRE_STATE_DIR substitui o base", diretorioBaseEstado() === join(TMP, "state-override"));
+  if (stateAntigo === undefined) delete process.env.MESTRE_STATE_DIR;
+  else process.env.MESTRE_STATE_DIR = stateAntigo;
   const repoIsoA = join(TMP, "iso A"); const repoIsoB = join(TMP, "iso B");
   mkdirSync(repoIsoA, { recursive: true }); mkdirSync(repoIsoB, { recursive: true });
   t("locks isolados por instalação", caminhoLock(repoIsoA, TMP) !== caminhoLock(repoIsoB, TMP));
   t("mesmo repo → mesmo lock (idempotente)", caminhoLock(repoIsoA, TMP) === caminhoLock(repoIsoA, TMP));
-  t("nome do lock usa SHA-256 (64 hex no input, 16 no nome)",
-    /^mestre-boot-lock-[0-9a-f]{16}\.json$/.test(lockProd.split(sep).pop()));
 
   // ---------- porta efetiva = mesma precedência de config.ts ----------
   const repoPorta = join(TMP, "repo porta");
@@ -232,7 +243,7 @@ try {
   writeFileSync(cfgPorta, JSON.stringify({ porta: 4599 }));
   let urlVista = "";
   const rPorta = await adquirirLock({
-    cwd: repoPorta, dirLocks: TMP, pid: process.pid,
+    cwd: repoPorta, stateBase: TMP, pid: process.pid,
     pidVivo: () => true, fetchHealth: async (u) => { urlVista = u; return true; },
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
@@ -244,23 +255,24 @@ try {
   const repoRen = join(TMP, "repo rename");
   mkdirSync(repoRen, { recursive: true });
   const lockRen = caminhoLock(repoRen, TMP);
+  mkdirSync(dirname(lockRen), { recursive: true });
   const mortoRen = pidMorto();
   const metaStaleRen = JSON.stringify(META(mortoRen, hostname(), caminhoCanonicoRepo(repoRen)));
   const pidVivoRen = (p) => p !== mortoRen;
   writeFileSync(lockRen, metaStaleRen);
   const rEnoent = await adquirirLock({
-    cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid,
+    cwd: repoRen, lockPath: lockRen, stateBase: TMP, pid: process.pid,
     pidVivo: pidVivoRen, fetchHealth: fetchNunca,
     // ENOENT real: o arquivo sumiu entre a leitura e o rename
     renomear: (src) => { rmSync(src, { force: true }); const e = new Error("gone"); e.code = "ENOENT"; throw e; },
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
   });
   t("rename ENOENT → tratado como sumiu, retenta e adquire", rEnoent.codigo === 0, `${rEnoent.codigo} ${rEnoent.motivo}`);
-  liberarLock({ cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid, host: hostname() });
+  liberarLock({ cwd: repoRen, lockPath: lockRen, stateBase: TMP, pid: process.pid, host: hostname() });
 
   writeFileSync(lockRen, metaStaleRen);
   const rEacces = await adquirirLock({
-    cwd: repoRen, lockPath: lockRen, dirLocks: TMP, pid: process.pid,
+    cwd: repoRen, lockPath: lockRen, stateBase: TMP, pid: process.pid,
     pidVivo: pidVivoRen, fetchHealth: fetchNunca,
     renomear: () => { const e = new Error("denied"); e.code = "EACCES"; throw e; },
     timeoutEsperaMs: 50, intervaloEsperaMs: 5, log: () => {},
@@ -273,9 +285,8 @@ try {
   // Repo dedicado para não colidir com locks de função acima.
   const repoConc = join(TMP, "repo concorrencia");
   mkdirSync(repoConc, { recursive: true });
-  const lockConc = caminhoLock(repoConc); // dirLocks padrão de produção — mesmo que o CLI usa
-  // Porta morta garantida: health-first não pode trombar servidor real do usuário
-  process.env.MESTRE_PORTA = "39991";
+  const lockConc = caminhoLock(repoConc, STATE_WORKERS); // mesmo MESTRE_STATE_DIR dos workers
+  mkdirSync(dirname(lockConc), { recursive: true });
   rmSync(lockConc, { force: true });
   rmSync(lockConc + ".recover", { force: true });
 
@@ -334,12 +345,15 @@ try {
   rmSync(lockConc, { force: true });
   const cliA = spawnSync(process.execPath, [SCRIPT, "adquirir"], {
     cwd: repoConc, encoding: "utf8", timeout: 15000,
-    env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "300", MESTRE_PORTA: "39991" },
+    env: { ...process.env, MESTRE_BOOT_LOCK_TIMEOUT_MS: "300", MESTRE_PORTA: "39991", MESTRE_STATE_DIR: STATE_WORKERS },
   });
   t("CLI adquirir → exit 0", cliA.status === 0, `${cliA.status} ${cliA.stderr} ${cliA.stdout}`);
   const cliMeta = JSON.parse(readFileSync(lockConc, "utf8"));
   t("CLI grava pid do processo pai (dono)", Number.isInteger(cliMeta.pid) && cliMeta.pid > 0, JSON.stringify(cliMeta));
-  const cliLib = spawnSync(process.execPath, [SCRIPT, "liberar"], { cwd: repoConc, encoding: "utf8", timeout: 15000 });
+  const cliLib = spawnSync(process.execPath, [SCRIPT, "liberar"], {
+    cwd: repoConc, encoding: "utf8", timeout: 15000,
+    env: { ...process.env, MESTRE_STATE_DIR: STATE_WORKERS },
+  });
   t("CLI liberar → exit 0 (mesmo ppid+host+repo)", cliLib.status === 0, `${cliLib.status} ${cliLib.stderr}`);
   t("lock real removido", !existsSync(lockConc));
 
@@ -422,7 +436,7 @@ try {
         p.on("close", (code) => res2({ status: code, stdout: out, stderr: "" }));
       });
     }
-    const lockBat = (ctx) => caminhoLock(ctx.dir, join(ctx.la, "MestreRPG", "locks"));
+    const lockBat = (ctx) => caminhoLock(ctx.dir, join(ctx.la, "MestreRPG", "state"));
 
     // a) helper ausente → aborta sem rodar nada
     let ctx = prepararRaizBat("sem-helper", { comHelper: false });

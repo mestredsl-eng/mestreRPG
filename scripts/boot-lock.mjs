@@ -13,16 +13,17 @@
 //     — cobre o caso do lock ter sido apagado externamente.
 //   Depois: criação atômica (open 'wx') de um arquivo de lock FORA
 //     do worktree, em diretório PERSISTENTE por usuário:
-//       Windows:   %LOCALAPPDATA%\MestreRPG\locks\
-//       demais:    $XDG_STATE_HOME/mestre-rpg/locks/ ou
-//                  ~/.local/state/mestre-rpg/locks/
-//     (tmpdir é volátil — Storage Sense poderia apagar o lock durante
-//     um boot longo e permitir segunda instância). Chave: SHA-256 do
-//     caminho canônico real da instalação. Metadados: pid do processo
-//     proprietário (o cmd.exe do .bat, ou seja process.ppid do node
-//     auxiliar), hostname e caminho canônico.
-//     ATENÇÃO: %LOCALAPPDATA% é por usuário — duas contas Windows
-//     distintas NÃO compartilham exclusão mútua na mesma instalação.
+//       Windows:   %LOCALAPPDATA%\MestreRPG\state\<instalacaoId>\
+//       demais:    $XDG_STATE_HOME/mestre-rpg/state/<instalacaoId>/ ou
+//                  ~/.local/state/mestre-rpg/state/<instalacaoId>/
+//     Override:   %MESTRE_STATE_DIR%\<instalacaoId>\
+//     onde instalacaoId = SHA-256 do realpath canônico e normalizado
+//     do repositório — a MESMA convenção que a futura
+//     scripts/estado-externo.mjs deve reproduzir. (tmpdir é volátil —
+//     Storage Sense poderia apagar o lock durante um boot longo e
+//     permitir segunda instância.) ATENÇÃO: o base é por usuário —
+//     duas contas Windows distintas NÃO compartilham exclusão mútua
+//     na mesma instalação.
 //   Ocupado por pid VIVO na mesma máquina → aguarda /api/health por até
 //     120s; se o servidor responder, sai com código 20 ("outra instância
 //     assumiu") sem executar nada mutável; se não responder, aborta.
@@ -78,24 +79,38 @@ export function caminhoCanonicoRepo(dir) {
   }
 }
 
-/** Diretório persistente de locks — por usuário, fora do worktree e
- *  fora do tmpdir volátil. Injetável APENAS em testes via dirBase. */
-export function diretorioLocks() {
+/** Base do estado por usuário — Windows: %LOCALAPPDATA%\MestreRPG\state;
+ *  demais: $XDG_STATE_HOME/mestre-rpg/state ou ~/.local/state/mestre-rpg/state.
+ *  Override global: MESTRE_STATE_DIR substitui TODO o base (o
+ *  <instalacaoId> continua sendo anexado). */
+export function diretorioBaseEstado() {
+  const override = (process.env.MESTRE_STATE_DIR ?? "").trim();
+  if (override) return override;
   if (process.platform === "win32") {
-    const base = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
-    return join(base, "MestreRPG", "locks");
+    const local = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    return join(local, "MestreRPG", "state");
   }
   const xdg = (process.env.XDG_STATE_HOME ?? "").trim();
   const base = xdg || join(homedir(), ".local", "state");
-  return join(base, "mestre-rpg", "locks");
+  return join(base, "mestre-rpg", "state");
 }
 
-/** Arquivo de lock por instalação — fora do worktree para nunca sujar
- *  `git status` (o updater exige árvore limpa). */
-export function caminhoLock(dir, dirBase = diretorioLocks()) {
-  const canon = caminhoCanonicoRepo(dir);
-  const hash = createHash("sha256").update(canon).digest("hex").slice(0, 16);
-  return join(dirBase, `mestre-boot-lock-${hash}.json`);
+/** Identidade da instalação: SHA-256 do caminho canônico real.
+ *  Exportada para que scripts/estado-externo.mjs reproduza o MESMO
+ *  resultado — não criar identidade paralela. */
+export function instalacaoId(dir) {
+  return createHash("sha256").update(caminhoCanonicoRepo(dir)).digest("hex");
+}
+
+/** Diretório de estado desta instalação: <base>\<instalacaoId>. */
+export function diretorioEstado(dir, baseOverride) {
+  return join(baseOverride ?? diretorioBaseEstado(), instalacaoId(dir));
+}
+
+/** Arquivo de lock por instalação — <estado>/<instalacaoId>/mestre-boot-lock.json,
+ *  fora do worktree para nunca sujar `git status` (o updater exige árvore limpa). */
+export function caminhoLock(dir, baseOverride) {
+  return join(diretorioEstado(dir, baseOverride), "mestre-boot-lock.json");
 }
 
 /**
@@ -315,9 +330,9 @@ function reivindicarLockObsoleto({ lockPath, repoDir, host, pidVivo, log, renome
 export async function adquirirLock(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const repoDir = caminhoCanonicoRepo(cwd);
-  // dirLocks é injetável SOMENTE para testes — produção usa o diretório
-  // persistente por usuário (LOCALAPPDATA/XDG_STATE_HOME).
-  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.dirLocks);
+  // stateBase é injetável SOMENTE para testes — produção usa a convenção
+  // compartilhada <MESTRE_STATE_DIR|LOCALAPPDATA>/.../<instalacaoId>.
+  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.stateBase);
   const pidDono = opts.pid ?? process.ppid; // cmd.exe do .bat, não este node
   const host = opts.host ?? hostname();
   const pidVivo = opts.pidVivo ?? pidVivoReal;
@@ -414,7 +429,7 @@ export async function adquirirLock(opts = {}) {
 export function liberarLock(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const repoDir = caminhoCanonicoRepo(cwd);
-  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.dirLocks);
+  const lockPath = opts.lockPath ?? caminhoLock(cwd, opts.stateBase);
   const pidDono = opts.pid ?? process.ppid;
   const host = opts.host ?? hostname();
 
