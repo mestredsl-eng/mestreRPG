@@ -535,6 +535,33 @@ try {
     t("nenhum fetch/pull com upstream de fork", !regFork.some((x) => x.includes("fetch") || x.includes("pull")), regFork.join(" | "));
   }
 
+  sec("B1c — refspec/merge customizado não pode puxar outra branch");
+  {
+    // remote.origin.fetch customizado + branch.main.merge apontando
+    // para 'evil' fazem @{u} resolver como origin/main, mas a
+    // referencia de rastreio passa a conter a ponta de 'evil'. Sem a
+    // conferencia via ls-remote, o pull --ff-only traria codigo de
+    // outra branch do mesmo repositorio oficial.
+    const c = criarRepo("b1c-refspec");
+    publicar(c);
+    const pub = join(c.base, "pub");
+    gitSetup(["checkout", "-b", "evil"], pub);
+    c.commit(pub, "evil-avanco", { "site/src/evil.txt": "evil\n" });
+    gitSetup(["push", "origin", "evil"], pub);
+    gitSetup(["checkout", "main"], pub);
+    const shaAnt = head(c.local);
+    gitSetup(["config", "remote.origin.fetch", "+refs/heads/evil:refs/remotes/origin/main"], c.local);
+    gitSetup(["config", "branch.main.merge", "refs/heads/evil"], c.local);
+    const upBruto = String(git(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"], c.local).stdout).trim();
+    t("@{u} resolve como origin/main mesmo com merge customizado", upBruto === "origin/main", upBruto);
+    const reg = [];
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
+    t("fetch customizado executado antes do bloqueio", reg.some((x) => x.includes("fetch")), reg.join(" | "));
+    t("upstream que não reflete o remoto → bloqueado", r.atualizou === false && r.motivo === "upstream-nao-reflete-remoto", `${r.motivo} up=${r.upstream}`);
+    t("nenhum pull com upstream adulterado", !reg.some((x) => x.includes(" pull")), reg.join(" | "));
+    t("HEAD local preservado", head(c.local) === shaAnt);
+  }
+
   sec("Executar npm real sem shell livre — compatibilidade Windows");
   {
     const cmd = process.platform === "win32" ? "npm.cmd" : "npm";

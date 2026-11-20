@@ -176,6 +176,26 @@ export async function verificarAtualizacao(opts = {}) {
   if (nBehind === 0) return pular("sem-atualizacao", { repoDir, branch, commits: 0 });
   if (nAhead > 0) return pular("divergente", { repoDir, branch, commits: nBehind });
 
+  // 8b. Integridade do upstream: a referencia de rastreio
+  //     refs/remotes/origin/<branch> precisa refletir a branch de
+  //     mesmo nome no remoto oficial. Um refspec customizado
+  //     (remote.origin.fetch) combinado com branch.<nome>.merge
+  //     apontando para outra branch poderia fazer 'origin/main'
+  //     carregar codigo de uma ref diferente do mesmo repositorio.
+  //     ls-remote consulta o remoto diretamente — nao depende do
+  //     mapeamento local.
+  const ls = git(["ls-remote", "origin", `refs/heads/${branch}`], tFetch);
+  if (ls.code !== 0) {
+    return pular("falha-fetch", { repoDir, branch, detalhe: String(ls.stderr).trim().slice(0, 300) });
+  }
+  const shaRemoto = String(ls.stdout).split(/\r?\n/)
+    .map((l) => l.trim().split(/\s+/))
+    .find(([, ref]) => ref === `refs/heads/${branch}`)?.[0] ?? "";
+  const shaTracking = String(git(["rev-parse", `refs/remotes/${upstream}`]).stdout).trim();
+  if (!shaRemoto || shaRemoto !== shaTracking) {
+    return pular("upstream-nao-reflete-remoto", { repoDir, branch });
+  }
+
   // 9. pull exclusivamente fast-forward; SHA anterior registrado antes.
   //    A partir daqui qualquer excecao inesperada pode deixar o HEAD
   //    atualizado sem deps/build — devolvemos `rollback` para o boot
@@ -480,6 +500,7 @@ export async function executarBoot(opts = {}) {
       "head-detached": "HEAD destacado — atualizacao ignorada.",
       "sem-upstream": "Branch sem upstream configurado — atualizacao ignorada.",
       "upstream-invalido": `Upstream '${v.upstream ?? "?"}' nao e 'origin/${v.branch}' — atualizacao ignorada (remoto nao oficial).`,
+      "upstream-nao-reflete-remoto": "O upstream local nao corresponde a branch homonima do remoto — atualizacao ignorada (fetch/merge customizado).",
       "arvore-suja": "Alteracoes locais detectadas — atualizacao adiada para nao conflitar; revise e rode 'git pull' manualmente se quiser.",
       "falha-fetch": "Falha ao buscar atualizacoes (sem rede ou autenticacao) — seguindo com a versao local.",
       "falha-pull": "Nao foi possivel aplicar o pull --ff-only — seguindo com a versao local.",
