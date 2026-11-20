@@ -1,24 +1,26 @@
 # Homologação independente — Issue #155, Etapas 1–3 (PR #193)
 
-- **SHA de produção testado:** `d822f0e1b9aa9030534716bb4a665fc8042c3293` (`fix/issue-155-pr193-fail-closed`, merge na branch de testes).
-- **Base anterior homologada:** `30c348f1f19c2996fbb237d467ec5113c9cc81ab` — os 2 FAILs de recibo encontrados nela foram **corrigidos** pelo Pai em d822f0e e revalidados aqui.
+- **Produção testada (atual):** `fc219f1b5b0dc687a4050fd8ff5357ae1d939c8d` (HEAD de `fix/issue-155-pr193-fail-closed`), que contém `d822f0e1b9aa9030534716bb4a665fc8042c3293` — merge `11d9247` nesta branch.
+- **Base histórica:** `30c348f1f19c2996fbb237d467ec5113c9cc81ab` — os 2 FAILs de recibo encontrados nela foram corrigidos pelo Pai em d822f0e e revalidados.
 - **Ambiente:** Windows (MINGW64/NT 10.0), Node v26.13.0. Sem runner Linux nem Node 20/22 → Fase 7 NOT EXECUTED.
 - **Execução:** LOCAL. Fixtures 100% descartáveis em `%TEMP%`; banco/instalação reais nunca tocados. State dir isolado por fixture (`MESTRE_STATE_DIR=<raiz>/state`).
 
-## O que mudou na produção (d822f0e) e cobertura de teste
+## O que mudou na produção e cobertura de teste
 
 | Correção do Pai | Teste que prova |
 |---|---|
-| Recibo = "instalação concluída"; nunca autoriza banco ausente/vazio | `teste-restauracao-journal.mjs` T1 + T1b; `teste-restauracao-boot.mjs` §1 e §14 |
-| `bootstrap-autorizacao.json` uso único, consumo durável (rename antes de validar) | T1b: autorização válida→exit 0, replay→bloqueia, corrompida→bloqueia+consumida, divergente→bloqueia, recibo+autorização→bloqueia sem consumir |
-| `diagnosticarBootstrap`/`estadoInstalacaoConhecido`/`avaliarBoot` | `teste-estado-externo.mjs` (diagnóstico por estado, avaliarBoot com manifesto) |
-| State dir ausente/ilegível → null inconclusivo | backup-contrato T2 (2 casos) + T3 referenciadoPorJournal |
-| Quarentena `*.quarentena-*` bloqueia varredura | T2 (state dir e protecao/) |
-| Identidade obrigatória em todo registro do protocolo | T2 (divergente, protocoloVersao, ausente total) |
-| Marker sem expiração por idade; desproteção exige não-referência provada | T3 (marker `ate` no passado protege e não é removido; desproteção inconclusiva retorna false e preserva marker) |
-| SHA-256 streaming 1 MiB, sempre verificado | T4 (>2 GiB esparso com hash errado → rejeita por sha256, prova de verificação) |
-| Raiz do backup symlink/não-diretório rejeitada (lstat/TOCTOU) | T4 (junction → rejeita) |
-| `dirEstado` sem `MESTRE_HOME` — paridade exata com boot-lock | T5 paridade (9 casos de env, todos iguais) |
+| Recibo = "instalação concluída"; nunca autoriza banco ausente/vazio | `teste-restauracao-journal.mjs` T1/T1b; `teste-restauracao-boot.mjs` §1 e §14 |
+| `bootstrap-autorizacao.json` uso único, consumo durável (rename antes de validar) | T1b: válida→exit 0, replay→bloqueia, corrompida→bloqueia+consumida, divergente→bloqueia, recibo+autorização→bloqueia sem consumir |
+| `diagnosticarBootstrap`/`estadoInstalacaoConhecido`/`avaliarBoot` | `teste-estado-externo.mjs` (58 asserções) |
+| State dir ausente/ilegível → null inconclusivo | backup-contrato T2 + T3 |
+| Quarentena `*.quarentena-*` bloqueia varredura | T2 (state dir e `protecao/`) |
+| Identidade obrigatória (`protocoloVersao`+`instalacaoId`+`repoCanon`) em todo registro | T2 (divergente, ausente, protocolo incompatível) |
+| `referenciadoPorJournal()` varre estado principal **e** `protecao/`; corrupção/quarentena/identidade ausente → null (fail-closed) — **novo em fc219f1** | T3 dedicado a `protecao/` corrompido/em quarentena/sem identidade |
+| Marker sem expiração por idade; desproteção exige não-referência provada | T3 (marker vencido protege; desproteção inconclusiva preserva marker) |
+| SHA-256 streaming 1 MiB, sempre verificado | T4 (>2 GiB esparso com hash errado → rejeita por sha256) |
+| Raiz do backup symlink/junction rejeitada (lstat) | T4 |
+| `dirEstado` sem `MESTRE_HOME` — paridade exata com boot-lock | T5 paridade (9 casos de env, resolvedores reais importados) |
+| Gates de teste por componente `aplicar-*`/`rollback-*` em `MESTRE_TRAVA_GATE_DIR` — **novo em fc219f1** | Classe B real abaixo |
 
 ## Arquivos de teste alterados (somente testes)
 
@@ -26,43 +28,49 @@
 |---|---|
 | `teste-fixture-backup.mjs` | helper — manifesto v2 de fixture |
 | `teste-estado-externo.mjs` | APIs novas (diagnosticarBootstrap/consumirAutorizacaoBootstrap/estadoInstalacaoConhecido), paridade T5, falha de bootstrap |
-| `teste-restauracao-journal.mjs` | W14 fail-closed + T1 recibo (agora PASS) + T1b autorização uso único/replay |
-| `teste-restauracao-boot.mjs` | state dir isolado por fixture, autorização de bootstrap (recibo não é autorização), **2 kills reais Classe B** |
-| `servidor/testes/backup-contrato.test.ts` | T2/T3/T4 alinhados ao contrato fail-closed (42 testes) |
+| `teste-restauracao-journal.mjs` | W14 fail-closed + T1 recibo + T1b autorização uso único/replay |
+| `teste-restauracao-boot.mjs` | state dir isolado por fixture, autorização de bootstrap, **Classe B completa: apos-trava, apos-rollback e 10 gates por componente** |
+| `servidor/testes/backup-contrato.test.ts` | T2/T3/T4 alinhados ao contrato fail-closed (43 testes) |
 | `docs/HOMOLOGACAO-155-ETAPAS123.md` | este relatório |
 
-`teste-estado-externo.mjs` e `teste-restauracao-journal.mjs` também receberam ajustes do próprio Pai em d822f0e — o merge preservou ambas as frentes sem conflito.
+`teste-estado-externo.mjs` e `teste-restauracao-journal.mjs` também receberam ajustes do próprio Pai — merges preservaram ambas as frentes.
 
-## Resultados (todos executados nesta sessão, exit codes reais)
+## Resultados atuais (contra fc219f1, exit codes reais)
 
 | Suíte | Comando | Exit | Resultado |
 |---|---|---|---|
 | Estado externo | `node teste-estado-externo.mjs` | 0 | **58 ok / 0 falhas** |
 | Journal/restauração | `node teste-restauracao-journal.mjs` | 0 | **51 ok / 0 falhas** |
-| Boot/restauração real | `node teste-restauracao-boot.mjs` | 0 | **136 ok / 0 falhas** |
-| Contrato de backup | `tsx --test testes/backup-contrato.test.ts` | 0 | **42/42 pass** |
-| Regressão | `tsx --test` iniciativa/regua/d10/guildas-guarda | 0 | 4 + 38 + 7 + 5 pass |
-| Build | `npm run build -w servidor` (tsc) | 0 | ok |
+| Boot/restauração real | `node teste-restauracao-boot.mjs` | 0 | **236 ok / 0 falhas** |
+| Contrato de backup | `npx tsx --test testes/backup-contrato.test.ts` | 0 | **43/43 pass** |
+| Boot Lock | `node teste-boot-lock.mjs` | 0 | **88 passaram / 0 falharam** |
+| Regressão | tsx iniciativa/regua/d10/guildas-guarda | 0 | 4 + 38 + 7 + 5 pass |
+| Build | `npm run build -w servidor` (tsc -p tsconfig.json) | 0 | ok |
+
+### Histórico (não é homologação atual)
+
+Contra `30c348f` (commit `3382f41`): estado 48/0, journal 35/2 (FAIL-1 recibo+DB ausente, FAIL-2 recibo+DB vazio — ambos corrigidos pelo Pai), boot 121/0, backup-contrato 40/40. Contra `d822f0e` (commit `0f75826`): estado 58/0, journal 51/0, boot 136/0, backup-contrato 42/42. Esses números não devem ser lidos como resultado de fc219f1.
 
 ## Classe B — interrupção real (processo filho + SIGKILL)
 
 | Gate | Resultado |
 |---|---|
-| `apos-trava` (antes de qualquer escrita) | **PASS** — kill real; sem journal/pre_restore; flag intacta; retomada completa |
-| `apos-rollback` (rollback concluído, trava segurada) | **PASS** — journal pré-montado `rollback-em-andamento`; processo executou rollback real, parou no gate, kill; estado vivo = preservado; retomada aplicou a restauração original até `concluido` |
-| Gates por componente (sidecars/banco/arquivos/config/flag) | **NOT EXECUTED** — `aguardarGateTrava` só existe em `apos-trava` e `apos-rollback`; sem hooks de produção o Filho não pode criar pontos intermediários. Dependência do Pai se quiserem cobertura total. |
+| `apos-trava` | **PASS** — kill antes de qualquer escrita; sem journal/pre_restore; retomada completa |
+| `apos-rollback` | **PASS** — rollback real executado, kill no gate com trava segurada; retomada aplicou a restauração original até `concluido` |
+| `aplicar-{sidecars,banco,arquivos,configuracao,flag}` | **PASS (5/5)** — kill real com componente `em-andamento` no journal; estado vivo correto; retomada concluiu |
+| `rollback-{sidecars,banco,arquivos,configuracao,flag}` | **PASS (5/5)** — kill real com `rollback-em-andamento`; retomada do rollback → restore original → `concluido` |
 
 ## FAIL / BLOCKED / NOT EXECUTED
 
-- **FAIL:** nenhum nesta execução.
-- **BLOCKED:** produtor confiável de `bootstrap-autorizacao.json` (instalador/.bat/updater) — integração pendente (Etapa 5); testes usam o writer do formato, o que prova o contrato mas **não** declara o bootstrap real homologado ponta a ponta.
-- **NOT EXECUTED:** ramos Linux (XDG_STATE_HOME, `~/.local/state`) — sem runner Linux; convenção alinhada por paridade de código e `process.platform` fixo. Node 20/22 — indisponíveis localmente. `teste-servidor.mjs` — sem cópia consistente descartável de banco.
-- Gates por componente do restaurador (ver Classe B).
+- **FAIL:** nenhum na execução verde final.
+- **Instabilidade ambiental (não é defeito de contrato):** `gravarJsonAtomico` usa `renameSync` sem retry; em Windows, rename transitório `EPERM` (provável scanner de arquivos) já derrubou o filho restaurador em ~1 de cada 12 cenários Classe B em 2 de 4 execuções. Experimento isolado: 200.000 renames com 180k leituras concorrentes → 0 falhas, logo leituras do teste não são a causa. **Recomendação ao Pai:** retry com backoff em EPERM/EBUSY/EACCES dentro de `gravarJsonAtomico`. Todas as asserções de recuperação passaram mesmo nas execuções com crash — o journal `rollback-*` retomou corretamente.
+- **BLOCKED:** produtor confiável de `bootstrap-autorizacao.json` (instalador/.bat/updater) — integração pendente (Etapa 5); testes usam o writer do formato, provando o contrato mas **sem** declarar bootstrap real homologado ponta a ponta.
+- **NOT EXECUTED:** ramos Linux (XDG_STATE_HOME, `~/.local/state`) — sem runner Linux. Node 20/22 — indisponíveis. `teste-servidor.mjs` — sem cópia consistente descartável de banco.
 
 ## Limitações residuais
 
 - `MESTRE_HOME` não participa do state dir (correto por contrato); fixtures isolam estado via `MESTRE_STATE_DIR`.
-- O teste `apos-rollback` usa journal pré-montado para a ENTRADA (Classe A) mas a interrupção é real (Classe B); a primeira execução falhou por timeout de polling de 30s — ampliado para 60s, passou de forma determinística.
+- Polling de journal usa intervalo de 1s com estabilidade (2 leituras iguais) para evitar corrida com rename atômico no Windows.
 - Homologação final das Etapas 1–3 não é declarada por esta frente — decisão do Intermediário/Mestre/auditoria.
 
 ## Confirmação

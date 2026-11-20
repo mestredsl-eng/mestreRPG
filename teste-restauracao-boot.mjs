@@ -904,9 +904,15 @@ try {
     }, envR);
     const stateDirR = join(rR, "state", instalacaoId(RAIZ_REPO));
     const journalR = () => { try { return JSON.parse(readFileSync(join(stateDirR, "restauracao-externa.json"), "utf8")); } catch { return null; } };
-    // processo real com gate: passa apos-trava, executa rollback, para em apos-rollback
+    // processo real com gate: libera trava + gates por componente
+    // (fc219f1) para o processo atravessar o rollback inteiro e parar
+    // somente em apos-rollback
     const gateDir = join(rR, "gate");
     mkdirSync(gateDir, { recursive: true });
+    for (const g of ["apos-trava", "rollback-sidecars", "rollback-banco",
+      "rollback-arquivos", "rollback-configuracao", "rollback-flag"]) {
+      writeFileSync(join(gateDir, g), "");
+    }
     const proc = spawn("node", [RESTAURADOR], {
       env: envRaiz(rR, { MESTRE_TRAVA_GATE_DIR: gateDir }),
       stdio: ["ignore", "pipe", "pipe"],
@@ -914,18 +920,16 @@ try {
     let saidaR = "";
     proc.stdout.on("data", (d) => { saidaR += d; });
     proc.stderr.on("data", (d) => { saidaR += d; });
-    // libera o primeiro gate quando a trava aparecer
     const travaPath = dbPath(rR) + ".trava";
     const limiteTrava = Date.now() + 20000;
     while (!existsSync(travaPath) && Date.now() < limiteTrava && proc.exitCode === null) {
       await new Promise((r) => setTimeout(r, 50));
     }
-    t("processo alcançou a trava (apos-trava)", existsSync(travaPath) && proc.exitCode === null);
-    writeFileSync(join(gateDir, "apos-trava"), "");
+    t("processo vivo após trava (gates intermediários liberados)", proc.exitCode === null);
     // espera o journal chegar a rollback-concluido (processo no gate seguinte)
     const limiteRb = Date.now() + 60000;
     while (journalR()?.fase !== "rollback-concluido" && Date.now() < limiteRb && proc.exitCode === null) {
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 1000)); // leitura de arquivo: janela mínima p/ rename no Win
     }
     if (journalR()?.fase !== "rollback-concluido") {
       console.log("  [debug] fase:", journalR()?.fase, "componentes:", JSON.stringify(journalR()?.componentes), "saida:", saidaR.slice(-600));
@@ -936,8 +940,11 @@ try {
     t("estado vivo = preservado: doc_vivo presente", existsSync(join(arqPath(rR), "doc_vivo.txt")));
     t("banco restaurado sem marcador parcial", !temTabelaDb(dbPath(rR), "marcador_parcial"));
     // kill real no gate — SO libera a trava; journal já persistido
-    proc.kill("SIGKILL");
-    await new Promise((r) => proc.once("exit", r));
+    if (proc.exitCode === null) proc.kill("SIGKILL");
+    await Promise.race([
+      new Promise((r) => proc.once("exit", r)),
+      new Promise((r) => setTimeout(r, 10000)),
+    ]);
     t("processo morreu de fato", proc.exitCode !== 0 || proc.signalCode !== null);
     t("journal rollback-concluido persistiu após kill", journalR()?.fase === "rollback-concluido");
     // retomada: nova execução sem gate — journal final + flag ainda
@@ -947,6 +954,193 @@ try {
     t("restauração original concluída após retomada", journalR()?.fase === "concluido", `fase=${journalR()?.fase}`);
     t("doc do backup presente", existsSync(join(arqPath(rR), "doc_bk.txt")));
     t("flag limpa após conclusão", flagPendenteDb(dbPath(rR)) === null);
+  }
+
+  // ===== 24. Classe B por componente — gates aplicar-* (fc219f1) =====
+  // Para cada componente, pré-criamos os arquivos-gate de TODAS as
+  // etapas exceto a alvo: o processo atravessa os gates anteriores
+  // instantaneamente, executa a mutação do componente e fica PAUSADO
+  // no gate alvo (arquivo ausente = espera determinística, sem
+  // setTimeout). Kill real; a retomada deve completar só o pendente.
+  sec("Classe B — kill real nos gates aplicar-{componente}");
+  {
+    const COMPONENTES = ["sidecars", "banco", "arquivos", "configuracao", "flag"];
+    const GATES = ["apos-trava", ...COMPONENTES.map((c) => `aplicar-${c}`), "apos-rollback"];
+    const journalDe = (r) => {
+      const p = join(r, "state", instalacaoId(RAIZ_REPO), "restauracao-externa.json");
+      try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
+    };
+    const estadoComp = (j, c) => j?.componentes?.[c]?.estado;
+    // espera o journal mostrar o componente alvo em-andamento de forma
+    // estável (duas leituras consecutivas iguais) — a mutação é
+    // síncrona e o gate seguinte bloqueia sem arquivo de liberação.
+    const esperarGateAlvo = async (r, comp, timeoutMs = 60000) => {
+      const limite = Date.now() + timeoutMs;
+      let ultimo = null, estavel = 0;
+      while (Date.now() < limite) {
+        const j = journalDe(r);
+        const est = estadoComp(j, comp);
+        if (est === "em-andamento" && est === ultimo) { if (++estavel >= 2) return j; }
+        else estavel = 0;
+        ultimo = est;
+        await new Promise((r2) => setTimeout(r2, 1000)); // leitura de arquivo: janela mínima p/ rename no Win
+      }
+      return journalDe(r);
+    };
+    for (const comp of COMPONENTES) {
+      const alvo = `aplicar-${comp}`;
+      const rG = join(RAIZ, `gate_apl_${comp}`);
+      mkdirSync(join(rG, "banco"), { recursive: true });
+      migrar(rG);
+      mkdirSync(arqPath(rG), { recursive: true });
+      writeFileSync(join(arqPath(rG), "doc_vivo.txt"), "vivo");
+      mkdirSync(join(rG, "configuracao"), { recursive: true });
+      writeFileSync(cfgPath(rG), JSON.stringify({ atual: true }));
+      const bkG = fazerBackup(rG, `bk_${comp}`);
+      armarFlag(rG, bkG);
+      const gateDir = join(rG, "gate");
+      mkdirSync(gateDir, { recursive: true });
+      for (const g of GATES) if (g !== alvo) writeFileSync(join(gateDir, g), "");
+      const proc = spawn("node", [RESTAURADOR], {
+        env: envRaiz(rG, { MESTRE_TRAVA_GATE_DIR: gateDir }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let saidaG = "";
+      proc.stdout.on("data", (d) => { saidaG += d; });
+      proc.stderr.on("data", (d) => { saidaG += d; });
+      const travaG = dbPath(rG) + ".trava";
+      const limTrava = Date.now() + 20000;
+      while (!existsSync(travaG) && Date.now() < limTrava && proc.exitCode === null) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      t(`[${comp}] processo vivo após trava`, proc.exitCode === null);
+      const jGate = await esperarGateAlvo(rG, comp);
+      if (estadoComp(jGate, comp) !== "em-andamento") {
+        console.log(`  [debug ${comp}] fase=${jGate?.fase} comps=${JSON.stringify(jGate?.componentes)} saida=${saidaG.slice(-500)}`);
+      }
+      t(`[${comp}] journal marca ${comp} em-andamento (no gate)`, estadoComp(jGate, comp) === "em-andamento", `comp=${estadoComp(jGate, comp)}`);
+      if (proc.exitCode === null) proc.kill("SIGKILL");
+      await Promise.race([
+        new Promise((r) => proc.once("exit", r)),
+        new Promise((r) => setTimeout(r, 10000)),
+      ]);
+      const jPos = journalDe(rG);
+      t(`[${comp}] kill real`, proc.exitCode !== 0 || proc.signalCode !== null);
+      t(`[${comp}] journal NÃO concluído`, jPos?.fase !== "concluido", `fase=${jPos?.fase}`);
+      t(`[${comp}] componente ficou em-andamento`, estadoComp(jPos, comp) === "em-andamento", `comp=${estadoComp(jPos, comp)}`);
+      // estado parcial coerente: em aplicar-sidecars o banco vivo ainda é
+      // o antigo (flag armada); a partir de aplicar-banco o DB já é o do
+      // backup (sem flag — flag vive no banco substituído).
+      if (comp === "sidecars") {
+        t(`[${comp}] flag ainda armada (banco antigo intacto)`, !!flagPendenteDb(dbPath(rG)));
+      } else {
+        t(`[${comp}] banco já é o do backup (flag ausente)`, flagPendenteDb(dbPath(rG)) === null);
+      }
+      const rest2 = restaurar(rG);
+      t(`[${comp}] retomada → exit 0`, rest2.code === 0, rest2.saida.slice(-200));
+      t(`[${comp}] journal concluído após retomada`, journalDe(rG)?.fase === "concluido", `fase=${journalDe(rG)?.fase}`);
+      t(`[${comp}] backup aplicado`, existsSync(join(arqPath(rG), "doc_bk.txt")));
+      t(`[${comp}] flag limpa`, flagPendenteDb(dbPath(rG)) === null);
+    }
+  }
+
+  // ===== 25. Classe B por componente — gates rollback-* (fc219f1) =====
+  // Mesma técnica: journal pré-montado rollback-em-andamento (estado de
+  // entrada Classe A) + kill real no gate do componente (Classe B).
+  sec("Classe B — kill real nos gates rollback-{componente}");
+  {
+    const COMPONENTES = ["sidecars", "banco", "arquivos", "configuracao", "flag"];
+    const GATES = ["apos-trava", ...COMPONENTES.map((c) => `rollback-${c}`), "apos-rollback"];
+    const journalDe = (r) => {
+      const p = join(r, "state", instalacaoId(RAIZ_REPO), "restauracao-externa.json");
+      try { return JSON.parse(readFileSync(p, "utf8")); } catch { return null; }
+    };
+    const estadoComp = (j, c) => j?.componentes?.[c]?.estado;
+    const esperarComp = async (r, comp, estado, timeoutMs = 60000) => {
+      const limite = Date.now() + timeoutMs;
+      let ultimo = null, estavel = 0;
+      while (Date.now() < limite) {
+        const j = journalDe(r);
+        const est = estadoComp(j, comp);
+        const anteriores = COMPONENTES.slice(0, COMPONENTES.indexOf(comp))
+          .every((c) => estadoComp(j, c) === "rollback-concluido");
+        if (est === estado && anteriores && est === ultimo) { if (++estavel >= 2) return j; }
+        else estavel = 0;
+        ultimo = est;
+        await new Promise((r2) => setTimeout(r2, 1000)); // leitura de arquivo: janela mínima p/ rename no Win
+      }
+      return journalDe(r);
+    };
+    for (const comp of COMPONENTES) {
+      const alvo = `rollback-${comp}`;
+      const rR = join(RAIZ, `gate_rb_${comp}`);
+      mkdirSync(join(rR, "banco"), { recursive: true });
+      migrar(rR);
+      mkdirSync(arqPath(rR), { recursive: true });
+      writeFileSync(join(arqPath(rR), "doc_vivo.txt"), "vivo");
+      mkdirSync(join(rR, "configuracao"), { recursive: true });
+      writeFileSync(cfgPath(rR), JSON.stringify({ atual: true }));
+      const bkR = fazerBackup(rR, `bk_rb_${comp}`);
+      armarFlag(rR, bkR);
+      // preservado = estado pré-adulteração (com flag armada)
+      const lado = join(rR, "backups", "pre_restore_manual");
+      mkdirSync(lado, { recursive: true });
+      for (const suf of ["", "-wal", "-shm"]) {
+        if (existsSync(dbPath(rR) + suf)) copyFileSync(dbPath(rR) + suf, join(lado, `mestre-rpg.db${suf}`));
+      }
+      cpSync(arqPath(rR), join(lado, "arquivos"), { recursive: true });
+      mkdirSync(join(lado, "configuracao"), { recursive: true });
+      copyFileSync(cfgPath(rR), join(lado, "configuracao", "servidor.json"));
+      // adultera o vivo (aplicação parcial que falhou)
+      writeFileSync(join(arqPath(rR), "doc_adulterado.txt"), "parcial");
+      comDbRw(dbPath(rR), (db) => db.exec("create table marcador_parcial (id integer)"));
+      gravarEstado(RAIZ_REPO, "restauracao-externa.json", {
+        fase: "rollback-em-andamento",
+        preRestoreDir: lado,
+        tinhaArquivos: true,
+        tinhaCfg: true,
+        componentes: Object.fromEntries(COMPONENTES.map((c) => [c, { estado: "pendente" }])),
+      }, envRaiz(rR));
+      const gateDir = join(rR, "gate");
+      mkdirSync(gateDir, { recursive: true });
+      for (const g of GATES) if (g !== alvo) writeFileSync(join(gateDir, g), "");
+      const proc = spawn("node", [RESTAURADOR], {
+        env: envRaiz(rR, { MESTRE_TRAVA_GATE_DIR: gateDir }),
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let saidaR = "";
+      proc.stdout.on("data", (d) => { saidaR += d; });
+      proc.stderr.on("data", (d) => { saidaR += d; });
+      const travaR = dbPath(rR) + ".trava";
+      const limTrava = Date.now() + 20000;
+      while (!existsSync(travaR) && Date.now() < limTrava && proc.exitCode === null) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      t(`[${comp}] processo vivo após trava`, proc.exitCode === null);
+      const jGate = await esperarComp(rR, comp, "rollback-em-andamento");
+      if (estadoComp(jGate, comp) !== "rollback-em-andamento") {
+        console.log(`  [debug ${comp}] fase=${jGate?.fase} comps=${JSON.stringify(jGate?.componentes)} saida=${saidaR.slice(-500)}`);
+      }
+      t(`[${comp}] journal marca ${comp} rollback-em-andamento`, estadoComp(jGate, comp) === "rollback-em-andamento", `comp=${estadoComp(jGate, comp)}`);
+      if (proc.exitCode === null) proc.kill("SIGKILL");
+      await Promise.race([
+        new Promise((r) => proc.once("exit", r)),
+        new Promise((r) => setTimeout(r, 10000)),
+      ]);
+      const jPos = journalDe(rR);
+      t(`[${comp}] kill real`, proc.exitCode !== 0 || proc.signalCode !== null);
+      t(`[${comp}] fase NÃO final após kill`, !["concluido", "rollback-concluido"].includes(jPos?.fase), `fase=${jPos?.fase}`);
+      t(`[${comp}] componente ficou rollback-em-andamento`, estadoComp(jPos, comp) === "rollback-em-andamento", `comp=${estadoComp(jPos, comp)}`);
+      // retomada 1: completa o rollback → exit 1 (rollback sempre falha o boot)
+      const rest2 = restaurar(rR);
+      t(`[${comp}] retomada do rollback → exit != 0`, rest2.code !== 0, `code=${rest2.code} ${rest2.saida.slice(-150)}`);
+      t(`[${comp}] rollback concluído`, journalDe(rR)?.fase === "rollback-concluido", `fase=${journalDe(rR)?.fase}`);
+      // retomada 2: journal final + flag no banco preservado → aplica restore
+      const rest3 = restaurar(rR);
+      t(`[${comp}] restore original após rollback → exit 0`, rest3.code === 0, rest3.saida.slice(-200));
+      t(`[${comp}] journal concluído`, journalDe(rR)?.fase === "concluido", `fase=${journalDe(rR)?.fase}`);
+      t(`[${comp}] estado final = backup`, existsSync(join(arqPath(rR), "doc_bk.txt")) && flagPendenteDb(dbPath(rR)) === null);
+    }
   }
 } finally {
   limparDir(RAIZ);
