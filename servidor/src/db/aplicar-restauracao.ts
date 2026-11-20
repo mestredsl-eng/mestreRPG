@@ -520,6 +520,9 @@ async function principal() {
     if (journalCarregado?.componentes.sidecars.estado !== "concluido") {
       await checkpoint("sidecars", "em-andamento");
       for (const suf of ["-wal", "-shm"]) rmSync(DB_VIVA + suf, { force: true });
+      // Gate de teste (inócuo sem MESTRE_TRAVA_GATE_DIR): pausa com a
+      // mutação feita e o checkpoint pendente — homologação de queda.
+      aguardarGateTrava("aplicar-sidecars");
     }
     // banco: staging + rename atômico no mesmo volume (não há atomicidade
     // conjunta com os demais componentes — o journal cobre a retomada).
@@ -533,6 +536,7 @@ async function principal() {
         const bkSide = join(String(backupDir), `mestre-rpg.db${suf}`);
         if (existsSync(bkSide)) copyFileSync(bkSide, DB_VIVA + suf);
       }
+      aguardarGateTrava("aplicar-banco"); // gate de teste — inócuo em produção
       await checkpoint("banco", "concluido");
       await checkpoint("sidecars", "concluido");
     } else if (journalCarregado?.componentes.sidecars.estado !== "concluido") {
@@ -545,6 +549,7 @@ async function principal() {
       await checkpoint("arquivos", "em-andamento");
       rmSync(DIR_ARQUIVOS, { recursive: true, force: true });
       if (existsSync(dirArqBackup)) cpSync(dirArqBackup, DIR_ARQUIVOS, { recursive: true });
+      aguardarGateTrava("aplicar-arquivos"); // gate de teste — inócuo em produção
       await checkpoint("arquivos", "concluido");
     }
     if (journalCarregado?.componentes.configuracao.estado !== "concluido") {
@@ -554,6 +559,7 @@ async function principal() {
         mkdirSync(dirname(ARQ_CFG), { recursive: true });
         copyFileSync(cfgBackup, ARQ_CFG);
       }
+      aguardarGateTrava("aplicar-configuracao"); // gate de teste — inócuo em produção
       await checkpoint("configuracao", "concluido");
     }
     // flag é limpa DENTRO do banco restaurado e a remoção é confirmada —
@@ -561,6 +567,7 @@ async function principal() {
     if (journalCarregado?.componentes.flag.estado !== "concluido") {
       await checkpoint("flag", "em-andamento");
       limparFlag();
+      aguardarGateTrava("aplicar-flag"); // gate de teste — inócuo em produção
       await checkpoint("flag", "concluido");
     }
     // validação pós-aplicação: integridade do banco restaurado antes de
@@ -609,6 +616,9 @@ async function executarRollback(lado: string, tinhaArquivosArg?: boolean, tinhaC
     if (journalCarregado?.componentes[comp]?.estado === "rollback-concluido") return;
     await checkpoint(comp, "rollback-em-andamento");
     fn();
+    // Gate de teste por componente (inócuo sem MESTRE_TRAVA_GATE_DIR):
+    // pausa com a reversão feita e o checkpoint pendente.
+    aguardarGateTrava(`rollback-${comp}`);
     await checkpoint(comp, "rollback-concluido");
   };
 

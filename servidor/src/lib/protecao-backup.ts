@@ -214,6 +214,30 @@ export async function referenciadoPorJournal(dirBackup: string): Promise<boolean
       if (typeof v2 === "string" && v2 && normDir(v2) === alvo) return true;
     }
   }
+
+  // Diretório de markers também precisa ser conclusivo: marker
+  // corrompido, em quarentena ou com identidade inválida em protecao/
+  // é evidência de recuperação inconclusiva — a desproteção NÃO pode
+  // prosseguir (pode haver proteção desconhecida dependente dela).
+  const protDir = join(dir, "protecao");
+  let markers: string[];
+  try {
+    if (!existsSync(protDir)) return false; // sem markers → nada a provar
+    markers = readdirSync(protDir);
+  } catch { return null; }
+  if (markers.some((f) => f.includes(MARCADOR_QUARENTENA))) return null;
+  for (const f of markers) {
+    if (!f.endsWith(".json")) continue;
+    let j: unknown;
+    try { j = JSON.parse(readFileSync(join(protDir, f), "utf8")); }
+    catch { return null; } // marker ilegível → inconclusivo
+    if (!j || typeof j !== "object" || Array.isArray(j)) return null;
+    const o = j as Record<string, unknown>;
+    // todo arquivo em protecao/ é registro nosso: identidade completa
+    // obrigatória; marker sem backupDir válido também é inconclusivo.
+    if (problemaIdentidade(o, id, canon)) return null;
+    if (typeof o.backupDir !== "string" || !o.backupDir) return null;
+  }
   return false;
 }
 
