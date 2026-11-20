@@ -123,7 +123,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 
 ### W8 — Ausência de proveniência backup↔migration no mecanismo legado
 
-- **Objetivo/risco:** **demonstrar a lacuna**: no legado (N-1), migration concluída seguida de queda não deixa proveniência nem backup pré-migration recuperável. O resultado esperado pode ser a confirmação da lacuna — não inventar recuperação.
+- **Objetivo/risco:** **demonstrar a lacuna**: no legado (N-1), migration concluída seguida de queda não deixa proveniência nem backup pré-migration recuperável. O resultado esperado é a **confirmação da lacuna como risco residual aceito pelo Mestre** — não é correção prometida nem comportamento a ser "consertado" neste teste; não inventar recuperação.
 - **Classe:** [HOJE].
 - **Fatores verificados:** `.bat` roda `node servidor\dist\db\aplicar-restauracao.js` e depois `call npm run db:migrate -w servidor` sem backup prévio; `backup.ts` tem `manifesto.json` (sha256 de arquivos de campanha, `criadoEm`, `versao`) **sem** sha256 de banco/config; `aplicar-restauracao` não revalida hashes do manifesto.
 - **Fixture:** clone descartável do repo em `7ce5b99`; banco de teste com migration pendente; executar etapas equivalentes ao `.bat` (ou o `.bat` real com build prévio) até migrate.
@@ -153,15 +153,15 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Esperado:** próximo boot executa updater (sem update), cauda do `.bat`, restore (sem flag → no-op), migrate (nada pendente), start; **sem** qualquer verificação de "estado deixado pela sessão anterior" — documentar.
 - **PASS:** comportamento do próximo boot documentado com logs; lacuna W8 confirmada em contexto. **CI/Windows:** Windows real.
 
-### W11 — Helper de Boot Lock ausente em N
+### W11 — Helper de Boot Lock ausente em N — **Gate 0**
 
-- **Objetivo/risco:** provar fail-closed: `scripts\boot-lock.mjs` ausente na versão N → npm, builds, restauração e migrations **não executam**; sem bypass silencioso.
+- **Objetivo/risco:** provar fail-closed **de todo o fluxo mutável**: `scripts\boot-lock.mjs` ausente na versão N → npm, builds, restauração e migrations **não executam**; sem bypass silencioso. É um **Gate 0**: sem essa prova, nenhum outro W de N pode ser considerado homologado.
 - **Base factual (#189):** `.bat` aborta se helper ausente ou retorno inesperado; exit 20 = outra instância assumiu → `exit /b 0`; demais ≠0 → abort.
 - **Classe:** [INTEGRAÇÃO] — em `7ce5b99` não existe `boot-lock` no `.bat`.
 - **Fixture:** clone da versão N; remover `scripts/boot-lock.mjs` após checkout (ou versão N sem o arquivo).
 - **Injeção:** ausência do arquivo na chamada `node scripts\boot-lock.mjs adquirir`.
-- **Esperado:** abort antes de qualquer `npm`/build/restore/migrate; log explícito; exit ≠0 e ≠20; nenhuma rota alternativa (`goto`) contorna a verificação.
-- **PASS:** zero etapas proibidas (conferir log + ausência de efeitos: `node_modules`/`dist/`/banco intocados). **FAIL:** bypass ou execução parcial. **BLOCKED:** #189 não integrada.
+- **Esperado:** abort antes de **qualquer** etapa mutável — npm ci/install, `npm run build`, `aplicar-restauracao`, `db:migrate`, `npm run start`; log explícito; exit ≠0 e ≠20; nenhuma rota alternativa (`goto`) contorna a verificação; `errorlevel` lido corretamente em `cmd.exe` real.
+- **PASS:** zero etapas mutáveis executadas — conferência por log **e** por ausência de efeitos em disco (`node_modules`/`dist/`/`banco/`/`backups/` intocados, `git status` limpo). **FAIL:** qualquer bypass, etapa parcial ou exit 0. **BLOCKED:** #189 não integrada.
 - **CI/Windows:** Windows real obrigatório — o teste existente é estrutural/textual, W11 exige execução comportamental do `cmd.exe`.
 
 ### W12 — Comparação smoke isolado × integridade real × journal real
@@ -169,7 +169,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Objetivo/risco:** separar três provas que não podem ser confundidas:
   1. **Smoke HTTP isolado** (W6): disponibilidade do build em cópia vazia — prova HTTP, não dados.
   2. **Integridade real do banco:** `PRAGMA integrity_check` + `foreign_key_check` no banco restaurado/migrado do fixture; journal `__drizzle_migrations` real (lote pendente atômico — drizzle-orm 0.45.4).
-  3. **Smoke em cópia consistente de dados reais:** somente com autorização, sobre snapshot da instalação real em diretório descartável.
+  3. **Smoke em cópia consistente de dados reais:** **obrigatoriamente** sobre uma cópia consistente obtida após restauração/rollback (snapshot/bak da instalação real materializado em diretório descartável) — **nunca** iniciar servidor de smoke contra o banco real. Exige autorização e fixture de dados reais.
 - **Classe:** itens 1–2 [HOJE] em fixture; item 3 [CONTRATO] (autorização/fixture de dados reais).
 - **PASS:** cada prova com artefato próprio; smoke vazio **nunca** reportado como integridade de dados reais. **FAIL:** conflação das provas.
 - **CI/Windows:** CI para 1–2; estação de homologação para 3.
@@ -184,17 +184,17 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 
 ### W14 — Fail-open do detector de restauração pendente
 
-- **Objetivo/risco:** **nenhum erro de consulta pode virar "nada a restaurar" com sucesso**. Cenários: banco inexistente legítimo (primeiro boot → cria); banco existente **sem** `server_settings`; falha de `prepare`/`get`; corrupção com abertura parcial; erro de I/O.
-- **Fatores verificados:** `aplicar-restauracao.ts` retorna sucesso quando a linha `restauracao_pendente` está ausente; exceção de query é caminho distinto — a prova exige demonstrar que exceção/erro **aborta**, não segue.
-- **Classe:** [HOJE] para observação do comportamento atual; [CORREÇÃO] se erro for tratado como ausência.
-- **Fixture:** bancos descartáveis: (a) sem `banco/mestre-rpg.db`; (b) banco sem `server_settings`; (c) tabela corrompida/truncada; (d) permissão de leitura revogada; (e) `-wal`/`-shm` inconsistentes.
-- **Esperado:** inexistente legítimo → cria e segue; banco existente com qualquer falha → exit ≠0 e boot abortado.
-- **PASS:** matriz cenário×exit conforme contrato. **FAIL:** erro de consulta retornando 0 com boot prosseguindo. Registrar achado se o código atual falhar.
+- **Objetivo/risco:** **nenhum erro de consulta pode virar "nada a restaurar" com sucesso**. Distinguir rigorosamente: **instalação inicial comprovada** (banco inexistente → cria e segue, exit 0 legítimo) de **banco existente** com `server_settings` ausente, erro SQL em `prepare`/`get`, erro de I/O ou corrupção — todos estes últimos devem abortar com exit ≠0, nunca sucesso silencioso.
+- **Fatores verificados:** `aplicar-restauracao.ts` retorna sucesso quando a linha `restauracao_pendente` está ausente; exceção de query é caminho distinto — a prova exige demonstrar que exceção/erro **aborta**, não segue. Execução real já evidenciou fail-open em banco sem `server_settings`, view quebrada e arquivo corrompido (relatório de execução, W14 reprovado).
+- **Classe:** [HOJE] para observação do comportamento atual; [CORREÇÃO] enquanto erro for tratado como ausência.
+- **Fixture:** bancos descartáveis: (a) sem `banco/mestre-rpg.db` (instalação inicial comprovada); (b) banco existente sem `server_settings`; (c) tabela corrompida/truncada; (d) permissão de leitura revogada / erro de I/O; (e) `-wal`/`-shm` inconsistentes.
+- **Esperado:** (a) inexistente legítimo → cria e segue; (b)–(e) banco existente com qualquer falha → exit ≠0 e boot abortado com instrução.
+- **PASS:** matriz cenário×exit conforme contrato — "instalação inicial" e "banco existente com erro" nunca compartilham o mesmo resultado. **FAIL:** erro de consulta retornando 0 com boot prosseguindo. Registrar achado se o código atual falhar.
 - **CI/Windows:** executável em CI (node direto, sem `.bat`) — candidato a suíte automatizada.
 
 ### W15 — Restauração interrompida: aplicação e rollback por componente
 
-- **Objetivo/risco:** kill durante `aplicar-restauracao` em **cada** fronteira — preservação (`pre_restore_*`), substituição do banco, sidecars (`-wal`/`-shm`), arquivos da campanha, configuração, limpeza da flag e **durante o rollback interno** do restaurador. Não basta testar falha tratada.
+- **Objetivo/risco:** kill durante `aplicar-restauracao` em **cada** fronteira — preservação (`pre_restore_*`), substituição do arquivo do banco, sidecars (`-wal`/`-shm`), arquivos da campanha, configuração, limpeza da flag — **e durante o rollback interno** do restaurador (não basta testar falha tratada: crash no meio do `reverter()` é cenário próprio). Componentes cobertos: banco, sidecars, arquivos, configuração e flag.
 - **Fatores verificados:** flag `restauracao_pendente` vive **dentro do banco** (`server_settings`) e a aplicação troca o arquivo do banco — a flag pode estar no banco antigo ou no restaurado; remoção confirmada por re-leitura; **não existe journal externo de subetapas** hoje.
 - **Classe:** **BLOCKED — dependência** até existir journal externo + protocolo de retomada. Não executar como PASS; homologar prontidão quando implementado.
 - **Fixture (quando implementado):** clone com flag apontando para backup válido; kill em cada fronteira; reinvocar `node servidor\dist\db\aplicar-restauracao.js`.
@@ -203,11 +203,11 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 
 ### W16 — Manifesto obrigatório e proteção do backup transacional
 
-- **Objetivo/risco:** backup inválido **falha**; backup referenciado por journal/flag ativa **não é removido pela retenção** antes da conclusão.
-- **Fatores verificados:** `manifesto.json` tem sha256/tamanho dos arquivos de campanha — **sem** sha256 de banco/config; `verificarBackup` valida hashes (online); `aplicar-restauracao` offline **não** revalida; política de retenção existente precisa ser conferida se consulta flags.
-- **Cenários:** manifesto ausente → falha; incompleto → falha; hash divergente → `verificarBackup` falha (documentar que restore offline não cobre); metadados banco/config → [CORREÇÃO]; retenção vs. backup transacional → provar não-remoção.
-- **Classe:** 1–3 [HOJE] parcial; 4–5 [CORREÇÃO]+[CONTRATO].
-- **PASS:** cada cenário conforme contrato. **FAIL:** backup inválido aceito ou remoção de backup transacional. **BLOCKED:** metadados/retenção até implementação.
+- **Objetivo/risco:** **manifesto integral obrigatório** — ausente, incompleto ou inválido deve **falhar**; e **imunidade à retenção**: backup referenciado por journal/flag de restauração **ativa** não pode ser removido pela rotina de retenção antes da conclusão.
+- **Fatores verificados:** `manifesto.json` tem sha256/tamanho dos arquivos de campanha — **sem** sha256 de banco/config; `verificarBackup` valida hashes dos arquivos do manifesto (online) mas **pula a validação quando o manifesto está ausente** (`if existsSync`) — fail-open já evidenciado em execução (W16 reprovado); `aplicar-restauracao` offline **não** revalida hashes; política de retenção (`aplicarRetencao`) precisa ser conferida se consulta flags/journal antes de remover.
+- **Cenários:** manifesto ausente → falha; incompleto → falha; inválido/hash divergente → falha (documentar que restore offline não cobre); manifesto integral incluindo metadados de banco/config → [CORREÇÃO]; backup referenciado por journal/flag ativa → retenção não pode removê-lo → provar não-remoção.
+- **Classe:** manifesto ausente/inválido [HOJE] — já reprovado em execução; metadados banco/config e imunidade à retenção [CORREÇÃO]+[CONTRATO].
+- **PASS:** cada cenário conforme contrato. **FAIL:** backup inválido aceito ou remoção de backup referenciado por journal ativo. **BLOCKED:** metadados/retenção até implementação.
 - **CI/Windows:** lógica em CI; `backups/` só em fixture.
 
 ---
