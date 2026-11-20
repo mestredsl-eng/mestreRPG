@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.0.0.6] - 2026-11-19
+
+### Atualização automática na inicialização
+
+- **Auto-update Git no boot:** o `iniciar-mestre-rpg.bat` agora verifica o repositório oficial antes de subir o servidor. Quando há commits novos em um fast-forward seguro, o updater aplica `git pull --ff-only`, reinstala dependências quando o lockfile muda e recompila o servidor e o frontend.
+- **Proteções contra atualização insegura:** o updater se recusa a atualizar com Git ausente, sem `.git`, remoto diferente do oficial (incluindo URLs reescritas por `url.*.insteadOf` e múltiplas URLs), branch detached, upstream que não seja `origin/<branch-atual>`, árvore suja (rastreada ou não) ou divergência. Falhas de rede, autenticação e timeout apenas adiam a atualização — nunca bloqueiam a inicialização.
+- **Rollback controlado:** se dependências ou builds falharem após o pull, o updater restaura o commit anterior somente com árvore limpa, HEAD exato e mesma branch, reinstala dependências e recompila ambos os workspaces; se a integridade não puder ser garantida, encerra com código de erro e instruções, sem sucesso falso.
+- **Execução segura de npm no Windows:** comandos npm passam por allowlist fixa via `ComSpec`, sem shell livre; variáveis `GIT_*` herdadas do processo são descartadas para impedir redirecionamento de repositório.
+- **Registro na Central de Novidades:** migration `0030_release_1006_auto_update_news.sql`, com seed idempotente próprio (`INSERT OR IGNORE`), publica esta funcionalidade na versão `1.0.6`, categoria `novidade`.
+
+### Testes
+
+- `teste-auto-update.mjs` cobre 80 cenários: ausência de Git, instalação sem repositório, fast-forward, falhas de rede/auth/timeout, URLs reescritas e ambíguas, árvore suja, upstream inválido ou de fork, divergência, falhas de dependências e build, rollback completo com rebuild dos dois workspaces, proteção contra alterações locais durante o rollback, lockfiles aninhados, variáveis `GIT_*` hostis e recuperação manual pelo arquivo de estado — incluindo execução real de `npm.cmd` no runner Windows.
+
 ## [1.0.0.5] - 2026-11-19
 
 ### Integridade de importações e progressão XP
