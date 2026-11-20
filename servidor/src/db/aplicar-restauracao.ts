@@ -197,7 +197,9 @@ interface EeModulo {
   ARQUIVO_BOOTSTRAP_ANDAMENTO?: string;
   lerMarcadorInstalacao?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string };
   lerJournalSemEfeitos?(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): { status: string; dados?: Record<string, unknown> };
-  validarAutorizacoesConsumidas?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; arquivo?: string };
+  lerAutorizacaoBootstrap?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; dados?: Record<string, unknown> };
+  avaliarBootstrapAndamento?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; etapa?: string; autorizacaoId?: string; motivo?: string };
+  validarAutorizacoesConsumidas?(repoDir: string, env?: NodeJS.ProcessEnv, autorizacaoId?: string | null): { status: string; arquivo?: string };
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -235,16 +237,41 @@ function gravarAndamento(mod: EeModulo, etapa: string, extra: Record<string, unk
  * MESTRE_BOOTSTRAP_CRASH_AFTER (somente teste): "pendente" | "consumida"
  * força exit(42) no ponto real da implementação.
  */
+function crashInjection(ponto: string) {
+  // Hook exclusivo de teste: em produção (NODE_ENV !== "test") é inerte
+  // mesmo com a variável configurada.
+  if (process.env.NODE_ENV === "test" && process.env.MESTRE_BOOTSTRAP_CRASH_AFTER === ponto) {
+    process.exit(42);
+  }
+}
+
 function autorizarBootstrap(mod: EeModulo, motivo: string) {
-  gravarAndamento(mod, "autorizacao-pendente", { motivo });
-  if (process.env.MESTRE_BOOTSTRAP_CRASH_AFTER === "pendente") process.exit(42);
+  // Lê o autorizacaoId da autorização atual ANTES de consumir — o
+  // marcador pendente precisa carregar a identidade EXATA do ciclo,
+  // senão uma autorização antiga poderia ser confundida na retomada.
+  const authAtual = mod.lerAutorizacaoBootstrap?.(REPO_ROOT, process.env);
+  const authId = authAtual?.status === "ok"
+    ? (authAtual.dados?.autorizacaoId as string | undefined)
+    : undefined;
+  gravarAndamento(mod, "autorizacao-pendente", { motivo, autorizacaoId: authId });
+  crashInjection("pendente");
   const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
   if (!auth.autorizado) {
     log(`ERRO: sem autorização de primeiro bootstrap válida (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
     process.exit(2);
   }
-  if (process.env.MESTRE_BOOTSTRAP_CRASH_AFTER === "consumida") process.exit(42);
-  gravarAndamento(mod, "autorizada", { motivo, emitidaEm: auth.dados?.emitidaEm });
+  // Vinculação: o arquivo consumido precisa ser o MESMO id anunciado
+  // no marcador pendente — nunca uma autorização de outro ciclo.
+  if (authId && auth.dados?.autorizacaoId !== authId) {
+    log("ERRO: autorização consumida diverge do ciclo pendente (autorizacaoId) — restauração abortada.");
+    process.exit(2);
+  }
+  crashInjection("consumida");
+  gravarAndamento(mod, "autorizada", {
+    motivo,
+    autorizacaoId: (auth.dados?.autorizacaoId as string | undefined) ?? authId,
+    emitidaEm: auth.dados?.emitidaEm,
+  });
   mkdirSync(dirname(DB_VIVA), { recursive: true });
   log(`Primeiro bootstrap autorizado (uso único consumido, ${motivo}); nada a restaurar.`);
 }
@@ -266,46 +293,40 @@ function autorizarBootstrap(mod: EeModulo, motivo: string) {
 function bootstrapEmAndamentoValido(mod: EeModulo): boolean {
   // Sandbox sem state isolado: sinais de state dir não se aplicam.
   if (mod.estadoRealCompartilhado?.(process.env)) return false;
-  const ler = mod.lerJournalSemEfeitos ?? mod.lerJournal;
-  const andamento = ler.call(mod, REPO_ROOT, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? NOME_ANDAMENTO, process.env);
-  if (andamento.status === "ausente") return false;
-  if (andamento.status !== "ok") {
-    log(`ERRO: marcador de bootstrap em andamento ${andamento.status} — estado inconclusivo, restauração abortada.`);
+  // Validação semântica compartilhada (estado-externo): envelope +
+  // tipo + etapa + autorizacaoId + prova vinculada + marcador ausente.
+  const av = mod.avaliarBootstrapAndamento?.(REPO_ROOT, process.env);
+  if (!av) {
+    log("ERRO: avaliador de bootstrap-em-andamento indisponível — restauração abortada.");
     process.exit(2);
   }
-  const marcador = mod.lerMarcadorInstalacao?.(REPO_ROOT, process.env);
-  if (marcador?.status === "ok") {
-    log("ERRO: bootstrap em andamento com instalação já registrada (marcador ok) — estado contraditório, restauração abortada.");
+  if (av.status === "ausente") return false;
+  if (av.status !== "valido") {
+    log(`ERRO: bootstrap em andamento ${av.status}${av.motivo ? ` (${av.motivo})` : ""} — restauração abortada.`);
     process.exit(2);
   }
-  if (marcador && marcador.status !== "ausente") {
-    log(`ERRO: marcador de proveniência ${marcador.status} — bootstrap em andamento não pode ser retomado, restauração abortada.`);
-    process.exit(2);
-  }
-  const etapa = andamento.dados?.etapa;
-  if (etapa === "autorizada") return true;
-  if (etapa !== undefined && etapa !== "autorizacao-pendente") {
-    log(`ERRO: bootstrap em andamento com etapa desconhecida (${String(etapa)}) — restauração abortada.`);
-    process.exit(2);
-  }
-  // Etapa pendente (ou registro legado sem etapa): resolver a
-  // transição — a autorização pode ainda estar válida (crash antes
-  // do consumo) ou já ter sido consumida (crash após o rename,
-  // antes de gravar "autorizada").
+  if (av.etapa === "autorizada") return true;
+  // Etapa "autorizacao-pendente" já validada com prova vinculada:
+  // resolver a transição duravelmente — consumir a autorização atual
+  // se ainda pendente, ou promover se a consumida do MESMO id já existe.
   const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
   if (auth.autorizado) {
-    gravarAndamento(mod, "autorizada", { motivo: "retomada-consumo", emitidaEm: auth.dados?.emitidaEm });
+    if (auth.dados?.autorizacaoId !== av.autorizacaoId) {
+      log("ERRO: autorização retomada diverge do ciclo pendente (autorizacaoId) — restauração abortada.");
+      process.exit(2);
+    }
+    gravarAndamento(mod, "autorizada", {
+      motivo: "retomada-consumo",
+      autorizacaoId: av.autorizacaoId,
+      emitidaEm: auth.dados?.emitidaEm,
+    });
     return true;
   }
   if (auth.motivo === "bootstrap-em-andamento") {
-    // Já consumida — provar que a autorização consumida era VÁLIDA.
-    const val = mod.validarAutorizacoesConsumidas?.(REPO_ROOT, process.env);
-    if (val?.status === "valida") {
-      gravarAndamento(mod, "autorizada", { motivo: "retomada-consumida-valida", arquivo: val.arquivo });
-      return true;
-    }
-    log(`ERRO: autorização consumida sem prova de validade (${val?.status ?? "desconhecido"}) — bootstrap interrompido inválido, restauração abortada.`);
-    process.exit(2);
+    // O avaliador já provou a consumida VÁLIDA com o MESMO autorizacaoId
+    // (senão o status não seria "valido") — promover o marcador.
+    gravarAndamento(mod, "autorizada", { motivo: "retomada-consumida-valida", autorizacaoId: av.autorizacaoId });
+    return true;
   }
   log(`ERRO: bootstrap em andamento sem autorização retomável (${auth.motivo ?? "sem autorização"}) — restauração abortada.`);
   process.exit(2);

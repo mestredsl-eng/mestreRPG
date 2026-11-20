@@ -400,6 +400,11 @@ export function gravarAutorizacaoBootstrap(repoDir, env = process.env, dadosExtr
   return gravarEstado(repoDir, ARQUIVO_AUTORIZACAO_BOOTSTRAP, {
     tipo: TIPO_AUTORIZACAO,
     emitidaEm: new Date().toISOString(),
+    // Identidade única por autorização (W13): vincula a autorização
+    // emitida, o marcador de andamento e o arquivo consumido — a
+    // retomada só aceita a consumida com ESTE id, nunca uma autorização
+    // antiga da mesma instalação.
+    autorizacaoId: randomBytes(16).toString("hex"),
     ...dadosExtra,
   }, env);
 }
@@ -475,8 +480,15 @@ export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
   }
   // Recibo permanente válido ⇒ instalação concluída: autorização de
   // primeiro bootstrap é irrelevante e NÃO é consumida (evidência fica).
-  if (lerReciboInstalacao(repoDir, env).status === "ok") {
+  // Recibo em QUALQUER outro estado (corrompido, incompatível,
+  // divergente, inconclusivo) bloqueia — erro de leitura nunca vira
+  // ausência; só "ausente" comprovado permite o consumo.
+  const recibo = lerReciboInstalacao(repoDir, env);
+  if (recibo.status === "ok") {
     return { autorizado: false, motivo: "instalacao-concluida" };
+  }
+  if (recibo.status !== "ausente") {
+    return { autorizado: false, motivo: `recibo-${recibo.status}` };
   }
   const consumido = join(
     dir,
@@ -503,7 +515,7 @@ export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
  *  bootstrap quando o marcador de andamento ficou em "pendente".
  *  Retorno: { status: "valida", arquivo } | "invalida" | "ausente" |
  *  "inconclusivo". Somente leitura — nunca move nem apaga nada. */
-export function validarAutorizacoesConsumidas(repoDir, env = process.env) {
+export function validarAutorizacoesConsumidas(repoDir, env = process.env, autorizacaoId = null) {
   const dir = dirEstado(repoDir, env);
   const est = estadoCaminho(dir);
   if (est === "inconclusivo") return { status: "inconclusivo" };
@@ -515,6 +527,7 @@ export function validarAutorizacoesConsumidas(repoDir, env = process.env) {
     return { status: "inconclusivo" };
   }
   if (nomes.length === 0) return { status: "ausente" };
+  let viuValidaSemVinculo = false;
   for (const n of nomes) {
     const dados = lerJsonCru(join(dir, n));
     const valido = dados && typeof dados === "object" && !Array.isArray(dados)
@@ -522,9 +535,20 @@ export function validarAutorizacoesConsumidas(repoDir, env = process.env) {
       && dados.instalacaoId === instalacaoId(repoDir)
       && dados.repoCanon === caminhoCanonico(repoDir)
       && dados.tipo === TIPO_AUTORIZACAO;
-    if (valido) return { status: "valida", arquivo: n };
+    if (!valido) continue;
+    // Com autorizacaoId exigido, só a consumida do MESMO ciclo conta —
+    // uma autorização antiga válida da instalação não prova nada sobre
+    // o ciclo pendente atual.
+    if (autorizacaoId) {
+      if (dados.autorizacaoId === autorizacaoId) {
+        return { status: "valida", arquivo: n, dados };
+      }
+      viuValidaSemVinculo = true;
+      continue;
+    }
+    return { status: "valida", arquivo: n, dados };
   }
-  return { status: "invalida" };
+  return viuValidaSemVinculo ? { status: "outra-autorizacao" } : { status: "invalida" };
 }
 
 // ---------- marcador de proveniência (W13) ----------
@@ -656,6 +680,75 @@ export function estadoRealCompartilhado(env = process.env) {
 export function limparBootstrapAndamento(repoDir, env = process.env) {
   try { rmSync(join(dirEstado(repoDir, env), ARQUIVO_BOOTSTRAP_ANDAMENTO), { force: true }); }
   catch { /* melhor esforço — arquivo pode não existir */ }
+}
+
+const ETAPAS_BOOTSTRAP_ANDAMENTO = new Set(["autorizacao-pendente", "autorizada"]);
+const RE_AUTORIZACAO_ID = /^[0-9a-f]{32}$/;
+
+/**
+ * Validação SOMENTE-LEITURA e compartilhada do marcador
+ * bootstrap-em-andamento — usada por decidirPortao/verificarPortao
+ * (Gate 0, migrate, servidor) e pelo restaurador, sem duplicar regras.
+ *
+ * Contrato semântico (além do envelope protocolo/identidade do
+ * lerJournalSemEfeitos):
+ *   - tipo === "bootstrap-em-andamento";
+ *   - etapa ∈ {"autorizacao-pendente", "autorizada"};
+ *   - autorizacaoId presente, bem formado e vinculado a uma prova:
+ *       etapa "autorizada"  ⇒ exige arquivo consumida VÁLIDO com o
+ *                             MESMO autorizacaoId (afirma consumo);
+ *       etapa "pendente"    ⇒ autorização atual válida com o mesmo id
+ *                             OU consumida válida com o mesmo id
+ *                             (cobre crash entre consumo e promoção);
+ *   - marcador de proveniência comprovadamente ausente.
+ *
+ * Retorno: { status:"ausente" } |
+ *          { status:"valido", etapa, autorizacaoId, prova } |
+ *          { status:"invalido", motivo } |
+ *          { status:"inconclusivo"|"corrompido"|"incompativel"|
+ *            "identidade-divergente" } (propagados do envelope).
+ */
+export function avaliarBootstrapAndamento(repoDir, env = process.env) {
+  const andamento = lerJournalSemEfeitos(repoDir, ARQUIVO_BOOTSTRAP_ANDAMENTO, env);
+  if (andamento.status === "ausente") return { status: "ausente" };
+  if (andamento.status !== "ok") return { status: andamento.status };
+  const d = andamento.dados ?? {};
+  if (d.tipo !== TIPO_BOOTSTRAP_ANDAMENTO) {
+    return { status: "invalido", motivo: "tipo-desconhecido" };
+  }
+  if (!ETAPAS_BOOTSTRAP_ANDAMENTO.has(d.etapa)) {
+    return { status: "invalido", motivo: "etapa-desconhecida" };
+  }
+  const id = d.autorizacaoId;
+  if (typeof id !== "string" || !RE_AUTORIZACAO_ID.test(id)) {
+    return { status: "invalido", motivo: "autorizacaoId-ausente-ou-invalido" };
+  }
+  // Marcador de proveniência precisa estar comprovadamente ausente —
+  // instalação registrada não pode estar "em bootstrap".
+  const marcador = lerMarcadorInstalacao(repoDir, env);
+  if (marcador.status !== "ausente") {
+    return { status: "invalido", motivo: `marcador-${marcador.status}` };
+  }
+  // Prova vinculada ao MESMO autorizacaoId:
+  //  a) autorização ainda pendente (não consumida) com o mesmo id; ou
+  //  b) arquivo consumido válido com o mesmo id.
+  const auth = lerAutorizacaoBootstrap(repoDir, env);
+  let prova = null;
+  if (auth.status === "ok" && auth.dados?.autorizacaoId === id) {
+    prova = "autorizacao-pendente";
+  } else {
+    const val = validarAutorizacoesConsumidas(repoDir, env, id);
+    if (val.status === "valida") prova = "consumida";
+    else if (val.status === "inconclusivo") return { status: "inconclusivo" };
+    // "invalida"/"ausente"/"outra-autorizacao" → sem prova vinculada.
+  }
+  if (!prova) return { status: "invalido", motivo: "sem-prova-vinculada" };
+  if (d.etapa === "autorizada" && prova !== "consumida") {
+    // "autorizada" afirma que o consumo JÁ aconteceu — uma autorização
+    // apenas pendente não é prova suficiente.
+    return { status: "invalido", motivo: "autorizada-sem-consumo" };
+  }
+  return { status: "valido", etapa: d.etapa, autorizacaoId: id, prova };
 }
 
 /** Estado de instalação conhecido para avaliação de boot: instalação

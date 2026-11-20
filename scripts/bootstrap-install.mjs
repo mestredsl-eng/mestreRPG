@@ -196,6 +196,11 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
   // bootstrap em andamento: autorização já consumida pelo restaurador
   // neste ciclo — prova de que o primeiro boot está a meio caminho.
   s.andamento = compartilhado ? ausente : mod.lerJournalSemEfeitos(repoDir, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? "bootstrap-em-andamento.json", env);
+  // Validação semântica compartilhada do andamento (tipo/etapa/
+  // autorizacaoId/prova vinculada/marcador ausente) — somente leitura.
+  s.andamentoAval = compartilhado
+    ? { status: "ausente" }
+    : (mod.avaliarBootstrapAndamento?.(repoDir, env) ?? { status: s.andamento.status });
   return s;
 }
 
@@ -279,18 +284,32 @@ export function decidirPortao(s) {
   if (AUTH_RUIM.has(s.auth.status)) {
     return bloquear(`autorizacao-${s.auth.status}`, "A autorização de bootstrap está corrompida ou diverge desta instalação.");
   }
+  // Recibo: só "ausente" ou "ok" são conclusivos neste ponto — qualquer
+  // outro estado (corrompido/incompatível/divergente/inconclusivo)
+  // bloqueia ANTES de aceitar autorização pendente: erro de leitura
+  // nunca vira ausência.
+  if (s.recibo.status !== "ausente" && s.recibo.status !== "ok") {
+    return bloquear(`recibo-${s.recibo.status}`,
+      "O recibo de instalação está corrompido ou não pôde ser lido. Verifique o diretório de estado antes de reiniciar.");
+  }
+  // Bootstrap em andamento: validação semântica compartilhada —
+  // envelope ok NÃO basta; tipo/etapa/autorizacaoId precisam ter prova
+  // vinculada (autorização pendente ou consumida do MESMO ciclo) e o
+  // marcador de proveniência precisa estar ausente. Inválido bloqueia
+  // AQUI, antes do updater/build — não só no restaurador.
+  const av = s.andamentoAval ?? { status: s.andamento.status };
+  if (av.status !== "ausente" && av.status !== "valido") {
+    return bloquear(`bootstrap-andamento-${av.status}`,
+      `O marcador de bootstrap em andamento é inválido ou não pôde ser verificado (${av.motivo ?? av.status}). Investigue o state dir antes de reiniciar.`);
+  }
+  if (av.status === "valido") {
+    // O avaliador já exige marcador ausente; instalação registrada com
+    // banco perdido parou antes, no ramo "banco-perdido".
+    return { seguro: true, acao: "prosseguir", motivo: "bootstrap-em-andamento" };
+  }
   if (s.auth.status === "ok") {
     // bootstrap já autorizado e ainda não consumido — idempotente.
     return { seguro: true, acao: "prosseguir", motivo: "bootstrap-autorizado" };
-  }
-  // bootstrap em andamento: a autorização de uso único JÁ foi consumida
-  // pelo restaurador neste ciclo (ou num ciclo anterior interrompido
-  // antes do migrate). Sem marcador de instalação — instalações
-  // registradas com banco perdido param antes, no ramo "banco-perdido".
-  // Prosseguir deixa o migrador criar o schema; a adoção no próximo
-  // gate com banco válido grava marcador + recibo e limpa este estado.
-  if (s.andamento.status === "ok" && s.marcador.status === "ausente") {
-    return { seguro: true, acao: "prosseguir", motivo: "bootstrap-em-andamento" };
   }
   if (s.recibo.status !== "ausente" || s.autorizacoesConsumidas > 0 || s.stateProtocolo === true) {
     // Estado de protocolo existe sem marcador e sem autorização:
@@ -398,6 +417,18 @@ export async function recuperarEstadoPerdido(opts = {}) {
   if (mod.estadoRealCompartilhado?.(env)) {
     return { ok: false, motivo: "sandbox-sem-state-isolado", detalhe: "Defina MESTRE_STATE_DIR para isolar o state dir do sandbox." };
   }
+  // Recibo precisa estar comprovadamente ausente — ok significa
+  // instalação concluída (recusa); qualquer outro estado bloqueia:
+  // erro de leitura nunca vira ausência.
+  if (s.recibo.status !== "ausente") {
+    return {
+      ok: false,
+      motivo: `recibo-${s.recibo.status}`,
+      detalhe: s.recibo.status === "ok"
+        ? "Já existe recibo de instalação concluída — reinstalação recusada."
+        : "O recibo de instalação não pôde ser verificado — inspeção explícita necessária antes de assumir reinstalação.",
+    };
+  }
   mod.gravarReciboInstalacao(repoDir, env, { origem: "recuperacao-estado-perdido" });
   return {
     ok: true,
@@ -441,6 +472,15 @@ export async function assumirReinstalacao(opts = {}) {
       ok: false,
       motivo: `banco-${s.banco.estado}`,
       detalhe: `O estado do banco não pôde ser determinado (${s.banco.detalhe ?? s.banco.estado}). Reinstalação recusada — verifique o arquivo ${s.cam.db} primeiro.`,
+    };
+  }
+  // Recibo inconclusivo/corrompido também bloqueia: --confirmar não
+  // pode contornar falha de leitura do estado de instalação.
+  if (s.recibo.status !== "ausente") {
+    return {
+      ok: false,
+      motivo: `recibo-${s.recibo.status}`,
+      detalhe: "O recibo de instalação não está comprovadamente ausente — inspeção explícita necessária antes de assumir reinstalação.",
     };
   }
   if (mod.estadoRealCompartilhado?.(env)) {

@@ -73,7 +73,8 @@ function cenario(nome, { comBanco = "nenhum", comBackups = false, comCfg = false
   await gate.executarPortao({ repoDir: c.repo, env: c.env, log: logSilencio });
   const a1 = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
   t("primeiro consumo autorizado", a1.autorizado === true);
-  ee.gravarBootstrapAndamento(c.repo, c.env, { motivo: "teste" });
+  // andamento válido exige etapa + autorizacaoId vinculado à consumida
+  ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizada", autorizacaoId: a1.dados?.autorizacaoId });
   const a2 = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
   t("replay da autorização recusado", a2.autorizado === false);
   t("evidência consumida preservada", readdirSync(ee.dirEstado(c.repo, c.env)).some((n) => n.startsWith("bootstrap-autorizacao.consumida-")));
@@ -408,6 +409,7 @@ for (const ponto of ["pendente", "consumida"]) {
   const c = cenario(`crash-${ponto}`);
   const envBase = {
     ...process.env,
+    NODE_ENV: "test",
     MESTRE_STATE_DIR: c.stateDir,
     MESTRE_PROVENIENCIA_DIR: c.provDir,
     MESTRE_BANCO: c.db,
@@ -444,6 +446,147 @@ for (const ponto of ["pendente", "consumida"]) {
   const r3 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
   t(`crash-${ponto}: boot estável no-op (exit 0)`, r3.status === 0);
   t(`crash-${ponto}: replay impossível (1 consumida)`, contagem() === 1);
+}
+
+// ---------- 23) vínculo autorizacaoId — retomada só aceita o ciclo exato ----------
+// Helper: grava arquivo de estado com envelope completo.
+const escreverEstado = (c, nome, dados) => {
+  const dir = ee.dirEstado(c.repo, c.env);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, nome), JSON.stringify({
+    protocoloVersao: ee.PROTOCOLO_VERSAO,
+    instalacaoId: ee.instalacaoId(c.repo),
+    repoCanon: ee.caminhoCanonico(c.repo),
+    ...dados,
+  }));
+};
+const ID_A = "a".repeat(32), ID_B = "b".repeat(32);
+{
+  // Caso legítimo: pendente id=B + consumida válida id=B → válido.
+  const c = cenario("vinculo-ok");
+  ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizacao-pendente", autorizacaoId: ID_B, motivo: "t" });
+  escreverEstado(c, "bootstrap-autorizacao.consumida-2026-01-01-x", { tipo: "primeiro-bootstrap", autorizacaoId: ID_B, emitidaEm: "2026-01-01" });
+  const av = ee.avaliarBootstrapAndamento(c.repo, c.env);
+  t("vínculo: pendente+consumida do MESMO id → válido", av.status === "valido" && av.autorizacaoId === ID_B, JSON.stringify(av));
+
+  // Autorização ANTIGA válida (id=A) + ciclo pendente id=B → inválido.
+  const c2 = cenario("vinculo-antiga");
+  ee.gravarBootstrapAndamento(c2.repo, c2.env, { etapa: "autorizacao-pendente", autorizacaoId: ID_B, motivo: "t" });
+  escreverEstado(c2, "bootstrap-autorizacao.consumida-2026-01-01-x", { tipo: "primeiro-bootstrap", autorizacaoId: ID_A, emitidaEm: "2026-01-01" });
+  const av2 = ee.avaliarBootstrapAndamento(c2.repo, c2.env);
+  t("vínculo: consumida de OUTRO ciclo não prova pendente", av2.status === "invalido", JSON.stringify(av2));
+  const val2 = ee.validarAutorizacoesConsumidas(c2.repo, c2.env, ID_B);
+  t("validarConsumidas distingue outra-autorizacao", val2.status === "outra-autorizacao", JSON.stringify(val2));
+
+  // "autorizada" sem consumida do mesmo id → inválido.
+  const c3 = cenario("vinculo-autorizada-sem-prova");
+  ee.gravarBootstrapAndamento(c3.repo, c3.env, { etapa: "autorizada", autorizacaoId: ID_B });
+  escreverEstado(c3, "bootstrap-autorizacao.consumida-2026-01-01-x", { tipo: "primeiro-bootstrap", autorizacaoId: ID_A });
+  const av3 = ee.avaliarBootstrapAndamento(c3.repo, c3.env);
+  t("vínculo: autorizada sem consumo do mesmo id → inválido", av3.status === "invalido" && av3.motivo === "sem-prova-vinculada", JSON.stringify(av3));
+
+  // Dois ciclos: consumida antiga A + auth atual B pendente id=B → válido
+  // (a prova é a auth atual, não a antiga).
+  const c4 = cenario("vinculo-dois-ciclos");
+  ee.gravarBootstrapAndamento(c4.repo, c4.env, { etapa: "autorizacao-pendente", autorizacaoId: ID_B, motivo: "t" });
+  escreverEstado(c4, "bootstrap-autorizacao.consumida-2026-01-01-x", { tipo: "primeiro-bootstrap", autorizacaoId: ID_A });
+  ee.gravarAutorizacaoBootstrap(c4.repo, c4.env, { autorizacaoId: ID_B });
+  const av4 = ee.avaliarBootstrapAndamento(c4.repo, c4.env);
+  t("vínculo: ciclo novo com auth atual → válido (antiga ignorada)", av4.status === "valido" && av4.prova === "autorizacao-pendente", JSON.stringify(av4));
+
+  // Andamento sem autorizacaoId → inválido.
+  const c5 = cenario("vinculo-sem-id");
+  ee.gravarBootstrapAndamento(c5.repo, c5.env, { etapa: "autorizacao-pendente", motivo: "t" });
+  const av5 = ee.avaliarBootstrapAndamento(c5.repo, c5.env);
+  t("vínculo: pendente sem autorizacaoId → inválido", av5.status === "invalido", JSON.stringify(av5));
+}
+
+// ---------- 24) Gate 0 bloqueia andamento semanticamente inválido ----------
+for (const [nome, preparo, esperado] of [
+  ["tipo-errado", (c) => escreverEstado(c, "bootstrap-em-andamento.json", { tipo: "outro-tipo", etapa: "autorizada", autorizacaoId: ID_B }), false],
+  ["etapa-aleatoria", (c) => ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "sei-la", autorizacaoId: ID_B }), false],
+  ["autorizada-sem-consumo", (c) => ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizada", autorizacaoId: ID_B }), false],
+  ["pendente-sem-auth", (c) => ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizacao-pendente", autorizacaoId: ID_B }), false],
+  ["pendente-auth-valida", (c) => { ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizacao-pendente", autorizacaoId: ID_B }); ee.gravarAutorizacaoBootstrap(c.repo, c.env, { autorizacaoId: ID_B }); }, true],
+]) {
+  const c = cenario(`gate-and-${nome}`);
+  preparo(c);
+  const v = await gate.verificarPortao({ repoDir: c.repo, env: c.env });
+  t(`gate: andamento ${nome} → ${esperado ? "prossegue" : "bloqueia"}`,
+    v.seguroIniciar === esperado, JSON.stringify(v).slice(0, 160));
+}
+// executarPortao (produtor) também bloqueia — exit code 2.
+{
+  const c = cenario("gate-and-executar");
+  ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizada", autorizacaoId: ID_B });
+  const r = await gate.executarPortao({ repoDir: c.repo, env: c.env, log: logSilencio });
+  t("executarPortao bloqueia andamento inválido (codigo 2)", r.codigo === 2, `codigo=${r.codigo}`);
+}
+
+// ---------- 25) recibo inconclusivo bloqueia consumo e autorizações ----------
+for (const [nome, preparar] of [
+  ["corrompido", (c) => escreverEstado(c, "instalacao-recibo.json", null) && writeFileSync(join(ee.dirEstado(c.repo, c.env), "instalacao-recibo.json"), "{lixo")],
+  ["diretorio", (c) => { mkdirSync(join(ee.dirEstado(c.repo, c.env), "instalacao-recibo.json"), { recursive: true }); }],
+]) {
+  const c = cenario(`recibo-${nome}`);
+  ee.gravarAutorizacaoBootstrap(c.repo, c.env); // autorização válida pendente
+  preparar(c);
+  const v = await gate.verificarPortao({ repoDir: c.repo, env: c.env });
+  t(`recibo ${nome}: verificarPortao bloqueia`, v.seguroIniciar === false, JSON.stringify(v).slice(0, 140));
+  const cons = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
+  t(`recibo ${nome}: consumo recusado (${cons.motivo})`, cons.autorizado === false && String(cons.motivo).startsWith("recibo-"), cons.motivo);
+  const asm = await gate.assumirReinstalacao({ repoDir: c.repo, env: c.env });
+  t(`recibo ${nome}: assumir-reinstalacao recusa`, asm.ok === false, JSON.stringify(asm).slice(0, 140));
+}
+{
+  // recibo VÁLIDO + autorização → consumo recusado como instalacao-concluida
+  const c = cenario("recibo-valido");
+  ee.gravarReciboInstalacao(c.repo, c.env);
+  ee.gravarAutorizacaoBootstrap(c.repo, c.env);
+  const cons = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
+  t("recibo válido: consumo recusado (instalacao-concluida)", cons.autorizado === false && cons.motivo === "instalacao-concluida");
+}
+
+// ---------- 26) hook de crash inerte fora de teste + vínculo real ----------
+{
+  const RAIZ_REPO = process.cwd();
+  const c = cenario("hook-inerte");
+  const envF = {
+    ...process.env,
+    // SEM NODE_ENV=test — simula produção
+    MESTRE_STATE_DIR: c.stateDir,
+    MESTRE_PROVENIENCIA_DIR: c.provDir,
+    MESTRE_BANCO: c.db,
+    MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(c.repo, "backups"),
+    MESTRE_BOOTSTRAP_CRASH_AFTER: "pendente",
+  };
+  delete envF.NODE_ENV;
+  const g = spawnSync("node", ["scripts/bootstrap-install.mjs"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
+  const r = spawnSync("node", ["servidor/dist/db/aplicar-restauracao.js"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
+  t("hook inerte em produção: restaurador conclui (exit 0, não 42)", r.status === 0, `status=${r.status}`);
+}
+{
+  // Vínculo real: consumida antiga de outro ciclo + andamento pendente
+  // do ciclo atual → restaurador DEVE bloquear (exit 2), não retomar.
+  const RAIZ_REPO = process.cwd();
+  const c = cenario("vinculo-real");
+  const envF = {
+    ...process.env,
+    NODE_ENV: "test",
+    MESTRE_STATE_DIR: c.stateDir,
+    MESTRE_PROVENIENCIA_DIR: c.provDir,
+    MESTRE_BANCO: c.db,
+    MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(c.repo, "backups"),
+  };
+  // consumida ANTIGA (id=X) + andamento pendente (id=Y) sem auth atual
+  escreverEstado(c, "bootstrap-autorizacao.consumida-2020-01-01-antiga", { tipo: "primeiro-bootstrap", autorizacaoId: "c".repeat(32), emitidaEm: "2020-01-01" });
+  ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizacao-pendente", autorizacaoId: "d".repeat(32), motivo: "ciclo-atual" });
+  const r = spawnSync("node", ["servidor/dist/db/aplicar-restauracao.js"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
+  t("retomada recusa consumida de outro ciclo (exit 2)", r.status === 2, `status=${r.status} ${(r.stdout + r.stderr).slice(-200)}`);
+  const g = spawnSync("node", ["scripts/bootstrap-install.mjs"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
+  t("gate também bloqueia o mesmo estado", g.status === 2, `status=${g.status}`);
 }
 
 console.log(`\n${pass} ok / ${fail} falhas`);
