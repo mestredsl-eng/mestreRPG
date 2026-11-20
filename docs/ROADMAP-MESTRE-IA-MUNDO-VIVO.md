@@ -198,9 +198,9 @@ O motor atual tem rolagens, testes, iniciativa e aplicação de HP, mas não um 
 ### Backlog sequenciado da Fase 0 (planejamento; execução depende de liberação)
 
 A sequência inicial proposta é:
-1. Identidade de serviço, capacidades e projeção de contexto privado (Issue filha #A).
-2. Extração dos serviços internos de chat, D10 e HP com paridade dos handlers atuais (Issue filha #B).
-3. Interface ProvedorIA fake, telemetria e limites de orçamento sem provedor real (Issue filha #C).
+1. Identidade de serviço, capacidades e projeção de contexto privado ([#182](https://github.com/mestredsl-eng/mestreRPG/issues/182)).
+2. Extração dos serviços internos de chat, D10 e HP com paridade dos handlers atuais ([#183](https://github.com/mestredsl-eng/mestreRPG/issues/183)).
+3. Interface ProvedorIA fake, telemetria e limites de orçamento sem provedor real ([#184](https://github.com/mestredsl-eng/mestreRPG/issues/184)).
 4. Depois da fundação, detalhar o Criador de Campanhas revisável e aprovado por humano.
 
 A Fase 0 continua sem autorização para começar implementação até liberação explícita da coordenação. D10 e estabilização da linha 1.x permanecem prioritários; a versão 2.0 evoluirá lentamente, sem ser esquecida e sem competir com a entrega jogável atual.
