@@ -29,10 +29,10 @@
 //
 // Overrides de teste: MESTRE_BANCO, MESTRE_ARQUIVOS, MESTRE_BACKUPS,
 // MESTRE_STATE_DIR, MESTRE_PROVENIENCIA_DIR, MESTRE_HOME.
-import { existsSync, readdirSync } from "node:fs";
+import { copyFileSync, lstatSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import Database from "better-sqlite3";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, "..");
@@ -62,34 +62,87 @@ function resolverCaminhos(repoDir, env) {
 }
 
 function dirTemConteudo(dir) {
-  try {
-    if (!existsSync(dir)) return false;
-    // .gitkeep é placeholder TRACKED do repo — todo clone novo o tem e
-    // ele NÃO é evidência de instalação anterior.
-    return readdirSync(dir).some((n) => n !== ".gitkeep");
-  } catch { return null; } // inconclusivo
+  // Distingue: ausente (false) | vazio|só-.gitkeep (false) | conteúdo
+  // (true) | inacessível/tipo inválido (null → inconclusivo → bloqueia).
+  return dirConteudoClassificado(dir).temConteudo;
 }
 
-/** Sonda o banco SEM criá-lo e SEM escrever: ausente | vazio (0 tabelas)
- *  | valido (≥1 tabela) | ilegivel (abre? não / erro de leitura). */
-function sondarBanco(caminho) {
-  if (!existsSync(caminho)) return { estado: "ausente" };
-  let db;
+function dirConteudoClassificado(dir) {
+  const est = estadoCaminhoLocal(dir);
+  if (est === "inconclusivo") return { temConteudo: null, estado: "inconclusivo" };
+  if (est === "ausente") return { temConteudo: false, estado: "ausente" };
+  let nomes;
+  try { nomes = readdirSync(dir); }
+  catch { return { temConteudo: null, estado: "inconclusivo" }; }
+  // .gitkeep é placeholder TRACKED do repo — todo clone novo o tem e
+  // ele NÃO é evidência de instalação anterior.
+  return { temConteudo: nomes.some((n) => n !== ".gitkeep"), estado: "existe" };
+}
+
+/** lstat local — existeSync devolveria false em EACCES/EPERM, o que
+ *  faria "não consegui verificar" parecer "não existe". */
+function estadoCaminhoLocal(caminho) {
   try {
-    // SEM readonly: banco em WAL pode falhar em abertura read-only sem
-    // -shm (SQLite precisa do shared-memory). Abertura normal só cria
-    // sidecars se necessário — não altera dados.
-    db = new Database(caminho, { fileMustExist: true });
+    lstatSync(caminho);
+    return "existe";
   } catch (e) {
-    return { estado: "ilegivel", detalhe: String(e?.message ?? e).slice(0, 160) };
+    return e && e.code === "ENOENT" ? "ausente" : "inconclusivo";
   }
+}
+
+// better-sqlite3 é carregado SOB DEMANDA: o Gate 0 roda antes do
+// `npm ci` no .bat — num clone limpo sem node_modules a ausência do
+// banco deve ser classificável sem a dependência. Com banco existente,
+// dependência indisponível ou inspeção impossível → "inconclusivo"
+// (bloqueio fail-closed — nunca "válido" por falta de módulo).
+let sqliteMod = null;
+async function carregarSqlite() {
+  if (sqliteMod) return sqliteMod;
+  const mod = await import("better-sqlite3");
+  sqliteMod = mod.default ?? mod;
+  return sqliteMod;
+}
+
+/** Sonda o banco SEM criá-lo e SEM efeitos colaterais no original:
+ *  ausente | vazio (0 tabelas) | valido (≥1 tabela) | ilegivel |
+ *  inconclusivo (dependência ausente, path inacessível ou inspeção
+ *  impossível). A inspeção copia db+sidecars para um diretório
+ *  temporário do SO — nem readonly nem abertura normal são usados no
+ *  arquivo real (ambos criam -shm/-wal em bancos WAL). */
+async function sondarBanco(caminho) {
+  const est = estadoCaminhoLocal(caminho);
+  if (est === "ausente") return { estado: "ausente" };
+  if (est === "inconclusivo") {
+    return { estado: "inconclusivo", detalhe: "caminho do banco inacessível" };
+  }
+  let Database;
   try {
-    const total = db.prepare("select count(*) as c from sqlite_master where type='table'").get().c;
-    return { estado: total === 0 ? "vazio" : "valido" };
+    Database = await carregarSqlite();
   } catch (e) {
-    return { estado: "ilegivel", detalhe: String(e?.message ?? e).slice(0, 160) };
+    return { estado: "inconclusivo", detalhe: `better-sqlite3 indisponível: ${String(e?.message ?? e).slice(0, 120)}` };
+  }
+  const tmp = mkdtempSync(join(tmpdir(), "gate0-db-"));
+  try {
+    const base = caminho.split(/[\\/]/).pop();
+    for (const suf of ["", "-wal", "-shm", "-journal"]) {
+      const src = caminho + suf;
+      const estSide = estadoCaminhoLocal(src);
+      if (estSide === "inconclusivo") {
+        return { estado: "inconclusivo", detalhe: `sidecar ${suf || "(principal)"} inacessível` };
+      }
+      if (estSide === "existe") copyFileSync(src, join(tmp, base + suf));
+    }
+    const db = new Database(join(tmp, base), { fileMustExist: true });
+    try {
+      const total = db.prepare("select count(*) as c from sqlite_master where type='table'").get().c;
+      return { estado: total === 0 ? "vazio" : "valido" };
+    } finally {
+      try { db.close(); } catch { /* ignora */ }
+    }
+  } catch (e) {
+    return { estado: "inconclusivo", detalhe: String(e?.message ?? e).slice(0, 160) };
   } finally {
-    try { db.close(); } catch { /* ignora */ }
+    try { rmSync(tmp, { recursive: true, force: true }); } catch { /* melhor esforço */ }
   }
 }
 
@@ -116,7 +169,7 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
     env,
     cam,
     dirEstado: dirEst,
-    banco: sondarBanco(cam.db),
+    banco: await sondarBanco(cam.db),
     stateProtocolo: compartilhado ? false : mod.stateDirTemProtocolo(dirEst),
     marcador: mod.lerMarcadorInstalacao(repoDir, env),
     recibo: compartilhado ? ausente : mod.lerReciboInstalacao(repoDir, env),
@@ -134,9 +187,11 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
   };
   // autorização já consumida (evidência durável fora do nome .json)
   try {
-    s.autorizacoesConsumidas = compartilhado || !existsSync(dirEst)
-      ? 0
-      : readdirSync(dirEst).filter((n) => n.startsWith("bootstrap-autorizacao.consumida-")).length;
+    const est = estadoCaminhoLocal(dirEst);
+    s.autorizacoesConsumidas = compartilhado ? 0
+      : est === "existe"
+        ? readdirSync(dirEst).filter((n) => n.startsWith("bootstrap-autorizacao.consumida-")).length
+        : est === "ausente" ? 0 : null;
   } catch { s.autorizacoesConsumidas = null; }
   // bootstrap em andamento: autorização já consumida pelo restaurador
   // neste ciclo — prova de que o primeiro boot está a meio caminho.
@@ -144,8 +199,8 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
   return s;
 }
 
-const MARCADOR_RUIM = new Set(["corrompido", "incompativel", "divergente", "invalido"]);
-const AUTH_RUIM = new Set(["corrompido", "incompativel", "divergente", "invalido"]);
+const MARCADOR_RUIM = new Set(["corrompido", "incompativel", "divergente", "invalido", "inconclusivo"]);
+const AUTH_RUIM = new Set(["corrompido", "incompativel", "divergente", "invalido", "inconclusivo"]);
 
 function temEvidenciaLegado(s) {
   return s.legado.backups === true || s.legado.arquivos === true;
@@ -175,9 +230,19 @@ export function decidirPortao(s) {
     return bloquear("atualizacao-pendente", "Existe uma atualização interrompida registrada no estado externo. Resolva o journal antes de reiniciar (Etapa 4 do protocolo).");
   }
 
-  // 2) Banco ilegível: não dá para classificar → fail-closed.
-  if (s.banco.estado === "ilegivel") {
-    return bloquear("banco-ilegivel", `O banco de dados não pôde ser aberto: ${s.banco.detalhe}. Verifique o arquivo ${s.cam.db}.`);
+  // 1b) Sinais inconclusivos NUNCA viram ausência: state dir ilegível,
+  //     contagem de autorizações falha ou evidência legada inacessível
+  //     bloqueiam qualquer decisão — inclusive a emissão de autorização.
+  if (s.stateProtocolo === null || s.autorizacoesConsumidas === null) {
+    return bloquear("state-ilegivel", "O diretório de estado não pôde ser lido. Verifique permissões antes de reiniciar.");
+  }
+  if (s.legado.backups === null || s.legado.arquivos === null) {
+    return bloquear("evidencia-legada-inconclusiva", "Não foi possível verificar backups/ ou arquivos/ de campanhas (permissão ou tipo inválido). A instalação pode ser anterior — resolva o acesso antes de reiniciar.");
+  }
+
+  // 2) Banco ilegível/inconclusivo: não dá para classificar → fail-closed.
+  if (s.banco.estado === "ilegivel" || s.banco.estado === "inconclusivo") {
+    return bloquear(`banco-${s.banco.estado}`, `O banco de dados não pôde ser inspecionado: ${s.banco.detalhe ?? "erro"}. Verifique o arquivo ${s.cam.db}.`);
   }
 
   // 3) Banco VÁLIDO — a prova mais forte de instalação existente.
@@ -339,8 +404,19 @@ export async function assumirReinstalacao(opts = {}) {
   const env = opts.env ?? process.env;
   const mod = await estadoExterno();
   const marcador = mod.lerMarcadorInstalacao(repoDir, env);
-  if (marcador.status === "ok") {
-    return { ok: false, motivo: "marcador-presente", detalhe: "A instalação está registrada — banco perdido deve ser restaurado, não reinstalado." };
+  // --confirmar NÃO é bypass de proveniência: só autoriza quando o
+  // marcador está COMPROVADAMENTE ausente. Corrompido/divergente/
+  // incompatível/inconclusivo exigem inspeção e recuperação explícita
+  // do marcador — emitir autorização aqui produziria sucesso sem estado
+  // utilizável (o gate continuaria bloqueando pelo marcador ruim).
+  if (marcador.status !== "ausente") {
+    return {
+      ok: false,
+      motivo: `marcador-${marcador.status}`,
+      detalhe: marcador.status === "inconclusivo"
+        ? "Não foi possível verificar o marcador de proveniência (permissão/leitura)."
+        : "O marcador de proveniência existe mas está corrompido, divergente ou incompatível. Inspecione o arquivo de proveniência e recupere-o explicitamente antes de assumir reinstalação.",
+    };
   }
   const s = await sondarInstalacao(repoDir, env);
   if (s.banco.estado === "valido") {

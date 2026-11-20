@@ -100,6 +100,19 @@ if exist scripts\bootstrap-install.mjs (
         node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
+) else (
+    rem Arvore com protocolo tracked (protocolo-auto-update.json) mas
+    rem sem o Gate 0 = instalacao incompleta/corrompida — bloquear.
+    rem Fixtures minimas de teste (sem o manifesto) seguem toleradas.
+    if exist scripts\protocolo-auto-update.json (
+        echo.
+        echo [ERRO] Gate 0 de proveniencia ausente numa arvore com
+        echo        protocolo auto-update — instalacao incompleta.
+        echo        Restaure scripts\bootstrap-install.mjs e reinicie.
+        pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
+        exit /b 1
+    )
 )
 
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------

@@ -194,6 +194,8 @@ interface EeModulo {
   consumirAutorizacaoBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): { autorizado: boolean; motivo?: string };
   gravarBootstrapAndamento(repoDir: string, env?: NodeJS.ProcessEnv, dadosExtra?: Record<string, unknown>): unknown;
   estadoRealCompartilhado?(env?: NodeJS.ProcessEnv): boolean;
+  ARQUIVO_BOOTSTRAP_ANDAMENTO?: string;
+  lerMarcadorInstalacao?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string };
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -207,6 +209,42 @@ async function estadoExterno(): Promise<EeModulo> {
   const mod = await import(pathToFileURL(join(REPO_ROOT, "scripts", "estado-externo.mjs")).href);
   ee = mod as unknown as EeModulo;
   return ee;
+}
+
+const NOME_ANDAMENTO = "bootstrap-em-andamento.json";
+
+/**
+ * Retomada de bootstrap interrompido (W13): se um boot anterior consumiu
+ * a autorização one-shot e gravou bootstrap-em-andamento, mas caiu antes
+ * do migrate, o banco continua ausente/vazio e a autorização NÃO pode
+ * ser consumida de novo. O marcador de andamento válido + marcador de
+ * proveniência comprovadamente ausente autoriza a RETOMADA — sem
+ * exceção genérica de banco ausente:
+ *   - andamento ausente        → false (fluxo normal de consumo);
+ *   - andamento corrompido/    → exit 2 (estado inconclusivo);
+ *     divergente/incompatível
+ *   - andamento ok + marcador  → exit 2 (estado contraditório: instalação
+ *     de proveniência ok       registrada não pode estar "em bootstrap");
+ *   - marcador não-ausente     → exit 2 (exige investigação);
+ *   - marcador ausente         → true (retomada legítima).
+ */
+function bootstrapEmAndamentoValido(mod: EeModulo): boolean {
+  const andamento = mod.lerJournal(REPO_ROOT, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? NOME_ANDAMENTO, process.env);
+  if (andamento.status === "ausente") return false;
+  if (andamento.status !== "ok") {
+    log(`ERRO: marcador de bootstrap em andamento ${andamento.status} — estado inconclusivo, restauração abortada.`);
+    process.exit(2);
+  }
+  const marcador = mod.lerMarcadorInstalacao?.(REPO_ROOT, process.env);
+  if (marcador?.status === "ok") {
+    log("ERRO: bootstrap em andamento com instalação já registrada (marcador ok) — estado contraditório, restauração abortada.");
+    process.exit(2);
+  }
+  if (marcador && marcador.status !== "ausente") {
+    log(`ERRO: marcador de proveniência ${marcador.status} — bootstrap em andamento não pode ser retomado, restauração abortada.`);
+    process.exit(2);
+  }
+  return true;
 }
 
 interface JournalRest {
@@ -289,6 +327,13 @@ async function principal() {
   const dbExiste = existsSync(DB_VIVA);
   if (!dbExiste && !journalPendente) {
     const mod = await estadoExterno();
+    // Retomada: autorização já consumida num boot anterior + crash
+    // antes do migrate — não consumir de novo (one-shot já cumprido).
+    if (bootstrapEmAndamentoValido(mod)) {
+      mkdirSync(dirname(DB_VIVA), { recursive: true });
+      log("Bootstrap em andamento retomado — autorização de uso único já consumida anteriormente; nada a restaurar.");
+      return;
+    }
     const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
     if (!auth.autorizado) {
       log(`ERRO: banco inexistente, sem journal e sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
@@ -342,6 +387,10 @@ async function principal() {
             // autorização de uso único — banco vazio sozinho não prova
             // nada e recibo permanente não autoriza (banco perdido).
             const mod = await estadoExterno();
+            if (bootstrapEmAndamentoValido(mod)) {
+              log("Bootstrap em andamento retomado (banco vazio) — autorização já consumida anteriormente; nada a restaurar.");
+              return;
+            }
             const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
             if (!auth.autorizado) {
               log(`ERRO: banco vazio sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);

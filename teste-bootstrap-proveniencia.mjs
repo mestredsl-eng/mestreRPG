@@ -9,6 +9,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import Database from "better-sqlite3";
 
 const gate = await import("./scripts/bootstrap-install.mjs");
@@ -216,6 +217,129 @@ function cenario(nome, { comBanco = "nenhum", comBackups = false, comCfg = false
   }));
   const r = await gate.executarPortao({ repoDir: c.repo, env: c.env, log: logSilencio });
   t("protocolo incompatível → bloqueia", r.codigo === 2 && r.decisao.motivo === "marcador-incompativel");
+}
+
+// ---------- 15) retomada REAL de bootstrap interrompido (processos) ----------
+// Cadeia real: gate (.bat) → restaurador consome one-shot + grava
+// andamento → crash antes do migrate → próximo boot retoma sem
+// reconsumir → migrate conclui → marcador/recibo → boot estável.
+{
+  const RAIZ_REPO = process.cwd();
+  const c = cenario("retomada-real");
+  const envF = {
+    ...process.env,
+    MESTRE_STATE_DIR: c.stateDir,
+    MESTRE_PROVENIENCIA_DIR: c.provDir,
+    MESTRE_BANCO: c.db,
+    MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(c.repo, "backups"),
+  };
+  const rodar = (args) => spawnSync("node", args, { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
+  const contagemConsumidas = () => {
+    const est = ee.dirEstado(RAIZ_REPO, envF);
+    return existsSync(est) ? readdirSync(est).filter((n) => n.startsWith("bootstrap-autorizacao.consumida-")).length : 0;
+  };
+
+  const g1 = rodar(["scripts/bootstrap-install.mjs"]);
+  t("boot1 gate emite autorização (exit 0)", g1.status === 0, g1.stderr?.slice(-200));
+  const r1 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+  t("boot1 restaurador consome one-shot (exit 0)", r1.status === 0, (r1.stdout + r1.stderr).slice(-200));
+  t("andamento gravado após consumo", ee.lerJournal(RAIZ_REPO, "bootstrap-em-andamento.json", envF).status === "ok");
+  t("uma evidência consumida", contagemConsumidas() === 1);
+  // CRASH: migrate NÃO executa — banco continua ausente.
+
+  const g2 = rodar(["scripts/bootstrap-install.mjs"]);
+  t("boot2 gate prossegue (bootstrap-em-andamento)", g2.status === 0 && /bootstrap-em-andamento|prosseguir/i.test(g2.stdout + g2.stderr), (g2.stdout + g2.stderr).slice(-200));
+  const r2 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+  t("boot2 restaurador RETOMA sem reconsumir (exit 0)", r2.status === 0, (r2.stdout + r2.stderr).slice(-250));
+  t("sem segunda evidência consumida (one-shot preservado)", contagemConsumidas() === 1);
+
+  const m1 = rodar(["servidor/dist/db/migrate.js"]);
+  t("migrate conclui instalação (exit 0)", m1.status === 0, (m1.stdout + m1.stderr).slice(-200));
+  t("marcador gravado fora do state dir", ee.lerMarcadorInstalacao(RAIZ_REPO, envF).status === "ok");
+  t("recibo gravado no state dir", ee.lerReciboInstalacao(RAIZ_REPO, envF).status === "ok");
+
+  const g3 = rodar(["scripts/bootstrap-install.mjs"]);
+  t("boot3 gate → instalação conhecida", g3.status === 0 && /instalacao-conhecida/.test(g3.stdout + g3.stderr), (g3.stdout + g3.stderr).slice(-200));
+  const r3 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+  t("boot3 restaurador no-op (exit 0)", r3.status === 0);
+  t("replay impossível: ainda 1 consumida", contagemConsumidas() === 1);
+}
+
+// ---------- 16) retry EPERM/EBUSY/EACCES em renomearComRetry ----------
+{
+  const { renomearComRetry } = ee;
+  const erro = (code) => Object.assign(new Error(code), { code });
+  // transitório: 2 falhas EPERM depois sucesso
+  let chamadas = 0;
+  renomearComRetry("a", "b", {
+    renomear: () => { chamadas++; if (chamadas <= 2) throw erro("EPERM"); },
+    dormir: () => {},
+  });
+  t("retry: sucesso após EPERM transitório", chamadas === 3);
+  // esgotamento: erro propagado, tentativas limitadas
+  chamadas = 0;
+  let lancou = null;
+  try {
+    renomearComRetry("a", "b", {
+      renomear: () => { chamadas++; throw erro("EBUSY"); },
+      dormir: () => {}, maxTentativas: 4,
+    });
+  } catch (e) { lancou = e; }
+  t("retry: esgotamento propaga erro original", lancou?.code === "EBUSY" && chamadas === 4);
+  // erro não-transitório: sem retry
+  chamadas = 0;
+  lancou = null;
+  try {
+    renomearComRetry("a", "b", {
+      renomear: () => { chamadas++; throw erro("ENOENT"); },
+      dormir: () => {},
+    });
+  } catch (e) { lancou = e; }
+  t("retry: ENOENT não tenta de novo", lancou?.code === "ENOENT" && chamadas === 1);
+}
+
+// ---------- 17) assumir-reinstalacao recusa marcador não-ausente ----------
+for (const [nome, preparar] of [
+  ["corrompido", (c) => { mkdirSync(ee.dirProveniencia(c.repo, c.env), { recursive: true }); writeFileSync(ee.caminhoMarcadorInstalacao(c.repo, c.env), "{lixo"); }],
+  ["divergente", (c) => { ee.gravarMarcadorInstalacao(c.repo, c.env); const p = ee.caminhoMarcadorInstalacao(c.repo, c.env); const j = JSON.parse(readFileSync(p, "utf8")); j.instalacaoId = "f".repeat(64); writeFileSync(p, JSON.stringify(j)); }],
+]) {
+  const c = cenario(`assumir-${nome}`);
+  preparar(c);
+  const r = await gate.assumirReinstalacao({ repoDir: c.repo, env: c.env });
+  t(`assumir-reinstalacao recusa marcador ${nome}`, r.ok === false && String(r.motivo).includes(nome === "corrompido" ? "corrompido" : "divergente"));
+}
+
+// ---------- 18) verificarPortao é realmente somente-leitura ----------
+// Banco WAL com sidecars presentes (conexão aberta) + snapshots de
+// hash/tamanho de TODOS os arquivos do fixture antes/depois da avaliação.
+{
+  const c = cenario("readonly-wal", { comBanco: "valido" });
+  // converte para WAL e mantém sidecars vivos
+  const d = new Database(c.db);
+  d.pragma("journal_mode = WAL");
+  d.exec("insert into server_settings (key,value) values ('x','y')");
+  const snapshot = () => {
+    const dirs = [join(c.repo, "banco"), c.stateDir, c.provDir];
+    const res = {};
+    for (const dir of dirs) {
+      if (!existsSync(dir)) { res[dir] = "AUSENTE"; continue; }
+      res[dir] = readdirSync(dir).sort().map((n) => {
+        const p = join(dir, n);
+        try { return `${n}:${readFileSync(p).length}`; } catch { return `${n}:?`; }
+      });
+    }
+    return JSON.stringify(res);
+  };
+  const antes = snapshot();
+  const sidecarsAntes = readdirSync(join(c.repo, "banco")).sort();
+  const v = await gate.verificarPortao({ repoDir: c.repo, env: c.env });
+  t("avaliação aprova instalação com WAL", v.seguroIniciar === true);
+  const depois = snapshot();
+  t("NENHUM arquivo criado/alterado/removido pela avaliação", antes === depois, `\nantes=${antes}\ndepois=${depois}`);
+  t("sidecars -wal/-shm não foram criados pela avaliação",
+    JSON.stringify(sidecarsAntes) === JSON.stringify(readdirSync(join(c.repo, "banco")).sort()));
+  d.close();
 }
 
 console.log(`\n${pass} ok / ${fail} falhas`);

@@ -39,7 +39,7 @@
 // ausência de banco ou ausência do próprio state dir.
 import { createHash, randomBytes } from "node:crypto";
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
+  closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, renameSync, rmSync, writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -103,11 +103,56 @@ export function caminhoManifestoProtocolo(repoDir) {
   return join(repoDir, "scripts", ARQUIVO_MANIFESTO_PROTOCOLO);
 }
 
+/** Classificação de existência por lstat — distingue ausência provada
+ *  (ENOENT) de falha de leitura/permissão. existsSync() devolve false
+ *  tanto para ausente quanto para EACCES/EPERM, o que transformaria
+ *  "não consegui verificar" em "não existe" — inaceitável em avaliação
+ *  fail-closed. Retorno: "existe" | "ausente" | "inconclusivo". */
+export function estadoCaminho(caminho) {
+  try {
+    lstatSync(caminho);
+    return "existe";
+  } catch (e) {
+    if (e && e.code === "ENOENT") return "ausente";
+    return "inconclusivo";
+  }
+}
+
 function tmpUnico(dir, nome) {
   return join(dir, `.${nome}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`);
 }
 
-/** Escrita atômica: tmp exclusivo no mesmo diretório → flush/fsync → rename. */
+const ERROS_RETRY_RENAME = new Set(["EPERM", "EBUSY", "EACCES"]);
+const MAX_TENTATIVAS_RENAME = 6;
+
+/** Bloqueio curto da thread principal sem processo extra. */
+function dormirSync(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); }
+  catch { /* ambientes sem SharedArrayBuffer: segue sem espera */ }
+}
+
+/** Rename com retry limitado SOMENTE para erros transitórios do
+ *  Windows (EPERM/EBUSY/EACCES — antivírus/indexador segurando o
+ *  arquivo). Tentativas limitadas, backoff progressivo curto, erro
+ *  original propagado ao esgotar; nunca retorna sucesso sem rename. */
+export function renomearComRetry(origem, destino, opcoes = {}) {
+  const renomear = opcoes.renomear ?? renameSync;
+  const dormir = opcoes.dormir ?? dormirSync;
+  const max = opcoes.maxTentativas ?? MAX_TENTATIVAS_RENAME;
+  for (let i = 0; i < max; i++) {
+    try {
+      renomear(origem, destino);
+      return;
+    } catch (e) {
+      if (!ERROS_RETRY_RENAME.has(e?.code) || i === max - 1) throw e;
+      dormir(50 * 2 ** i); // 50, 100, 200, 400, 800 ms
+    }
+  }
+}
+
+/** Escrita atômica: tmp exclusivo no mesmo diretório → flush/fsync →
+ *  rename (com retry transitório). Falha final remove o tmp quando
+ *  seguro e propaga o erro original. */
 export function gravarJsonAtomico(caminho, obj) {
   const dir = dirname(caminho);
   mkdirSync(dir, { recursive: true });
@@ -119,7 +164,12 @@ export function gravarJsonAtomico(caminho, obj) {
   } finally {
     closeSync(fd);
   }
-  renameSync(tmp, caminho);
+  try {
+    renomearComRetry(tmp, caminho);
+  } catch (e) {
+    try { rmSync(tmp, { force: true }); } catch { /* melhor esforço */ }
+    throw e;
+  }
 }
 
 /** Move arquivo corrompido para quarentena datada; nunca apaga. */
@@ -137,6 +187,27 @@ function lerJsonCru(caminho) {
   catch { return undefined; }
 }
 
+/** Leitura classificada SEM efeitos colaterais (nunca quarentena):
+ *  distingue ausência provada (ENOENT), conteúdo corrompido e falha de
+ *  leitura/permissão (inconclusivo). Usada pelos leitores de marcador,
+ *  recibo e autorização — avaliações somente-leitura. */
+function lerJsonEstado(caminho) {
+  const est = estadoCaminho(caminho);
+  if (est === "ausente") return { status: "ausente" };
+  if (est === "inconclusivo") return { status: "inconclusivo" };
+  let bruto;
+  try {
+    bruto = readFileSync(caminho, "utf8");
+  } catch {
+    return { status: "inconclusivo" };
+  }
+  try {
+    return { status: "ok", dados: JSON.parse(bruto) };
+  } catch {
+    return { status: "corrompido" };
+  }
+}
+
 /**
  * Lê um registro JSON do estado externo com classificação fail-closed.
  * Retorno: { status: "ausente" } |
@@ -148,10 +219,19 @@ function lerJsonCru(caminho) {
  * informado, divergências são classificadas (nunca tratadas como ausência).
  */
 export function lerEstado(caminho, esperado = {}) {
-  if (!existsSync(caminho)) return { status: "ausente" };
+  const est = estadoCaminho(caminho);
+  if (est === "ausente") return { status: "ausente" };
+  if (est === "inconclusivo") return { status: "inconclusivo" };
+  let bruto;
+  try {
+    bruto = readFileSync(caminho, "utf8");
+  } catch {
+    // EACCES/EPERM/EISDIR etc. — NÃO é JSON corrompido: inconclusivo.
+    return { status: "inconclusivo" };
+  }
   let dados;
   try {
-    dados = JSON.parse(readFileSync(caminho, "utf8"));
+    dados = JSON.parse(bruto);
   } catch {
     return { status: "corrompido", quarentena: colocarEmQuarentena(caminho, "json") };
   }
@@ -259,9 +339,9 @@ export function gravarReciboInstalacao(repoDir, env = process.env, dadosExtra = 
  *  { status: "ok", dados } | { status: "ausente" } |
  *  { status: "corrompido"|"incompativel"|"divergente"|"invalido" }. */
 export function lerReciboInstalacao(repoDir, env = process.env) {
-  const caminho = join(dirEstado(repoDir, env), ARQUIVO_RECIBO_INSTALACAO);
-  if (!existsSync(caminho)) return { status: "ausente" };
-  const dados = lerJsonCru(caminho);
+  const lido = lerJsonEstado(join(dirEstado(repoDir, env), ARQUIVO_RECIBO_INSTALACAO));
+  if (lido.status !== "ok") return { status: lido.status };
+  const dados = lido.dados;
   if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
   if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
   if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
@@ -283,9 +363,9 @@ export function gravarAutorizacaoBootstrap(repoDir, env = process.env, dadosExtr
 
 /** Lê a autorização SEM consumi-la (verificação não destrutiva). */
 export function lerAutorizacaoBootstrap(repoDir, env = process.env) {
-  const caminho = join(dirEstado(repoDir, env), ARQUIVO_AUTORIZACAO_BOOTSTRAP);
-  if (!existsSync(caminho)) return { status: "ausente" };
-  const dados = lerJsonCru(caminho);
+  const lido = lerJsonEstado(join(dirEstado(repoDir, env), ARQUIVO_AUTORIZACAO_BOOTSTRAP));
+  if (lido.status !== "ok") return { status: lido.status };
+  const dados = lido.dados;
   if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
   if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
   if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
@@ -308,7 +388,9 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
   const recibo = lerReciboInstalacao(repoDir, env);
   if (recibo.status === "ok") return "instalacao-concluida";
   let nomes = [];
-  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  const estDir = estadoCaminho(dir);
+  if (estDir === "inconclusivo") return "state-ilegivel";
+  try { nomes = estDir === "existe" ? readdirSync(dir) : []; }
   catch { return "state-ilegivel"; }
   // bootstrap em andamento (autorização já consumida, instalação a meio
   // caminho) — estado conhecido: o ciclo de primeiro boot está válido.
@@ -336,7 +418,11 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
 export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
   const dir = dirEstado(repoDir, env);
   const caminho = join(dir, ARQUIVO_AUTORIZACAO_BOOTSTRAP);
-  if (!existsSync(caminho)) {
+  const estAuth = estadoCaminho(caminho);
+  if (estAuth === "inconclusivo") {
+    return { autorizado: false, motivo: "autorizacao-inconclusiva" };
+  }
+  if (estAuth === "ausente") {
     return { autorizado: false, motivo: diagnosticarBootstrap(repoDir, env) };
   }
   // Recibo permanente válido ⇒ instalação concluída: autorização de
@@ -437,9 +523,9 @@ export function gravarMarcadorInstalacao(repoDir, env = process.env, dadosExtra 
  *  instalação nova. Retorno: { status: "ok", dados } | "ausente" |
  *  "corrompido" | "incompativel" | "divergente" | "invalido". */
 export function lerMarcadorInstalacao(repoDir, env = process.env) {
-  const caminho = caminhoMarcadorInstalacao(repoDir, env);
-  if (!existsSync(caminho)) return { status: "ausente" };
-  const dados = lerJsonCru(caminho);
+  const lido = lerJsonEstado(caminhoMarcadorInstalacao(repoDir, env));
+  if (lido.status !== "ok") return { status: lido.status };
+  const dados = lido.dados;
   if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
   if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
   if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
@@ -454,8 +540,10 @@ export function lerMarcadorInstalacao(repoDir, env = process.env) {
  *  boot e NÃO provam estado de protocolo — não contam.
  *  Retorno: true | false | null (diretório ilegível → inconclusivo). */
 export function stateDirTemProtocolo(dir) {
+  const est = estadoCaminho(dir);
+  if (est === "inconclusivo") return null;
   let nomes;
-  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  try { nomes = est === "existe" ? readdirSync(dir) : []; }
   catch { return null; }
   return nomes.some((n) => !n.startsWith("mestre-boot-lock.json"));
 }
@@ -529,7 +617,11 @@ export function avaliarBoot(repoDir, env = process.env) {
   // mas não há estado conhecido (recibo concluído ou autorização de
   // bootstrap válida) — bloqueia.
   const manifesto = caminhoManifestoProtocolo(repoDir);
-  if (existsSync(manifesto)) {
+  const estManifesto = estadoCaminho(manifesto);
+  if (estManifesto === "inconclusivo") {
+    return { seguroIniciar: false, motivo: "manifesto-inconclusivo" };
+  }
+  if (estManifesto === "existe") {
     const prova = estadoInstalacaoConhecido(repoDir, env);
     if (!prova.conhecido) {
       return { seguroIniciar: false, motivo: "estado-ambiguo", detalhes: prova };
