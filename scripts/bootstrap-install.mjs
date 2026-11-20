@@ -174,8 +174,8 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
     marcador: mod.lerMarcadorInstalacao(repoDir, env),
     recibo: compartilhado ? ausente : mod.lerReciboInstalacao(repoDir, env),
     auth: compartilhado ? ausente : mod.lerAutorizacaoBootstrap(repoDir, env),
-    journalUpdate: compartilhado ? ausente : mod.lerJournal(repoDir, JOURNAL_UPDATE, env),
-    journalRest: compartilhado ? ausente : mod.lerJournal(repoDir, JOURNAL_RESTAURACAO, env),
+    journalUpdate: compartilhado ? ausente : mod.lerJournalSemEfeitos(repoDir, JOURNAL_UPDATE, env),
+    journalRest: compartilhado ? ausente : mod.lerJournalSemEfeitos(repoDir, JOURNAL_RESTAURACAO, env),
     legado: {
       backups: dirTemConteudo(cam.backups),
       arquivos: dirTemConteudo(cam.arquivos),
@@ -195,7 +195,7 @@ export async function sondarInstalacao(repoDir = REPO_ROOT, env = process.env) {
   } catch { s.autorizacoesConsumidas = null; }
   // bootstrap em andamento: autorização já consumida pelo restaurador
   // neste ciclo — prova de que o primeiro boot está a meio caminho.
-  s.andamento = compartilhado ? ausente : mod.lerJournal(repoDir, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? "bootstrap-em-andamento.json", env);
+  s.andamento = compartilhado ? ausente : mod.lerJournalSemEfeitos(repoDir, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? "bootstrap-em-andamento.json", env);
   return s;
 }
 
@@ -383,8 +383,17 @@ export async function recuperarEstadoPerdido(opts = {}) {
     return { ok: false, motivo: `sem-marcador-valido:${marcador.status}` };
   }
   const s = await sondarInstalacao(repoDir, env);
-  if (s.stateProtocolo === true) {
-    return { ok: false, motivo: "state-dir-tem-conteudo", detalhe: "O diretório de estado não está vazio — não é o cenário de perda total." };
+  // Só recupera com ausência de conteúdo PROVADA: stateProtocolo true
+  // (tem registros) ou null (leitura inconclusiva) bloqueiam — nunca
+  // gravar recibo sobre estado que não foi possível verificar.
+  if (s.stateProtocolo !== false) {
+    return {
+      ok: false,
+      motivo: s.stateProtocolo === null ? "state-ilegivel" : "state-dir-tem-conteudo",
+      detalhe: s.stateProtocolo === null
+        ? "O diretório de estado existe mas não pôde ser lido — recuperação recusada."
+        : "O diretório de estado não está vazio — não é o cenário de perda total.",
+    };
   }
   if (mod.estadoRealCompartilhado?.(env)) {
     return { ok: false, motivo: "sandbox-sem-state-isolado", detalhe: "Defina MESTRE_STATE_DIR para isolar o state dir do sandbox." };
@@ -419,8 +428,20 @@ export async function assumirReinstalacao(opts = {}) {
     };
   }
   const s = await sondarInstalacao(repoDir, env);
+  // Estados admissíveis para reinstalação assumida: "ausente" ou
+  // "vazio" (0 tabelas — prova de que não há dados a perder).
+  // "valido" recusa (banco existe); "ilegivel"/"inconclusivo" recusam
+  // porque --confirmar não pode contornar falha de leitura — estado
+  // desconhecido nunca produz autorização.
   if (s.banco.estado === "valido") {
     return { ok: false, motivo: "banco-valido", detalhe: "Banco válido existe — reinstalação recusada." };
+  }
+  if (s.banco.estado !== "ausente" && s.banco.estado !== "vazio") {
+    return {
+      ok: false,
+      motivo: `banco-${s.banco.estado}`,
+      detalhe: `O estado do banco não pôde ser determinado (${s.banco.detalhe ?? s.banco.estado}). Reinstalação recusada — verifique o arquivo ${s.cam.db} primeiro.`,
+    };
   }
   if (mod.estadoRealCompartilhado?.(env)) {
     return { ok: false, motivo: "sandbox-sem-state-isolado", detalhe: "Defina MESTRE_STATE_DIR para isolar o state dir do sandbox." };

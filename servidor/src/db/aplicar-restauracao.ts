@@ -191,11 +191,13 @@ interface EeModulo {
   lerJournal(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): {
     status: string; dados?: Record<string, unknown>; quarentena?: string | null;
   };
-  consumirAutorizacaoBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): { autorizado: boolean; motivo?: string };
+  consumirAutorizacaoBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): { autorizado: boolean; motivo?: string; dados?: Record<string, unknown> };
   gravarBootstrapAndamento(repoDir: string, env?: NodeJS.ProcessEnv, dadosExtra?: Record<string, unknown>): unknown;
   estadoRealCompartilhado?(env?: NodeJS.ProcessEnv): boolean;
   ARQUIVO_BOOTSTRAP_ANDAMENTO?: string;
   lerMarcadorInstalacao?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string };
+  lerJournalSemEfeitos?(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): { status: string; dados?: Record<string, unknown> };
+  validarAutorizacoesConsumidas?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; arquivo?: string };
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -213,23 +215,59 @@ async function estadoExterno(): Promise<EeModulo> {
 
 const NOME_ANDAMENTO = "bootstrap-em-andamento.json";
 
+function gravarAndamento(mod: EeModulo, etapa: string, extra: Record<string, unknown> = {}) {
+  // Sob MESTRE_HOME sem MESTRE_STATE_DIR o state dir é o real — não escrever.
+  if (mod.estadoRealCompartilhado?.(process.env)) return;
+  mod.gravarBootstrapAndamento(REPO_ROOT, process.env, { etapa, ...extra });
+}
+
 /**
- * Retomada de bootstrap interrompido (W13): se um boot anterior consumiu
- * a autorização one-shot e gravou bootstrap-em-andamento, mas caiu antes
- * do migrate, o banco continua ausente/vazio e a autorização NÃO pode
- * ser consumida de novo. O marcador de andamento válido + marcador de
- * proveniência comprovadamente ausente autoriza a RETOMADA — sem
- * exceção genérica de banco ausente:
- *   - andamento ausente        → false (fluxo normal de consumo);
- *   - andamento corrompido/    → exit 2 (estado inconclusivo);
- *     divergente/incompatível
- *   - andamento ok + marcador  → exit 2 (estado contraditório: instalação
- *     de proveniência ok       registrada não pode estar "em bootstrap");
- *   - marcador não-ausente     → exit 2 (exige investigação);
- *   - marcador ausente         → true (retomada legítima).
+ * Autorização de primeiro bootstrap em DUAS FASES duráveis:
+ *   1) andamento "autorizacao-pendente" gravado ANTES de consumir —
+ *      se o processo cair aqui, a autorização continua válida e a
+ *      retomada a consome normalmente;
+ *   2) autorização consumida (rename one-shot + validação);
+ *   3) andamento "autorizada" gravado — prova de que a autorização
+ *      era VÁLIDA quando consumida.
+ * Crash entre (2) e (3): andamento fica "pendente" e a retomada
+ * resolve verificando a autorização consumida (validarAutorizacoes-
+ * Consumidas) — distingue consumo legítimo de autorização inválida.
+ * MESTRE_BOOTSTRAP_CRASH_AFTER (somente teste): "pendente" | "consumida"
+ * força exit(42) no ponto real da implementação.
+ */
+function autorizarBootstrap(mod: EeModulo, motivo: string) {
+  gravarAndamento(mod, "autorizacao-pendente", { motivo });
+  if (process.env.MESTRE_BOOTSTRAP_CRASH_AFTER === "pendente") process.exit(42);
+  const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
+  if (!auth.autorizado) {
+    log(`ERRO: sem autorização de primeiro bootstrap válida (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
+    process.exit(2);
+  }
+  if (process.env.MESTRE_BOOTSTRAP_CRASH_AFTER === "consumida") process.exit(42);
+  gravarAndamento(mod, "autorizada", { motivo, emitidaEm: auth.dados?.emitidaEm });
+  mkdirSync(dirname(DB_VIVA), { recursive: true });
+  log(`Primeiro bootstrap autorizado (uso único consumido, ${motivo}); nada a restaurar.`);
+}
+
+/**
+ * Retomada de bootstrap interrompido (W13): um boot anterior pode ter
+ * consumido a autorização one-shot e gravado bootstrap-em-andamento,
+ * caindo antes do migrate — o banco continua ausente/vazio e a
+ * autorização NÃO pode ser consumida de novo.
+ *   - andamento ausente → false (fluxo normal);
+ *   - andamento corrompido/divergente → exit 2;
+ *   - marcador ok ou não-ausente → exit 2 (contraditório/investigar);
+ *   - etapa "autorizada" → true (consumo já comprovado);
+ *   - etapa "autorizacao-pendente" (ou sem etapa, legado) → resolve:
+ *       consome se ainda houver autorização válida; se já consumida,
+ *       exige prova de que a consumida era VÁLIDA — sem exceção
+ *       genérica de banco ausente.
  */
 function bootstrapEmAndamentoValido(mod: EeModulo): boolean {
-  const andamento = mod.lerJournal(REPO_ROOT, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? NOME_ANDAMENTO, process.env);
+  // Sandbox sem state isolado: sinais de state dir não se aplicam.
+  if (mod.estadoRealCompartilhado?.(process.env)) return false;
+  const ler = mod.lerJournalSemEfeitos ?? mod.lerJournal;
+  const andamento = ler.call(mod, REPO_ROOT, mod.ARQUIVO_BOOTSTRAP_ANDAMENTO ?? NOME_ANDAMENTO, process.env);
   if (andamento.status === "ausente") return false;
   if (andamento.status !== "ok") {
     log(`ERRO: marcador de bootstrap em andamento ${andamento.status} — estado inconclusivo, restauração abortada.`);
@@ -244,7 +282,33 @@ function bootstrapEmAndamentoValido(mod: EeModulo): boolean {
     log(`ERRO: marcador de proveniência ${marcador.status} — bootstrap em andamento não pode ser retomado, restauração abortada.`);
     process.exit(2);
   }
-  return true;
+  const etapa = andamento.dados?.etapa;
+  if (etapa === "autorizada") return true;
+  if (etapa !== undefined && etapa !== "autorizacao-pendente") {
+    log(`ERRO: bootstrap em andamento com etapa desconhecida (${String(etapa)}) — restauração abortada.`);
+    process.exit(2);
+  }
+  // Etapa pendente (ou registro legado sem etapa): resolver a
+  // transição — a autorização pode ainda estar válida (crash antes
+  // do consumo) ou já ter sido consumida (crash após o rename,
+  // antes de gravar "autorizada").
+  const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
+  if (auth.autorizado) {
+    gravarAndamento(mod, "autorizada", { motivo: "retomada-consumo", emitidaEm: auth.dados?.emitidaEm });
+    return true;
+  }
+  if (auth.motivo === "bootstrap-em-andamento") {
+    // Já consumida — provar que a autorização consumida era VÁLIDA.
+    const val = mod.validarAutorizacoesConsumidas?.(REPO_ROOT, process.env);
+    if (val?.status === "valida") {
+      gravarAndamento(mod, "autorizada", { motivo: "retomada-consumida-valida", arquivo: val.arquivo });
+      return true;
+    }
+    log(`ERRO: autorização consumida sem prova de validade (${val?.status ?? "desconhecido"}) — bootstrap interrompido inválido, restauração abortada.`);
+    process.exit(2);
+  }
+  log(`ERRO: bootstrap em andamento sem autorização retomável (${auth.motivo ?? "sem autorização"}) — restauração abortada.`);
+  process.exit(2);
 }
 
 interface JournalRest {
@@ -331,23 +395,10 @@ async function principal() {
     // antes do migrate — não consumir de novo (one-shot já cumprido).
     if (bootstrapEmAndamentoValido(mod)) {
       mkdirSync(dirname(DB_VIVA), { recursive: true });
-      log("Bootstrap em andamento retomado — autorização de uso único já consumida anteriormente; nada a restaurar.");
+      log("Bootstrap em andamento retomado — autorização de uso único já resolvida; nada a restaurar.");
       return;
     }
-    const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
-    if (!auth.autorizado) {
-      log(`ERRO: banco inexistente, sem journal e sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
-      process.exit(2);
-    }
-    mkdirSync(dirname(DB_VIVA), { recursive: true });
-    // prova durável de bootstrap em andamento: a autorização já foi
-    // consumida — sem este marcador, o próximo gate veria "estado
-    // ambíguo" (autorização consumida + banco ainda ausente).
-    // Sob MESTRE_HOME sem MESTRE_STATE_DIR o state dir é o real — não escrever.
-    if (!mod.estadoRealCompartilhado?.(process.env)) {
-      mod.gravarBootstrapAndamento(REPO_ROOT, process.env, { motivo: "banco-ausente" });
-    }
-    log("Banco inexistente — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
+    autorizarBootstrap(mod, "banco-ausente");
     return;
   }
 
@@ -388,18 +439,10 @@ async function principal() {
             // nada e recibo permanente não autoriza (banco perdido).
             const mod = await estadoExterno();
             if (bootstrapEmAndamentoValido(mod)) {
-              log("Bootstrap em andamento retomado (banco vazio) — autorização já consumida anteriormente; nada a restaurar.");
+              log("Bootstrap em andamento retomado (banco vazio) — autorização já resolvida; nada a restaurar.");
               return;
             }
-            const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
-            if (!auth.autorizado) {
-              log(`ERRO: banco vazio sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
-              process.exit(2);
-            }
-            if (!mod.estadoRealCompartilhado?.(process.env)) {
-              mod.gravarBootstrapAndamento(REPO_ROOT, process.env, { motivo: "banco-vazio" });
-            }
-            log("Banco vazio — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
+            autorizarBootstrap(mod, "banco-vazio");
             return;
           }
         } else {

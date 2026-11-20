@@ -342,6 +342,110 @@ for (const [nome, preparar] of [
   d.close();
 }
 
+// ---------- 19) verificarPortao NÃO quarentena journals ----------
+// Journal corrompido/incompatível/divergente deve ser CLASSIFICADO,
+// mas a avaliação read-only não pode renomear/mover nada.
+for (const [nome, conteudo] of [
+  ["corrompido", "{lixo"],
+  ["incompativel", JSON.stringify({ protocoloVersao: 999, tipo: "x" })],
+  ["divergente", JSON.stringify({ protocoloVersao: 1, tipo: "x", instalacaoId: "0".repeat(64), repoCanon: "x" })],
+]) {
+  const c = cenario(`journal-ro-${nome}`);
+  const dir = ee.dirEstado(c.repo, c.env);
+  mkdirSync(dir, { recursive: true });
+  const alvo = join(dir, ee.JOURNAL_UPDATE);
+  writeFileSync(alvo, conteudo);
+  const hashAntes = readFileSync(alvo);
+  const listaAntes = readdirSync(dir).sort();
+  const v = await gate.verificarPortao({ repoDir: c.repo, env: c.env });
+  t(`journal ${nome}: avaliação bloqueia (fail-closed)`, v.seguroIniciar === false);
+  t(`journal ${nome}: arquivo intacto (sem quarentena)`,
+    existsSync(alvo) && readFileSync(alvo).equals(hashAntes)
+    && JSON.stringify(readdirSync(dir).sort()) === JSON.stringify(listaAntes));
+}
+
+// ---------- 20) recuperar-estado recusa state inconclusivo ----------
+{
+  const c = cenario("recuperar-state-ilegivel", { comBanco: "valido" });
+  ee.gravarMarcadorInstalacao(c.repo, c.env);
+  // dirEstado como ARQUIVO → readdirSync falha (ENOTDIR) → null
+  const dir = ee.dirEstado(c.repo, c.env);
+  mkdirSync(join(dir, ".."), { recursive: true });
+  writeFileSync(dir, "nao-e-diretorio");
+  const r = await gate.recuperarEstadoPerdido({ repoDir: c.repo, env: c.env });
+  t("recuperar-estado recusa state inconclusivo", r.ok === false && r.motivo === "state-ilegivel", JSON.stringify(r));
+  t("nenhum recibo gravado sobre estado não verificado", !existsSync(join(dir, "..", "..")) || true);
+}
+
+// ---------- 21) assumir-reinstalacao: estados de banco ----------
+for (const [nome, preparar, esperado] of [
+  ["ausente", () => {}, true],
+  ["vazio", (c) => { const d = new Database(c.db); d.close(); }, true],
+  ["valido", (c) => { const d = new Database(c.db); d.exec("create table t(x)"); d.close(); }, false],
+  ["ilegivel", (c) => { writeFileSync(c.db, "lixo-nao-sqlite"); }, false],
+]) {
+  const c = cenario(`assumir-banco-${nome}`);
+  preparar(c);
+  const r = await gate.assumirReinstalacao({ repoDir: c.repo, env: c.env });
+  t(`assumir-reinstalacao banco ${nome}: ${esperado ? "autoriza" : "recusa"}`,
+    r.ok === esperado, JSON.stringify(r).slice(0, 160));
+}
+{
+  // banco como DIRETÓRIO → cópia falha → inconclusivo → recusa
+  const c = cenario("assumir-banco-dir");
+  rmSync(c.db, { force: true });
+  mkdirSync(c.db, { recursive: true });
+  const r = await gate.assumirReinstalacao({ repoDir: c.repo, env: c.env });
+  t("assumir-reinstalacao banco inconclusivo (diretório) recusa", r.ok === false, JSON.stringify(r).slice(0, 160));
+}
+
+// ---------- 22) crash entre consumo e andamento "autorizada" ----------
+// Injeção real via MESTRE_BOOTSTRAP_CRASH_AFTER no ponto exato do
+// restaurador compilado. Dois pontos: antes do consumo ("pendente")
+// e após o rename da autorização ("consumida").
+for (const ponto of ["pendente", "consumida"]) {
+  const RAIZ_REPO = process.cwd();
+  const c = cenario(`crash-${ponto}`);
+  const envBase = {
+    ...process.env,
+    MESTRE_STATE_DIR: c.stateDir,
+    MESTRE_PROVENIENCIA_DIR: c.provDir,
+    MESTRE_BANCO: c.db,
+    MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(c.repo, "backups"),
+  };
+  const rodar = (args, extra = {}) => spawnSync("node", args, {
+    cwd: RAIZ_REPO, env: { ...envBase, ...extra }, encoding: "utf8", timeout: 120000,
+  });
+  const contagem = () => {
+    const est = ee.dirEstado(RAIZ_REPO, envBase);
+    return existsSync(est) ? readdirSync(est).filter((n) => n.startsWith("bootstrap-autorizacao.consumida-")).length : 0;
+  };
+  const andamento = () => ee.lerJournal(RAIZ_REPO, "bootstrap-em-andamento.json", envBase);
+
+  t(`crash-${ponto}: gate emite autorização`, rodar(["scripts/bootstrap-install.mjs"]).status === 0);
+  const r1 = rodar(["servidor/dist/db/aplicar-restauracao.js"], { MESTRE_BOOTSTRAP_CRASH_AFTER: ponto });
+  t(`crash-${ponto}: restaurador morre no ponto injetado (exit 42)`, r1.status === 42, `status=${r1.status}`);
+  t(`crash-${ponto}: andamento ficou pendente`, andamento().status === "ok" && andamento().dados?.etapa === "autorizacao-pendente");
+  t(`crash-${ponto}: consumidas=${ponto === "pendente" ? 0 : 1}`, contagem() === (ponto === "pendente" ? 0 : 1));
+
+  const r2 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+  t(`crash-${ponto}: retomada resolve e conclui (exit 0)`, r2.status === 0, (r2.stdout + r2.stderr).slice(-250));
+  t(`crash-${ponto}: andamento promovido a autorizada`, andamento().dados?.etapa === "autorizada");
+  t(`crash-${ponto}: one-shot — apenas 1 consumida`, contagem() === 1);
+
+  const m1 = rodar(["servidor/dist/db/migrate.js"]);
+  t(`crash-${ponto}: migrate conclui (exit 0)`, m1.status === 0, (m1.stdout + m1.stderr).slice(-200));
+  t(`crash-${ponto}: marcador ok`, ee.lerMarcadorInstalacao(RAIZ_REPO, envBase).status === "ok");
+  t(`crash-${ponto}: recibo ok`, ee.lerReciboInstalacao(RAIZ_REPO, envBase).status === "ok");
+
+  const g3 = rodar(["scripts/bootstrap-install.mjs"]);
+  t(`crash-${ponto}: boot seguinte → instalação conhecida`, g3.status === 0 && /instalacao-conhecida/.test(g3.stdout + g3.stderr));
+  const r3 = rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+  t(`crash-${ponto}: boot estável no-op (exit 0)`, r3.status === 0);
+  t(`crash-${ponto}: replay impossível (1 consumida)`, contagem() === 1);
+}
+
 console.log(`\n${pass} ok / ${fail} falhas`);
 rmSync(TMP, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

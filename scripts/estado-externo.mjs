@@ -270,6 +270,49 @@ export function lerJournal(repoDir, nome, env = process.env) {
   });
 }
 
+/** Variante SOMENTE-LEITURA de lerEstado/lerJournal: mesma
+ *  classificação (ausente|ok|corrompido|incompativel|
+ *  identidade-divergente|inconclusivo), mas NUNCA quarentena —
+ *  avaliações de boot não podem renomear arquivos. Usar em
+ *  verificarPortao/avaliarBoot/sondagens; o fluxo mutável de
+ *  recuperação continua usando lerEstado/lerJournal. */
+export function lerEstadoSemEfeitos(caminho, esperado = {}) {
+  const est = estadoCaminho(caminho);
+  if (est === "ausente") return { status: "ausente" };
+  if (est === "inconclusivo") return { status: "inconclusivo" };
+  let bruto;
+  try {
+    bruto = readFileSync(caminho, "utf8");
+  } catch {
+    return { status: "inconclusivo" };
+  }
+  let dados;
+  try {
+    dados = JSON.parse(bruto);
+  } catch {
+    return { status: "corrompido" };
+  }
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) {
+    return { status: "corrompido" };
+  }
+  const pv = esperado.protocoloVersao ?? PROTOCOLO_VERSAO;
+  if (dados.protocoloVersao !== pv) return { status: "incompativel", dados };
+  if (esperado.instalacaoId && dados.instalacaoId !== esperado.instalacaoId) {
+    return { status: "identidade-divergente", dados };
+  }
+  if (esperado.repoCanon && dados.repoCanon !== esperado.repoCanon) {
+    return { status: "identidade-divergente", dados };
+  }
+  return { status: "ok", dados };
+}
+
+export function lerJournalSemEfeitos(repoDir, nome, env = process.env) {
+  return lerEstadoSemEfeitos(join(dirEstado(repoDir, env), nome), {
+    instalacaoId: instalacaoId(repoDir),
+    repoCanon: caminhoCanonico(repoDir),
+  });
+}
+
 /**
  * Consentimento: preferência local de atualização automática.
  * Retorno: { status: "aceito"|"recusado"|"ausente"|"invalido"|"divergente", dados? }.
@@ -395,7 +438,7 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
   // bootstrap em andamento (autorização já consumida, instalação a meio
   // caminho) — estado conhecido: o ciclo de primeiro boot está válido.
   if (nomes.includes(ARQUIVO_BOOTSTRAP_ANDAMENTO)) {
-    const andamento = lerJournal(repoDir, ARQUIVO_BOOTSTRAP_ANDAMENTO, env);
+    const andamento = lerJournalSemEfeitos(repoDir, ARQUIVO_BOOTSTRAP_ANDAMENTO, env);
     if (andamento.status === "ok") return "bootstrap-em-andamento";
     if (andamento.status !== "ausente") return `bootstrap-andamento-${andamento.status}`;
   }
@@ -416,6 +459,11 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
  *          { autorizado:false, motivo, consumido? }.
  */
 export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
+  // Sandbox sem state isolado: o state dir resolvido é o REAL — consumir
+  // aqui comeria a autorização da instalação verdadeira.
+  if (estadoRealCompartilhado(env)) {
+    return { autorizado: false, motivo: "sandbox-sem-state-isolado" };
+  }
   const dir = dirEstado(repoDir, env);
   const caminho = join(dir, ARQUIVO_AUTORIZACAO_BOOTSTRAP);
   const estAuth = estadoCaminho(caminho);
@@ -447,6 +495,36 @@ export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
     && dados.tipo === TIPO_AUTORIZACAO;
   if (!valido) return { autorizado: false, motivo: "autorizacao-invalida", consumido };
   return { autorizado: true, dados, consumido };
+}
+
+/** Valida as autorizações JÁ consumidas (arquivos
+ *  bootstrap-autorizacao.consumida-*): prova de que uma autorização
+ *  foi efetivamente válida quando consumida — usada na retomada de
+ *  bootstrap quando o marcador de andamento ficou em "pendente".
+ *  Retorno: { status: "valida", arquivo } | "invalida" | "ausente" |
+ *  "inconclusivo". Somente leitura — nunca move nem apaga nada. */
+export function validarAutorizacoesConsumidas(repoDir, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  const est = estadoCaminho(dir);
+  if (est === "inconclusivo") return { status: "inconclusivo" };
+  if (est === "ausente") return { status: "ausente" };
+  let nomes;
+  try {
+    nomes = readdirSync(dir).filter((n) => n.startsWith(PREFIXO_AUTORIZACAO_CONSUMIDA));
+  } catch {
+    return { status: "inconclusivo" };
+  }
+  if (nomes.length === 0) return { status: "ausente" };
+  for (const n of nomes) {
+    const dados = lerJsonCru(join(dir, n));
+    const valido = dados && typeof dados === "object" && !Array.isArray(dados)
+      && dados.protocoloVersao === PROTOCOLO_VERSAO
+      && dados.instalacaoId === instalacaoId(repoDir)
+      && dados.repoCanon === caminhoCanonico(repoDir)
+      && dados.tipo === TIPO_AUTORIZACAO;
+    if (valido) return { status: "valida", arquivo: n };
+  }
+  return { status: "invalida" };
 }
 
 // ---------- marcador de proveniência (W13) ----------
@@ -599,14 +677,14 @@ export function estadoInstalacaoConhecido(repoDir, env = process.env) {
  * - recuperação pendente NUNCA é bloqueada por consentimento.
  */
 export function avaliarBoot(repoDir, env = process.env) {
-  const journal = lerJournal(repoDir, JOURNAL_UPDATE, env);
+  const journal = lerJournalSemEfeitos(repoDir, JOURNAL_UPDATE, env);
   if (journal.status !== "ausente" && journal.status !== "ok") {
     return { seguroIniciar: false, motivo: `journal-${journal.status}`, detalhes: journal };
   }
   if (journal.status === "ok" && journal.dados?.fase && journal.dados.fase !== "concluido") {
     return { seguroIniciar: false, motivo: "recuperacao-pendente", detalhes: journal.dados };
   }
-  const restauracao = lerJournal(repoDir, JOURNAL_RESTAURACAO, env);
+  const restauracao = lerJournalSemEfeitos(repoDir, JOURNAL_RESTAURACAO, env);
   if (restauracao.status !== "ausente" && restauracao.status !== "ok") {
     return { seguroIniciar: false, motivo: `restauracao-${restauracao.status}`, detalhes: restauracao };
   }
