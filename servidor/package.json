@@ -12,7 +12,8 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts"
+    "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts",
+    "test:backup-contrato": "tsx --test testes/backup-contrato.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",

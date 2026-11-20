@@ -7,6 +7,7 @@ import { backups, serverSettings } from "../db/schema.js";
 import { eq } from "drizzle-orm";
 import { log } from "./logs.js";
 import { config } from "../config.js";
+import { dirsProtegidosBackup, normDir, protegerBackupContraRetencao } from "./protecao-backup.js";
 
 const db = getDb();
 
@@ -174,8 +175,54 @@ function copiarArquivos(origem: string, destino: string, raiz: string, manifesto
   }
 }
 
-/** Cria backup completo: banco (consistente), arquivos, config e manifesto. */
-export async function criarBackup(kind: "automatico" | "manual" | "pre_restauracao" = "manual", nota?: string) {
+/** Valida o manifesto de um backup de forma integral e obrigatória:
+ *  manifesto presente, parseável, com versão compatível, e TODOS os
+ *  itens registrados (banco, configuração, arquivos) conferem
+ *  tamanho+SHA-256. Retorna lista de problemas (vazia = válido).
+ *  Manifesto ausente/incompleto/incompatível ⇒ problemas não-vazio. */
+export function validarManifestoBackup(dir: string): string[] {
+  const problemas: string[] = [];
+  const manPath = join(dir, "manifesto.json");
+  if (!existsSync(manPath)) return ["manifesto.json ausente"];
+  let man: {
+    manifestoVersao?: number; banco?: { size?: number; sha256?: string };
+    configuracao?: { size?: number; sha256?: string } | null;
+    arquivos?: Record<string, { size: number; sha256: string }>;
+  };
+  try {
+    man = JSON.parse(readFileSync(manPath, "utf-8"));
+  } catch (e) {
+    return [`manifesto.json ilegível: ${String(e)}`];
+  }
+  if (man.manifestoVersao !== 2) problemas.push(`manifestoVersao incompatível: ${man.manifestoVersao ?? "ausente"}`);
+  const confere = (rel: string, meta: { size?: number; sha256?: string } | undefined, rotulo: string) => {
+    if (!meta || typeof meta.size !== "number" || typeof meta.sha256 !== "string") {
+      problemas.push(`${rotulo}: entrada ausente/incompleta no manifesto`);
+      return;
+    }
+    const p = join(dir, ...rel.split("/"));
+    if (!existsSync(p)) { problemas.push(`${rotulo}: arquivo ausente (${rel})`); return; }
+    const st = statSync(p);
+    if (st.size !== meta.size) { problemas.push(`${rotulo}: tamanho diverge (${st.size} != ${meta.size})`); return; }
+    if (sha256Arquivo(p) !== meta.sha256) problemas.push(`${rotulo}: sha256 diverge`);
+  };
+  confere("mestre-rpg.db", man.banco, "banco");
+  if (man.configuracao) confere("configuracao/servidor.json", man.configuracao, "configuracao");
+  for (const [rel, meta] of Object.entries(man.arquivos ?? {})) {
+    confere(rel, meta, `arquivos/${rel}`);
+  }
+  return problemas;
+}
+
+/** Cria backup completo: banco (consistente), arquivos, config e manifesto.
+ *  opts.proteger: marca o diretório como imune à retenção enquanto o
+ *  journal que o referencia estiver ativo (backups transacionais/
+ *  de recuperação). opts.meta: campos extras no manifesto. */
+export async function criarBackup(
+  kind: "automatico" | "manual" | "pre_restauracao" | "pre_update" = "manual",
+  nota?: string,
+  opts: { proteger?: boolean; meta?: Record<string, unknown> } = {},
+) {
   const cfg = await getConfigBackup();
   const pasta = pastaBackups(cfg);
   const id = crypto.randomUUID();
@@ -183,12 +230,21 @@ export async function criarBackup(kind: "automatico" | "manual" | "pre_restaurac
   const dir = join(pasta, `${stamp}_${kind}`);
   mkdirSync(dir, { recursive: true });
 
-  const manifesto: Record<string, unknown> = { arquivos: {} as Record<string, { size: number; sha256: string }>, criadoEm: new Date().toISOString(), versao: lerVersao() };
+  const manifesto: Record<string, unknown> = {
+    manifestoVersao: 2,
+    arquivos: {} as Record<string, { size: number; sha256: string }>,
+    criadoEm: new Date().toISOString(), versao: lerVersao(),
+    ...(opts.meta ?? {}),
+  };
   const erros: string[] = [];
 
   // 1) banco — cópia consistente via API de backup
   try {
     await copiarBanco(join(dir, "mestre-rpg.db"));
+    const dbDest = join(dir, "mestre-rpg.db");
+    if (existsSync(dbDest)) {
+      manifesto.banco = { size: statSync(dbDest).size, sha256: sha256Arquivo(dbDest) };
+    }
   } catch (e) {
     erros.push(`banco: ${String(e)}`);
   }
@@ -206,6 +262,8 @@ export async function criarBackup(kind: "automatico" | "manual" | "pre_restaurac
     if (existsSync(cfgSrc)) {
       mkdirSync(join(dir, "configuracao"), { recursive: true });
       cpSync(cfgSrc, join(dir, "configuracao", "servidor.json"));
+      const cfgDest = join(dir, "configuracao", "servidor.json");
+      manifesto.configuracao = { size: statSync(cfgDest).size, sha256: sha256Arquivo(cfgDest) };
     }
   } catch (e) {
     erros.push(`config: ${String(e)}`);
@@ -213,15 +271,23 @@ export async function criarBackup(kind: "automatico" | "manual" | "pre_restaurac
 
   writeFileSync(join(dir, "manifesto.json"), JSON.stringify(manifesto, null, 2));
 
-  // 4) validação antes de marcar sucesso
+  // 4) validação antes de marcar sucesso — manifesto integral obrigatório
   const bancoOk = existsSync(join(dir, "mestre-rpg.db")) && verificarBanco(join(dir, "mestre-rpg.db")).ok;
-  let faltando = 0;
-  const manifestoFiles = Object.keys((manifesto.arquivos as Record<string, unknown>) ?? {});
-  for (const rel of manifestoFiles) {
-    const p = join(dir, ...rel.split("/"));
-    if (!existsSync(p)) faltando++;
+  const problemasManifesto = validarManifestoBackup(dir);
+  const sucesso = erros.length === 0 && bancoOk && problemasManifesto.length === 0;
+
+  // Backup transacional/de recuperação: proteção contra retenção é
+  // OBRIGATÓRIA — sem marcador não há como garantir que a rotação não o
+  // remova enquanto o journal estiver ativo. Falha aqui = backup falha.
+  if (sucesso && opts.proteger) {
+    const ok = await protegerBackupContraRetencao(dir, nota ?? kind);
+    if (!ok) {
+      erros.push("proteção contra retenção não pôde ser gravada");
+      rmSync(dir, { recursive: true, force: true });
+      log("erro", "backup pre-update falhou: state dir indisponível", { id, dir });
+      return { id, dir, sucesso: false, erros, tamanho: 0, faltando: 0 };
+    }
   }
-  const sucesso = erros.length === 0 && bancoOk && faltando === 0;
 
   const tamanho = tamanhoDir(dir);
   const [row] = await db.insert(backups).values({
@@ -234,9 +300,9 @@ export async function criarBackup(kind: "automatico" | "manual" | "pre_restaurac
     await aplicarRetencao(cfg);
     log("info", "backup criado", { id, dir, tamanho });
   } else {
-    log("erro", "backup falhou", { id, erros, bancoOk, faltando });
+    log("erro", "backup falhou", { id, erros, bancoOk, problemasManifesto });
   }
-  return { id, dir, sucesso, erros, tamanho, faltando };
+  return { id, dir, sucesso, erros, tamanho, problemasManifesto };
 }
 
 function tamanhoDir(dir: string): number {
@@ -258,9 +324,17 @@ function lerVersao(): string {
   } catch { return "0.0.0"; }
 }
 
-/** Remove backups antigos além da retenção (só após novo backup validado). */
+/** Remove backups antigos além da retenção (só após novo backup validado).
+ *  Backups protegidos por journal/marker ativo NUNCA são removidos;
+ *  se a varredura de proteção falhar, a retenção inteira é abortada
+ *  (fail-safe — nunca rotacionar sem prova). */
 async function aplicarRetencao(cfg: ConfigBackup) {
-  const lista = await listarBackups();
+  const protegidos = await dirsProtegidosBackup();
+  if (protegidos === null) {
+    log("erro", "retenção abortada: não foi possível verificar backups protegidos");
+    return;
+  }
+  const lista = (await listarBackups()).filter((b) => !protegidos.has(normDir(b.filePath)));
   const agora = Date.now();
   const DIAS = 86400000;
   const classificar = (b: BackupInfo) => {
@@ -305,19 +379,31 @@ export async function verificarBackup(id: string): Promise<{ ok: boolean; detalh
   const integ = verificarBanco(dbPath);
   if (!integ.ok) { detalhes.push(`banco corrompido: ${integ.integridade}`); return { ok: false, detalhes }; }
   detalhes.push("banco ok");
+  // validação integral do manifesto — obrigatória para backups novos
+  // (manifestoVersao 2). Backups antigos sem o campo novo caem na
+  // verificação legada de arquivos apenas.
   const manPath = join(b.filePath, "manifesto.json");
   if (existsSync(manPath)) {
     try {
-      const man = JSON.parse(readFileSync(manPath, "utf-8")) as { arquivos?: Record<string, { size: number; sha256: string }> };
-      let ok = 0, falhas = 0;
-      for (const [rel, meta] of Object.entries(man.arquivos ?? {})) {
-        const p = join(b.filePath, ...rel.split("/"));
-        if (!existsSync(p) || statSync(p).size !== meta.size || sha256Arquivo(p) !== meta.sha256) falhas++;
-        else ok++;
+      const man = JSON.parse(readFileSync(manPath, "utf-8")) as { manifestoVersao?: number; arquivos?: Record<string, { size: number; sha256: string }> };
+      if (man.manifestoVersao === 2) {
+        const problemas = validarManifestoBackup(b.filePath);
+        if (problemas.length) { detalhes.push(...problemas.slice(0, 5)); return { ok: false, detalhes }; }
+        detalhes.push("manifesto v2 ok");
+      } else {
+        let ok = 0, falhas = 0;
+        for (const [rel, meta] of Object.entries(man.arquivos ?? {})) {
+          const p = join(b.filePath, ...rel.split("/"));
+          if (!existsSync(p) || statSync(p).size !== meta.size || sha256Arquivo(p) !== meta.sha256) falhas++;
+          else ok++;
+        }
+        detalhes.push(`arquivos: ${ok} ok, ${falhas} com problema`);
+        if (falhas) return { ok: false, detalhes };
       }
-      detalhes.push(`arquivos: ${ok} ok, ${falhas} com problema`);
-      if (falhas) return { ok: false, detalhes };
     } catch (e) { detalhes.push(`manifesto ilegível: ${String(e)}`); return { ok: false, detalhes }; }
+  } else {
+    detalhes.push("manifesto.json ausente");
+    return { ok: false, detalhes };
   }
   return { ok: true, detalhes };
 }
@@ -330,6 +416,18 @@ export async function prepararRestauracao(backupId: string, usuarioId: string) {
   if (!existsSync(join(alvo.filePath, "mestre-rpg.db"))) return { erro: "Backup incompleto (banco ausente)", status: 400 };
   const integ = verificarBanco(join(alvo.filePath, "mestre-rpg.db"));
   if (!integ.ok) return { erro: `Backup corrompido: ${integ.integridade}`, status: 400 };
+  // manifesto obrigatório: ausente rejeita; v2 exige validação integral
+  const manPath = join(alvo.filePath, "manifesto.json");
+  if (!existsSync(manPath)) return { erro: "Backup sem manifesto.json — rejeitado", status: 400 };
+  try {
+    const man = JSON.parse(readFileSync(manPath, "utf-8")) as { manifestoVersao?: number };
+    if (man.manifestoVersao === 2) {
+      const problemas = validarManifestoBackup(alvo.filePath);
+      if (problemas.length) return { erro: `Manifesto inválido: ${problemas[0]}`, status: 400 };
+    }
+  } catch {
+    return { erro: "Manifesto ilegível — rejeitado", status: 400 };
+  }
 
   // backup de segurança do estado atual antes de qualquer restauração
   const seguranca = await criarBackup("pre_restauracao", `Segurança antes de restaurar ${backupId}`);
@@ -337,6 +435,12 @@ export async function prepararRestauracao(backupId: string, usuarioId: string) {
   await db.insert(serverSettings).values({
     key: "restauracao_pendente", value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date(),
   }).onConflictDoUpdate({ target: serverSettings.key, set: { value: { backupId, filePath: alvo.filePath, por: usuarioId, em: new Date().toISOString() } as never, updatedAt: new Date() } });
+
+  // O alvo da restauração fica imune à retenção até a aplicação concluir
+  // (o restaurador remove a proteção ao terminar). Falha aqui não aborta
+  // o pedido — vira warning, mas o alvo pode ser rotacionado antes do boot.
+  const protegido = await protegerBackupContraRetencao(alvo.filePath, "restauracao_pendente");
+  if (!protegido) log("erro", "não foi possível proteger backup alvo contra retenção", { backupId });
 
   return { ok: true, seguranca, arquivoPath: alvo.filePath };
 }
