@@ -68,6 +68,10 @@ export function executarReal(cmd, args, { cwd, env, timeoutMs } = {}) {
     encoding: "utf8",
     timeout: timeoutMs,
     windowsHide: true,
+    // npm ci pode exceder o maxBuffer padrao do Node em instalacoes
+    // verbosas. O limite maior evita rollback espurio por truncamento
+    // de stdout/stderr; continua finito para proteger memoria.
+    maxBuffer: 8 * 1024 * 1024,
   });
   if (r.error) {
     return { code: typeof r.status === "number" ? r.status : 1, stdout: r.stdout ?? "", stderr: `${r.error.message ?? r.error}`, morto: true };
@@ -158,7 +162,7 @@ export async function verificarAtualizacao(opts = {}) {
 
   // 6. arvore limpa — qualquer alteracao (rastreada ou nao) aborta so a
   //    atualizacao; proibido stash/clean/reset preventivo.
-  const status = git(["status", "--porcelain"]);
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"]);
   if (status.code !== 0) return pular("falha-status", { repoDir, branch });
   if (String(status.stdout).trim() !== "") return pular("arvore-suja", { repoDir, branch });
 
@@ -381,7 +385,7 @@ async function executarRollback(estado, opts = {}) {
     }
   }
 
-  const status = git(["status", "--porcelain"], repoDir);
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"], repoDir);
   if (status.code !== 0 || String(status.stdout).trim() !== "") {
     return { ok: false, motivo: "arvore-suja-rollback-bloqueado" };
   }

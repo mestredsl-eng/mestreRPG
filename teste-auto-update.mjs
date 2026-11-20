@@ -250,6 +250,15 @@ try {
     writeFileSync(join(c2.local, "novo-arquivo-local.txt"), "x\n");
     const r2 = await verificarAtualizacao({ ...opcoesRepo(c2), executar: execReal, log: silencioso });
     t("arquivo nao rastreado → arvore-suja", r2.motivo === "arvore-suja", r2.motivo);
+
+    // Config local que ocultava untracked no git status comum não pode
+    // neutralizar a guarda explícita do updater.
+    const c3 = criarRepo("c9c-status-config");
+    publicar(c3);
+    gitSetup(["config", "status.showUntrackedFiles", "no"], c3.local);
+    writeFileSync(join(c3.local, "nao-rastreado-oculto.txt"), "sujeira local\\n");
+    const r3 = await verificarAtualizacao({ ...opcoesRepo(c3), executar: execReal, log: silencioso });
+    t("status.showUntrackedFiles=no → arvore-suja", r3.motivo === "arvore-suja", r3.motivo);
   }
 
   sec("10. Branch sem upstream");
@@ -751,6 +760,16 @@ try {
       if (envAnterior === undefined) delete process.env.MESTRE_AUTO_UPDATE;
       else process.env.MESTRE_AUTO_UPDATE = envAnterior;
     }
+  }
+  sec("Hardening do spawnSync — saída npm acima de 1 MiB");
+  {
+    const bytes = 2 * 1024 * 1024;
+    const r = executarReal(process.execPath, ["-e", `process.stdout.write("x".repeat(${bytes}))`], {
+      cwd: RAIZ,
+      timeoutMs: 10_000,
+    });
+    t("stdout 2 MiB não causa erro de maxBuffer", r.code === 0 && r.stdout.length === bytes && !r.morto,
+      `code=${r.code} bytes=${r.stdout.length} morto=${!!r.morto}`);
   }
 } finally {
   for (let i = 0; i < 3; i++) {
