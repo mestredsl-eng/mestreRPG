@@ -1229,7 +1229,6 @@ function socket_handlers(
           if (!tTx || !tTx.sessionId || tTx.sessionId !== ref.sessionId || tTx.campaignId !== ctx.sessao.campaignId) {
             return { tipo: "naoEncontrado" };
           }
-          if (tTx.status !== "pendente") return { tipo: "jaRolado", status: tTx.status };
 
           // sessão relida sob a tx: precisa existir, pertencer à
           // campanha do teste e não estar encerrada
@@ -1252,6 +1251,14 @@ function socket_handlers(
           const ehDonoTx = mdTx?.userId === u.id;
           if (papelTx !== "mestre" && !ehDonoTx) return { tipo: "donoPerdido" };
           if (papelTx !== "mestre" && classeVisibilidadeTeste(tTx.visibility) === "mestre") return { tipo: "visibilidade" };
+
+          // Idempotência SÓ depois da autorização atual: um teste já
+          // rolado confirma duplicidade (jaRolado) somente se o ator
+          // ainda tiver acesso — sessão válida, personagem da campanha,
+          // titularidade/visibilidade revalidadas acima. Sem isso, quem
+          // perdeu a posse durante a pausa pré-commit receberia ACK de
+          // confirmação baseado em autorização obsoleta.
+          if (tTx.status !== "pendente") return { tipo: "jaRolado", status: tTx.status };
 
           const regrasTx = carregarRegrasSincrono(tx, tTx.campaignId);
           if (!regrasTx || impressaoDigitalRegras(regrasTx) !== fingerprintRegras) return { tipo: "regrasMudaram" };
