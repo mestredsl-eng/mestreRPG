@@ -38,7 +38,8 @@ import { pausaTesteEmit } from "./lib/io.js";
 import { chatMessages } from "./db/schema.js";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { resolve, sep, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const app = express();
 
@@ -199,6 +200,25 @@ try {
   }
 } catch (e) {
   log("aviso", "não foi possível criar configuracao/local.json", { erro: String(e) });
+}
+
+// Gate 0 (Issue #155 W13): o servidor nunca sobe sobre estado de
+// instalação ambíguo — mesma avaliação somente-leitura aplicada pelo
+// migrador. O produtor de autorização/marcador é o gate do
+// iniciar-mestre-rpg.bat; aqui só se valida, nunca se escreve.
+try {
+  const portao = await import(pathToFileURL(join(RAIZ, "scripts", "bootstrap-install.mjs")).href) as {
+    verificarPortao(opts?: { repoDir?: string }): Promise<{ seguroIniciar: boolean; motivo?: string; instrucao?: string }>;
+  };
+  const v = await portao.verificarPortao({ repoDir: RAIZ });
+  if (!v.seguroIniciar) {
+    console.error(`[boot] Gate 0 bloqueou o servidor: ${v.motivo ?? "estado-ambiguo"}`);
+    if (v.instrucao) console.error(`[boot] ${v.instrucao}`);
+    process.exit(2);
+  }
+} catch (e) {
+  console.error(`[boot] Gate 0 indisponível (${String(e)}) — abortando por segurança.`);
+  process.exit(2);
 }
 
 // Banco (instância única compartilhada; migrações via `npm run db:migrate`)

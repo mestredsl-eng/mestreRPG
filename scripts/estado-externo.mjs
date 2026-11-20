@@ -31,8 +31,9 @@
 //     mutável deve bloquear. Recibo permanente de instalação concluída
 //     NÃO autoriza banco ausente/vazio como primeira instalação.
 //
-// Recibo de instalação: gravado UMA vez por um caminho de bootstrap
-// confiável (updater/.bat/instalador — integração pendente, Etapa 5).
+// Recibo de instalação: gravado por caminhos confiáveis — o Gate 0
+// (scripts/bootstrap-install.mjs via iniciar-mestre-rpg.bat) na adoção,
+// ou o migrador após conclusão (origem "migrate-concluido").
 // Vinculado a instalacaoId+repoCanon+protocoloVersao; sua ausência NÃO
 // pode ser contornada por manifesto versionado, arquivo tracked, código N,
 // ausência de banco ou ausência do próprio state dir.
@@ -269,10 +270,9 @@ export function lerReciboInstalacao(repoDir, env = process.env) {
   return { status: "ok", dados };
 }
 
-/** Grava a autorização de primeiro bootstrap — SOMENTE o produtor
- *  confiável futuro (instalador/.bat/updater, integração pendente).
- *  Nenhum código de produção chama esta função hoje; ela existe para
- *  definir o formato que o produtor deverá escrever. */
+/** Grava a autorização de primeiro bootstrap — produtor confiável:
+ *  scripts/bootstrap-install.mjs (Gate 0 do .bat) e o fluxo
+ *  `assumir-reinstalacao` explícito do operador. */
 export function gravarAutorizacaoBootstrap(repoDir, env = process.env, dadosExtra = {}) {
   return gravarEstado(repoDir, ARQUIVO_AUTORIZACAO_BOOTSTRAP, {
     tipo: TIPO_AUTORIZACAO,
@@ -310,6 +310,13 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
   let nomes = [];
   try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
   catch { return "state-ilegivel"; }
+  // bootstrap em andamento (autorização já consumida, instalação a meio
+  // caminho) — estado conhecido: o ciclo de primeiro boot está válido.
+  if (nomes.includes(ARQUIVO_BOOTSTRAP_ANDAMENTO)) {
+    const andamento = lerJournal(repoDir, ARQUIVO_BOOTSTRAP_ANDAMENTO, env);
+    if (andamento.status === "ok") return "bootstrap-em-andamento";
+    if (andamento.status !== "ausente") return `bootstrap-andamento-${andamento.status}`;
+  }
   if (nomes.some((n) => n.startsWith(PREFIXO_AUTORIZACAO_CONSUMIDA))) return "bootstrap-interrompido";
   if (recibo.status !== "ausente") return `recibo-${recibo.status}`;
   if (auth.status !== "ausente") return `autorizacao-${auth.status}`;
@@ -356,12 +363,144 @@ export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
   return { autorizado: true, dados, consumido };
 }
 
+// ---------- marcador de proveniência (W13) ----------
+// O recibo/autorização vivem DENTRO do state dir — se o diretório for
+// perdido, eles somem junto e "instalação que perdeu o estado" fica
+// indistinguível de "clone novo". O marcador de proveniência fica FORA
+// do state dir (diretório próprio por plataforma), para que a prova de
+// "esta instalação já foi inicializada" sobreviva à perda do estado:
+//   MESTRE_PROVENIENCIA_DIR definido → <override>/<instalacaoId>/
+//   Windows                     → %LOCALAPPDATA%\MestreRPG\install\<id>\
+//   Linux c/ XDG                → $XDG_STATE_HOME/mestre-rpg/install/<id>/
+//   Linux s/ XDG                → ~/.local/state/mestre-rpg/install/<id>/
+// Fora do worktree (sobrevive a git reset/clone no mesmo path? não —
+// clone novo no MESMO path compartilha instalacaoId: o marcador é
+// evidência de proveniência por caminho, e divergências de conteúdo
+// são detectadas por repoCanon/identidade). Não fica no banco nem no
+// state dir, por exigência do contrato W13.
+export const ARQUIVO_MARCADOR_INSTALACAO = "instalacao-marcador.json";
+const TIPO_MARCADOR = "instalacao-inicializada";
+
+export function diretorioBaseProveniencia(env = process.env) {
+  const override = (env.MESTRE_PROVENIENCIA_DIR ?? "").trim();
+  if (override) return override;
+  // Sem override explícito, um MESTRE_STATE_DIR customizado (testes,
+  // sandboxes) também isola a proveniência — senão fixtures que só
+  // isolam o state dir escreveriam o marcador real da instalação.
+  const stateDir = (env.MESTRE_STATE_DIR ?? "").trim();
+  if (stateDir) return join(dirname(stateDir), "install");
+  // MESTRE_HOME é a raiz de dados alternativa (testes/sandbox): sem
+  // ela, fixtures que só isolam MESTRE_HOME compartilhariam o marcador
+  // real da instalação e contaminariam umas às outras. O marcador fica
+  // dentro da raiz de dados do sandbox — continua fora do state dir e
+  // do banco, e some junto numa perda total do MESTRE_HOME (cenário que
+  // já exige decisão explícita do operador).
+  const home = (env.MESTRE_HOME ?? "").trim();
+  if (home) return join(home, ".proveniencia-install");
+  if (process.platform === "win32") {
+    const local = env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    return join(local, "MestreRPG", "install");
+  }
+  const xdg = (env.XDG_STATE_HOME ?? "").trim();
+  const base = xdg || join(homedir(), ".local", "state");
+  return join(base, "mestre-rpg", "install");
+}
+
+export function dirProveniencia(repoDir, env = process.env) {
+  return join(diretorioBaseProveniencia(env), instalacaoId(repoDir));
+}
+
+export function caminhoMarcadorInstalacao(repoDir, env = process.env) {
+  return join(dirProveniencia(repoDir, env), ARQUIVO_MARCADOR_INSTALACAO);
+}
+
+/** Grava o marcador de proveniência — escrita atômica durável.
+ *  Chamar quando houver PROVA de instalação concluída (banco válido
+ *  adotado) ou explicitamente no fluxo de bootstrap. Idempotente:
+ *  regravar o mesmo registro é inócuo. */
+export function gravarMarcadorInstalacao(repoDir, env = process.env, dadosExtra = {}) {
+  const registro = {
+    protocoloVersao: PROTOCOLO_VERSAO,
+    instalacaoId: instalacaoId(repoDir),
+    repoCanon: caminhoCanonico(repoDir),
+    tipo: TIPO_MARCADOR,
+    criadoEm: new Date().toISOString(),
+    ...dadosExtra,
+  };
+  gravarJsonAtomico(caminhoMarcadorInstalacao(repoDir, env), registro);
+  return registro;
+}
+
+/** Lê o marcador SEM efeitos colaterais e SEM quarentena: um marcador
+ *  corrompido precisa continuar bloqueando — quarentená-lo o faria
+ *  "ausente" e abriria caminho para tratar perda de estado como
+ *  instalação nova. Retorno: { status: "ok", dados } | "ausente" |
+ *  "corrompido" | "incompativel" | "divergente" | "invalido". */
+export function lerMarcadorInstalacao(repoDir, env = process.env) {
+  const caminho = caminhoMarcadorInstalacao(repoDir, env);
+  if (!existsSync(caminho)) return { status: "ausente" };
+  const dados = lerJsonCru(caminho);
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
+  if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
+  if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
+  if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
+  if (dados.tipo !== TIPO_MARCADOR) return { status: "invalido" };
+  return { status: "ok", dados };
+}
+
+/** O diretório de estado contém registros do protocolo (journals,
+ *  recibo, autorização/consumidas, proteção/, quarentena)? Artefatos
+ *  do Boot Lock (mestre-boot-lock.json[.recover]) são recriados a cada
+ *  boot e NÃO provam estado de protocolo — não contam.
+ *  Retorno: true | false | null (diretório ilegível → inconclusivo). */
+export function stateDirTemProtocolo(dir) {
+  let nomes;
+  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  catch { return null; }
+  return nomes.some((n) => !n.startsWith("mestre-boot-lock.json"));
+}
+
+// ---------- bootstrap em andamento (W13) ----------
+// Gravado pelo restaurador NO INSTANTE em que consome a autorização de
+// uso único: prova de que o bootstrap foi autorizado e está em curso —
+// distingue "primeira instalação a caminho" de "autorização consumida
+// e instalação interrompida" (que bloqueia). Limpo pelo Gate 0 quando
+// o banco válido é observado (adoção) ou por recuperação explícita.
+export const ARQUIVO_BOOTSTRAP_ANDAMENTO = "bootstrap-em-andamento.json";
+const TIPO_BOOTSTRAP_ANDAMENTO = "bootstrap-em-andamento";
+
+export function gravarBootstrapAndamento(repoDir, env = process.env, dadosExtra = {}) {
+  return gravarEstado(repoDir, ARQUIVO_BOOTSTRAP_ANDAMENTO, {
+    tipo: TIPO_BOOTSTRAP_ANDAMENTO,
+    em: new Date().toISOString(),
+    ...dadosExtra,
+  }, env);
+}
+
+/** Sandbox sem state dir isolado: MESTRE_HOME definido mas
+ *  MESTRE_STATE_DIR ausente → dirEstado() cai no diretório REAL da
+ *  instalação. Nesse modo, escritas de protocolo (recibo, andamento,
+ *  autorização) contaminariam o estado real — os consumidores devem
+ *  evitá-las. Leituras fail-closed continuam normais. */
+export function estadoRealCompartilhado(env = process.env) {
+  return Boolean((env.MESTRE_HOME ?? "").trim()) && !(env.MESTRE_STATE_DIR ?? "").trim();
+}
+
+/** Remove o marcador de bootstrap em andamento (pós-adoção). */
+export function limparBootstrapAndamento(repoDir, env = process.env) {
+  try { rmSync(join(dirEstado(repoDir, env), ARQUIVO_BOOTSTRAP_ANDAMENTO), { force: true }); }
+  catch { /* melhor esforço — arquivo pode não existir */ }
+}
+
 /** Estado de instalação conhecido para avaliação de boot: instalação
  *  concluída (recibo) OU primeiro bootstrap autorizado e ainda não
  *  consumido. Qualquer outro caso é ambíguo → fail-closed. */
 export function estadoInstalacaoConhecido(repoDir, env = process.env) {
   const diag = diagnosticarBootstrap(repoDir, env);
-  return { conhecido: diag === "instalacao-concluida" || diag === "primeiro-bootstrap", motivo: diag };
+  return {
+    conhecido: diag === "instalacao-concluida" || diag === "primeiro-bootstrap" || diag === "bootstrap-em-andamento",
+    motivo: diag,
+  };
 }
 
 /**

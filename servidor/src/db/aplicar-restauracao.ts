@@ -192,6 +192,8 @@ interface EeModulo {
     status: string; dados?: Record<string, unknown>; quarentena?: string | null;
   };
   consumirAutorizacaoBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): { autorizado: boolean; motivo?: string };
+  gravarBootstrapAndamento(repoDir: string, env?: NodeJS.ProcessEnv, dadosExtra?: Record<string, unknown>): unknown;
+  estadoRealCompartilhado?(env?: NodeJS.ProcessEnv): boolean;
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -293,6 +295,13 @@ async function principal() {
       process.exit(2);
     }
     mkdirSync(dirname(DB_VIVA), { recursive: true });
+    // prova durável de bootstrap em andamento: a autorização já foi
+    // consumida — sem este marcador, o próximo gate veria "estado
+    // ambíguo" (autorização consumida + banco ainda ausente).
+    // Sob MESTRE_HOME sem MESTRE_STATE_DIR o state dir é o real — não escrever.
+    if (!mod.estadoRealCompartilhado?.(process.env)) {
+      mod.gravarBootstrapAndamento(REPO_ROOT, process.env, { motivo: "banco-ausente" });
+    }
     log("Banco inexistente — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
     return;
   }
@@ -337,6 +346,9 @@ async function principal() {
             if (!auth.autorizado) {
               log(`ERRO: banco vazio sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
               process.exit(2);
+            }
+            if (!mod.estadoRealCompartilhado?.(process.env)) {
+              mod.gravarBootstrapAndamento(REPO_ROOT, process.env, { motivo: "banco-vazio" });
             }
             log("Banco vazio — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
             return;

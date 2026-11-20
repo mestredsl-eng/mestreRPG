@@ -7,7 +7,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { hashSenha, hashToken } from "./servidor/dist/lib/password.js";
 
@@ -15,12 +15,26 @@ export function dirTeste(nome) {
   return mkdtempSync(join(tmpdir(), `mrpg-${nome}-`));
 }
 
+// Isolamento do estado externo/proveniência por fixture (Issue #155):
+// derive do caminho do banco — cada fixture ganha state dir e dir de
+// proveniência próprios, nunca o diretório real do usuário. Um env
+// explícito (MESTRE_STATE_DIR/MESTRE_PROVENIENCIA_DIR) sempre vence.
+function estadoIsolado(banco, env = {}) {
+  const base = dirname(dirname(banco));
+  return {
+    MESTRE_STATE_DIR: env.MESTRE_STATE_DIR ?? join(base, "state"),
+    // "install" irmão do "state" — mesmo fallback de
+    // diretorioBaseProveniencia quando MESTRE_STATE_DIR está definido.
+    MESTRE_PROVENIENCIA_DIR: env.MESTRE_PROVENIENCIA_DIR ?? join(base, "install"),
+  };
+}
+
 /** Cria banco vazio e aplica todas as migrations do servidor. */
-export async function prepararBanco(banco) {
+export async function prepararBanco(banco, envExtra = {}) {
   for (const suf of ["", "-wal", "-shm"]) rmSync(banco + suf, { force: true });
   await new Promise((res, rej) => {
     const p = spawn("node", ["servidor/dist/db/migrate.js"], {
-      env: { ...process.env, MESTRE_BANCO: banco },
+      env: { ...process.env, MESTRE_BANCO: banco, ...estadoIsolado(banco), ...envExtra },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err = "";
@@ -46,6 +60,7 @@ export function subirServidor(porta, { banco, arquivos, backups, env }) {
       MESTRE_BANCO: banco,
       MESTRE_ARQUIVOS: arquivos,
       MESTRE_BACKUPS: backups,
+      ...estadoIsolado(banco, env ?? {}),
       ...(env ?? {}),
     },
     stdio: ["ignore", "pipe", "pipe"],

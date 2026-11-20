@@ -82,6 +82,26 @@ if not %errorlevel%==0 (
     exit /b 1
 )
 
+rem ---------- Gate 0: proveniencia e bootstrap (Issue #155 W13) ----------
+rem Distingue primeira instalacao legitima de instalacao existente que
+rem perdeu banco/state dir. Emite a autorizacao de bootstrap de uso
+rem unico SOMENTE para clone novo sem nenhuma evidencia anterior;
+rem bloqueia (exit 2) qualquer estado ambiguo, corrompido ou divergente.
+rem Ausencia do script nao pode acontecer numa arvore completa — o
+rem mesmo padrao tolerante do auto-update evita quebrar fixtures.
+if exist scripts\bootstrap-install.mjs (
+    node scripts\bootstrap-install.mjs
+    if errorlevel 1 (
+        echo.
+        echo [ERRO] A verificacao de proveniencia da instalacao FALHOU.
+        echo        O boot foi abortado antes de qualquer operacao
+        echo        mutavel. Siga a instrucao exibida acima.
+        pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
+        exit /b 1
+    )
+)
+
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------
 rem Executa SOMENTE depois da sonda de health do lock acima: se ja ha
 rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
