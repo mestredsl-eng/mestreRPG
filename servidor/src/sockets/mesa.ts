@@ -1171,7 +1171,9 @@ function socket_handlers(
         cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" });
         return;
       }
-      if (teste.status !== "pendente") { cb?.({ ok: true, id: teste.id, status: teste.status, jaRolado: true }); return; }
+      // SEM fast-path de idempotência aqui: qualquer retry — inclusive
+      // de teste já 'rolado' — precisa alcançar a transação, onde a
+      // autorização ATUAL é revalidada antes do ACK jaRolado.
       // personagem arquivado não rola — fail-closed (revalidado na tx)
       if (char?.status === "arquivado") { cb?.({ ok: false, erro: "Personagem arquivado não pode rolar testes" }); return; }
 

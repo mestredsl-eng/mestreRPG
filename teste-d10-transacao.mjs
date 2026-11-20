@@ -406,6 +406,74 @@ try {
     }
     rmSync(FLAG + ".pausado", { force: true });
   }
+
+  sec("12. Teste JÁ rolado antes da requisição — retry alcança a tx");
+  {
+    // Sem fast-path pré-tx: até o retry de teste 'rolado' passa pela
+    // pausa e pela revalidação de autorização dentro da transação.
+
+    // A) pré-rolado + pausa + membership revogada → erro, nunca jaRolado
+    const tidA = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id });
+    const r0A = await emitir(sockJ, "mesa:teste:rolar", { testId: tidA });
+    t("A: pré-roll ok", r0A?.ok === true, JSON.stringify(r0A).slice(0, 120));
+    await sono(1200);
+    writeFileSync(FLAG, tidA);
+    const pendA = emitir(sockJ, "mesa:teste:rolar", { testId: tidA });
+    for (let i = 0; i < 100 && !existsSync(FLAG + ".pausado"); i++) await sono(50);
+    t("A: handler pausado", existsSync(FLAG + ".pausado"));
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update memberships set status='inativo' where id=?").run(c.jogadores.jogador1.membershipId);
+      db.close();
+    }
+    rmSync(FLAG);
+    const rA = await pendA;
+    t("A: pré-rolado + membership revogada → erro, nunca jaRolado", rA?.ok === false && rA?.jaRolado !== true, JSON.stringify(rA));
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update memberships set status='ativo' where id=?").run(c.jogadores.jogador1.membershipId);
+      db.close();
+    }
+    rmSync(FLAG + ".pausado", { force: true });
+
+    // B) pré-rolado + pausa + sessão encerrada → erro, nunca jaRolado
+    const tidB = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id });
+    const r0B = await emitir(sockJ, "mesa:teste:rolar", { testId: tidB });
+    t("B: pré-roll ok", r0B?.ok === true, JSON.stringify(r0B).slice(0, 120));
+    await sono(1200);
+    writeFileSync(FLAG, tidB);
+    const pendB = emitir(sockJ, "mesa:teste:rolar", { testId: tidB });
+    for (let i = 0; i < 100 && !existsSync(FLAG + ".pausado"); i++) await sono(50);
+    t("B: handler pausado", existsSync(FLAG + ".pausado"));
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update sessions set status='encerrada' where id=?").run(SID);
+      db.close();
+    }
+    rmSync(FLAG);
+    const rB = await pendB;
+    t("B: pré-rolado + sessão encerrada → erro, nunca jaRolado", rB?.ok === false && rB?.jaRolado !== true, JSON.stringify(rB));
+    {
+      const db = abrirDb(BANCO);
+      db.prepare("update sessions set status='ativa' where id=?").run(SID);
+      db.close();
+    }
+    rmSync(FLAG + ".pausado", { force: true });
+
+    // C) controle: pré-rolado + pausa sem mutação → jaRolado na tx
+    const tidC = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id });
+    const r0C = await emitir(sockJ, "mesa:teste:rolar", { testId: tidC });
+    t("C: pré-roll ok", r0C?.ok === true, JSON.stringify(r0C).slice(0, 120));
+    await sono(1200);
+    writeFileSync(FLAG, tidC);
+    const pendC = emitir(sockJ, "mesa:teste:rolar", { testId: tidC });
+    for (let i = 0; i < 100 && !existsSync(FLAG + ".pausado"); i++) await sono(50);
+    t("C: handler pausado", existsSync(FLAG + ".pausado"));
+    rmSync(FLAG);
+    const rC = await pendC;
+    t("C: pré-rolado + autorizado → jaRolado", rC?.ok === true && rC?.jaRolado === true, JSON.stringify(rC));
+    rmSync(FLAG + ".pausado", { force: true });
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 600));
