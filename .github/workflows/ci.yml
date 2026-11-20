@@ -159,6 +159,7 @@ jobs:
             teste-sessoes-conta.mjs \
             teste-prerequisitos-patrimonio.mjs \
             teste-patrimonio-permissoes.mjs \
+            teste-patrimonio-ui-permissoes.mjs \
             teste-escopo-cruzado.mjs \
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
@@ -254,6 +255,7 @@ jobs:
             homologacao-patrimonio.mjs \
             homologacao-npc-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-patrimonio-permissoes.mjs \
             homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
@@ -267,6 +269,7 @@ jobs:
             teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-vida-vtt.mjs \
+            homologacao-regua.mjs \
             homologacao-nevoa.mjs \
             homologacao-guildas.mjs \
             homologacao-sessoes.mjs \
@@ -277,6 +280,7 @@ jobs:
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
             teste-vtt-vida.mjs \
+            teste-vtt-regua.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \

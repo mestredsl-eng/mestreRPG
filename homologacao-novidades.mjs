@@ -37,16 +37,17 @@ const btnNav = (page, nome) => page.locator(".topo nav button", { hasText: nome 
 
 try {
   await prepararBanco(BANCO);
-  // O seed v1.0.5 é publicado por padrão nas instalações novas. Esta
+  // Os seeds de release são publicados por padrão nas instalações novas. Esta
   // homologação cria suas próprias publicações e preserva contagens
-  // determinísticas; a presença/idempotência do seed é testada em
+  // determinísticas; a presença/idempotência dos seeds é testada em
   // teste-novidades.mjs. BANCO é sempre temporário.
   {
     const db = abrirDb(BANCO);
-    db.prepare("delete from novidades where id=?")
-      .run("00000000-0000-4000-8000-000000000105");
-    db.prepare("delete from novidades where id=?")
-      .run("00000000-0000-4000-8000-000000000106");
+    for (const id of [
+      "00000000-0000-4000-8000-000000000105",
+      "00000000-0000-4000-8000-000000000106",
+      "00000000-0000-4000-8000-000000000107",
+    ]) db.prepare("delete from novidades where id=?").run(id);
     db.close();
   }
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });

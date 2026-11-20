@@ -1146,10 +1146,16 @@ export interface TokenVtt {
 export interface PontoNevoa { x: number; y: number }
 export interface TracoNevoa { id: string; raioX: number; raioY: number; pontos: PontoNevoa[] }
 export interface NevoaVtt { ativa: boolean; revelados: TracoNevoa[] }
+export interface CalibracaoRegua {
+  unidade: string;
+  distanciaReferencia: number;
+  valorReferencia: number;
+}
 export interface VttState {
   mapa: { fileId: string; nome: string; largura?: number; altura?: number } | null;
   tokens: TokenVtt[];
   nevoa?: NevoaVtt;
+  regua?: CalibracaoRegua | null;
 }
 export const arquivoUrl = (cid: string, fid: string) =>
   `${API_BASE}/campaigns/${cid}/arquivos/${fid}`;

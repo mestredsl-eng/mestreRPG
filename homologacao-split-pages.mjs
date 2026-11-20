@@ -70,6 +70,18 @@ const chunksDe = (set, prefixo) => [...set].filter((c) => c.startsWith(prefixo))
 
 try {
   await prepararBanco(BANCO);
+  // Remove os seeds de release: o badge de não lidas altera o nome acessível
+  // do botão "Novidades". BANCO é sempre temporário; a presença/idempotência
+  // dos seeds é testada em teste-novidades.mjs.
+  {
+    const db = abrirDb(BANCO);
+    for (const id of [
+      "00000000-0000-4000-8000-000000000105",
+      "00000000-0000-4000-8000-000000000106",
+      "00000000-0000-4000-8000-000000000107",
+    ]) db.prepare("delete from novidades where id=?").run(id);
+    db.close();
+  }
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
   await esperarSaudavel(BASE, proc);
   const cenario = await criarCenario(BASE, BANCO);
