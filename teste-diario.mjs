@@ -452,6 +452,30 @@ try {
     setFlagCompartilha(false);
     const b13 = await req("PATCH", `/anotacoes/${A_KIND}`, { body: { content: "mestre edita compartilhada" } });
     t("171-17 flag off: mestre edita normalmente → 200", b13.status === 200, String(b13.status));
+
+    // Tentativas alternativas com flag OFF — nenhuma pode contornar o gate.
+    const J5_PRIV2 = (await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title: `J5 priv2 ${RUN}`, kind: "diario", visibility: "privada" } })).json?.id;
+    const J2_PRIV = (await req("POST", "/anotacoes", { cookie: JOG2.cookie, body: { title: `J2 priv ${RUN}`, kind: "diario", visibility: "privada" } })).json?.id;
+    const c1 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { visibility: "publica" } });
+    t("171-18 flag off: privada → pública direta → 403", c1.status === 403, String(c1.status));
+    const c2 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { visibility: "mestre" } });
+    t("171-19 flag off: privada → mestre → 403", c2.status === 403, String(c2.status));
+    const c3 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { kind: "mestre", visibility: "privada", content: "promoção combinada" } });
+    t("171-20 flag off: kind mestre + privada → 403", c3.status === 403, String(c3.status));
+    const c4 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG2.cookie, body: { recipients: [uJ2] } });
+    t("171-21 flag off: recipients em nota privada → 200 (inócuo)", c4.status === 200, String(c4.status));
+    lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
+    const vazou = lista.some((x) => x.id === J2_PRIV);
+    t("171-22 nota privada c/ recipients não aparece p/ terceiros", !vazou, JSON.stringify(vazou));
+    const c5 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG5.cookie, body: { content: "intruso" } });
+    t("171-23 flag off: dono errado → 403", c5.status === 403, String(c5.status));
+    const c6 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG2.cookie, body: { status: "concluida", title: `J2 priv done ${RUN}` } });
+    t("171-24 flag off: status/título em privada → 200", c6.status === 200, String(c6.status));
+    const c7 = await req("PATCH", `/anotacoes/${J_PRIV}`, { cookie: JOG5.cookie, body: { kind: "diario", visibility: "privada", content: "downgrade combinado" } });
+    t("171-25 flag off: downgrade c/ kind explícito → 200", c7.status === 200, String(c7.status));
+    const c8 = await req("GET", "/anotacoes?tipo=diario", { cookie: JOG2.cookie });
+    const aindaPublica = (c8.json?.anotacoes ?? []).some((x) => x.id === J_PRIV);
+    t("171-26 nota rebaixada some p/ outros jogadores", !aindaPublica, JSON.stringify(aindaPublica));
     setFlagCompartilha(true);
   }
 } catch (e) {
