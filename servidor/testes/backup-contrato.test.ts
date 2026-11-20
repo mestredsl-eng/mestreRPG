@@ -105,6 +105,61 @@ describe("backup pré-migration — manifesto v2 e proteção (W16)", () => {
     assert.ok(lista.some((b) => b.filePath === protegido.dir), "backup protegido sumiu do registro");
   });
 
+  it("desproteção aborta diante de evidência inconclusiva em protecao/", async () => {
+    const prot = await import("../src/lib/protecao-backup.js");
+    const ee = await import("../../scripts/estado-externo.mjs");
+    const { createHash } = await import("node:crypto");
+    const dirEstado = ee.dirEstado(RAIZ_REPO, process.env);
+    const protDir = join(dirEstado, "protecao");
+    mkdirSync(protDir, { recursive: true });
+    const alvo = join(TMP, "backups", "alvo-desprotecao");
+    const idAlvo = createHash("sha256").update(prot.normDir(alvo)).digest("hex").slice(0, 16);
+    const markerAlvo = join(protDir, `${idAlvo}.json`);
+    try {
+      assert.equal(await prot.protegerBackupContraRetencao(alvo, "teste-desprotecao"), true);
+      assert.ok(existsSync(markerAlvo));
+
+      // 1) marker CORROMPIDO em protecao/ → referência inconclusiva
+      const corrupto = join(protDir, "corrompido.json");
+      writeFileSync(corrupto, "{ nao-json");
+      assert.equal(await prot.referenciadoPorJournal(alvo), null, "marker corrompido deveria ser inconclusivo");
+      assert.equal(await prot.desprotegerBackupContraRetencao(alvo), false, "desproteção deveria abortar");
+      assert.ok(existsSync(markerAlvo), "marker do alvo não pode ser removido com evidência inconclusiva");
+      rmSync(corrupto, { force: true });
+
+      // 2) marker em QUARENTENA em protecao/ → inconclusivo
+      const quarentena = join(protDir, "x.json.quarentena-teste-1");
+      writeFileSync(quarentena, "{}");
+      assert.equal(await prot.referenciadoPorJournal(alvo), null, "marker em quarentena deveria ser inconclusivo");
+      assert.equal(await prot.desprotegerBackupContraRetencao(alvo), false);
+      assert.ok(existsSync(markerAlvo));
+      rmSync(quarentena, { force: true });
+
+      // 3) marker sem identidade → inconclusivo
+      const semId = join(protDir, "sem-identidade.json");
+      writeFileSync(semId, JSON.stringify({ backupDir: alvo, motivo: "x" }));
+      assert.equal(await prot.referenciadoPorJournal(alvo), null, "marker sem identidade deveria ser inconclusivo");
+      assert.equal(await prot.desprotegerBackupContraRetencao(alvo), false);
+      assert.ok(existsSync(markerAlvo));
+      rmSync(semId, { force: true });
+
+      // 4) marker de terceiro VÁLIDO não bloqueia; sem journal → desprotege
+      const outro = join(protDir, "outro-valido.json");
+      writeFileSync(outro, JSON.stringify({
+        protocoloVersao: 1,
+        instalacaoId: ee.instalacaoId(RAIZ_REPO),
+        repoCanon: ee.caminhoCanonico(RAIZ_REPO),
+        backupDir: join(TMP, "backups", "outro"), motivo: "m", criadoEm: new Date().toISOString(),
+      }));
+      assert.equal(await prot.referenciadoPorJournal(alvo), false);
+      assert.equal(await prot.desprotegerBackupContraRetencao(alvo), true);
+      assert.ok(!existsSync(markerAlvo), "marker deveria ter sido removido com prova de não-referência");
+      rmSync(outro, { force: true });
+    } finally {
+      rmSync(markerAlvo, { force: true });
+    }
+  });
+
   it("backup pre_update sem proteção possível falha (fail-closed)", async () => {
     // estado externo indisponível: MESTRE_STATE_DIR apontando para caminho inválido
     const envOriginal = process.env.MESTRE_STATE_DIR;
