@@ -269,6 +269,7 @@ jobs:
             teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-vida-vtt.mjs \
+            homologacao-vida-regua.mjs \
             homologacao-regua.mjs \
             homologacao-nevoa.mjs \
             homologacao-guildas.mjs \
