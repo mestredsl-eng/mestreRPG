@@ -10,6 +10,7 @@ import {
   todosCampos,
   type EstruturaFicha,
   type CampoDef,
+  type TipoCampo,
   type PontosConfig,
   pontosConfigSchema,
 } from "./ficha.js";
@@ -221,6 +222,54 @@ export const configRegrasSchema = z.object({
   vtt: z
     .object({ vidaCompartilhada: z.boolean().default(false) })
     .default({ vidaCompartilhada: false }),
+  // Pontos de Sangue (Issue #186, C1): bloco aditivo — campanhas sem
+  // `sangue` permanecem com o recurso desabilitado. Estruturalmente
+  // compatível com ConfigSangue/ConfigCapacidadeSangue da C2 (PR #194),
+  // sem importar o módulo (dependência circular). Nenhum valor de regra
+  // é preenchido: nomes de naturezas, IDs, custos, coeficientes e
+  // fórmulas são decididos pela campanha — nunca por default.
+  sangue: z
+    .object({
+      habilitado: z.boolean().default(false),
+      campoCapacidadeId: z.string().max(80).optional(),
+      campoNaturezaId: z.string().max(80).optional(),
+      capacidade: z
+        .object({
+          modo: z.enum(["valor", "somaNiveis", "mapa"]).optional(),
+          // modo "mapa": rótulo do campo → capacidade (rótulos são da
+          // campanha; o servidor nunca assume nomes).
+          mapa: z.record(z.string().min(1).max(120), z.number().nonnegative()).optional(),
+          // Bônus opcional por Qualidade (ponto de extensão da D3):
+          // coeficiente da campanha — nunca inventado. Alinhado à C2:
+          // finito >= 0 (zero é no-op válido); NaN/Infinity rejeitados.
+          bonusQualidade: z
+            .object({
+              campoId: z.string().max(80).optional(),
+              coeficiente: z.number().nonnegative().optional(),
+              modo: z.enum(["valor", "somaNiveis", "mapa"]).optional(),
+              mapa: z.record(z.string().min(1).max(120), z.number().nonnegative()).optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      // Rótulos de natureza são livres da campanha; cada entrada pode
+      // declarar metaHumanoComPoder e um rótulo opaco de recuperação.
+      // Natureza sem mapeamento permanece desconhecida (fail-closed).
+      naturezas: z
+        .record(
+          z.string().min(1).max(80),
+          z.object({
+            metaHumanoComPoder: z.boolean().optional(),
+            recuperacao: z.string().max(120).optional(),
+          })
+        )
+        .optional(),
+      // Ausência nunca habilita recuperação — só `habilitado:true` liga.
+      recuperacaoSangue: z
+        .object({ habilitado: z.boolean().optional() })
+        .optional(),
+    })
+    .default({ habilitado: false }),
   // Lançador de dados (D10): meta mínima que conta como sucesso.
   dados: z
     .object({
@@ -256,6 +305,155 @@ export function errosConversaoFerimento(config: ConfigRegras): string[] {
     vistos.add(l.ate);
     if (!Number.isInteger(l.nivel) || l.nivel < 0 || l.nivel >= totalNiveis) {
       erros.push(`${rot}: nível de vitalidade inválido (0 a ${Math.max(totalNiveis - 1, 0)}).`);
+    }
+  }
+  return erros;
+}
+
+// ---------- Vínculos de config.sangue (Issue #186, C1) ----------
+// Validação ESTRUTURAL dos IDs contra as fichas publicadas em uso —
+// não resolve valores nem inventa regra. Um vínculo que nenhuma
+// estrutura ativa consegue atender é rejeitado (400), nunca ignorado.
+
+type ModoCapacidadeSangue = "valor" | "somaNiveis" | "mapa";
+
+/** Tipos de campo que produzem número direto para o modo "valor". */
+const TIPOS_CAPACIDADE_VALOR: readonly TipoCampo[] = ["inteiro", "decimal", "moeda"];
+/** Tipos de campo com itens/níveis somáveis para "somaNiveis". */
+const TIPOS_CAPACIDADE_SOMA: readonly TipoCampo[] = ["selecao_nivel", "selecao_multipla", "lista"];
+/** Tipos de campo que produzem rótulo selecionável para "mapa". */
+const TIPOS_CAPACIDADE_MAPA: readonly TipoCampo[] = ["selecao_unica", "selecao_multipla", "selecao_nivel", "lista"];
+/** Tipos de campo que produzem rótulo para a natureza/espécie. */
+const TIPOS_NATUREZA: readonly TipoCampo[] = ["selecao_unica", "selecao_multipla", "selecao_nivel", "lista"];
+
+/** Mesma inferência da C2 (modoInferido em sangue.ts) — mantida aqui
+ *  de forma estrutural para não importar o módulo do Pai. */
+function modoCapacidadeInferido(tipo: TipoCampo): ModoCapacidadeSangue {
+  if (tipo === "inteiro" || tipo === "decimal" || tipo === "moeda") return "valor";
+  if (tipo === "selecao_nivel") return "somaNiveis";
+  return "mapa";
+}
+
+function tiposDoModo(modo: ModoCapacidadeSangue): readonly TipoCampo[] {
+  if (modo === "valor") return TIPOS_CAPACIDADE_VALOR;
+  if (modo === "somaNiveis") return TIPOS_CAPACIDADE_SOMA;
+  return TIPOS_CAPACIDADE_MAPA;
+}
+
+interface VinculoCapacidade {
+  campoId: string | undefined;
+  modo: ModoCapacidadeSangue | undefined;
+  mapa: Record<string, number> | undefined;
+}
+
+/** Valida UM vínculo de capacidade (base ou bônus) contra uma estrutura.
+ *  `rotulo` identifica o vínculo nas mensagens de erro. */
+function errosVinculoCapacidade(
+  estrutura: EstruturaFicha,
+  vinculo: VinculoCapacidade,
+  rotulo: string,
+  erros: string[],
+): void {
+  if (!vinculo.campoId) return;
+  const campo = mapaCampos(estrutura).get(vinculo.campoId);
+  if (!campo) {
+    erros.push(`${rotulo}: campo "${vinculo.campoId}" não existe na estrutura da ficha`);
+    return;
+  }
+  const modo = vinculo.modo ?? modoCapacidadeInferido(campo.tipo);
+  if (!tiposDoModo(modo).includes(campo.tipo)) {
+    erros.push(
+      `${rotulo}: campo "${vinculo.campoId}" (tipo ${campo.tipo}) é incompatível com o modo "${modo}" de capacidade`,
+    );
+    return;
+  }
+  if (modo === "mapa" && (!vinculo.mapa || Object.keys(vinculo.mapa).length === 0)) {
+    erros.push(`${rotulo}: modo "mapa" exige mapa com ao menos um rótulo configurado`);
+  }
+}
+
+/**
+ * Valida os vínculos de `config.sangue` contra CADA estrutura de ficha
+ * ativa informada (templateVersionId → estrutura parseada).
+ *
+ * Regras:
+ *  - recurso desabilitado E sem vínculos declarados → nada a validar;
+ *  - `habilitado:true` exige `campoCapacidadeId` (a natureza é opcional
+ *    — natureza ausente não desabilita o recurso, só impede Meta humano);
+ *  - vínculo declarado deve existir em TODAS as estruturas ativas —
+ *    uma configuração única da campanha não pode ignorar a incompatível;
+ *  - compatibilidade de tipo é por modo (valor/somaNiveis/mapa), com a
+ *    mesma inferência da C2 quando `modo` é omitido.
+ *
+ * Retorna mensagens de erro; vazio = válido. A coleta das estruturas
+ * ativas (characters.templateVersionId → sheet_versions) é responsabilidade
+ * da rota — esta função é pura e testável.
+ */
+export function errosVinculosSangueConfig(
+  config: ConfigRegras,
+  estruturas: ReadonlyMap<string, EstruturaFicha>,
+): string[] {
+  const erros: string[] = [];
+  const sang = config.sangue;
+  if (!sang) return erros;
+  // Qualquer chave definida em bonusQualidade torna o bloco ATIVO para
+  // a C2 — parcial (só campoId, só coeficiente, só modo/mapa) é config
+  // inválida que mataria a capacidade em runtime. O par campoId +
+  // coeficiente finito é exigido aqui, antes de validar os vínculos.
+  const bq = sang.capacidade?.bonusQualidade;
+  const bqAtivo = !!bq && Object.values(bq).some((v) => v !== undefined);
+  const temVinculo = !!(
+    sang.campoCapacidadeId ||
+    sang.campoNaturezaId ||
+    bqAtivo
+  );
+  if (!sang.habilitado && !temVinculo) return erros;
+  // Checagens de nível de config SEMPRE executam — mesmo sem nenhuma
+  // estrutura elegível: config sintaticamente inválida nunca é salva.
+  if (bqAtivo && (typeof bq!.campoId !== "string" || !bq!.campoId || typeof bq!.coeficiente !== "number" || !Number.isFinite(bq!.coeficiente))) {
+    erros.push(
+      "config.sangue.capacidade.bonusQualidade: exige campoId e coeficiente numérico finito quando qualquer opção é definida",
+    );
+    return erros;
+  }
+  if (sang.habilitado && !sang.campoCapacidadeId) {
+    erros.push("config.sangue: habilitado exige campoCapacidadeId");
+    return erros;
+  }
+  // Sem estruturas elegíveis não há vínculo a comparar — a config
+  // sintaticamente válida é aceita; a resolução concreta por
+  // personagem continua fail-closed em C2 no uso.
+  if (estruturas.size === 0) return erros;
+  for (const [versao, estrutura] of estruturas) {
+    const prefixo = `config.sangue (ficha ${versao})`;
+    errosVinculoCapacidade(
+      estrutura,
+      {
+        campoId: sang.campoCapacidadeId,
+        modo: sang.capacidade?.modo,
+        mapa: sang.capacidade?.mapa,
+      },
+      `${prefixo} capacidade`,
+      erros,
+    );
+    const bq = sang.capacidade?.bonusQualidade;
+    if (bq?.campoId) {
+      errosVinculoCapacidade(
+        estrutura,
+        { campoId: bq.campoId, modo: bq.modo, mapa: bq.mapa },
+        `${prefixo} bônus de qualidade`,
+        erros,
+      );
+    }
+    if (sang.campoNaturezaId) {
+      const campoNat = mapaCampos(estrutura).get(sang.campoNaturezaId);
+      if (!campoNat) {
+        erros.push(`${prefixo}: campoNaturezaId "${sang.campoNaturezaId}" não existe na estrutura da ficha`);
+      } else if (!TIPOS_NATUREZA.includes(campoNat.tipo)) {
+        erros.push(
+          `${prefixo}: campoNaturezaId "${sang.campoNaturezaId}" (tipo ${campoNat.tipo}) não produz rótulo selecionável`,
+        );
+      }
     }
   }
   return erros;
