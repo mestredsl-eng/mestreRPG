@@ -14,7 +14,7 @@ import { dirTeste, abrirDb } from "./teste-base.mjs";
 
 const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
-const { instalacaoId, dirEstado, gravarReciboInstalacao } = await import("./scripts/estado-externo.mjs");
+const { instalacaoId, dirEstado, gravarReciboInstalacao, lerReciboInstalacao } = await import("./scripts/estado-externo.mjs");
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
 let pass = 0, fail = 0;
@@ -227,6 +227,11 @@ sec("W15a — retomada de aplicação interrompida no meio das substituições")
   t("banco vivo = conteúdo do backup", valorBanco(raiz) === "novo", `valor=${valorBanco(raiz)}`);
   t("flag removida do banco restaurado", !existsSync(dbVivo(raiz)) || !flagPresente(raiz));
   t("journal → concluido", lerJournal(raiz)?.fase === "concluido", lerJournal(raiz)?.fase);
+  // segunda execução após conclusão: journal final não é pendente →
+  // nada a fazer, saída limpa (idempotente)
+  const r2 = rodar(raiz);
+  t("segunda execução após conclusão → exit 0 idempotente", r2.code === 0, `code=${r2.code} ${r2.saida.slice(0, 200)}`);
+  t("banco continua = backup", valorBanco(raiz) === "novo", `valor=${valorBanco(raiz)}`);
   rmSync(raiz, { recursive: true, force: true });
 }
 function flagPresente(raiz) {
@@ -340,6 +345,53 @@ sec("W15e — DB ausente + journal pendente: retomada NÃO é ignorada");
   t("DB ausente + rollback pendente → retoma rollback (exit != 0)", r.code !== 0, `code=${r.code}`);
   t("banco preservado restaurado", valorBanco(raiz) === "preservado", `valor=${valorBanco(raiz)}`);
   t("journal → rollback-concluido", lerJournal(raiz)?.fase === "rollback-concluido", lerJournal(raiz)?.fase);
+  rmSync(raiz, { recursive: true, force: true });
+}
+
+// ================= T1 — ciclo de vida do recibo de instalação =================
+// O recibo prova que a instalação foi INITIALIZADA. Se o banco some ou
+// é truncado DEPOIS disso, o estado é ambíguo (perda de dados?), não
+// "instalação nova" — o contrato exige bloqueio, não sucesso silencioso.
+sec("T1 — recibo permanente × banco ausente/truncado posterior");
+{
+  const raiz = novoRaiz();
+  // instalação comprovada: recibo válido gravado pelo caminho real
+  gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
+  t("recibo gravado", lerReciboInstalacao(RAIZ_REPO, envRaiz(raiz)).status === "ok");
+  // DB nunca existiu nesta fixture mas o recibo existe → simulamos
+  // "DB removido após instalação" apagando o banco de uma instalação
+  // que de fato rodou: primeiro criamos e migramos? não — cenário é
+  // recibo + ausência de banco. Contrato: bloqueia.
+  const r = rodar(raiz);
+  t("recibo + DB ausente → BLOQUEIA (estado ambíguo)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
+  // DB truncado/vazio DEPOIS da instalação: 0 tabelas não é prova de
+  // novidade quando já existe recibo de inicialização concluída.
+  abrirDb(dbVivo(raiz)).close(); // cria arquivo sqlite vazio (0 tabelas)
+  const r = rodar(raiz);
+  t("recibo + DB vazio (0 tabelas) → BLOQUEIA", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  // state dir INTEIRO removido após o recibo → recibo não é reutilizável:
+  // sem estado externo verificável, volta a ser ambíguo → bloqueia.
+  gravarReciboInstalacao(RAIZ_REPO, envRaiz(raiz));
+  rmSync(stateDir(raiz), { recursive: true, force: true });
+  const r = rodar(raiz);
+  t("state dir removido (recibo perdido) → BLOQUEIA", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  // instalação NOVA de verdade: sem recibo e sem banco → bloqueia
+  // (já coberto em W14, reafirmado aqui como fronteira do ciclo de vida)
+  const r = rodar(raiz);
+  t("sem recibo + sem banco → BLOQUEIA", r.code !== 0, `code=${r.code}`);
   rmSync(raiz, { recursive: true, force: true });
 }
 

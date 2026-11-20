@@ -9,6 +9,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { dirTeste, abrirDb, limparDir, portaLivre, subirServidor, esperarSaudavel, encerrarServidor } from "./teste-base.mjs";
+import { gerarManifestoBackup } from "./teste-fixture-backup.mjs";
+import { gravarReciboInstalacao, dirEstado, instalacaoId } from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -105,12 +107,29 @@ function rebaixarSchema(arquivoDb) {
     }
   } finally { db.close(); }
 }
-// Backup completo mínimo: db + arquivos/ + configuracao/servidor.json
-function fazerBackup(raiz, nome, { rebaixar = false, semCfg = false, semArq = false } = {}) {
+// Backup completo mínimo no formato do novo contrato: db + arquivos/ +
+// configuracao/servidor.json + manifesto.json v2 íntegro (o restaurador
+// valida o manifesto antes de tocar no estado vivo — backup sem
+// manifesto é rejeitado). `sabotagem` roda sobre o banco do backup
+// ANTES do manifesto ser gerado (hash reflete o estado sabotado).
+function fazerBackup(raiz, nome, { rebaixar = false, semCfg = false, semArq = false, sabotagem = null } = {}) {
   const bk = join(raiz, "backups", nome);
   mkdirSync(bk, { recursive: true });
   copyFileSync(dbPath(raiz), join(bk, "mestre-rpg.db"));
   if (rebaixar) rebaixarSchema(join(bk, "mestre-rpg.db"));
+  if (sabotagem) sabotagem(join(bk, "mestre-rpg.db"));
+  // espelha copiarBanco (backup.ts): snapshot autocontido —
+  // wal_checkpoint + journal_mode=DELETE e remoção dos sidecars, senão
+  // a integrity_check do validador cria -wal/-shm no backup e o
+  // manifesto os rejeita como arquivos não declarados.
+  {
+    const d = abrirDb(join(bk, "mestre-rpg.db"));
+    try {
+      d.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      d.exec("PRAGMA journal_mode=DELETE");
+    } finally { d.close(); }
+    for (const suf of ["-wal", "-shm"]) rmSync(join(bk, "mestre-rpg.db" + suf), { force: true });
+  }
   if (!semArq) {
     // backup espelha o CONTEÚDO de DIR_ARQUIVOS (ver backup.ts: copiarArquivos)
     mkdirSync(join(bk, "arquivos"), { recursive: true });
@@ -120,6 +139,7 @@ function fazerBackup(raiz, nome, { rebaixar = false, semCfg = false, semArq = fa
     mkdirSync(join(bk, "configuracao"), { recursive: true });
     writeFileSync(join(bk, "configuracao", "servidor.json"), JSON.stringify({ backup: true }));
   }
+  gerarManifestoBackup(bk);
   return bk;
 }
 function estadoVivo(raiz) {
@@ -173,8 +193,19 @@ try {
     const r1 = join(RAIZ, "vazia"); // nem mkdirSync — raiz inexistente de propósito? não: MESTRE_HOME deve existir? teste usa raiz existente mas vazia
     mkdirSync(r1, { recursive: true });
     t("raiz existe e está vazia", readdirSync(r1).length === 0);
+    // Novo contrato (#155 Etapas 1–3): banco ausente SEM recibo durável de
+    // instalação é estado ambíguo → fail-closed (exit != 0). A ausência
+    // de banco sozinha não prova instalação nova.
+    const restSemRecibo = restaurar(r1);
+    t("restaurador em raiz vazia SEM recibo → fail-closed (exit != 0)", restSemRecibo.code !== 0, restSemRecibo.saida.slice(-200));
+    t("mensagem de estado ambíguo", /amb[ií]guo|recibo/i.test(restSemRecibo.saida), restSemRecibo.saida.slice(-200));
+    // Com recibo durável gravado pelo caminho real (gravarReciboInstalacao
+    // — a escrita do bootstrap é Etapa 5, pendente; aqui simulamos o
+    // estado pós-bootstrap na fixture), a instalação é comprovada e o
+    // restaurador retorna "nada a restaurar".
+    gravarReciboInstalacao(RAIZ_REPO, envRaiz(r1));
     const rest = restaurar(r1);
-    t("restaurador em raiz vazia → exit 0 (nada a restaurar)", rest.code === 0, rest.saida.slice(-200));
+    t("restaurador com recibo → exit 0 (nada a restaurar)", rest.code === 0, rest.saida.slice(-200));
     const m = migrar(r1);
     t("migrate cria banco e schema → exit 0", m.code === 0, m.saida.slice(-200));
     t("schema completo (tabela nova presente)", temTabelaDb(dbPath(r1), TABELA_NOVA));
@@ -252,6 +283,9 @@ try {
     migrar(r4);
     const bk = join(r4, "backups", "bk_ruim"); mkdirSync(bk, { recursive: true });
     writeFileSync(join(bk, "mestre-rpg.db"), "isto nao e sqlite");
+    // manifesto íntegro sobre o conteúdo corrompido: a rejeição deve
+    // vir da integrity_check do validarBackup, não de manifesto ausente.
+    gerarManifestoBackup(bk);
     armarFlag(r4, bk);
     const antes = comDbRw(dbPath(r4), (db) => db.prepare("select count(*) c from sqlite_master").get().c);
     const rest = restaurar(r4);
@@ -286,6 +320,7 @@ try {
     writeFileSync(cfgPath(r6), JSON.stringify({ atual: true }));
     const bk = join(r6, "bk_fonte"); mkdirSync(bk, { recursive: true });
     copyFileSync(dbPath(r6), join(bk, "mestre-rpg.db"));
+    gerarManifestoBackup(bk); // backup válido — a falha é na preservação
     armarFlag(r6, bk);
     // sabotagem: 'backups' vira ARQUIVO → mkdirSync(pre_restore) explode
     // durante a PRESERVAÇÃO, antes de qualquer arquivo ser tocado.
@@ -348,14 +383,15 @@ try {
     migrar(r9);
     mkdirSync(arqPath(r9), { recursive: true });
     writeFileSync(join(arqPath(r9), "doc_vivo.txt"), "vivo");
-    const bk = fazerBackup(r9, "bk_sem_tabela");
-    // sabotagem no BACKUP: remove server_settings → limparFlag lança
-    // "no such table" → deve reverter TUDO e sair != 0.
-    {
-      const d = abrirDb(join(bk, "mestre-rpg.db"));
-      d.exec("drop table server_settings");
-      d.close();
-    }
+    const bk = fazerBackup(r9, "bk_sem_tabela", {
+      // sabotagem no BACKUP ANTES do manifesto: remove server_settings →
+      // limparFlag lança "no such table" → deve reverter TUDO e sair != 0.
+      sabotagem: (dbBk) => {
+        const d = abrirDb(dbBk);
+        d.exec("drop table server_settings");
+        d.close();
+      },
+    });
     armarFlag(r9, bk);
     const rest = restaurar(r9);
     t("restaurador com falha na flag → exit != 0", rest.code !== 0, `code=${rest.code}`);
@@ -390,9 +426,11 @@ try {
       t("abort antes de escrever: sem pre_restore_*", pre.length === 0);
     } else {
       t("estado anterior (com sidecars) preservado em pre_restore_*", pre.length >= 1);
-      const ladoDb = join(r11, "backups", pre[0], "mestre-rpg.db");
-      t("trio preservado inclui -wal e -shm",
-        existsSync(ladoDb + "-wal") && existsSync(ladoDb + "-shm"));
+      if (pre.length >= 1) {
+        const ladoDb = join(r11, "backups", pre[0], "mestre-rpg.db");
+        t("trio preservado inclui -wal e -shm",
+          existsSync(ladoDb + "-wal") && existsSync(ladoDb + "-shm"));
+      }
     }
     t("banco vivo NÃO foi substituído (sidecars ainda presentes)",
       existsSync(dbPath(r11) + "-wal") && existsSync(dbPath(r11) + "-shm"));
@@ -401,40 +439,44 @@ try {
     t("flag preservada para retry", !!flagPendenteDb(dbPath(r11)));
   }
 
-  // ===== 12. backup COM WAL/SHM, banco vivo SEM sidecars =====
-  sec("Sidecars: backup tem WAL/SHM, vivo não — restore aplica o trio");
+  // ===== 12. backup COM WAL/SHM residual — novo contrato =====
+  // copiarBanco (backup.ts) agora consolida o snapshot (wal_checkpoint +
+  // journal_mode=DELETE) e remove sidecars: um backup REAL nunca contém
+  // -wal/-shm. Se aparecerem, são arquivos não declarados no manifesto →
+  // validarBackup rejeita antes de tocar no estado vivo.
+  sec("Sidecars: backup com WAL/SHM residual — rejeitado pelo manifesto");
   {
     const r12 = join(RAIZ, "wal_backup");
     mkdirSync(join(r12, "banco"), { recursive: true });
     migrar(r12);
     const bk = fazerBackup(r12, "bk_com_side");
-    materializarTrio(join(bk, "mestre-rpg.db")); // trio real dentro do backup
+    materializarTrio(join(bk, "mestre-rpg.db")); // trio real DENTRO do backup (pós-manifesto)
     t("backup possui -wal e -shm",
       existsSync(join(bk, "mestre-rpg.db-wal")) && existsSync(join(bk, "mestre-rpg.db-shm")));
     armarFlag(r12, bk);
     const rest = restaurar(r12);
-    t("restaurador → exit 0", rest.code === 0, rest.saida.slice(-300));
-    // o SQLite consolida o WAL na primeira abertura (limparFlag) e remove
-    // os sidecars — a prova real é o dado que SÓ existia no WAL ser lido.
-    t("conteúdo do WAL aplicado (wal_probe)", probeWalDb(dbPath(r12)) === "wal-ok", String(probeWalDb(dbPath(r12))));
-    t("flag limpa após sucesso", flagPendenteDb(dbPath(r12)) === null);
+    t("backup com sidecars não declarados → exit != 0 (inválido)", rest.code !== 0, `code=${rest.code}`);
+    t("nada aplicado: doc_bk.txt ausente", !existsSync(join(arqPath(r12), "doc_bk.txt")));
+    t("flag limpa no cancelamento", flagPendenteDb(dbPath(r12)) === null);
   }
 
-  // ===== 13. rollback após falha — sidecars do backup NÃO ficam residuais =====
-  sec("Rollback com sidecars do backup — nenhum residual no banco recuperado");
+  // ===== 13. rollback após falha na flag =====
+  // Sidecars do backup não são mais possíveis em backup válido (snapshot
+  // autocontido) — a cobertura de "rollback remove sidecars residuais"
+  // migrou para o journal externo (teste-restauracao-journal.mjs, W15).
+  // Aqui permanece a prova de rollback integral após falha na flag.
+  sec("Rollback após falha na limpeza da flag — estado anterior restaurado");
   {
     const r13 = join(RAIZ, "wal_rollback");
     mkdirSync(join(r13, "banco"), { recursive: true });
     migrar(r13);
-    const bk = fazerBackup(r13, "bk_falha_flag");
-    // sabotagem: backup sem server_settings → limparFlag lança → rollback;
-    // e COM sidecars → o rollback precisa removê-los (não existiam antes).
-    {
-      const d = abrirDb(join(bk, "mestre-rpg.db"));
-      d.exec("drop table server_settings");
-      d.close();
-    }
-    materializarTrio(join(bk, "mestre-rpg.db")); // trio real no backup
+    const bk = fazerBackup(r13, "bk_falha_flag", {
+      sabotagem: (dbBk) => {
+        const d = abrirDb(dbBk);
+        d.exec("drop table server_settings");
+        d.close();
+      },
+    });
     armarFlag(r13, bk);
     t("vivo sem sidecars antes do restore", !existsSync(dbPath(r13) + "-wal") && !existsSync(dbPath(r13) + "-shm"));
     const rest = restaurar(r13);
@@ -510,14 +552,16 @@ try {
     writeFileSync(join(arqPath(r18), "doc_vivo.txt"), "vivo");
     mkdirSync(join(r18, "configuracao"), { recursive: true });
     writeFileSync(cfgPath(r18), JSON.stringify({ atual: true }));
-    const bk = fazerBackup(r18, "bk_vazio_falha", { semArq: true, semCfg: true });
-    // sabotagem: backup sem server_settings → apply remove arquivos+config,
-    // copia banco e falha na limpeza da flag → rollback deve restaurar TUDO.
-    {
-      const d = abrirDb(join(bk, "mestre-rpg.db"));
-      d.exec("drop table server_settings");
-      d.close();
-    }
+    const bk = fazerBackup(r18, "bk_vazio_falha", {
+      semArq: true, semCfg: true,
+      // sabotagem: backup sem server_settings → apply remove arquivos+config,
+      // copia banco e falha na limpeza da flag → rollback deve restaurar TUDO.
+      sabotagem: (dbBk) => {
+        const d = abrirDb(dbBk);
+        d.exec("drop table server_settings");
+        d.close();
+      },
+    });
     armarFlag(r18, bk);
     const rest = restaurar(r18);
     t("restaurador com falha na flag → exit != 0", rest.code !== 0, `code=${rest.code}`);
@@ -615,8 +659,13 @@ try {
   {
     const r14 = join(RAIZ, "raiz_inexistente");
     t("raiz realmente não existe", !existsSync(r14));
+    // Sem recibo durável → fail-closed mesmo com raiz inexistente.
+    const restSem = restaurar(r14);
+    t("restaurador sem recibo → exit != 0 (estado ambíguo)", restSem.code !== 0, restSem.saida.slice(-200));
+    // Recibo do caminho real de gravação (bootstrap efetivo é Etapa 5).
+    gravarReciboInstalacao(RAIZ_REPO, envRaiz(r14));
     const rest = restaurar(r14);
-    t("restaurador → exit 0 mesmo sem raiz", rest.code === 0, rest.saida.slice(-200));
+    t("restaurador com recibo → exit 0 mesmo sem raiz", rest.code === 0, rest.saida.slice(-200));
     t("diretório banco/ criado no caminho configurado", existsSync(join(r14, "banco")));
     const m = migrar(r14);
     t("migrate → exit 0", m.code === 0, m.saida.slice(-200));
@@ -741,6 +790,51 @@ try {
     } else {
       t("casos com symlink/permissão POSIX (linux-only) — cobertos no CI", true);
     }
+  }
+  // ===== 22. interrupção REAL no gate da trava (Classe B) =====
+  // MESTRE_TRAVA_GATE_DIR pausa o restaurador logo após adquirir a
+  // trava exclusiva e ANTES de qualquer escrita/journal. Sinal
+  // determinístico: o arquivo .trava só existe após a aquisição — como
+  // o arquivo-gate nunca é criado, o processo está garantidamente
+  // preso no gate quando o .trava aparece. Kill real do processo.
+  sec("Interrupção real no gate apos-trava — kill antes de qualquer escrita");
+  {
+    const rB = join(RAIZ, "gate_kill");
+    mkdirSync(join(rB, "banco"), { recursive: true });
+    migrar(rB);
+    mkdirSync(arqPath(rB), { recursive: true });
+    writeFileSync(join(arqPath(rB), "doc_vivo.txt"), "vivo");
+    const bk = fazerBackup(rB, "bk_gate");
+    armarFlag(rB, bk);
+    const gateDir = join(rB, "gate");
+    mkdirSync(gateDir, { recursive: true }); // VAZIO de propósito: processo fica no gate
+    const proc = spawn("node", [RESTAURADOR], {
+      env: envRaiz(rB, { MESTRE_TRAVA_GATE_DIR: gateDir }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let saidaProc = "";
+    proc.stdout.on("data", (d) => { saidaProc += d; });
+    proc.stderr.on("data", (d) => { saidaProc += d; });
+    const travaPath = dbPath(rB) + ".trava";
+    const limite = Date.now() + 20000;
+    while (!existsSync(travaPath) && Date.now() < limite && proc.exitCode === null) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    t("processo alcançou a trava e está no gate", existsSync(travaPath) && proc.exitCode === null);
+    proc.kill("SIGKILL"); // morte real — SO libera BEGIN EXCLUSIVE
+    await new Promise((r) => proc.once("exit", r));
+    t("processo morreu de fato", proc.exitCode !== 0 || proc.signalCode !== null);
+    const stateDirB = join(rB, "state", instalacaoId(RAIZ_REPO));
+    t("sem journal após kill (nada foi escrito)", !existsSync(join(stateDirB, "restauracao-externa.json")));
+    t("sem pre_restore após kill", !readdirSync(join(rB, "backups")).some((d) => d.startsWith("pre_restore_")));
+    t("flag intacta para retry", !!flagPendenteDb(dbPath(rB)));
+    t("doc vivo intacto", readFileSync(join(arqPath(rB), "doc_vivo.txt"), "utf8") === "vivo");
+    // retomada: nova execução sem gate → restore completa normalmente
+    const rest2 = restaurar(rB);
+    t("nova execução após kill → exit 0", rest2.code === 0, rest2.saida.slice(-200));
+    t("restore aplicado após retomada",
+      existsSync(join(arqPath(rB), "doc_bk.txt")) && flagPendenteDb(dbPath(rB)) === null);
+    t("journal concluído", JSON.parse(readFileSync(join(stateDirB, "restauracao-externa.json"), "utf8")).fase === "concluido");
   }
 } finally {
   limparDir(RAIZ);

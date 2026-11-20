@@ -152,6 +152,61 @@ gravarEstado(repoBoot, "atualizacao-ultima.json", { fase: "concluido", concluido
 const cj = avaliarBoot(repoBoot, envBoot);
 t("journal concluído não bloqueia por journal", cj.motivo !== "recuperacao-pendente" && cj.motivo !== "journal-corrompido", cj.motivo);
 
+// ---------- T5 — paridade de caminhos com o Boot Lock ----------
+// Compara os RESOLVEDORES REAIS dos dois módulos (nenhuma lógica
+// reimplementada). boot-lock lê process.env diretamente; estado-externo
+// aceita env injetável — mutamos process.env por caso e comparamos.
+console.log("\n== T5 paridade estado-externo × boot-lock ==");
+{
+  const CHAVES = ["MESTRE_STATE_DIR", "MESTRE_HOME", "LOCALAPPDATA", "XDG_STATE_HOME"];
+  const salvo = {};
+  for (const k of CHAVES) { salvo[k] = process.env[k]; delete process.env[k]; }
+  const par = (nome, mutar, esperadoDivergente = false) => {
+    for (const k of CHAVES) { if (salvo[k] !== undefined) process.env[k] = salvo[k]; else delete process.env[k]; }
+    mutar();
+    const eeDir = dirEstado(repo, process.env);
+    const blDir = bootLock.diretorioEstado(repo); // usa process.env internamente
+    const igual = eeDir === blDir;
+    t(`paridade ${nome}: ${igual ? "iguais" : `DIVERGEM ee=${eeDir} bl=${blDir}`}`,
+      esperadoDivergente ? !igual : igual);
+  };
+  par("MESTRE_STATE_DIR definido", () => { process.env.MESTRE_STATE_DIR = join(TMP, "par-state"); });
+  par("MESTRE_STATE_DIR vazio", () => { process.env.MESTRE_STATE_DIR = ""; });
+  par("MESTRE_STATE_DIR só espaços", () => { process.env.MESTRE_STATE_DIR = "   "; });
+  par("MESTRE_STATE_DIR com espaços nas pontas", () => { process.env.MESTRE_STATE_DIR = `  ${join(TMP, "par-sp")}  `; });
+  par("LOCALAPPDATA custom (win32)", () => { process.env.LOCALAPPDATA = join(TMP, "local-app"); });
+  par("LOCALAPPDATA vazio", () => { process.env.LOCALAPPDATA = ""; });
+  par("XDG_STATE_HOME definido em win32 (ignorado pelos dois)", () => { process.env.XDG_STATE_HOME = join(TMP, "xdg"); });
+  // MESTRE_HOME é extensão documentada do estado-externo (sandbox de
+  // dados) — o boot-lock NÃO o conhece: divergência ESPERADA e intencional
+  // quando MESTRE_HOME está definido sem MESTRE_STATE_DIR.
+  par("MESTRE_HOME definido (divergência intencional documentada)",
+    () => { process.env.MESTRE_HOME = join(TMP, "mhome"); }, true);
+  // ramos Linux (XDG_STATE_HOME / ~/.local/state) não são exercitáveis em
+  // win32 — process.platform é fixo. Registrado como NOT EXECUTED local;
+  // a convenção foi alinhada por inspeção do código (diretorioBaseEstado
+  // espelha boot-lock.diretorioBaseEstado).
+  t("ramos Linux XDG/fallback — NOT EXECUTED em win32 (verificar em CI Linux)", true);
+  for (const k of CHAVES) { if (salvo[k] !== undefined) process.env[k] = salvo[k]; else delete process.env[k]; }
+}
+
+// ---------- T1 — ciclo de vida do recibo: falha de bootstrap ----------
+{
+  // gravarReciboInstalacao com destino impossível → lança, sem efeito
+  // parcial: nenhum arquivo de recibo é criado e a prova continua
+  // negativa (falha de bootstrap não produz falso sucesso).
+  const repoB = join(TMP, "repo-bootstrap");
+  mkdirSync(join(repoB, "scripts"), { recursive: true });
+  const envB = { MESTRE_STATE_DIR: join(TMP, "state-bloqueado") };
+  writeFileSync(envB.MESTRE_STATE_DIR, "não é diretório");
+  let lancou = false;
+  try { gravarReciboInstalacao(repoB, envB); } catch { lancou = true; }
+  t("gravarReciboInstalacao em destino impossível → lança", lancou);
+  t("sem recibo parcial após falha", lerReciboInstalacao(repoB, envB).status === "ausente");
+  t("prova continua negativa após falha", provarInstalacaoNova(repoB, envB).nova === false);
+  rmSync(envB.MESTRE_STATE_DIR, { force: true });
+}
+
 console.log(`\n${pass} ok, ${fail} falhas`);
 rmSync(TMP, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

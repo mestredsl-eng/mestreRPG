@@ -5,12 +5,13 @@
 // Executar: npm run test:backup-contrato -w servidor
 import assert from "node:assert/strict";
 import { describe, it, before } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, symlinkSync, truncateSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
+import Database from "better-sqlite3";
+import { gerarManifestoBackup } from "../../teste-fixture-backup.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ_REPO = resolve(__dirname, "..", "..");
@@ -31,6 +32,51 @@ let validarManifestoBackup: typeof import("../src/lib/backup.js").validarManifes
 let setConfigBackup: typeof import("../src/lib/backup.js").setConfigBackup;
 let verificarBackup: typeof import("../src/lib/backup.js").verificarBackup;
 let listarBackups: typeof import("../src/lib/backup.js").listarBackups;
+let validarBackup: typeof import("../src/lib/validar-backup.js").validarBackup;
+let dirsProtegidosBackup: typeof import("../src/lib/protecao-backup.js").dirsProtegidosBackup;
+let protegerBackupContraRetencao: typeof import("../src/lib/protecao-backup.js").protegerBackupContraRetencao;
+let desprotegerBackupContraRetencao: typeof import("../src/lib/protecao-backup.js").desprotegerBackupContraRetencao;
+let referenciadoPorJournal: typeof import("../src/lib/protecao-backup.js").referenciadoPorJournal;
+let ee: {
+  dirEstado(repoDir: string, env?: NodeJS.ProcessEnv): string;
+  instalacaoId(repoDir: string): string;
+  caminhoCanonico(repoDir: string): string;
+};
+
+/** State dir efetivo desta instalação de teste (MESTRE_STATE_DIR=STATE). */
+function stateDirTeste(): string {
+  return ee.dirEstado(RAIZ_REPO, process.env);
+}
+/** Grava um JSON no state dir da instalação de teste. */
+function gravarNoState(nome: string, dados: unknown, sub = ""): void {
+  const dir = sub ? join(stateDirTeste(), sub) : stateDirTeste();
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, nome), JSON.stringify(dados));
+}
+/** Journal/marker no formato do protocolo (identidade correta). */
+function registroValido(dados: Record<string, unknown>): Record<string, unknown> {
+  return {
+    protocoloVersao: 1,
+    instalacaoId: ee.instalacaoId(RAIZ_REPO),
+    repoCanon: ee.caminhoCanonico(RAIZ_REPO),
+    atualizadoEm: new Date().toISOString(),
+    ...dados,
+  };
+}
+/** Remove todos os .json do state dir e de protecao/ (isolamento entre testes). */
+function limparStateTeste(): void {
+  const dir = stateDirTeste();
+  if (!existsSync(dir)) return;
+  for (const f of readdirSync(dir)) {
+    if (f.endsWith(".json")) rmSync(join(dir, f), { force: true });
+  }
+  const prot = join(dir, "protecao");
+  if (existsSync(prot)) {
+    for (const f of readdirSync(prot)) {
+      if (f.endsWith(".json")) rmSync(join(prot, f), { force: true });
+    }
+  }
+}
 
 before(async () => {
   mkdirSync(dirname(BANCO), { recursive: true });
@@ -47,6 +93,14 @@ before(async () => {
   setConfigBackup = mod.setConfigBackup;
   verificarBackup = mod.verificarBackup;
   listarBackups = mod.listarBackups;
+  const vb = await import("../src/lib/validar-backup.js");
+  validarBackup = vb.validarBackup;
+  const pb = await import("../src/lib/protecao-backup.js");
+  dirsProtegidosBackup = pb.dirsProtegidosBackup;
+  protegerBackupContraRetencao = pb.protegerBackupContraRetencao;
+  desprotegerBackupContraRetencao = pb.desprotegerBackupContraRetencao;
+  referenciadoPorJournal = pb.referenciadoPorJournal;
+  ee = await import("../../scripts/estado-externo.mjs") as typeof ee;
 });
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -119,5 +173,413 @@ describe("backup pré-migration — manifesto v2 e proteção (W16)", () => {
       process.env.MESTRE_STATE_DIR = envOriginal;
       rmSync(bloqueio, { force: true });
     }
+  });
+});
+
+// =====================================================================
+// T2 — varredura de proteção fail-closed (dirsProtegidosBackup)
+// Retorno null = varredura inconclusiva → consumidor DEVE abortar a
+// retenção. Conjunto vazio só é válido quando a varredura completou.
+// =====================================================================
+describe("T2 — proteção de backups: varredura fail-closed", () => {
+  it("state dir inexistente → varredura completa com conjunto vazio", async () => {
+    limparStateTeste();
+    rmSync(stateDirTeste(), { recursive: true, force: true });
+    const v = await dirsProtegidosBackup();
+    // dir nunca criado: não há como haver proteção registrada — vazio é
+    // resposta completa e legítima (não é falha de leitura).
+    assert.ok(v instanceof Set, `esperado Set, veio ${v === null ? "null" : typeof v}`);
+    assert.equal(v.size, 0);
+  });
+
+  it("state dir existe mas é ILEGÍVEL (arquivo, não diretório) → null", async () => {
+    limparStateTeste();
+    // <base>/<id> como ARQUIVO: existsSync(dir)=true, readdirSync falha
+    const dir = stateDirTeste();
+    mkdirSync(dirname(dir), { recursive: true });
+    writeFileSync(dir, "não é diretório");
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null, "state dir ilegível deveria retornar null (fail-closed)");
+    rmSync(dir, { force: true });
+  });
+
+  it("journal corrompido no state dir → null (varredura inconclusiva)", async () => {
+    limparStateTeste();
+    gravarNoState("atualizacao-ultima.json", registroValido({ fase: "pull" }));
+    writeFileSync(join(stateDirTeste(), "journal-corrompido.json"), "{ não-json !!!");
+    // journal corrompido com nome de protocolo: qualquer *.json ilegível bloqueia
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null);
+    limparStateTeste();
+  });
+
+  it("journal do protocolo corrompido → null", async () => {
+    limparStateTeste();
+    writeFileSync(join(stateDirTeste(), "atualizacao-ultima.json"), "lixo{");
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null);
+    limparStateTeste();
+  });
+
+  it("marker corrompido em protecao/ → null", async () => {
+    limparStateTeste();
+    gravarNoState("x.json", registroValido({}), "protecao");
+    writeFileSync(join(stateDirTeste(), "protecao", "quebrado.json"), "{{{");
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null);
+    limparStateTeste();
+  });
+
+  it("journal em quarentena (*.quarentena-*) é ignorado pela varredura", async () => {
+    limparStateTeste();
+    // quarentena = já isolado por lerEstado; o nome original não existe
+    // mais → não há referência ativa a proteger. Documenta comportamento.
+    gravarNoState("atualizacao-ultima.json.quarentena-json-2025", "lixo não-json");
+    const v = await dirsProtegidosBackup();
+    assert.ok(v instanceof Set, "quarentena não deveria bloquear a varredura");
+    limparStateTeste();
+  });
+
+  it("journal com identidade divergente → null", async () => {
+    limparStateTeste();
+    gravarNoState("atualizacao-ultima.json", registroValido({ fase: "pull", instalacaoId: "outra" }));
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null);
+    limparStateTeste();
+  });
+
+  it("journal com protocoloVersao incompatível → null", async () => {
+    limparStateTeste();
+    gravarNoState("atualizacao-ultima.json", registroValido({ fase: "pull", protocoloVersao: 99 }));
+    const v = await dirsProtegidosBackup();
+    assert.equal(v, null);
+    limparStateTeste();
+  });
+
+  it("journal SEM instalacaoId/repoCanon → comportamento observado (identidade ausente)", async () => {
+    limparStateTeste();
+    // problemaIdentidade só rejeita campos string divergentes — campos
+    // AUSENTES passam. Registra o comportamento real para o contrato.
+    gravarNoState("atualizacao-ultima.json", { fase: "pull", backupDir: "C:\fake\bk", protocoloVersao: 1 });
+    const v = await dirsProtegidosBackup();
+    // se null → identidade ausente bloqueia (fail-closed);
+    // se Set com "c:\fake\bk" → identidade ausente é aceita (gap).
+    console.log(`  [observado] identidade ausente → ${v === null ? "null (bloqueia)" : `Set(${[...v].join(",")})`}`);
+    limparStateTeste();
+  });
+
+  it("journal ativo protege backupDir; journal concluído não protege", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-protegido");
+    gravarNoState("atualizacao-ultima.json", registroValido({ fase: "pull", backupDir: alvo }));
+    let v = await dirsProtegidosBackup();
+    assert.ok(v !== null && v.has((await import("../src/lib/protecao-backup.js")).normDir(alvo)), "journal ativo deveria proteger");
+    // journal concluído → deixa de proteger
+    gravarNoState("atualizacao-ultima.json", registroValido({ fase: "concluido", backupDir: alvo }));
+    v = await dirsProtegidosBackup();
+    assert.ok(v !== null && !v.has((await import("../src/lib/protecao-backup.js")).normDir(alvo)), "journal concluído não deveria proteger");
+    limparStateTeste();
+  });
+});
+
+// =====================================================================
+// T3 — ciclo de vida dos markers de proteção
+// =====================================================================
+describe("T3 — ciclo de vida dos markers", () => {
+  it("marker ativo protege; referenciadoPorJournal distingue journal de marker", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-marker");
+    const ok = await protegerBackupContraRetencao(alvo, "teste-marker");
+    assert.equal(ok, true, "proteção deveria ser gravada");
+    const v = await dirsProtegidosBackup();
+    const { normDir } = await import("../src/lib/protecao-backup.js");
+    assert.ok(v !== null && v.has(normDir(alvo)), "marker ativo deveria proteger");
+    // marker sozinho (sem journal) → referenciadoPorJournal = false
+    assert.equal(await referenciadoPorJournal(alvo), false);
+    await desprotegerBackupContraRetencao(alvo);
+    const v2 = await dirsProtegidosBackup();
+    assert.ok(v2 !== null && !v2.has(normDir(alvo)), "marker removido não deveria proteger");
+    limparStateTeste();
+  });
+
+  it("marker EXPIRADO é removido na varredura e não protege", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-expirado");
+    const ok = await protegerBackupContraRetencao(alvo, "teste", { horasValidade: -1 });
+    assert.equal(ok, true);
+    const v = await dirsProtegidosBackup();
+    const { normDir } = await import("../src/lib/protecao-backup.js");
+    assert.ok(v !== null && !v.has(normDir(alvo)), "marker expirado não deveria proteger");
+    // marker expirado foi removido do disco
+    const protDir = join(stateDirTeste(), "protecao");
+    const restantes = existsSync(protDir) ? readdirSync(protDir).filter((f) => f.endsWith(".json")) : [];
+    assert.equal(restantes.length, 0, "marker expirado deveria ter sido removido");
+    limparStateTeste();
+  });
+
+  it("journal rollback-concluido MANTÉM proteção (flag ainda pendente)", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-rollback");
+    gravarNoState("restauracao-externa.json", registroValido({ fase: "rollback-concluido", preRestoreDir: alvo }));
+    const v = await dirsProtegidosBackup();
+    const { normDir } = await import("../src/lib/protecao-backup.js");
+    assert.ok(v !== null && v.has(normDir(alvo)), "rollback-concluido deveria manter proteção");
+    limparStateTeste();
+  });
+
+  it("journal corrompido → referenciadoPorJournal null (nunca 'concluído')", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-ref");
+    writeFileSync(join(stateDirTeste(), "atualizacao-ultima.json"), "lixo{");
+    // referenciadoPorJournal lê JSONs do state dir — corrompido → null
+    const r = await referenciadoPorJournal(alvo);
+    assert.equal(r, null, "leitura inconclusiva deveria retornar null");
+    limparStateTeste();
+  });
+
+  it("falha ao registrar proteção retorna false", async () => {
+    limparStateTeste();
+    // state dir como ARQUIVO → gravarJsonAtomico falha → false
+    const dir = stateDirTeste();
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dirname(dir), { recursive: true });
+    writeFileSync(dir, "não é diretório");
+    const ok = await protegerBackupContraRetencao(join(TMP, "bk-x"), "teste");
+    assert.equal(ok, false, "proteção impossível deveria retornar false");
+    rmSync(dir, { force: true });
+  });
+});
+
+// =====================================================================
+// T4 — integridade integral de backups (validarBackup — módulo neutro,
+// o MESMO usado pelo restaurador offline e por verificarBackup)
+// =====================================================================
+describe("T4 — integridade do backup: manifesto × inventário real", () => {
+  /** Monta um backup mínimo válido: db sqlite real + manifesto v2. */
+  function fixtureBackup(sufixo: string, { comCfg = true, comArq = true } = {}) {
+    const dir = join(TMP, `bkval_${sufixo}`);
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table t (id integer)");
+    db.close();
+    if (comCfg) {
+      mkdirSync(join(dir, "configuracao"), { recursive: true });
+      writeFileSync(join(dir, "configuracao", "servidor.json"), JSON.stringify({ porta: 3001 }));
+    }
+    if (comArq) {
+      mkdirSync(join(dir, "arquivos"), { recursive: true });
+      writeFileSync(join(dir, "arquivos", "doc.txt"), "conteudo");
+    }
+    gerarManifestoBackup(dir);
+    return dir;
+  }
+  const manPath = (dir: string) => join(dir, "manifesto.json");
+  const lerMan = (dir: string) => JSON.parse(readFileSync(manPath(dir), "utf8"));
+  const gravarMan = (dir: string, man: unknown) => writeFileSync(manPath(dir), JSON.stringify(man, null, 2));
+
+  it("backup válido → ok", () => {
+    const dir = fixtureBackup("ok");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+  });
+
+  it("banco alterado após manifesto → sha256 diverge", () => {
+    const dir = fixtureBackup("dbalt");
+    const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("insert into t values (1)");
+    db.close();
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sha256") || p.includes("tamanho")), v.problemas.join("; "));
+  });
+
+  it("configuração alterada → diverge", () => {
+    const dir = fixtureBackup("cfgalt");
+    writeFileSync(join(dir, "configuracao", "servidor.json"), JSON.stringify({ porta: 9999 }));
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("configuracao")), v.problemas.join("; "));
+  });
+
+  it("arquivo de campanha alterado → diverge", () => {
+    const dir = fixtureBackup("arqalt");
+    writeFileSync(join(dir, "arquivos", "doc.txt"), "adulterado");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("doc.txt")), v.problemas.join("; "));
+  });
+
+  it("entrada removida do manifesto → arquivo real sem declaração", () => {
+    const dir = fixtureBackup("semdecl");
+    const man = lerMan(dir);
+    delete man.arquivos["arquivos/doc.txt"];
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sem entrada no manifesto")), v.problemas.join("; "));
+  });
+
+  it("entrada extra no manifesto → declaração sem arquivo", () => {
+    const dir = fixtureBackup("extra");
+    const man = lerMan(dir);
+    man.arquivos["arquivos/fantasma.txt"] = { size: 1, sha256: "0".repeat(64) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sem arquivo")), v.problemas.join("; "));
+  });
+
+  it("manifesto ausente → rejeita", () => {
+    const dir = fixtureBackup("semman");
+    rmSync(manPath(dir));
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("ausente")));
+  });
+
+  it("manifesto corrompido → rejeita", () => {
+    const dir = fixtureBackup("manruim");
+    writeFileSync(manPath(dir), "{lixo");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+  });
+
+  it("versão incompatível → rejeita", () => {
+    const dir = fixtureBackup("ver");
+    const man = lerMan(dir);
+    man.manifestoVersao = 1;
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("manifestoVersao")));
+  });
+
+  it("manifesto incompleto (sem banco/configuracao/arquivos) → rejeita", () => {
+    const dir = fixtureBackup("incompleto");
+    gravarMan(dir, { manifestoVersao: 2 });
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.length >= 3, v.problemas.join("; "));
+  });
+
+  it("caminho traversal em arquivos → rejeita", () => {
+    const dir = fixtureBackup("trav");
+    const man = lerMan(dir);
+    man.arquivos["../escape.txt"] = { size: 1, sha256: "0".repeat(64) };
+    man.arquivos["arquivos/../../etc/passwd"] = { size: 1, sha256: "0".repeat(64) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("caminho inválido")), v.problemas.join("; "));
+  });
+
+  it("caminho absoluto / unidade Windows → rejeita", () => {
+    const dir = fixtureBackup("abs");
+    const man = lerMan(dir);
+    man.arquivos["/etc/passwd"] = { size: 1, sha256: "0".repeat(64) };
+    man.arquivos["C:/Windows/x"] = { size: 1, sha256: "0".repeat(64) };
+    man.arquivos["arquivos/C:/x"] = { size: 1, sha256: "0".repeat(64) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("caminho inválido") || p.includes("fora de")), v.problemas.join("; "));
+  });
+
+  it("symlink interno no backup → rejeita", () => {
+    const dir = fixtureBackup("sym");
+    const alvo = join(TMP, "alvo-sym.txt");
+    writeFileSync(alvo, "fora");
+    let okLink = true;
+    try { symlinkSync(alvo, join(dir, "arquivos", "link.txt")); }
+    catch { okLink = false; }
+    if (!okLink) { console.log("  (skip: sem privilégio de symlink)"); return; }
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("symlink")), v.problemas.join("; "));
+  });
+
+  it("arquivo declarado inexistente → rejeita", () => {
+    const dir = fixtureBackup("fantasma");
+    const man = lerMan(dir);
+    man.banco = { size: 999999, sha256: "f".repeat(64) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+  });
+
+  it("configuração real sem entrada no manifesto → rejeita (inventário nos dois sentidos)", () => {
+    const dir = fixtureBackup("cfgsolta");
+    // config existe mas manifesto declara configuracao:null
+    const man = lerMan(dir);
+    man.configuracao = null;
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sem entrada no manifesto")), v.problemas.join("; "));
+  });
+
+  it("configuração ausente com declaracao null explícita → válido", () => {
+    const dir = fixtureBackup("cfgnull", { comCfg: false });
+    const man = lerMan(dir);
+    assert.equal(man.configuracao, null);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, v.problemas.join("; "));
+  });
+
+  it("configuração ausente do manifesto (chave faltando) → rejeita", () => {
+    const dir = fixtureBackup("cfgkey", { comCfg: false });
+    const man = lerMan(dir);
+    delete man.configuracao;
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("configuracao")), v.problemas.join("; "));
+  });
+
+  it("banco com integrity_check inválido → rejeita", () => {
+    const dir = fixtureBackup("dbruim");
+    // corrompe o db DEPOIS do manifesto → integrity_check falha
+    // (e o sha também diverge — ambos são problemas legítimos)
+    const p = join(dir, "mestre-rpg.db");
+    const fd = readFileSync(p);
+    const buf = Buffer.from(fd);
+    for (let i = 100; i < Math.min(500, buf.length); i++) buf[i] = 0xab;
+    writeFileSync(p, buf);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p2) => p2.includes("integrity") || p2.includes("sha256") || p2.includes("não foi possível")), v.problemas.join("; "));
+  });
+
+  it("arquivo > 2 GiB: hash é PULADO (limite declarado) — registra comportamento", () => {
+    const dir = fixtureBackup("big");
+    const grande = join(dir, "arquivos", "grande.bin");
+    writeFileSync(grande, "x");
+    const TAM = 2 * 1024 * 1024 * 1024 + 1;
+    truncateSync(grande, TAM);
+    const man = lerMan(dir);
+    // sha256 falso de propósito: se o validador hasheia, diverge;
+    // se pula (>2GiB), o tamanho correto faz passar — documenta o gap.
+    man.arquivos["arquivos/grande.bin"] = { size: TAM, sha256: "0".repeat(64) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    const problemasGrande = v.problemas.filter((p) => p.includes("grande.bin"));
+    console.log(`  [observado] >2GiB → ${problemasGrande.length ? problemasGrande.join("; ") : "sem problema de hash (pulou)"}`);
+    // Contrato pede hash em streaming OU rejeição explícita — se passou
+    // sem verificar hash, é gap a reportar (não falha de fixture).
+    rmSync(grande, { force: true });
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("raiz do backup como symlink/junction → comportamento observado", () => {
+    const real = fixtureBackup("raizreal");
+    const link = join(TMP, "bklink");
+    let okLink = true;
+    try { symlinkSync(real, link, "junction"); }
+    catch { okLink = false; }
+    if (!okLink) { console.log("  (skip: sem privilégio de symlink)"); return; }
+    const v = validarBackup(link);
+    console.log(`  [observado] raiz symlink → ok=${v.ok} ${v.problemas.join("; ")}`);
+    // registra comportamento; não impõe PASS/FAIL aqui — vai ao relatório
+    rmSync(link, { force: true });
   });
 });
