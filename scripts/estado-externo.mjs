@@ -172,12 +172,15 @@ export function gravarJsonAtomico(caminho, obj) {
   }
 }
 
-/** Move arquivo corrompido para quarentena datada; nunca apaga. */
-export function colocarEmQuarentena(caminho, motivo = "corrompido") {
-  if (!existsSync(caminho)) return null;
+/** Move arquivo corrompido para quarentena datada; nunca apaga.
+ *  renomearComRetry: EPERM/EBUSY/EACCES transitórios do Windows não
+ *  devem fazer a quarentena falhar — se o movimento não for
+ *  comprovadamente concluído, o original permanece no lugar. */
+export function colocarEmQuarentena(caminho, motivo = "corrompido", opcoes = {}) {
+  if (estadoCaminho(caminho) !== "existe") return null;
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const destino = `${caminho}.quarentena-${motivo}-${ts}`;
-  try { renameSync(caminho, destino); return destino; } catch { return null; }
+  try { renomearComRetry(caminho, destino, opcoes); return destino; } catch { return null; }
 }
 
 /** Leitura NÃO destrutiva de JSON (sem quarentena) — para verificações
@@ -463,7 +466,7 @@ export function diagnosticarBootstrap(repoDir, env = process.env) {
  * Retorno: { autorizado:true, dados, consumido } |
  *          { autorizado:false, motivo, consumido? }.
  */
-export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
+export function consumirAutorizacaoBootstrap(repoDir, env = process.env, opcoes = {}) {
   // Sandbox sem state isolado: o state dir resolvido é o REAL — consumir
   // aqui comeria a autorização da instalação verdadeira.
   if (estadoRealCompartilhado(env)) {
@@ -494,8 +497,13 @@ export function consumirAutorizacaoBootstrap(repoDir, env = process.env) {
     dir,
     `${PREFIXO_AUTORIZACAO_CONSUMIDA}${new Date().toISOString().replace(/[:.]/g, "-")}-${randomBytes(4).toString("hex")}`,
   );
+  // renomearComRetry: falha transitória (EPERM/EBUSY/EACCES) é
+  // retentada; esgotadas as tentativas ou erro não transitório, o
+  // arquivo original permanece intacto e o retorno é "não autorizado"
+  // com o diagnóstico real — nunca sucesso falso nem consumo de outro
+  // ciclo. Somente depois do rename confirmado o conteúdo é validado.
   try {
-    renameSync(caminho, consumido);
+    renomearComRetry(caminho, consumido, opcoes);
   } catch {
     return { autorizado: false, motivo: diagnosticarBootstrap(repoDir, env) };
   }

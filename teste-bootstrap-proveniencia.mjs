@@ -6,7 +6,7 @@
 // do state dir com marcador preservado, adoção N-1, banco perdido com
 // backups, interrupção marcador↔autorização, corrupção/divergência do
 // marcador, recuperação e leitura somente-leitura do consumidor.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -688,6 +688,90 @@ for (const [nome, preparar] of [
     t("P1: recibo corrompido → exit 2", r.status === 2, `status=${r.status}`);
     t("P1: recibo corrompido não grava andamento", f.temAndamento() === false);
     t("P1: auth não consumida com recibo ruim", existsSync(join(dir, "bootstrap-autorizacao.json")));
+  }
+}
+
+// ---------- 28) retry EPERM/EBUSY/EACCES nos pontos de rename do protocolo ----------
+// Injeção determinística via seam `opcoes.renomear` (mesmo padrão do
+// boot-lock) — nenhum timing real envolvido.
+{
+  const erro = (code) => Object.assign(new Error(code), { code });
+  const injetor = (falhas, code) => {
+    const op = { tentativas: 0 };
+    op.opcoes = {
+      renomear: (o, d) => { op.tentativas++; if (op.tentativas <= falhas) throw erro(code); return renameSync(o, d); },
+      dormir: () => {},
+    };
+    return op;
+  };
+
+  // 28a) consumo one-shot: EPERM transitório → retenta e consome o MESMO id
+  for (const code of ["EPERM", "EBUSY", "EACCES"]) {
+    const c = cenario(`consumo-retry-${code.toLowerCase()}`);
+    ee.gravarAutorizacaoBootstrap(c.repo, c.env);
+    const authAntes = ee.lerAutorizacaoBootstrap(c.repo, c.env);
+    const inj = injetor(2, code);
+    const r = ee.consumirAutorizacaoBootstrap(c.repo, c.env, inj.opcoes);
+    t(`consumo ${code} transitório: autorizado após retry`, r.autorizado === true && inj.tentativas === 3, `tent=${inj.tentativas}`);
+    t(`consumo ${code}: mesmo autorizacaoId`, r.dados?.autorizacaoId === authAntes.dados?.autorizacaoId);
+    t(`consumo ${code}: original removido, consumida existe`,
+      ee.lerAutorizacaoBootstrap(c.repo, c.env).status === "ausente"
+      && existsSync(r.consumido));
+    const replay = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
+    t(`consumo ${code}: replay recusado`, replay.autorizado === false);
+  }
+
+  // 28b) esgotamento: auth permanece intacta, nada consumido, retry posterior funciona
+  {
+    const c = cenario("consumo-esgotado");
+    ee.gravarAutorizacaoBootstrap(c.repo, c.env);
+    const dir = ee.dirEstado(c.repo, c.env);
+    const authPath = join(dir, "bootstrap-autorizacao.json");
+    const hashAntes = createHash("sha256").update(readFileSync(authPath)).digest("hex");
+    const inj = injetor(99, "EBUSY"); // sempre falha
+    const r = ee.consumirAutorizacaoBootstrap(c.repo, c.env, inj.opcoes);
+    t("consumo esgotado: não autorizado", r.autorizado === false);
+    t("consumo esgotado: tentativas limitadas (6)", inj.tentativas === 6, `tent=${inj.tentativas}`);
+    t("consumo esgotado: auth original intacta",
+      existsSync(authPath) && createHash("sha256").update(readFileSync(authPath)).digest("hex") === hashAntes);
+    t("consumo esgotado: nenhuma consumida", !readdirSync(dir).some((n) => n.startsWith("bootstrap-autorizacao.consumida-")));
+    // tentativa legítima posterior funciona — estado não envenenado
+    const r2 = ee.consumirAutorizacaoBootstrap(c.repo, c.env);
+    t("consumo esgotado: retry posterior consome normalmente", r2.autorizado === true);
+  }
+
+  // 28c) erro não transitório: 1 tentativa, auth intacta
+  {
+    const c = cenario("consumo-nao-transitorio");
+    ee.gravarAutorizacaoBootstrap(c.repo, c.env);
+    const inj = injetor(1, "ENOENT"); // ENOENT não elegível → 1 tentativa só
+    const r = ee.consumirAutorizacaoBootstrap(c.repo, c.env, inj.opcoes);
+    t("consumo ENOENT: não autorizado", r.autorizado === false);
+    t("consumo ENOENT: sem repetição", inj.tentativas === 1, `tent=${inj.tentativas}`);
+    t("consumo ENOENT: auth permanece", ee.lerAutorizacaoBootstrap(c.repo, c.env).status === "ok");
+  }
+
+  // 28d) quarentena: EPERM transitório → move; esgotamento → original preservado
+  {
+    const c = cenario("quarentena-retry");
+    const dir = ee.dirEstado(c.repo, c.env);
+    mkdirSync(dir, { recursive: true });
+    const alvo = join(dir, "atualizacao-ultima.json");
+    writeFileSync(alvo, "{corrompido");
+    const inj = injetor(1, "EPERM");
+    const dest = ee.colocarEmQuarentena(alvo, "json", inj.opcoes);
+    t("quarentena EPERM transitório: movida após retry", typeof dest === "string" && existsSync(dest) && !existsSync(alvo));
+
+    const c2 = cenario("quarentena-esgotada");
+    const dir2 = ee.dirEstado(c2.repo, c2.env);
+    mkdirSync(dir2, { recursive: true });
+    const alvo2 = join(dir2, "restauracao-externa.json");
+    writeFileSync(alvo2, "{corrompido");
+    const inj2 = injetor(99, "EACCES");
+    const dest2 = ee.colocarEmQuarentena(alvo2, "json", inj2.opcoes);
+    t("quarentena esgotada: retorna null", dest2 === null);
+    t("quarentena esgotada: original preservado", existsSync(alvo2) && readFileSync(alvo2, "utf8") === "{corrompido");
+    t("quarentena esgotada: tentativas limitadas", inj2.tentativas === 6, `tent=${inj2.tentativas}`);
   }
 }
 
