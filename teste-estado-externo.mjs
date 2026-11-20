@@ -11,7 +11,8 @@ import { join } from "node:path";
 const {
   caminhoCanonico, instalacaoId, dirEstado, diretorioBaseEstado, gravarJsonAtomico, lerEstado,
   gravarEstado, lerJournal, lerConsentimento, gravarConsentimento,
-  gravarReciboInstalacao, lerReciboInstalacao, provarInstalacaoNova, avaliarBoot, PROTOCOLO_VERSAO,
+  gravarReciboInstalacao, lerReciboInstalacao, avaliarBoot, PROTOCOLO_VERSAO,
+  diagnosticarBootstrap, consumirAutorizacaoBootstrap, estadoInstalacaoConhecido,
 } = await import("./scripts/estado-externo.mjs");
 const bootLock = await import("./scripts/boot-lock.mjs");
 
@@ -41,6 +42,10 @@ t("diretorioBaseEstado == boot-lock (mesma convenção)",
   diretorioBaseEstado(process.env) === bootLock.diretorioBaseEstado());
 t("instalacaoId == boot-lock.instalacaoId", instalacaoId(repo) === bootLock.instalacaoId(repo));
 t("caminhoCanonico == boot-lock.caminhoCanonicoRepo", caminhoCanonico(repo) === bootLock.caminhoCanonicoRepo(repo));
+t("dirEstado == boot-lock.diretorioEstado (paridade final)",
+  dirEstado(repo, process.env) === bootLock.diretorioEstado(repo));
+t("MESTRE_HOME NÃO desvia o state dir (paridade boot-lock)",
+  dirEstado(repo, { MESTRE_HOME: join(TMP, "mh") }) === dirEstado(repo, {}));
 
 // ---------- escrita atômica + leitura ----------
 const arq = join(dirEstado(repo, env), "journal.json");
@@ -84,36 +89,58 @@ gravarConsentimento(repo, "aceito", { instalacaoId: "outra-inst" });
 t("consentimento divergente → divergente", lerConsentimento(repo).status === "divergente");
 rmSync(join(repo, "configuracao", "auto-update.json"), { force: true });
 
-// ---------- recibo de instalação (prova independente) ----------
+// ---------- recibo permanente × autorização de bootstrap ----------
+// Recibo permanente prova "instalação CONCLUÍDA" — NUNCA autoriza
+// banco ausente/vazio como primeira instalação. Autorização de primeiro
+// bootstrap é de uso único e seu produtor confiável ainda não existe:
+// nenhum teste fabrica autorização válida (proibido simular produtor).
 const repoNovo = join(TMP, "repo-novo");
 mkdirSync(join(repoNovo, "scripts"), { recursive: true });
 const envNovo = { MESTRE_STATE_DIR: join(TMP, "state-novo") };
-// sem recibo → NÃO é prova de instalação nova (ausência de banco/state
-// não é recibo; manifesto/tracked/código N tampouco)
-const provaSem = provarInstalacaoNova(repoNovo, envNovo);
-t("sem recibo → não é instalação nova", provaSem.nova === false, JSON.stringify(provaSem));
-t("sem recibo → motivo sem-recibo-valido", /sem-recibo-valido/.test(provaSem.motivo ?? ""), provaSem.motivo);
-// recibo corrompido → não prova
-gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { lixo: true });
-writeFileSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), "{ quebrado");
-t("recibo corrompido → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
-rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
-// recibo de OUTRA instalação → divergente, não prova
-gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), {
-  protocoloVersao: PROTOCOLO_VERSAO, instalacaoId: "deadbeef", repoCanon: "x", tipo: "instalacao-inicial",
+const dirNovo = () => dirEstado(repoNovo, envNovo);
+// sem nada → diagnóstico "desconhecido"; consumo negado
+const cons0 = consumirAutorizacaoBootstrap(repoNovo, envNovo);
+t("sem estado → diagnóstico desconhecido", diagnosticarBootstrap(repoNovo, envNovo) === "desconhecido");
+t("sem autorização → não autorizado", cons0.autorizado === false);
+t("motivo = diagnóstico", cons0.motivo === "desconhecido", cons0.motivo);
+// recibo corrompido → diagnóstico reflete; consumo negado
+gravarJsonAtomico(join(dirNovo(), "instalacao-recibo.json"), { lixo: true });
+writeFileSync(join(dirNovo(), "instalacao-recibo.json"), "{ quebrado");
+t("recibo corrompido → diagnóstico reflete", /recibo-corrompido/.test(diagnosticarBootstrap(repoNovo, envNovo)));
+t("recibo corrompido → não autoriza", consumirAutorizacaoBootstrap(repoNovo, envNovo).autorizado === false);
+rmSync(join(dirNovo(), "instalacao-recibo.json"), { force: true });
+// recibo de OUTRA instalação → divergente, não autoriza
+gravarJsonAtomico(join(dirNovo(), "instalacao-recibo.json"), {
+  protocoloVersao: PROTOCOLO_VERSAO, instalacaoId: "deadbeef", repoCanon: "x", tipo: "instalacao-concluida",
 });
-t("recibo divergente → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
-rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
-// recibo válido → prova
+t("recibo divergente → diagnóstico reflete", /recibo-divergente/.test(diagnosticarBootstrap(repoNovo, envNovo)));
+rmSync(join(dirNovo(), "instalacao-recibo.json"), { force: true });
+// recibo VÁLIDO (instalação concluída) → conhecido p/ boot, mas
+// NUNCA autoriza primeiro bootstrap (banco ausente = banco perdido)
 gravarReciboInstalacao(repoNovo, envNovo);
-t("recibo válido → instalação comprovada", provarInstalacaoNova(repoNovo, envNovo).nova === true);
+t("recibo válido → instalação concluída", diagnosticarBootstrap(repoNovo, envNovo) === "instalacao-concluida");
+t("recibo válido → estado conhecido p/ boot", estadoInstalacaoConhecido(repoNovo, envNovo).conhecido === true);
 t("lerReciboInstalacao ok", lerReciboInstalacao(repoNovo, envNovo).status === "ok");
-// protocolo incompatível no recibo → não prova
-gravarJsonAtomico(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), {
-  protocoloVersao: 999, instalacaoId: instalacaoId(repoNovo), repoCanon: caminhoCanonico(repoNovo), tipo: "instalacao-inicial",
+const consRecibo = consumirAutorizacaoBootstrap(repoNovo, envNovo);
+t("recibo permanente NÃO autoriza bootstrap", consRecibo.autorizado === false && consRecibo.motivo === "instalacao-concluida", JSON.stringify(consRecibo));
+// protocolo incompatível no recibo → não é instalação concluída
+gravarJsonAtomico(join(dirNovo(), "instalacao-recibo.json"), {
+  protocoloVersao: 999, instalacaoId: instalacaoId(repoNovo), repoCanon: caminhoCanonico(repoNovo), tipo: "instalacao-concluida",
 });
-t("recibo protocolo incompatível → não prova", provarInstalacaoNova(repoNovo, envNovo).nova === false);
-rmSync(join(dirEstado(repoNovo, envNovo), "instalacao-recibo.json"), { force: true });
+t("recibo protocolo incompatível → diagnóstico reflete", /recibo-incompativel/.test(diagnosticarBootstrap(repoNovo, envNovo)));
+rmSync(join(dirNovo(), "instalacao-recibo.json"), { force: true });
+// autorização CORROMPIDA: consumo durável acontece (rename) mas não
+// autoriza; o arquivo some do nome original → segunda tentativa cai em
+// "bootstrap-interrompido" (evidência de consumo preservada)
+const arqAuth = join(dirNovo(), "bootstrap-autorizacao.json");
+gravarJsonAtomico(arqAuth, { lixo: true }); // inválido de propósito
+const consLixo = consumirAutorizacaoBootstrap(repoNovo, envNovo);
+t("autorização inválida → não autoriza", consLixo.autorizado === false && consLixo.motivo === "autorizacao-invalida", consLixo.motivo);
+t("autorização inválida foi consumida (rename)", !existsSync(arqAuth) && !!consLixo.consumido && existsSync(consLixo.consumido));
+t("após consumo inválido → diagnóstico bootstrap-interrompido",
+  diagnosticarBootstrap(repoNovo, envNovo) === "bootstrap-interrompido");
+const cons2 = consumirAutorizacaoBootstrap(repoNovo, envNovo);
+t("segunda tentativa → não autoriza (uso único)", cons2.autorizado === false && cons2.motivo === "bootstrap-interrompido", cons2.motivo);
 
 // ---------- avaliarBoot ----------
 // repo limpo sem manifesto → seguro

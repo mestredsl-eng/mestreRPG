@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, resolve, sep } from "node:path";
 import Database from "better-sqlite3";
@@ -8,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { log } from "./logs.js";
 import { config } from "../config.js";
 import { dirsProtegidosBackup, normDir, protegerBackupContraRetencao, desprotegerBackupContraRetencao, referenciadoPorJournal } from "./protecao-backup.js";
-import { validarBackup } from "./validar-backup.js";
+import { validarBackup, sha256Arquivo } from "./validar-backup.js";
 
 const db = getDb();
 
@@ -132,10 +131,6 @@ export function pastaBackups(c: ConfigBackup): string {
   // automáticos de testes caiam na pasta real do repositório.
   if (c.pasta === BACKUP_PADRAO.pasta) return CAMINHOS.backups;
   return resolve(RAIZ, c.pasta);
-}
-
-function sha256Arquivo(caminho: string): string {
-  return createHash("sha256").update(readFileSync(caminho)).digest("hex");
 }
 
 /** Copia consistente do SQLite via API de backup do better-sqlite3.
@@ -389,7 +384,8 @@ export async function verificarBackup(id: string): Promise<{ ok: boolean; detalh
  *      journals), nunca uma proteção ainda necessária.
  *  Não existe transação entre marker (state dir) e flag (banco): a
  *  ordem proteção→flag elimina a janela "flag sem proteção"; a janela
- *  "marker sem flag" é inofensiva (over-protection até expirar). */
+ *  "marker sem flag" é inofensiva (over-protection até a conclusão
+ *  comprovada — markers não expiram por tempo). */
 export async function prepararRestauracao(backupId: string, usuarioId: string) {
   const todos = await db.select().from(backups);
   const alvo = todos.find((b) => b.id === backupId && !b.campaignId);

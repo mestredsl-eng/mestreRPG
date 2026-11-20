@@ -17,7 +17,7 @@
 //    `configuracao: null` no manifesto (chave obrigatória);
 //  - integridade SQLite (PRAGMA integrity_check) do banco snapshot.
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 
@@ -26,10 +26,24 @@ export interface ResultadoValidacaoBackup {
   problemas: string[];
 }
 
-const TAM_MAX_ARQUIVO_HASH = 2 * 1024 * 1024 * 1024; // 2 GiB — acima disso nem tenta hash
+const TAM_JANELA_HASH = 1024 * 1024; // 1 MiB por leitura
 
-function sha256Arquivo(caminho: string): string {
-  return createHash("sha256").update(readFileSync(caminho)).digest("hex");
+/** SHA-256 em streaming síncrono — memória limitada independentemente
+ *  do tamanho do arquivo. NUNCA retornar ok sem verificar o hash
+ *  declarado: não existe limite de tamanho que dispense a verificação. */
+export function sha256Arquivo(caminho: string): string {
+  const fd = openSync(caminho, "r");
+  try {
+    const h = createHash("sha256");
+    const buf = Buffer.alloc(TAM_JANELA_HASH);
+    let n = 0;
+    while ((n = readSync(fd, buf, 0, buf.length, null)) > 0) {
+      h.update(buf.subarray(0, n));
+    }
+    return h.digest("hex");
+  } finally {
+    closeSync(fd);
+  }
 }
 
 interface MetaItem { size?: unknown; sha256?: unknown }
@@ -78,6 +92,17 @@ function inventarioReal(dir: string, problemas: string[]): string[] {
  */
 export function validarBackup(dir: string): ResultadoValidacaoBackup {
   const problemas: string[] = [];
+  // Raiz do backup: deve ser diretório real — symlink ou não-diretório
+  // é rejeitado antes de qualquer leitura (lstat não segue links).
+  let stRoot;
+  try {
+    stRoot = lstatSync(dir);
+  } catch (e) {
+    return { ok: false, problemas: [`raiz do backup inacessível: ${String(e)}`] };
+  }
+  if (stRoot.isSymbolicLink()) return { ok: false, problemas: ["raiz do backup é symlink — proibido"] };
+  if (!stRoot.isDirectory()) return { ok: false, problemas: ["raiz do backup não é um diretório"] };
+
   const manPath = join(dir, "manifesto.json");
   if (!existsSync(manPath)) return { ok: false, problemas: ["manifesto.json ausente"] };
 
@@ -155,12 +180,32 @@ export function validarBackup(dir: string): ResultadoValidacaoBackup {
       problemas.push(`${rel}: metadados incompletos no manifesto`);
       continue;
     }
-    const st = statSync(p);
+    // lstat: rejeita symlink trocado após o inventário (TOCTOU) e
+    // qualquer entrada que não seja arquivo regular.
+    let st;
+    try {
+      st = lstatSync(p);
+    } catch (e) {
+      problemas.push(`${rel}: arquivo declarado inacessível (${String(e).slice(0, 80)})`);
+      continue;
+    }
+    if (st.isSymbolicLink() || !st.isFile()) {
+      problemas.push(`${rel}: não é arquivo regular (symlink/especial proibido)`);
+      continue;
+    }
     if (st.size !== meta.size) {
       problemas.push(`${rel}: tamanho diverge (${st.size} != ${meta.size})`);
       continue;
     }
-    if (st.size <= TAM_MAX_ARQUIVO_HASH && sha256Arquivo(p) !== meta.sha256) {
+    // Hash SEMPRE verificado em streaming — inclusive acima de 2 GiB.
+    let hashReal: string;
+    try {
+      hashReal = sha256Arquivo(p);
+    } catch (e) {
+      problemas.push(`${rel}: falha ao calcular sha256 (${String(e).slice(0, 80)})`);
+      continue;
+    }
+    if (hashReal !== meta.sha256) {
       problemas.push(`${rel}: sha256 diverge`);
     }
   }

@@ -191,7 +191,7 @@ interface EeModulo {
   lerJournal(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): {
     status: string; dados?: Record<string, unknown>; quarentena?: string | null;
   };
-  provarInstalacaoNova(repoDir: string, env?: NodeJS.ProcessEnv): { nova: boolean; motivo?: string };
+  consumirAutorizacaoBootstrap(repoDir: string, env?: NodeJS.ProcessEnv): { autorizado: boolean; motivo?: string };
 }
 
 const JOURNAL_REST = "restauracao-externa.json";
@@ -278,19 +278,22 @@ async function principal() {
   const retomarRollback = faseJournal.startsWith("rollback");
   const retomarAplicacao = journalPendente && !retomarRollback;
 
-  // 0b) banco ausente: só é "nada a restaurar" com recibo durável de
-  //     instalação. Com journal pendente, segue para retomada — o
-  //     backupDir/preRestoreDir vêm do journal, não do banco.
+  // 0b) banco ausente: só é "primeiro bootstrap" mediante autorização
+  //     de USO ÚNICO emitida por produtor confiável — consumida
+  //     duravelmente aqui. Recibo permanente de instalação concluída
+  //     NÃO autoriza (banco perdido ≠ primeira instalação). Com journal
+  //     pendente, segue para retomada — backupDir/preRestoreDir vêm do
+  //     journal, não do banco.
   const dbExiste = existsSync(DB_VIVA);
   if (!dbExiste && !journalPendente) {
     const mod = await estadoExterno();
-    const prova = mod.provarInstalacaoNova(REPO_ROOT, process.env);
-    if (!prova.nova) {
-      log(`ERRO: banco inexistente, sem journal e sem recibo de instalação verificável (${prova.motivo ?? "sem prova"}) — estado ambíguo, restauração abortada por segurança.`);
+    const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
+    if (!auth.autorizado) {
+      log(`ERRO: banco inexistente, sem journal e sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
       process.exit(2);
     }
     mkdirSync(dirname(DB_VIVA), { recursive: true });
-    log("Banco inexistente — instalação inicial comprovada por recibo; nada a restaurar.");
+    log("Banco inexistente — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
     return;
   }
 
@@ -326,15 +329,16 @@ async function principal() {
           if (journalPendente) {
             forcarRollback = true; // journal pendente + banco vazio = inesperado
           } else {
-            // Banco vazio (0 tabelas) só é instalação inicial COM recibo
-            // durável — banco vazio sozinho não prova nada.
+            // Banco vazio (0 tabelas) só é primeiro bootstrap mediante
+            // autorização de uso único — banco vazio sozinho não prova
+            // nada e recibo permanente não autoriza (banco perdido).
             const mod = await estadoExterno();
-            const prova = mod.provarInstalacaoNova(REPO_ROOT, process.env);
-            if (!prova.nova) {
-              log(`ERRO: banco vazio sem recibo de instalação verificável (${prova.motivo ?? "sem prova"}) — estado ambíguo, restauração abortada por segurança.`);
+            const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
+            if (!auth.autorizado) {
+              log(`ERRO: banco vazio sem autorização de primeiro bootstrap (${auth.motivo ?? "sem autorização"}) — restauração abortada por segurança.`);
               process.exit(2);
             }
-            log("Banco vazio — instalação inicial comprovada por recibo; nada a restaurar.");
+            log("Banco vazio — primeiro bootstrap autorizado (uso único consumido); nada a restaurar.");
             return;
           }
         } else {
