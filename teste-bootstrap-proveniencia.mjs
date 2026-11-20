@@ -6,7 +6,8 @@
 // do state dir com marcador preservado, adoção N-1, banco perdido com
 // backups, interrupção marcador↔autorização, corrupção/divergência do
 // marcador, recuperação e leitura somente-leitura do consumidor.
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -321,15 +322,20 @@ for (const [nome, preparar] of [
   d.pragma("journal_mode = WAL");
   d.exec("insert into server_settings (key,value) values ('x','y')");
   const snapshot = () => {
-    const dirs = [join(c.repo, "banco"), c.stateDir, c.provDir];
+    // Snapshot profundo: SHA-256 do conteúdo + tamanho + mtime + tipo,
+    // recursivo — nomes e tamanhos sozinhos não provam read-only.
     const res = {};
-    for (const dir of dirs) {
-      if (!existsSync(dir)) { res[dir] = "AUSENTE"; continue; }
-      res[dir] = readdirSync(dir).sort().map((n) => {
-        const p = join(dir, n);
-        try { return `${n}:${readFileSync(p).length}`; } catch { return `${n}:?`; }
-      });
-    }
+    const varrer = (dir, prefixo) => {
+      if (!existsSync(dir)) { res[prefixo || dir] = "AUSENTE"; return; }
+      for (const n of readdirSync(dir).sort()) {
+        const p = join(dir, n), st = statSync(p), k = `${prefixo}${n}`;
+        if (st.isDirectory()) { res[`${k}/`] = "dir"; varrer(p, `${k}/`); }
+        else res[k] = `${st.size}:${st.mtimeMs}:${createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 16)}`;
+      }
+    };
+    varrer(join(c.repo, "banco"), "banco/");
+    varrer(c.stateDir, "state/");
+    varrer(c.provDir, "prov/");
     return JSON.stringify(res);
   };
   const antes = snapshot();
@@ -580,13 +586,109 @@ for (const [nome, preparar] of [
     MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
     MESTRE_BACKUPS: join(c.repo, "backups"),
   };
-  // consumida ANTIGA (id=X) + andamento pendente (id=Y) sem auth atual
-  escreverEstado(c, "bootstrap-autorizacao.consumida-2020-01-01-antiga", { tipo: "primeiro-bootstrap", autorizacaoId: "c".repeat(32), emitidaEm: "2020-01-01" });
-  ee.gravarBootstrapAndamento(c.repo, c.env, { etapa: "autorizacao-pendente", autorizacaoId: "d".repeat(32), motivo: "ciclo-atual" });
+  // consumida ANTIGA (id=X) + andamento pendente (id=Y) sem auth atual.
+  // repoDir DEVE ser RAIZ_REPO — os processos resolvem instalacaoId a
+  // partir do repo real, não do diretório da fixture.
+  const escreverEstadoReal = (nome, dados) => {
+    const dir = ee.dirEstado(RAIZ_REPO, envF);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, nome), JSON.stringify({
+      protocoloVersao: ee.PROTOCOLO_VERSAO,
+      instalacaoId: ee.instalacaoId(RAIZ_REPO),
+      repoCanon: ee.caminhoCanonico(RAIZ_REPO),
+      ...dados,
+    }));
+  };
+  escreverEstadoReal("bootstrap-autorizacao.consumida-2020-01-01-antiga", { tipo: "primeiro-bootstrap", autorizacaoId: "c".repeat(32), emitidaEm: "2020-01-01" });
+  ee.gravarBootstrapAndamento(RAIZ_REPO, envF, { etapa: "autorizacao-pendente", autorizacaoId: "d".repeat(32), motivo: "ciclo-atual" });
   const r = spawnSync("node", ["servidor/dist/db/aplicar-restauracao.js"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
   t("retomada recusa consumida de outro ciclo (exit 2)", r.status === 2, `status=${r.status} ${(r.stdout + r.stderr).slice(-200)}`);
   const g = spawnSync("node", ["scripts/bootstrap-install.mjs"], { cwd: RAIZ_REPO, env: envF, encoding: "utf8", timeout: 120000 });
   t("gate também bloqueia o mesmo estado", g.status === 2, `status=${g.status}`);
+}
+
+// ---------- 27) REGRESSÃO P1 — tentativa sem autorização não envenena ----------
+// Auditoria 7af6b13: autorizarBootstrap gravava andamento-pendente
+// ANTES de validar a autorização → consumo falho deixava pendente sem
+// id → Gate 0 bloqueava permanentemente. Agora a validação precede
+// qualquer escrita.
+{
+  const RAIZ_REPO = process.cwd();
+  const montar = (nome) => {
+    const c = cenario(nome);
+    const envF = {
+      ...process.env,
+      MESTRE_STATE_DIR: c.stateDir,
+      MESTRE_PROVENIENCIA_DIR: c.provDir,
+      MESTRE_BANCO: c.db,
+      MESTRE_ARQUIVOS: join(c.repo, "arquivos", "campanhas"),
+      MESTRE_BACKUPS: join(c.repo, "backups"),
+    };
+    return {
+      c, envF,
+      rodar: (args, extra = {}) => spawnSync("node", args, { cwd: RAIZ_REPO, env: { ...envF, ...extra }, encoding: "utf8", timeout: 120000 }),
+      temAndamento: () => {
+        const est = ee.dirEstado(RAIZ_REPO, envF);
+        return existsSync(est) && readdirSync(est).includes("bootstrap-em-andamento.json");
+      },
+    };
+  };
+
+  // 27a) sem autorização nenhuma → exit 2, ZERO estado persistido
+  {
+    const f = montar("p1-sem-auth");
+    const r = f.rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+    t("P1: restaurador sem auth → exit 2", r.status === 2, `status=${r.status}`);
+    t("P1: nenhum andamento gravado", f.temAndamento() === false);
+    t("P1: state dir sem registros de bootstrap", !existsSync(ee.dirEstado(RAIZ_REPO, f.envF))
+      || !readdirSync(ee.dirEstado(RAIZ_REPO, f.envF)).some((n) => n.includes("bootstrap")));
+    // bootstrap legítimo posterior FUNCIONA
+    const g = f.rodar(["scripts/bootstrap-install.mjs"]);
+    t("P1: gate emite autorização depois da recusa", g.status === 0);
+    const r2 = f.rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+    t("P1: bootstrap legítimo posterior conclui (exit 0)", r2.status === 0, (r2.stdout + r2.stderr).slice(-200));
+    const m = f.rodar(["servidor/dist/db/migrate.js"]);
+    t("P1: migrate conclui após retomada limpa", m.status === 0);
+    t("P1: marcador+recibo gravados", ee.lerMarcadorInstalacao(RAIZ_REPO, f.envF).status === "ok" && ee.lerReciboInstalacao(RAIZ_REPO, f.envF).status === "ok");
+  }
+
+  // 27b) autorização CORROMPIDA → exit 2, sem envenenar
+  {
+    const f = montar("p1-auth-corrompida");
+    const dir = ee.dirEstado(RAIZ_REPO, f.envF);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "bootstrap-autorizacao.json"), "{lixo-corrompido");
+    const r = f.rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+    t("P1: auth corrompida → exit 2", r.status === 2, `status=${r.status}`);
+    t("P1: auth corrompida não grava andamento", f.temAndamento() === false);
+    const g = f.rodar(["scripts/bootstrap-install.mjs"]);
+    t("P1: gate bloqueia auth corrompida (não emite outra)", g.status === 2, `status=${g.status}`);
+  }
+
+  // 27c) recibo VÁLIDO + auth → instalação concluída, sem andamento
+  {
+    const f = montar("p1-recibo-valido");
+    ee.gravarReciboInstalacao(RAIZ_REPO, f.envF);
+    ee.gravarAutorizacaoBootstrap(RAIZ_REPO, f.envF);
+    const r = f.rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+    t("P1: recibo válido → exit 2 (concluída)", r.status === 2, `status=${r.status}`);
+    t("P1: recibo válido não grava andamento", f.temAndamento() === false);
+    t("P1: autorização NÃO consumida (evidência preservada)",
+      existsSync(join(ee.dirEstado(RAIZ_REPO, f.envF), "bootstrap-autorizacao.json")));
+  }
+
+  // 27d) recibo CORROMPIDO → bloqueio sem andamento inválido
+  {
+    const f = montar("p1-recibo-corrompido");
+    const dir = ee.dirEstado(RAIZ_REPO, f.envF);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "instalacao-recibo.json"), "{lixo");
+    ee.gravarAutorizacaoBootstrap(RAIZ_REPO, f.envF);
+    const r = f.rodar(["servidor/dist/db/aplicar-restauracao.js"]);
+    t("P1: recibo corrompido → exit 2", r.status === 2, `status=${r.status}`);
+    t("P1: recibo corrompido não grava andamento", f.temAndamento() === false);
+    t("P1: auth não consumida com recibo ruim", existsSync(join(dir, "bootstrap-autorizacao.json")));
+  }
 }
 
 console.log(`\n${pass} ok / ${fail} falhas`);

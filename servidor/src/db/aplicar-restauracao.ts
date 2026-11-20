@@ -198,6 +198,7 @@ interface EeModulo {
   lerMarcadorInstalacao?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string };
   lerJournalSemEfeitos?(repoDir: string, nome: string, env?: NodeJS.ProcessEnv): { status: string; dados?: Record<string, unknown> };
   lerAutorizacaoBootstrap?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; dados?: Record<string, unknown> };
+  lerReciboInstalacao?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string };
   avaliarBootstrapAndamento?(repoDir: string, env?: NodeJS.ProcessEnv): { status: string; etapa?: string; autorizacaoId?: string; motivo?: string };
   validarAutorizacoesConsumidas?(repoDir: string, env?: NodeJS.ProcessEnv, autorizacaoId?: string | null): { status: string; arquivo?: string };
 }
@@ -246,13 +247,34 @@ function crashInjection(ponto: string) {
 }
 
 function autorizarBootstrap(mod: EeModulo, motivo: string) {
-  // Lê o autorizacaoId da autorização atual ANTES de consumir — o
-  // marcador pendente precisa carregar a identidade EXATA do ciclo,
-  // senão uma autorização antiga poderia ser confundida na retomada.
+  // VALIDAÇÃO ANTES DE QUALQUER ESCRITA: uma tentativa recusada não
+  // pode gravar andamento — um pendente sem autorizacaoId/prova
+  // envenenaria o Gate 0 permanentemente (regressão apontada pela
+  // auditoria W13/W14). Ordem:
+  //   1) autorização atual precisa existir, ter envelope válido e
+  //      autorizacaoId bem formado — é a identidade do ciclo;
+  //   2) recibo precisa estar comprovadamente ausente (mesmo
+  //      contrato fail-closed do consumo: ok→concluída, qualquer
+  //      outro estado→bloqueio);
+  //   3) SÓ ENTÃO grava andamento "autorizacao-pendente" com o id;
+  //   4) consome (rename one-shot) e confere o id do consumido;
+  //   5) promove a "autorizada".
+  // Janelas de crash restantes são todas recuperáveis: pendente+auth
+  // válida → retomada consome; pendente+consumida do mesmo id →
+  // retomada promove. Nenhuma deixa estado inválido.
   const authAtual = mod.lerAutorizacaoBootstrap?.(REPO_ROOT, process.env);
   const authId = authAtual?.status === "ok"
     ? (authAtual.dados?.autorizacaoId as string | undefined)
     : undefined;
+  if (authAtual?.status !== "ok" || typeof authId !== "string" || !/^[0-9a-f]{32}$/.test(authId)) {
+    log(`ERRO: sem autorização de primeiro bootstrap válida (${authAtual?.status ?? "ausente"}) — restauração abortada sem alterar o estado de bootstrap.`);
+    process.exit(2);
+  }
+  const recibo = mod.lerReciboInstalacao?.(REPO_ROOT, process.env);
+  if (recibo && recibo.status !== "ausente") {
+    log(`ERRO: recibo de instalação ${recibo.status === "ok" ? "presente (instalação já concluída)" : `em estado ${recibo.status}`} — restauração abortada sem alterar o estado de bootstrap.`);
+    process.exit(2);
+  }
   gravarAndamento(mod, "autorizacao-pendente", { motivo, autorizacaoId: authId });
   crashInjection("pendente");
   const auth = mod.consumirAutorizacaoBootstrap(REPO_ROOT, process.env);
@@ -262,14 +284,14 @@ function autorizarBootstrap(mod: EeModulo, motivo: string) {
   }
   // Vinculação: o arquivo consumido precisa ser o MESMO id anunciado
   // no marcador pendente — nunca uma autorização de outro ciclo.
-  if (authId && auth.dados?.autorizacaoId !== authId) {
+  if (auth.dados?.autorizacaoId !== authId) {
     log("ERRO: autorização consumida diverge do ciclo pendente (autorizacaoId) — restauração abortada.");
     process.exit(2);
   }
   crashInjection("consumida");
   gravarAndamento(mod, "autorizada", {
     motivo,
-    autorizacaoId: (auth.dados?.autorizacaoId as string | undefined) ?? authId,
+    autorizacaoId: authId,
     emitidaEm: auth.dados?.emitidaEm,
   });
   mkdirSync(dirname(DB_VIVA), { recursive: true });

@@ -305,6 +305,12 @@ export function decidirPortao(s) {
   if (av.status === "valido") {
     // O avaliador já exige marcador ausente; instalação registrada com
     // banco perdido parou antes, no ramo "banco-perdido".
+    // Recibo ok + andamento válido é contraditório (instalação
+    // concluída não pode estar "em bootstrap") → fail-closed.
+    if (s.recibo.status !== "ausente") {
+      return bloquear("bootstrap-andamento-contraditorio",
+        "Há bootstrap em andamento válido mas também recibo de instalação — estado contraditório. Investigue o state dir antes de reiniciar.");
+    }
     return { seguro: true, acao: "prosseguir", motivo: "bootstrap-em-andamento" };
   }
   if (s.auth.status === "ok") {
