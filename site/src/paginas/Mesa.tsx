@@ -1942,12 +1942,18 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     setMedida(null);
   }, []);
 
-  // token sob o ponteiro: primeiro o alvo do evento (botão .vtt-token),
-  // senão o centro mais próximo dentro de 30px. Só tokens do estado já
+  // token sob o ponteiro: o elemento efetivamente sob as coordenadas
+  // atuais (elementFromPoint), senão o centro mais próximo dentro de
+  // 30px. NUNCA ev.target para o destino: em gestos de toque o Pointer
+  // Capture implícito retém o alvo de origem durante todo o movimento
+  // e o snap ficaria preso ao token inicial. Só tokens do estado já
   // filtrado pelo servidor são candidatos — ocultos de não-mestres nem
   // chegam ao cliente.
-  const snapTokenRegua = (ev: { clientX: number; clientY: number; target?: EventTarget | null }) => {
-    const porAlvo = (ev.target as HTMLElement | null)?.closest?.(".vtt-token");
+  const snapTokenRegua = (ev: { clientX: number; clientY: number }) => {
+    const sobPonteiro = typeof document !== "undefined"
+      ? (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)
+      : null;
+    const porAlvo = sobPonteiro?.closest?.(".vtt-token");
     const idAlvo = porAlvo?.getAttribute("data-token-id");
     const porId = idAlvo ? vtt.tokens.find((t) => t.id === idAlvo && t.ativo) : undefined;
     if (porId) return { ponto: { x: porId.x, y: porId.y }, token: porId };
@@ -1967,7 +1973,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   };
 
   const iniciarRegua = (e: ReactPointerEvent) => {
-    if (!reguaAtiva || !dimsMapa || encerrada || visaoBloqueada || visaoPapelPendente || pincel) return;
+    if (!reguaAtiva || !dimsMapa || encerrada || visaoBloqueada || visaoPapelPendente || pincel || desenhoRef.current) return;
     if (reguaGestGesto.current !== null) return;
     const alvo = snapTokenRegua(e.nativeEvent);
     if (!alvo) return;
@@ -2312,7 +2318,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // interfere: eventos de outro pointerId são ignorados e um novo
   // pointerdown é bloqueado enquanto há desenho ativo.
   const iniciarPincel = (e: ReactPointerEvent) => {
-    if (!pincel || !souMestreCena || pendenteNevoaRef.current || nevoaIncertaRef.current || desenhoRef.current) return;
+    if (!pincel || !souMestreCena || pendenteNevoaRef.current || nevoaIncertaRef.current || desenhoRef.current
+      || reguaAtiva || reguaGestGesto.current !== null) return;
     const p = pontoNormalizado(e);
     if (!p) return;
     e.preventDefault();
@@ -2587,7 +2594,14 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
             className={reguaAtiva ? "primario" : "secundario"}
             disabled={!dimsMapa || encerrada}
             title={dimsMapa ? "Medir distâncias no tabuleiro" : "Aguardando as dimensões do mapa…"}
-            onClick={() => { setReguaAtiva((a) => !a); if (reguaAtiva) limparRegua(); }}
+            onClick={() => {
+              if (reguaAtiva) { setReguaAtiva(false); limparRegua(); return; }
+              // exclusividade régua × pincel: ativar a régua desliga o
+              // pincel e descarta rascunho, gesto e prévia de névoa
+              fimDesenhoRef.current?.();
+              setPincel(false); setPreviewNevoa(null); desenhoRef.current = null;
+              setReguaAtiva(true);
+            }}
           >{reguaAtiva ? "Sair da régua" : "Régua"}</button>
           {reguaAtiva && (
             <>
@@ -2674,7 +2688,15 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           <button
             className={pincel ? "primario" : "secundario"}
             disabled={pendenteNevoa || nevoaIncerta}
-            onClick={() => { fimDesenhoRef.current?.(); setPincel((p) => !p); }}
+            onClick={() => {
+              fimDesenhoRef.current?.();
+              if (!pincel) {
+                // exclusividade régua × pincel: ativar o pincel desliga
+                // a régua e limpa medida/gesto de medição em andamento
+                setReguaAtiva(false); limparRegua();
+              }
+              setPincel(!pincel);
+            }}
           >{pincel ? "Sair do pincel" : "Pincel de névoa"}</button>
           {pincel && (
             <label className="vtt-nevoa-raio">

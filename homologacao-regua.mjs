@@ -296,6 +296,48 @@ try {
   t("medida do jogador não vaza ao mestre", await pgM.locator(".vtt-regua-rotulo").count() === 0);
   await pgJ.keyboard.press("Escape");
 
+  // ---------- D2. Exclusividade régua × pincel de névoa ----------
+  sec("D2. Régua e pincel são mutuamente exclusivos");
+  const metaNevoa = pgM.locator(".vtt-nevoa-controles .meta", { hasText: "Névoa:" });
+  const btnPincel = pgM.getByRole("button", { name: "Pincel de névoa" });
+  const btnRegua = pgM.getByRole("button", { name: /Régua|Sair da régua/ });
+  // com a régua ativa, um gesto no tabuleiro mede — não desenha névoa
+  await ligarRegua(pgM);
+  const b2 = await pgM.locator(".vtt-tabuleiro").boundingBox();
+  await arrastar(pgM,
+    { x: b2.x + b2.width * 0.15, y: b2.y + b2.height * 0.85 },
+    { x: b2.x + b2.width * 0.15, y: b2.y + b2.height * 0.15 });
+  await pgM.locator(".vtt-regua-rotulo").waitFor({ timeout: 8000 });
+  t("gesto com régua ativa mede (não vira traço de névoa)",
+    await pgM.locator(".vtt-nevoa-canvas-pincel").count() === 0
+    && /desativada/.test((await metaNevoa.textContent()) ?? ""));
+  await pgM.keyboard.press("Escape");
+  await pgM.waitForTimeout(150);
+  // ativar o pincel desliga a régua e limpa a medida
+  await btnPincel.click();
+  t("ativar pincel desliga régua", await pgM.locator(".vtt-tabuleiro-regua").count() === 0);
+  t("pincel ativo (canvas interativo)", await pgM.locator(".vtt-nevoa-canvas-pincel").count() === 1);
+  // com o pincel ativo, um gesto desenha — não mede
+  await arrastar(pgM,
+    { x: b2.x + b2.width * 0.2, y: b2.y + b2.height * 0.2 },
+    { x: b2.x + b2.width * 0.7, y: b2.y + b2.height * 0.7 });
+  // "desativada" contém "ativa" — o wait precisa do padrão completo
+  await pgM.waitForFunction(() => /Névoa: ativa \(\d+ traço/.test(
+    document.querySelector(".vtt-nevoa-controles .meta")?.textContent ?? ""), null, { timeout: 10000 });
+  t("gesto com pincel ativo desenha traço de névoa",
+    /ativa \(1 traço\)/.test((await metaNevoa.textContent()) ?? ""), await metaNevoa.textContent());
+  t("gesto de pincel não gerou medida de régua", await pgM.locator(".vtt-regua-rotulo").count() === 0);
+  // ativar a régua desliga o pincel e limpa o rascunho
+  await btnRegua.click();
+  await pgM.locator(".vtt-tabuleiro-regua").waitFor({ timeout: 8000 });
+  t("ativar régua desliga pincel", await pgM.locator(".vtt-nevoa-canvas-pincel").count() === 0);
+  // desfaz a névoa criada pelo teste para não afetar as seções seguintes
+  await pgM.getByRole("button", { name: "Revelar tudo" }).click();
+  await pgM.locator(".vtt-nevoa-controles .meta", { hasText: "desativada" }).waitFor({ timeout: 10000 });
+  t("névoa desativada após limpeza do teste", true);
+  await pgM.keyboard.press("Escape");
+  await pgM.waitForTimeout(150);
+
   // ---------- E. Limpeza de estado ----------
   sec("E. Limpeza de estado");
   // troca de mapa desativa a régua (garante modo ativo antes)
@@ -325,8 +367,43 @@ try {
   t("após reload régua desativada", await pgM.locator(".vtt-tabuleiro-regua").count() === 0);
   t("calibração persiste após reload", await pgM.locator(".vtt-regua-controles .meta", { hasText: "Escala:" }).count() === 1);
 
-  // ---------- F. Mobile (touch) ----------
-  sec("F. Mobile 390x844 — toque e aspecto");
+  // reconexão de socket: medida e modo régua nunca são restaurados
+  await ligarRegua(pgM);
+  {
+    const cR1 = await centroToken(pgM, 0); const cR2 = await centroToken(pgM, 1);
+    await arrastar(pgM, cR1, cR2);
+    await pgM.locator(".vtt-regua-rotulo").waitFor({ timeout: 8000 });
+  }
+  // reconexão de socket real: disconnect/connect do cliente —
+  // o handler 'connect' zera medida e modo régua
+  await pgM.evaluate(() => window.__mesaSocket?.disconnect());
+  await pgM.waitForFunction(() => window.__mesaSocket?.connected === false, null, { timeout: 10000 }).catch(() => {});
+  await pgM.evaluate(() => window.__mesaSocket?.connect());
+  await pgM.waitForFunction(() => window.__mesaSocket?.connected === true, null, { timeout: 20000 }).catch(() => {});
+  await pgM.waitForTimeout(800);
+  t("reconexão zera medida e desativa régua",
+    await pgM.locator(".vtt-regua-rotulo").count() === 0 && await pgM.locator(".vtt-tabuleiro-regua").count() === 0);
+
+  // reentrada na sessão (sair e voltar) também não restaura estado
+  await ligarRegua(pgM);
+  {
+    const cS1 = await centroToken(pgM, 0); const cS2 = await centroToken(pgM, 1);
+    await arrastar(pgM, cS1, cS2);
+    await pgM.locator(".vtt-regua-rotulo").waitFor({ timeout: 8000 });
+  }
+  await pgM.getByRole("button", { name: "Sair da mesa" }).click();
+  await irMesa(pgM);
+  await abrirSessao(pgM, "Mesa Régua UI");
+  t("reentrada na sessão não restaura medida nem modo", 
+    await pgM.locator(".vtt-regua-rotulo").count() === 0 && await pgM.locator(".vtt-tabuleiro-regua").count() === 0);
+
+  // dois tokens visíveis ao jogador para o gesto token→token por
+  // toque real (o Alfa foi removido na seção E; Beta e Secreto seguem)
+  await novoToken("Gama", 0.2, 0.3);
+  await novoToken("Delta", 0.8, 0.3);
+
+  // ---------- F. Mobile (touch REAL via CDP Input.dispatchTouchEvent) ----------
+  sec("F. Mobile 390x844 — toque real token→token");
   const ctxMob = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const pgMob = await ctxMob.newPage();
   vigiar(pgMob, "mobile");
@@ -342,16 +419,41 @@ try {
     return b && !b.disabled;
   }, { timeout: 15000 });
   await ligarRegua(pgMob);
-  // gesto de arrasto por toque (pointer events unificados mouse/toque)
-  const mbox = await pgMob.locator(".vtt-tabuleiro").boundingBox();
-  const d1 = { x: mbox.x + mbox.width * 0.2, y: mbox.y + mbox.height * 0.2 };
-  const d2 = { x: mbox.x + mbox.width * 0.2, y: mbox.y + mbox.height * 0.8 };
-  await pgMob.touchscreen.tap(d1.x, d1.y).catch(() => {});
-  await pgMob.mouse.move(d1.x, d1.y); await pgMob.mouse.down();
-  await pgMob.mouse.move(d2.x, d2.y, { steps: 5 }); await pgMob.mouse.up();
+  // Gesto touchscreen REAL via CDP: touchStart no centro do token de
+  // origem, touchMove atravessando o tabuleiro e terminando sobre o
+  // token de destino, touchEnd. Pointer Events unificados + Pointer
+  // Capture implícito do toque reproduzem o cenário do audit — um
+  // snap preso à origem exibiria ~0 m e FALHARIA este teste.
+  const cdp = await ctxMob.newCDPSession(pgMob);
+  const centroNome = (txt) => pgMob.locator(".vtt-token", { hasText: txt }).first().evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+  });
+  const g1 = await centroNome("GA"); // Gama (0.2,0.3)
+  const g2 = await centroNome("DE"); // Delta (0.8,0.3)
+  t("tokens Gama/Delta visíveis ao jogador no mobile",
+    await pgMob.locator(".vtt-token", { hasText: "GA" }).count() === 1
+    && await pgMob.locator(".vtt-token", { hasText: "DE" }).count() === 1);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: g1.x, y: g1.y, id: 1 }] });
+  const PASSOS = 10;
+  for (let i = 1; i <= PASSOS; i++) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: g1.x + ((g2.x - g1.x) * i) / PASSOS, y: g1.y + ((g2.y - g1.y) * i) / PASSOS, id: 1 }],
+    });
+    await pgMob.waitForTimeout(25);
+  }
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await pgMob.locator(".vtt-regua-rotulo").waitFor({ timeout: 8000 });
-  // dy=0.6 → 0.6*900=540 un → 8,1 m
-  t("toque/arrasto mobile mede e exibe unidade", /8[.,]1/.test(await pgMob.locator(".vtt-regua-rotulo").textContent() ?? ""), await pgMob.locator(".vtt-regua-rotulo").textContent());
+  // dx=0.6 → 0.6*1200=720 un. mapa; 720/100*1.5 = 10,8 m
+  const txtRotMob = await pgMob.locator(".vtt-regua-rotulo").textContent();
+  t("toque real token→token snap no destino e exibe distância",
+    /10[.,]8/.test(txtRotMob ?? "") && /720/.test(txtRotMob ?? ""), txtRotMob);
+  t("dois pontos e linha SVG após gesto touch", 
+    await pgMob.locator(".vtt-regua-ponto").count() === 2 && await pgMob.locator(".vtt-regua-svg line").count() === 1);
+  // gesto encerrado: medida permanece estável (não depende de gesto ativo)
+  await pgMob.waitForTimeout(300);
+  t("medida persiste após touchEnd", /10[.,]8/.test(await pgMob.locator(".vtt-regua-rotulo").textContent() ?? ""));
   await pgMob.screenshot({ path: join(SHOTS, "regua-03-mobile.png") });
   t("mobile sem overflow horizontal", await pgMob.evaluate(() => document.scrollingElement.scrollWidth <= document.documentElement.clientWidth + 1));
 
