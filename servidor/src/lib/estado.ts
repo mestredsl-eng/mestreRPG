@@ -129,16 +129,49 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     // "substituir" pacote.campanhaId === campaignId (validado na rota).
     campanhaIdOrigem: campaignId,
   };
-  // C3: insumos do fichaFp — config.sangue do ruleset ativo (bruto,
-  // antes de qualquer parse) e a estrutura publicada EXATA de cada
-  // templateVersion. Ambos vêm das mesmas linhas exportadas, então a
-  // importação reproduz o fingerprint sobre o pacote recebido.
-  const rsAtivoExport = (estado.ruleSets ?? []).find((r) => r.isActive);
-  const configSangueExport =
-    (rsAtivoExport?.config as Record<string, unknown> | undefined)?.sangue ?? null;
-  const estruturaPorVersao = new Map(
-    (estado.sheetVersions ?? []).map((v) => [v.id, v.structure]),
+  // C3 (bloqueio 2 — fail-closed): a v2 só é emitida quando TODOS os
+  // elos do fingerprint existem de verdade. Regras do pacote:
+  //   - exatamente UM ruleset ativo, sem IDs duplicados;
+  //   - `config.sangue` do ruleset ativo presente e objeto;
+  //   - personagem com templateVersionId → sheetVersion PUBLICADA
+  //     (publishedAt) com structure → sheetTemplate da MESMA campanha.
+  // Qualquer elo ausente → o personagem NÃO recebe v2 (seu __xp segue
+  // com sig v1 e seu __sangue fica sem prova — a importação descarta).
+  const idsRulesVistos = new Set<string>();
+  let rulesIdsDuplicados = false;
+  for (const r of estado.ruleSets ?? []) {
+    const id = String((r as { id?: unknown }).id ?? "");
+    if (idsRulesVistos.has(id)) rulesIdsDuplicados = true;
+    idsRulesVistos.add(id);
+  }
+  const rsAtivosExp = (estado.ruleSets ?? []).filter((r) => r.isActive === true || (r as { isActive?: unknown }).isActive === 1);
+  const rsUnicoExp = !rulesIdsDuplicados && rsAtivosExp.length === 1 ? rsAtivosExp[0] : null;
+  const configSangueExport = rsUnicoExp
+    ? ((rsUnicoExp.config as Record<string, unknown> | undefined)?.sangue ?? null)
+    : null;
+  const pacoteSangueElegivel =
+    !!rsUnicoExp &&
+    !!configSangueExport && typeof configSangueExport === "object" && !Array.isArray(configSangueExport);
+  const versaoPorIdExp = new Map(
+    (estado.sheetVersions ?? []).map((v) => [String(v.id), v]),
   );
+  const templatePorIdExp = new Map(
+    (estado.sheetTemplates ?? []).map((t) => [String(t.id), t]),
+  );
+  const fichaFpExport = (row: (typeof estado.characters)[number]): string | null => {
+    if (!pacoteSangueElegivel) return null;
+    const tvId = (row as { templateVersionId?: unknown }).templateVersionId;
+    if (typeof tvId !== "string" || !tvId) return null;
+    const ver = versaoPorIdExp.get(tvId);
+    if (!ver || ver.publishedAt == null || ver.structure == null) return null;
+    const tpl = templatePorIdExp.get(String(ver.templateId ?? ""));
+    if (!tpl || tpl.campaignId !== campaignId) return null;
+    return impressaoDigitalFicha({
+      templateVersionId: tvId,
+      estrutura: ver.structure,
+      configSangue: configSangueExport,
+    });
+  };
   for (const row of estado.characters ?? []) {
     const data = row.data as Record<string, unknown> | null;
     if (!data || typeof data !== "object") continue;
@@ -149,23 +182,22 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
     // regras+personagem+campanha de origem. O `sig` v1 residual de
     // `__xp` é removido — nunca coexistem credenciais de transporte.
     if (sangue !== undefined && sangue !== null) {
-      const xpSem = xpSemAssinaturaRaiz(xp);
-      const tvId = (row as { templateVersionId?: unknown }).templateVersionId ?? null;
-      const fichaFp = impressaoDigitalFicha({
-        templateVersionId: tvId,
-        estrutura: typeof tvId === "string" ? estruturaPorVersao.get(tvId) ?? null : null,
-        configSangue: configSangueExport,
-      });
-      data.__sangue_sig = assinarPacoteV2(ctxAss, {
-        personagemId: String(row.id),
-        xp: xpSem,
-        sangue,
-        fichaFp,
-      });
-      if (xp && typeof xp === "object" && !Array.isArray(xp)) {
-        delete (xp as Record<string, unknown>).sig;
+      const fichaFp = fichaFpExport(row);
+      if (fichaFp !== null) {
+        const xpSem = xpSemAssinaturaRaiz(xp);
+        data.__sangue_sig = assinarPacoteV2(ctxAss, {
+          personagemId: String(row.id),
+          xp: xpSem,
+          sangue,
+          fichaFp,
+        });
+        if (xp && typeof xp === "object" && !Array.isArray(xp)) {
+          delete (xp as Record<string, unknown>).sig;
+        }
+        continue;
       }
-      continue;
+      // cadeia incompleta → sem v2: __xp cai no fluxo v1 abaixo e
+      // __sangue viaja sem prova (importação descarta + reporta)
     }
     if (!xp || typeof xp !== "object" || Array.isArray(xp)) continue;
     const xpObj = xp as Record<string, unknown>;

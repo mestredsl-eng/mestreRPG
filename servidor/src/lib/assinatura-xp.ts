@@ -79,8 +79,9 @@ export interface ContextoAssinatura {
   chave: Buffer;
   regrasFp: string;
   /** Issue #186/C3: campanha de origem do pacote (envelope
-   *  `pacote.campanhaId`) — integra o payload v2. Ausente/nula torna
-   *  qualquer verificação v2 impossível (fail-closed). */
+   *  `pacote.campanhaId`) — CONTEXTO obrigatório de proveniência
+   *  (validação da cadeia personagem→versão→template→campanha), mas
+   *  NÃO faz parte do payload canônico assinado. */
   campanhaIdOrigem?: string | null;
 }
 
@@ -162,7 +163,6 @@ function payloadAssinaturaV2(
   return jsonCanonico({
     v: 2,
     personagemId: p.personagemId,
-    campanhaIdOrigem: ctx.campanhaIdOrigem ?? null,
     xp: p.xp ?? null,
     sangue: p.sangue ?? null,
     regrasFp: ctx.regrasFp,

@@ -124,12 +124,19 @@ export interface ContextoSaneamento {
   estruturas: Map<string, EstruturaFicha | null>;
   /** ids de files do pacote (retrato precisa apontar para um deles) */
   arquivosIds: Set<string>;
-  /** C3: `config.sangue` BRUTO do ruleset ativo do pacote — insumo do
-   *  fichaFp (mesma serialização usada na exportação). */
+  /** C3: `config.sangue` BRUTO do ÚNICO ruleset ativo do pacote —
+   *  insumo do fichaFp (mesma serialização usada na exportação). */
   configSanguePacote: unknown;
-  /** C3: templateVersionId → `structure` BRUTA do pacote — a estrutura
-   *  publicada exata que entra no fichaFp (não a versão parseada). */
-  estruturasBrutas: Map<string, unknown>;
+  /** C3: templateVersionId → dados BRUTOS da sheetVersion do pacote —
+   *  a estrutura publicada exata que entra no fichaFp (não a versão
+   *  parseada) mais os elos da cadeia de proveniência. */
+  versoesPacote: Map<string, { structure: unknown; templateId: unknown; publishedAt: unknown }>;
+  /** C3: sheetTemplate.id → campaignId — último elo da cadeia
+   *  personagem→versão→template→campanha de origem. */
+  templatesPorId: Map<string, unknown>;
+  /** C3: pacote elegível para v2 — exatamente um ruleset ativo (sem
+   *  IDs duplicados) com `config.sangue` objeto. */
+  regrasSangueElegivel: boolean;
   /** userId → nome de exibição (autoria forjada é limpa) */
   autores: Map<string, string | null>;
   /** B1: contexto de verificação HMAC do ledger — null quando a
@@ -676,13 +683,29 @@ export function sanearPersonagemImportado(
   //      cobre Sangue) — descartado e registrado.
   const temSangue = data[CHAVE_SANGUE] !== undefined && data[CHAVE_SANGUE] !== null;
   const marcador = data[CHAVE_SANGUE_SIG];
+  // C3 (bloqueio 3): a cadeia de proveniência precisa estar ÍNTEGRA no
+  // pacote — personagem → sheetVersion PUBLICADA → sheetTemplate da
+  // campanha de origem (envelope), com ruleset ativo único e
+  // config.sangue presente. Qualquer elo quebrado → contexto incompleto
+  // e nenhuma v2 pode ser aceita (fail-closed).
+  const cadeiaFichaValida = ((): boolean => {
+    if (!ctx.regrasSangueElegivel) return false;
+    if (!ctx.assinatura?.campanhaIdOrigem) return false;
+    if (typeof templateVersionId !== "string" || !templateVersionId) return false;
+    const ver = ctx.versoesPacote.get(templateVersionId);
+    if (!ver) return false;
+    if (ver.publishedAt === null || ver.publishedAt === undefined) return false;
+    if (ver.structure === null || ver.structure === undefined) return false;
+    const tplCampanha = ctx.templatesPorId.get(String(ver.templateId ?? ""));
+    return tplCampanha !== undefined && tplCampanha === ctx.assinatura.campanhaIdOrigem;
+  })();
   // fichaFp reproduzido do pacote: templateVersionId da linha +
   // estrutura publicada BRUTA daquela versão + config.sangue do ruleset
   // ativo — mesma cadeia usada na exportação.
   const fichaFp = impressaoDigitalFicha({
     templateVersionId: templateVersionId ?? null,
     estrutura: typeof templateVersionId === "string"
-      ? ctx.estruturasBrutas.get(templateVersionId) ?? null
+      ? ctx.versoesPacote.get(templateVersionId)?.structure ?? null
       : null,
     configSangue: ctx.configSanguePacote ?? null,
   });
@@ -692,13 +715,19 @@ export function sanearPersonagemImportado(
   if (typeof marcador === "string" && marcador.length > 0) {
     if (temSangue) {
       if (marcador.startsWith("v2.")) {
-        const xpBruto = obj(data[CHAVE_XP]);
-        const { sig: _sx, ...xpSem } = xpBruto ?? {};
-        v2Ok = ctx.assinatura !== null && verificarAssinaturaV2(
-          ctx.assinatura, personagemId, marcador,
-          xpBruto ? xpSem : null, data[CHAVE_SANGUE], fichaFp,
-        );
-        if (!v2Ok) { v2Invalido = true; motivoInvalido = "assinatura_invalida"; }
+        if (!cadeiaFichaValida) {
+          // marcador v2 em pacote sem cadeia comprovável = inválido
+          v2Invalido = true;
+          motivoInvalido = "contexto_incompleto";
+        } else {
+          const xpBruto = obj(data[CHAVE_XP]);
+          const { sig: _sx, ...xpSem } = xpBruto ?? {};
+          v2Ok = ctx.assinatura !== null && verificarAssinaturaV2(
+            ctx.assinatura, personagemId, marcador,
+            xpBruto ? xpSem : null, data[CHAVE_SANGUE], fichaFp,
+          );
+          if (!v2Ok) { v2Invalido = true; motivoInvalido = "assinatura_invalida"; }
+        }
       } else {
         v2Invalido = true;
         motivoInvalido = "prefixo_desconhecido";
@@ -750,7 +779,8 @@ export function montarContextoSaneamento(
   dados: {
     ruleSets?: ({ id?: string; config?: unknown; isActive?: boolean })[];
     ruleDefinitions?: ({ ruleSetId?: string } & Record<string, unknown>)[];
-    sheetVersions?: { id?: string; structure?: unknown }[];
+    sheetVersions?: { id?: string; templateId?: unknown; structure?: unknown; publishedAt?: unknown }[];
+    sheetTemplates?: { id?: string; campaignId?: unknown }[];
     files?: { id?: string }[];
     campanha?: Record<string, unknown>;
   },
@@ -782,12 +812,12 @@ export function montarContextoSaneamento(
     regras = { ruleSetId: rsAtivo?.id ?? null, config, elementos: new Map(), porKind: new Map() };
   }
   const estruturas = new Map<string, EstruturaFicha | null>();
-  const estruturasBrutas = new Map<string, unknown>();
+  const versoesPacote = new Map<string, { structure: unknown; templateId: unknown; publishedAt: unknown }>();
   for (const v of dados.sheetVersions ?? []) {
     if (typeof v.id !== "string") continue;
-    // C3: guarda a estrutura BRUTA para o fichaFp — a versão parseada
-    // pode divergir da serialização original do pacote.
-    estruturasBrutas.set(v.id, v.structure);
+    // C3: guarda a versão BRUTA para o fichaFp e os elos da cadeia de
+    // proveniência — a versão parseada pode divergir do pacote.
+    versoesPacote.set(v.id, { structure: v.structure, templateId: v.templateId, publishedAt: v.publishedAt });
     try {
       const parsed = typeof v.structure === "string" ? JSON.parse(v.structure) : v.structure;
       estruturas.set(v.id, estruturaFichaSchema.parse(parsed ?? {}));
@@ -795,6 +825,27 @@ export function montarContextoSaneamento(
       estruturas.set(v.id, null);
     }
   }
+  const templatesPorId = new Map<string, unknown>();
+  for (const t of dados.sheetTemplates ?? []) {
+    if (typeof t.id === "string") templatesPorId.set(t.id, t.campaignId ?? null);
+  }
+  // C3 (bloqueio 3): elegibilidade do pacote para v2 — exatamente UM
+  // ruleset ativo e IDs de ruleset sem duplicatas; config.sangue do
+  // ruleset ativo precisa existir como objeto.
+  const idsRulesVistos = new Set<string>();
+  let rulesIdsDuplicados = false;
+  for (const r of dados.ruleSets ?? []) {
+    const id = String(r?.id ?? "");
+    if (idsRulesVistos.has(id)) rulesIdsDuplicados = true;
+    idsRulesVistos.add(id);
+  }
+  const rsAtivosSangue = (dados.ruleSets ?? []).filter((r) => r.isActive === true || (r.isActive as unknown) === 1);
+  const rsUnicoSangue = !rulesIdsDuplicados && rsAtivosSangue.length === 1 ? rsAtivosSangue[0] : null;
+  const cfgSanguePac = rsUnicoSangue
+    ? ((rsUnicoSangue.config as Record<string, unknown> | undefined)?.sangue ?? null)
+    : null;
+  const regrasSangueElegivel =
+    !!rsUnicoSangue && !!cfgSanguePac && typeof cfgSanguePac === "object" && !Array.isArray(cfgSanguePac);
   // B1: proveniência do ledger — a assinatura HMAC cobre personagem,
   // ledger integral e a impressão digital das regras DO PACOTE. Sem
   // chave de instalação não há como distinguir pacote legítimo de
@@ -812,9 +863,10 @@ export function montarContextoSaneamento(
     config,
     regras,
     estruturas,
-    configSanguePacote:
-      (rsAtivo?.config as Record<string, unknown> | undefined)?.sangue ?? null,
-    estruturasBrutas,
+    configSanguePacote: cfgSanguePac,
+    versoesPacote,
+    templatesPorId,
+    regrasSangueElegivel,
     arquivosIds: new Set((dados.files ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string")),
     autores,
     assinatura,
