@@ -217,13 +217,16 @@ try {
     // já seria válido pelo merge
     const rInv = await putCfg(c3.campId, c3.cookieMestre, { sangue: { habilitado: true } });
     t("habilitado sem campoCapacidadeId → 400", rInv.status === 400, `status=${rInv.status}`);
+    // readback imediato: ESTA rejeição não persistiu nada
+    const cfgAposInv = await getCfg(c3.campId, c3.cookieMestre);
+    t("readback: 400 (sem campo) não persistiu", cfgAposInv?.sangue?.habilitado === false && cfgAposInv?.sangue?.campoCapacidadeId == null);
     const rBq = await putCfg(c3.campId, c3.cookieMestre, {
       sangue: { habilitado: true, campoCapacidadeId: "x", capacidade: { bonusQualidade: { campoId: "q" } } },
     });
     t("bonusQualidade parcial sem estrutura → 400", rBq.status === 400, `status=${rBq.status}`);
-    // readback: os 400 não persistiram nada — config segue default
+    // readback imediato: ESTA rejeição também não persistiu nada
     const cfgApos400 = await getCfg(c3.campId, c3.cookieMestre);
-    t("readback: 400s não alteraram a config", cfgApos400?.sangue?.habilitado === false && cfgApos400?.sangue?.campoCapacidadeId == null);
+    t("readback: 400 (bônus parcial) não persistiu", cfgApos400?.sangue?.habilitado === false && cfgApos400?.sangue?.campoCapacidadeId == null);
     // sem estruturas elegíveis não há vínculo a comparar: config
     // sintaticamente válida é aceita e persistida
     const r = await putCfg(c3.campId, c3.cookieMestre, {
