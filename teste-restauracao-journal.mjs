@@ -14,7 +14,8 @@ import { dirTeste, abrirDb } from "./teste-base.mjs";
 
 const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
-const { instalacaoId, dirEstado, gravarReciboInstalacao, lerReciboInstalacao } = await import("./scripts/estado-externo.mjs");
+const { instalacaoId, dirEstado, gravarReciboInstalacao, lerReciboInstalacao,
+  gravarAutorizacaoBootstrap, lerAutorizacaoBootstrap, diagnosticarBootstrap } = await import("./scripts/estado-externo.mjs");
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
 let pass = 0, fail = 0;
@@ -397,6 +398,79 @@ sec("T1 — recibo permanente × banco ausente/truncado posterior");
   // (já coberto em W14, reafirmado aqui como fronteira do ciclo de vida)
   const r = rodar(raiz);
   t("sem recibo + sem banco → BLOQUEIA", r.code !== 0, `code=${r.code}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+
+// ---- T1b — autorização de primeiro bootstrap (uso único) ----
+// gravarAutorizacaoBootstrap é o writer do FORMATO definido para o
+// produtor confiável futuro (instalador/.bat/updater — integração
+// PENDENTE, Etapa 5). Usá-lo aqui testa o CONTRATO do ciclo de vida;
+// NÃO declara o bootstrap real homologado ponta a ponta.
+sec("T1b — autorização de bootstrap: consumo, replay e inválidas");
+{
+  const raiz = novoRaiz();
+  const env = envRaiz(raiz);
+  gravarAutorizacaoBootstrap(RAIZ_REPO, env);
+  t("autorização gravada e legível", lerAutorizacaoBootstrap(RAIZ_REPO, env).status === "ok");
+  // DB ausente + autorização válida → restaurador CONSOME e libera
+  const r = rodar(raiz);
+  t("autorização válida + DB ausente → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  t("autorização consumida duravelmente (rename)", lerAutorizacaoBootstrap(RAIZ_REPO, env).status === "ausente");
+  t("diagnóstico pós-consumo = bootstrap-interrompido",
+    diagnosticarBootstrap(RAIZ_REPO, env) === "bootstrap-interrompido");
+  // replay: segunda execução NÃO pode reusar a autorização consumida
+  const r2 = rodar(raiz);
+  t("REPLAY: 2ª execução → BLOQUEIA (uso único)", r2.code !== 0, `code=${r2.code} ${r2.saida.slice(0, 250)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const env = envRaiz(raiz);
+  abrirDb(dbVivo(raiz)).close(); // DB vazio (0 tabelas)
+  gravarAutorizacaoBootstrap(RAIZ_REPO, env);
+  const r = rodar(raiz);
+  t("autorização válida + DB vazio → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  t("autorização consumida", lerAutorizacaoBootstrap(RAIZ_REPO, env).status === "ausente");
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const env = envRaiz(raiz);
+  // autorização CORROMPIDA → consumo durável mas não autoriza → bloqueia
+  const arqAuth = join(stateDir(raiz), "bootstrap-autorizacao.json");
+  mkdirSync(stateDir(raiz), { recursive: true });
+  writeFileSync(arqAuth, "{ json quebrado");
+  const r = rodar(raiz);
+  t("autorização corrompida + DB ausente → BLOQUEIA", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  t("autorização corrompida foi consumida (evidência preservada)", !existsSync(arqAuth));
+  t("pós-consumo inválido → bootstrap-interrompido",
+    diagnosticarBootstrap(RAIZ_REPO, env) === "bootstrap-interrompido");
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const env = envRaiz(raiz);
+  // autorização de OUTRA instalação (identidade divergente) → bloqueia
+  mkdirSync(stateDir(raiz), { recursive: true });
+  writeFileSync(join(stateDir(raiz), "bootstrap-autorizacao.json"), JSON.stringify({
+    protocoloVersao: 1, instalacaoId: "deadbeef", repoCanon: "x", tipo: "primeiro-bootstrap",
+  }));
+  const r = rodar(raiz);
+  t("autorização divergente + DB ausente → BLOQUEIA", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const env = envRaiz(raiz);
+  // recibo permanente + autorização presente: recibo prova instalação
+  // CONCLUÍDA → autorização de bootstrap não se aplica; DB ausente é
+  // "banco perdido" → BLOQUEIA (e a autorização não é consumida).
+  gravarReciboInstalacao(RAIZ_REPO, env);
+  gravarAutorizacaoBootstrap(RAIZ_REPO, env);
+  const r = rodar(raiz);
+  t("recibo + autorização + DB ausente → BLOQUEIA (banco perdido)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  t("autorização NÃO consumida quando recibo existe",
+    lerAutorizacaoBootstrap(RAIZ_REPO, env).status === "ok");
   rmSync(raiz, { recursive: true, force: true });
 }
 

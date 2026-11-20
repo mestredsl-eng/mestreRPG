@@ -6,11 +6,11 @@
 // banco, nos arquivos, na config e na limpeza da flag — cada uma com
 // verificação do estado resultante (banco, sidecars, arquivos, config, flag).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, rmSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { dirTeste, abrirDb, limparDir, portaLivre, subirServidor, esperarSaudavel, encerrarServidor } from "./teste-base.mjs";
 import { gerarManifestoBackup } from "./teste-fixture-backup.mjs";
-import { gravarReciboInstalacao, dirEstado, instalacaoId } from "./scripts/estado-externo.mjs";
+import { gravarReciboInstalacao, gravarAutorizacaoBootstrap, dirEstado, instalacaoId, gravarEstado } from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -29,6 +29,7 @@ function envRaiz(raiz, extra = {}) {
     MESTRE_BANCO: join(raiz, "banco", "mestre-rpg.db"),
     MESTRE_ARQUIVOS: join(raiz, "arquivos", "campanhas"),
     MESTRE_BACKUPS: join(raiz, "backups"),
+    MESTRE_STATE_DIR: join(raiz, "state"), // state dir ISOLADO por fixture
     ...extra,
   };
 }
@@ -193,19 +194,30 @@ try {
     const r1 = join(RAIZ, "vazia"); // nem mkdirSync — raiz inexistente de propósito? não: MESTRE_HOME deve existir? teste usa raiz existente mas vazia
     mkdirSync(r1, { recursive: true });
     t("raiz existe e está vazia", readdirSync(r1).length === 0);
-    // Novo contrato (#155 Etapas 1–3): banco ausente SEM recibo durável de
-    // instalação é estado ambíguo → fail-closed (exit != 0). A ausência
-    // de banco sozinha não prova instalação nova.
-    const restSemRecibo = restaurar(r1);
-    t("restaurador em raiz vazia SEM recibo → fail-closed (exit != 0)", restSemRecibo.code !== 0, restSemRecibo.saida.slice(-200));
-    t("mensagem de estado ambíguo", /amb[ií]guo|recibo/i.test(restSemRecibo.saida), restSemRecibo.saida.slice(-200));
-    // Com recibo durável gravado pelo caminho real (gravarReciboInstalacao
-    // — a escrita do bootstrap é Etapa 5, pendente; aqui simulamos o
-    // estado pós-bootstrap na fixture), a instalação é comprovada e o
-    // restaurador retorna "nada a restaurar".
+    // Novo contrato (#155 Etapas 1–3, d822f0e): banco ausente SEM
+    // autorização de primeiro bootstrap é estado ambíguo → fail-closed.
+    // Recibo permanente prova instalação CONCLUÍDA — NÃO autoriza banco
+    // ausente (isso é "banco perdido" → bloqueio).
+    const restSemAut = restaurar(r1);
+    t("restaurador em raiz vazia SEM autorização → fail-closed (exit != 0)", restSemAut.code !== 0, restSemAut.saida.slice(-200));
+    t("mensagem de ausência de autorização", /autoriza|bootstrap|amb[ií]guo|desconhecido/i.test(restSemAut.saida), restSemAut.saida.slice(-200));
+    // Recibo permanente + DB ausente → BLOQUEIA (banco perdido, não
+    // primeira instalação). gravarReciboInstalacao NÃO é autorização.
     gravarReciboInstalacao(RAIZ_REPO, envRaiz(r1));
+    const restRecibo = restaurar(r1);
+    t("recibo permanente + DB ausente → BLOQUEIA (banco perdido)", restRecibo.code !== 0, restRecibo.saida.slice(-200));
+    // Recibo permanente torna a autorização de bootstrap irrelevante
+    // (instalação já concluída) — removê-lo para exercitar o caminho
+    // de primeiro bootstrap isoladamente.
+    rmSync(join(dirEstado(RAIZ_REPO, envRaiz(r1)), "instalacao-recibo.json"), { force: true });
+    // Autorização de primeiro bootstrap (formato do produtor confiável
+    // futuro — integração pendente, Etapa 5): uso único, consumida
+    // duravelmente → "nada a restaurar".
+    gravarAutorizacaoBootstrap(RAIZ_REPO, envRaiz(r1));
     const rest = restaurar(r1);
-    t("restaurador com recibo → exit 0 (nada a restaurar)", rest.code === 0, rest.saida.slice(-200));
+    t("restaurador com autorização de bootstrap → exit 0 (uso único)", rest.code === 0, rest.saida.slice(-200));
+    const restReplay = restaurar(r1);
+    t("replay: 2ª execução sem autorização → fail-closed", restReplay.code !== 0, restReplay.saida.slice(-200));
     const m = migrar(r1);
     t("migrate cria banco e schema → exit 0", m.code === 0, m.saida.slice(-200));
     t("schema completo (tabela nova presente)", temTabelaDb(dbPath(r1), TABELA_NOVA));
@@ -659,13 +671,20 @@ try {
   {
     const r14 = join(RAIZ, "raiz_inexistente");
     t("raiz realmente não existe", !existsSync(r14));
-    // Sem recibo durável → fail-closed mesmo com raiz inexistente.
+    // Sem autorização de bootstrap → fail-closed mesmo com raiz inexistente.
     const restSem = restaurar(r14);
-    t("restaurador sem recibo → exit != 0 (estado ambíguo)", restSem.code !== 0, restSem.saida.slice(-200));
-    // Recibo do caminho real de gravação (bootstrap efetivo é Etapa 5).
+    t("restaurador sem autorização → exit != 0", restSem.code !== 0, restSem.saida.slice(-200));
+    // Recibo permanente NÃO autoriza (banco perdido ≠ primeira instalação).
     gravarReciboInstalacao(RAIZ_REPO, envRaiz(r14));
+    const restRec = restaurar(r14);
+    t("recibo permanente + raiz inexistente → BLOQUEIA", restRec.code !== 0, restRec.saida.slice(-200));
+    // Autorização de uso único (produtor real pendente — Etapa 5).
+    // Remover o recibo antes: com instalação concluída comprovada, a
+    // autorização de bootstrap não se aplica.
+    rmSync(join(dirEstado(RAIZ_REPO, envRaiz(r14)), "instalacao-recibo.json"), { force: true });
+    gravarAutorizacaoBootstrap(RAIZ_REPO, envRaiz(r14));
     const rest = restaurar(r14);
-    t("restaurador com recibo → exit 0 mesmo sem raiz", rest.code === 0, rest.saida.slice(-200));
+    t("restaurador com autorização de bootstrap → exit 0 mesmo sem raiz", rest.code === 0, rest.saida.slice(-200));
     t("diretório banco/ criado no caminho configurado", existsSync(join(r14, "banco")));
     const m = migrar(r14);
     t("migrate → exit 0", m.code === 0, m.saida.slice(-200));
@@ -835,6 +854,99 @@ try {
     t("restore aplicado após retomada",
       existsSync(join(arqPath(rB), "doc_bk.txt")) && flagPendenteDb(dbPath(rB)) === null);
     t("journal concluído", JSON.parse(readFileSync(join(stateDirB, "restauracao-externa.json"), "utf8")).fase === "concluido");
+  }
+
+  // ===== 23. interrupção REAL no gate apos-rollback (Classe B) =====
+  // Journal pré-montado em fase "rollback-em-andamento" (estado
+  // persistido como ficaria após uma queda real no meio do rollback —
+  // a interrupção do PROCESSO é real; o estado de entrada é Classe A).
+  // O processo executa o rollback de verdade, grava
+  // "rollback-concluido" e fica PAUSADO no gate apos-rollback com a
+  // trava ainda segurada. Kill real: SO libera a trava; o journal
+  // persistido permite a retomada na execução seguinte.
+  sec("Interrupção real no gate apos-rollback — kill com rollback concluído");
+  {
+    const rR = join(RAIZ, "gate_rollback");
+    mkdirSync(join(rR, "banco"), { recursive: true });
+    migrar(rR);
+    mkdirSync(arqPath(rR), { recursive: true });
+    writeFileSync(join(arqPath(rR), "doc_vivo.txt"), "vivo");
+    mkdirSync(join(rR, "configuracao"), { recursive: true });
+    writeFileSync(cfgPath(rR), JSON.stringify({ atual: true }));
+    const bk = fazerBackup(rR, "bk_rb");
+    armarFlag(rR, bk);
+    // estado preservado = cópia do estado ANTES da adulteração (como a
+    // preservação real faria: banco COM a flag armada + sidecars,
+    // arquivos e config vivos)
+    const lado = join(rR, "backups", "pre_restore_manual");
+    mkdirSync(lado, { recursive: true });
+    for (const suf of ["", "-wal", "-shm"]) {
+      if (existsSync(dbPath(rR) + suf)) copyFileSync(dbPath(rR) + suf, join(lado, `mestre-rpg.db${suf}`));
+    }
+    cpSync(arqPath(rR), join(lado, "arquivos"), { recursive: true });
+    mkdirSync(join(lado, "configuracao"), { recursive: true });
+    copyFileSync(cfgPath(rR), join(lado, "configuracao", "servidor.json"));
+    // estado "adulterado" vivo (simula aplicação parcial que falhou)
+    writeFileSync(join(arqPath(rR), "doc_adulterado.txt"), "parcial");
+    comDbRw(dbPath(rR), (db) => db.exec("create table marcador_parcial (id integer)"));
+    // journal pré-montado: rollback em andamento com estado preservado
+    const envR = envRaiz(rR);
+    gravarEstado(RAIZ_REPO, "restauracao-externa.json", {
+      fase: "rollback-em-andamento",
+      preRestoreDir: lado,
+      tinhaArquivos: true,
+      tinhaCfg: true,
+      componentes: {
+        sidecars: { estado: "pendente" }, banco: { estado: "pendente" },
+        arquivos: { estado: "pendente" }, configuracao: { estado: "pendente" },
+        flag: { estado: "pendente" },
+      },
+    }, envR);
+    const stateDirR = join(rR, "state", instalacaoId(RAIZ_REPO));
+    const journalR = () => { try { return JSON.parse(readFileSync(join(stateDirR, "restauracao-externa.json"), "utf8")); } catch { return null; } };
+    // processo real com gate: passa apos-trava, executa rollback, para em apos-rollback
+    const gateDir = join(rR, "gate");
+    mkdirSync(gateDir, { recursive: true });
+    const proc = spawn("node", [RESTAURADOR], {
+      env: envRaiz(rR, { MESTRE_TRAVA_GATE_DIR: gateDir }),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let saidaR = "";
+    proc.stdout.on("data", (d) => { saidaR += d; });
+    proc.stderr.on("data", (d) => { saidaR += d; });
+    // libera o primeiro gate quando a trava aparecer
+    const travaPath = dbPath(rR) + ".trava";
+    const limiteTrava = Date.now() + 20000;
+    while (!existsSync(travaPath) && Date.now() < limiteTrava && proc.exitCode === null) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    t("processo alcançou a trava (apos-trava)", existsSync(travaPath) && proc.exitCode === null);
+    writeFileSync(join(gateDir, "apos-trava"), "");
+    // espera o journal chegar a rollback-concluido (processo no gate seguinte)
+    const limiteRb = Date.now() + 60000;
+    while (journalR()?.fase !== "rollback-concluido" && Date.now() < limiteRb && proc.exitCode === null) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (journalR()?.fase !== "rollback-concluido") {
+      console.log("  [debug] fase:", journalR()?.fase, "componentes:", JSON.stringify(journalR()?.componentes), "saida:", saidaR.slice(-600));
+    }
+    t("rollback executado de verdade: journal → rollback-concluido", journalR()?.fase === "rollback-concluido", `fase=${journalR()?.fase}`);
+    t("processo vivo no gate apos-rollback (trava ainda segurada)", proc.exitCode === null && existsSync(travaPath));
+    t("estado vivo = preservado: doc_adulterado removido", !existsSync(join(arqPath(rR), "doc_adulterado.txt")));
+    t("estado vivo = preservado: doc_vivo presente", existsSync(join(arqPath(rR), "doc_vivo.txt")));
+    t("banco restaurado sem marcador parcial", !temTabelaDb(dbPath(rR), "marcador_parcial"));
+    // kill real no gate — SO libera a trava; journal já persistido
+    proc.kill("SIGKILL");
+    await new Promise((r) => proc.once("exit", r));
+    t("processo morreu de fato", proc.exitCode !== 0 || proc.signalCode !== null);
+    t("journal rollback-concluido persistiu após kill", journalR()?.fase === "rollback-concluido");
+    // retomada: nova execução sem gate — journal final + flag ainda
+    // armada no banco restaurado → aplica a restauração original.
+    const rest2 = restaurar(rR);
+    t("retomada após kill em apos-rollback → exit 0", rest2.code === 0, rest2.saida.slice(-250));
+    t("restauração original concluída após retomada", journalR()?.fase === "concluido", `fase=${journalR()?.fase}`);
+    t("doc do backup presente", existsSync(join(arqPath(rR), "doc_bk.txt")));
+    t("flag limpa após conclusão", flagPendenteDb(dbPath(rR)) === null);
   }
 } finally {
   limparDir(RAIZ);

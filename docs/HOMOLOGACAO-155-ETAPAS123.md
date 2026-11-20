@@ -1,75 +1,70 @@
 # Homologação independente — Issue #155, Etapas 1–3 (PR #193)
 
-- **SHA de produção testado:** `30c348f1f19c2996fbb237d467ec5113c9cc81ab` (contém `a65a6d3` e `88e03bc` — verificado via `git merge-base`).
-- **Ambiente:** Windows (win32), Node v26.13.0, npm 11.20.0, Git 2.55.
-- **Execução:** LOCAL (não é CI). Fixtures 100% descartáveis em `%TEMP%`; banco/instalação reais nunca tocados.
-- **Escopo:** correção de `teste-restauracao-boot.mjs` para o novo contrato + regressão dos bloqueadores da auditoria (T1–T5 desta missão).
+- **SHA de produção testado:** `d822f0e1b9aa9030534716bb4a665fc8042c3293` (`fix/issue-155-pr193-fail-closed`, merge na branch de testes).
+- **Base anterior homologada:** `30c348f1f19c2996fbb237d467ec5113c9cc81ab` — os 2 FAILs de recibo encontrados nela foram **corrigidos** pelo Pai em d822f0e e revalidados aqui.
+- **Ambiente:** Windows (MINGW64/NT 10.0), Node v26.13.0. Sem runner Linux nem Node 20/22 → Fase 7 NOT EXECUTED.
+- **Execução:** LOCAL. Fixtures 100% descartáveis em `%TEMP%`; banco/instalação reais nunca tocados. State dir isolado por fixture (`MESTRE_STATE_DIR=<raiz>/state`).
 
-## Arquivos alterados (somente testes)
+## O que mudou na produção (d822f0e) e cobertura de teste
+
+| Correção do Pai | Teste que prova |
+|---|---|
+| Recibo = "instalação concluída"; nunca autoriza banco ausente/vazio | `teste-restauracao-journal.mjs` T1 + T1b; `teste-restauracao-boot.mjs` §1 e §14 |
+| `bootstrap-autorizacao.json` uso único, consumo durável (rename antes de validar) | T1b: autorização válida→exit 0, replay→bloqueia, corrompida→bloqueia+consumida, divergente→bloqueia, recibo+autorização→bloqueia sem consumir |
+| `diagnosticarBootstrap`/`estadoInstalacaoConhecido`/`avaliarBoot` | `teste-estado-externo.mjs` (diagnóstico por estado, avaliarBoot com manifesto) |
+| State dir ausente/ilegível → null inconclusivo | backup-contrato T2 (2 casos) + T3 referenciadoPorJournal |
+| Quarentena `*.quarentena-*` bloqueia varredura | T2 (state dir e protecao/) |
+| Identidade obrigatória em todo registro do protocolo | T2 (divergente, protocoloVersao, ausente total) |
+| Marker sem expiração por idade; desproteção exige não-referência provada | T3 (marker `ate` no passado protege e não é removido; desproteção inconclusiva retorna false e preserva marker) |
+| SHA-256 streaming 1 MiB, sempre verificado | T4 (>2 GiB esparso com hash errado → rejeita por sha256, prova de verificação) |
+| Raiz do backup symlink/não-diretório rejeitada (lstat/TOCTOU) | T4 (junction → rejeita) |
+| `dirEstado` sem `MESTRE_HOME` — paridade exata com boot-lock | T5 paridade (9 casos de env, todos iguais) |
+
+## Arquivos de teste alterados (somente testes)
 
 | Arquivo | Mudança |
 |---|---|
-| `teste-fixture-backup.mjs` | **novo** — helper de fixture: gera `manifesto.json` v2 íntegro para backups montados à mão (mesmo formato de `backup.ts`/`validar-backup.ts`) |
-| `teste-restauracao-boot.mjs` | compatibilizado com o novo contrato (manifesto obrigatório, recibo para instalação vazia, sidecars em backup rejeitados, sabotagem antes do hash) + **novo cenário Classe B** (kill real no gate `apos-trava`) |
-| `teste-restauracao-journal.mjs` | +T1 ciclo de vida do recibo (4 cenários) + segunda execução idempotente pós-conclusão |
-| `teste-estado-externo.mjs` | +T5 paridade de resolvedores com Boot Lock (8 casos de env) + falha de bootstrap do recibo |
-| `servidor/testes/backup-contrato.test.ts` | +T2 varredura fail-closed (10), +T3 markers (5), +T4 integridade (18) — 40 testes no total |
+| `teste-fixture-backup.mjs` | helper — manifesto v2 de fixture |
+| `teste-estado-externo.mjs` | APIs novas (diagnosticarBootstrap/consumirAutorizacaoBootstrap/estadoInstalacaoConhecido), paridade T5, falha de bootstrap |
+| `teste-restauracao-journal.mjs` | W14 fail-closed + T1 recibo (agora PASS) + T1b autorização uso único/replay |
+| `teste-restauracao-boot.mjs` | state dir isolado por fixture, autorização de bootstrap (recibo não é autorização), **2 kills reais Classe B** |
+| `servidor/testes/backup-contrato.test.ts` | T2/T3/T4 alinhados ao contrato fail-closed (42 testes) |
+| `docs/HOMOLOGACAO-155-ETAPAS123.md` | este relatório |
 
-Nenhum arquivo de produção alterado.
+`teste-estado-externo.mjs` e `teste-restauracao-journal.mjs` também receberam ajustes do próprio Pai em d822f0e — o merge preservou ambas as frentes sem conflito.
 
-## Resultados
+## Resultados (todos executados nesta sessão, exit codes reais)
 
-| Suíte | Resultado |
+| Suíte | Comando | Exit | Resultado |
+|---|---|---|---|
+| Estado externo | `node teste-estado-externo.mjs` | 0 | **58 ok / 0 falhas** |
+| Journal/restauração | `node teste-restauracao-journal.mjs` | 0 | **51 ok / 0 falhas** |
+| Boot/restauração real | `node teste-restauracao-boot.mjs` | 0 | **136 ok / 0 falhas** |
+| Contrato de backup | `tsx --test testes/backup-contrato.test.ts` | 0 | **42/42 pass** |
+| Regressão | `tsx --test` iniciativa/regua/d10/guildas-guarda | 0 | 4 + 38 + 7 + 5 pass |
+| Build | `npm run build -w servidor` (tsc) | 0 | ok |
+
+## Classe B — interrupção real (processo filho + SIGKILL)
+
+| Gate | Resultado |
 |---|---|
-| `node teste-estado-externo.mjs` | **48 ok, 0 falhas** |
-| `node teste-restauracao-journal.mjs` | **35 ok, 2 falhas** (ver FAIL-1/FAIL-2) |
-| `node teste-restauracao-boot.mjs` | **121 ok, 0 falhas** |
-| `tsx --test testes/backup-contrato.test.ts` | **40/40 pass** |
-| `tsx --test testes/iniciativa.test.ts` | 38/38 |
-| `tsx --test testes/regua.test.ts` | 38/38 |
-| `tsx --test testes/d10.test.ts` | 7/7 |
-| `tsx --test testes/guildas-guarda.test.ts` | 5/5 |
-| `tsc -p servidor/tsconfig.json` | exit 0 |
+| `apos-trava` (antes de qualquer escrita) | **PASS** — kill real; sem journal/pre_restore; flag intacta; retomada completa |
+| `apos-rollback` (rollback concluído, trava segurada) | **PASS** — journal pré-montado `rollback-em-andamento`; processo executou rollback real, parou no gate, kill; estado vivo = preservado; retomada aplicou a restauração original até `concluido` |
+| Gates por componente (sidecars/banco/arquivos/config/flag) | **NOT EXECUTED** — `aguardarGateTrava` só existe em `apos-trava` e `apos-rollback`; sem hooks de produção o Filho não pode criar pontos intermediários. Dependência do Pai se quiserem cobertura total. |
 
-## FAIL — defeitos de produção a encaminhar ao Pai
+## FAIL / BLOCKED / NOT EXECUTED
 
-### FAIL-1 — recibo + banco ausente retorna sucesso (exit 0)
-`aplicar-restauracao`: com `instalacao-recibo.json` válido e `mestre-rpg.db` inexistente, o restaurador loga "instalação inicial comprovada por recibo; nada a restaurar" e sai **0**. Contrato T1: recibo prova inicialização *concluída*; banco que some depois é estado ambíguo → deve bloquear. Reprodução: `teste-restauracao-journal.mjs` seção "T1" (fixture: `gravarReciboInstalacao` + sem `banco/mestre-rpg.db`).
+- **FAIL:** nenhum nesta execução.
+- **BLOCKED:** produtor confiável de `bootstrap-autorizacao.json` (instalador/.bat/updater) — integração pendente (Etapa 5); testes usam o writer do formato, o que prova o contrato mas **não** declara o bootstrap real homologado ponta a ponta.
+- **NOT EXECUTED:** ramos Linux (XDG_STATE_HOME, `~/.local/state`) — sem runner Linux; convenção alinhada por paridade de código e `process.platform` fixo. Node 20/22 — indisponíveis localmente. `teste-servidor.mjs` — sem cópia consistente descartável de banco.
+- Gates por componente do restaurador (ver Classe B).
 
-### FAIL-2 — recibo + banco vazio (0 tabelas) retorna sucesso (exit 0)
-Mesma classe: banco truncado/criado-vazio após instalação com recibo → exit 0. Esperado: bloqueio. Mesma seção do teste.
+## Limitações residuais
 
-## Gaps observados (registrados, classificação no relatório)
-
-| # | Observado | Avaliação |
-|---|---|---|
-| G1 | Journal/marker **sem** `instalacaoId`/`repoCanon` é aceito pela varredura de proteção (`problemaIdentidade` só rejeita strings divergentes; campos ausentes passam) e seu `backupDir` protege normalmente | Provável FAIL vs. "identidade ausente bloqueia" — confirmar contrato |
-| G2 | Arquivo **> 2 GiB** tem SHA-256 **pulado** (`st.size <= TAM_MAX` guarda o hash); manifesto com hash falso passa se tamanho confere | Contrato pede hash em streaming **ou** rejeição explícita — gap real |
-| G3 | Raiz do backup como junction/symlink → `validarBackup` retorna `ok=true` (segue o link) | Registrar; contrato deve dizer se raiz-link é proibida |
-| G4 | `MESTRE_HOME` diverge do Boot Lock **por desenho** (extensão documentada de sandbox) — paridade vale apenas sem `MESTRE_HOME` | Documentado, não é defeito |
-| G5 | Ramos Linux (`XDG_STATE_HOME`, `~/.local/state`) **NOT EXECUTED** em win32 — `process.platform` fixo; convenção alinhada por inspeção | Verificar em CI Linux |
-
-## Classe A × Classe B (W15)
-
-- **Classe A** (journal/checkpoints pré-montados): W15a–e + segunda execução — coberta em `teste-restauracao-journal.mjs` (37 asserções ok).
-- **Classe B** (interrupção real): **1 ponto executado** — kill SIGKILL no gate `apos-trava` (`MESTRE_TRAVA_GATE_DIR`), antes de qualquer escrita: sem journal, sem `pre_restore`, flag intacta, retomada posterior completa (9 asserções ok em `teste-restauracao-boot.mjs` §22). Gates `apos-rollback` e por-componente **não existem** → interrupções entre componentes seguem **NOT EXECUTED** (sem hooks de produção permitidos ao Filho).
-
-## Correções de fixture (fidelidade, não afrouxamento)
-
-1. `fazerBackup` agora emite `manifesto.json` v2 — o restaurador rejeita backup sem manifesto (novo contrato).
-2. `fazerBackup` consolida o banco do backup (`wal_checkpoint`+`journal_mode=DELETE`, remove sidecars) — espelha `copiarBanco`; sem isso a `integrity_check` criava `-wal/-shm` no backup e o manifesto os rejeitava (comportamento correto do validador).
-3. Sabotagens que devem preceder o hash (drop `server_settings`) migraram para `opts.sabotagem`, executada antes do manifesto.
-4. Backup com `-wal/-shm` residuais agora é cenário de **rejeição** (snapshot real nunca os contém).
-
-## Pendências / limitações
-
-- FAIL-1/FAIL-2 aguardam correção do Pai; reexecutar `teste-restauracao-journal.mjs` após o SHA corrigido.
-- G1–G3 aguardam decisão de contrato/correção do Pai.
-- Classe B entre componentes: depende de gates adicionais (`aguardarGateTrava` por checkpoint) — solicitação ao Pai via Intermediário.
-- `teste-servidor.mjs` não executado (exige banco populado; sem cópia consistente preparada — NOT EXECUTED).
-- Node 26 local ≠ mínimo declarado (20) nem CI (22) — evidência de versão pendente.
-- Estado externo não está integrado ao updater/`.bat` (Etapa 5 pendente) — escopo esperado das Etapas 1–3.
+- `MESTRE_HOME` não participa do state dir (correto por contrato); fixtures isolam estado via `MESTRE_STATE_DIR`.
+- O teste `apos-rollback` usa journal pré-montado para a ENTRADA (Classe A) mas a interrupção é real (Classe B); a primeira execução falhou por timeout de polling de 30s — ampliado para 60s, passou de forma determinística.
+- Homologação final das Etapas 1–3 não é declarada por esta frente — decisão do Intermediário/Mestre/auditoria.
 
 ## Confirmação
 
-`git status`: somente os 5 arquivos de teste listados. Nenhum arquivo de produção, `.bat`, `auto-update.mjs`, `boot-lock.mjs`, `teste-boot-lock.mjs`, `ci.yml` ou doc protegido foi alterado.
+Somente arquivos de teste e este documento foram alterados. Nenhum arquivo de produção, `.bat`, `auto-update.mjs`, `boot-lock.mjs`, `teste-boot-lock.mjs`, `ci.yml` ou doc protegido foi modificado.

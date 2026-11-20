@@ -68,12 +68,12 @@ function limparStateTeste(): void {
   const dir = stateDirTeste();
   if (!existsSync(dir)) return;
   for (const f of readdirSync(dir)) {
-    if (f.endsWith(".json")) rmSync(join(dir, f), { force: true });
+    if (f.endsWith(".json") || f.includes(".quarentena-")) rmSync(join(dir, f), { force: true });
   }
   const prot = join(dir, "protecao");
   if (existsSync(prot)) {
     for (const f of readdirSync(prot)) {
-      if (f.endsWith(".json")) rmSync(join(prot, f), { force: true });
+      if (f.endsWith(".json") || f.includes(".quarentena-")) rmSync(join(prot, f), { force: true });
     }
   }
 }
@@ -182,14 +182,13 @@ describe("backup pré-migration — manifesto v2 e proteção (W16)", () => {
 // retenção. Conjunto vazio só é válido quando a varredura completou.
 // =====================================================================
 describe("T2 — proteção de backups: varredura fail-closed", () => {
-  it("state dir inexistente → varredura completa com conjunto vazio", async () => {
+  it("state dir inexistente → null (inconclusivo, NUNCA prova de não-proteção)", async () => {
     limparStateTeste();
     rmSync(stateDirTeste(), { recursive: true, force: true });
     const v = await dirsProtegidosBackup();
-    // dir nunca criado: não há como haver proteção registrada — vazio é
-    // resposta completa e legítima (não é falha de leitura).
-    assert.ok(v instanceof Set, `esperado Set, veio ${v === null ? "null" : typeof v}`);
-    assert.equal(v.size, 0);
+    // d822f0e: ausência do state dir é inconclusiva — pode ter sido
+    // perdido/movido; retornar Set vazio seria fail-open.
+    assert.equal(v, null, "state dir ausente deveria retornar null");
   });
 
   it("state dir existe mas é ILEGÍVEL (arquivo, não diretório) → null", async () => {
@@ -230,13 +229,19 @@ describe("T2 — proteção de backups: varredura fail-closed", () => {
     limparStateTeste();
   });
 
-  it("journal em quarentena (*.quarentena-*) é ignorado pela varredura", async () => {
+  it("registro do protocolo em QUARENTENA (*.quarentena-*) → null (bloqueia)", async () => {
     limparStateTeste();
-    // quarentena = já isolado por lerEstado; o nome original não existe
-    // mais → não há referência ativa a proteger. Documenta comportamento.
+    // d822f0e: quarentena é fail-closed — um journal/marker quarentenado
+    // pode referenciar backup que a retenção não pode tocar. O arquivo
+    // nem precisa terminar em .json: o NOME já bloqueia a varredura.
     gravarNoState("atualizacao-ultima.json.quarentena-json-2025", "lixo não-json");
     const v = await dirsProtegidosBackup();
-    assert.ok(v instanceof Set, "quarentena não deveria bloquear a varredura");
+    assert.equal(v, null, "quarentena no state dir deveria bloquear");
+    limparStateTeste();
+    // idem dentro de protecao/
+    gravarNoState("protecao/x.json.quarentena-protocolo-2025", "lixo");
+    const v2 = await dirsProtegidosBackup();
+    assert.equal(v2, null, "quarentena em protecao/ deveria bloquear");
     limparStateTeste();
   });
 
@@ -256,15 +261,19 @@ describe("T2 — proteção de backups: varredura fail-closed", () => {
     limparStateTeste();
   });
 
-  it("journal SEM instalacaoId/repoCanon → comportamento observado (identidade ausente)", async () => {
+  it("journal SEM instalacaoId/repoCanon → null (identidade ausente bloqueia)", async () => {
     limparStateTeste();
-    // problemaIdentidade só rejeita campos string divergentes — campos
-    // AUSENTES passam. Registra o comportamento real para o contrato.
+    // d822f0e: TODO registro do protocolo exige protocoloVersao +
+    // instalacaoId + repoCanon presentes e correspondentes — campo
+    // ausente é fail-closed (antes era aceito: gap F-identidade).
     gravarNoState("atualizacao-ultima.json", { fase: "pull", backupDir: "C:\fake\bk", protocoloVersao: 1 });
     const v = await dirsProtegidosBackup();
-    // se null → identidade ausente bloqueia (fail-closed);
-    // se Set com "c:\fake\bk" → identidade ausente é aceita (gap).
-    console.log(`  [observado] identidade ausente → ${v === null ? "null (bloqueia)" : `Set(${[...v].join(",")})`}`);
+    assert.equal(v, null, "identidade ausente deveria bloquear a varredura");
+    limparStateTeste();
+    // sem NENHUM campo de identidade → também bloqueia
+    gravarNoState("atualizacao-ultima.json", { fase: "pull", backupDir: "C:\fake\bk" });
+    const v2 = await dirsProtegidosBackup();
+    assert.equal(v2, null, "registro sem identidade nenhuma deveria bloquear");
     limparStateTeste();
   });
 
@@ -296,25 +305,56 @@ describe("T3 — ciclo de vida dos markers", () => {
     assert.ok(v !== null && v.has(normDir(alvo)), "marker ativo deveria proteger");
     // marker sozinho (sem journal) → referenciadoPorJournal = false
     assert.equal(await referenciadoPorJournal(alvo), false);
-    await desprotegerBackupContraRetencao(alvo);
+    const okDes = await desprotegerBackupContraRetencao(alvo);
+    assert.equal(okDes, true, "desproteção com não-referência provada deveria remover");
     const v2 = await dirsProtegidosBackup();
     assert.ok(v2 !== null && !v2.has(normDir(alvo)), "marker removido não deveria proteger");
     limparStateTeste();
   });
 
-  it("marker EXPIRADO é removido na varredura e não protege", async () => {
+  it("marker NÃO expira por idade — proteção só termina por conclusão comprovada", async () => {
     limparStateTeste();
-    const alvo = join(TMP, "bk-expirado");
-    const ok = await protegerBackupContraRetencao(alvo, "teste", { horasValidade: -1 });
+    const alvo = join(TMP, "bk-velho");
+    // d822f0e removeu a expiração: marker antigo (ate no passado,
+    // criadoEm de meses atrás) continua protegendo e NÃO é apagado
+    // pela varredura — a janela marker→restaurador pode ser longa.
+    // grava via API real e depois REESCREVE com timestamps antigos
+    const ok = await protegerBackupContraRetencao(alvo, "teste-velho");
     assert.equal(ok, true);
-    const v = await dirsProtegidosBackup();
-    const { normDir } = await import("../src/lib/protecao-backup.js");
-    assert.ok(v !== null && !v.has(normDir(alvo)), "marker expirado não deveria proteger");
-    // marker expirado foi removido do disco
     const protDir = join(stateDirTeste(), "protecao");
-    const restantes = existsSync(protDir) ? readdirSync(protDir).filter((f) => f.endsWith(".json")) : [];
-    assert.equal(restantes.length, 0, "marker expirado deveria ter sido removido");
+    const arqMarker = readdirSync(protDir).find((f) => f.endsWith(".json"));
+    assert.ok(arqMarker, "marker deveria existir");
+    const man = JSON.parse(readFileSync(join(protDir, arqMarker), "utf8"));
+    man.criadoEm = "2020-01-01T00:00:00.000Z";
+    man.ate = "2020-02-01T00:00:00.000Z"; // expirado de propósito
+    writeFileSync(join(protDir, arqMarker), JSON.stringify(man));
+    const { normDir } = await import("../src/lib/protecao-backup.js");
+    const v = await dirsProtegidosBackup();
+    assert.ok(v !== null && v.has(normDir(alvo)), "marker antigo NÃO deveria perder proteção por idade");
+    // a varredura não removeu o arquivo
+    assert.ok(existsSync(join(protDir, arqMarker)), "marker expirado não deveria ser removido pela varredura");
     limparStateTeste();
+  });
+
+  it("desproteção INCONCLUSIVA não remove marker", async () => {
+    limparStateTeste();
+    const alvo = join(TMP, "bk-inconclusivo");
+    assert.equal(await protegerBackupContraRetencao(alvo, "teste"), true);
+    // torna a referência inconclusiva: journal corrompido no state dir
+    writeFileSync(join(stateDirTeste(), "atualizacao-ultima.json"), "{lixo");
+    const okDes = await desprotegerBackupContraRetencao(alvo);
+    assert.equal(okDes, false, "desproteção inconclusiva deveria retornar false");
+    // varredura também inconclusiva → null; mas o marker AINDA existe
+    const protDir = join(stateDirTeste(), "protecao");
+    assert.ok(readdirSync(protDir).some((f) => f.endsWith(".json")), "marker deveria permanecer após desproteção abortada");
+    limparStateTeste();
+  });
+
+  it("referenciadoPorJournal com state dir ausente → null (inconclusivo)", async () => {
+    limparStateTeste();
+    rmSync(stateDirTeste(), { recursive: true, force: true });
+    const r = await referenciadoPorJournal(join(TMP, "bk-qq"));
+    assert.equal(r, null, "state dir ausente deveria ser inconclusivo, não 'não referenciado'");
   });
 
   it("journal rollback-concluido MANTÉM proteção (flag ainda pendente)", async () => {
@@ -550,36 +590,39 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     assert.ok(v.problemas.some((p2) => p2.includes("integrity") || p2.includes("sha256") || p2.includes("não foi possível")), v.problemas.join("; "));
   });
 
-  it("arquivo > 2 GiB: hash é PULADO (limite declarado) — registra comportamento", () => {
+  it("arquivo > 2 GiB: hash SEMPRE verificado em streaming — sha256 divergente rejeita", () => {
     const dir = fixtureBackup("big");
     const grande = join(dir, "arquivos", "grande.bin");
     writeFileSync(grande, "x");
-    const TAM = 2 * 1024 * 1024 * 1024 + 1;
-    truncateSync(grande, TAM);
+    const TAM = 2 * 1024 * 1024 * 1024 + 1; // > 2 GiB
+    truncateSync(grande, TAM); // sparse: leitura rápida de zeros
     const man = lerMan(dir);
-    // sha256 falso de propósito: se o validador hasheia, diverge;
-    // se pula (>2GiB), o tamanho correto faz passar — documenta o gap.
+    // tamanho CORRETO + sha256 propositalmente errado: se o validador
+    // pulasse o hash (comportamento antigo), passaria — a rejeição
+    // prova que o hash é calculado em streaming sem limite de tamanho.
     man.arquivos["arquivos/grande.bin"] = { size: TAM, sha256: "0".repeat(64) };
     gravarMan(dir, man);
     const v = validarBackup(dir);
-    const problemasGrande = v.problemas.filter((p) => p.includes("grande.bin"));
-    console.log(`  [observado] >2GiB → ${problemasGrande.length ? problemasGrande.join("; ") : "sem problema de hash (pulou)"}`);
-    // Contrato pede hash em streaming OU rejeição explícita — se passou
-    // sem verificar hash, é gap a reportar (não falha de fixture).
+    assert.equal(v.ok, false, ">2GiB com hash divergente deveria rejeitar");
+    assert.ok(
+      v.problemas.some((p) => p.includes("grande.bin") && p.includes("sha256")),
+      `problema de hash ausente: ${v.problemas.join("; ")}`,
+    );
     rmSync(grande, { force: true });
     rmSync(dir, { recursive: true, force: true });
-  });
+  }, 120_000);
 
-  it("raiz do backup como symlink/junction → comportamento observado", () => {
+  it("raiz do backup como symlink/junction → REJEITA", () => {
     const real = fixtureBackup("raizreal");
     const link = join(TMP, "bklink");
     let okLink = true;
     try { symlinkSync(real, link, "junction"); }
     catch { okLink = false; }
     if (!okLink) { console.log("  (skip: sem privilégio de symlink)"); return; }
+    // d822f0e: lstat na raiz — symlink é proibido antes de qualquer leitura
     const v = validarBackup(link);
-    console.log(`  [observado] raiz symlink → ok=${v.ok} ${v.problemas.join("; ")}`);
-    // registra comportamento; não impõe PASS/FAIL aqui — vai ao relatório
+    assert.equal(v.ok, false, "raiz symlink deveria ser rejeitada");
+    assert.ok(v.problemas.some((p) => p.includes("symlink") || p.includes("raiz")), v.problemas.join("; "));
     rmSync(link, { force: true });
   });
 });

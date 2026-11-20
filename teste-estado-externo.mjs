@@ -2,7 +2,7 @@
 // Testes — estado externo durável por instalação (Issue #155, contrato).
 // Cobre: identidade SHA-256, dir canônico, escrita atômica, leitura
 // fail-closed, quarentena, protocolo incompatível, identidade divergente,
-// override MESTRE_STATE_DIR/MESTRE_HOME, consentimento separado de journal,
+// override MESTRE_STATE_DIR (único override de estado), consentimento separado de journal,
 // e avaliação de boot (ambiguidade fail-closed).
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -204,11 +204,11 @@ console.log("\n== T5 paridade estado-externo × boot-lock ==");
   par("LOCALAPPDATA custom (win32)", () => { process.env.LOCALAPPDATA = join(TMP, "local-app"); });
   par("LOCALAPPDATA vazio", () => { process.env.LOCALAPPDATA = ""; });
   par("XDG_STATE_HOME definido em win32 (ignorado pelos dois)", () => { process.env.XDG_STATE_HOME = join(TMP, "xdg"); });
-  // MESTRE_HOME é extensão documentada do estado-externo (sandbox de
-  // dados) — o boot-lock NÃO o conhece: divergência ESPERADA e intencional
-  // quando MESTRE_HOME está definido sem MESTRE_STATE_DIR.
-  par("MESTRE_HOME definido (divergência intencional documentada)",
-    () => { process.env.MESTRE_HOME = join(TMP, "mhome"); }, true);
+  // MESTRE_HOME é raiz de DADOS, NÃO de estado: desde d822f0e o
+  // dirEstado() tem paridade EXATA com boot-lock — MESTRE_HOME não
+  // pode desviar o state dir em nenhum ambiente.
+  par("MESTRE_HOME definido (não desvia state dir)",
+    () => { process.env.MESTRE_HOME = join(TMP, "mhome"); });
   // ramos Linux (XDG_STATE_HOME / ~/.local/state) não são exercitáveis em
   // win32 — process.platform é fixo. Registrado como NOT EXECUTED local;
   // a convenção foi alinhada por inspeção do código (diretorioBaseEstado
@@ -230,7 +230,7 @@ console.log("\n== T5 paridade estado-externo × boot-lock ==");
   try { gravarReciboInstalacao(repoB, envB); } catch { lancou = true; }
   t("gravarReciboInstalacao em destino impossível → lança", lancou);
   t("sem recibo parcial após falha", lerReciboInstalacao(repoB, envB).status === "ausente");
-  t("prova continua negativa após falha", provarInstalacaoNova(repoB, envB).nova === false);
+  t("estado continua desconhecido após falha", estadoInstalacaoConhecido(repoB, envB).conhecido === false);
   rmSync(envB.MESTRE_STATE_DIR, { force: true });
 }
 
