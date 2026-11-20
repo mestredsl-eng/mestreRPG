@@ -1497,6 +1497,7 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
   const [negativos, setNegativos] = useState(0);
   const [privado, setPrivado] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  const [erroFicha, setErroFicha] = useState<string | null>(null);
   // Biblioteca da campanha — resolve o NOME real dos elementos de campos
   // selecao_nivel (regraKind); sem ela cai na chave crua como fallback.
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
@@ -1520,6 +1521,7 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
     setCharacterId(id);
     setSelecao("");
     setGrupos([]);
+    setErroFicha(null);
     if (!id) return;
     setCarregando(true);
     try {
@@ -1560,7 +1562,11 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
         }
       }
       setGrupos([...porSecao.entries()].map(([titulo, campos]) => ({ titulo, campos })));
-    } catch { /* sem ficha acessível */ }
+      setErroFicha(null);
+    } catch (e) {
+      setGrupos([]);
+      setErroFicha(e instanceof Error ? e.message : "Falha ao carregar a ficha do personagem.");
+    }
     setCarregando(false);
   };
 
@@ -1611,7 +1617,10 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
               ))}
             </select>
           </label>
-          {campos.length === 0 && characterId && !carregando && (
+          {erroFicha && characterId && !carregando && (
+            <p className="meta erro">Não foi possível carregar a ficha: {erroFicha}</p>
+          )}
+          {!erroFicha && campos.length === 0 && characterId && !carregando && (
             <p className="meta">
               Nenhum campo elegível para teste nesta ficha. Apenas campos numéricos (inteiro/decimal) ou elementos
               de seleções com nível das seções Atributos, Habilidades, Conhecimentos e Talentos — ou marcados como
