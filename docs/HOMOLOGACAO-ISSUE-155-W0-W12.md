@@ -276,4 +276,9 @@ Limpeza: ______
 
 | W | Data | SHA | SO/Node | Comando | Exit | Decisão | Artefato |
 |---|---|---|---|---|---|---|---|
-| — | — | — | — | nenhuma execução registrada ainda | — | — | — |
+| W14 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w14` | — | **reprovado** (fail-open: 3 cenários exit 0) | relatório de execução na branch `test/issue-155-homologacao-w` |
+| W8 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w8` | migrate 0 | **aprovado** (lacuna demonstrada: 31 migrations, 0 backups, 0 marcadores) | idem |
+| W6 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w6` | — | **aprovado** (health 200 isolado) | idem |
+| W16 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w16` | — | **reprovado** (manifesto ausente → ok:true) | idem |
+| W0/W9/W10 | — | — | — | — | — | **não executado** — servidor real ocupa porta 3001 | — |
+| W1–W5/W7/W11/W12.3/W13/W15 | — | — | — | — | — | **bloqueado** — versão N não integrada | — |
