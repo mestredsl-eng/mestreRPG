@@ -350,3 +350,92 @@ describe("casos degenerados", () => {
     assert.equal(r.incompatibilidades[0]?.motivo, "dados_invalidos");
   });
 });
+
+// ---------- 10. estrutura malformada (fail-closed, sem exceção) ----------
+
+describe("estrutura malformada", () => {
+  const casos: Array<[string, unknown]> = [
+    ["secoes:[{}]", { versao: 1, secoes: [{}] }],
+    ["secoes:[null]", { versao: 1, secoes: [null] }],
+    ["seção sem campos", { versao: 1, secoes: [{ id: "s1", titulo: "X" }] }],
+    ['campos:"x"', { versao: 1, secoes: [{ id: "s1", campos: "x" }] }],
+    ["campo nulo", { versao: 1, secoes: [{ id: "s1", campos: [null] }] }],
+    ["campo sem id", { versao: 1, secoes: [{ id: "s1", campos: [{ tipo: "texto" }] }] }],
+    ["campo id não-string", { versao: 1, secoes: [{ id: "s1", campos: [{ id: 7, tipo: "texto" }] }] }],
+    [
+      "IDs duplicados entre seções",
+      {
+        versao: 1,
+        secoes: [
+          { id: "s1", campos: [{ id: "dup", tipo: "texto" }] },
+          { id: "s2", campos: [{ id: "dup", tipo: "texto" }] },
+        ],
+      },
+    ],
+  ];
+
+  for (const [nome, estrutura] of casos) {
+    it(`${nome} → ok:false estrutura_invalida, sem exceção`, () => {
+      let r: ReturnType<typeof preverRevinculacaoFicha> | undefined;
+      assert.doesNotThrow(() => {
+        r = preverRevinculacaoFicha(
+          estrutura as EstruturaFicha,
+          estruturaBase(),
+          {},
+        );
+      });
+      assert.equal(r?.ok, false, nome);
+      assert.equal(r?.incompatibilidades[0]?.motivo, "estrutura_invalida", nome);
+    });
+
+    it(`${nome} (destino) → ok:false estrutura_invalida, sem exceção`, () => {
+      let r: ReturnType<typeof preverRevinculacaoFicha> | undefined;
+      assert.doesNotThrow(() => {
+        r = preverRevinculacaoFicha(
+          estruturaBase(),
+          estrutura as EstruturaFicha,
+          {},
+        );
+      });
+      assert.equal(r?.ok, false, nome);
+      assert.equal(r?.incompatibilidades[0]?.motivo, "estrutura_invalida", nome);
+    });
+  }
+});
+
+// ---------- 11. saldo de carteira não finito ----------
+
+describe("saldo de carteira não finito", () => {
+  for (const [nome, valor] of [
+    ["Infinity", Infinity],
+    ["-Infinity", -Infinity],
+    ["NaN", NaN],
+  ] as Array<[string, number]>) {
+    it(`${nome} → ok:false valor_invalido`, () => {
+      const r = preverRevinculacaoFicha(estruturaBase(), estruturaBase(), {
+        nome: "Kael",
+        dinheiro: [{ tipo: "entrada", valor: 10 }],
+        "dinheiro::saldo": valor,
+      });
+      assert.equal(r.ok, false, nome);
+      assert.ok(
+        r.incompatibilidades.some(
+          (i) =>
+            i.motivo === "valor_invalido" &&
+            (i.chave === "dinheiro::saldo" || i.chave === "dinheiro"),
+        ),
+        nome,
+      );
+    });
+  }
+
+  it("saldo finito válido permanece aceito", () => {
+    const r = preverRevinculacaoFicha(estruturaBase(), estruturaBase(), {
+      nome: "Kael",
+      dinheiro: [{ tipo: "entrada", valor: 10 }],
+      "dinheiro::saldo": 42.5,
+    });
+    assert.equal(r.ok, true, JSON.stringify(r.incompatibilidades));
+    assert.equal(r.dados?.["dinheiro::saldo"], 42.5);
+  });
+});

@@ -32,7 +32,7 @@
  * renomeação é incompatibilidade até decisão explícita.
  */
 
-import { mapaCampos, validarFicha, type EstruturaFicha } from "./ficha.js";
+import { mapaCampos, validarFicha, type CampoDef, type EstruturaFicha } from "./ficha.js";
 
 // ---------- Chaves reservadas confirmadas em characters.data ----------
 // Fontes verificadas no código (SHA base 37232ee):
@@ -96,8 +96,30 @@ export interface PreviaRevinculacao {
   incompatibilidades: IncompatibilidadeRevinculacao[];
 }
 
+/**
+ * Guarda estrutural profunda: `secoes` array NÃO basta — cada seção
+ * precisa ser objeto, `campos` (quando presente) array, cada campo
+ * objeto com `id` string não-vazia, e IDs de campo únicos na
+ * estrutura inteira (mapaCampos é last-wins — duplicata tornaria a
+ * classificação ambígua). Qualquer violação → estrutura inválida,
+ * nunca exceção para o chamador.
+ */
 function estruturaValida(e: EstruturaFicha | null | undefined): e is EstruturaFicha {
-  return !!e && typeof e === "object" && Array.isArray(e.secoes);
+  if (!e || typeof e !== "object" || !Array.isArray(e.secoes)) return false;
+  const ids = new Set<string>();
+  for (const s of e.secoes) {
+    if (!s || typeof s !== "object") return false;
+    const campos = (s as { campos?: unknown }).campos;
+    if (campos !== undefined && !Array.isArray(campos)) return false;
+    for (const c of campos ?? []) {
+      if (!c || typeof c !== "object") return false;
+      const id = (c as { id?: unknown }).id;
+      if (typeof id !== "string" || id.length === 0) return false;
+      if (ids.has(id)) return false; // ID duplicado entre seções
+      ids.add(id);
+    }
+  }
+  return true;
 }
 
 /**
@@ -123,8 +145,16 @@ export function preverRevinculacaoFicha(
     return falha([{ chave: "(data)", motivo: "dados_invalidos" }]);
   }
 
-  const mapaOrig = mapaCampos(estruturaOrigem);
-  const mapaDest = mapaCampos(estruturaDestino);
+  let mapaOrig: Map<string, CampoDef>;
+  let mapaDest: Map<string, CampoDef>;
+  try {
+    mapaOrig = mapaCampos(estruturaOrigem);
+    mapaDest = mapaCampos(estruturaDestino);
+  } catch {
+    // defesa em profundidade: mesmo com o guarda acima, qualquer
+    // estrutura patológica vira incompatibilidade — nunca exceção.
+    return falha([{ chave: "(estrutura)", motivo: "estrutura_invalida" }]);
+  }
   const incompatibilidades: IncompatibilidadeRevinculacao[] = [];
 
   // Chaves reservadas: preservadas verbatim em `reservados`.
@@ -202,14 +232,34 @@ export function preverRevinculacaoFicha(
   const carteirasSaldo = new Set(
     [...mapaDest.values()].filter((c) => c.carteira).map((c) => c.id),
   );
-  const res = validarFicha(estruturaDestino, entradaCampos, {
-    aplicarPadroes: false,
-    estrito: false,
-    apenasCamposPermitidos: new Set(Object.keys(entradaCampos)),
-    carteirasSaldo,
-  });
+  let res: ReturnType<typeof validarFicha>;
+  try {
+    res = validarFicha(estruturaDestino, entradaCampos, {
+      aplicarPadroes: false,
+      estrito: false,
+      apenasCamposPermitidos: new Set(Object.keys(entradaCampos)),
+      carteirasSaldo,
+    });
+  } catch {
+    return falha([{ chave: "(estrutura)", motivo: "estrutura_invalida" }]);
+  }
   for (const [campoId, detalhe] of Object.entries(res.erros)) {
     incompatibilidades.push({ chave: campoId, campoId, motivo: "valor_invalido", detalhe });
+  }
+
+  // Saldo de carteira: validarFicha aceita Infinity via parseNumeroBR
+  // (Number.isFinite não é verificado no ramo carteira). Na prévia o
+  // contrato exige valor finito — Infinity/-Infinity/NaN nunca podem
+  // sair como ok (no round-trip JSON virariam null = corrupção).
+  for (const chave of Object.keys(entradaCampos)) {
+    if (!chave.endsWith(SUFIXO_SALDO_CARTEIRA)) continue;
+    const v = res.dados[chave];
+    if (v !== undefined && (typeof v !== "number" || !Number.isFinite(v))) {
+      incompatibilidades.push({
+        chave, campoId: chave.slice(0, -SUFIXO_SALDO_CARTEIRA.length),
+        motivo: "valor_invalido", detalhe: "Saldo inicial deve ser número finito",
+      });
+    }
   }
 
   if (incompatibilidades.length > 0) {
