@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { createHash } from "node:crypto";
-import { and, asc, eq, isNull, like, or } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, like, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { ruleSets, ruleDefinitions, characters, memberships, sheetVersions, ruleBooks, ruleBookItems, campaignRuleBooks } from "../db/schema.js";
@@ -10,13 +10,15 @@ import {
   carregarRegras,
   configRegrasSchema,
   errosConversaoFerimento,
+  errosVinculosSangueConfig,
   definicaoElementoSchema,
   validarRegras,
   pontosParaFicha,
   TIPOS_REGRA,
+  type ConfigRegras,
   type ElementoRegra,
 } from "../lib/regras.js";
-import { estruturaFichaSchema, todosCampos, avaliarFormula, validarFicha } from "../lib/ficha.js";
+import { estruturaFichaSchema, todosCampos, avaliarFormula, validarFicha, type EstruturaFicha } from "../lib/ficha.js";
 import { resumoHp, resumoVitalidade, CHAVE_HP, CHAVE_VITALIDADE } from "../lib/vida.js";
 import { bonusPontos } from "../lib/pontos.js";
 import { SEED_BIBLIOTECA } from "../lib/seed-regras.js";
@@ -225,6 +227,48 @@ regrasRouter.post("/duplicar/:elementId", requirePapel("mestre"), async (req, re
   res.status(201).json({ id });
 });
 
+/**
+ * Coleta as estruturas de ficha efetivamente vinculadas a personagens da
+ * campanha (characters.templateVersionId → sheet_versions.structure,
+ * parseadas por estruturaFichaSchema) e delega a validação estrutural
+ * pura de config.sangue. Se a config habilita Sangue ou declara
+ * vínculos e NÃO há estrutura ativa verificável, falha fechado —
+ * nunca aceita vínculo não verificado.
+ */
+async function errosVinculosSangueCampanha(
+  config: ConfigRegras,
+  campaignId: string,
+): Promise<string[]> {
+  const sang = config.sangue;
+  const temVinculo = !!(
+    sang?.campoCapacidadeId ||
+    sang?.campoNaturezaId ||
+    sang?.capacidade?.bonusQualidade?.campoId
+  );
+  if (!sang?.habilitado && !temVinculo) return [];
+  const vinculos = await db
+    .select({ templateVersionId: characters.templateVersionId })
+    .from(characters)
+    .where(and(eq(characters.campaignId, campaignId), isNotNull(characters.templateVersionId)));
+  const ids = [...new Set(vinculos.map((c) => c.templateVersionId).filter((v): v is string => !!v))];
+  if (!ids.length) {
+    return ["config.sangue: nenhuma ficha publicada vinculada a personagens da campanha — vínculos não podem ser verificados"];
+  }
+  const estruturas = new Map<string, EstruturaFicha>();
+  const erros: string[] = [];
+  for (const vid of ids) {
+    const [v] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, vid)).limit(1);
+    const parse = estruturaFichaSchema.safeParse(v?.structure);
+    if (!parse.success) {
+      erros.push(`config.sangue: estrutura da ficha ${vid} inválida — vínculos não podem ser verificados`);
+      continue;
+    }
+    estruturas.set(vid, parse.data);
+  }
+  if (erros.length) return erros;
+  return errosVinculosSangueConfig(config, estruturas);
+}
+
 /** PUT /api/campaigns/:campaignId/regras/config — configuração de pontos e aprovação (mestre) */
 regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   const body = configRegrasSchema.partial().safeParse(req.body);
@@ -242,6 +286,11 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   const errosConv = errosConversaoFerimento(novo);
   if (errosConv.length) {
     res.status(400).json({ erro: errosConv.join(" ") });
+    return;
+  }
+  const errosSangue = await errosVinculosSangueCampanha(novo, req.params.campaignId);
+  if (errosSangue.length) {
+    res.status(400).json({ erro: errosSangue.join(" ") });
     return;
   }
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));

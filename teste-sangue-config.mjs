@@ -1,0 +1,230 @@
+// Issue #186 C1 — config.sangue no PUT /api/campaigns/:id/regras/config.
+// Cobre: default desabilitado, schema estrutural, validação de vínculos
+// contra TODAS as estruturas de ficha ativas da campanha (400 sem
+// persistir), PUT parcial preservando campos, e naturezas de rótulos
+// livres. Banco 100% descartável; fixtures sintéticas.
+import crypto from "node:crypto";
+import { join } from "node:path";
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, req, abrirDb, encerrarServidor, limparDir,
+} from "./teste-base.mjs";
+
+let pass = 0, fail = 0;
+const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
+const sec = (n) => console.log("\n== " + n + " ==");
+
+const DIR = dirTeste("sangue-config");
+const BANCO = join(DIR, "banco.db");
+const PORTA = await portaLivre();
+const BASE = `http://localhost:${PORTA}`;
+let proc;
+
+const putCfg = (campId, cookie, body) =>
+  req(BASE, "PUT", `/campaigns/${campId}/regras/config`, { cookie, body });
+const getCfg = async (campId, cookie) => {
+  const r = await req(BASE, "GET", `/campaigns/${campId}/regras`, { cookie });
+  return r.json?.config;
+};
+
+// Estrutura sintética com campos compatíveis/incompatíveis de propósito.
+function estruturaCustom() {
+  return {
+    versao: 1,
+    secoes: [{
+      id: "s1", titulo: "Sangue", ordem: 0,
+      campos: [
+        { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "livre", padrao: 0 },
+        { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", padrao: "", opcoes: ["Alfa", "Beta"] },
+        { id: "qual", label: "Qualidade", tipo: "selecao_nivel", semantico: "vantagem", padrao: [] },
+        { id: "txt", label: "Texto", tipo: "texto", semantico: "livre", padrao: "" },
+      ],
+    }],
+    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+  };
+}
+
+// criarCenario só semeia o admin uma vez por banco — campanhas extras
+// são criadas via API e recebem ficha/personagem por INSERT direto.
+async function novaCenarioExtra(c, { comFicha = true, estrutura = null, rotulo = "extra" } = {}) {
+  const camp = await req(BASE, "POST", "/campaigns", {
+    cookie: c.cookieMestre, body: { name: `Extra ${rotulo} ${crypto.randomUUID().slice(0, 6)}` },
+  });
+  const campId = camp.json?.campanha?.id;
+  if (!campId) throw new Error("criar campanha extra falhou: " + JSON.stringify(camp.json));
+  const db = abrirDb(BANCO);
+  try {
+    const agora = Date.now();
+    const mid = crypto.randomUUID();
+    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'jogador','ativo',?,?,?)")
+      .run(mid, campId, c.jogadores.jogador1.id, agora, agora, agora);
+    let templateVersionId = null;
+    if (comFicha) {
+      const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
+      db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+        .run(tplId, campId, "Ficha " + rotulo, null, c.adminId, agora, agora);
+      db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+        .run(verId, tplId, JSON.stringify(estrutura ?? estruturaCustom()), agora, agora);
+      db.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
+      templateVersionId = verId;
+      const pid = crypto.randomUUID();
+      db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(pid, campId, mid, verId, "Herói " + rotulo,
+          JSON.stringify({ cap: 7, nat: "Alfa", for: 5, qual: [{ key: "x", nivel: 2 }], txt: "livre" }),
+          "{}", "aprovada", 0, agora, agora);
+    }
+    return { campId, cookieMestre: c.cookieMestre, templateVersionId };
+  } finally { db.close(); }
+}
+
+try {
+  await prepararBanco(BANCO);
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bkp") });
+  await esperarSaudavel(BASE, proc);
+  const c = await criarCenario(BASE, BANCO, { campanha: "Campanha Sangue Config" });
+
+  sec("1-2. Default desabilitado — configs antigas intactas");
+  {
+    const cfg = await getCfg(c.campId, c.cookieMestre);
+    t("config sem sangue → bloco desabilitado", cfg?.sangue?.habilitado === false, JSON.stringify(cfg?.sangue));
+    // PUT parcial de outro bloco não liga Sangue
+    const r = await putCfg(c.campId, c.cookieMestre, { financeiro: { moedaPrincipal: "USD" } });
+    t("PUT financeiro parcial aceito", r.status === 200, `status=${r.status}`);
+    const cfg2 = await getCfg(c.campId, c.cookieMestre);
+    t("sangue continua desabilitado após PUT alheio", cfg2?.sangue?.habilitado === false);
+    t("financeiro persistiu USD", cfg2?.financeiro?.moedaPrincipal === "USD");
+    // habilitado:false explícito não liga
+    const r2 = await putCfg(c.campId, c.cookieMestre, { sangue: { habilitado: false } });
+    t("sangue.habilitado=false aceito", r2.status === 200, `status=${r2.status}`);
+  }
+
+  sec("3. Config estrutural válida — sem valores de regra inventados");
+  {
+    // habilitado:true sem campoCapacidadeId → 400 (a config ainda não tem vínculo)
+    const r0 = await putCfg(c.campId, c.cookieMestre, { sangue: { habilitado: true } });
+    t("400: habilitado sem campoCapacidadeId", r0.status === 400, `status=${r0.status} ${JSON.stringify(r0.json).slice(0, 140)}`);
+
+    const r = await putCfg(c.campId, c.cookieMestre, {
+      sangue: {
+        habilitado: true,
+        campoCapacidadeId: "for", // campo inteiro da fixture base
+        campoNaturezaId: undefined,
+        capacidade: { modo: "valor" },
+        naturezas: { Alfa: { metaHumanoComPoder: true, recuperacao: "descansar" } },
+        recuperacaoSangue: { habilitado: true },
+      },
+    });
+    // fixture base só tem campo "for" (inteiro): capacidade ok, natureza ausente ok
+    t("sangue válido na estrutura base aceito", r.status === 200, `status=${r.status} ${JSON.stringify(r.json).slice(0, 200)}`);
+    const cfg = await getCfg(c.campId, c.cookieMestre);
+    t("naturezas persistiu rótulo livre Alfa", cfg?.sangue?.naturezas?.Alfa?.metaHumanoComPoder === true);
+    t("recuperacaoSangue persistiu", cfg?.sangue?.recuperacaoSangue?.habilitado === true);
+  }
+
+  sec("4-6. Vínculos inválidos → HTTP 400 sem persistir");
+  {
+    const casos = [
+      ["campo capacidade inexistente", { sangue: { habilitado: true, campoCapacidadeId: "nao_existe" } }],
+      ["modo incompatível (somaNiveis em inteiro)", { sangue: { habilitado: true, campoCapacidadeId: "for", capacidade: { modo: "somaNiveis" } } }],
+      ["modo mapa sem mapa", { sangue: { habilitado: true, campoCapacidadeId: "for", capacidade: { modo: "mapa" } } }],
+      ["natureza inexistente", { sangue: { habilitado: true, campoCapacidadeId: "for", campoNaturezaId: "fantasma" } }],
+      ["natureza tipo incompatível (inteiro)", { sangue: { habilitado: true, campoCapacidadeId: "for", campoNaturezaId: "for" } }],
+      ["bonusQualidade campo inexistente", { sangue: { habilitado: true, campoCapacidadeId: "for", capacidade: { bonusQualidade: { campoId: "x", coeficiente: 1 } } } }],
+    ];
+    for (const [nome, body] of casos) {
+      const r = await putCfg(c.campId, c.cookieMestre, body);
+      t(`400: ${nome}`, r.status === 400, `status=${r.status} ${JSON.stringify(r.json).slice(0, 140)}`);
+    }
+    // nada foi persistido — config ainda é a do cenário 3
+    const cfg = await getCfg(c.campId, c.cookieMestre);
+    t("rejeições não gravaram alteração", cfg?.sangue?.campoCapacidadeId === "for");
+  }
+
+  sec("7. Naturezas: rótulos livres, sem nomes hardcoded");
+  {
+    const r = await putCfg(c.campId, c.cookieMestre, {
+      sangue: {
+        habilitado: true,
+        campoCapacidadeId: "for",
+        naturezas: {
+          "Espécie-X-Qualquer": { metaHumanoComPoder: false },
+          Outro: { recuperacao: "rotulo-opaco-da-campanha" },
+        },
+      },
+    });
+    t("naturezas com rótulos arbitrários aceitas", r.status === 200, `status=${r.status}`);
+    const cfg = await getCfg(c.campId, c.cookieMestre);
+    t("rótulo não mapeado não ganha semântica", cfg?.sangue?.naturezas?.["Sem-Mapeamento"] === undefined);
+  }
+
+  sec("8. PUT parcial preserva campos não enviados");
+  {
+    const antes = await getCfg(c.campId, c.cookieMestre);
+    const r = await putCfg(c.campId, c.cookieMestre, { mesa: { acaoForaDeTurno: false } });
+    t("PUT mesa parcial aceito", r.status === 200);
+    const depois = await getCfg(c.campId, c.cookieMestre);
+    t("sangue preservado no merge parcial", JSON.stringify(depois?.sangue) === JSON.stringify(antes?.sangue));
+    t("mesa persistiu", depois?.mesa?.acaoForaDeTurno === false);
+  }
+
+  sec("9. Múltiplas estruturas ativas — valida CADA uma");
+  {
+    // campanha com DOIS personagens em estruturas diferentes:
+    // custom (cap/nat/qual/txt) + base-like (só "for")
+    const c2 = await novaCenarioExtra(c, { rotulo: "multi" });
+    // segundo personagem com estrutura mínima (só campo "for" inteiro)
+    {
+      const db = abrirDb(BANCO); const agora = Date.now();
+      try {
+        const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
+        db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+          .run(tplId, c2.campId, "Ficha minima", null, c.adminId, agora, agora);
+        db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+          .run(verId, tplId, JSON.stringify({
+            versao: 1,
+            secoes: [{ id: "s1", titulo: "A", ordem: 0, campos: [{ id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" }] }],
+            pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+          }), agora, agora);
+        db.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
+        const mid2 = db.prepare("select id from memberships where campaign_id=? and user_id=?").get(c2.campId, c.jogadores.jogador2?.id ?? c.jogadores.jogador1.id)?.id
+          ?? db.prepare("select id from memberships where campaign_id=? limit 1").get(c2.campId).id;
+        const pid = crypto.randomUUID();
+        db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(pid, c2.campId, mid2, verId, "Herói Mínimo", JSON.stringify({ for: 3 }), "{}", "aprovada", 0, agora, agora);
+      } finally { db.close(); }
+    }
+    // config que só a estrutura custom atende (nat não existe na mínima)
+    const ok = await putCfg(c2.campId, c2.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "for", campoNaturezaId: undefined, capacidade: { modo: "valor" } },
+    });
+    // "for" existe nas DUAS estruturas (custom tem for? não — custom não tem "for")
+    // custom tem cap/nat/qual/txt; mínima tem for → "for" falta na custom → 400
+    t("vínculo ausente em QUALQUER estrutura ativa → 400", ok.status === 400, `status=${ok.status} ${JSON.stringify(ok.json).slice(0, 200)}`);
+    // config que falha só na mínima: campoNaturezaId "nat" (não existe na mínima)
+    const rNat = await putCfg(c2.campId, c2.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "cap", campoNaturezaId: "nat" },
+    });
+    t("natureza válida na custom mas ausente na mínima → 400", rNat.status === 400, `status=${rNat.status} ${JSON.stringify(rNat.json).slice(0, 200)}`);
+    const cfg2 = await getCfg(c2.campId, c2.cookieMestre);
+    t("config rejeitada não persistiu", cfg2?.sangue?.habilitado !== true || cfg2?.sangue?.campoNaturezaId == null);
+  }
+
+  sec("10. Campanha sem nenhuma ficha vinculada → fail-closed");
+  {
+    const c3 = await novaCenarioExtra(c, { comFicha: false, rotulo: "sem-ficha" });
+    const r = await putCfg(c3.campId, c3.cookieMestre, {
+      sangue: { habilitado: true, campoCapacidadeId: "qualquer" },
+    });
+    t("sangue habilitado sem estrutura verificável → 400", r.status === 400, `status=${r.status}`);
+    const r2 = await putCfg(c3.campId, c3.cookieMestre, { sangue: { habilitado: false } });
+    t("sangue desabilitado sem ficha → 200", r2.status === 200, `status=${r2.status}`);
+  }
+} catch (e) {
+  fail++;
+  console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 600));
+} finally {
+  if (proc) await encerrarServidor(proc);
+  limparDir(DIR);
+}
+console.log(`\n${pass} ok, ${fail} falhas`);
+process.exit(fail ? 1 : 0);
