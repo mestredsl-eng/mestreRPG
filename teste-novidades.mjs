@@ -50,6 +50,12 @@ const sec = (n) => console.log("\n== " + n + " ==");
     `prevId=${snapshotXp.prevId} anterior=${atual.id}`);
   t("snapshot 0029 preserva o mesmo esquema (migration só de dados)",
     JSON.stringify(semIdentidade(snapshotXp)) === JSON.stringify(semIdentidade(atual)));
+  const snapshotNews = JSON.parse(readFileSync(join(meta, "0030_snapshot.json"), "utf8"));
+  t("snapshot 0030 encadeia em 0029 com UUID próprio",
+    snapshotNews.prevId === snapshotXp.id && snapshotNews.id !== snapshotXp.id && /^[0-9a-f-]{36}$/i.test(snapshotNews.id),
+    `prevId=${snapshotNews.prevId} anterior=${snapshotXp.id}`);
+  t("snapshot 0030 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshotNews)) === JSON.stringify(semIdentidade(snapshotXp)));
 }
 
 // ---------- banco limpo com todas as migrations (cenário principal) ----------

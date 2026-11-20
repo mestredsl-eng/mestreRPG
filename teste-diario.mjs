@@ -463,7 +463,9 @@ try {
     const c3 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { kind: "mestre", visibility: "privada", content: "promoção combinada" } });
     t("171-20 flag off: kind mestre + privada → 403", c3.status === 403, String(c3.status));
     const c4 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG2.cookie, body: { recipients: [uJ2] } });
-    t("171-21 flag off: recipients em nota privada → 200 (inócuo)", c4.status === 200, String(c4.status));
+    t("171-21 flag off: recipients em nota privada → 200 (ignorado)", c4.status === 200, String(c4.status));
+    const recJ2Priv = comDb(BANCO, (db) => db.prepare("select recipients from notes where id=?").get(J2_PRIV))?.recipients;
+    t("171-21b recipients de nota privada persistido como null", recJ2Priv === null, String(recJ2Priv));
     lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
     const vazou = lista.some((x) => x.id === J2_PRIV);
     t("171-22 nota privada c/ recipients não aparece p/ terceiros", !vazou, JSON.stringify(vazou));
@@ -477,6 +479,36 @@ try {
     const aindaPublica = (c8.json?.anotacoes ?? []).some((x) => x.id === J_PRIV);
     t("171-26 nota rebaixada some p/ outros jogadores", !aindaPublica, JSON.stringify(aindaPublica));
     setFlagCompartilha(true);
+
+    // P2-A — destinatários latentes: nota privada nunca retém recipients.
+    const recNota = (id) => comDb(BANCO, (db) => db.prepare("select recipients, visibility from notes where id=?").get(id));
+    const J5_LAT = await mkJ(`E171 latente ${RUN}`, "privada");
+    t("171-27 nota privada p/ teste de latência criada", Boolean(J5_LAT));
+    const d1 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { recipients: [uJ2] } });
+    t("171-28 PATCH recipients em privada (flag on) → 200", d1.status === 200, String(d1.status));
+    t("171-29 recipients persistido null", recNota(J5_LAT)?.recipients === null, String(recNota(J5_LAT)?.recipients));
+    let lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-30 destinatário latente não vê a nota", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d2 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "selecionada" } });
+    t("171-31 promover p/ selecionada sem recipients → 400", d2.status === 400, String(d2.status));
+    t("171-32 recipients continua null após 400", recNota(J5_LAT)?.recipients === null);
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-33 destinatário antigo não reativado", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d3 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "selecionada", recipients: [uJ2] } });
+    t("171-34 selecionada com recipients válidos → 200", d3.status === 200, String(d3.status));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-35 destinatário explícito passa a ver", (lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d4 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { content: "só conteúdo" } });
+    t("171-36 PATCH conteúdo em selecionada → 200", d4.status === 200, String(d4.status));
+    const recSel = recNota(J5_LAT);
+    t("171-37 recipients preservados sem reenvio", JSON.stringify(JSON.parse(recSel?.recipients ?? "null")) === JSON.stringify([uJ2]), String(recSel?.recipients));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-38 destinatário continua vendo após edição", (lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d5 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "privada" } });
+    t("171-39 downgrade p/ privada → 200", d5.status === 200, String(d5.status));
+    t("171-40 downgrade limpa recipients", recNota(J5_LAT)?.recipients === null, String(recNota(J5_LAT)?.recipients));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-41 nota rebaixada some p/ destinatário", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
   }
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));

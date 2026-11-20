@@ -192,13 +192,21 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
       if (md?.userId !== req.usuario!.id) { res.status(403).json({ erro: "Diário pertence a outro jogador" }); return; }
     }
   }
-  let recips: string[] | null | undefined;
-  if (d.visibility === "selecionada" || (d.recipients !== undefined && d.visibility !== "privada" && d.visibility !== "mestre" && d.visibility !== "publica")) {
-    if (d.recipients !== undefined) {
-      const validados = await validarDestinatarios(req.params.campaignId, d.recipients);
-      if (validados === null) { res.status(400).json({ erro: "Destinatários inválidos" }); return; }
-      recips = validados;
-    }
+  const visibilidadeFinal = d.visibility ?? n.visibility;
+  let recips: string[] | null;
+  if (visibilidadeFinal !== "selecionada") {
+    // P2-A: nota que não está "selecionada" nunca retém destinatários —
+    // impede lista latente ser reativada numa promoção posterior.
+    recips = null;
+  } else if (d.recipients !== undefined) {
+    const validados = await validarDestinatarios(req.params.campaignId, d.recipients);
+    if (validados === null || validados.length === 0) { res.status(400).json({ erro: "Destinatários inválidos" }); return; }
+    recips = validados;
+  } else if (n.visibility !== "selecionada") {
+    // promoção para "selecionada" sem lista nova: não herda recipients antigos
+    res.status(400).json({ erro: "Informe ao menos um destinatário" }); return;
+  } else {
+    recips = (n.recipients as string[] | null) ?? null;
   }
   await db.update(notes).set({
     title: d.title ?? n.title,
@@ -208,7 +216,7 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
     kind: d.kind ?? n.kind,
     important: d.important !== undefined ? (d.important ? 1 : 0) : n.important,
     visibility: d.visibility ?? n.visibility,
-    recipients: recips !== undefined ? recips : (d.visibility && d.visibility !== "selecionada" ? null : n.recipients),
+    recipients: recips,
     status: d.status ?? n.status,
     updatedAt: new Date(),
   }).where(eq(notes.id, n.id));
