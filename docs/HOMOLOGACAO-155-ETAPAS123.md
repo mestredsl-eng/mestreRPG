@@ -35,7 +35,12 @@
 
 `teste-estado-externo.mjs` e `teste-restauracao-journal.mjs` também receberam ajustes do próprio Pai — merges preservaram ambas as frentes.
 
-## Resultados atuais (contra 2d814ca mergeado, exit codes reais — reexecução pós-merge)
+## Resultados atuais (reexecução pós-merge)
+
+- **Árvore sob teste:** `5884113` (merge de `2d814ca` sobre `dbe7965`) — working tree idêntica à do merge; os comandos rodaram antes do commit documental.
+- **SHA de produção efetivo:** `2d814cabc60123c77df6a675ffad6382622574d8`.
+- **SHA final da branch (documental):** commit deste arquivo, posterior às execuções — não foi ele o SHA testado.
+- **Ambiente:** Windows + Node v26.13.0, execução local em `%TEMP%`.
 
 | Suíte | Comando | Exit | Resultado |
 |---|---|---|---|
