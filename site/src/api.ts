@@ -847,6 +847,10 @@ export interface ConfigRegras {
   dados?: {
     d10SucessoMinimo: number;
   };
+  /** Pontos de Sangue (Issue #186, C1) — espelha config.sangue do schema
+   *  servidor/src/lib/regras.ts. Apenas vínculos; custo/recuperação em
+   *  jogo ainda não fazem parte deste contrato. */
+  sangue?: ConfigSangue;
   notas?: {
     jogadorCompartilha: boolean;
     espectadorLeCompartilhadas: boolean;
@@ -854,6 +858,58 @@ export interface ConfigRegras {
   vtt?: {
     vidaCompartilhada: boolean;
   };
+}
+
+// ---------- Pontos de Sangue (Issue #186, C1) ----------
+
+export type ModoCapacidadeSangue = "valor" | "somaNiveis" | "mapa";
+
+export interface ConfigCapacidadeSangue {
+  modo?: ModoCapacidadeSangue;
+  /** modo "mapa": rótulo do campo → capacidade (rótulos são da campanha). */
+  mapa?: Record<string, number>;
+  /** Bônus opcional por Qualidade — coeficiente é da campanha, nunca inventado. */
+  bonusQualidade?: {
+    campoId?: string;
+    coeficiente?: number;
+    modo?: ModoCapacidadeSangue;
+    mapa?: Record<string, number>;
+  };
+}
+
+export interface ConfigNaturezaSangue {
+  metaHumanoComPoder?: boolean;
+  /** Ação canônica de recuperação (contrato #216) — nunca string livre. */
+  recuperacao?: "descansar" | "alimentar";
+}
+
+/** Ação canônica de recuperação de Sangue (Descansar/Alimentar-se). */
+export interface ConfigAcaoRecuperacao {
+  /** Obrigatória quando a ação está presente; false = inerte. */
+  habilitada?: boolean;
+  /** Obrigatória > 0 quando habilitada:true; ausente/inválida → 400. */
+  quantidade?: number;
+}
+
+export interface ConfigSangue {
+  habilitado?: boolean;
+  campoCapacidadeId?: string;
+  campoNaturezaId?: string;
+  capacidade?: ConfigCapacidadeSangue;
+  /** Rótulos de natureza livres da campanha; sem mapeamento = desconhecida (fail-closed). */
+  naturezas?: Record<string, ConfigNaturezaSangue>;
+  /** Ausência nunca habilita recuperação — só habilitado:true liga. */
+  recuperacaoSangue?: {
+    habilitado?: boolean;
+    /** Ações canônicas; ação ausente = desabilitada. */
+    acoes?: {
+      descansar?: ConfigAcaoRecuperacao;
+      alimentar?: ConfigAcaoRecuperacao;
+    };
+  };
+  /** Custo de Sangue por Poder (key de rule_definitions kind="poder").
+   *  Campo sem entrada = gratuito; custo deve ser finito >= 0. */
+  poderes?: Record<string, { custo: number }>;
 }
 
 export interface RegrasCampanha {
