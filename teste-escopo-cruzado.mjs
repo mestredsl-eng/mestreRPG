@@ -107,6 +107,25 @@ try {
   t("admin2 sem membership na campanha", membAdmin2 === 0);
   t("GM sem membership na campanha", membGm === 0);
 
+  // O GM possui um membership legítimo em OUTRA campanha; isso prova que
+  // autorização em um escopo de campanha não atravessa para a campanha-alvo.
+  const outra = await req(base, "POST", "/campaigns", {
+    cookie: cookieGm,
+    body: { nome: "Campanha do GM — outra" },
+  });
+  const outraCampId = outra.json?.campanha?.id ?? outra.json?.campaign?.id;
+  t("GM cria outra campanha e recebe membership mestre",
+    outra.status === 201 && !!outraCampId,
+    JSON.stringify(outra.json).slice(0, 200));
+  if (outraCampId) {
+    const membOutra = comDb(BANCO, (db) => db.prepare(
+      "select role, status from memberships where campaign_id=? and user_id=?"
+    ).get(outraCampId, gmId));
+    t("membership do GM existe somente na outra campanha",
+      membOutra?.role === "mestre" && membOutra?.status === "ativo",
+      JSON.stringify(membOutra));
+  }
+
   // baseline de integridade: convites e memberships da campanha antes
   // das negações — os asserts do fim comparam com estes valores.
   const baseIntegridade = comDb(BANCO, (db) => ({
