@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca } from "../api";
 import { ModalConfirmar } from "../Modal";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
+import EstadoVazio from "../EstadoVazio";
 
 const CATEGORIAS = ["mapas", "npcs", "locais", "documentos", "imagens", "pistas", "regras", "referencias", "jogadores", "outros"];
 const VIS_OPCOES = [
@@ -248,7 +249,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
                 </div>
               </li>
             ))}
-            {!filtrados.length && <li className="dica">Nenhum arquivo nesta visualização.</li>}
+            {!filtrados.length && <li><EstadoVazio icone="vazio-busca">Nenhum arquivo nesta visualização.</EstadoVazio></li>}
           </ul>
         </div>
       </div>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
+import EstadoVazio from "../EstadoVazio";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
 import AvatarRetrato from "../AvatarRetrato";
@@ -161,7 +162,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
       </section>
 
       {personagens.length === 0 ? (
-        <section className="cartao"><p>{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</p></section>
+        <section className="cartao"><EstadoVazio icone="vazio-lista">{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</EstadoVazio></section>
       ) : (
         <section className="cartao">
           <div className="linha filtros-lista">
@@ -172,7 +173,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             </select>
           </div>
           {visiveis.length === 0 ? (
-            <p className="meta">Nenhum personagem corresponde à busca.</p>
+            <EstadoVazio icone="vazio-busca">Nenhum personagem corresponde à busca.</EstadoVazio>
           ) : (
           <table className="tabela">
             <thead>

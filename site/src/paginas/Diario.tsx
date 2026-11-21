@@ -3,6 +3,7 @@ import { ModalConfirmar } from "../Modal";
 import AvatarRetrato from "../AvatarRetrato";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
+import EstadoVazio from "../EstadoVazio";
 
 const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
 const VISIBILIDADES = [
@@ -260,8 +261,8 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
             </div>
           </li>
         ))}
-        {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
-        {anotacoes.length > 0 && !visiveis.length && <li className="dica">{temFiltro ? "Nenhuma anotação corresponde aos filtros." : "Nenhuma anotação."}</li>}
+        {!anotacoes.length && <li><EstadoVazio icone="vazio-lista">Nenhuma anotação.</EstadoVazio></li>}
+        {anotacoes.length > 0 && !visiveis.length && <li><EstadoVazio icone="vazio-busca">{temFiltro ? "Nenhuma anotação corresponde aos filtros." : "Nenhuma anotação."}</EstadoVazio></li>}
       </ul>
       {confirmando && (
         <ModalConfirmar

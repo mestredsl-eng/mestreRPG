@@ -2433,3 +2433,26 @@ textarea:focus-visible,
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* Issue #236 — estados vazios ilustrados: ícone decorativo grande e
+   discreto, texto como conteúdo principal; centralizado, sem overflow. */
+.estado-vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.6rem 1rem;
+  text-align: center;
+  color: #9aa3b2;
+}
+
+.estado-vazio-icone {
+  width: 44px;
+  height: 44px;
+  opacity: 0.55;
+}
+
+.estado-vazio-texto {
+  margin: 0;
+  font-size: 0.95rem;
+}

@@ -11,6 +11,7 @@ import Diario from "./Diario";
 import Historico from "./Historico";
 import Arquivos from "./Arquivos";
 import IconeInterface from "../IconeInterface";
+import EstadoVazio from "../EstadoVazio";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -422,6 +423,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             </div>
             <button type="submit">Gerar convite</button>
           </form>
+
+          {convites.length === 0 && (
+            <EstadoVazio icone="vazio-lista">Nenhum convite gerado ainda.</EstadoVazio>
+          )}
 
           <table className="tabela tabela-responsiva">
             <thead>

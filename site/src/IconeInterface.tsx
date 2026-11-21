@@ -19,7 +19,9 @@ export type NomeIconeInterface =
   | "fichas"
   | "regras"
   | "participantes"
-  | "convites";
+  | "convites"
+  | "vazio-lista"
+  | "vazio-busca";
 
 const desenhos: Record<NomeIconeInterface, ReactNode> = {
   simbolo: (
@@ -146,6 +148,21 @@ const desenhos: Record<NomeIconeInterface, ReactNode> = {
     <>
       <rect x="3" y="5.5" width="18" height="13" rx="1.5" />
       <path d="m3.5 7.5 8.5 6 8.5-6" />
+    </>
+  ),
+  // Estados vazios (Issue #236) — decorativos, aria-hidden via componente.
+  "vazio-lista": (
+    <>
+      <path d="M3.5 13.5 6 5.5h12l2.5 8v6a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19.5v-6Z" />
+      <path d="M3.5 13.5h5l1.8 2.8h3.4l1.8-2.8h5" />
+      <path d="M10 10.5h4" strokeDasharray="2 2.5" />
+    </>
+  ),
+  "vazio-busca": (
+    <>
+      <circle cx="10.5" cy="10.5" r="6" />
+      <path d="m15 15 5 5" />
+      <path d="M8 10.5h5" strokeDasharray="2 2.5" />
     </>
   ),
 };
