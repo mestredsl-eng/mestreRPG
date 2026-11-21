@@ -6,11 +6,11 @@
 // banco, nos arquivos, na config e na limpeza da flag — cada uma com
 // verificação do estado resultante (banco, sidecars, arquivos, config, flag).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, rmSync, readdirSync, symlinkSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, cpSync, rmSync, readdirSync, symlinkSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { dirTeste, abrirDb, limparDir, portaLivre, subirServidor, esperarSaudavel, encerrarServidor } from "./teste-base.mjs";
 import { gerarManifestoBackup } from "./teste-fixture-backup.mjs";
-import { gravarReciboInstalacao, gravarAutorizacaoBootstrap, dirEstado, instalacaoId, gravarEstado } from "./scripts/estado-externo.mjs";
+import { gravarReciboInstalacao, gravarAutorizacaoBootstrap, gravarProvisionamento, lerProvisionamento, autorizarPrimeiroBootstrap, dirEstado, instalacaoId, gravarEstado } from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -37,7 +37,22 @@ function rodar(cmd, args, env) {
   const r = spawnSync(cmd, args, { env, encoding: "utf8" });
   return { code: r.status, saida: (r.stdout ?? "") + (r.stderr ?? "") };
 }
-const migrar = (raiz, env) => rodar("node", [MIGRADOR], env ?? envRaiz(raiz));
+// P10-B: migrate.ts bloqueia banco vazio sem estado de instalação
+// reconhecido. Este helper provisiona o bootstrap (mesma ação que o
+// .bat fará na P10-C) SOMENTE quando o banco está ausente — DBs
+// restaurados/existentes seguem o fluxo normal. Não interfere em
+// estados já reconhecidos (interrompido/concluída): a autorização
+// retorna não-autorizado e o diagnóstico já permite o migrate.
+const migrar = (raiz, env) => {
+  const e = env ?? envRaiz(raiz);
+  const banco = e.MESTRE_BANCO;
+  const vazio = !banco || !existsSync(banco) || (existsSync(banco) && statSync(banco).size === 0);
+  if (vazio) {
+    if (lerProvisionamento(RAIZ_REPO, e).status === "ausente") gravarProvisionamento(RAIZ_REPO, e);
+    autorizarPrimeiroBootstrap(RAIZ_REPO, e);
+  }
+  return rodar("node", [MIGRADOR], e);
+};
 const restaurar = (raiz, env) => rodar("node", [RESTAURADOR], env ?? envRaiz(raiz));
 const dbPath = (raiz) => join(raiz, "banco", "mestre-rpg.db");
 const arqPath = (raiz) => join(raiz, "arquivos", "campanhas");
@@ -713,7 +728,7 @@ try {
     mkdirSync(join(r10, "arqs"), { recursive: true });
     mkdirSync(join(r10, "bks"), { recursive: true });
     const env = { ...envRaiz(r10), MESTRE_BANCO: bancoCustom, MESTRE_ARQUIVOS: join(r10, "arqs"), MESTRE_BACKUPS: join(r10, "bks") };
-    const m = rodar("node", [MIGRADOR], env);
+    const m = migrar(r10, env);
     t("migrate com MESTRE_BANCO custom → exit 0 e arquivo criado", m.code === 0 && existsSync(bancoCustom), m.saida.slice(-150));
     const rest = rodar("node", [RESTAURADOR], env);
     t("restaurador respeita MESTRE_BANCO (sem pendência → 0)", rest.code === 0, rest.saida.slice(-150));

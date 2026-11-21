@@ -7,9 +7,15 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { hashSenha, hashToken } from "./servidor/dist/lib/password.js";
+import {
+  autorizarPrimeiroBootstrap, gravarProvisionamento, lerProvisionamento,
+} from "./scripts/estado-externo.mjs";
+
+const REPO = dirname(fileURLToPath(import.meta.url));
 
 export function dirTeste(nome) {
   return mkdtempSync(join(tmpdir(), `mrpg-${nome}-`));
@@ -18,9 +24,21 @@ export function dirTeste(nome) {
 /** Cria banco vazio e aplica todas as migrations do servidor. */
 export async function prepararBanco(banco) {
   for (const suf of ["", "-wal", "-shm"]) rmSync(banco + suf, { force: true });
+  // P10-B: migrate.ts só segue com banco vazio quando o estado de
+  // instalação é reconhecido (bootstrap autorizado). Provisiona o
+  // state dir isolado por banco — mesmo env que o filho recebe.
+  const stateDir = join(dirname(banco), "state-externo");
+  const envEstado = { ...process.env, MESTRE_STATE_DIR: stateDir, MESTRE_BANCO: banco };
+  if (lerProvisionamento(REPO, envEstado).status === "ausente") {
+    gravarProvisionamento(REPO, envEstado);
+  }
+  const auth = autorizarPrimeiroBootstrap(REPO, envEstado);
+  if (!auth.autorizado) {
+    throw new Error(`prepararBanco: bootstrap não autorizado (${auth.motivo})`);
+  }
   await new Promise((res, rej) => {
     const p = spawn("node", ["servidor/dist/db/migrate.js"], {
-      env: { ...process.env, MESTRE_BANCO: banco },
+      env: { ...process.env, MESTRE_BANCO: banco, MESTRE_STATE_DIR: stateDir },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err = "";

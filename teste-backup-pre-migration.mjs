@@ -6,11 +6,17 @@
 // é fabricado copiando servidor/migrations para %TEMP% e truncando
 // o journal DA CÓPIA (MESTRE_MIGRATIONS_FOLDER) — o journal
 // versionado nunca é escrito pelo teste.
+// Banco vazio SÓ migra com bootstrap explicitamente provisionado
+// (gravarProvisionamento + autorizarPrimeiroBootstrap) — o mesmo
+// contrato que o .bat usará na P10-C.
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
+import {
+  autorizarPrimeiroBootstrap, gravarProvisionamento,
+} from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => {
@@ -39,6 +45,13 @@ const cenario = () => {
       MESTRE_STATE_DIR: join(dir, "state"),
     },
   };
+};
+// Provisiona o primeiro bootstrap no state dir isolado do cenário —
+// repoDir é o repo real (RAIZ do migrate.ts), env isola o state.
+const bootstrapar = (c) => {
+  gravarProvisionamento(ROOT, c.env);
+  const a = autorizarPrimeiroBootstrap(ROOT, c.env);
+  if (!a.autorizado) throw new Error(`bootstrap não autorizado: ${a.motivo}`);
 };
 // Copia a árvore de migrations para dentro do cenário e, se k for
 // informado, trunca o journal DA CÓPIA — isolado do repo.
@@ -79,9 +92,10 @@ const backupsPreUpdate = (dir) => {
 };
 
 try {
-  sec("1. Instalação nova — sem backup, migra tudo");
+  sec("1. Instalação nova autorizada — sem backup, migra tudo");
   {
     const c = cenario();
+    bootstrapar(c);
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const r = migrar(c.env);
     t("exit 0", r.status === 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
@@ -93,6 +107,7 @@ try {
   {
     const c = cenario();
     const K = 15;
+    bootstrapar(c);
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c, K);
     const r1 = migrar(c.env);
     t("fase 1 (journal truncado) exit 0", r1.status === 0, `status=${r1.status}`);
@@ -113,6 +128,7 @@ try {
   sec("3. Banco em dia — segundo boot não repete backup");
   {
     const c = cenario();
+    bootstrapar(c);
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const r1 = migrar(c.env);
     t("primeira migração ok", r1.status === 0);
@@ -126,6 +142,7 @@ try {
   {
     const c = cenario();
     const K = 15;
+    bootstrapar(c);
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c, K);
     migrar(c.env);
     // Banco em K; troca para journal cheio + MESTRE_BACKUPS inválido
@@ -136,6 +153,36 @@ try {
     const r = migrar(env);
     t("exit não-zero", r.status !== 0, `status=${r.status}`);
     t("zero migrations novas (segue em K)", aplicadas(c.env.MESTRE_BANCO) === K, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
+  }
+
+  sec("5. Banco vazio SEM bootstrap provisionado — bloqueia");
+  {
+    const c = cenario();
+    // nenhum provisionamento: state dir ausente → diagnóstico
+    // "desconhecido" → migrate deve recusar (fail-closed)
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    const r = migrar(c.env);
+    t("exit não-zero", r.status !== 0, `status=${r.status}`);
+    t("banco NÃO foi criado", !existsSync(c.env.MESTRE_BANCO), c.env.MESTRE_BANCO);
+    t("zero migrations aplicadas", aplicadas(c.env.MESTRE_BANCO) === -1);
+  }
+
+  sec("6. DB parcial (só __drizzle_migrations) — não é instalação nova");
+  {
+    const c = cenario();
+    bootstrapar(c);
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    // Fabrica DB anômalo: migrations registradas, zero tabelas de
+    // usuário — não pode seguir o fast-path de "vazio".
+    mkdirSync(dirname(c.env.MESTRE_BANCO), { recursive: true });
+    const s = new Database(c.env.MESTRE_BANCO);
+    s.exec("create table __drizzle_migrations (id integer primary key, hash text not null, created_at numeric)");
+    const ins = s.prepare("insert into __drizzle_migrations (hash, created_at) values (?,?)");
+    for (let i = 0; i < 5; i++) ins.run(`hash-${i}`, Date.now());
+    s.close();
+    const r = migrar(c.env);
+    t("exit não-zero (bloqueado ou backup falhou fechado)", r.status !== 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
+    t("migrations NÃO avançaram", aplicadas(c.env.MESTRE_BANCO) === 5, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
   }
 } finally {
   rmSync(BASE, { recursive: true, force: true });

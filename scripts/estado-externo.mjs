@@ -240,9 +240,11 @@ export function gravarConsentimento(repoDir, consentimento, dadosExtra = {}) {
 // N, ausência de banco, ausência do state dir ou do protocolo.
 
 export const ARQUIVO_AUTORIZACAO_BOOTSTRAP = "bootstrap-autorizacao.json";
+export const ARQUIVO_PROVISIONAMENTO = "provisionamento.json";
 const PREFIXO_AUTORIZACAO_CONSUMIDA = "bootstrap-autorizacao.consumida-";
 const TIPO_RECIBO_CONCLUIDA = "instalacao-concluida";
 const TIPO_AUTORIZACAO = "primeiro-bootstrap";
+const TIPO_PROVISIONAMENTO = "provisionamento";
 
 /** Grava o recibo de instalação CONCLUÍDA. Chamar UMA vez, somente
  *  após a instalação ser comprovadamente concluída e validada. */
@@ -291,6 +293,37 @@ export function lerAutorizacaoBootstrap(repoDir, env = process.env) {
   if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
   if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
   if (dados.tipo !== TIPO_AUTORIZACAO) return { status: "invalido" };
+  return { status: "ok", dados };
+}
+
+/** Grava o marcador de PROVISIONAMENTO — prova positiva e independente
+ *  de que uma ação explícita de provisionamento ocorreu neste state
+ *  dir (criada pelo entrypoint scripts/autorizar-bootstrap.mjs com
+ *  --confirmar-provisionamento, ou pelo instalador/.bat na P10-C).
+ *  Não autoriza nada por si só: é pré-condição do produtor de
+ *  primeiro bootstrap. Idempotente por natureza — regravar só atualiza
+ *  o timestamp; chamadores NUNCA devem regravar sobre marcador
+ *  inválido/divergente (o produtor bloqueia e nada é sobrescrito). */
+export function gravarProvisionamento(repoDir, env = process.env, dadosExtra = {}) {
+  return gravarEstado(repoDir, ARQUIVO_PROVISIONAMENTO, {
+    tipo: TIPO_PROVISIONAMENTO,
+    provisionadoEm: new Date().toISOString(),
+    ...dadosExtra,
+  }, env);
+}
+
+/** Lê o marcador de provisionamento sem efeitos colaterais. Mesmo
+ *  contrato de validação dos demais artefatos: ok | ausente |
+ *  corrompido | incompativel | divergente | invalido. */
+export function lerProvisionamento(repoDir, env = process.env) {
+  const caminho = join(dirEstado(repoDir, env), ARQUIVO_PROVISIONAMENTO);
+  if (!existsSync(caminho)) return { status: "ausente" };
+  const dados = lerJsonCru(caminho);
+  if (!dados || typeof dados !== "object" || Array.isArray(dados)) return { status: "corrompido" };
+  if (dados.protocoloVersao !== PROTOCOLO_VERSAO) return { status: "incompativel" };
+  if (dados.instalacaoId !== instalacaoId(repoDir)) return { status: "divergente" };
+  if (dados.repoCanon !== caminhoCanonico(repoDir)) return { status: "divergente" };
+  if (dados.tipo !== TIPO_PROVISIONAMENTO) return { status: "invalido" };
   return { status: "ok", dados };
 }
 
@@ -401,9 +434,12 @@ export function avaliarBoot(repoDir, env = process.env) {
 
 // ---------- produtor confiável de primeiro bootstrap (P10-A) ----------
 // Emite `bootstrap-autorizacao.json` (uso único) SOMENTE quando a prova
-// combinada de instalação limpa passa por inteiro. Nunca autoriza
-// apenas porque o banco não existe: qualquer estado corrompido,
-// incompatível, divergente, desconhecido ou interrompido bloqueia.
+// combinada de instalação limpa passa por inteiro — incluindo o marcador
+// de provisionamento (provisionamento.json), prova positiva de ação
+// explícita. State dir ausente NÃO é lista vazia: é ambíguo e bloqueia.
+// Nunca autoriza apenas porque o banco não existe: qualquer estado
+// corrompido, incompatível, divergente, desconhecido ou interrompido
+// bloqueia.
 // O consumidor (aplicar-restauracao) já existe; o produtor é este
 // módulo + scripts/autorizar-bootstrap.mjs (entrypoint do .bat na
 // integração P10-C). Recibo permanente só é gravado por
@@ -423,23 +459,30 @@ export function caminhoBancoConfigurado(repoDir, env = process.env) {
  * Retorno: { autorizado:true, motivo:"emitida"|"ja-autorizado", dados } |
  *          { autorizado:false, motivo }.
  * Provas exigidas (todas):
- *   1. state dir legível (readdir não falha);
- *   2. journals de update e restauração AUSENTES (qualquer status
+ *   0. state dir EXISTENTE e legível — ausência não é "lista vazia"
+ *      (perda conjunta DB+state é ambígua e bloqueia);
+ *   0b. marcador de provisionamento VÁLIDO (provisionamento.json) —
+ *      prova positiva de ação explícita de provisionamento; sem ela
+ *      a ausência de evidências não basta;
+ *   1. journals de update e restauração AUSENTES (qualquer status
  *      diferente de "ausente" — inclusive ok/corrompido/divergente —
  *      bloqueia);
- *   3. recibo de instalação ausente (recibo válido ⇒ já concluída);
- *   4. autorização existente: válida ⇒ idempotente ("ja-autorizado",
+ *   2. recibo de instalação ausente (recibo válido ⇒ já concluída);
+ *   3. autorização existente: válida ⇒ idempotente ("ja-autorizado",
  *      sem regravar); inválida/divergente/corrompida ⇒ bloqueia;
- *   5. nenhuma autorização consumida sem recibo (bootstrap-interrompido
+ *   4. nenhuma autorização consumida sem recibo (bootstrap-interrompido
  *      NUNCA é reemitido);
- *   6. banco configurado AUSENTE — qualquer arquivo presente, mesmo
+ *   5. banco configurado AUSENTE — qualquer arquivo presente, mesmo
  *      vazio (0 bytes), é estado ambíguo e bloqueia ("banco-existente").
  */
 export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
   const dir = dirEstado(repoDir, env);
-  let nomes = [];
-  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  if (!existsSync(dir)) return { autorizado: false, motivo: "state-ausente" };
+  let nomes;
+  try { nomes = readdirSync(dir); }
   catch { return { autorizado: false, motivo: "state-ilegivel" }; }
+  const prov = lerProvisionamento(repoDir, env);
+  if (prov.status !== "ok") return { autorizado: false, motivo: `provisionamento-${prov.status}` };
   for (const j of [JOURNAL_UPDATE, JOURNAL_RESTAURACAO]) {
     const r = lerJournal(repoDir, j, env);
     if (r.status !== "ausente") return { autorizado: false, motivo: `journal-${j}-${r.status}` };
