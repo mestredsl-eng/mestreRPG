@@ -167,19 +167,28 @@ try {
     t("um único usoId d10 no ledger", usosSangue(charCusto).filter((u) => u === `d10:${tid}`).length === 1);
   }
 
-  sec("3. Poder sem custo / custo zero — gratuito");
+  sec("3. Poder sem custo / custo zero — gratuito com ledger durável");
   definirCusto(c, 0);
   {
     const tid = novoTeste(c, { sessionId: SID, characterId: charZero, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
     const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     t("custo zero → roll ok", r?.ok === true, JSON.stringify(r).slice(0, 150));
     t("saldo inalterado (4)", saldoSangue(charZero) === 4, `saldo=${saldoSangue(charZero)}`);
-    t("sem usoId no ledger", usosSangue(charZero).length === 0);
-    definirCusto(c, null); // remove a entrada → sem custo configurado
+    // Contrato #219: gratuito ≠ invisível — usoId durável + evento
+    // quantidade 0 tornam o retry idempotente.
+    t("usoId d10:<testId> registrado (gratuito)", usosSangue(charZero).includes(`d10:${tid}`), JSON.stringify(usosSangue(charZero)));
+    t("evento histórico quantidade 0", dadosChar(charZero).__sangue.historico.at(-1)?.quantidade === 0, JSON.stringify(dadosChar(charZero).__sangue.historico.at(-1)));
+    const rReplay = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("retry mesmo testId → jaRolado", rReplay?.ok === true && rReplay?.jaRolado === true, JSON.stringify(rReplay).slice(0, 150));
+    t("ledger não duplica após retry", usosSangue(charZero).filter((u) => u === `d10:${tid}`).length === 1
+      && dadosChar(charZero).__sangue.historico.filter((e) => e.quantidade === 0).length === 1);
+    definirCusto(c, null); // remove a entrada → custo ausente = zero
     const tid2 = novoTeste(c, { sessionId: SID, characterId: charSemCusto, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
     const r2 = await emitir(sockJ, "mesa:teste:rolar", { testId: tid2, requestId: crypto.randomUUID() });
     t("sem custo → roll ok", r2?.ok === true, JSON.stringify(r2).slice(0, 150));
     t("saldo inalterado (7)", saldoSangue(charSemCusto) === 7, `saldo=${saldoSangue(charSemCusto)}`);
+    t("custo ausente também registra usoId", usosSangue(charSemCusto).includes(`d10:${tid2}`), JSON.stringify(usosSangue(charSemCusto)));
+    t("evento quantidade 0 (ausente)", dadosChar(charSemCusto).__sangue.historico.at(-1)?.quantidade === 0);
     definirCusto(c, 2); // restaura
   }
 
@@ -238,6 +247,7 @@ try {
     const tid = novoTeste(c, { sessionId: SID, characterId: charCusto, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
     const saldoAntes = saldoSangue(charCusto);
     writeFileSync(FLAG, tid);
+    await sono(700); // rate limit do socket — rajada das seções anteriores
     const pendente = emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     for (let i = 0; i < 100 && !existsSync(FLAG + ".pausado"); i++) await sono(50);
     t("handler pausado", existsSync(FLAG + ".pausado"));
@@ -384,7 +394,7 @@ try {
     t("roll ok (legado)", r?.ok === true, JSON.stringify(r).slice(0, 200));
     t("saldo inalterado (7)", saldoSangue(charSemCusto) === 7, `saldo=${saldoSangue(charSemCusto)}`);
     t("characters.data byte-a-byte intacto (sem escrita no ledger)", JSON.stringify(dadosChar(charSemCusto)) === dadosAntes);
-    t("sem usoId", usosSangue(charSemCusto).length === 0);
+    t("sem usoId novo neste roll", !usosSangue(charSemCusto).includes(`d10:${tid}`));
     // config.sangue ausente por completo → mesmo comportamento
     definirSangue(c, "ausente");
     const tid2 = novoTeste(c, { sessionId: SID, characterId: charZero, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });

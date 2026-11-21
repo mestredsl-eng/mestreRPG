@@ -258,13 +258,19 @@ function resolverCobrancaSangueD10(
       return { tipo: "erro", erro: "poder_nao_adquirido" };
     }
   }
+  // Custo zero OU ausente = Poder gratuito — mas NUNCA retorna
+  // "livre": a gratuidade é registrada no ledger (`usos["d10:<testId>"]`
+  // + evento quantidade 0) para que retry/concorrência sejam
+  // idempotentes (contrato #219 @ 7be6aab). Custo inválido segue
+  // fail-closed; -0 é normalizado para 0.
   const custoBruto = (cfgSangue.poderes as Record<string, { custo?: unknown }> | undefined)?.[elementoKey]?.custo;
-  if (custoBruto === undefined || custoBruto === null) return { tipo: "livre" };
-  if (typeof custoBruto !== "number" || !Number.isFinite(custoBruto) || custoBruto < 0) {
-    return { tipo: "erro", erro: "custo_invalido" };
+  if (custoBruto !== undefined && custoBruto !== null) {
+    if (typeof custoBruto !== "number" || !Number.isFinite(custoBruto) || custoBruto < 0) {
+      return { tipo: "erro", erro: "custo_invalido" };
+    }
   }
-  if (custoBruto === 0) return { tipo: "livre" };
-  return { tipo: "debitar", custo: custoBruto, poderKey: elementoKey };
+  const custo = custoBruto ?? 0;
+  return { tipo: "debitar", custo: custo === 0 ? 0 : custo, poderKey: elementoKey };
 }
 
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
