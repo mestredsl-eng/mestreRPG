@@ -118,6 +118,16 @@ describe("usoSangueValido — contrato discriminado por prefixo", () => {
     assert.equal(usoSangueValido(`recuperar:${REQ1}`, { ...u, tipo: "uso" }), false);
   });
 
+  it("ajustar: exige requestId UUID = sufixo e delta finito ≠ 0", () => {
+    const u = { tipo: "uso", em: new Date().toISOString(), personagemId: PID, requestId: REQ1, delta: 2, motivo: "x" };
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, u), true);
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, { ...u, requestId: undefined }), false);
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, { ...u, delta: 0 }), false);
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, { ...u, delta: Number.NaN }), false);
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, { ...u, tipo: "recuperacao" }), false);
+    assert.equal(usoSangueValido(`ajustar:${REQ1}`, { ...u, motivo: 42 }), false);
+  });
+
   it("prefixo desconhecido ou chave malformada → inválido", () => {
     assert.equal(usoSangueValido("ajustar:abc", {}), false);
     assert.equal(usoSangueValido("d10:", {}), false);
@@ -359,6 +369,37 @@ describe("operações de ledger", () => {
       assert.equal(r.estado.historico.at(-1)?.tipo, "ajuste");
       assert.equal(Object.keys(r.estado.usos).length, 0);
     }
+  });
+
+  it("ajuste com requestId → dedup durável ajustar:<uuid> no ledger", () => {
+    const dados = { [CHAVE_SANGUE]: { saldo: 3, usos: {}, historico: [] } };
+    const r1 = registrarAjusteSangue(dados, { ...AUTOR, delta: 2, motivo: "bônus", requestId: REQ1 });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.equal(r1.jaRegistrado, undefined);
+    assert.equal(r1.estado.saldo, 5);
+    const chave = `ajustar:${REQ1.toLowerCase()}`;
+    assert.ok(r1.estado.usos[chave]);
+    assert.equal(r1.estado.usos[chave].delta, 2);
+    // replay: mesmo requestId + payload → jaRegistrado, sem novo delta
+    const r2 = registrarAjusteSangue(r1.dados, { ...AUTOR, delta: 2, motivo: "bônus", requestId: REQ1 });
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 5);
+    }
+    // conflito: mesmo requestId, delta divergente → uso_conflito
+    const r3 = registrarAjusteSangue(r1.dados, { ...AUTOR, delta: 3, motivo: "bônus", requestId: REQ1 });
+    assert.equal(r3.ok, false);
+    if (!r3.ok) assert.equal(r3.codigo, "uso_conflito");
+    // conflito: mesmo requestId, motivo divergente → uso_conflito
+    const r4 = registrarAjusteSangue(r1.dados, { ...AUTOR, delta: 2, motivo: "outro", requestId: REQ1 });
+    assert.equal(r4.ok, false);
+    if (!r4.ok) assert.equal(r4.codigo, "uso_conflito");
+    // requestId inválido → uso_invalido antes de tocar o ledger
+    const r5 = registrarAjusteSangue(r1.dados, { ...AUTOR, delta: 1, motivo: "x", requestId: "abc" });
+    assert.equal(r5.ok, false);
+    if (!r5.ok) assert.equal(r5.codigo, "uso_invalido");
   });
 });
 

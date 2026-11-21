@@ -183,6 +183,11 @@ async function carregarPreTx(
 // ---------- handler ----------
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Teto do motivo auditável — acima disso a operação é recusada
+ *  ANTES de qualquer mutação (P2 R6.3: motivo ilimitado inflava o
+ *  ledger/histórico via payload do cliente). */
+const MOTIVO_MAX = 500;
+const motivoAceitavel = (v: unknown): boolean => typeof v !== "string" || v.length <= MOTIVO_MAX;
 
 type Acao = "ativar" | "recuperar" | "ajustar" | "reconciliar";
 
@@ -197,10 +202,17 @@ function socketSangue(io: SocketIOServer) {
   io.on("connection", (socket) => {
     const on = (evento: string, handler: (...args: never[]) => unknown) => {
       socket.on(evento, (...args: unknown[]) => {
+        // ACK só é válido quando o ÚLTIMO argumento emitido é função.
+        // Qualquer outro tipo (string, objeto, número) é descartado —
+        // nunca provoca TypeError em `cb?.()` nem deixa a operação
+        // sem tratamento (P2 R6.3: callback não-função).
+        const ultimo = args[args.length - 1];
+        const cb = typeof ultimo === "function" ? (ultimo as (r: Ack) => void) : undefined;
+        const payload = args.length > 1 || typeof args[0] !== "function" ? args[0] : undefined;
         void opCampanhaALS.run({ ops: new Map() }, async () => {
           try {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await (handler as (...a: any[]) => unknown)(...(args as any[]));
+            await (handler as (...a: any[]) => unknown)(payload as any, cb);
           } finally {
             liberarLeasesALS();
           }
@@ -337,7 +349,7 @@ function socketSangue(io: SocketIOServer) {
       if (!consumirOuRecusar(socket, "ativar", cb)) return;
       const poderKey = typeof payload?.poderKey === "string" ? payload.poderKey.trim() : "";
       const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
-      if (!poderKey || poderKey.length > 80 || !UUID_RE.test(requestId)) {
+      if (!poderKey || poderKey.length > 80 || !UUID_RE.test(requestId) || !motivoAceitavel(payload?.motivo)) {
         cb?.(ackErro("uso_invalido")); return;
       }
       return executarAcao("ativar", payload, cb, ({ dados, ctx: c2, config, regras, autor, papelTx, ehDonoTx, donoAtivoTx }) => {
@@ -355,7 +367,9 @@ function socketSangue(io: SocketIOServer) {
         // O Poder precisa existir no ruleset E estar na ficha atual
         // do personagem (revalidado aqui, dentro da tx).
         const possui = extrairEscolhas(c2.estrutura, dados, regras).some(
-          (e) => e.elemento?.kind === "poder" && e.elemento.key === poderKey && e.selecionado && e.level >= 1,
+          // Convenção #237: nível numérico finito > 0 — frações
+          // positivas (0.5) são posse válida, alinhado ao D10.
+          (e) => e.elemento?.kind === "poder" && e.elemento.key === poderKey && e.selecionado && e.level > 0,
         );
         if (!possui) return { ok: false as const, codigo: "poder_nao_adquirido" };
         return ativarPoderNarrativo(dados, {
@@ -378,7 +392,7 @@ function socketSangue(io: SocketIOServer) {
     on("sangue:recuperar", (payload: Record<string, unknown>, cb?: (r: Ack) => void) => {
       if (!consumirOuRecusar(socket, "recuperar", cb)) return;
       const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
-      if (!UUID_RE.test(requestId)) { cb?.(ackErro("uso_invalido")); return; }
+      if (!UUID_RE.test(requestId) || !motivoAceitavel(payload?.motivo)) { cb?.(ackErro("uso_invalido")); return; }
       return executarAcao("recuperar", payload, cb, ({ dados, ctx: c2, config, autor, papelTx, ehDonoTx, donoAtivoTx }) => {
         const neg = exigirDonoTx(papelTx, ehDonoTx, donoAtivoTx);
         if (neg) return { ok: false as const, codigo: neg };
@@ -397,15 +411,21 @@ function socketSangue(io: SocketIOServer) {
       });
     });
 
-    /** `sangue:ajustar` {characterId, delta, motivo}
+    /** `sangue:ajustar` {characterId, delta, motivo, requestId}
      *  Ajuste manual — SOMENTE mestre ativo da campanha; delta finito
      *  ≠ 0 e motivo obrigatório (a primitiva impõe ambos). Ajuste
-     *  positivo nunca ultrapassa a capacidade resolvida do servidor. */
+     *  positivo nunca ultrapassa a capacidade resolvida do servidor.
+     *  `requestId` UUID é OBRIGATÓRIO: dedup durável `ajustar:<uuid>`
+     *  dentro da mesma transação — ACK perdido + retry devolve o
+     *  resultado original sem novo delta; payload divergente com o
+     *  mesmo requestId → `uso_conflito` (P2 R6.3). */
     on("sangue:ajustar", (payload: Record<string, unknown>, cb?: (r: Ack) => void) => {
       if (!consumirOuRecusar(socket, "ajustar", cb)) return;
       const delta = typeof payload?.delta === "number" ? payload.delta : NaN;
       const motivo = typeof payload?.motivo === "string" ? payload.motivo : "";
-      if (!Number.isFinite(delta) || delta === 0 || !motivo.trim()) {
+      const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+      if (!UUID_RE.test(requestId)) { cb?.(ackErro("uso_invalido")); return; }
+      if (!Number.isFinite(delta) || delta === 0 || !motivo.trim() || motivo.length > MOTIVO_MAX) {
         cb?.(ackErro("quantidade_invalida")); return;
       }
       return executarAcao("ajustar", payload, cb, ({ dados, ctx: c2, config, autor, papelTx }) => {
@@ -426,6 +446,7 @@ function socketSangue(io: SocketIOServer) {
           autorNome: autor.nome,
           motivo,
           delta,
+          requestId,
         });
       });
     });
@@ -437,7 +458,7 @@ function socketSangue(io: SocketIOServer) {
     on("sangue:reconciliar-capacidade", (payload: Record<string, unknown>, cb?: (r: Ack) => void) => {
       if (!consumirOuRecusar(socket, "reconciliar", cb)) return;
       const motivo = typeof payload?.motivo === "string" ? payload.motivo : "";
-      if (!motivo.trim()) { cb?.(ackErro("quantidade_invalida")); return; }
+      if (!motivo.trim() || motivo.length > MOTIVO_MAX) { cb?.(ackErro("quantidade_invalida")); return; }
       return executarAcao("reconciliar", payload, cb, ({ dados, ctx: c2, config, autor, papelTx }) => {
         if (papelTx !== "mestre") return { ok: false as const, codigo: "sem_permissao" };
         const cap = resolverCapacidadeSangue(c2.estrutura, dados, config ?? undefined);

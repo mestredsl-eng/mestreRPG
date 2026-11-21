@@ -280,33 +280,63 @@ try {
     definirConfigSangue(c.campId, CONFIG_SANGUE.recuperacaoSangue ? { recuperacaoSangue: CONFIG_SANGUE.recuperacaoSangue } : {});
   }
 
-  sec("5. Ajuste manual — somente mestre, motivo e teto");
+  sec("5. Ajuste manual — somente mestre, motivo, teto e idempotência");
   {
-    const rJ = await emitir(sockJ1, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "teste" });
+    const rid = () => crypto.randomUUID();
+    const rJ = await emitir(sockJ1, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "teste", requestId: rid() });
     t("jogador → sem_permissao", rJ?.ok === false && rJ?.codigo === "sem_permissao", JSON.stringify(rJ).slice(0, 150));
-    const rM = await emitir(sockJ2, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "teste" });
+    const rM = await emitir(sockJ2, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "teste", requestId: rid() });
     t("outro jogador → sem_permissao", rM?.ok === false);
-    const rSemMotivo = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "  " });
+    const rSemMotivo = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "  ", requestId: rid() });
     t("motivo vazio → quantidade_invalida", rSemMotivo?.ok === false && rSemMotivo?.codigo === "quantidade_invalida");
-    const rDelta0 = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 0, motivo: "x" });
+    const rDelta0 = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 0, motivo: "x", requestId: rid() });
     t("delta 0 → quantidade_invalida", rDelta0?.ok === false);
-    const rDeltaNaN = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: "abc", motivo: "x" });
+    const rDeltaNaN = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: "abc", motivo: "x", requestId: rid() });
     t("delta não-numérico → quantidade_invalida", rDeltaNaN?.ok === false);
-    const rPos = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 2, motivo: "recompensa" });
-    t("mestre +2 ok", rPos?.ok === true && saldoSangue(charVampiro) === 6, JSON.stringify(rPos).slice(0, 200));
+    const rSemRid = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "x" });
+    t("sem requestId → uso_invalido", rSemRid?.ok === false && rSemRid?.codigo === "uso_invalido", JSON.stringify(rSemRid).slice(0, 150));
+    const rRidRuim = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "x", requestId: "nao-uuid" });
+    t("requestId não-UUID → uso_invalido", rRidRuim?.ok === false && rRidRuim?.codigo === "uso_invalido");
+    const rMotivoLongo = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "x".repeat(501), requestId: rid() });
+    t("motivo >500 → quantidade_invalida sem mutação", rMotivoLongo?.ok === false && rMotivoLongo?.codigo === "quantidade_invalida" && saldoSangue(charVampiro) === 4);
+    const ridPos = rid();
+    const rPos = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 2, motivo: "recompensa", requestId: ridPos });
+    t("mestre +2 ok", rPos?.ok === true && rPos?.replay === false && saldoSangue(charVampiro) === 6, JSON.stringify(rPos).slice(0, 200));
     t("histórico registra ajuste do mestre", histSangue(charVampiro).at(-1)?.tipo === "ajuste" || histSangue(charVampiro).at(-1)?.tipo === "ajuste_manual");
-    const rTeto = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 5, motivo: "excede" });
+    // P2 R6.3 — ACK perdido + retry: MESMO requestId e payload → replay,
+    // nunca segundo delta.
+    const rRetry = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 2, motivo: "recompensa", requestId: ridPos });
+    t("retry mesmo requestId → replay sem novo delta", rRetry?.ok === true && rRetry?.replay === true && saldoSangue(charVampiro) === 6, JSON.stringify(rRetry).slice(0, 200));
+    const rConflitoDelta = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 3, motivo: "recompensa", requestId: ridPos });
+    t("mesmo requestId delta divergente → uso_conflito", rConflitoDelta?.ok === false && rConflitoDelta?.codigo === "uso_conflito", JSON.stringify(rConflitoDelta).slice(0, 150));
+    const rConflitoMotivo = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 2, motivo: "outro motivo", requestId: ridPos });
+    t("mesmo requestId motivo divergente → uso_conflito", rConflitoMotivo?.ok === false && rConflitoMotivo?.codigo === "uso_conflito");
+    t("saldo intacto após conflitos", saldoSangue(charVampiro) === 6);
+    // P2 R6.3 — callback não-função: efeito aplica, sem TypeError e o
+    // socket continua respondendo às próximas emissões.
+    const saldoAntesCb = saldoSangue(charVampiro);
+    sockM.emit("sangue:ajustar", { characterId: charVampiro, delta: 1, motivo: "cb lixo", requestId: rid() }, "nao-e-funcao");
+    await sono(400);
+    t("cb não-função: ajuste aplicado sem crash", saldoSangue(charVampiro) === saldoAntesCb + 1);
+    const rAposCb = await emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 0, motivo: "x", requestId: rid() });
+    t("socket responsivo após cb inválido", rAposCb?.ok === false);
+    const rTeto = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 5, motivo: "excede", requestId: rid() });
     t("positivo acima do teto → capacidade_excedida", rTeto?.ok === false && rTeto?.codigo === "capacidade_excedida", JSON.stringify(rTeto).slice(0, 150));
-    const rNeg = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: -20, motivo: "penalidade" });
+    const rNeg = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: -20, motivo: "penalidade", requestId: rid() });
     t("negativo além do saldo → saldo_insuficiente", rNeg?.ok === false && rNeg?.codigo === "saldo_insuficiente", JSON.stringify(rNeg).slice(0, 150));
-    const rSemCap = await emitir(sockM, "sangue:ajustar", { characterId: charSemCap, delta: 1, motivo: "sem capacidade válida" });
+    const rSemCap = await emitir(sockM, "sangue:ajustar", { characterId: charSemCap, delta: 1, motivo: "sem capacidade válida", requestId: rid() });
     t("capacidade não resolvida → capacidade_excedida", rSemCap?.ok === false && rSemCap?.codigo === "capacidade_excedida", JSON.stringify(rSemCap).slice(0, 150));
     t("saldo do sem-cap intacto", saldoSangue(charSemCap) === 3);
     // limite EXATO: saldo 9 + delta 1 = capacidade 10 → permitido
-    const rEdge = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "até o teto" });
+    const rEdge = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "até o teto", requestId: rid() });
     t("saldo+delta === capacidade → ok", rEdge?.ok === true && saldoSangue(charQuaseCheio) === 10, JSON.stringify(rEdge).slice(0, 150));
-    const rEdge2 = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "estoura" });
+    const rEdge2 = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "estoura", requestId: rid() });
     t("no teto + 1 → capacidade_excedida", rEdge2?.ok === false && rEdge2?.codigo === "capacidade_excedida", JSON.stringify(rEdge2).slice(0, 150));
+    // RATE_LIMITED por ÚLTIMO: a rajada esgota o limitador local do
+    // mestre — não pode contaminar as asserções anteriores.
+    const rajada = await Promise.all(Array.from({ length: 40 }, () =>
+      emitir(sockM, "sangue:ajustar", { characterId: charVampiro, delta: 0, motivo: "x", requestId: rid() })));
+    t("rate limit dispara em rajada", rajada.some((r) => r?.codigo === "RATE_LIMITED"), `limitados=${rajada.filter((r) => r?.codigo === "RATE_LIMITED").length}`);
   }
 
   sec("6. Reconciliação de capacidade — mestre, auditável");
