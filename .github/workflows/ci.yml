@@ -195,6 +195,8 @@ jobs:
             teste-fisica-mesa.mjs \
             teste-d10-minimo-servidor.mjs \
             teste-restauracao-boot.mjs \
+            teste-estado-externo.mjs \
+            teste-restauracao-journal.mjs \
             teste-trava-instancia.mjs \
             teste-atualizacao-instalacao.mjs \
             teste-docs-operacao.mjs \
