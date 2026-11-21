@@ -287,7 +287,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
 
   const salvar = async () => {
     setErro(null); setAviso(null);
-    const custoInvalido = Object.entries(custoPoderes).find(([key, txt]) => {
+    const custoInvalido = Object.entries(custoPoderes).find(([, txt]) => {
       if (txt.trim() === "") return false; // vazio = gratuito
       const n = Number(txt);
       return !Number.isFinite(n) || n < 0;
