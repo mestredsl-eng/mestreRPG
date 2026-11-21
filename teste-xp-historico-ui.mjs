@@ -188,7 +188,63 @@ try {
     await ctx.close();
   }
 
-  // ---------- 7. Mobile ----------
+  // ---------- 7. Resposta obsoleta — carga realtime sobrepõe inicial atrasada ----------
+  // Determinístico: a PRIMEIRA resposta de /progressao do charA é
+  // buscada no servidor (snapshot S1, saldo 100) mas a entrega ao
+  // browser fica retida. Um POST /xp concede +25 → o servidor emite
+  // personagens:atualizados → o Extrato recarrega (S2, saldo 125) e
+  // renderiza. Só então S1 é entregue: sem guarda de geração o estado
+  // regrediria para o snapshot velho; com a guarda, S1 é descartado.
+  // Nota: a troca A→B por navegação desmonta o componente (Voltar →
+  // lista → outro personagem), então o caminho obsoleto alcançável é
+  // o de cargas sobrepostas do MESMO personagem via realtime.
+  {
+    // selo de pontos — pré-requisito do POST /xp (ficha_nao_selada)
+    const w = abrirDb(BANCO);
+    const row = w.prepare("select data from characters where id=?").get(charA);
+    const d = JSON.parse(row.data);
+    d.__pontos = { ...(d.__pontos ?? {}), selo: { em: new Date().toISOString(), autorId: "teste", autorNome: "Teste" } };
+    w.prepare("update characters set data=? where id=?").run(JSON.stringify(d), charA);
+    w.close();
+    const { ctx, page } = await novaPagina(cookieMestre);
+    // DUAS requisições iniciais de /progressao chegam (ExtratoXp +
+    // ProgressaoXp montam juntas) — ambas ficam retidas com snapshot S1.
+    let reqA = 0;
+    const pendentes = [];
+    await page.route("**/api/characters/*/progressao", async (route) => {
+      if (!route.request().url().includes(charA)) { await route.continue(); return; }
+      reqA += 1;
+      if (reqA <= 2) {
+        const resp = await route.fetch();       // snapshot S1 já no servidor
+        pendentes.push({ route, resp });        // entrega retida
+      } else {
+        await route.continue();                 // recargas seguintes passam
+      }
+    });
+    await abrirPersonagem(page, "Campanha Extrato XP", "Herói Ledger");
+    await page.waitForSelector(".extrato-xp", { timeout: 15000 });
+    for (let i = 0; i < 100 && pendentes.length < 2; i++) await page.waitForTimeout(50);
+    ok("corrida. respostas iniciais de A interceptadas", pendentes.length === 2, `reqA=${reqA}`);
+    // concessão de XP → personagens:atualizados → segunda carga (S2)
+    const xp = await req(BASE, "POST", `/characters/${charA}/xp`, {
+      cookie: cookieMestre,
+      body: { acao: "conceder", quantidade: 25, motivo: "Corrida XP" },
+    });
+    ok("corrida. XP concedido", xp.status === 200, `status=${xp.status} body=${JSON.stringify(xp.json).slice(0,120)}`);
+    await page.waitForSelector(".extrato-xp:has-text('125 XP disponíveis')", { timeout: 15000 });
+    ok("corrida. UI mostra saldo novo (125) via realtime", true);
+    // entrega as respostas obsoletas S1 por último
+    for (const p of pendentes) await p.route.fulfill({ response: p.resp });
+    await page.waitForTimeout(800);
+    const txt = await page.locator(".extrato-xp").textContent();
+    ok("corrida. resposta obsoleta não regride o saldo", txt.includes("125 XP disponíveis") && !txt.includes("100 XP disponíveis"), txt.slice(0, 140));
+    ok("corrida. evento novo permanece (Corrida XP)", txt.includes("Corrida XP"));
+    ok("corrida. histórico de S2 preservado (Sessão 4)", txt.includes("Sessão 4"));
+    ok("corrida. sem erro residual", !(await page.locator(".extrato-xp .erro").count()));
+    await ctx.close();
+  }
+
+  // ---------- 8. Mobile ----------
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addCookies([{ name: "mestre_rpg_session", value: cookieMestre.split("=").pop(), url: BASE }]);

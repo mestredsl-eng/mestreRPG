@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "./socket";
 import { apiProgressao, type EventoXp, type Progressao } from "./api-progressao";
 
@@ -29,14 +29,29 @@ export default function ExtratoXp({ characterId }: { characterId: string }) {
   const [prog, setProg] = useState<Progressao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [visiveis, setVisiveis] = useState(POR_PAGINA);
+  // Geração da carga: resposta atrasada de um characterId anterior é
+  // descartada — nunca exibe dados de A como se fossem de B.
+  const geracao = useRef(0);
 
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
-      setProg(await apiProgressao.obter(characterId));
+      const dados = await apiProgressao.obter(characterId);
+      if (g !== geracao.current) return;
+      setProg(dados);
       setErro(null);
     } catch (e) {
+      if (g !== geracao.current) return;
       setErro(e instanceof Error ? e.message : "Falha ao carregar extrato de XP");
     }
+  }, [characterId]);
+
+  // Troca de personagem: limpa saldo/histórico/erro para o estado de
+  // carregamento — dados do personagem anterior nunca permanecem.
+  useEffect(() => {
+    setProg(null);
+    setErro(null);
+    setVisiveis(POR_PAGINA);
   }, [characterId]);
 
   useEffect(() => { void carregar(); }, [carregar]);
