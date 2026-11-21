@@ -88,6 +88,29 @@ try {
     const ativo = await page.locator(".abas button.ativo").first().innerText();
     ok("mestre. troca para Diário marca botão ativo", ativo.includes("Diário"), ativo.trim());
 
+    // F9 — semântica acessível das abas (P3 do relatório integrado):
+    // tablist + role=tab + aria-selected, exatamente uma selecionada.
+    const semMestre = await page.evaluate(() => {
+      const lista = document.querySelector(".abas[role=tablist]");
+      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
+      return {
+        tablist: lista?.getAttribute("role") === "tablist",
+        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab" && b.getAttribute("type") === "button"),
+        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").map((b) => b.textContent.trim()),
+      };
+    });
+    ok("mestre. container .abas expõe role=tablist", semMestre.tablist);
+    ok("mestre. todas as abas têm role=tab + type=button", semMestre.todasTabs);
+    ok("mestre. exatamente uma aba aria-selected=true", semMestre.selecionadas.length === 1 && semMestre.selecionadas[0].startsWith("Diário"), semMestre.selecionadas.join("|"));
+
+    // Troca por teclado (Enter na aba focada) atualiza aria-selected.
+    await page.locator(".abas button", { hasText: "Histórico" }).focus();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(300);
+    const selTeclado = await page.evaluate(() =>
+      [...document.querySelectorAll(".abas[role=tablist] button")].filter((b) => b.getAttribute("aria-selected") === "true").map((b) => b.textContent.trim()));
+    ok("mestre. troca por teclado move aria-selected", selTeclado.length === 1 && selTeclado[0].startsWith("Histórico"), selTeclado.join("|"));
+
     // Foco de teclado: Tab real dispara :focus-visible (outline 2px solid).
     await page.locator(".abas button").first().focus();
     await page.keyboard.press("Tab");
@@ -119,6 +142,18 @@ try {
       const n = await page.locator(".abas button", { hasText: rotulo }).count();
       ok(`jogador. aba mestre "${rotulo}" ausente`, n === 0, `encontradas=${n}`);
     }
+    // F9 — semântica acessível também vale para jogador (abas de mestre
+    // ausentes não podem deixar tab órfã/selecionada).
+    const semJogador = await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
+      return {
+        tablist: document.querySelector(".abas[role=tablist]")?.getAttribute("role") === "tablist",
+        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab"),
+        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").length,
+      };
+    });
+    ok("jogador. tablist + role=tab em todas as abas visíveis", semJogador.tablist && semJogador.todasTabs);
+    ok("jogador. exatamente uma aba selecionada", semJogador.selecionadas === 1, `selecionadas=${semJogador.selecionadas}`);
     await ctx.close();
   }
 
@@ -139,6 +174,18 @@ try {
     }
     const icones = await page.locator(".abas button svg.icone-interface").count();
     ok("espectador. ícones presentes nas abas visíveis", icones === nomes.length, `icones=${icones}`);
+    // F9 — espectador também recebe semântica de aba correta.
+    const semEspectador = await page.evaluate(() => {
+      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
+      return {
+        tablist: document.querySelector(".abas[role=tablist]")?.getAttribute("role") === "tablist",
+        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab"),
+        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").length,
+      };
+    });
+    ok("espectador. tablist + role=tab + exatamente uma selecionada",
+      semEspectador.tablist && semEspectador.todasTabs && semEspectador.selecionadas === 1,
+      JSON.stringify(semEspectador));
     await ctx.close();
   }
 
