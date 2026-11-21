@@ -281,6 +281,7 @@ jobs:
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
             teste-vtt-vida.mjs \
+            teste-vtt-vida-p1-privacidade.mjs \
             teste-vtt-regua.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \

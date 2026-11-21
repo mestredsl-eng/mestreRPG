@@ -39,6 +39,7 @@ function conectar(cookie) {
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
 const emitirCb = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
 const sincronizar = (s) => emitirCb(s, "mesa:vtt:sincronizar", { sessionId: sid });
+const sincronizarNevoa = (s) => emitirCb(s, "mesa:vtt:nevoa:sincronizar", { sessionId: sid });
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 async function esperarVtt(socket, timeout = 8000) {
   const ini = cntVtt.get(socket) ?? 0;
@@ -174,15 +175,19 @@ try {
     t("sincronizar j1 ok", rSync?.ok === true);
     const vA = rSync?.vtt;
     t("j1: vida no token do j2 (filtrada, campos todos visíveis)", tok(vA, "tkpj2-bb22")?.vida?.hp?.maximo === 150, JSON.stringify(tok(vA, "tkpj2-bb22")?.vida));
-    // NPC: campo "for" é mestre-only → para j1 o HP máximo usa apenas os
-    // campos visíveis: for ausente → nível 0 → 100 + 0 = 100 (não 180).
-    t("j1: vida no NPC calculada sobre visão filtrada (max=100, não 180)",
-      tok(vA, "tknpc-cc33")?.vida?.hp?.maximo === 100, JSON.stringify(tok(vA, "tknpc-cc33")?.vida));
-    t("j1: vitalidade do NPC vem do estado público (nivelManual=2)", tok(vA, "tknpc-cc33")?.vida?.vitalidade?.nivel === 2, JSON.stringify(tok(vA, "tknpc-cc33")?.vida?.vitalidade));
+    // NPC: o atributo que define o máximo é mestre-only. Como __hp.atual
+    // foi produzido sob o máximo real, não publicar HP recalculado/clampado
+    // sobre a visão filtrada (isso permitiria inferir o atributo secreto).
+    t("j1: HP do NPC com atributo mestre-only não é compartilhado",
+      tok(vA, "tknpc-cc33")?.vida?.hp == null, JSON.stringify(tok(vA, "tknpc-cc33")?.vida));
+    t("j1: vitalidade manual do NPC permanece como piso narrativo (nivelManual=2)", tok(vA, "tknpc-cc33")?.vida?.vitalidade?.nivel === 2, JSON.stringify(tok(vA, "tknpc-cc33")?.vida?.vitalidade));
     t("j1: token oculto continua não entregue", tok(vA, "tknpco-dd44") === undefined);
     const rSyncE = await sincronizar(sE);
     t("espectador: vida no token do j1 com flag on (filtrada, não é dono)", tok(rSyncE?.vtt, "tkpj1-aa11")?.vida?.hp?.maximo === 150 && tok(rSyncE?.vtt, "tkpj1-aa11")?.vida?.hp?.atual === 120, JSON.stringify(tok(rSyncE?.vtt, "tkpj1-aa11")?.vida));
-    t("espectador: vida no NPC com flag on (filtrada)", tok(rSyncE?.vtt, "tknpc-cc33")?.vida?.hp?.maximo === 100, JSON.stringify(tok(rSyncE?.vtt, "tknpc-cc33")?.vida));
+    t("espectador: HP do NPC com atributo mestre-only não é compartilhado",
+      tok(rSyncE?.vtt, "tknpc-cc33")?.vida?.hp == null, JSON.stringify(tok(rSyncE?.vtt, "tknpc-cc33")?.vida));
+    t("espectador: vitalidade manual do NPC permanece como piso narrativo",
+      tok(rSyncE?.vtt, "tknpc-cc33")?.vida?.vitalidade?.nivel === 2, JSON.stringify(tok(rSyncE?.vtt, "tknpc-cc33")?.vida?.vitalidade));
     t("espectador: SEM vida no token sem vínculo", tok(rSyncE?.vtt, "tksem-ee55")?.vida == null);
   }
 
@@ -273,10 +278,23 @@ try {
     t("segundo socket do mesmo usuário também recebe RATE_LIMITED",
       rA2?.codigo === "RATE_LIMITED" && typeof rA2?.retryAfterMs === "number" && rA2.retryAfterMs > 0,
       JSON.stringify(rA2).slice(0, 140));
-    // cota reposta → sincronização legítima volta e HP segue correto
+    // sync de névoa divide o MESMO balde vttSync: com o bucket acabado
+    // de esvaziar pela rajada acima, ela também é rejeitada — em
+    // qualquer socket do mesmo usuário
+    const rNevA = await sincronizarNevoa(sA);
+    t("sync de névoa compartilha o balde vttSync (RATE_LIMITED)",
+      rNevA?.codigo === "RATE_LIMITED" && typeof rNevA?.retryAfterMs === "number" && rNevA.retryAfterMs > 0,
+      JSON.stringify(rNevA).slice(0, 140));
+    const rNevA2 = await sincronizarNevoa(sA2);
+    t("sync de névoa no 2º socket do mesmo usuário também RATE_LIMITED",
+      rNevA2?.codigo === "RATE_LIMITED" && typeof rNevA2?.retryAfterMs === "number" && rNevA2.retryAfterMs > 0,
+      JSON.stringify(rNevA2).slice(0, 140));
+    // cota reposta → sincronizações legítimas voltam e HP segue correto
     await dormir(1600);
     const rOk = await sincronizar(sA);
     t("sync legítimo após reposição da cota → ok", rOk?.ok === true, JSON.stringify(rOk).slice(0, 140));
+    const rOkNev = await sincronizarNevoa(sA);
+    t("sync de névoa legítimo após reposição → ok", rOkNev?.ok === true, JSON.stringify(rOkNev).slice(0, 140));
     t("HP atualizado continua chegando no sync", tok(rOk?.vtt, "tkpj1-aa11")?.vida?.hp?.atual === 110,
       JSON.stringify(tok(rOk?.vtt, "tkpj1-aa11")?.vida));
   }

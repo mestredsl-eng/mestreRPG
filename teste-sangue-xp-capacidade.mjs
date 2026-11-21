@@ -129,8 +129,12 @@ try {
     const el = (g.json?.disponiveis ?? []).find((d) => d.kind === "caracteristica" && d.key === "sangue_cap");
     t("caracteristica capacidade listada", !!el, JSON.stringify(g.json?.disponiveis).slice(0, 200));
     t("compravel com preco 3 (0→1)", el?.compravel === true && el?.precoProximo === 3, JSON.stringify(el));
+    t("marcador positivo capacidadeSangue:true", el?.capacidadeSangue === true, JSON.stringify(el));
     const car = (g.json?.disponiveis ?? []).find((d) => d.kind === "caracteristica" && d.key === "carisma");
     t("outra caracteristica NÃO compravel", car && car.compravel === false, JSON.stringify(car));
+    t("outra caracteristica SEM marcador", car?.capacidadeSangue !== true, JSON.stringify(car));
+    const vant = (g.json?.disponiveis ?? []).find((d) => d.kind === "vantagem");
+    t("vantagem SEM marcador", vant?.capacidadeSangue !== true, JSON.stringify(vant));
   }
 
   sec("POST 0→1 — débito único, __sangue intacto");
@@ -181,6 +185,11 @@ try {
     setSangueConfig(CID, { habilitado: false, campoCapacidadeId: "f-sangue" });
     let r = await comprar(CHAR, J1, { kind: "caracteristica", key: "sangue_cap", nivelAlvo: 3 });
     t("habilitado:false → 400", r.status === 400, `status=${r.status}`);
+    {
+      const g = await progressaoDe(CHAR, J1);
+      const el = (g.json?.disponiveis ?? []).find((d) => d.key === "sangue_cap");
+      t("sangue off → SEM marcador capacidadeSangue", el?.capacidadeSangue !== true, JSON.stringify(el));
+    }
     setSangueConfig(CID, { habilitado: true }); // sem campoCapacidadeId
     r = await comprar(CHAR, J1, { kind: "caracteristica", key: "sangue_cap", nivelAlvo: 3 });
     t("sem campoCapacidadeId → 400", r.status === 400, `status=${r.status}`);
@@ -237,6 +246,11 @@ try {
     } finally { w.close(); }
     let r = await comprar(CHAR, J1, { kind: "caracteristica", key: "sangue_cap", nivelAlvo: 4 });
     t("XP insuficiente → 400 xp_insuficiente", r.status === 400 && r.json?.codigo === "xp_insuficiente", `status=${r.status} ${JSON.stringify(r.json).slice(0, 140)}`);
+    {
+      const g = await progressaoDe(CHAR, J1);
+      const el = (g.json?.disponiveis ?? []).find((d) => d.key === "sangue_cap");
+      t("XP insuficiente → marcador persiste, compravel false", el?.capacidadeSangue === true && el?.compravel === false, JSON.stringify(el));
+    }
     // repõe XP e corre duas compras simultâneas do mesmo nível
     const w2 = db();
     try {

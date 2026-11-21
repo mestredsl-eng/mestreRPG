@@ -111,6 +111,13 @@ function rotuloMotivoRolagem(r: RolagemMesa): string {
 
 const LADOS = [4, 6, 8, 10, 20] as const;
 
+/** Percentual da barra de HP do token: divisor real quando maximo>0;
+ *  máximo/atual inválidos ou máximo <= 0 renderizam 0 (sem NaN); clamp 0–100. */
+function percentualVida(atual: number, maximo: number): number {
+  if (!Number.isFinite(atual) || !Number.isFinite(maximo) || maximo <= 0) return 0;
+  return Math.max(0, Math.min(100, (atual / maximo) * 100));
+}
+
 function fmtTempo(ms: number) {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(s / 60);
@@ -1343,6 +1350,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         meuUserId={meuUserId}
         membros={membros}
         npcs={personagens.filter((p) => p.isNpc)}
+        fichas={personagens.filter((p) => !p.isNpc)}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
         atualizacaoPapel={permSeq}
@@ -1733,9 +1741,9 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, fichas, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; npcs: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
+  membros: Membro[]; npcs: PersonagemResumo[]; fichas: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
   atualizacaoPapel: number;
   // geração autoritativa de permissões: referência do PAI, incrementada
   // sincronicamente no handler de mesa:permissao:atualizada — o filho
@@ -1751,6 +1759,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
   const [novoNpcId, setNovoNpcId] = useState("");
+  // Ficha ativa do membro selecionado (Issue #179-A): token de jogador
+  // precisa de personagemId concreto para carregar vida — nunca inferido
+  // automaticamente (o usuário pode ter várias fichas).
+  const [novoFichaId, setNovoFichaId] = useState("");
   const [selVtt, setSelVtt] = useState<string | null>(null);
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
@@ -2635,7 +2647,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                   >
                     <span
                       className="vtt-token-hp-fill"
-                      style={{ width: `${Math.max(0, Math.min(100, (tk.vida.hp.atual / Math.max(1, tk.vida.hp.maximo)) * 100))}%` }}
+                      style={{ width: `${percentualVida(tk.vida.hp.atual, tk.vida.hp.maximo)}%` }}
                     />
                   </span>
                 )}
@@ -2730,14 +2742,25 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       {souMestre && !encerrada && vtt.mapa && (
         <div className="linha vtt-controles">
           <input placeholder="Nome do token" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
-          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); if (e.target.value) setNovoNpcId(""); }}>
+          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoNpcId(""); }}>
             <option value="">Sem dono</option>
             {membros.filter((m) => m.status !== "removido").map((m) => (
               <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>
             ))}
           </select>
+          {novoUserId && !novoNpcId && (() => {
+            const membroSel = membros.find((m) => m.userId === novoUserId);
+            const fichasDoMembro = fichas.filter((p) =>
+              p.status !== "arquivado" && p.membershipId === membroSel?.membershipId);
+            return (
+              <select value={novoFichaId} onChange={(e) => setNovoFichaId(e.target.value)} aria-label="Vincular ficha do jogador">
+                <option value="">Sem ficha (sem vida no token)</option>
+                {fichasDoMembro.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            );
+          })()}
           {npcs.length > 0 && (
-            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
+            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
               <option value="">Sem NPC</option>
               {npcs.map((p) => <option key={p.id} value={p.id}>{p.name} (NPC)</option>)}
             </select>
@@ -2752,9 +2775,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 token: {
                   nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5,
                   userId: novoUserId || null,
-                  personagemId: npc?.id ?? null,
+                  personagemId: npc?.id ?? (novoFichaId || null),
                 },
-              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); });
+              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); });
             }}
           >Adicionar token</button>
           {selVtt && (() => {

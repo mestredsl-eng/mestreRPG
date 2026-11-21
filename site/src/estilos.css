@@ -2405,8 +2405,10 @@ textarea:focus-visible,
   .chat-falar-como select { width: 100%; }
 }
 
-/* Indicadores de vida nos tokens da mesa virtual (Issue #127) */
-.vtt-token { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+/* Indicadores de vida nos tokens da mesa virtual (Issue #127) — sem
+   position:relative aqui: a regra base já declara position:absolute e
+   um override posterior no mesmo seletor quebraria left/top percentuais. */
+.vtt-token { display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .vtt-token-hp {
   position: absolute; left: 8%; right: 8%; bottom: 6%;
   height: 4px; border-radius: 2px; background: rgba(0,0,0,.55); overflow: hidden;
