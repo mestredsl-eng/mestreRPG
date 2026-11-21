@@ -255,6 +255,10 @@ try {
     ok("CSS. saldo em destaque (>1rem)", parseFloat(saldoStrong) > 16, saldoStrong);
     const metaSize = await estilo(".extrato-xp-evento .meta", "fontSize");
     ok("CSS. meta do evento menor (<=13px)", parseFloat(metaSize) <= 13, metaSize);
+    // quantidade +/- com cores distintas (convenção do app)
+    const qtdPos = await estilo(".extrato-xp-qtd.positivo", "color");
+    const qtdNeg = await estilo(".extrato-xp-qtd.negativo", "color");
+    ok("CSS. quantidade positiva/negativa com tons distintos", qtdPos !== qtdNeg && qtdPos !== "" && qtdNeg !== "", `pos=${qtdPos} neg=${qtdNeg}`);
     // botão Mostrar mais existe e tem foco visível (regra global)
     const btn = page.getByRole("button", { name: /Mostrar mais/ });
     if (await btn.count()) {

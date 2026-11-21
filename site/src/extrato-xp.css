@@ -13,8 +13,13 @@
 .extrato-xp .progresso-saldo strong {
   font-size: 1.35rem;
   font-variant-numeric: tabular-nums;
-  color: #8ab4ff;
+  color: var(--acento, #8ab4ff);
 }
+
+/* Quantidade positiva/negativa — mesma convenção de cor do app
+   (carteira-badge/hp-qtd); não há token dedicado para esses tons. */
+.extrato-xp .extrato-xp-qtd.positivo { color: #7fd18b; }
+.extrato-xp .extrato-xp-qtd.negativo { color: #ff9d9d; }
 
 .extrato-xp .extrato-xp-lista {
   margin: 8px 0;

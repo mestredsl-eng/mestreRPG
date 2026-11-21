@@ -92,8 +92,8 @@ export default function ExtratoXp({ characterId }: { characterId: string }) {
                 {mostrados.map((ev: EventoXp, i) => (
                   <li key={`${ev.em}-${i}`} className="extrato-xp-evento">
                     <strong>{ROTULO_TIPO[ev.tipo] ?? ev.tipo}</strong>
-                    {ev.compra && <> — {ev.compra.nome} nv.{ev.compra.nivelAnterior}→{ev.compra.nivelNovo} (−{ev.compra.custoXp} XP)</>}
-                    {!ev.compra && <> {ev.quantidade > 0 ? "+" : ""}{ev.quantidade} XP</>}
+                    {ev.compra && <> — {ev.compra.nome} nv.{ev.compra.nivelAnterior}→{ev.compra.nivelNovo} (<span className="extrato-xp-qtd negativo">−{ev.compra.custoXp} XP</span>)</>}
+                    {!ev.compra && <> <span className={`extrato-xp-qtd ${ev.quantidade >= 0 ? "positivo" : "negativo"}`}>{ev.quantidade > 0 ? "+" : ""}{ev.quantidade} XP</span></>}
                     <span className="meta">
                       {" "}· {new Date(ev.em).toLocaleString("pt-BR")}
                       {ev.autorNome ? ` · ${ev.autorNome}` : ""}
