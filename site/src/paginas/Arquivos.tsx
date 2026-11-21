@@ -3,6 +3,7 @@ import { api, type ArquivoBiblioteca, type CampanhaResumo, type PastaBiblioteca 
 import { ModalConfirmar } from "../Modal";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
 import EstadoVazio from "../EstadoVazio";
+import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
 const CATEGORIAS = ["mapas", "npcs", "locais", "documentos", "imagens", "pistas", "regras", "referencias", "jogadores", "outros"];
 const VIS_OPCOES = [
@@ -31,6 +32,9 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
   const [busca, setBusca] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
   const [erro, setErro] = useState<string | null>(null);
+  // Issue #239 — loading só na primeira carga; recargas por socket silenciosas.
+  const [carregando, setCarregando] = useState(true);
+  const primeiraCarga = useRef(true);
   const [msg, setMsg] = useState<string | null>(null);
   const [visualizando, setVisualizando] = useState<ArquivoBiblioteca | null>(null);
   const [editando, setEditando] = useState<ArquivoBiblioteca | null>(null);
@@ -46,6 +50,8 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
   const geracao = useRef(0);
   const carregar = useCallback(async () => {
     const g = ++geracao.current;
+    const inicial = primeiraCarga.current;
+    if (inicial) setCarregando(true);
     try {
       const [a, p] = await Promise.all([api.listarArquivos(campaignId), api.listarPastas(campaignId)]);
       if (g !== geracao.current) return;
@@ -53,6 +59,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
       setJogadoresEnviam(a.config.jogadoresEnviam);
       setErro(null);
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+    finally { primeiraCarga.current = false; if (g === geracao.current) setCarregando(false); }
   }, [campaignId]);
   useEffect(() => { void carregar(); }, [carregar]);
   // Issue #67: upload/moderação/edição/exclusão de outro membro atualiza a lista.
@@ -155,7 +162,8 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
         {podeEnviar && <button onClick={() => inputRef.current?.click()} disabled={enviando}>{enviando ? "Enviando…" : "Enviar arquivo"}</button>}
         <input ref={inputRef} type="file" multiple hidden onChange={(e) => void enviar(e.target.files)} />
       </div>
-      {erro && <p className="erro">{erro}</p>}
+      {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
+      {carregando && <EstadoCarregando>Carregando arquivos…</EstadoCarregando>}
       {msg && <p className="sucesso">{msg}</p>}
       {!souMestre && !ehEspectador && jogadoresEnviam && <p className="dica">Arquivos enviados ficam pendentes até aprovação do mestre.</p>}
       {ehEspectador && <p className="dica">Modo espectador: apenas visualização.</p>}
