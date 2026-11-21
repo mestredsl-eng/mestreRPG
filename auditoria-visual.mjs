@@ -40,16 +40,75 @@ async function medirPagina(page, tela, vp) {
   const m = await page.evaluate(() => {
     const de = document.documentElement;
     const overflowX = de.scrollWidth > de.clientWidth + 1;
-    // elementos visíveis mais largos que a viewport
-    const largos = [];
+    // Elementos visíveis mais largos que a viewport. O conteúdo de uma
+    // área com overflow-x:auto|scroll é intencionalmente navegável; não
+    // deve virar um falso positivo por cada thead/tr/td descendente.
+    // Fora dessas áreas, agrupa a árvore no ancestral largo mais externo,
+    // para não contar cada nó de um mesmo componente como um defeito novo.
+    const largosPorRaiz = new Map();
+    const areasRolaveis = new Map();
+    const seletorCurto = (el) => {
+      const tag = el.tagName.toLowerCase();
+      const id = el.id ? `#${el.id}` : "";
+      const classes = typeof el.className === "string"
+        ? el.className.split(/\\s+/).filter(Boolean).slice(0, 2).map((c) => `.${c}`).join("")
+        : "";
+      return `${tag}${id}${classes}`;
+    };
     for (const el of document.querySelectorAll("body *")) {
       const r = el.getBoundingClientRect();
-      if (r.width > de.clientWidth + 1 && r.height > 0) {
-        const cls = (el.className && typeof el.className === "string") ? "." + el.className.split(" ")[0] : el.tagName.toLowerCase();
-        largos.push(`${el.tagName.toLowerCase()}${cls} w=${Math.round(r.width)}`);
-        if (largos.length >= 5) break;
+      if (r.width <= de.clientWidth + 1 || r.height <= 0) continue;
+
+      let raiz = el;
+      let ancestral = el.parentElement;
+      let areaRolavel = null;
+      while (ancestral && ancestral !== document.body && ancestral !== de) {
+        const estilo = getComputedStyle(ancestral);
+        const larguraAncestral = ancestral.getBoundingClientRect();
+        const permiteRolagem = /(auto|scroll)/.test(estilo.overflowX)
+          && ancestral.clientWidth > 0
+          && ancestral.scrollWidth > ancestral.clientWidth + 1;
+        if (permiteRolagem) {
+          areaRolavel = ancestral;
+          break;
+        }
+        if (larguraAncestral.width > de.clientWidth + 1 && larguraAncestral.height > 0) {
+          raiz = ancestral;
+        }
+        ancestral = ancestral.parentElement;
       }
+
+      if (areaRolavel) {
+        const existente = areasRolaveis.get(areaRolavel) ?? {
+          seletor: seletorCurto(areaRolavel),
+          clientW: areaRolavel.clientWidth,
+          scrollW: areaRolavel.scrollWidth,
+          maiorConteudo: 0,
+          descendentesLargos: 0,
+        };
+        existente.maiorConteudo = Math.max(existente.maiorConteudo, Math.round(r.width));
+        existente.descendentesLargos++;
+        areasRolaveis.set(areaRolavel, existente);
+        continue;
+      }
+
+      if (raiz === document.body || raiz === de) continue;
+      const existente = largosPorRaiz.get(raiz) ?? {
+        seletor: seletorCurto(raiz),
+        largura: Math.round(raiz.getBoundingClientRect().width),
+        maiorDescendente: 0,
+        descendentesLargos: 0,
+      };
+      existente.maiorDescendente = Math.max(existente.maiorDescendente, Math.round(r.width));
+      existente.descendentesLargos++;
+      largosPorRaiz.set(raiz, existente);
     }
+    const largos = [...largosPorRaiz.values()].map((x) =>
+      `${x.seletor} largura=${x.largura}px (maior descendente=${x.maiorDescendente}px; ${x.descendentesLargos} nós)`,
+    );
+    const areasRolaveisLista = [...areasRolaveis.values()].map((x) =>
+      `${x.seletor} clientWidth=${x.clientW}px scrollWidth=${x.scrollW}px (conteúdo até ${x.maiorConteudo}px; ${x.descendentesLargos} nós)`,
+    );
     // botões sem nome acessível
     const botoesSemNome = [];
     for (const b of document.querySelectorAll("button")) {
@@ -69,10 +128,11 @@ async function medirPagina(page, tela, vp) {
         || i.getAttribute("placeholder");
       if (!temLabel) inputsSemLabel.push(`${i.tagName.toLowerCase()} type=${i.type || ""} :: ${i.outerHTML.slice(0, 140)}`);
     }
-    return { overflowX, scrollW: de.scrollWidth, clientW: de.clientWidth, largos, botoesSemNome, inputsSemLabel };
+    return { overflowX, scrollW: de.scrollWidth, clientW: de.clientWidth, largos, areasRolaveis: areasRolaveisLista, botoesSemNome, inputsSemLabel };
   });
   if (m.overflowX) anotar(tela, vp.nome, "rolagem-horizontal", `scrollWidth=${m.scrollW} clientWidth=${m.clientW}`);
   for (const l of m.largos) anotar(tela, vp.nome, "elemento-mais-largo", l);
+  for (const a of m.areasRolaveis) console.log(`  [${vp.nome}/${tela}] area-rolavel: ${a}`);
   for (const b of m.botoesSemNome) anotar(tela, vp.nome, "botao-sem-nome", b);
   for (const i of m.inputsSemLabel) anotar(tela, vp.nome, "input-sem-label", i);
   return m;
