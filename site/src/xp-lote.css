@@ -1,0 +1,61 @@
+/* Issue #185 — estilos dedicados do modal de XP em lote (.xp-lote-*).
+   Isolado de estilos.css: lista rolável, item selecionável, campo de
+   quantidade compacto e resumo de confirmação/resultado. */
+
+.xp-lote-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 16rem;
+  overflow-y: auto;
+  margin: 0.75rem 0;
+}
+
+.xp-lote-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #3a4152;
+  border-radius: 8px;
+  background: #232833;
+}
+
+.xp-lote-item.selecionado {
+  border-color: #46538a;
+  background: #2b3350;
+}
+
+.xp-lote-item.erro-campo {
+  border-color: #b0413e;
+}
+
+.xp-lote-item .check {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.xp-lote-qtd {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: #9aa3b2;
+  flex: none;
+}
+
+.xp-lote-qtd input {
+  width: 6.5rem;
+}
+
+.xp-lote-resumo {
+  margin: 0.5rem 0;
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}

@@ -256,6 +256,32 @@ try {
     await p.waitForSelector(".modal-fundo");
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     ok("UI. mobile: modal utilizável sem overflow horizontal", !overflow);
+    // CSS dedicado .xp-lote-* (Issue #185 follow-up): computed-style
+    const css = await p.evaluate(() => {
+      const lista = document.querySelector(".xp-lote-lista");
+      const item = document.querySelector(".xp-lote-item");
+      if (!lista || !item) return null;
+      const cs = getComputedStyle(lista), ci = getComputedStyle(item);
+      return { overflowY: cs.overflowY, maxH: cs.maxHeight, border: ci.borderTopWidth, display: ci.display };
+    });
+    ok("CSS. .xp-lote-lista rolável com altura máxima", css && css.overflowY === "auto" && css.maxH !== "none", JSON.stringify(css));
+    ok("CSS. .xp-lote-item com borda e layout flex", css && css.border !== "0px" && css.display === "flex", JSON.stringify(css));
+    // desktop: mesmo contrato de estilo
+    const cD = await browser.newContext();
+    await cD.addCookies([{ name: "mestre_rpg_session", value: cookieMestre.split("=").slice(1).join("="), url: BASE }]);
+    const pDesk = await cD.newPage();
+    await pDesk.goto(BASE, { waitUntil: "networkidle" });
+    await abrirPersonagens(pDesk);
+    await pDesk.getByRole("button", { name: "XP em lote" }).click();
+    await pDesk.waitForSelector(".xp-lote-lista");
+    const sel = pDesk.locator(".xp-lote-item .check input[type=checkbox]").first();
+    await sel.check();
+    const estSel = await pDesk.evaluate(() => {
+      const it = document.querySelector(".xp-lote-item.selecionado");
+      return it ? getComputedStyle(it).borderTopColor : null;
+    });
+    ok("CSS. item selecionado recebe estilo .selecionado", !!estSel, String(estSel));
+    await cD.close();
     await p.getByRole("button", { name: "Cancelar" }).click();
     await cM.close();
   }

@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Modal } from "./Modal";
 import { apiProgressao, ApiErrorProgresso } from "./api-progressao";
 import type { PersonagemResumo } from "./api";
+import "./xp-lote.css";
 
 interface ResultadoItem { characterId: string; quantidade: number; saldoResultante: number }
 
