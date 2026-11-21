@@ -62,6 +62,9 @@ function novoUsuario(banco, { username, role = null, campId = null }) {
 
 const CFG = {
   hp: { habilitado: true, base: 100, porNivel: 10, semantico: "atributo", edicaoPor: "mestre" },
+  // Só o NPC A cruza este limiar depois do mesmo dano absoluto, pois seu
+  // máximo real depende do atributo mestre-only for=8 (180 vs 200).
+  conversaoFerimento: { habilitada: true, limiares: [{ ate: 47, nivel: 2 }] },
 };
 
 try {
@@ -126,6 +129,16 @@ try {
     t("persistido NPC-A __hp.atual=80", la.__hp?.atual === 80, JSON.stringify(la.__hp));
     t("persistido NPC-B __hp.atual=100", lb.__hp?.atual === 100, JSON.stringify(lb.__hp));
   }
+  {
+    const rSyncM = await sincronizar(sM);
+    const vidaM_A = tok(rSyncM?.vtt, "tknpc-a1")?.vida;
+    const vidaM_B = tok(rSyncM?.vtt, "tknpc-b2")?.vida;
+    t("mestre mantém HP real NPC-A = 80/180", vidaM_A?.hp?.atual === 80 && vidaM_A?.hp?.maximo === 180, JSON.stringify(vidaM_A));
+    t("mestre mantém HP real NPC-B = 100/200", vidaM_B?.hp?.atual === 100 && vidaM_B?.hp?.maximo === 200, JSON.stringify(vidaM_B));
+    t("mestre vê conversão automática real apenas no NPC-A",
+      vidaM_A?.vitalidade?.nivel === 2 && vidaM_B?.vitalidade?.nivel === 0,
+      `A=${JSON.stringify(vidaM_A?.vitalidade)} B=${JSON.stringify(vidaM_B?.vitalidade)}`);
+  }
 
   // ---------- vidaCompartilhada = TRUE ----------
   sec("vidaCompartilhada=true — payload de não-dono e espectador");
@@ -146,13 +159,24 @@ try {
   console.log("  payload espect.  NPC-A.vida =", JSON.stringify(vidaE_A));
   console.log("  payload espect.  NPC-B.vida =", JSON.stringify(vidaE_B));
 
-  // Presença/ausência de campos no payload público
-  t("jogador: vida presente nos dois tokens NPC", vidaJ_A != null && vidaJ_B != null);
-  t("jogador: hp.atual exposto", typeof vidaJ_A?.hp?.atual === "number" && typeof vidaJ_B?.hp?.atual === "number");
-  t("jogador: hp.maximo exposto", typeof vidaJ_A?.hp?.maximo === "number" && typeof vidaJ_B?.hp?.maximo === "number");
-  t("jogador: historico vazio/ausente no caminho filtrado",
-    (vidaJ_A?.hp?.historico ?? []).length === 0 && !("historico" in (vidaJ_A?.hp ?? {})));
-  t("espectador: vida presente nos dois tokens NPC", vidaE_A != null && vidaE_B != null);
+  // O atributo que define o HP é mestre-only: o objeto HP inteiro fica
+  // omitido para os dois não-mestres; a Vitalidade só mostra o piso manual.
+  t("jogador: HP oculto nos dois NPCs com atributo mestre-only", vidaJ_A?.hp == null && vidaJ_B?.hp == null);
+  t("espectador: HP oculto nos dois NPCs com atributo mestre-only", vidaE_A?.hp == null && vidaE_B?.hp == null);
+  t("jogador: vitalidade manual segura e equivalente",
+    vidaJ_A?.vitalidade?.nivel === 0 &&
+    vidaJ_A?.vitalidade?.nivel === vidaJ_B?.vitalidade?.nivel &&
+    vidaJ_A?.vitalidade?.nome === vidaJ_B?.vitalidade?.nome);
+  t("espectador: vitalidade manual segura e equivalente",
+    vidaE_A?.vitalidade?.nivel === 0 &&
+    vidaE_A?.vitalidade?.nivel === vidaE_B?.vitalidade?.nivel &&
+    vidaE_A?.vitalidade?.nome === vidaE_B?.vitalidade?.nome);
+  t("jogador: histórico/autor/timestamp de vitalidade não expostos",
+    (vidaJ_A?.vitalidade?.historico ?? []).length === 0 &&
+    vidaJ_A?.vitalidade?.alteradoEm == null && vidaJ_A?.vitalidade?.alteradoPor == null);
+  t("espectador: histórico/autor/timestamp de vitalidade não expostos",
+    (vidaE_A?.vitalidade?.historico ?? []).length === 0 &&
+    vidaE_A?.vitalidade?.alteradoEm == null && vidaE_A?.vitalidade?.alteradoPor == null);
 
   // NÚCLEO DA PROVA: payloads devem ser indistinguíveis
   const indistJ = eq(vidaJ_A, vidaJ_B);
