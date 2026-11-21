@@ -10,6 +10,7 @@ import Mesa from "./Mesa";
 import Diario from "./Diario";
 import Historico from "./Historico";
 import Arquivos from "./Arquivos";
+import IconeInterface from "../IconeInterface";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -179,18 +180,20 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         {campanha.description && <p>{campanha.description}</p>}
 
         <div className="abas">
-          <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}>Informações</button>
-          <button className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}>Mesa</button>
-          {vePersonagens && <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}>Personagens</button>}
-          <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}>Diário</button>
-          <button className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}>Histórico</button>
-          <button className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}>Arquivos</button>
+          {/* Issue #233 — ícones complementam os rótulos (que permanecem
+              como accessible name); nunca substituem o texto. */}
+          <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}><IconeInterface nome="informacoes" />Informações</button>
+          <button className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}><IconeInterface nome="mesa" />Mesa</button>
+          {vePersonagens && <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}><IconeInterface nome="personagens" />Personagens</button>}
+          <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}><IconeInterface nome="diario" />Diário</button>
+          <button className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}><IconeInterface nome="historico" />Histórico</button>
+          <button className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}><IconeInterface nome="arquivos" />Arquivos</button>
           {souMestre && (
             <>
-              <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}>Fichas</button>
-              <button className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}>Regras</button>
-              <button className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}>Participantes ({membros.length})</button>
-              <button className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}>Convites ({convites.length})</button>
+              <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}><IconeInterface nome="fichas" />Fichas</button>
+              <button className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}><IconeInterface nome="regras" />Regras</button>
+              <button className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}><IconeInterface nome="participantes" />Participantes ({membros.length})</button>
+              <button className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}><IconeInterface nome="convites" />Convites ({convites.length})</button>
             </>
           )}
         </div>

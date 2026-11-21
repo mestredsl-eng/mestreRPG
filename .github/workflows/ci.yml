@@ -9,6 +9,9 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
+      # Base da PR #238 (estados vazios, empilhada na #235) — faz o CI
+      # rodar nela; o guard [ ! -f ] do loop cobre refs sem o arquivo.
+      - feat/issue-132-icones-abas
     types:
       - opened
       - synchronize
@@ -288,7 +291,8 @@ jobs:
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
             homologacao-papeis-ui.mjs \
-            auditoria-visual.mjs
+            auditoria-visual.mjs \
+            teste-estados-vazios-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
