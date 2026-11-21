@@ -229,7 +229,12 @@ try {
     const painel = page.locator(".painel-sangue");
 
     // Escalares: opção vazia bloqueada quando há vínculo (não promete limpeza impossível)
-    const opcaoVaziaCap = await painel.locator('#sangue-campo-capacidade option[value=""]').getAttribute("disabled");
+    // Enquanto `campos` carrega, o select tem DOIS option[value=""] (placeholder +
+    // "Carregando…"): aguardar o término do loading e usar .first() para o
+    // locator ser determinístico (o placeholder é sempre o primeiro).
+    await painel.locator('#sangue-campo-capacidade option', { hasText: "Carregando campos" })
+      .waitFor({ state: "detached", timeout: 15000 });
+    const opcaoVaziaCap = await painel.locator('#sangue-campo-capacidade option[value=""]').first().getAttribute("disabled");
     ok("P2. select capacidade: opção vazia desabilitada com vínculo", opcaoVaziaCap !== null, `disabled=${opcaoVaziaCap}`);
     const dicaVinculo = await painel.locator(".meta", { hasText: "não podem ser removidos" }).count();
     ok("P2. dica de vínculo não-removível visível", dicaVinculo >= 1);
