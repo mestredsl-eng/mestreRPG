@@ -512,6 +512,75 @@ export function registrarAjusteSangue(
   return aplicarDelta(dados, params.delta, "ajuste", params);
 }
 
+/** Resultado da reconciliação de capacidade — `ajustado` informa se
+ *  um ajuste de saldo foi efetivamente registrado neste chamado. */
+export type ResultadoReconciliacaoSangue =
+  | { ok: true; dados: Record<string, unknown>; estado: EstadoSangue; ajustado: boolean }
+  | { ok: false; codigo: CodigoErroSangue; saldo?: number; motivo?: string };
+
+/**
+ * Reconciliação de capacidade reduzida (decisão #7055515759, item 1).
+ *
+ * Quando a capacidade recém-resolvida e VALIDADA pelo chamador
+ * (`resolverCapacidadeSangue` sobre a versão da ficha) fica ABAIXO do
+ * saldo atual, registra um ajuste negativo auditável até o teto —
+ * nunca apaga histórico, nunca zera saldo silenciosamente.
+ *
+ * Regras (todas fail-closed, nenhuma regra numérica inventada):
+ *  - `capacidadeNova` ausente/null/não finita/negativa → NO-OP
+ *    (`ajustado:false`, dados retornados sem mutação). Capacidade
+ *    desconhecida nunca gera ajuste.
+ *  - `saldo <= capacidadeNova` → NO-OP (`ajustado:false`).
+ *  - `saldo > capacidadeNova` → `registrarAjusteSangue` com delta
+ *    `capacidadeNova - saldo` (exatamente até o teto, nunca abaixo).
+ *    Exige `motivo` não vazio — o runtime deve passar a razão da
+ *    redução (ex.: "Capacidade reduzida de 10 para 6"); sem motivo a
+ *    função recusa com `quantidade_invalida` em vez de gravar ajuste
+ *    não auditável.
+ *
+ * O resultado também atualiza o cache `estado.capacidade` quando o
+ * ajuste ocorre. A gravação em `characters.data` deve ocorrer dentro
+ * da transação síncrona do chamador (C6) — esta função é pura e só
+ * toca o objeto `dados`.
+ */
+export function reconciliarCapacidadeSangue(
+  dados: Record<string, unknown>,
+  params: ContextoEvento & { capacidadeNova?: number | null },
+): ResultadoReconciliacaoSangue {
+  const cap = params.capacidadeNova;
+  if (cap === undefined || cap === null || !Number.isFinite(cap) || cap < 0) {
+    const lido = lerSangue(dados);
+    if (!lido.valido) {
+      return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
+    }
+    return { ok: true, dados, estado: lido.estado, ajustado: false };
+  }
+  const lido = lerSangue(dados);
+  if (!lido.valido) {
+    return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
+  }
+  const estado = lido.estado;
+  if (estado.saldo <= cap) {
+    return { ok: true, dados, estado, ajustado: false };
+  }
+  const ajuste = registrarAjusteSangue(dados, {
+    personagemId: params.personagemId,
+    autorId: params.autorId,
+    autorNome: params.autorNome,
+    motivo: params.motivo,
+    delta: cap - estado.saldo,
+  });
+  if (!ajuste.ok) return ajuste;
+  // Atualiza o cache de capacidade junto — a leitura seguinte já
+  // reflete o teto novo sem esperar novo round-trip de ficha.
+  const dadosAjustados = gravarCacheCapacidade(ajuste.dados, cap);
+  const relido = lerSangue(dadosAjustados);
+  if (!relido.valido) {
+    return { ok: false, codigo: "sangue_invalido", motivo: relido.motivo };
+  }
+  return { ok: true, dados: dadosAjustados, estado: relido.estado, ajustado: true };
+}
+
 /** Grava o cache de exibição `__sangue.capacidade` — nunca altera
  *  saldo/usos/histórico. Chamado por rotas de leitura após resolver
  *  a capacidade pela versão da ficha. */
