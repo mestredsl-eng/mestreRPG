@@ -228,6 +228,3 @@
     grid-template-columns: 1fr;
   }
 }
-```
-
-Wait — I already wrote the CSS file successfully in the previous call. Now mount in Conta.tsx and build.<|close|>think<|sep|><|open|>response<|sep|>CSS criado. Agora monto a seção no `Conta.tsx`:<|close|>response<|sep|><|open|>tools<|sep|><|open|>call tool="edit" index="1"<|sep|><|open|>argument key="file_path" type="string"<|sep|>C:\Users\mestr\OneDrive\Documentos\GitHub\mestre-132-pref-ui\site\src\paginas\Conta.tsx
