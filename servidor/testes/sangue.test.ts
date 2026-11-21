@@ -10,6 +10,7 @@ import {
   registrarAtivacaoSangue,
   registrarRecuperacaoSangue,
   registrarUsoD10,
+  reconciliarCapacidadeSangue,
   resolverCapacidadeSangue,
   resolverNaturezaSangue,
   resolverSanguePersonagem,
@@ -757,5 +758,94 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     // somados como nível.
     assert.equal(r.disponivel, true);
     assert.equal(r.capacidade, 2);
+  });
+});
+
+// ---------- reconciliação de capacidade reduzida (decisão #7055515759) ----------
+
+describe("reconciliarCapacidadeSangue", () => {
+  const dadosCom = (saldo: number, historico: unknown[] = []) => ({
+    [CHAVE_SANGUE]: { saldo, usos: {}, historico },
+  });
+
+  it("capacidade ausente/inválida → no-op, dados intactos", () => {
+    const dados = dadosCom(8);
+    const antes = JSON.stringify(dados);
+    for (const cap of [undefined, null, NaN, Infinity, -Infinity, -1]) {
+      const r = reconciliarCapacidadeSangue(dados, { ...AUTOR, capacidadeNova: cap });
+      assert.equal(r.ok, true, `cap=${cap}`);
+      if (r.ok) {
+        assert.equal(r.ajustado, false);
+        assert.equal(r.estado.saldo, 8);
+      }
+    }
+    assert.equal(JSON.stringify(dados), antes);
+  });
+
+  it("saldo dentro do teto → no-op", () => {
+    for (const cap of [8, 10]) {
+      const r = reconciliarCapacidadeSangue(dadosCom(8), { ...AUTOR, capacidadeNova: cap });
+      assert.equal(r.ok, true);
+      if (r.ok) assert.equal(r.ajustado, false);
+    }
+  });
+
+  it("capacidade abaixo do saldo → ajuste negativo auditável até o teto", () => {
+    let dados: Record<string, unknown> = dadosCom(10);
+    const r = reconciliarCapacidadeSangue(dados, {
+      ...AUTOR, capacidadeNova: 6, motivo: "Capacidade reduzida de 10 para 6",
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.ajustado, true);
+    assert.equal(r.estado.saldo, 6);
+    const ev = r.estado.historico.at(-1);
+    assert.equal(ev?.tipo, "ajuste");
+    assert.equal(ev?.quantidade, -4);
+    assert.equal(ev?.saldoResultante, 6);
+    assert.equal(ev?.motivo, "Capacidade reduzida de 10 para 6");
+    assert.equal(r.estado.capacidade, 6); // cache atualizado
+    dados = r.dados;
+    // histórico anterior preservado (append-only)
+    assert.equal(r.estado.historico.length, 1);
+  });
+
+  it("ajuste preserva histórico existente — nunca apaga", () => {
+    const hist = [{ em: new Date().toISOString(), tipo: "uso", quantidade: -2, motivo: null, autorId: "u", autorNome: "M", saldoResultante: 8 }];
+    const r = reconciliarCapacidadeSangue(dadosCom(8, hist), {
+      ...AUTOR, capacidadeNova: 3, motivo: "downgrade",
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.saldo, 3);
+    assert.equal(r.estado.historico.length, 2);
+    assert.equal(r.estado.historico[0].tipo, "uso"); // evento antigo intacto
+    assert.equal(r.estado.historico[1].tipo, "ajuste");
+  });
+
+  it("saldo acima do teto sem motivo → recusa fail-closed", () => {
+    const r = reconciliarCapacidadeSangue(dadosCom(10), { ...AUTOR, capacidadeNova: 4 });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "quantidade_invalida");
+  });
+
+  it("capacidade 0 com saldo positivo → ajuste até zero auditável", () => {
+    const r = reconciliarCapacidadeSangue(dadosCom(5), {
+      ...AUTOR, capacidadeNova: 0, motivo: "capacidade zerada",
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.ajustado, true);
+      assert.equal(r.estado.saldo, 0);
+    }
+  });
+
+  it("ledger malformado → sangue_invalido mesmo com capacidade válida", () => {
+    const r = reconciliarCapacidadeSangue(
+      { [CHAVE_SANGUE]: { saldo: "x", usos: {}, historico: [] } },
+      { ...AUTOR, capacidadeNova: 1 },
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "sangue_invalido");
   });
 });
