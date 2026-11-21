@@ -241,25 +241,35 @@ export function recuperarSangue(
 
 export interface ParamsAjusteSangue extends ContextoAtor {
   delta: number;
+  /** UUID de idempotência (`ajustar:<uuid>`) — OBRIGATÓRIO no
+   *  contrato do socket R6.3: retry após ACK perdido devolve o
+   *  resultado original sem novo delta; requestId reaproveitado
+   *  com payload divergente → `uso_conflito`. */
+  requestId: string;
 }
 
 /** Ajuste manual — expõe `registrarAjusteSangue` com motivo
  *  obrigatório (o primitivo já rejeita delta 0/não finito e motivo
- *  vazio). O runtime deve provar que o ator é mestre ANTES de chamar;
- *  papel nunca vem do cliente. Não cria entrada em `usos`. */
+ *  vazio) e `requestId` UUID obrigatório para dedup durável.
+ *  O runtime deve provar que o ator é mestre ANTES de chamar;
+ *  papel nunca vem do cliente. */
 export function ajustarSangueManual(
   dados: Record<string, unknown>,
   params: ParamsAjusteSangue,
 ): ResultadoAcaoSangue {
+  if (typeof params.requestId !== "string" || !UUID_RE.test(params.requestId)) {
+    return erro("uso_invalido", { motivo: "requestId deve ser UUID" });
+  }
   const r = registrarAjusteSangue(dados, {
     personagemId: params.personagemId,
     autorId: params.autorId,
     autorNome: params.autorNome,
     motivo: params.motivo ?? null,
     delta: params.delta,
+    requestId: params.requestId,
   });
   if (!r.ok) return deErro(r);
-  return { ok: true, dados: r.dados, estado: r.estado, replay: false };
+  return { ok: true, dados: r.dados, estado: r.estado, replay: r.jaRegistrado === true };
 }
 
 // ---------- 4. Reconciliação de capacidade reduzida ----------

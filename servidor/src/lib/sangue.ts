@@ -35,7 +35,7 @@ export const MAX_HISTORICO_SANGUE = 500;
 export const LIMITE_USOS_AVISO = 5000;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CHAVE_USO_RE = /^(d10|ativar|recuperar):(.+)$/;
+const CHAVE_USO_RE = /^(d10|ativar|recuperar|ajustar):(.+)$/;
 
 // ---------- Tipos ----------
 
@@ -67,6 +67,13 @@ export interface UsoSangue {
   poderKey?: string;
   /** Somente prefixo recuperar:. */
   quantidade?: number;
+  /** Somente prefixo ajustar: — delta aplicado (fingerprint de
+   *  payload: requestId reaproveitado com delta/motivo divergente
+   *  é rejeitado como `uso_conflito`, nunca replay silencioso). */
+  delta?: number;
+  /** Somente prefixo ajustar: — motivo normalizado (trim) que faz
+   *  parte do fingerprint de payload. */
+  motivo?: string | null;
 }
 
 export interface EstadoSangue {
@@ -96,7 +103,7 @@ const isoValida = (v: unknown): v is string =>
 export function usoSangueValido(chave: string, valor: unknown): boolean {
   const m = CHAVE_USO_RE.exec(chave);
   if (!m) return false;
-  const prefixo = m[1] as "d10" | "ativar" | "recuperar";
+  const prefixo = m[1] as "d10" | "ativar" | "recuperar" | "ajustar";
   const sufixo = m[2];
   if (!UUID_RE.test(sufixo)) return false;
   if (!valor || typeof valor !== "object" || Array.isArray(valor)) return false;
@@ -118,6 +125,15 @@ export function usoSangueValido(chave: string, valor: unknown): boolean {
     // (o servidor deriva a chave de `ativar:<requestId>`).
     if (typeof u.requestId !== "string" || u.requestId.toLowerCase() !== sufixo.toLowerCase()) return false;
     if (typeof u.poderKey !== "string" || u.poderKey.length === 0 || u.poderKey.length > 80) return false;
+    return true;
+  }
+  if (prefixo === "ajustar") {
+    // requestId UUID obrigatório e é o próprio sufixo da operação
+    // (o servidor deriva a chave de `ajustar:<requestId>`).
+    if (typeof u.requestId !== "string" || u.requestId.toLowerCase() !== sufixo.toLowerCase()) return false;
+    const d = num(u.delta);
+    if (d === null || d === 0) return false;
+    if (u.motivo !== undefined && u.motivo !== null && typeof u.motivo !== "string") return false;
     return true;
   }
   // recuperar:
@@ -295,7 +311,18 @@ function registrarOperacao(
     if (existente.personagemId !== params.personagemId) {
       return { ok: false, codigo: "uso_conflito" };
     }
-    // Replay idempotente: mesmo usoId do mesmo personagem → nada muda.
+    // Ativação de Poder tem fingerprint de payload: o mesmo
+    // personagem/requestId só é replay quando poderKey também
+    // corresponde. RequestId reutilizado para outro Poder é conflito,
+    // nunca replay silencioso. Entradas antigas válidas já exigem
+    // poderKey no schema de `ativar:`, portanto seguem compatíveis.
+    if (
+      params.extra?.poderKey !== undefined &&
+      existente.poderKey !== params.extra.poderKey
+    ) {
+      return { ok: false, codigo: "uso_conflito" };
+    }
+    // Replay idempotente: mesmo usoId/personagem/payload → nada muda.
     return { ok: true, dados, estado, jaRegistrado: true };
   }
 
@@ -494,14 +521,19 @@ export function registrarRecuperacaoSangue(
   });
 }
 
-/** Ajuste administrativo de saldo (mestre) — NÃO cria entrada em
- *  `usos` (não é operação de cliente com idempotência). Exige motivo.
+/** Ajuste administrativo de saldo (mestre) — exige motivo.
+ *  Sem `requestId` não cria entrada em `usos` (uso interno, ex.:
+ *  reconciliação de capacidade). Com `requestId` UUID (contrato do
+ *  socket R6.3) registra `usos["ajustar:<uuid>"]` DENTRO da mesma
+ *  transação do chamador: retry do mesmo requestId com o mesmo
+ *  payload (delta+motivo) retorna `jaRegistrado` sem novo delta;
+ *  requestId reaproveitado com payload divergente → `uso_conflito`.
  *  Usado para correções e, se aprovado, para o tratamento de
  *  redução de capacidade (decisão D4 pendente — sem clamp automático
  *  para zero nesta etapa). */
 export function registrarAjusteSangue(
   dados: Record<string, unknown>,
-  params: ContextoEvento & { delta: number },
+  params: ContextoEvento & { delta: number; requestId?: string | null },
 ): ResultadoSangue {
   if (!Number.isFinite(params.delta) || params.delta === 0) {
     return { ok: false, codigo: "quantidade_invalida" };
@@ -509,7 +541,42 @@ export function registrarAjusteSangue(
   if (!params.motivo?.trim()) {
     return { ok: false, codigo: "quantidade_invalida", motivo: "ajuste exige motivo" };
   }
-  return aplicarDelta(dados, params.delta, "ajuste", params);
+  const requestId = params.requestId ?? null;
+  if (requestId !== null && (typeof requestId !== "string" || !UUID_RE.test(requestId))) {
+    return { ok: false, codigo: "uso_invalido" };
+  }
+  if (requestId === null) {
+    return aplicarDelta(dados, params.delta, "ajuste", params);
+  }
+  // Dedup durável: o uso é verificado ANTES de aplicar — mesmo
+  // requestId + mesmo fingerprint → replay; fingerprint divergente
+  // → conflito estável (o ACK perdido + retry nunca duplica delta).
+  const usoId = `ajustar:${requestId.toLowerCase()}`;
+  const lido = lerSangue(dados);
+  if (!lido.valido) {
+    return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
+  }
+  const existente = lido.estado.usos[usoId];
+  if (existente) {
+    if (existente.personagemId !== params.personagemId) {
+      return { ok: false, codigo: "uso_conflito" };
+    }
+    const motivoNorm = params.motivo?.trim() || null;
+    if (existente.delta !== params.delta || (existente.motivo ?? null) !== motivoNorm) {
+      return { ok: false, codigo: "uso_conflito" };
+    }
+    return { ok: true, dados, estado: lido.estado, jaRegistrado: true };
+  }
+  return registrarOperacao(dados, {
+    usoId,
+    tipoUso: "uso",
+    delta: params.delta,
+    tipoEvento: "ajuste",
+    personagemId: params.personagemId,
+    requestId,
+    extra: { delta: params.delta, motivo: params.motivo?.trim() || null },
+    ctx: params,
+  });
 }
 
 /** Resultado da reconciliação de capacidade — `ajustado` informa se

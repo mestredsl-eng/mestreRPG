@@ -180,6 +180,41 @@ describe("ativarPoderNarrativo", () => {
     }
   });
 
+  it("mesmo requestId com outro poderKey → uso_conflito sem mutação", () => {
+    const primeiro = ativarPoderNarrativo(dadosCom(), {
+      ...AUTOR, requestId: REQ2, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(primeiro.ok, true);
+    if (!primeiro.ok) return;
+
+    // Mesmo Poder e requestId conserva o replay, sem novo débito.
+    const replay = ativarPoderNarrativo(primeiro.dados, {
+      ...AUTOR, requestId: REQ2, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(replay.ok, true);
+    if (replay.ok) {
+      assert.equal(replay.replay, true);
+      assert.equal(replay.estado.saldo, 8);
+    }
+
+    // Reutilizar a intenção para outro Poder não pode ser replay
+    // silencioso nem aplicar o custo diferente.
+    const antesConflito = JSON.stringify(primeiro.dados);
+    const conflito = ativarPoderNarrativo(primeiro.dados, {
+      ...AUTOR, requestId: REQ2, poderKey: "gratis", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(conflito.ok, false);
+    if (!conflito.ok) assert.equal(conflito.codigo, "uso_conflito");
+    assert.equal(JSON.stringify(primeiro.dados), antesConflito);
+    const estadoFinal = estadoSangueAtual(primeiro.dados);
+    assert.equal(estadoFinal.ok, true);
+    if (estadoFinal.ok) {
+      assert.equal(estadoFinal.estado.saldo, 8);
+      assert.equal(Object.keys(estadoFinal.estado.usos).length, 1);
+      assert.equal(estadoFinal.estado.historico.length, 1);
+    }
+  });
+
   it("saldo insuficiente → erro sem mutação", () => {
     const dados = dadosCom(1);
     const antes = JSON.stringify(dados);
@@ -312,17 +347,51 @@ describe("recuperarSangue", () => {
 
 describe("ajustarSangueManual", () => {
   it("ajuste positivo e negativo com motivo", () => {
-    const r1 = ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 3, motivo: "recompensa" });
+    const r1 = ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 3, motivo: "recompensa", requestId: REQ1 });
     assert.equal(r1.ok, true);
     if (r1.ok) assert.equal(r1.estado.saldo, 8);
-    const r2 = ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: -2, motivo: "penalidade" });
+    const r2 = ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: -2, motivo: "penalidade", requestId: REQ2 });
     assert.equal(r2.ok, true);
     if (r2.ok) assert.equal(r2.estado.saldo, 3);
   });
 
-  it("sem motivo ou delta 0 → rejeitado", () => {
-    assert.equal(ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 1 }).ok, false);
-    assert.equal(ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 0, motivo: "x" }).ok, false);
+  it("sem motivo, delta 0 ou requestId inválido → rejeitado", () => {
+    assert.equal(ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 1, requestId: REQ1 }).ok, false);
+    assert.equal(ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 0, motivo: "x", requestId: REQ1 }).ok, false);
+    assert.equal(ajustarSangueManual(dadosCom(5), { ...AUTOR, delta: 1, motivo: "x", requestId: "nao-uuid" }).ok, false);
+  });
+
+  it("P2 R6.3 — retry mesmo requestId → replay sem novo delta", () => {
+    const dados = dadosCom(5);
+    const r1 = ajustarSangueManual(dados, { ...AUTOR, delta: 2, motivo: "recompensa", requestId: REQ1 });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.equal(r1.replay, false);
+    assert.equal(r1.estado.saldo, 7);
+    // ACK perdido + retry: mesmo requestId E payload → replay
+    const r2 = ajustarSangueManual(r1.dados, { ...AUTOR, delta: 2, motivo: "recompensa", requestId: REQ1 });
+    assert.equal(r2.ok, true);
+    if (!r2.ok) return;
+    assert.equal(r2.replay, true);
+    assert.equal(r2.estado.saldo, 7);
+    assert.equal(Object.keys(r2.estado.usos).filter((k) => k.startsWith("ajustar:")).length, 1);
+  });
+
+  it("P2 R6.3 — requestId reaproveitado com payload divergente → uso_conflito", () => {
+    const dados = dadosCom(5);
+    const r1 = ajustarSangueManual(dados, { ...AUTOR, delta: 2, motivo: "recompensa", requestId: REQ1 });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    const rDelta = ajustarSangueManual(r1.dados, { ...AUTOR, delta: 3, motivo: "recompensa", requestId: REQ1 });
+    assert.equal(rDelta.ok, false);
+    if (!rDelta.ok) assert.equal(rDelta.codigo, "uso_conflito");
+    const rMotivo = ajustarSangueManual(r1.dados, { ...AUTOR, delta: 2, motivo: "outro", requestId: REQ1 });
+    assert.equal(rMotivo.ok, false);
+    if (!rMotivo.ok) assert.equal(rMotivo.codigo, "uso_conflito");
+    // estado permanece o do primeiro ajuste
+    const r3 = ajustarSangueManual(r1.dados, { ...AUTOR, delta: 2, motivo: "recompensa", requestId: REQ1 });
+    assert.equal(r3.ok, true);
+    if (r3.ok) assert.equal(r3.estado.saldo, 7);
   });
 });
 
