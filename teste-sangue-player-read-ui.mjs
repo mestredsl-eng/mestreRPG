@@ -4,8 +4,10 @@
 // Cobre: saldo/capacidade, natureza conhecida/desconhecida, ação de
 // recuperação efetiva, estados desabilitado/capacidade_indisponivel/
 // ledger_invalido, permissões (dono/mestre veem; J2/espectador 403),
-// realtime via socket, troca de personagem, presença na Mesa,
-// mobile 390px e ausência de qualquer botão de mutação.
+// realtime via socket, troca de personagem, presença na Mesa e
+// mobile 390px. (C8-C2 acrescentou controles reais de mutação —
+// cobertos em teste-sangue-actions-ui.mjs; aqui validam-se os
+// contextos em que NENHUM controle deve aparecer.)
 // Servidor+SQLite+site 100% descartáveis.
 import crypto from "node:crypto";
 import { join } from "node:path";
@@ -178,7 +180,11 @@ try {
     t("UI. saldo 5 / capacidade 8", /5/.test(txt) && /8/.test(txt), txt.slice(0, 200));
     t("UI. natureza humano", /humano/i.test(txt));
     t("UI. ação Descansar +2", /Descansar/i.test(txt) && /\+2/.test(txt));
-    t("UI. NENHUM botão de mutação", await painel.getByRole("button").count() === 0);
+    // C8-C2: o dono passa a ter o controle real de recuperação
+    // (sangue:recuperar). O contrato read-only C8-C1 não mudou — o que
+    // segue proibido é mutação por não-dono/mestre, coberta na suíte
+    // teste-sangue-actions-ui.mjs.
+    t("UI. dono vê controle de recuperação", await painel.getByRole("button", { name: /Descansar/ }).count() === 1);
     // troca de personagem → dados da outra ficha (re-navega: o app
     // recarrega a lista e o painel busca o novo characterId)
     await abrirFicha(page, "Vampira UI");
@@ -265,7 +271,9 @@ try {
     const txt = await painel.innerText();
     // saldo atual é 5 (seção de estados degradados restaurou o ledger)
     t("UI. mestre vê saldo/natureza", /5/.test(txt) && /humano/i.test(txt), txt.slice(0, 200));
-    t("UI. mestre: sem botões de mutação", await painel.getByRole("button").count() === 0);
+    // C8-C2: mestre tem "Ações do mestre" (details fechado — fora da
+    // árvore de acessibilidade), mas NUNCA os controles do jogador.
+    t("UI. mestre: sem controles de jogador", await painel.getByRole("button", { name: /Descansar|Ativar|Ajustar|Reconciliar/ }).count() === 0);
     await ctx.close();
   }
 
@@ -293,6 +301,12 @@ try {
       const temPainel = await page.locator(".painel-sangue-leitura").count();
       t("UI. Mesa: painel de Sangue aparece ao escolher personagem", temPainel === 1, `count=${temPainel}`);
       if (temPainel) {
+        // C8-C2: a carga do painel inclui a lista da campanha (posse
+        // real) — espera sair de "Carregando…" antes de ler.
+        await page.waitForFunction(() => {
+          const p = document.querySelector(".painel-sangue-leitura");
+          return p && !p.innerText.includes("Carregando");
+        }, { timeout: 15000 }).catch(() => null);
         const txt = await page.locator(".painel-sangue-leitura").innerText();
         t("UI. Mesa: saldo correto no painel", /5/.test(txt), txt.slice(0, 160));
       }
