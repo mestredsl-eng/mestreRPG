@@ -21,6 +21,14 @@ on:
       - feat/issue-186-sangue-xp-ui
       - feat/issue-186-sangue-player-read-ui
       - feat/issue-186-sangue-runtime-actions
+      - feat/issue-186-sangue-config
+      - feat/issue-186-sangue-rules-runtime-config
+      - feat/issue-186-d10-transaction-core
+      - feat/issue-186-d10-zero-custo
+      - feat/issue-186-sangue-capacidade-reducao
+      - feat/issue-186-poder-d10-eligibility
+      - feat/issue-186-sangue-capacidade-flag
+      - fix/issue-186-d10-sangue-cobranca-p2s
       # Base da PR empilhada sobre #232 (ex.: C8-D) — a #232 em si já
       # é coberta pela base feat/issue-186-sangue-player-read-ui acima.
       - feat/issue-186-sangue-actions-ui
@@ -226,7 +234,8 @@ jobs:
             teste-d10-sangue-cobranca.mjs \
             teste-sangue-xp-capacidade.mjs \
             teste-sangue-read-api.mjs \
-            teste-sangue-runtime.mjs
+            teste-sangue-runtime.mjs \
+            teste-sangue-poderes-acoes.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
