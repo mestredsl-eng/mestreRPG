@@ -82,13 +82,14 @@ async function diagnosticoBootstrap(repoDir: string): Promise<string | null> {
 }
 
 // Estados que legitimam seguir SEM backup num banco vazio: bootstrap
-// autorizado/em curso, bootstrap interrompido (migração faz parte da
-// conclusão) ou instalação concluída (recibo prova legitimidade —
-// banco vazio aqui significa perda já ocorrida, não há o que salvar).
+// autorizado/em curso ou bootstrap interrompido (a migração faz parte
+// da conclusão). "instalacao-concluida" NÃO está aqui de propósito:
+// recibo prova que a instalação existiu — banco vazio nesse estado é
+// PERDA, e migrar recriaria um schema vazio mascarando o desastre.
+// Bloqueia fail-closed (mesma regra do restaurador: banco perdido).
 const ESTADOS_SEM_BACKUP_VAZIO = new Set([
   "primeiro-bootstrap",
   "bootstrap-interrompido",
-  "instalacao-concluida",
 ]);
 
 const classe = classificarBanco(CAMINHOS.banco);

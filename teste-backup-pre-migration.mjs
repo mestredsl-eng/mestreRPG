@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import {
-  autorizarPrimeiroBootstrap, gravarProvisionamento,
+  autorizarPrimeiroBootstrap, gravarProvisionamento, gravarReciboInstalacao,
 } from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
@@ -183,6 +183,18 @@ try {
     const r = migrar(c.env);
     t("exit não-zero (bloqueado ou backup falhou fechado)", r.status !== 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
     t("migrations NÃO avançaram", aplicadas(c.env.MESTRE_BANCO) === 5, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
+  }
+
+  sec("7. Recibo de instalação concluída + DB vazio — banco PERDIDO, bloqueia");
+  {
+    const c = cenario();
+    // Recibo permanente prova que a instalação existiu; banco vazio
+    // aqui é perda — migrate NÃO pode recriar schema vazio.
+    gravarReciboInstalacao(ROOT, c.env);
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    const r = migrar(c.env);
+    t("exit não-zero", r.status !== 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
+    t("banco NÃO foi recriado", !existsSync(c.env.MESTRE_BANCO), c.env.MESTRE_BANCO);
   }
 } finally {
   rmSync(BASE, { recursive: true, force: true });
