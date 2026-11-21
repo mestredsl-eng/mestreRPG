@@ -204,6 +204,7 @@ try {
     setSangueConfig(CID, { ...CFG_BASE, campoCapacidadeId: "fantasma" });
     r = await getSangue(CHAR, J1);
     t("campo inexistente → capacidade_indisponivel", r.json?.estado === "capacidade_indisponivel" && r.json?.motivo === "campo_inexistente" && r.json?.capacidadeMax === null, JSON.stringify(r.json));
+    t("capacidade_indisponivel: nenhum resumo anunciado", r.json?.saldo === null && r.json?.natureza === null && r.json?.acaoRecuperacao === null && r.json?.utilizavel === false, JSON.stringify(r.json));
 
     setSangueConfig(CID, null);
     r = await getSangue(CHAR, J1);
@@ -220,7 +221,10 @@ try {
     setSangue(CHAR, "lixo-invalido");
     r = await getSangue(CHAR, J1);
     t("ledger corrompido → ledger_invalido, saldo null", r.json?.estado === "ledger_invalido" && r.json?.saldo === null, JSON.stringify(r.json));
-    t("capacidade ainda derivada (8)", r.json?.capacidadeMax === 8, `cap=${r.json?.capacidadeMax}`);
+    // Contrato #227 (correção #7056578372): estado != ok → TODOS os
+    // resumos null — nenhum painel pode anunciar ação a partir de
+    // estado parcial.
+    t("ledger_invalido: capacidadeMax/natureza/acaoRecuperacao null", r.json?.capacidadeMax === null && r.json?.natureza === null && r.json?.acaoRecuperacao === null && r.json?.utilizavel === false, JSON.stringify(r.json));
 
     setSangue(CHAR, { saldo: 5, usos: {}, historico: [], capacidade: 999 });
     r = await getSangue(CHAR, J1);

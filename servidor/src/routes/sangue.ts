@@ -77,6 +77,32 @@ sangueRouter.get(
     const lido = lerSangue(dados);
     const capacidadeMax = resolucao.capacidade.disponivel ? resolucao.capacidade.capacidade : null;
 
+    const ledgerValido = lido.valido;
+    const saldo = ledgerValido ? lido.estado.saldo : null;
+    const capacidadeOk = resolucao.capacidade.disponivel;
+    const estado = !capacidadeOk
+      ? "capacidade_indisponivel"
+      : !ledgerValido
+        ? "ledger_invalido"
+        : "ok";
+
+    // Contrato publicado (#227): qualquer estado != "ok" devolve
+    // TODOS os campos de resumo como null — o consumidor nunca
+    // anuncia saldo/capacidade/ação a partir de estado parcial.
+    if (estado !== "ok") {
+      res.json({
+        estado,
+        motivo: !capacidadeOk ? (resolucao.capacidade.motivo ?? "indisponivel") : "ledger_invalido",
+        habilitado: true,
+        utilizavel: false,
+        saldo: null,
+        capacidadeMax: null,
+        natureza: null,
+        acaoRecuperacao: null,
+      });
+      return;
+    }
+
     // Ação de recuperação efetiva — MESMA cadeia de `recuperarSangue`
     // (sangue-acoes.ts): natureza mapeada → ação canônica → flag global
     // → ação habilitada → quantidade válida. Qualquer elo ausente →
@@ -92,22 +118,12 @@ sangueRouter.get(
       }
     }
 
-    const ledgerValido = lido.valido;
-    const saldo = ledgerValido ? lido.estado.saldo : null;
-    const capacidadeOk = resolucao.capacidade.disponivel;
-    const estado = !capacidadeOk
-      ? "capacidade_indisponivel"
-      : !ledgerValido
-        ? "ledger_invalido"
-        : "ok";
-
     res.json({
       estado,
-      ...(estado !== "ok" ? { motivo: !capacidadeOk ? (resolucao.capacidade.motivo ?? "indisponivel") : "ledger_invalido" } : {}),
       habilitado: true,
-      utilizavel: capacidadeOk && ledgerValido,
+      utilizavel: true,
       saldo,
-      capacidadeMax,
+      capacidadeMax: resolucao.capacidade.capacidade,
       natureza: resolucao.natureza.disponivel
         ? {
             rotulo: resolucao.natureza.rotulo,
