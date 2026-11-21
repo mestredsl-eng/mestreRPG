@@ -19,6 +19,7 @@ import {
   SUPERFICIES,
   TEXTURAS,
   VISUAL_PADRAO,
+  sugestaoVisualAprendizado,
 } from "../temasVisuais";
 import "../preferencias-visuais.css";
 
@@ -129,6 +130,41 @@ export default function PreferenciasVisuais({ usuario, recarregar }: { usuario: 
   const tokensPreview = tokensVisuaisComoEstilo(rascunho);
   const attrsPreview = atributosVisuais(rascunho);
 
+  // ---------- Aprendizado visual (Issue #132) ----------
+  // Opt-in explícito; o histórico só cresce no servidor quando um PATCH
+  // `visual` é aplicado com sucesso. Nada aqui aplica tema sozinho.
+  const aprendizado = usuario.preferences?.visualAprendizado;
+  const aprendizadoOptIn = aprendizado?.optIn === true;
+  const historicoAprendizado = Array.isArray(aprendizado?.historico) ? aprendizado.historico : [];
+  const sugestao = aprendizadoOptIn
+    ? sugestaoVisualAprendizado(historicoAprendizado, salvo)
+    : null;
+  const [aprendizadoSalvando, setAprendizadoSalvando] = useState(false);
+
+  const enviarAprendizado = async (parcial: { optIn?: boolean; historico?: PreferenciasVisuais[] }) => {
+    if (aprendizadoSalvando) return;
+    setAprendizadoSalvando(true);
+    setErro(null);
+    try {
+      await api.atualizarPreferenciasAprendizado(parcial);
+      await recarregar();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Não foi possível atualizar o aprendizado visual.");
+    } finally {
+      setAprendizadoSalvando(false);
+    }
+  };
+
+  const alternarOptIn = () => void enviarAprendizado({ optIn: !aprendizadoOptIn });
+  const apagarHistorico = () => void enviarAprendizado({ optIn: aprendizadoOptIn, historico: [] });
+  // Pré-visualizar só muda o rascunho — o painel de prévia existente já
+  // reflete; nenhum PATCH é enviado e o tema global não muda.
+  const preVisualizarSugestao = () => {
+    if (!sugestao) return;
+    setRascunho({ ...sugestao.preferencias });
+    setErro(null);
+  };
+
   return (
     <section className="cartao prefs-visuais" aria-labelledby="prefs-visuais-titulo">
       <h2 id="prefs-visuais-titulo">Aparência</h2>
@@ -238,6 +274,63 @@ export default function PreferenciasVisuais({ usuario, recarregar }: { usuario: 
         </button>
       </div>
       {!sujo && !erro && <p className="dica">Nenhuma alteração pendente.</p>}
+
+      <fieldset className="prefs-aprendizado">
+        <legend>Aprendizado com minhas escolhas</legend>
+        <p className="dica">
+          Quando ativado, o sistema registra apenas as combinações que você
+          <strong> aplica e salva</strong> — prévias e cancelamentos nunca contam.
+          Nenhuma sugestão é aplicada automaticamente.
+        </p>
+        <div className="linha">
+          <button
+            type="button"
+            className="secundario"
+            aria-pressed={aprendizadoOptIn}
+            onClick={alternarOptIn}
+            disabled={aprendizadoSalvando || salvando}
+          >
+            {aprendizadoOptIn ? "Aprendizado ativado" : "Ativar aprendizado"}
+          </button>
+          {aprendizadoOptIn && historicoAprendizado.length > 0 && (
+            <button
+              type="button"
+              className="secundario"
+              onClick={apagarHistorico}
+              disabled={aprendizadoSalvando || salvando}
+            >
+              Apagar histórico
+            </button>
+          )}
+        </div>
+        {aprendizadoOptIn && sugestao && (
+          <div className="prefs-sugestao" role="status">
+            <p>
+              <strong>Sugestão:</strong>{" "}
+              {(() => {
+                const nome = ATMOSFERAS_VISUAIS.find((a) => mesmoVisual(sugestao.preferencias, a.preferencias as PreferenciasVisuais))?.nome;
+                return nome ? `atmosfera "${nome}"` : "uma combinação personalizada";
+              })()}{" "}
+              — você aplicou esta combinação {sugestao.vezes} vezes.
+            </p>
+            <div className="linha">
+              <button type="button" className="secundario" onClick={preVisualizarSugestao} disabled={salvando}>
+                Pré-visualizar
+              </button>
+              <button
+                type="button"
+                onClick={() => void aplicar({ ...sugestao.preferencias })}
+                disabled={salvando}
+              >
+                Aplicar sugestão
+              </button>
+            </div>
+          </div>
+        )}
+        {aprendizadoOptIn && !sugestao && historicoAprendizado.length > 0 && (
+          <p className="dica">Ainda não há combinação repetida o suficiente para sugerir.</p>
+        )}
+      </fieldset>
     </section>
   );
 }
