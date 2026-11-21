@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "./socket";
 import { apiProgressao, type EventoXp, type Progressao } from "./api-progressao";
 
@@ -29,17 +29,32 @@ export default function ExtratoXp({ characterId }: { characterId: string }) {
   const [prog, setProg] = useState<Progressao | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [visiveis, setVisiveis] = useState(POR_PAGINA);
+  // P3-1 (#217): resposta atrasada de um characterId anterior não pode
+  // sobrescrever o estado do personagem atual — cada carga recebe uma
+  // geração e respostas/erros de gerações antigas são descartadas.
+  const geracao = useRef(0);
 
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
-      setProg(await apiProgressao.obter(characterId));
+      const p = await apiProgressao.obter(characterId);
+      if (g !== geracao.current) return;
+      setProg(p);
       setErro(null);
     } catch (e) {
+      if (g !== geracao.current) return;
       setErro(e instanceof Error ? e.message : "Falha ao carregar extrato de XP");
     }
   }, [characterId]);
 
-  useEffect(() => { void carregar(); }, [carregar]);
+  useEffect(() => {
+    // Troca de personagem: não exibir saldo/histórico de A como se
+    // fossem de B enquanto a carga de B não resolve.
+    setProg(null);
+    setErro(null);
+    setVisiveis(POR_PAGINA);
+    void carregar();
+  }, [carregar]);
 
   // Tempo real: mesma assinatura de Personagens — mutações do personagem
   // emitem personagens:atualizados na campanha.

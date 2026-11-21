@@ -188,7 +188,116 @@ try {
     await ctx.close();
   }
 
-  // ---------- 7. Mobile ----------
+  // ---------- 7. P3-1: resposta atrasada de A não sobrescreve B ----------
+  // Determinístico: GET /progressao de A fica retido; troca para B;
+  // B resolve; A é liberado por último. No SHA-base a resposta de A
+  // sobrescreve o estado de B (falha); com a guarda de geração, é
+  // descartada e o extrato final pertence somente a B.
+  {
+    const { ctx, page } = await novaPagina(cookieMestre);
+    let liberarA;
+    const travaA = new Promise((res) => { liberarA = res; });
+    const padraoA = `**/characters/${charA}/progressao**`;
+    await page.route(padraoA, async (route) => { await travaA; await route.continue(); });
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Extrato XP" }).click();
+    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.locator("tr.clicavel", { hasText: "Herói Ledger" }).click();
+    await page.waitForSelector(".extrato-xp", { timeout: 15000 });
+    // GET de A retido → volta à lista e abre B
+    // detalhe do personagem (o "Voltar" do cabeçalho da campanha é o primeiro)
+    await page.locator("button.secundario", { hasText: "Voltar" }).last().click();
+    await page.locator("tr.clicavel", { hasText: "Sem Movimentos" }).waitFor({ timeout: 15000 });
+    await page.locator("tr.clicavel", { hasText: "Sem Movimentos" }).click();
+    await page.waitForSelector("text=XP disponíveis", { timeout: 15000 });
+    // B (saldo 0, sem histórico) resolveu; agora libera A por último
+    liberarA();
+    await page.waitForTimeout(800);
+    const txt = await page.locator(".extrato-xp").textContent();
+    ok("UI. resposta atrasada de A descartada — extrato é de B",
+      txt.includes("Nenhuma movimentação de XP registrada") && !txt.includes("Sessão 4"),
+      txt.replace(/\s+/g, " ").slice(0, 90));
+    await page.unroute(padraoA);
+    await ctx.close();
+  }
+
+  // ---------- 7b. P3-1 (prova diferencial): resposta obsoleta via realtime ----------
+  // A troca A→B desmonta o ExtratoXp, então o cenário acima não
+  // reproduz o bug no SHA-base. A corrida real e alcançável é entre
+  // cargas do MESMO personagem: mount + personagens:atualizados.
+  // GET #1 é capturado com saldo 100 e retido; concessão real de +40
+  // XP (saldo 140) emite o evento → GET #2 aplica 140; a resposta
+  // velha de 100 chega por último e deve ser descartada pela guarda.
+  {
+    const { ctx, page } = await novaPagina(cookieMestre);
+    // Toda resposta é capturada na hora (route.fetch) e a ENTREGA é
+    // controlada por um portão individual — permite entregar a mais
+    // velha por último, depois de todas as novas.
+    const pendentes = []; // { resp, liberar, done }
+    const padrao = `**/characters/${charLongo}/progressao**`;
+    await page.route(padrao, async (route) => {
+      const resp = await route.fetch();
+      const j = await resp.json().catch(() => null);
+      let liberar, done;
+      const p = {
+        j,
+        liberar: () => liberar(),
+        done: new Promise((res) => { done = res; }),
+      };
+      await new Promise((res) => { liberar = res; pendentes.push(p); });
+      await route.fulfill({
+        status: resp.status(),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(j ?? {}),
+      });
+      done();
+    });
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Extrato XP" }).click();
+    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.locator("tr.clicavel", { hasText: "Histórico Longo" }).click();
+    await page.waitForSelector(".extrato-xp", { timeout: 15000 });
+    // GET #1 retido (capturou saldo 450). Muta o XP no banco e emite
+    // personagens:atualizados via PATCH real → novas cargas capturam 490.
+    const det = await req(BASE, "GET", `/characters/${charLongo}`, { cookie: cookieMestre });
+    const upd = det.json?.personagem?.updatedAt;
+    const w = abrirDb(BANCO);
+    const row = w.prepare("select data from characters where id=?").get(charLongo);
+    const d = JSON.parse(row.data);
+    d.__xp.saldo = 490;
+    d.__xp.historico.unshift({ em: new Date().toISOString(), tipo: "concessao", quantidade: 40, motivo: "corrida p3-1", autorId: "x", autorNome: "Mestre Teste", saldoResultante: 490 });
+    w.prepare("update characters set data=? where id=?").run(JSON.stringify(d), charLongo);
+    w.close();
+    const g = await req(BASE, "PATCH", `/characters/${charLongo}`, {
+      cookie: cookieMestre,
+      body: { name: "Histórico Longo", baseUpdatedAt: upd },
+    });
+    ok("setup. PATCH emite personagens:atualizados", g.status === 200, `status=${g.status}`);
+    // dá tempo do socket entregar o evento e a carga nova ser capturada
+    // (pode haver capturas anteriores ao PATCH — a obsoleta é sempre a #1)
+    await page.waitForTimeout(2000);
+    ok("setup. carga nova capturada", pendentes.length >= 2, `n=${pendentes.length} saldos=${pendentes.map((p) => p.j?.xp?.saldo).join(",")}`);
+    // entrega todas as respostas NOVAS (490) e espera os fulfills
+    // completarem; a #1 (450) segue retida
+    for (const p of pendentes.slice(1)) p.liberar();
+    await Promise.all(pendentes.slice(1).map((p) => p.done));
+    await page.waitForSelector("text=490 XP", { timeout: 15000 });
+    // entrega a resposta OBSOLETA por último e espera o fulfill
+    pendentes[0].liberar();
+    await pendentes[0].done;
+    await page.waitForTimeout(800);
+    const txt = await page.locator(".extrato-xp").textContent();
+    ok("UI. resposta obsoleta descartada — saldo permanece 490",
+      txt.includes("490 XP") && !txt.includes("450 XP"),
+      txt.replace(/\s+/g, " ").slice(0, 90));
+    for (const p of pendentes) p.liberar();
+    await page.unroute(padrao);
+    await ctx.close();
+  }
+
+  // ---------- 8. Mobile ----------
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await ctx.addCookies([{ name: "mestre_rpg_session", value: cookieMestre.split("=").pop(), url: BASE }]);
