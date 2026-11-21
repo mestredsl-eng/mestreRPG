@@ -44,6 +44,30 @@ if errorlevel 1 (
     echo.
 )
 
+rem ---------- Versao minima do Node (engines.node >=20.19) ----------
+rem O package.json declara engines.node >=20.19; sem este gate uma
+rem instalacao com Node 20.18 ou anterior passaria pelo "node existe"
+rem e falharia mais tarde, em npm/build/migracao. Falha cedo — antes de
+rem qualquer chamada npm/node operacional — com a versao detectada.
+set "NODE_MIN=20.19"
+for /f "usebackq delims=" %%v in (`node -p "process.versions.node" 2^>nul`) do set "NODE_VER=%%v"
+if not defined NODE_VER (
+    echo [ERRO] Nao foi possivel ler a versao do Node.js instalado.
+    echo        Versao minima exigida: %NODE_MIN% ou superior.
+    echo        Reinstale o Node.js em https://nodejs.org e tente novamente.
+    pause
+    exit /b 1
+)
+node -e "const p=process.versions.node.split('.').map(Number);process.exit(p[0]>20||(p[0]===20&&p[1]>=19)?0:1)" >nul 2>nul
+if errorlevel 1 (
+    echo [ERRO] Node.js %NODE_VER% detectado - versao minima exigida: %NODE_MIN% ou superior.
+    echo        Atualize o Node.js em https://nodejs.org e tente novamente.
+    pause
+    exit /b 1
+)
+echo [OK] Node.js %NODE_VER% (minimo %NODE_MIN%).
+echo.
+
 where npm >nul 2>nul
 if errorlevel 1 (
     echo [ERRO] npm nao encontrado. Reinstale o Node.js 20+ e tente novamente.

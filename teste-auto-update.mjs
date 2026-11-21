@@ -398,6 +398,35 @@ try {
     t(".bat nao executa git diretamente", !/\bgit\s+(pull|fetch|reset|stash|clean|merge|rebase)\b/i.test(bat));
   }
 
+  sec("17. Gate engines.node >=20.19 — iniciar-mestre-rpg.bat");
+  {
+    const bat = readFileSync("iniciar-mestre-rpg.bat", "utf8");
+    const m = bat.match(/node -e "([^"]*process\.versions\.node[^"]*)"/);
+    t("expressao de versao encontrada no .bat", !!m);
+    if (m) {
+      const expr = m[1];
+      const iGate = bat.indexOf(m[0]);
+      const iOperacional = bat.search(/call npm |node scripts\\auto-update\.mjs/);
+      t("gate vem antes de npm/auto-update/build", iGate > -1 && iGate < iOperacional, `gate=${iGate} operacional=${iOperacional}`);
+      // Prova deterministica: sobrescreve process.versions.node
+      // (propriedade configurable) e executa a MESMA expressao extraida
+      // do .bat — nao depende da versao do Node do host.
+      const casos = [
+        ["20.18.0", 1], ["20.18.9", 1], ["19.9.9", 1], ["18.20.0", 1],
+        ["20.19.0", 0], ["20.19.5", 0], ["20.20.0", 0],
+        ["22.11.0", 0], ["24.0.0", 0], ["25.1.0", 0],
+        ["", 1], ["abc", 1], ["20", 1], ["20.x.y", 1],
+      ];
+      for (const [ver, esperado] of casos) {
+        const r = spawnSync(process.execPath, ["-e",
+          `Object.defineProperty(process.versions,'node',{value:${JSON.stringify(ver)}});${expr}`],
+          { encoding: "utf8" });
+        t(`Node ${ver || "(vazio)"} → exit ${esperado}`,
+          r.status === esperado, `status=${r.status} stderr=${String(r.stderr || "").slice(0, 120)}`);
+      }
+    }
+  }
+
   sec("Extra — normalizacao de URL e lockfile inalterado");
   {
     t("URL oficial https normaliza", normalizarUrlRepo("https://github.com/mestredsl-eng/mestreRPG.git/") === normalizarUrlRepo(REPO_OFICIAL));
