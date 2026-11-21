@@ -224,6 +224,56 @@ try {
     await ctx.close();
   }
 
+  // ---------- 4. PERDA DE PAPEL EM TEMPO REAL: não deixar tab órfã ----------
+  {
+    const ctx = await browser.newContext();
+    await ctx.addCookies([{ name: "mestre_rpg_session", value: c.cookieMestre.split("=").pop(), url: BASE }]);
+    const page = await ctx.newPage();
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await abrirCampanha(page);
+    await page.locator('#campanha-tab-convites').click();
+
+    // Entrega o papel de mestre a outro membro antes de rebaixar o mestre atual.
+    const promoveu = await req(BASE, "PATCH", `/campaigns/${c.campId}/members/${c.jogadores.jogador1.membershipId}`, {
+      cookie: c.cookieMestre,
+      body: { role: "mestre" },
+    });
+    ok("papel. promove outro membro a mestre antes do rebaixamento", promoveu.status === 200, `status=${promoveu.status}`);
+
+    const rebaixou = await req(BASE, "PATCH", `/campaigns/${c.campId}/members/${c.membMestre}`, {
+      cookie: c.jogadores.jogador1.cookie,
+      body: { role: "jogador" },
+    });
+    ok("papel. segundo mestre rebaixa usuário conectado para jogador", rebaixou.status === 200, `status=${rebaixou.status}`);
+    await page.waitForFunction(() =>
+      document.querySelector('#campanha-tab-info[aria-selected="true"]') !== null &&
+      document.querySelector('#campanha-tab-convites') === null,
+      { timeout: 10000 },
+    );
+    await checarContratoTabs(page, "após perder papel de mestre");
+    const tabsJogador = await page.locator('.abas [role="tab"]').evaluateAll((els) => els.map((el) => el.id));
+    ok("papel. abas exclusivas de mestre removidas sem seleção órfã",
+      !tabsJogador.some((id) => ["campanha-tab-fichas", "campanha-tab-regras", "campanha-tab-participantes", "campanha-tab-convites"].includes(id)),
+      tabsJogador.join("|"));
+
+    // O jogador ainda pode abrir Personagens; ao virar espectador, retorna a Informações.
+    await page.locator('#campanha-tab-personagens').click();
+    const rebaixouEspectador = await req(BASE, "PATCH", `/campaigns/${c.campId}/members/${c.membMestre}`, {
+      cookie: c.jogadores.jogador1.cookie,
+      body: { role: "espectador" },
+    });
+    ok("papel. segundo mestre rebaixa jogador conectado para espectador", rebaixouEspectador.status === 200, `status=${rebaixouEspectador.status}`);
+    await page.waitForFunction(() =>
+      document.querySelector('#campanha-tab-info[aria-selected="true"]') !== null &&
+      document.querySelector('#campanha-tab-personagens') === null,
+      { timeout: 10000 },
+    );
+    await checarContratoTabs(page, "após perder acesso a Personagens");
+    ok("papel. aba Personagens removida sem seleção órfã",
+      await page.locator('#campanha-tab-personagens').count() === 0);
+    await ctx.close();
+  }
+
   await browser.close();
 } finally {
   encerrarServidor(proc);
