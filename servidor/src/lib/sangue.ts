@@ -311,7 +311,18 @@ function registrarOperacao(
     if (existente.personagemId !== params.personagemId) {
       return { ok: false, codigo: "uso_conflito" };
     }
-    // Replay idempotente: mesmo usoId do mesmo personagem → nada muda.
+    // Ativação de Poder tem fingerprint de payload: o mesmo
+    // personagem/requestId só é replay quando poderKey também
+    // corresponde. RequestId reutilizado para outro Poder é conflito,
+    // nunca replay silencioso. Entradas antigas válidas já exigem
+    // poderKey no schema de `ativar:`, portanto seguem compatíveis.
+    if (
+      params.extra?.poderKey !== undefined &&
+      existente.poderKey !== params.extra.poderKey
+    ) {
+      return { ok: false, codigo: "uso_conflito" };
+    }
+    // Replay idempotente: mesmo usoId/personagem/payload → nada muda.
     return { ok: true, dados, estado, jaRegistrado: true };
   }
 
