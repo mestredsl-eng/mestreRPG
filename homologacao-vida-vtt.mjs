@@ -48,7 +48,7 @@ const CFG = {
   },
 };
 
-let browser, proc, ids, sid;
+let browser, proc, ids, sid, sidBGlobal;
 const errosConsole = [];
 function vigiar(page, tag) {
   page.on("pageerror", (e) => errosConsole.push(`${tag}:pageerror:${e.message}`));
@@ -211,6 +211,63 @@ try {
   await pgM.screenshot({ path: join(SHOTS, "vida-01-mestre-flag-off.png") });
   await pgA.screenshot({ path: join(SHOTS, "vida-02-j1-flag-off.png") });
 
+  // ---------- A. Token de jogador via formulário UI com ficha concreta ----------
+  sec("A. Formulário Adicionar token — ficha do membro + rejeição cross-owner");
+  {
+    // cross-owner direto no socket: userId de j1 + ficha de j2 deve falhar
+    const cross = await emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: "tkcross-01", nome: "Cross", cor: "#ff0000", x: 0.5, y: 0.5, userId: ids.j1, personagemId: PJ2 },
+    });
+    t("cross-owner (userId j1 + ficha de j2) rejeitado", cross?.ok === false, JSON.stringify(cross));
+
+    const formTok = pgM.locator(".vtt-controles", { has: pgM.locator('input[placeholder="Nome do token"]') });
+    const selMembro = formTok.locator("select").nth(0);
+    const selFicha = formTok.locator('select[aria-label="Vincular ficha do jogador"]');
+    const btnAdd = formTok.getByRole("button", { name: "Adicionar token" });
+
+    // token COM ficha: usuário j1 + Ana (PJ1)
+    await formTok.locator('input[placeholder="Nome do token"]').fill("Vera UI");
+    await selMembro.selectOption(ids.j1);
+    await selFicha.selectOption(PJ1);
+    await btnAdd.click();
+    await pgM.locator(".vtt-token", { hasText: "VE" }).waitFor({ timeout: 10000 });
+    t("UI: token criado com userId+ficha", true);
+    t("UI: HP bar no token da UI (mestre)", (await hpBar(pgM, "VE").count()) === 1);
+    t("UI: title HP = 120/150", (await hpBar(pgM, "VE").getAttribute("title")) === "HP 120/150");
+    await pgA.locator(".vtt-token", { hasText: "VE" }).waitFor({ timeout: 10000 });
+    t("UI: dono (j1) vê HP do próprio token criado via UI", (await hpBar(pgA, "VE").count()) === 1);
+
+    // trocar o dono limpa a ficha selecionada (sem inferência)
+    await selMembro.selectOption(ids.j2);
+    t("UI: trocar dono limpa ficha selecionada",
+      (await selFicha.inputValue()) === "", `valor=${await selFicha.inputValue()}`);
+
+    // token SEM ficha: usuário j2 sem selecionar ficha → vida null explícita
+    await formTok.locator('input[placeholder="Nome do token"]').fill("Solto UI");
+    await btnAdd.click();
+    await pgM.locator(".vtt-token", { hasText: "SO" }).waitFor({ timeout: 10000 });
+    await pgM.waitForTimeout(500);
+    t("UI: token sem ficha NÃO tem HP bar (vida null)", (await hpBar(pgM, "SO").count()) === 0);
+  }
+
+  // ---------- C. position:absolute — tokens fora do fluxo, left/top governam ----------
+  sec("C. .vtt-token position absolute — coordenadas inline preservadas");
+  {
+    const pos = await pgM.locator(".vtt-token", { hasText: "AN" }).first().evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { position: s.position, left: s.left, top: s.top, transform: s.transform };
+    });
+    t("computed position === absolute", pos.position === "absolute", JSON.stringify(pos));
+    // todos os tokens de teste estão em x=0.5,y=0.5: com absolute eles
+    // sobrepõem (mesmo rect); com relative empilhariam no fluxo (rects distintos)
+    const rects = await pgM.locator(".vtt-token").evaluateAll((els) =>
+      els.map((e) => { const r = e.getBoundingClientRect(); return `${Math.round(r.x)},${Math.round(r.y)}`; }));
+    const unicos = new Set(rects);
+    t("tokens nas mesmas coords sobrepõem (fora do fluxo)", unicos.size === 1 && rects.length >= 6,
+      `unicos=${unicos.size} n=${rects.length} rects=${[...unicos].join("|")}`);
+  }
+
   // ---------- toggle vidaCompartilhada pela UI de Regras ----------
   sec("Toggle vidaCompartilhada em Regras → sincronização ao vivo");
   await irRegrasPontuacao(pgM);
@@ -285,11 +342,12 @@ try {
   {
     const sessB = await req(BASE, "POST", `/campaigns/${c.campId}/sessoes`, { cookie: c.cookieMestre, body: { name: "Mesa Vida B" } });
     const sidB = sessB.json?.sessao?.id ?? sessB.json?.id;
+    sidBGlobal = sidB;
     t("sessão B criada", !!sidB);
-    await emitirCb(sM, "mesa:entrar", { sessionId: sidB });
+    await emitirCb(sM, "mesa:entrar", { sessionId: sidBGlobal });
     t("token Zé (PJ1) criado na sessão B",
       (await emitirCb(sM, "mesa:vtt:token", {
-        sessionId: sidB, acao: "criar",
+        sessionId: sidBGlobal, acao: "criar",
         token: { id: "tkze-bb77", nome: "Zé", cor: "#22aa55", x: 0.3, y: 0.3, personagemId: PJ1, userId: ids.j1 },
       }))?.ok === true);
 
@@ -351,6 +409,41 @@ try {
       const title = await pgA.locator(".vtt-token .vtt-token-hp").getAttribute("title").catch(() => "ausente");
       t("sessão B segue sincronizando vida correta (105/150)", false, title);
     }
+  }
+
+  // ---------- B. Barra HP fracionária — divisor real, clamp 0–100 ----------
+  sec("B. HP fracionário — percentuais corretos na barra");
+  {
+    // regras hp → base 0, porNivel 0.5: for=1 ⇒ maximo 0.5 (fracionário real)
+    const dbf = abrirDb(BANCO);
+    const rsRow = dbf.prepare("select id,config from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+    const cfgF = JSON.parse(rsRow.config || "{}");
+    cfgF.hp = { habilitado: true, base: 0, porNivel: 0.5, semantico: "atributo", edicaoPor: "mestre" };
+    dbf.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfgF), rsRow.id);
+    dbf.close();
+
+    const PF = [
+      ["Fraco", 0.25, "FR"], ["Cheio", 0.5, "CH"], ["Vazio", 0, "VA"], ["Excedente", 0.9, "EX"],
+    ];
+    for (const [nome, atual, ini] of PF) {
+      const pid = c.novoPersonagem(c.membMestre, nome, { for: 1, __hp: { atual, historico: [] } });
+      const tk = await emitirCb(sM, "mesa:vtt:token", {
+        sessionId: sidBGlobal, acao: "criar",
+        token: { id: `tk${ini.toLowerCase()}-f1`, nome, cor: "#3366ff", x: 0.5, y: 0.5, personagemId: pid },
+      });
+      t(`token fracionário ${nome} criado`, tk?.ok === true, JSON.stringify(tk));
+    }
+    await emitirCb(sM, "mesa:vtt:sincronizar", { sessionId: sidBGlobal });
+    await pgM.waitForTimeout(800);
+    const larg = async (ini) => pgM.locator(".vtt-token", { hasText: ini })
+      .locator(".vtt-token-hp-fill").evaluate((el) => el.style.width).catch(() => "ausente");
+    t("B. 0.25/0.5 = 50%", (await larg("FR")) === "50%", await larg("FR"));
+    t("B. 0.5/0.5 = 100%", (await larg("CH")) === "100%", await larg("CH"));
+    t("B. 0/0.5 = 0%", (await larg("VA")) === "0%", await larg("VA"));
+    t("B. acima do máximo (0.9→clamp) = 100%", (await larg("EX")) === "100%", await larg("EX"));
+    t("B. title HP fracionário visível", (await pgM.locator(".vtt-token", { hasText: "FR" })
+      .locator(".vtt-token-hp").getAttribute("title")) === "HP 0.25/0.5",
+      await pgM.locator(".vtt-token", { hasText: "FR" }).locator(".vtt-token-hp").getAttribute("title"));
   }
 
   await ctxM.close(); await ctxA.close(); await ctxB.close(); await ctxE.close();
