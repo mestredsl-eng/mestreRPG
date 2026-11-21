@@ -232,8 +232,13 @@ function resolverCobrancaSangueD10(
   if (!elemento) {
     // identidade vinda do vínculo do campo aponta para elemento
     // inexistente → fail-closed; elementoKey do cliente sem elemento
-    // correspondente segue "não é teste de Poder" (livre).
+    // correspondente segue "não é teste de Poder" (livre) — EXCETO
+    // quando o campo validado é ligado a Poder (regraKind/regra.kind):
+    // uma key que some do ruleset entre o pedido e a rolagem nunca
+    // pode virar D10 gratuito silencioso.
     if (!posseLista) return { tipo: "erro", erro: "poder_nao_identificado" };
+    const ehPoderCampo = !!campoSel && (campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder");
+    if (ehPoderCampo) return { tipo: "erro", erro: "poder_nao_identificado" };
     return { tipo: "livre" };
   }
   const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
@@ -1061,6 +1066,17 @@ function socket_handlers(
       // do campo no skillRef enriquecido (Issue #147).
       let estruturaValida: EstruturaFicha | null = null;
       let campoInfo: Record<string, unknown> | null = null;
+      // Regras da campanha carregadas sob demanda — somente quando o
+      // campo é ligado a Poder E Sangue está habilitado (R6.2 P2:
+      // validação de posse/key do Poder antes do INSERT).
+      let regrasPedir: RegrasCampanha | null | undefined;
+      const carregarRegrasPedir = async () => {
+        if (regrasPedir === undefined) {
+          try { regrasPedir = await carregarRegras(ctx.sessao.campaignId); }
+          catch { regrasPedir = null; }
+        }
+        return regrasPedir;
+      };
       const rejeitarCampo = (motivo: string, detalhe?: string) => {
         console.warn(`[mesa] teste:pedir rejeitado — ${motivo}${detalhe ? ` (${detalhe})` : ""} (campoId=${payload.campoId}, elemento=${payload.elementoKey ?? "-"}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
         cb?.({ ok: false, erro: "Campo não é elegível para teste" });
@@ -1104,6 +1120,22 @@ function socket_handlers(
           const lista = Array.isArray(dadosFicha[campoSel.id]) ? (dadosFicha[campoSel.id] as { key?: unknown; nivel?: unknown }[]) : [];
           const item = key ? lista.find((i) => i && typeof i === "object" && i.key === key) : undefined;
           const nivel = item && typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : null;
+          // R6.2 P2: campo ligado a Poder + Sangue habilitado → a key
+          // precisa existir na ficha com nível inteiro 1..5 (contrato
+          // selecao_nivel — frações não são nível de lista) E no
+          // ruleset ativo como kind="poder". Recusa ANTES do INSERT.
+          const ehPoderSel = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
+          if (ehPoderSel) {
+            const regras = await carregarRegrasPedir();
+            if (regras?.config.sangue?.habilitado === true) {
+              const keyNoRuleset = !!key && regras.elementos.has(`poder:${key}`);
+              const nivelOk = typeof nivel === "number" && Number.isInteger(nivel) && nivel >= 1 && nivel <= 5;
+              if (!keyNoRuleset || !nivelOk) {
+                rejeitarCampo("poder sem nível/key válida no ruleset");
+                return;
+              }
+            }
+          }
           if (!key || nivel === null || nivel < 1) {
             rejeitarCampo("elemento sem nível na ficha");
             return;
@@ -1122,6 +1154,23 @@ function socket_handlers(
             // cair no dadosCount do cliente como fallback
             rejeitarCampo("campo sem valor numérico na ficha");
             return;
+          }
+          // R6.2 P2: campo escalar vinculado a Poder (regra.kind=
+          // "poder" + regra.key) + Sangue habilitado → a key derivada
+          // do vínculo precisa existir no ruleset ativo e o valor
+          // precisa ser número finito > 0 (0.5 é nível válido —
+          // convenção nivelNoVinculo; 0/negativo = não adquirido).
+          const ehPoderEsc = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
+          if (ehPoderEsc) {
+            const regras = await carregarRegrasPedir();
+            if (regras?.config.sangue?.habilitado === true) {
+              const keyRegra = campoSel.regra?.kind === "poder" ? campoSel.regra.key : "";
+              const keyNoRuleset = !!keyRegra && regras.elementos.has(`poder:${keyRegra}`);
+              if (!keyNoRuleset || !(v > 0)) {
+                rejeitarCampo("poder sem nível/key válida no ruleset");
+                return;
+              }
+            }
           }
           valorCampo = v;
           rotuloExibicao = campoSel.label;
@@ -1407,9 +1456,13 @@ function socket_handlers(
             ? tTx.skillRef as Record<string, unknown> : null;
           const refCampoId = typeof refSkill?.campoId === "string" ? refSkill.campoId : "";
           const refElementoKey = typeof refSkill?.elementoKey === "string" ? refSkill.elementoKey : "";
+          // campoSel carregado para AMBOS os caminhos (escalar e
+          // selecao_nivel) — necessário para detectar campo ligado a
+          // Poder quando a key some do ruleset entre pedido e rolagem
+          // (fail-closed, nunca tipo:"livre").
           if (
             regrasTx.config.sangue?.habilitado === true &&
-            refCampoId && !refElementoKey && cTx.templateVersionId
+            refCampoId && cTx.templateVersionId
           ) {
             const [verD10] = tx.select({ structure: sheetVersions.structure })
               .from(sheetVersions).where(eq(sheetVersions.id, cTx.templateVersionId)).limit(1).all();

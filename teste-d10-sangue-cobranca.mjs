@@ -24,6 +24,7 @@ const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 let proc;
 let sockJ;
+let sockM;
 
 const emitir = (sock, ev, payload) => Promise.race([
   new Promise((res) => sock.emit(ev, payload, res)),
@@ -137,7 +138,9 @@ try {
   const SID = sess.json?.sessao?.id;
   t("sessão criada", !!SID, JSON.stringify(sess.json).slice(0, 120));
   sockJ = await conectar(c.jogadores.jogador1.cookie);
+  sockM = await conectar(c.cookieMestre);
   await emitir(sockJ, "mesa:entrar", { sessionId: SID });
+  await emitir(sockM, "mesa:entrar", { sessionId: SID });
 
   sec("1. Custo positivo — débito único na mesma tx");
   {
@@ -307,6 +310,8 @@ try {
         { id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" },
         { id: "poder_geral", label: "Poder Geral", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regraKind: "poder" },
         { id: "poder_vinculado", label: "Poder Vinculado", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regra: { kind: "poder", key: "poder_fogo" } },
+        { id: "poder_sel", label: "Poder (seleção)", tipo: "selecao_nivel", semantico: "poder", usadoEmTestes: true, regraKind: "poder" },
+        { id: "habilidades", label: "Habilidades", tipo: "selecao_nivel", semantico: "habilidade", usadoEmTestes: true },
       ] }],
       pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
     };
@@ -341,6 +346,43 @@ try {
   });
   const charVinculadoNeg = novoCharPoder("Vínculo negativo", {
     poder_vinculado: -3,
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  // R6.2 P2 — personagens para os testes de mesa:teste:pedir
+  const charSelOk = novoCharPoder("Poder seleção ok", {
+    poder_sel: [{ key: "poder_fogo", nivel: 2 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelFrac = novoCharPoder("Poder seleção fração", {
+    poder_sel: [{ key: "poder_fogo", nivel: 0.5 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelZero = novoCharPoder("Poder seleção zero", {
+    poder_sel: [{ key: "poder_fogo", nivel: 0 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelCinco = novoCharPoder("Poder seleção nível 5", {
+    poder_sel: [{ key: "poder_fogo", nivel: 5 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelSeis = novoCharPoder("Poder seleção nível 6", {
+    poder_sel: [{ key: "poder_fogo", nivel: 6 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelFora = novoCharPoder("Poder fora do ruleset", {
+    poder_sel: [{ key: "poder_fora", nivel: 2 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelAusente = novoCharPoder("Poder seleção ausente", {
+    poder_sel: [{ key: "outro", nivel: 2 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charHab = novoCharPoder("Habilidades (não-Poder)", {
+    habilidades: [{ key: "correr", nivel: 1 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charVincFrac = novoCharPoder("Vínculo fracionário", {
+    poder_vinculado: 0.5,
     __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
   });
 
@@ -406,8 +448,136 @@ try {
     t("characters.data intacto", JSON.stringify(dadosChar(charZero)) === dadosAntes2);
     reabilitarSangue(c); // restaura habilitado+custo para seções futuras
   }
+
+  // ---------- R6.2 P2: mesa:teste:pedir valida Poder ANTES do INSERT ----------
+  const contarTestes = () => abrirDb(BANCO).prepare("select count(*) n from tests where session_id=?").get(SID).n;
+  const pedir = (payload) => emitir(sockM, "mesa:teste:pedir", {
+    sessionId: SID, dadosLados: 10, requestId: crypto.randomUUID(), ...payload,
+  });
+  const removerPoderRuleset = () => {
+    const db = abrirDb(BANCO);
+    try {
+      const rs = db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+      db.prepare("delete from rule_definitions where rule_set_id=? and kind=? and key=?").run(rs.id, "poder", "poder_fogo");
+    } finally { db.close(); }
+  };
+  const restaurarPoderRuleset = () => {
+    const db = abrirDb(BANCO);
+    try {
+      const rs = db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+      const agora = Date.now();
+      db.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run(crypto.randomUUID(), rs.id, "poder", "poder_fogo", "Poder de Fogo", null, null, "{}", agora, agora);
+    } finally { db.close(); }
+  };
+  const recusaPedir = async (rotulo, payload, antes) => {
+    const r = await pedir(payload);
+    t(`${rotulo} → ACK recusado`, r?.ok === false, JSON.stringify(r).slice(0, 160));
+    t(`${rotulo} → zero linha nova em tests`, contarTestes() === antes, `antes=${antes} depois=${contarTestes()}`);
+  };
+
+  sec("14. P2 — pedir: selecao_nivel de Poder exige nível inteiro 1..5 + key no ruleset");
+  {
+    await sono(3100); // janela do limitador mesa:teste:pedir (15/3s)
+    // positivo: nível 2 válido → desafio persistido
+    {
+      const antes = contarTestes();
+      const r = await pedir({ characterId: charSelOk, campoId: "poder_sel", elementoKey: "poder_fogo" });
+      t("nível 2 + key válida → desafio criado", r?.ok === true && !!r?.id, JSON.stringify(r).slice(0, 160));
+      t("linha pendente persistida", contarTestes() === antes + 1);
+      const row = testeRow(r?.id);
+      t("status pendente", row?.status === "pendente");
+      const ref = JSON.parse(row?.skill_ref ?? "null");
+      t("skillRef carrega elementoKey", ref?.elementoKey === "poder_fogo" && ref?.campoId === "poder_sel", JSON.stringify(ref).slice(0, 160));
+    }
+    // nível 5 (teto) também válido
+    {
+      const r = await pedir({ characterId: charSelCinco, campoId: "poder_sel", elementoKey: "poder_fogo" });
+      t("nível 5 → desafio criado", r?.ok === true && !!r?.id, JSON.stringify(r).slice(0, 160));
+    }
+    // negativos: fração, zero, >5, key fora do ruleset, key ausente da ficha
+    for (const [rotulo, charId, key] of [
+      ["fração 0.5", charSelFrac, "poder_fogo"],
+      ["nível 0", charSelZero, "poder_fogo"],
+      ["nível 6 (>5)", charSelSeis, "poder_fogo"],
+      ["key fora do ruleset", charSelFora, "poder_fora"],
+      ["key ausente da ficha", charSelAusente, "poder_fogo"],
+    ]) {
+      const antes = contarTestes();
+      await recusaPedir(`sel ${rotulo}`, { characterId: charId, campoId: "poder_sel", elementoKey: key }, antes);
+      await sono(250); // amortecer o limitador
+    }
+    // não-Poder (selecao_nivel comum) → comportamento legado preservado
+    {
+      const antes = contarTestes();
+      const r = await pedir({ characterId: charHab, campoId: "habilidades", elementoKey: "correr" });
+      t("não-Poder seleção → desafio criado (legado)", r?.ok === true && !!r?.id, JSON.stringify(r).slice(0, 160));
+      t("linha persistida", contarTestes() === antes + 1);
+    }
+  }
+
+  sec("15. P2 — pedir: campo escalar vinculado a Poder exige key no ruleset + valor > 0");
+  {
+    await sono(3100); // janela do limitador mesa:teste:pedir
+    // 0.5 decimal é nível válido (convenção nivelNoVinculo)
+    {
+      const antes = contarTestes();
+      const r = await pedir({ characterId: charVincFrac, campoId: "poder_vinculado" });
+      t("escalar vínculo 0.5 → desafio criado", r?.ok === true && !!r?.id, JSON.stringify(r).slice(0, 160));
+      t("linha persistida", contarTestes() === antes + 1);
+    }
+    // negativos: zero, regraKind sem regra.key, key removida do ruleset
+    for (const [rotulo, charId, campoId] of [
+      ["escalar vínculo 0", charVinculadoZero, "poder_vinculado"],
+      ["escalar vínculo ausente", novoCharPoder("Vínculo ausente", { __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} } }), "poder_vinculado"],
+      ["regraKind sem regra.key", charEscalar, "poder_geral"],
+    ]) {
+      const antes = contarTestes();
+      await recusaPedir(rotulo, { characterId: charId, campoId }, antes);
+      await sono(250);
+    }
+    // key existe na ficha/regra mas foi removida do ruleset ativo
+    {
+      removerPoderRuleset();
+      const antes = contarTestes();
+      await recusaPedir("key fora do ruleset (escalar)", { characterId: charVinculado, campoId: "poder_vinculado" }, antes);
+      restaurarPoderRuleset();
+      // e o caminho selecao_nivel também recusa com a key fora do ruleset
+      const antes2 = contarTestes();
+      removerPoderRuleset();
+      await recusaPedir("key fora do ruleset (seleção)", { characterId: charSelOk, campoId: "poder_sel", elementoKey: "poder_fogo" }, antes2);
+      restaurarPoderRuleset();
+    }
+  }
+
+  sec("16. P2 — roll fail-closed: key removida do ruleset entre pedido e rolagem");
+  {
+    // pedido válido enquanto a key existe
+    const antesT = contarTestes();
+    const rPed = await pedir({ characterId: charSelOk, campoId: "poder_sel", elementoKey: "poder_fogo" });
+    t("pedido pré-remoção aceito", rPed?.ok === true && !!rPed?.id, JSON.stringify(rPed).slice(0, 160));
+    const tid = rPed?.id;
+    const saldoAntes = saldoSangue(charSelOk);
+    // a key some do ruleset DEPOIS do pedido
+    removerPoderRuleset();
+    const antes = contarRolls(c.campId);
+    await sono(700);
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("roll recusado fail-closed (não vira livre)", r?.ok === false && /poder_nao_identificado|erro/i.test(JSON.stringify(r)), JSON.stringify(r).slice(0, 200));
+    t("zero roll novo", contarRolls(c.campId) === antes);
+    t("saldo inalterado", saldoSangue(charSelOk) === saldoAntes, `saldo=${saldoSangue(charSelOk)}`);
+    t("teste segue pendente", testeRow(tid)?.status === "pendente");
+    t("sem usoId novo", !usosSangue(charSelOk).some((u) => u === `d10:${tid}`));
+    restaurarPoderRuleset();
+    // com a key restaurada, o MESMO teste pendente rola e debita — prova
+    // de que a recusa anterior foi a ausência da key, não estado corrompido
+    await sono(700);
+    const r2 = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("após restaurar key → roll ok e debita", r2?.ok === true && saldoSangue(charSelOk) === saldoAntes - 2, JSON.stringify(r2).slice(0, 160));
+  }
 } finally {
   try { sockJ?.close(); } catch {}
+  try { sockM?.close(); } catch {}
   try { await encerrarServidor(proc); } catch {}
   limparDir(DIR);
 }
