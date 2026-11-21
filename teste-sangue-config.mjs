@@ -148,7 +148,8 @@ try {
         campoCapacidadeId: "for",
         naturezas: {
           "Espécie-X-Qualquer": { metaHumanoComPoder: false },
-          Outro: { recuperacao: "rotulo-opaco-da-campanha" },
+          // rótulo livre; `recuperacao` referencia ação canônica (#186)
+          Outro: { recuperacao: "descansar" },
         },
       },
     });

@@ -11,6 +11,7 @@ import {
   configRegrasSchema,
   errosConversaoFerimento,
   errosVinculosSangueConfig,
+  errosPoderesSangueConfig,
   definicaoElementoSchema,
   validarRegras,
   pontosParaFicha,
@@ -329,6 +330,20 @@ regrasRouter.put("/config", requirePapel("mestre"), async (req, res) => {
   if (errosSangue.length) {
     res.status(400).json({ erro: errosSangue.join(" ") });
     return;
+  }
+  // Custos de Poder (Issue #186): cada chave de config.sangue.poderes
+  // precisa ser um elemento kind="poder" do MESMO rule_set — identidade
+  // ruleset-scoped, independente de template/versão de ficha.
+  if (novo.sangue?.poderes && Object.keys(novo.sangue.poderes).length > 0) {
+    const defs = await db
+      .select({ key: ruleDefinitions.key })
+      .from(ruleDefinitions)
+      .where(and(eq(ruleDefinitions.ruleSetId, regras.ruleSetId), eq(ruleDefinitions.kind, "poder")));
+    const errosPoderes = errosPoderesSangueConfig(novo, new Set(defs.map((d) => d.key)));
+    if (errosPoderes.length) {
+      res.status(400).json({ erro: errosPoderes.join(" ") });
+      return;
+    }
   }
   await db.update(ruleSets).set({ config: novo, updatedAt: new Date() }).where(eq(ruleSets.id, regras.ruleSetId));
   await audit(req, "regras.config.atualizada", {});
