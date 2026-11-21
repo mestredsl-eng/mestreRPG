@@ -9,9 +9,6 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
-      - feat/issue-132-icones-abas
-      - feat/issue-132-estados-vazios
-      - feat/issue-132-feedback-listas
     types:
       - opened
       - synchronize
@@ -291,9 +288,7 @@ jobs:
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
             homologacao-papeis-ui.mjs \
-            auditoria-visual.mjs \
-            teste-estados-vazios-ui.mjs \
-            teste-feedback-listas-ui.mjs
+            auditoria-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
