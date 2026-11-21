@@ -24,7 +24,7 @@ on:
       - feat/issue-186-sangue-config
       - feat/issue-186-sangue-rules-runtime-config
       - feat/issue-186-d10-transaction-core
-      - feat/issue-186-d10-zero-custo
+      - feat/issue-186-sangue-d10-zero-custo
       - feat/issue-186-sangue-capacidade-reducao
       - feat/issue-186-poder-d10-eligibility
       - feat/issue-186-sangue-capacidade-flag
