@@ -180,6 +180,41 @@ describe("ativarPoderNarrativo", () => {
     }
   });
 
+  it("mesmo requestId com outro poderKey → uso_conflito sem mutação", () => {
+    const primeiro = ativarPoderNarrativo(dadosCom(), {
+      ...AUTOR, requestId: REQ2, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(primeiro.ok, true);
+    if (!primeiro.ok) return;
+
+    // Mesmo Poder e requestId conserva o replay, sem novo débito.
+    const replay = ativarPoderNarrativo(primeiro.dados, {
+      ...AUTOR, requestId: REQ2, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(replay.ok, true);
+    if (replay.ok) {
+      assert.equal(replay.replay, true);
+      assert.equal(replay.estado.saldo, 8);
+    }
+
+    // Reutilizar a intenção para outro Poder não pode ser replay
+    // silencioso nem aplicar o custo diferente.
+    const antesConflito = JSON.stringify(primeiro.dados);
+    const conflito = ativarPoderNarrativo(primeiro.dados, {
+      ...AUTOR, requestId: REQ2, poderKey: "gratis", config: CONFIG, poderesValidos: PODERES_VALIDOS,
+    });
+    assert.equal(conflito.ok, false);
+    if (!conflito.ok) assert.equal(conflito.codigo, "uso_conflito");
+    assert.equal(JSON.stringify(primeiro.dados), antesConflito);
+    const estadoFinal = estadoSangueAtual(primeiro.dados);
+    assert.equal(estadoFinal.ok, true);
+    if (estadoFinal.ok) {
+      assert.equal(estadoFinal.estado.saldo, 8);
+      assert.equal(Object.keys(estadoFinal.estado.usos).length, 1);
+      assert.equal(estadoFinal.estado.historico.length, 1);
+    }
+  });
+
   it("saldo insuficiente → erro sem mutação", () => {
     const dados = dadosCom(1);
     const antes = JSON.stringify(dados);
