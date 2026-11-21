@@ -180,6 +180,7 @@ try {
         { key: "poder_neg", nivel: -2 },
         { key: "poder_sem", nivel: null },
         { key: "poder_texto", nivel: "NaN" },
+        { key: "poder_sem" }, // nivel ausente por completo
       ];
       w.prepare("update characters set data=? where id=?").run(JSON.stringify(data), CHARF);
     } finally { w.close(); }
