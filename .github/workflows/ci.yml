@@ -9,6 +9,7 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
+      - fix/issue-155-boot-lock
     types:
       - opened
       - synchronize
@@ -123,6 +124,8 @@ jobs:
             teste-fisica-mesa.mjs \
             teste-d10-minimo-servidor.mjs \
             teste-restauracao-boot.mjs \
+            teste-estado-externo.mjs \
+            teste-restauracao-journal.mjs \
             teste-trava-instancia.mjs \
             teste-atualizacao-instalacao.mjs \
             teste-auto-update.mjs \

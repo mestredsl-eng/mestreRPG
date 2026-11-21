@@ -51,18 +51,39 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Impede segunda instancia: verifica se a porta 3001 ja responde
-rem (127.0.0.1 evita ambiguidade de IPv6/localhost; -Proxy $null ignora proxy do sistema)
-powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Proxy $null http://127.0.0.1:3001/api/health).StatusCode } catch { exit 1 }" >nul 2>nul
-if not errorlevel 1 (
-    echo [AVISO] Ja existe um servidor respondendo em http://localhost:3001
-    echo         Se desejar reiniciar, feche a janela anterior ou use parar-mestre-rpg.bat
+rem ---------- Lock de boot (Issue #155) ----------
+rem Garante que apenas UM processo execute auto-update, npm ci, builds,
+rem restauracao, migrations e o servidor neste diretorio. O helper
+rem resolve a porta efetiva do servidor (mesma precedencia de
+rem servidor/src/config.ts: configuracao/servidor.json > MESTRE_PORTA
+rem > 3001), sonda /api/health ANTES de adquirir o lock — se ja ha
+rem servidor no ar, sai com codigo 20 sem tocar em nada — e so depois
+rem adquire o lock pelo cmd.exe deste script, cobrindo TODO o ciclo.
+rem Se outra instancia valida estiver subindo, aguardamos o health
+rem por ate 120s — se o servidor responder, este boot encerra sem
+rem duplicar. Codigo 20 = servidor de outra instancia respondeu
+rem (sai sem erro); codigo 1 = aborta; 0 = lock adquirido e boot
+rem prossegue. O lock e OBRIGATORIO: sem o arquivo ou sem codigo
+rem 0/20, o boot aborta — nenhuma etapa mutavel roda sem exclusividade.
+if not exist scripts\boot-lock.mjs (
+    echo [ERRO] scripts\boot-lock.mjs ausente — inicializacao abortada.
+    echo        Restaure o arquivo ou use uma versao completa do projeto.
     pause
-    exit /b 0
+    exit /b 1
+)
+node scripts\boot-lock.mjs adquirir
+if %errorlevel%==20 exit /b 0
+if not %errorlevel%==0 (
+    echo [ERRO] Nao foi possivel adquirir o lock de inicializacao.
+    echo        Outra instancia pode estar em recuperacao ou o lock
+    echo        esta invalido. Verifique janelas do iniciar-mestre-rpg
+    echo        e processos node/cmd abertos antes de tentar de novo.
+    pause
+    exit /b 1
 )
 
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------
-rem Executa SOMENTE depois da checagem da porta 3001 acima: se ja ha
+rem Executa SOMENTE depois da sonda de health do lock acima: se ja ha
 rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
 rem O script e conservador: sem git, sem .git (instalacao ZIP), remoto
 rem diferente do oficial, arvore suja, sem upstream, sem rede, branch
@@ -80,6 +101,7 @@ if errorlevel 1 (
     echo        instrucoes exibidas acima e a secao "Atualizacao
     echo        automatica" do docs\GUIA-OPERACAO.md.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 :sem_auto_update
@@ -95,6 +117,7 @@ if not exist node_modules (
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar dependencias.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -107,6 +130,7 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo [ERRO] Falha ao recompilar dependencias nativas. Tente 'npm install' manualmente.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -120,6 +144,7 @@ call npm run build -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha na compilacao.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -137,6 +162,7 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo [ERRO] Falha ao compilar o frontend.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -154,6 +180,7 @@ if errorlevel 1 (
     echo        O banco anterior foi preservado em backups\pre_restore_*.
     echo        Corrija o problema e execute este script novamente.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -162,6 +189,7 @@ call npm run db:migrate -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha ao migrar banco de dados.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -176,4 +204,8 @@ echo Para acesso externo HTTPS, veja a secao "Acesso externo" no README.md.
 echo.
 
 call npm run start -w servidor
+rem Servidor encerrou — libera o lock antes do pause final. Se a janela
+rem for fechada com o servidor no ar, o cmd.exe morre e o lock fica
+rem obsoleto: a proxima inicializacao o recupera com prova de pid morto.
+node scripts\boot-lock.mjs liberar >nul 2>nul
 pause

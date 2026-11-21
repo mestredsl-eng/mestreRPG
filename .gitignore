@@ -17,6 +17,7 @@ backups/*
 .env.*
 !.env.example
 configuracao/local.json
+configuracao/auto-update.json
 
 # Logs
 *.log
