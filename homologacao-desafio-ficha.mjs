@@ -318,11 +318,15 @@ try {
     rSel?.ok === false, JSON.stringify(rSel));
   // desafio por ELEMENTO: cada item da lista vira um teste próprio com o
   // nível individual como dados positivos — nome real vem da biblioteca
+  const requestIdElComp = "df-" + crypto.randomUUID().slice(0, 8);
+  // O ACK do mestre não garante que o socket separado do jogador já recebeu
+  // mesa:teste. Registrar a espera antes do pedido evita a corrida no E2E.
+  const chegadaElComp = esperar(sockJ1, "mesa:teste", 8000, (d) => d.id === requestIdElComp);
   const rElComp = await emitirCb(sockM, "mesa:teste:pedir", {
     sessionId: sid, characterId: pj3Id, campoId: "conhecimentos", elementoKey: "computador",
-    dadosLados: 10, requestId: "df-" + crypto.randomUUID().slice(0, 8),
+    dadosLados: 10, requestId: requestIdElComp,
   });
-  const evElComp = evJ1.teste.find((x) => x.id === rElComp?.id);
+  const evElComp = await chegadaElComp;
   t("Fernandinho: elemento Conhecimento/Computador nível 5 -> 5 positivos",
     rElComp?.ok === true && evElComp?.pool?.positivos === 5 && evElComp?.pool?.dadosLados === 10,
     JSON.stringify(rElComp) + " " + JSON.stringify(evElComp?.pool));
