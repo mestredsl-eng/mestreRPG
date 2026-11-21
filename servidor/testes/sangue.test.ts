@@ -10,6 +10,7 @@ import {
   registrarAtivacaoSangue,
   registrarRecuperacaoSangue,
   registrarUsoD10,
+  reconciliarCapacidadeSangue,
   resolverCapacidadeSangue,
   resolverNaturezaSangue,
   resolverSanguePersonagem,
@@ -204,6 +205,95 @@ describe("operações de ledger", () => {
     const r = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 2 });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.codigo, "saldo_insuficiente");
+  });
+
+  // ---------- custo zero / gratuito (decisão #7055515759) ----------
+
+  it("D10 custo 0: saldo inalterado, uso d10: persistido", () => {
+    const r = registrarUsoD10({ [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } }, {
+      ...AUTOR, testId: TEST1, custo: 0,
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.saldo, 5);
+    assert.ok(r.estado.usos[`d10:${TEST1}`]);
+    assert.equal(r.estado.historico.at(-1)?.quantidade, 0);
+    assert.equal(r.estado.historico.at(-1)?.usoId, `d10:${TEST1}`);
+  });
+
+  it("D10 custo 0: replay não duplica uso nem evento", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const p = { ...AUTOR, testId: TEST1, custo: 0 };
+    const r1 = registrarUsoD10(dados, p);
+    assert.equal(r1.ok, true);
+    if (r1.ok) dados = r1.dados;
+    const histAntes = r1.ok ? r1.estado.historico.length : -1;
+    const r2 = registrarUsoD10(dados, p);
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 5);
+      assert.equal(r2.estado.historico.length, histAntes);
+      assert.equal(Object.keys(r2.estado.usos).length, 1);
+    }
+  });
+
+  it("D10 custo 0: chamadas seriadas no mesmo dados → um único uso lógico", () => {
+    // Serialização real é da tx SQLite do chamador; aqui simulamos a
+    // sequência estrita: duas invocações sobre o estado retornado.
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 7, usos: {}, historico: [] } };
+    const p = { ...AUTOR, testId: TEST1, custo: 0 };
+    const r1 = registrarUsoD10(dados, p);
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, p);
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 7);
+      assert.equal(Object.keys(r2.estado.usos).length, 1);
+      assert.equal(r2.estado.historico.filter((e) => e.usoId === `d10:${TEST1}`).length, 1);
+    }
+  });
+
+  it("D10 custo negativo/NaN/±Infinity → rejeitado, estado imutável", () => {
+    const dados = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const antes = JSON.stringify(dados);
+    for (const custo of [-1, NaN, Infinity, -Infinity]) {
+      const r = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo });
+      assert.equal(r.ok, false, `custo=${custo}`);
+      if (!r.ok) assert.equal(r.codigo, "quantidade_invalida");
+    }
+    assert.equal(JSON.stringify(dados), antes);
+  });
+
+  it("D10 custo 0: mesmo testId em outro personagem → uso_conflito", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const r1 = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0 });
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, { ...AUTOR, personagemId: PID2, testId: TEST1, custo: 0 });
+    assert.equal(r2.ok, false);
+    if (!r2.ok) assert.equal(r2.codigo, "uso_conflito");
+  });
+
+  it("D10 custo 0: testIds diferentes → operações independentes", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const r1 = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0 });
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0 });
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, undefined);
+      assert.equal(Object.keys(r2.estado.usos).length, 2);
+      assert.equal(r2.estado.saldo, 5);
+    }
+  });
+
+  it("D10 custo 0: ledger malformado → fail-closed", () => {
+    const r = registrarUsoD10({ [CHAVE_SANGUE]: { saldo: "x", usos: {}, historico: [] } }, {
+      ...AUTOR, testId: TEST1, custo: 0,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "sangue_invalido");
   });
 
   it("ativar exige requestId UUID; replay não duplica", () => {
@@ -668,5 +758,94 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     // somados como nível.
     assert.equal(r.disponivel, true);
     assert.equal(r.capacidade, 2);
+  });
+});
+
+// ---------- reconciliação de capacidade reduzida (decisão #7055515759) ----------
+
+describe("reconciliarCapacidadeSangue", () => {
+  const dadosCom = (saldo: number, historico: unknown[] = []) => ({
+    [CHAVE_SANGUE]: { saldo, usos: {}, historico },
+  });
+
+  it("capacidade ausente/inválida → no-op, dados intactos", () => {
+    const dados = dadosCom(8);
+    const antes = JSON.stringify(dados);
+    for (const cap of [undefined, null, NaN, Infinity, -Infinity, -1]) {
+      const r = reconciliarCapacidadeSangue(dados, { ...AUTOR, capacidadeNova: cap });
+      assert.equal(r.ok, true, `cap=${cap}`);
+      if (r.ok) {
+        assert.equal(r.ajustado, false);
+        assert.equal(r.estado.saldo, 8);
+      }
+    }
+    assert.equal(JSON.stringify(dados), antes);
+  });
+
+  it("saldo dentro do teto → no-op", () => {
+    for (const cap of [8, 10]) {
+      const r = reconciliarCapacidadeSangue(dadosCom(8), { ...AUTOR, capacidadeNova: cap });
+      assert.equal(r.ok, true);
+      if (r.ok) assert.equal(r.ajustado, false);
+    }
+  });
+
+  it("capacidade abaixo do saldo → ajuste negativo auditável até o teto", () => {
+    let dados: Record<string, unknown> = dadosCom(10);
+    const r = reconciliarCapacidadeSangue(dados, {
+      ...AUTOR, capacidadeNova: 6, motivo: "Capacidade reduzida de 10 para 6",
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.ajustado, true);
+    assert.equal(r.estado.saldo, 6);
+    const ev = r.estado.historico.at(-1);
+    assert.equal(ev?.tipo, "ajuste");
+    assert.equal(ev?.quantidade, -4);
+    assert.equal(ev?.saldoResultante, 6);
+    assert.equal(ev?.motivo, "Capacidade reduzida de 10 para 6");
+    assert.equal(r.estado.capacidade, 6); // cache atualizado
+    dados = r.dados;
+    // histórico anterior preservado (append-only)
+    assert.equal(r.estado.historico.length, 1);
+  });
+
+  it("ajuste preserva histórico existente — nunca apaga", () => {
+    const hist = [{ em: new Date().toISOString(), tipo: "uso", quantidade: -2, motivo: null, autorId: "u", autorNome: "M", saldoResultante: 8 }];
+    const r = reconciliarCapacidadeSangue(dadosCom(8, hist), {
+      ...AUTOR, capacidadeNova: 3, motivo: "downgrade",
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.saldo, 3);
+    assert.equal(r.estado.historico.length, 2);
+    assert.equal(r.estado.historico[0].tipo, "uso"); // evento antigo intacto
+    assert.equal(r.estado.historico[1].tipo, "ajuste");
+  });
+
+  it("saldo acima do teto sem motivo → recusa fail-closed", () => {
+    const r = reconciliarCapacidadeSangue(dadosCom(10), { ...AUTOR, capacidadeNova: 4 });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "quantidade_invalida");
+  });
+
+  it("capacidade 0 com saldo positivo → ajuste até zero auditável", () => {
+    const r = reconciliarCapacidadeSangue(dadosCom(5), {
+      ...AUTOR, capacidadeNova: 0, motivo: "capacidade zerada",
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) {
+      assert.equal(r.ajustado, true);
+      assert.equal(r.estado.saldo, 0);
+    }
+  });
+
+  it("ledger malformado → sangue_invalido mesmo com capacidade válida", () => {
+    const r = reconciliarCapacidadeSangue(
+      { [CHAVE_SANGUE]: { saldo: "x", usos: {}, historico: [] } },
+      { ...AUTOR, capacidadeNova: 1 },
+    );
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "sangue_invalido");
   });
 });

@@ -307,7 +307,9 @@ function registrarOperacao(
   // retry posterior, após a capacidade liberar espaço, creditaria
   // de novo o mesmo requestId. O uso é registrado sempre; o delta
   // efetivo (possivelmente 0) vai para o histórico.
-  let delta = params.delta;
+  // `-0` (de `-custo` com custo 0) é normalizado para `0` — o evento
+  // de histórico deve registrar quantidade neutra, não negativa-zero.
+  let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
     const espaco = Math.max(0, params.capacidadeMax - estado.saldo);
     if (delta > espaco) delta = espaco;
@@ -391,13 +393,25 @@ export interface ParamsUsoSangue extends ContextoEvento {
 
 /** Débito via teste D10 — `usoId = "d10:" + testId` (v5 §2).
  *  A transição `tests.status` e este débito devem ocorrer na MESMA
- *  transação do handler (C6) — esta função só toca `characters.data`. */
+ *  transação do handler (C6) — esta função só toca `characters.data`.
+ *
+ *  `custo` deve ser resolvido pelo CHAMADOR a partir da configuração
+ *  autoritativa (`config.sangue.poderes[key].custo`): entrada ausente
+ *  ou custo zero = Poder gratuito → o chamador passa `custo: 0`.
+ *  Esta primitiva NÃO aceita custo omitido/undefined — a resolução
+ *  de "sem custo configurado" é responsabilidade do runtime, para
+ *  que a decisão de gratuidade fique auditável na camada de config.
+ *  Custo zero ainda registra `usos["d10:<testId>"]` e um evento de
+ *  histórico com `quantidade: 0` — o registro durável é o que torna
+ *  o retry idempotente; como `usos` é consultado antes de qualquer
+ *  débito, um replay nunca pode cobrar depois (não há caminho que
+ *  "reabra" o uso para cobrança). */
 export function registrarUsoD10(
   dados: Record<string, unknown>,
   params: ParamsUsoSangue & { testId: string; requestId?: string | null },
 ): ResultadoSangue {
   if (!UUID_RE.test(params.testId)) return { ok: false, codigo: "uso_invalido" };
-  if (!Number.isFinite(params.custo) || params.custo <= 0) {
+  if (!Number.isFinite(params.custo) || params.custo < 0) {
     return { ok: false, codigo: "quantidade_invalida" };
   }
   return registrarOperacao(dados, {
@@ -496,6 +510,75 @@ export function registrarAjusteSangue(
     return { ok: false, codigo: "quantidade_invalida", motivo: "ajuste exige motivo" };
   }
   return aplicarDelta(dados, params.delta, "ajuste", params);
+}
+
+/** Resultado da reconciliação de capacidade — `ajustado` informa se
+ *  um ajuste de saldo foi efetivamente registrado neste chamado. */
+export type ResultadoReconciliacaoSangue =
+  | { ok: true; dados: Record<string, unknown>; estado: EstadoSangue; ajustado: boolean }
+  | { ok: false; codigo: CodigoErroSangue; saldo?: number; motivo?: string };
+
+/**
+ * Reconciliação de capacidade reduzida (decisão #7055515759, item 1).
+ *
+ * Quando a capacidade recém-resolvida e VALIDADA pelo chamador
+ * (`resolverCapacidadeSangue` sobre a versão da ficha) fica ABAIXO do
+ * saldo atual, registra um ajuste negativo auditável até o teto —
+ * nunca apaga histórico, nunca zera saldo silenciosamente.
+ *
+ * Regras (todas fail-closed, nenhuma regra numérica inventada):
+ *  - `capacidadeNova` ausente/null/não finita/negativa → NO-OP
+ *    (`ajustado:false`, dados retornados sem mutação). Capacidade
+ *    desconhecida nunca gera ajuste.
+ *  - `saldo <= capacidadeNova` → NO-OP (`ajustado:false`).
+ *  - `saldo > capacidadeNova` → `registrarAjusteSangue` com delta
+ *    `capacidadeNova - saldo` (exatamente até o teto, nunca abaixo).
+ *    Exige `motivo` não vazio — o runtime deve passar a razão da
+ *    redução (ex.: "Capacidade reduzida de 10 para 6"); sem motivo a
+ *    função recusa com `quantidade_invalida` em vez de gravar ajuste
+ *    não auditável.
+ *
+ * O resultado também atualiza o cache `estado.capacidade` quando o
+ * ajuste ocorre. A gravação em `characters.data` deve ocorrer dentro
+ * da transação síncrona do chamador (C6) — esta função é pura e só
+ * toca o objeto `dados`.
+ */
+export function reconciliarCapacidadeSangue(
+  dados: Record<string, unknown>,
+  params: ContextoEvento & { capacidadeNova?: number | null },
+): ResultadoReconciliacaoSangue {
+  const cap = params.capacidadeNova;
+  if (cap === undefined || cap === null || !Number.isFinite(cap) || cap < 0) {
+    const lido = lerSangue(dados);
+    if (!lido.valido) {
+      return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
+    }
+    return { ok: true, dados, estado: lido.estado, ajustado: false };
+  }
+  const lido = lerSangue(dados);
+  if (!lido.valido) {
+    return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
+  }
+  const estado = lido.estado;
+  if (estado.saldo <= cap) {
+    return { ok: true, dados, estado, ajustado: false };
+  }
+  const ajuste = registrarAjusteSangue(dados, {
+    personagemId: params.personagemId,
+    autorId: params.autorId,
+    autorNome: params.autorNome,
+    motivo: params.motivo,
+    delta: cap - estado.saldo,
+  });
+  if (!ajuste.ok) return ajuste;
+  // Atualiza o cache de capacidade junto — a leitura seguinte já
+  // reflete o teto novo sem esperar novo round-trip de ficha.
+  const dadosAjustados = gravarCacheCapacidade(ajuste.dados, cap);
+  const relido = lerSangue(dadosAjustados);
+  if (!relido.valido) {
+    return { ok: false, codigo: "sangue_invalido", motivo: relido.motivo };
+  }
+  return { ok: true, dados: dadosAjustados, estado: relido.estado, ajustado: true };
 }
 
 /** Grava o cache de exibição `__sangue.capacidade` — nunca altera
