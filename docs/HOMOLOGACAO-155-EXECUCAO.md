@@ -15,11 +15,11 @@
 | W3 | BLOQUEADO | Dois boots em N requerem Boot Lock corrigido (#189) integrado; helper atual não cobre storage/porta. |
 | W4 | BLOQUEADO | Estado externo/journal de fases de N não implementado. |
 | W5 | BLOQUEADO | Máquina de fases do protocolo externo não implementada. |
-| W6 | **APROVADO** | Smoke isolado real: `node servidor/dist/index.js` com `MESTRE_BANCO/ARQUIVOS/BACKUPS` em fixture temp → `/api/health` **200 em 534 ms**; conferência pós-execução: nenhum arquivo de `banco/`, `arquivos/`, `backups/` da worktree tocado. Prova de disponibilidade HTTP do build — **não** de integridade de dados. |
+| W6 | **APROVADO — revalidado com isolamento total** | Cópia completa da aplicação em `%TEMP%` (`servidor/dist` + `servidor/migrations` + `site/dist` + `configuracao/servidor.json` com porta dedicada livre + `node_modules` junction + `MESTRE_HOME` próprio com banco/arquivos/backups): filho subiu, `/api/health` **200** na porta efêmera dedicada (provada livre antes), processo filho vivo durante a resposta e porta morta após kill. Snapshot antes/depois de `banco/`, `arquivos/`, `backups/` **e `configuracao/`** da instalação real: **zero alterações**. Execução anterior (dist da worktree + porta 3001) estava **NÃO VALIDADA** até este reteste isolado. |
 | W7 | BLOQUEADO | Estado externo de N não implementado. |
 | W8 | **APROVADO (lacuna demonstrada)** | Sequência real do `.bat` N-1 em fixture (`aplicar-restauracao` sem flag → `db:migrate`): migrate exit 0 aplicou **31 migrations**; `backups/` vazio; **zero** marcadores externos (state/fase/journal/pendente) no diretório da instalação. Confirmado: nada permite ao próximo boot distinguir "migration recém-aplicada" de estado normal — não existe proveniência backup↔migration no legado. |
-| W9 | **NÃO EXECUTADO — bloqueado por ambiente** | Mesmo bloqueio de W0 (porta 3001 ocupada pelo servidor real). Harness pronto: `killOn: /Aplicando migra/` + segunda execução de retomada. |
-| W10 | **NÃO EXECUTADO — bloqueado por ambiente** | Mesmo bloqueio. Harness pronto: `killOn: /\[OK\] Servidor iniciado/` + verificação `servidorNoArAposKill` + próximo boot completo. |
+| W9 | **NÃO EXECUTADO — bloqueado por ambiente** | Mesmo bloqueio de W0 (porta 3001 ocupada pelo servidor real). Harness **redesenhado**: stub `npm.cmd` fixture-only cria barreira determinística em `npm run db:migrate` (arquivo `<ponto>.chegou` → kill só após confirmação → prova `<ponto>.executou` ausente); remoto bare local em `%TEMP%` — **zero push ao origin**. Falta apenas janela com porta 3001 livre. |
+| W10 | **NÃO EXECUTADO — bloqueado por ambiente** | Mesmo bloqueio. Harness redesenhado: barreira determinística em `npm run start` + verificação `servidorNoArAposKill` + retomada com npm real. Remoto bare local — zero push ao origin. |
 | W11 | BLOQUEADO | `scripts/boot-lock.mjs` ausente em N-1; cenário só existe em N (#189 Draft). |
 | W12 | PARCIAL | Itens 1–2 cobertos por W6/W8. Item 3 (smoke em cópia de dados reais) exige autorização/fixture de produção — não executado. |
 | W13 | BLOQUEADO | Marcador "estado já inicializado" não implementado — casos indistinguíveis por construção. |
@@ -41,7 +41,7 @@ node homologacao-155-w.mjs w0    :: aborta no pre-flight: porta 3001 ocupada
 ## Limitações declaradas
 
 1. **Node v26.13.0** — acima do mínimo declarado (20+) e diferente do CI (22). Resultados de W14/W16/W8 são de lógica SQLite/Node estável entre versões, mas a evidência formal em Node 20/22 fica para CI ou estação dedicada.
-2. **W0/W9/W10** não executados: servidor real ocupa a porta que o `.bat` verifica. O harness está pronto e foi revisado; basta rodar com o servidor parado. O pull de fixture usa a branch remota `homolog/w-fixture-155` (commit que só adiciona `echo` marcador após `:sem_auto_update`) — **branch scratch no origin, remover após homologação**.
+2. **W0/W9/W10** não executados: servidor real ocupa a porta que o `.bat` verifica. O harness foi **redesenhado para isolamento total**: (a) remoto `origin` da fixture aponta para **bare repo local em `%TEMP%`** — `git push/fetch/pull` nunca tocam o GitHub oficial (o `auto-update` valida a URL oficial e pula com "remoto-desconhecido", exit 0); (b) W9/W10 usam **stub `npm.cmd` + barreiras por arquivo** (`<ponto>.chegou`/`.liberar`/`.executou`) — kill somente após o processo atingir o ponto exato, sem corrida stdout×taskkill; (c) `executarBatE2E` limpa a fixture em `finally` e preserva logs em diretório próprio. **W0 permanece bloqueado por construção**: o `auto-update` exige `origin` == repositório oficial, logo o pull ff-only que traz o commit do `.bat` só pode ser exercitado contra o GitHub real — requer branch efêmera única (sem force, com verificação de pré-existência e delete em `finally`) e **autorização explícita de mutação remota temporária** (`HOMOLOG_W_REMOTO_GITHUB=1`).
 3. **W16** cobriu `verificarBackup` (verificação online); a ausência de revalidação de hashes no `aplicar-restauracao` offline já era conhecida por auditoria e permanece documentada, não re-executada aqui.
 4. Junction `node_modules` na fixture `.bat` evita `npm ci` — os cenários W0/W9/W10 testarão builds reais (tsc/vite) mas não reinstalação de dependências; se o contrato exigir `npm ci` real na fixture, rodar sem junction em estação dedicada.
 5. W14 cenário (e) usou flag apontando para backup inexistente — cobriu o caminho já tratado (exit 2); os fail-open estão em (b)(c)(d).
@@ -54,6 +54,7 @@ node homologacao-155-w.mjs w0    :: aborta no pre-flight: porta 3001 ocupada
 
 ## Pendências
 
-- Executar W0/W9/W10 com servidor real parado (janela combinada com o usuário).
+- Executar W9/W10 com servidor real parado (janela combinada com o usuário) — harness pronto, barreiras determinísticas.
+- W0: autorizar branch efêmera no GitHub (`HOMOLOG_W_REMOTO_GITHUB=1`) ou aceitar classificação permanente de bloqueado por contrato do `auto-update`.
 - Node 20/22 para evidência de versão mínima.
 - W1–W5/W7/W11/W13/W15 aguardam versão N integrada.
