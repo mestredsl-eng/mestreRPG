@@ -124,14 +124,12 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
     }
   };
 
-  // Exceção #186 (contrato do PAI, PR #226): a Característica que
-  // fornece a capacidade de Sangue é a ÚNICA `caracteristica` que o
-  // servidor pode marcar como evoluível — as demais sempre voltam com
-  // o motivo genérico de bloqueio. Identificamos pelo kind + motivo
-  // divergente; nunca liberamos nada por conta própria — o GET e o
-  // POST /comprar-ponto seguem sendo a autoridade.
+  // Exceção #186 (contrato do PAI, PRs #226+#231): o selo "Capacidade
+  // de Sangue" usa SOMENTE o marcador autoritativo `capacidadeSangue`
+  // emitido pelo GET — nunca heurística sobre `motivo`, kind ou nome.
+  // O GET e o POST /comprar-ponto seguem sendo a autoridade.
   const ehCapacidadeSangue = (el: ElementoDisponivel): boolean =>
-    el.kind === "caracteristica" && !(el.motivo ?? "").includes("nao pode evoluir");
+    el.capacidadeSangue === true;
 
   if (erro && !prog) return <div className="cartao"><p className="ficha-aviso">{erro}</p></div>;
   if (!prog) return null;

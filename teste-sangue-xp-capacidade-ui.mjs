@@ -190,6 +190,51 @@ try {
     await ctx.close();
   }
 
+  // ---------- 3b. Selo = marcador autoritativo #231 (nunca por motivo) ----------
+  sec("UI. selo só com capacidadeSangue===true — provas negativas");
+  {
+    const { ctx, page } = await novaPagina(J1);
+    await abrirFicha(page, "Dono Sangue XP");
+    const painel = page.locator(".progressao-xp");
+    const linhas = () => ({
+      cap: painel.locator("tr", { hasText: "Capacidade de Sangue" }).first(),
+      car: painel.locator("tr", { hasText: "Carisma" }).first(),
+    });
+    const recarregar = async () => {
+      // a ficha é estado de componente (sem rota) — re-navega
+      await abrirFicha(page, "Dono Sangue XP");
+    };
+    // (a) XP zerado: motivo "XP insuficiente" no designado — selo fica
+    // (flag independe de motivo); Carisma nunca recebe selo.
+    let l = linhas();
+    t("UI. marcador: selo no designado mesmo sem comprar", await l.cap.locator(".selo").count() === 1);
+    t("UI. marcador: Carisma SEM selo (XP insuficiente)", await l.car.locator(".selo").count() === 0);
+    // (b) nível máximo forçado — motivo/preço mudam; selo permanece
+    // no designado e continua ausente no Carisma.
+    selarFicha(CHAR, { "f-sangue": 99 });
+    await recarregar();
+    l = linhas();
+    t("UI. marcador: selo permanece no designado em nível máximo", await l.cap.locator(".selo").count() === 1);
+    t("UI. marcador: Carisma SEM selo (nível máximo)", await l.car.locator(".selo").count() === 0);
+    // (c) Sangue desabilitado → exceção null → marcador some → SEM selo
+    // em nenhuma característica, mesmo no designado.
+    setSangueConfig(CID, { habilitado: false, campoCapacidadeId: "f-sangue" });
+    await recarregar();
+    l = linhas();
+    t("UI. marcador: SEM selo no designado com Sangue off", await l.cap.locator(".selo").count() === 0);
+    t("UI. marcador: SEM selo no Carisma com Sangue off", await l.car.locator(".selo").count() === 0);
+    // (d) campoCapacidadeId ausente/inválido → idem.
+    setSangueConfig(CID, { habilitado: true, campoCapacidadeId: "f-inexistente" });
+    await recarregar();
+    l = linhas();
+    t("UI. marcador: SEM selo no designado com campo ausente", await l.cap.locator(".selo").count() === 0);
+    t("UI. marcador: SEM selo no Carisma com campo ausente", await l.car.locator(".selo").count() === 0);
+    // restaura estado para as seções seguintes
+    setSangueConfig(CID, { habilitado: true, campoCapacidadeId: "f-sangue" });
+    selarFicha(CHAR, { "f-sangue": 2 });
+    await ctx.close();
+  }
+
   // ---------- 4. Mestre também vê o painel na ficha do jogador ----------
   sec("UI. mestre na ficha do jogador");
   {
