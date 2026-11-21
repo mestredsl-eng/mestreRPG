@@ -390,6 +390,7 @@ jobs:
             teste-icones-abas-campanha.mjs \
             teste-estados-vazios-ui.mjs \
             teste-feedback-listas-ui.mjs \
+            teste-xp-historico-ui.mjs \
             teste-xp-lote-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
