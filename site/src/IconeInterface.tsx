@@ -9,7 +9,17 @@ export type NomeIconeInterface =
   | "guildas"
   | "admin"
   | "conta"
-  | "sair";
+  | "sair"
+  | "informacoes"
+  | "mesa"
+  | "personagens"
+  | "diario"
+  | "historico"
+  | "arquivos"
+  | "fichas"
+  | "regras"
+  | "participantes"
+  | "convites";
 
 const desenhos: Record<NomeIconeInterface, ReactNode> = {
   simbolo: (
@@ -66,6 +76,76 @@ const desenhos: Record<NomeIconeInterface, ReactNode> = {
     <>
       <path d="M10 17l5-5-5-5M15 12H3" />
       <path d="M12 3h6a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-6" />
+    </>
+  ),
+  // Abas de campanha (Issue #233) — traço 1.7, cantos arredondados,
+  // viewBox 24 e cor herdada, no mesmo estilo dos ícones do shell.
+  informacoes: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <path d="M12 8h.01" />
+    </>
+  ),
+  mesa: (
+    <>
+      <rect x="3" y="4" width="18" height="13" rx="1.5" />
+      <path d="M3 9h18M9 4v13M15 4v13" />
+      <path d="M8 20h8" />
+    </>
+  ),
+  personagens: (
+    <>
+      <circle cx="9" cy="8.5" r="3" />
+      <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
+      <path d="M15.5 6a3 3 0 0 1 0 5.7M17 14.8a5.5 5.5 0 0 1 3.5 4.7" />
+    </>
+  ),
+  diario: (
+    <>
+      <path d="M5 4.5A1.5 1.5 0 0 1 6.5 3H20v15H6.5A1.5 1.5 0 0 0 5 19.5v-15Z" />
+      <path d="M5 17.5A1.5 1.5 0 0 1 6.5 16H20" />
+      <path d="M9 7.5h7M9 11h5" />
+    </>
+  ),
+  historico: (
+    <>
+      <path d="M4 12a8 8 0 1 0 2.3-5.6L4 8.5" />
+      <path d="M4 4v4.5h4.5" />
+      <path d="M12 8v4l3 2" />
+    </>
+  ),
+  arquivos: (
+    <>
+      <path d="M3.5 6.5A1.5 1.5 0 0 1 5 5h4l2 2.5h8A1.5 1.5 0 0 1 20.5 9v9A1.5 1.5 0 0 1 19 19.5H5A1.5 1.5 0 0 1 3.5 18V6.5Z" />
+      <path d="M3.5 10.5h17" />
+    </>
+  ),
+  fichas: (
+    <>
+      <rect x="6" y="4" width="12" height="17" rx="1.5" />
+      <path d="M9 4.5V3h6v1.5" />
+      <path d="M9 10h6M9 14h6M9 18h4" />
+    </>
+  ),
+  regras: (
+    <>
+      <path d="M7 3.5h10a1.5 1.5 0 0 1 1.5 1.5v14.5L12 16l-6.5 3.5V5A1.5 1.5 0 0 1 7 3.5Z" />
+      <path d="M12 8v5M9.5 10.5h5" />
+    </>
+  ),
+  participantes: (
+    <>
+      <circle cx="8" cy="9" r="3" />
+      <path d="M2.5 19.5a5.5 5.5 0 0 1 11 0" />
+      <path d="M14.5 8.2a3 3 0 0 1 0 5.6M16.5 14.7a5.5 5.5 0 0 1 5 4.8" />
+      <path d="M13.5 5.4a3 3 0 0 1 4.6 2.6" />
+    </>
+  ),
+  convites: (
+    <>
+      <rect x="3" y="5.5" width="18" height="13" rx="1.5" />
+      <path d="m3.5 7.5 8.5 6 8.5-6" />
     </>
   ),
 };

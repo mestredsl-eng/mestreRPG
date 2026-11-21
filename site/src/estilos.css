@@ -391,6 +391,17 @@ textarea {
   color: #c9cdd3;
   padding: 0.45rem 0.9rem;
   font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+/* Issue #233 — ícones das abas de campanha: mesmo traço do shell,
+   herdam a cor do botão (ativo/inativo) e não encolhem o rótulo. */
+.abas button .icone-interface {
+  width: 15px;
+  height: 15px;
+  flex: none;
 }
 
 .abas button.ativo {
