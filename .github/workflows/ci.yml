@@ -34,6 +34,7 @@ on:
       - feat/issue-186-sangue-actions-ui
       # Base real da PR #218 (movimento reduzido) — faz o CI rodar nela.
       - feat/issue-132-recomendacoes-visuais-locais
+      - feat/issue-185-xp-lote
       - ci/issue-186-sangue-hmac-v2-tests
       - feat/issue-155-startup-auto-update
       - fix/issue-155-status-hardening
@@ -380,7 +381,8 @@ jobs:
             teste-sangue-xp-capacidade-ui.mjs \
             teste-sangue-player-read-ui.mjs \
             teste-sangue-actions-ui.mjs \
-            teste-reduced-motion.mjs
+            teste-reduced-motion.mjs \
+            teste-xp-lote-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
