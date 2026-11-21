@@ -385,16 +385,24 @@ function prepararStubNpm(tmp) {
   const onde = spawnSync("where", ["npm.cmd"], { encoding: "utf8" });
   const npmReal = (onde.stdout || "").split(/\r?\n/).map((s) => s.trim()).find(Boolean)
     || "npm.cmd";
+  // npm-cli.js real: <prefixo>/node_modules/npm/bin/npm-cli.js — delegar
+  // via node evita o inferno de aspas de cmd /c com caminhos com espaco.
+  const npmCli = join(dirname(npmReal), "node_modules", "npm", "bin", "npm-cli.js");
+  const delegar = existsSync(npmCli)
+    ? `spawnSync(process.execPath, [${JSON.stringify(npmCli)}, ...args], { stdio: "inherit" })`
+    : `spawnSync(process.env.ComSpec || "cmd.exe", ["/d","/s","/c", ${JSON.stringify(npmReal)}, ...args], { stdio: "inherit" })`;
   writeFileSync(join(dir, "npm.cmd"), `@echo off\r\nnode "%~dp0stub-npm.mjs" %*\r\n`);
   writeFileSync(join(dir, "stub-npm.mjs"), `// stub-npm — barreira deterministica restrita a fixture W9/W10
-import { writeFileSync, existsSync } from "node:fs";
+import { writeFileSync, existsSync, appendFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 const args = process.argv.slice(2);
 const alvo = args.join(" ");
 const barreira = process.env.HOMOLOG_BARRIER || "";
 const dirBar = process.env.HOMOLOG_BARRIER_DIR || "";
 const ponto = alvo.includes("db:migrate") ? "migrate" : alvo.includes("run start") ? "start" : null;
-const NPM_REAL = ${JSON.stringify(npmReal)};
+// debug: dump sempre ao lado do stub (independe de dirBar)
+try { appendFileSync(new URL("./env-dump.log", import.meta.url), JSON.stringify({ alvo, barreira, dirBar, homologa: Object.keys(process.env).filter(k=>/HOMOLOG/i.test(k)) }) + "\\n"); } catch {}
+if (dirBar) { try { appendFileSync(dirBar + "/chamadas.log", JSON.stringify({ alvo, barreira, ponto, dirBar }) + "\\n"); } catch {} }
 if (barreira === ponto && ponto) {
   writeFileSync(dirBar + "/" + ponto + ".chegou", String(Date.now()));
   // espera o harness liberar (ou timeout de seguranca de 5min)
@@ -405,7 +413,7 @@ if (barreira === ponto && ponto) {
   }
   writeFileSync(dirBar + "/" + ponto + ".executou", String(Date.now()));
 }
-const r = spawnSync(process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", '"' + NPM_REAL + '" ' + args.map((a) => '"' + a + '"').join(" ")], { stdio: "inherit" });
+const r = ${delegar};
 process.exit(r.status ?? 1);
 `);
   return { dir, npmReal };
@@ -508,10 +516,17 @@ async function executarBatE2E(w, cenario) {
       const stub = prepararStubNpm(tmp);
       const barDir = join(tmp, "barreira");
       mkdirSync(barDir, { recursive: true });
+      // Windows: a variavel pode ser "Path" (nao "PATH") — reutilizar a
+      // chave real existente, senao o filho recebe PATH duplicada e o
+      // stub nunca entra na resolucao do npm.
+      const chavePath = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
       const envBar = {
-        PATH: stub.dir + ";" + process.env.PATH,
-        HOMEOLOG_BARRIER: ponto, HOMEOLOG_BARRIER_DIR: barDir,
+        [chavePath]: stub.dir + ";" + process.env[chavePath],
+        HOMOLOG_BARRIER: ponto, HOMOLOG_BARRIER_DIR: barDir,
       };
+      writeFileSync(join(tmp, "env-debug.txt"), JSON.stringify({
+        chavePath, path: envBar[chavePath], barrier: envBar.HOMOLOG_BARRIER, dirBar: envBar.HOMOLOG_BARRIER_DIR,
+      }, null, 2));
       // run1: boot com stub — o processo PARA no ponto exato da barreira
       const r1 = await rodarBatParado(cloneDir, join(tmp, `w${w}-run1-kill.log`), barDir, ponto, envBar);
       res.execucoes.push({ fase: "kill-na-barreira", ...r1.estado, exitCmd: r1.exitCmd });
