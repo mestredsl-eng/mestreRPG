@@ -206,6 +206,95 @@ describe("operações de ledger", () => {
     if (!r.ok) assert.equal(r.codigo, "saldo_insuficiente");
   });
 
+  // ---------- custo zero / gratuito (decisão #7055515759) ----------
+
+  it("D10 custo 0: saldo inalterado, uso d10: persistido", () => {
+    const r = registrarUsoD10({ [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } }, {
+      ...AUTOR, testId: TEST1, custo: 0,
+    });
+    assert.equal(r.ok, true);
+    if (!r.ok) return;
+    assert.equal(r.estado.saldo, 5);
+    assert.ok(r.estado.usos[`d10:${TEST1}`]);
+    assert.equal(r.estado.historico.at(-1)?.quantidade, 0);
+    assert.equal(r.estado.historico.at(-1)?.usoId, `d10:${TEST1}`);
+  });
+
+  it("D10 custo 0: replay não duplica uso nem evento", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const p = { ...AUTOR, testId: TEST1, custo: 0 };
+    const r1 = registrarUsoD10(dados, p);
+    assert.equal(r1.ok, true);
+    if (r1.ok) dados = r1.dados;
+    const histAntes = r1.ok ? r1.estado.historico.length : -1;
+    const r2 = registrarUsoD10(dados, p);
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 5);
+      assert.equal(r2.estado.historico.length, histAntes);
+      assert.equal(Object.keys(r2.estado.usos).length, 1);
+    }
+  });
+
+  it("D10 custo 0: chamadas seriadas no mesmo dados → um único uso lógico", () => {
+    // Serialização real é da tx SQLite do chamador; aqui simulamos a
+    // sequência estrita: duas invocações sobre o estado retornado.
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 7, usos: {}, historico: [] } };
+    const p = { ...AUTOR, testId: TEST1, custo: 0 };
+    const r1 = registrarUsoD10(dados, p);
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, p);
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 7);
+      assert.equal(Object.keys(r2.estado.usos).length, 1);
+      assert.equal(r2.estado.historico.filter((e) => e.usoId === `d10:${TEST1}`).length, 1);
+    }
+  });
+
+  it("D10 custo negativo/NaN/±Infinity → rejeitado, estado imutável", () => {
+    const dados = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const antes = JSON.stringify(dados);
+    for (const custo of [-1, NaN, Infinity, -Infinity]) {
+      const r = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo });
+      assert.equal(r.ok, false, `custo=${custo}`);
+      if (!r.ok) assert.equal(r.codigo, "quantidade_invalida");
+    }
+    assert.equal(JSON.stringify(dados), antes);
+  });
+
+  it("D10 custo 0: mesmo testId em outro personagem → uso_conflito", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const r1 = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0 });
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, { ...AUTOR, personagemId: PID2, testId: TEST1, custo: 0 });
+    assert.equal(r2.ok, false);
+    if (!r2.ok) assert.equal(r2.codigo, "uso_conflito");
+  });
+
+  it("D10 custo 0: testIds diferentes → operações independentes", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const r1 = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0 });
+    if (r1.ok) dados = r1.dados;
+    const r2 = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0 });
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, undefined);
+      assert.equal(Object.keys(r2.estado.usos).length, 2);
+      assert.equal(r2.estado.saldo, 5);
+    }
+  });
+
+  it("D10 custo 0: ledger malformado → fail-closed", () => {
+    const r = registrarUsoD10({ [CHAVE_SANGUE]: { saldo: "x", usos: {}, historico: [] } }, {
+      ...AUTOR, testId: TEST1, custo: 0,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "sangue_invalido");
+  });
+
   it("ativar exige requestId UUID; replay não duplica", () => {
     let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
     const sem = registrarAtivacaoSangue(dados, { ...AUTOR, poderKey: "magia", custo: 1, requestId: "nao-uuid" });
