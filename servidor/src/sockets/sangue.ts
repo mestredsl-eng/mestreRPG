@@ -343,6 +343,11 @@ function socketSangue(io: SocketIOServer) {
       return executarAcao("ativar", payload, cb, ({ dados, ctx: c2, config, regras, autor, papelTx, ehDonoTx, donoAtivoTx }) => {
         const neg = exigirDonoTx(papelTx, ehDonoTx, donoAtivoTx);
         if (neg) return { ok: false as const, codigo: neg };
+        // Recurso desabilitado corta antes de custo/ledger — ruleset
+        // carregado ≠ Sangue habilitado (P1 coordenação #7056711233).
+        if (config?.habilitado !== true) {
+          return { ok: false as const, codigo: "recurso_desabilitado" };
+        }
         const poderesValidos = new Set((regras.porKind.get("poder") ?? []).map((e) => e.key));
         if (!poderesValidos.has(poderKey)) {
           return { ok: false as const, codigo: "poder_desconhecido" };

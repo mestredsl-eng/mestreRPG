@@ -302,6 +302,11 @@ try {
     const rSemCap = await emitir(sockM, "sangue:ajustar", { characterId: charSemCap, delta: 1, motivo: "sem capacidade válida" });
     t("capacidade não resolvida → capacidade_excedida", rSemCap?.ok === false && rSemCap?.codigo === "capacidade_excedida", JSON.stringify(rSemCap).slice(0, 150));
     t("saldo do sem-cap intacto", saldoSangue(charSemCap) === 3);
+    // limite EXATO: saldo 9 + delta 1 = capacidade 10 → permitido
+    const rEdge = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "até o teto" });
+    t("saldo+delta === capacidade → ok", rEdge?.ok === true && saldoSangue(charQuaseCheio) === 10, JSON.stringify(rEdge).slice(0, 150));
+    const rEdge2 = await emitir(sockM, "sangue:ajustar", { characterId: charQuaseCheio, delta: 1, motivo: "estoura" });
+    t("no teto + 1 → capacidade_excedida", rEdge2?.ok === false && rEdge2?.codigo === "capacidade_excedida", JSON.stringify(rEdge2).slice(0, 150));
   }
 
   sec("6. Reconciliação de capacidade — mestre, auditável");
@@ -334,6 +339,30 @@ try {
       db.prepare("update characters set data=? where id=?").run(JSON.stringify(d), charVampiro);
       db.close();
     }
+  }
+
+  sec("6b. Recurso desabilitado — fail-closed total (P1 coordenação)");
+  {
+    const rawAntes = JSON.stringify(dadosChar(charHumano));
+    const eventosAntes = eventosAtualizados.length;
+    // config.sangue ausente por completo
+    definirConfigSangue(c.campId, null);
+    const rSem = await emitir(sockJ1, "sangue:ativar", { characterId: charHumano, poderKey: "poder_fogo", requestId: crypto.randomUUID() });
+    t("config ausente → recurso_desabilitado", rSem?.ok === false && rSem?.codigo === "recurso_desabilitado", JSON.stringify(rSem).slice(0, 150));
+    // habilitado:false com custo positivo
+    definirConfigSangue(c.campId, { ...CONFIG_SANGUE, habilitado: false });
+    const rOffCusto = await emitir(sockJ1, "sangue:ativar", { characterId: charVampiro, poderKey: "poder_fogo", requestId: crypto.randomUUID() });
+    t("desabilitado + custo → recurso_desabilitado", rOffCusto?.ok === false && rOffCusto?.codigo === "recurso_desabilitado", JSON.stringify(rOffCusto).slice(0, 150));
+    // habilitado:false sem custo configurado (poderes vazio)
+    definirConfigSangue(c.campId, { habilitado: false, poderes: {} });
+    const rOffLivre = await emitir(sockJ1, "sangue:ativar", { characterId: charHumano, poderKey: "poder_fogo", requestId: crypto.randomUUID() });
+    t("desabilitado sem custo → recurso_desabilitado", rOffLivre?.ok === false && rOffLivre?.codigo === "recurso_desabilitado", JSON.stringify(rOffLivre).slice(0, 150));
+    t("ledger byte-a-byte intacto", JSON.stringify(dadosChar(charHumano)) === rawAntes);
+    t("ledger vampiro intacto", saldoSangue(charVampiro) === 4);
+    await sono(300);
+    t("nenhum evento emitido", eventosAtualizados.length === eventosAntes);
+    // restaura
+    definirConfigSangue(c.campId, CONFIG_SANGUE);
   }
 
   sec("7. Autorização — não-dono, espectador, mestre-no-lugar, inativo, arquivado");

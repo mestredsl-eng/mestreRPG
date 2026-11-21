@@ -119,12 +119,16 @@ export interface ParamsAtivacaoPoder extends ContextoAtor {
   requestId: string;
   /** `key` do elemento kind="poder" do ruleset — NUNCA o custo. */
   poderKey: string;
-  /** Configuração autoritativa já carregada do ruleset da campanha. */
+  /** Configuração autoritativa já carregada do ruleset da campanha.
+   *  `habilitado !== true` (ou config ausente) → `recurso_desabilitado`
+   *  antes de qualquer leitura de custo ou mutação do ledger. */
   config: ConfigSangueAcoes | null | undefined;
-  /** Chaves kind="poder" válidas do ruleset (rule_definitions).
-   *  Quando fornecido, poderKey fora do conjunto → `poder_desconhecido`.
-   *  O runtime deve fornecê-lo sempre que possível. */
-  poderesValidos?: ReadonlySet<string>;
+  /** Chaves kind="poder" válidas do ruleset (rule_definitions) —
+   *  OBRIGATÓRIO: o runtime deve fornecê-lo sempre, montado apenas
+   *  das definições `kind="poder"` do ruleset ativo. poderKey fora
+   *  do conjunto (ou conjunto ausente) → `poder_desconhecido`
+   *  (fail-closed — a camada nunca assume validade por conta própria). */
+  poderesValidos: ReadonlySet<string>;
 }
 
 /** Ativação narrativa de Poder fora do D10 — débito via
@@ -140,7 +144,12 @@ export function ativarPoderNarrativo(
   if (!poderKey || poderKey.length > 80) {
     return erro("uso_invalido", { motivo: "poderKey inválida" });
   }
-  if (params.poderesValidos && !params.poderesValidos.has(poderKey)) {
+  // Recurso desabilitado corta TUDO antes de custo/ledger — config
+  // ausente ou `habilitado !== true` nunca vira ativação gratuita.
+  if (!params.config || params.config.habilitado !== true) {
+    return erro("recurso_desabilitado");
+  }
+  if (params.poderesValidos?.has(poderKey) !== true) {
     return erro("poder_desconhecido", { motivo: poderKey });
   }
   const custoBruto = params.config?.poderes?.[poderKey]?.custo;
