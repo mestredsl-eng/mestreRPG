@@ -9,8 +9,9 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, campoElegivel
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
-import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
-import { carregarRegras, carregarRegrasSincrono, impressaoDigitalRegras } from "../lib/regras.js";
+import { barreiraRestauracaoAtiva, emitirCampanha, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
+import { carregarRegras, carregarRegrasSincrono, impressaoDigitalRegras, type RegrasCampanha } from "../lib/regras.js";
+import { registrarUsoD10 } from "../lib/sangue.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import { calcularIniciativa, INICIATIVA_DADOS_MAX, type ResultadoIniciativa } from "../lib/iniciativa.js";
 import { avaliarD10, type AvaliacaoDadoD10 } from "../lib/d10.js";
@@ -174,6 +175,54 @@ async function nomeElementoTeste(campo: CampoDef, key: string, campaignId: strin
     } catch { /* biblioteca indisponível — cai no fallback */ }
   }
   return key;
+}
+
+const UUID_TESTE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** R6.2 (Issue #186, contrato #7055515759 item 7): resolve se a
+ *  rolagem D10 "efetivamente usa um Poder" e qual custo aplicar.
+ *  - `elementoKey` do skillRef aponta para um elemento kind="poder"
+ *    do ruleset ativo → identidade do Poder (ruleset-scoped, nunca
+ *    campoId≅poderKey);
+ *  - o elemento precisa constar na ficha ATUAL do personagem
+ *    (revalidado na tx — ficha pode ter mudado desde o pedido);
+ *  - custo vem de `config.sangue.poderes[key].custo` do ruleset —
+ *    NUNCA do cliente; ausente/zero = gratuito;
+ *  - campo poder ESCALAR (sem elementoKey) não identifica um Poder
+ *    específico → sem custo configurável → gratuito (lacuna de
+ *    produto documentada na PR).
+ *  Retorna "erro" para fail-closed: poder sumiu da ficha, custo
+ *  inválido ou identidade de teste incompativel com o ledger. */
+function resolverCobrancaSangueD10(
+  skillRef: unknown,
+  dadosFicha: Record<string, unknown>,
+  regras: RegrasCampanha,
+):
+  | { tipo: "livre" }
+  | { tipo: "debitar"; custo: number; poderKey: string }
+  | { tipo: "erro"; erro: "poder_nao_adquirido" | "custo_invalido" | "test_id_invalido" } {
+  if (!skillRef || typeof skillRef !== "object" || Array.isArray(skillRef)) return { tipo: "livre" };
+  const ref = skillRef as Record<string, unknown>;
+  const elementoKey = typeof ref.elementoKey === "string" ? ref.elementoKey : "";
+  if (!elementoKey) return { tipo: "livre" };
+  // só debita quando o elemento é de fato um Poder das regras vigentes
+  const elemento = regras.elementos.get(`poder:${elementoKey}`);
+  if (!elemento) return { tipo: "livre" };
+  // revalidação de posse: o elemento precisa existir na ficha atual
+  const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
+  const lista = campoId && Array.isArray(dadosFicha[campoId])
+    ? (dadosFicha[campoId] as { key?: unknown }[])
+    : [];
+  if (!lista.some((i) => i && typeof i === "object" && i.key === elementoKey)) {
+    return { tipo: "erro", erro: "poder_nao_adquirido" };
+  }
+  const custoBruto = (regras.config.sangue?.poderes as Record<string, { custo?: unknown }> | undefined)?.[elementoKey]?.custo;
+  if (custoBruto === undefined || custoBruto === null) return { tipo: "livre" };
+  if (typeof custoBruto !== "number" || !Number.isFinite(custoBruto) || custoBruto < 0) {
+    return { tipo: "erro", erro: "custo_invalido" };
+  }
+  if (custoBruto === 0) return { tipo: "livre" };
+  return { tipo: "debitar", custo: custoBruto, poderKey: elementoKey };
 }
 
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
@@ -1198,6 +1247,9 @@ function socket_handlers(
         ? `teste:${payload.testId}:${payload.requestId}`
         : null;
       const agora = new Date();
+      // R6.2: nome do autor para o evento __sangue — resolvido ANTES da
+      // tx (sem await dentro); só é usado se houver débito de Sangue.
+      const autorNomeSangue = await nomeUsuario(u.id);
 
       // ---------- FASE 2 — transação SQLite síncrona ----------
       // Sem `await` dentro: tudo que pode mudar entre a pré-carga e a
@@ -1208,13 +1260,17 @@ function socket_handlers(
       type TxTesteRolar =
         | { tipo: "ok"; rollId: string; teste: typeof tests.$inferSelect; characterName?: string;
             papel: Papel; donoUserId?: string; resultados: number[]; total: number;
-            countFinal: number; vitalidade: VitalidadeRoll | null; d10: D10Roll | null }
+            countFinal: number; vitalidade: VitalidadeRoll | null; d10: D10Roll | null;
+            sangue?: { custo: number; saldoResultante: number } }
         | { tipo: "jaRolado"; status: string }
         | { tipo: "naoEncontrado" } | { tipo: "semPermissao" } | { tipo: "donoPerdido" }
         | { tipo: "arquivado" } | { tipo: "visibilidade" }
         | { tipo: "sessaoInvalida" } | { tipo: "personagemInvalido" }
         | { tipo: "bloqueado"; nomePersonagem: string; nomeVitalidade: string }
-        | { tipo: "regrasMudaram" };
+        | { tipo: "regrasMudaram" }
+        | { tipo: "poderNaoAdquirido" }
+        | { tipo: "sangueInsuficiente"; saldo: number; custo: number }
+        | { tipo: "cobrancaErro"; erro: string };
       type VitalidadeRoll = { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean };
       type D10Roll = { minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] };
       let txRes: TxTesteRolar;
@@ -1288,6 +1344,47 @@ function socket_handlers(
           const resultados = rolarLados(tTx.diceSides, countFinal);
           const total = resultados.reduce((a, b) => a + b, 0);
 
+          // R6.2 — cobrança de Sangue (Issue #186, contrato
+          // #7055515759 item 7): se a rolagem usa um Poder com custo
+          // configurado, o débito acontece na MESMA transação do roll +
+          // transição pendente→rolado. usoId `d10:<testId>` é
+          // idempotente no ledger — retry/concorrência nunca debita
+          // duas vezes; jaRolado retorna antes daqui.
+          const cobranca = resolverCobrancaSangueD10(
+            tTx.skillRef,
+            (cTx.data ?? {}) as Record<string, unknown>,
+            regrasTx,
+          );
+          if (cobranca.tipo === "erro") {
+            if (cobranca.erro === "poder_nao_adquirido") return { tipo: "poderNaoAdquirido" };
+            if (cobranca.erro === "test_id_invalido") return { tipo: "cobrancaErro", erro: "test_id_invalido" };
+            return { tipo: "cobrancaErro", erro: "custo_invalido" };
+          }
+          let dadosComSangue: Record<string, unknown> | null = null;
+          let sangueInfo: { custo: number; saldoResultante: number } | undefined;
+          if (cobranca.tipo === "debitar") {
+            // o ledger C2 só aceita ids UUID — testId fora do formato é
+            // fail-closed (nunca debita com identidade ambígua)
+            if (!UUID_TESTE_RE.test(tTx.id)) return { tipo: "cobrancaErro", erro: "test_id_invalido" };
+            const resSangue = registrarUsoD10((cTx.data ?? {}) as Record<string, unknown>, {
+              personagemId: cTx.id,
+              testId: tTx.id,
+              custo: cobranca.custo,
+              autorId: u.id,
+              autorNome: autorNomeSangue,
+              motivo: `Teste D10 (${tTx.id})`,
+              requestId: payload.requestId ?? null,
+            });
+            if (!resSangue.ok) {
+              if (resSangue.codigo === "saldo_insuficiente") {
+                return { tipo: "sangueInsuficiente", saldo: resSangue.saldo ?? 0, custo: cobranca.custo };
+              }
+              return { tipo: "cobrancaErro", erro: resSangue.codigo };
+            }
+            dadosComSangue = resSangue.dados;
+            sangueInfo = { custo: cobranca.custo, saldoResultante: resSangue.estado.saldo };
+          }
+
           // Desafio D10: sucessos/falhas calculados no servidor com a meta
           // da campanha — o navegador não pode alterar o mínimo.
           let d10: D10Roll | null = null;
@@ -1306,10 +1403,14 @@ function socket_handlers(
             requestId: requestIdPersistido, createdAt: agora,
           }).run();
           tx.update(tests).set({ status: "rolado", rollId, updatedAt: agora }).where(eq(tests.id, tTx.id)).run();
+          if (dadosComSangue) {
+            tx.update(characters).set({ data: dadosComSangue, updatedAt: agora }).where(eq(characters.id, cTx.id)).run();
+          }
 
           return {
             tipo: "ok", rollId, teste: tTx, characterName: cTx.name, papel: papelTx,
             donoUserId: mdTx?.userId, resultados, total, countFinal, vitalidade, d10,
+            ...(sangueInfo ? { sangue: sangueInfo } : {}),
           };
         });
       } catch (e) {
@@ -1348,6 +1449,18 @@ function socket_handlers(
       }
       if (txRes.tipo === "regrasMudaram") {
         cb?.({ ok: false, erro: "Regras da campanha alteradas durante a rolagem — tente novamente" });
+        return;
+      }
+      if (txRes.tipo === "poderNaoAdquirido") {
+        cb?.({ ok: false, erro: "Poder não consta mais na ficha do personagem" });
+        return;
+      }
+      if (txRes.tipo === "sangueInsuficiente") {
+        cb?.({ ok: false, erro: `Sangue insuficiente para o custo do Poder (saldo ${txRes.saldo}, custo ${txRes.custo})`, codigo: "sangue_insuficiente" });
+        return;
+      }
+      if (txRes.tipo === "cobrancaErro") {
+        cb?.({ ok: false, erro: `Cobrança de Sangue recusada (${txRes.erro})` });
         return;
       }
 
@@ -1392,6 +1505,11 @@ function socket_handlers(
       // lease ALS)
       await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
       agendarAutosave(tTx.campaignId);
+      // R6.2: débito de Sangue alterou characters.data — mesmo contrato
+      // do endpoint individual de XP (pós-commit, nunca antes).
+      if (txRes.sangue) {
+        emitirCampanha(tTx.campaignId, "personagens:atualizados", { characterId: tTx.characterId });
+      }
       await registrarChat(io, {
         campaignId: tTx.campaignId, sessionId: tTx.sessionId, authorId: u.id,
         kind: "rolagem",
