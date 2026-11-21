@@ -248,9 +248,13 @@ function resolverCobrancaSangueD10(
   } else {
     // vínculo regra.key: a posse é o valor numérico do próprio campo —
     // revalidado na ficha atual (pode ter mudado desde o pedido).
+    // Convenção do motor (nivelNoVinculo/aplicarNivelDados): 0 = ausente
+    // e valores não-positivos não representam nível adquirido — um campo
+    // zerado/negativo NUNCA autoriza débito de Sangue por um Poder que o
+    // sistema considera não adquirido.
     const campoRegraId = campoSel?.id ?? campoId;
     const v = campoRegraId ? dadosFicha[campoRegraId] : undefined;
-    if (typeof v !== "number" || !Number.isFinite(v)) {
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
       return { tipo: "erro", erro: "poder_nao_adquirido" };
     }
   }

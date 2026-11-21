@@ -325,6 +325,14 @@ try {
     poder_vinculado: 4,
     __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
   });
+  const charVinculadoZero = novoCharPoder("Vínculo zerado", {
+    poder_vinculado: 0,
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charVinculadoNeg = novoCharPoder("Vínculo negativo", {
+    poder_vinculado: -3,
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
 
   sec("11. P2-2 — Poder escalar sem identidade → fail-closed");
   {
@@ -350,6 +358,20 @@ try {
     t("roll ok", r?.ok === true, JSON.stringify(r).slice(0, 200));
     t("saldo 10→8 (custo do poder vinculado)", saldoSangue(charVinculado) === 8, `saldo=${saldoSangue(charVinculado)}`);
     t("usoId d10:<testId> registrado", usosSangue(charVinculado).includes(`d10:${tid}`), JSON.stringify(usosSangue(charVinculado)));
+  }
+
+  sec("12b. P3 #237 — vínculo regra.key com valor 0/negativo → não adquirido");
+  for (const [rotulo, charId, valor] of [["zero", charVinculadoZero, 0], ["negativo", charVinculadoNeg, -3]]) {
+    const tid = novoTeste(c, { sessionId: SID, characterId: charId, userId: c.jogadores.jogador1.id,
+      skillRef: { campoId: "poder_vinculado", rotulo: "Poder Vinculado", tipo: "inteiro", semantico: "atributo" } });
+    const antes = contarRolls(c.campId);
+    await sono(700); // rate limit do socket
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t(`vínculo ${rotulo} (${valor}) → recusado poder_nao_adquirido`, r?.ok === false && /não consta|poder_nao_adquirido/.test(JSON.stringify(r)), JSON.stringify(r).slice(0, 160));
+    t(`vínculo ${rotulo} → zero roll novo`, contarRolls(c.campId) === antes);
+    t(`vínculo ${rotulo} → saldo intacto (10)`, saldoSangue(charId) === 10, `saldo=${saldoSangue(charId)}`);
+    t(`vínculo ${rotulo} → teste segue pendente`, testeRow(tid)?.status === "pendente");
+    t(`vínculo ${rotulo} → sem usoId`, usosSangue(charId).length === 0);
   }
 
   sec("13. P2-1 — Sangue desabilitado → D10 legado sem débito");
