@@ -9,7 +9,8 @@
 // Não há PID file: a prova de "dono morto" é o próprio lock do SQLite,
 // liberado pelo SO na morte do processo — PID reutilizado é irrelevante.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, readdirSync, chmodSync, statSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel, encerrarServidor, limparDir } from "./teste-base.mjs";
@@ -29,6 +30,9 @@ const dbEm = (r) => join(r, "banco", "mestre-rpg.db");
 const travaEm = (r) => caminhoTrava(dbEm(r));
 const envRaiz = (raiz, extra = {}) => ({
   ...process.env,
+  // Estado externo isolado por raiz: sem MESTRE_STATE_DIR o journal de
+  // uma seção vazaria para as demais (e para o state dir real do usuário).
+  MESTRE_STATE_DIR: join(raiz, "state"),
   MESTRE_HOME: raiz,
   MESTRE_BANCO: dbEm(raiz),
   MESTRE_ARQUIVOS: join(raiz, "arquivos", "campanhas"),
@@ -48,14 +52,34 @@ const armarFlag = (raiz, filePath) => comDbRw(dbEm(raiz), (d) => {
   d.prepare("insert into server_settings (key,value) values ('restauracao_pendente',?) " +
     "on conflict(key) do update set value=excluded.value").run(JSON.stringify({ filePath }));
 });
+// Manifesto v2 completo — o restaurador valida o backup INTEGRALMENTE
+// (inventário real × declarado + tamanho + SHA-256 + integridade SQLite)
+// antes de tocar no estado vivo. Fixture precisa ser um backup real.
+const metaArq = (p) => ({ size: statSync(p).size, sha256: createHash("sha256").update(readFileSync(p)).digest("hex") });
 const fazerBackup = (raiz, nome) => {
   const bk = join(raiz, "backups", nome);
   mkdirSync(bk, { recursive: true });
   copyFileSync(dbEm(raiz), join(bk, "mestre-rpg.db"));
+  // Snapshot autocontido como o backup real (copiarBanco): consolida o
+  // WAL e força journal_mode=DELETE — sem isso o validador readonly
+  // recriaria -wal/-shm no backup e o inventário rejeitaria.
+  const snap = new Database(join(bk, "mestre-rpg.db"));
+  try {
+    snap.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    snap.exec("PRAGMA journal_mode=DELETE");
+  } finally { snap.close(); }
+  for (const suf of ["-wal", "-shm"]) rmSync(join(bk, `mestre-rpg.db${suf}`), { force: true });
   mkdirSync(join(bk, "arquivos"), { recursive: true });
   writeFileSync(join(bk, "arquivos", "doc_bk.txt"), "conteudo-do-backup");
   mkdirSync(join(bk, "configuracao"), { recursive: true });
   writeFileSync(join(bk, "configuracao", "servidor.json"), JSON.stringify({ backup: true }));
+  writeFileSync(join(bk, "manifesto.json"), JSON.stringify({
+    manifestoVersao: 2,
+    criadoEm: new Date().toISOString(),
+    banco: metaArq(join(bk, "mestre-rpg.db")),
+    configuracao: metaArq(join(bk, "configuracao", "servidor.json")),
+    arquivos: { "arquivos/doc_bk.txt": metaArq(join(bk, "arquivos", "doc_bk.txt")) },
+  }, null, 2));
   return bk; // filePath da flag é o DIRETÓRIO do backup
 };
 const marcadorDb = (raiz) => comDbRw(dbEm(raiz), (d) =>
@@ -215,6 +239,13 @@ try {
     armarFlag(r, bk);
     const gate = join(r, "gate");
     mkdirSync(gate, { recursive: true });
+    // Gates por componente pré-liberados: esta seção prova a trava em
+    // "apos-trava"; os gates aplicar-*/rollback-* existem para outras
+    // homologações e não devem pausar aqui.
+    for (const g of ["aplicar-sidecars", "aplicar-banco", "aplicar-arquivos", "aplicar-configuracao", "aplicar-flag",
+      "rollback-sidecars", "rollback-banco", "rollback-arquivos", "rollback-configuracao", "rollback-flag"]) {
+      writeFileSync(join(gate, g), "1");
+    }
     const env = envRaiz(r, { MESTRE_TRAVA_GATE_DIR: gate });
 
     // 1º restaurador: adquire a trava e pausa no gate "apos-trava"
@@ -273,6 +304,12 @@ try {
     armarFlag(r, bk);
     const gate = join(r, "gate");
     mkdirSync(gate, { recursive: true });
+    // Gates por componente pré-liberados — a pausa testada é só
+    // "apos-rollback" (e "apos-trava" liberado explicitamente abaixo).
+    for (const g of ["aplicar-sidecars", "aplicar-banco", "aplicar-arquivos", "aplicar-configuracao", "aplicar-flag",
+      "rollback-sidecars", "rollback-banco", "rollback-arquivos", "rollback-configuracao", "rollback-flag"]) {
+      writeFileSync(join(gate, g), "1");
+    }
     const env = envRaiz(r, { MESTRE_TRAVA_GATE_DIR: gate });
 
     // configuracao/ somente-leitura E o arquivo 0444: a aplicação falha

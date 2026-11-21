@@ -15,7 +15,7 @@
 // Nunca toca banco/, arquivos/ ou backups/ reais do usuário.
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, copyFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, copyFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,6 +43,9 @@ function dirTeste(nome) { return mkdtempSync(join(tmpdir(), `mrpg-upgrade-${nome
 function envRaiz(raiz) {
   return {
     ...process.env,
+    // Estado externo isolado por raiz — sem isso o journal do restaurador
+    // compartilharia o state dir real do usuário entre fixtures.
+    MESTRE_STATE_DIR: join(raiz, "state"),
     MESTRE_HOME: raiz,
     MESTRE_BANCO: join(raiz, "banco", "mestre-rpg.db"),
     MESTRE_ARQUIVOS: join(raiz, "arquivos", "campanhas"),
@@ -165,6 +168,26 @@ try {
   copyFileSync(BANCO_VELHO, join(BK, "mestre-rpg.db"));
   writeFileSync(join(BK, "arquivos", "lore_legado.txt"), "anotações da campanha antiga");
   writeFileSync(join(BK, "configuracao", "servidor.json"), JSON.stringify({ porta: 3001 }));
+  // Snapshot autocontido como o backup real (copiarBanco): a origem está
+  // em WAL — consolida e força journal_mode=DELETE para o validador
+  // readonly não recriar -wal/-shm dentro do backup.
+  {
+    const snap = new Database(join(BK, "mestre-rpg.db"));
+    try {
+      snap.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      snap.exec("PRAGMA journal_mode=DELETE");
+    } finally { snap.close(); }
+    for (const suf of ["-wal", "-shm"]) rmSync(join(BK, `mestre-rpg.db${suf}`), { force: true });
+  }
+  // manifesto.json v2 — contrato obrigatório do restaurador offline.
+  const metaArq = (p) => ({ size: statSync(p).size, sha256: createHash("sha256").update(readFileSync(p)).digest("hex") });
+  writeFileSync(join(BK, "manifesto.json"), JSON.stringify({
+    manifestoVersao: 2,
+    criadoEm: new Date().toISOString(),
+    banco: metaArq(join(BK, "mestre-rpg.db")),
+    configuracao: metaArq(join(BK, "configuracao", "servidor.json")),
+    arquivos: { "arquivos/lore_legado.txt": metaArq(join(BK, "arquivos", "lore_legado.txt")) },
+  }, null, 2));
   const hashAntes = createHash("sha256").update(readFileSync(BANCO_VELHO)).digest("hex");
   t("backup pré-update criado", existsSync(join(BK, "mestre-rpg.db")));
 
@@ -240,6 +263,7 @@ try {
   // simula estado atual corrompido/pós-update problemático: banco atual + flag apontando p/ backup
   const env2 = {
     ...process.env,
+    MESTRE_STATE_DIR: join(RAIZ2, "state"),
     MESTRE_HOME: RAIZ2,
     MESTRE_BANCO: dbPath(RAIZ2),
     MESTRE_ARQUIVOS: join(RAIZ2, "arquivos", "campanhas"),

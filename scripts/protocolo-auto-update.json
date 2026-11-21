@@ -1,0 +1,6 @@
+{
+  "protocolo": "auto-update-recuperacao",
+  "versao": 1,
+  "descricao": "Marcador versionado do protocolo de auto-update com recuperação (Issue #155). A presença deste arquivo NÃO prova instalação nova — apenas que o código é da versão N ou posterior.",
+  "autorizacao": "Opcao A — uma única atualização automática sem consentimento para entregar o gate de consentimento da 1.0.7"
+}
