@@ -259,7 +259,8 @@ jobs:
             teste-autorizacao-eventos-passivos.mjs \
             teste-autorizacao-concorrencia.mjs \
             teste-guilda-responsavel-concorrencia.mjs \
-            teste-xp-lote.mjs
+            teste-xp-lote.mjs \
+            teste-aprendizado-visual.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
@@ -380,6 +381,7 @@ jobs:
             homologacao-retratos.mjs \
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
+            homologacao-aprendizado-visual.mjs \
             homologacao-papeis-ui.mjs \
             auditoria-visual.mjs \
             teste-sangue-config-ui.mjs \
