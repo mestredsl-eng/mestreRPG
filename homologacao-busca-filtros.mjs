@@ -75,7 +75,7 @@ try {
     // ===== Personagens =====
     sec("Desktop — Personagens");
     await abrirCampanha(p, NOME);
-    await p.getByRole("button", { name: /Personagens/ }).click();
+    await p.getByRole("tab", { name: /Personagens/ }).click();
     await p.waitForTimeout(1000);
     const buscaP = p.getByLabel("Buscar personagem");
     const linhas = () => p.locator("tbody tr");
@@ -120,7 +120,7 @@ try {
 
     // ===== Diário =====
     sec("Desktop — Diário");
-    await p.getByRole("button", { name: /^Diário$/ }).click();
+    await p.getByRole("tab", { name: /^Diário$/ }).click();
     await p.waitForTimeout(1000);
     const buscaD = p.getByLabel("Buscar anotação");
     t("diário: campo de busca presente", await buscaD.count() > 0);
@@ -172,7 +172,7 @@ try {
     await abas.getByRole("button", { name: "Anotações do mestre" }).click();
     await p.waitForTimeout(1000);
     // volta à aba Diário: todos os campos devem estar limpos
-    await abas.getByRole("button", { name: "Diário", exact: true }).click();
+    await abas.getByRole("tab", { name: "Diário", exact: true }).click();
     await p.waitForTimeout(1000);
     t("diário: busca limpa após trocar de aba", (await buscaD.inputValue()) === "");
     t("diário: filtro visibilidade limpo", (await p.getByLabel("Filtrar por visibilidade").inputValue()) === "");
@@ -183,7 +183,7 @@ try {
 
     // ===== Patrimônio: equipamentos e veículos =====
     sec("Desktop — Patrimônio");
-    await p.getByRole("button", { name: /Personagens/ }).click();
+    await p.getByRole("tab", { name: /Personagens/ }).click();
     await p.waitForTimeout(900);
     await p.locator("tr", { hasText: "Mestre Herói" }).first().click();
     await p.waitForTimeout(1500);
@@ -225,7 +225,7 @@ try {
 
     sec("Mobile — privacidade do diário + busca");
     await abrirCampanha(p, NOME);
-    await p.getByRole("button", { name: /^Diário$/ }).click();
+    await p.getByRole("tab", { name: /^Diário$/ }).click();
     await p.waitForTimeout(1000);
     // J2 não deve ver a anotação privada do mestre nem o segredo
     t("mobile: anotação privada do mestre invisível p/ J2", (await p.locator(".lista-anotacoes", { hasText: "E2E Segredo Mestre" }).count()) === 0);
@@ -237,7 +237,7 @@ try {
     await p.getByLabel("Buscar anotação").fill("");
 
     // personagens no mobile
-    await p.getByRole("button", { name: /Personagens/ }).click();
+    await p.getByRole("tab", { name: /Personagens/ }).click();
     await p.waitForTimeout(900);
     await p.getByLabel("Buscar personagem").fill("Gama");
     await p.waitForTimeout(300);
