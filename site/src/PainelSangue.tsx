@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getSocket } from "./socket";
 import { apiSangue, ApiErrorSangue, type SangueLeitura } from "./api-sangue";
 
@@ -21,14 +21,21 @@ export default function PainelSangue({ characterId }: { characterId: string }) {
   const [carregando, setCarregando] = useState(true);
   const [semAcesso, setSemAcesso] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Geração da carga: resposta de um characterId anterior que chegue
+  // DEPOIS da troca é descartada — nunca sobrescreve o estado atual.
+  const geracao = useRef(0);
 
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     setCarregando(true);
     try {
-      setSangue(await apiSangue.obter(characterId));
+      const r = await apiSangue.obter(characterId);
+      if (g !== geracao.current) return; // resposta obsoleta
+      setSangue(r);
       setSemAcesso(false);
       setErro(null);
     } catch (e) {
+      if (g !== geracao.current) return; // resposta obsoleta
       if (e instanceof ApiErrorSangue && (e.status === 403 || e.status === 404)) {
         // Sem permissão ou personagem inexistente: nada de saldo na
         // tela — o painel simplesmente não existe para este usuário.
@@ -39,7 +46,7 @@ export default function PainelSangue({ characterId }: { characterId: string }) {
         setErro(e instanceof Error ? e.message : "Falha ao carregar Sangue");
       }
     } finally {
-      setCarregando(false);
+      if (g === geracao.current) setCarregando(false);
     }
   }, [characterId]);
 
@@ -98,7 +105,11 @@ export default function PainelSangue({ characterId }: { characterId: string }) {
             </p>
           )}
 
-          {sangue.acaoRecuperacao && (
+          {/* Ação de recuperação só quando o estado é utilizável de
+              fato — o GET pode devolver acaoRecuperacao mesmo com
+              ledger inválido/capacidade indisponível (config isolada
+              válida); anunciar ação indisponível seria enganoso. */}
+          {sangue.estado === "ok" && sangue.utilizavel === true && sangue.acaoRecuperacao && (
             <p className="meta">
               Ação de recuperação disponível: <strong>{sangue.acaoRecuperacao.acao === "descansar" ? "Descansar" : "Alimentar-se"}</strong>
               {" "}(+{sangue.acaoRecuperacao.quantidade} de Sangue)

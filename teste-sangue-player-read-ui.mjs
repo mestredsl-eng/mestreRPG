@@ -223,12 +223,16 @@ try {
     await abrirFicha(page, "Lobisomem UI");
     const txtBad = await page.locator(".painel-sangue-leitura").innerText();
     t("UI. ledger inválido → fail-closed", /inválido|inválid/i.test(txtBad), txtBad.slice(0, 200));
+    // P2 revisão: config isolada pode devolver acaoRecuperacao mesmo
+    // com estado fail-closed — o painel NÃO pode anunciá-la
+    t("UI. ledger inválido → ação de recuperação OCULTA", !/Ação de recuperação disponível/i.test(txtBad), txtBad.slice(0, 240));
     // capacidade indisponível (campo inexistente)
     setSangue(CHAR, { saldo: 5, capacidade: 8, usos: {}, historico: [] });
     setSangueConfig(CID, { ...CFG_BASE, campoCapacidadeId: "f-inexistente" });
     await abrirFicha(page, "Lobisomem UI");
     const txtCap = await page.locator(".painel-sangue-leitura").innerText();
     t("UI. capacidade indisponível → estado seguro", /indispon|capacidade/i.test(txtCap), txtCap.slice(0, 200));
+    t("UI. capacidade indisponível → ação OCULTA", !/Ação de recuperação disponível/i.test(txtCap), txtCap.slice(0, 240));
     setSangueConfig(CID, CFG_BASE);
     await ctx.close();
   }
@@ -294,6 +298,44 @@ try {
       }
     } else {
       t("UI. Mesa: sessão encontrada", false, "linha da sessão não apareceu");
+    }
+    await ctx.close();
+  }
+
+  // ---------- 6b. Resposta obsoleta não sobrescreve troca de personagem ----------
+  sec("UI. corrida — resposta A atrasada × B rápida");
+  {
+    const s = await req(BASE, "POST", `/campaigns/${CID}/sessoes`, { cookie: M, body: { name: "Sessão Corrida" } });
+    const SID2 = s.json?.sessao?.id;
+    const { ctx, page } = await novaPagina(M);
+    // atrasa SÓ o GET do CHAR (A); CHAR2 (B) responde normal
+    await page.route(`**/api/characters/${CHAR}/sangue`, async (route) => {
+      await new Promise((r) => setTimeout(r, 2500));
+      await route.continue();
+    });
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Read UI" }).click();
+    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.waitForTimeout(800);
+    const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Corrida" }).first();
+    if (await sessaoRow.count()) {
+      await sessaoRow.click();
+      await page.waitForTimeout(1200);
+      const sel = page.locator(".formulario select").first();
+      // A primeiro (GET fica pendente 2.5s), depois troca para B
+      await sel.selectOption(CHAR);
+      await page.waitForTimeout(300);
+      await sel.selectOption(CHAR2);
+      // B resolve rápido; quando a resposta atrasada de A chegar,
+      // a guarda de geração deve descartá-la
+      await page.waitForSelector(".painel-sangue-leitura", { timeout: 15000 });
+      await page.waitForTimeout(3500); // garante que a resposta de A já chegou
+      const txt = await page.locator(".painel-sangue-leitura").innerText();
+      t("UI. corrida: painel mostra SOMENTE dados de B (vampiro 9/6)", /9/.test(txt) && /6/.test(txt) && /Alimentar/i.test(txt), txt.slice(0, 240));
+      t("UI. corrida: dados de A (Descansar) NÃO apareceram", !/Descansar/i.test(txt));
+    } else {
+      t("UI. corrida: sessão encontrada", false);
     }
     await ctx.close();
   }
