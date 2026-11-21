@@ -41,6 +41,15 @@ const sec = (n) => console.log("\n== " + n + " ==");
   const anterior = JSON.parse(readFileSync(join(meta, "0027_snapshot.json"), "utf8"));
   const atual = JSON.parse(readFileSync(join(meta, "0028_snapshot.json"), "utf8"));
   const semIdentidade = ({ id, prevId, ...schema }) => schema;
+  const canonizar = (valor) => {
+    if (Array.isArray(valor)) return valor.map(canonizar);
+    if (valor && typeof valor === "object") {
+      return Object.fromEntries(Object.keys(valor).sort().map((chave) => [chave, canonizar(valor[chave])]));
+    }
+    return valor;
+  };
+  const mesmaEstrutura = (a, b) =>
+    JSON.stringify(canonizar(a)) === JSON.stringify(canonizar(b));
   t("snapshot 0028 encadeia em 0027 com UUID próprio",
     atual.prevId === anterior.id && atual.id !== anterior.id && /^[0-9a-f-]{36}$/i.test(atual.id),
     `prevId=${atual.prevId} anterior=${anterior.id}`);
@@ -70,8 +79,30 @@ const sec = (n) => console.log("\n== " + n + " ==");
   t("snapshot 0032 encadeia em 0031 com UUID próprio",
     snapshot1009.prevId === snapshot1007.id && snapshot1009.id !== snapshot1007.id && /^[0-9a-f-]{36}$/i.test(snapshot1009.id),
     `prevId=${snapshot1009.prevId} anterior=${snapshot1007.id}`);
-  t("snapshot 0032 preserva o mesmo esquema (migration só de dados)",
-    JSON.stringify(semIdentidade(snapshot1009)) === JSON.stringify(semIdentidade(snapshot1007)));
+  // A migration 0032 é estrutural: adiciona xp_lotes e seu índice único.
+  // Todas as tabelas anteriores e as demais seções do snapshot permanecem intactas.
+  const tabelasAntesDeXp = Object.fromEntries(
+    Object.entries(snapshot1009.tables).filter(([nome]) => nome !== "xp_lotes")
+  );
+  const xpLotes = snapshot1009.tables?.xp_lotes;
+  const schemaAnteriorPreservado =
+    Object.keys(tabelasAntesDeXp).length === Object.keys(snapshot1007.tables).length &&
+    Object.entries(snapshot1007.tables).every(([nome, tabela]) =>
+      mesmaEstrutura(tabela, tabelasAntesDeXp[nome])
+    ) &&
+    ["views", "enums", "_meta", "internal"].every((secao) =>
+      mesmaEstrutura(snapshot1007[secao], snapshot1009[secao])
+    );
+  const xpLotesCorreto =
+    !!xpLotes &&
+    Object.keys(xpLotes.columns ?? {}).sort().join(",") ===
+      ["campaign_id", "created_at", "created_by", "id", "itens", "motivo", "payload_hash", "request_id", "total_personagens", "total_xp"].sort().join(",") &&
+    xpLotes.indexes?.xp_lote_request_idx?.isUnique === true &&
+    mesmaEstrutura(xpLotes.indexes.xp_lote_request_idx.columns, ["campaign_id", "request_id"]) &&
+    xpLotes.foreignKeys?.xp_lotes_campaign_id_campaigns_id_fk?.tableTo === "campaigns" &&
+    xpLotes.foreignKeys?.xp_lotes_created_by_users_id_fk?.tableTo === "users";
+  t("snapshot 0032 adiciona xp_lotes e preserva o schema anterior",
+    schemaAnteriorPreservado && xpLotesCorreto);
   const snapshotAuto = JSON.parse(readFileSync(join(meta, "0033_snapshot.json"), "utf8"));
   t("snapshot 0033 encadeia em 0032 com UUID próprio",
     snapshotAuto.prevId === snapshot1009.id && snapshotAuto.id !== snapshot1009.id && /^[0-9a-f-]{36}$/i.test(snapshotAuto.id),
