@@ -110,6 +110,9 @@ try {
     const agora = Date.now();
     db.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
       .run(crypto.randomUUID(), rs.id, "poder", "poder_fogo", "Poder de Fogo", null, null, "{}", agora, agora);
+    // P1 refresh — elemento HOMÔNIMO de outro kind no mesmo ruleset
+    db.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), rs.id, "habilidade", "poder_fogo", "Habilidade Fogo", null, null, "{}", agora, agora);
     db.close();
   }
   const fichaBase = {
@@ -311,7 +314,7 @@ try {
         { id: "poder_geral", label: "Poder Geral", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regraKind: "poder" },
         { id: "poder_vinculado", label: "Poder Vinculado", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regra: { kind: "poder", key: "poder_fogo" } },
         { id: "poder_sel", label: "Poder (seleção)", tipo: "selecao_nivel", semantico: "poder", usadoEmTestes: true, regraKind: "poder" },
-        { id: "habilidades", label: "Habilidades", tipo: "selecao_nivel", semantico: "habilidade", usadoEmTestes: true },
+        { id: "habilidades", label: "Habilidades", tipo: "selecao_nivel", semantico: "habilidade", usadoEmTestes: true, regraKind: "habilidade" },
       ] }],
       pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
     };
@@ -379,6 +382,16 @@ try {
   });
   const charHab = novoCharPoder("Habilidades (não-Poder)", {
     habilidades: [{ key: "correr", nivel: 1 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  // P1 refresh — key HOMÔNIMA: "poder_fogo" existe como habilidade
+  // no ruleset E como poder; o campo é de habilidade → nunca debita.
+  const charHabColisao = novoCharPoder("Habilidade homônima", {
+    habilidades: [{ key: "poder_fogo", nivel: 2 }],
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charSelControle = novoCharPoder("Poder seleção controle", {
+    poder_sel: [{ key: "poder_fogo", nivel: 2 }],
     __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
   });
   const charVincFrac = novoCharPoder("Vínculo fracionário", {
@@ -574,6 +587,71 @@ try {
     await sono(700);
     const r2 = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     t("após restaurar key → roll ok e debita", r2?.ok === true && saldoSangue(charSelOk) === saldoAntes - 2, JSON.stringify(r2).slice(0, 160));
+  }
+
+  sec("17. P1 refresh — key homônima em campo NÃO-Poder nunca debita");
+  {
+    // ruleset tem poder:poder_fogo E habilidade:poder_fogo; a ficha
+    // do charHabColisao tem a key homônima no campo de HABILIDADE.
+    // pedir cria o desafio (campo não-Power → validação de Poder não se aplica)
+    const antesT = contarTestes();
+    const rPed = await pedir({ characterId: charHabColisao, campoId: "habilidades", elementoKey: "poder_fogo" });
+    t("pedido em campo habilidade aceito (legado)", rPed?.ok === true && !!rPed?.id, JSON.stringify(rPed).slice(0, 160));
+    const tid = rPed?.id;
+    t("linha pendente persistida", contarTestes() === antesT + 1);
+    const dadosAntes = JSON.stringify(dadosChar(charHabColisao));
+    const saldoAntes = saldoSangue(charHabColisao);
+    await sono(700);
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("roll ok (D10 legado)", r?.ok === true, JSON.stringify(r).slice(0, 160));
+    t("saldo INALTERADO (10) — não debitou como Poder", saldoSangue(charHabColisao) === saldoAntes, `saldo=${saldoSangue(charHabColisao)}`);
+    t("sem usoId d10:<testId>", !usosSangue(charHabColisao).includes(`d10:${tid}`), JSON.stringify(usosSangue(charHabColisao)));
+    t("characters.data byte-a-byte intacto", JSON.stringify(dadosChar(charHabColisao)) === dadosAntes);
+    t("teste rolado normalmente", testeRow(tid)?.status === "rolado");
+    // CONTROLE: campo Poder com a MESMA key homônima → debita custo
+    const rPed2 = await pedir({ characterId: charSelControle, campoId: "poder_sel", elementoKey: "poder_fogo" });
+    t("controle: pedido em campo Poder aceito", rPed2?.ok === true && !!rPed2?.id, JSON.stringify(rPed2).slice(0, 160));
+    const tid2 = rPed2?.id;
+    await sono(700);
+    const r2 = await emitir(sockJ, "mesa:teste:rolar", { testId: tid2, requestId: crypto.randomUUID() });
+    t("controle: roll de Poder ok", r2?.ok === true, JSON.stringify(r2).slice(0, 160));
+    t("controle: saldo 10→8 (custo 2)", saldoSangue(charSelControle) === 8, `saldo=${saldoSangue(charSelControle)}`);
+    t("controle: usoId d10:<testId> registrado", usosSangue(charSelControle).includes(`d10:${tid2}`));
+  }
+
+  sec("18. P2 refresh — falha ao carregar ruleset rejeita pedido de Poder antes do INSERT");
+  {
+    // injeta falha determinística: config JSON inválido → carregarRegras lança
+    const db = abrirDb(BANCO);
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+    const configOriginal = rs.config;
+    db.prepare("update rule_sets set config=? where id=?").run("{", rs.id);
+    db.close();
+    try {
+      const antes = contarTestes();
+      const r = await pedir({ characterId: charSelOk, campoId: "poder_sel", elementoKey: "poder_fogo" });
+      t("ruleset corrompido → ACK recusado", r?.ok === false, JSON.stringify(r).slice(0, 160));
+      t("zero linha nova em tests", contarTestes() === antes, `antes=${antes} depois=${contarTestes()}`);
+      // caminho escalar também fail-closed
+      const antes2 = contarTestes();
+      const r2 = await pedir({ characterId: charVinculado, campoId: "poder_vinculado" });
+      t("escalar: ruleset corrompido → ACK recusado", r2?.ok === false, JSON.stringify(r2).slice(0, 160));
+      t("escalar: zero linha nova", contarTestes() === antes2);
+      // campo NÃO-Poder não é afetado (não carrega ruleset para validar)
+      const antes3 = contarTestes();
+      const r3 = await pedir({ characterId: charHab, campoId: "habilidades", elementoKey: "correr" });
+      t("não-Poder segue legado mesmo com ruleset quebrado", r3?.ok === true && !!r3?.id, JSON.stringify(r3).slice(0, 160));
+      t("não-Poder: linha persistida", contarTestes() === antes3 + 1);
+    } finally {
+      const dbR = abrirDb(BANCO);
+      dbR.prepare("update rule_sets set config=? where id=?").run(configOriginal, rs.id);
+      dbR.close();
+    }
+    // ruleset restaurado → campo Poder volta a funcionar
+    const antes4 = contarTestes();
+    const rOk = await pedir({ characterId: charSelOk, campoId: "poder_sel", elementoKey: "poder_fogo" });
+    t("ruleset restaurado → pedido Poder aceito", rOk?.ok === true && !!rOk?.id, JSON.stringify(rOk).slice(0, 160));
+    t("linha persistida pós-restore", contarTestes() === antes4 + 1);
   }
 } finally {
   try { sockJ?.close(); } catch {}

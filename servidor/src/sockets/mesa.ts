@@ -241,6 +241,16 @@ function resolverCobrancaSangueD10(
     if (ehPoderCampo) return { tipo: "erro", erro: "poder_nao_identificado" };
     return { tipo: "livre" };
   }
+  // P1 refresh: o CampoDef atual é AUTORITATIVO — um campo conhecido
+  // que NÃO é ligado a Poder nunca vira débito de Sangue, mesmo que
+  // exista elemento kind="poder" homônimo no ruleset (ex.:
+  // habilidade:poder_fogo × poder:poder_fogo). O elementoKey do
+  // cliente não pode promover um campo não-Poder a teste de Poder.
+  // campoSel null (campoId ausente da versão atual) preserva o
+  // comportamento anterior — a identidade não pode ser provada.
+  if (campoSel && campoSel.regraKind !== "poder" && campoSel.regra?.kind !== "poder") {
+    return { tipo: "livre" };
+  }
   const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
   if (posseLista) {
     // revalidação de posse: o elemento precisa existir na ficha atual
@@ -1069,13 +1079,24 @@ function socket_handlers(
       // Regras da campanha carregadas sob demanda — somente quando o
       // campo é ligado a Poder E Sangue está habilitado (R6.2 P2:
       // validação de posse/key do Poder antes do INSERT).
+      // P2 refresh: falha de carga ≠ Sangue desabilitado — `falhou`
+      // distingue "ruleset inacessível" (fail-closed) de "config
+      // confirmadamente sem Sangue" (legado).
       let regrasPedir: RegrasCampanha | null | undefined;
+      let regrasPedirFalhou = false;
       const carregarRegrasPedir = async () => {
         if (regrasPedir === undefined) {
           try { regrasPedir = await carregarRegras(ctx.sessao.campaignId); }
-          catch { regrasPedir = null; }
+          catch { regrasPedir = null; regrasPedirFalhou = true; }
         }
         return regrasPedir;
+      };
+      // Guard comum: campo ligado a Poder exige ruleset legível; só
+      // pula a validação quando a carga CONFIRMA habilitado !== true.
+      const validarPoderSeHabilitado = async (): Promise<"ok" | "legado" | "rejeita"> => {
+        const regras = await carregarRegrasPedir();
+        if (regrasPedirFalhou || !regras) return "rejeita";
+        return regras.config.sangue?.habilitado === true ? "ok" : "legado";
       };
       const rejeitarCampo = (motivo: string, detalhe?: string) => {
         console.warn(`[mesa] teste:pedir rejeitado — ${motivo}${detalhe ? ` (${detalhe})` : ""} (campoId=${payload.campoId}, elemento=${payload.elementoKey ?? "-"}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
@@ -1126,8 +1147,13 @@ function socket_handlers(
           // ruleset ativo como kind="poder". Recusa ANTES do INSERT.
           const ehPoderSel = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
           if (ehPoderSel) {
-            const regras = await carregarRegrasPedir();
-            if (regras?.config.sangue?.habilitado === true) {
+            const modo = await validarPoderSeHabilitado();
+            if (modo === "rejeita") {
+              rejeitarCampo("ruleset indisponível para validar Poder");
+              return;
+            }
+            if (modo === "ok") {
+              const regras = regrasPedir!;
               const keyNoRuleset = !!key && regras.elementos.has(`poder:${key}`);
               const nivelOk = typeof nivel === "number" && Number.isInteger(nivel) && nivel >= 1 && nivel <= 5;
               if (!keyNoRuleset || !nivelOk) {
@@ -1162,8 +1188,13 @@ function socket_handlers(
           // convenção nivelNoVinculo; 0/negativo = não adquirido).
           const ehPoderEsc = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
           if (ehPoderEsc) {
-            const regras = await carregarRegrasPedir();
-            if (regras?.config.sangue?.habilitado === true) {
+            const modo = await validarPoderSeHabilitado();
+            if (modo === "rejeita") {
+              rejeitarCampo("ruleset indisponível para validar Poder");
+              return;
+            }
+            if (modo === "ok") {
+              const regras = regrasPedir!;
               const keyRegra = campoSel.regra?.kind === "poder" ? campoSel.regra.key : "";
               const keyNoRuleset = !!keyRegra && regras.elementos.has(`poder:${keyRegra}`);
               if (!keyNoRuleset || !(v > 0)) {
