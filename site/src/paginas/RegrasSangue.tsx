@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type ConfigAcaoRecuperacao, type ConfigCapacidadeSangue, type ConfigNaturezaSangue, type ConfigSangue, type ElementoRegra, type ModoCapacidadeSangue } from "../api";
 
 /**
@@ -84,13 +84,17 @@ function MapaEditor({ mapa, aoMudar, idPrefixo }: {
   );
 }
 
-function SeletorCampo({ campos, valor, rotuloVazio, onChange, filtroTipos, id }: {
+function SeletorCampo({ campos, valor, rotuloVazio, onChange, filtroTipos, id, vazioBloqueado }: {
   campos: CampoFicha[] | null;
   valor: string | undefined;
   rotuloVazio: string;
   onChange: (id: string) => void;
   filtroTipos?: string[];
   id: string;
+  /** Issue #223 P2: vínculo escalar não pode ser removido (merge parcial
+   *  do servidor não tem tombstone) — esconde a opção vazia quando há
+   *  valor, para a UI não prometer uma limpeza impossível. */
+  vazioBloqueado?: boolean;
 }) {
   const opcoes = useMemo(
     () => (campos ?? []).filter((c) => !filtroTipos || filtroTipos.includes(c.tipo)),
@@ -99,7 +103,7 @@ function SeletorCampo({ campos, valor, rotuloVazio, onChange, filtroTipos, id }:
   const atualForaDaLista = valor && campos !== null && !opcoes.some((c) => c.id === valor);
   return (
     <select id={id} value={valor ?? ""} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{rotuloVazio}</option>
+      <option value="" disabled={vazioBloqueado === true && !!valor}>{rotuloVazio}</option>
       {opcoes.map((c) => (
         <option key={`${c.modelo}-${c.versao}-${c.id}`} value={c.id} title={c.id}>
           {c.label} ({c.tipo}) — {c.modelo} v{c.versao}
@@ -131,11 +135,21 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
   const [acaoAlimentar, setAcaoAlimentar] = useState<{ on: boolean; qtd: string }>({ on: false, qtd: "" });
   const [mapaCap, setMapaCap] = useState<MapaLinha[]>([]);
   const [mapaBq, setMapaBq] = useState<MapaLinha[]>([]);
+  // Issue #223 P2 — seções-objeto que existiam na config carregada:
+  // esvaziá-las na UI deve enviar {} explícito (o servidor substitui o
+  // objeto inteiro), em vez de omitir a chave e preservar o valor antigo.
+  const secoesRef = useRef({ capacidade: false, naturezas: false, rec: false, poderes: false });
 
   // Formulário "sujo": sync externo (regras:atualizadas) atualiza o config
   // mas NÃO sobrescreve edições em andamento — o mestre reverte ou salva.
   const [sujo, setSujo] = useState(false);
   const aplicarDeConfig = (cfg: ConfigSangue | undefined) => {
+    secoesRef.current = {
+      capacidade: !!cfg?.capacidade && Object.values(cfg.capacidade).some((v) => v !== undefined),
+      naturezas: !!cfg?.naturezas && Object.keys(cfg.naturezas).length > 0,
+      rec: !!cfg?.recuperacaoSangue && Object.keys(cfg.recuperacaoSangue).length > 0,
+      poderes: !!cfg?.poderes && Object.keys(cfg.poderes).length > 0,
+    };
     setForm({ habilitado: false, ...cfg });
     const bq = cfg?.capacidade?.bonusQualidade;
     setBqAtivo(!!bq && Object.values(bq).some((v) => v !== undefined));
@@ -237,7 +251,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
       }
       if (Object.keys(nbq).length) cap.bonusQualidade = nbq;
     }
-    if (Object.keys(cap).length) s.capacidade = cap;
+    if (Object.keys(cap).length || secoesRef.current.capacidade) s.capacidade = cap;
     const nats: Record<string, ConfigNaturezaSangue> = {};
     for (const n of naturezas) {
       if (!n.rotulo.trim()) continue;
@@ -246,7 +260,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
       if (n.recuperacao) entrada.recuperacao = n.recuperacao;
       nats[n.rotulo.trim()] = entrada;
     }
-    if (Object.keys(nats).length) s.naturezas = nats;
+    if (Object.keys(nats).length || secoesRef.current.naturezas) s.naturezas = nats;
     const recSangue: NonNullable<ConfigSangue["recuperacaoSangue"]> = {};
     if (form.recuperacaoSangue?.habilitado) recSangue.habilitado = true;
     const montarAcao = (a: { on: boolean; qtd: string }): ConfigAcaoRecuperacao | undefined => {
@@ -259,14 +273,14 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
     const aD = montarAcao(acaoDescansar);
     const aA = montarAcao(acaoAlimentar);
     if (aD || aA) recSangue.acoes = { ...(aD ? { descansar: aD } : {}), ...(aA ? { alimentar: aA } : {}) };
-    if (Object.keys(recSangue).length) s.recuperacaoSangue = recSangue;
+    if (Object.keys(recSangue).length || secoesRef.current.rec) s.recuperacaoSangue = recSangue;
     const pds: Record<string, { custo: number }> = {};
     for (const [key, txt] of Object.entries(custoPoderes)) {
       if (txt.trim() === "") continue; // vazio = gratuito (sem entrada)
       const n = Number(txt);
       if (Number.isFinite(n) && n >= 0) pds[key] = { custo: n };
     }
-    if (Object.keys(pds).length) s.poderes = pds;
+    if (Object.keys(pds).length || secoesRef.current.poderes) s.poderes = pds;
     return s;
   };
 
@@ -318,6 +332,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
           valor={form.campoCapacidadeId}
           rotuloVazio="— selecionar campo —"
           filtroTipos={[...TIPOS_VALOR, ...TIPOS_SOMA, ...TIPOS_MAPA]}
+          vazioBloqueado
           onChange={(v) => {
             setForm((f) => ({ ...f, campoCapacidadeId: v || undefined }));
             // modo explícito incompatível com o novo campo é descartado
@@ -422,9 +437,13 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
           valor={form.campoNaturezaId}
           rotuloVazio="— sem vínculo de natureza —"
           filtroTipos={TIPOS_NATUREZA}
+          vazioBloqueado
           onChange={(v) => setForm((f) => ({ ...f, campoNaturezaId: v || undefined }))}
         />
       </label>
+      {(form.campoCapacidadeId || form.campoNaturezaId) && (
+        <p className="meta">Os vínculos de campo não podem ser removidos — o merge parcial do servidor preserva valores omitidos. Para trocar, selecione outro campo.</p>
+      )}
       <p className="meta">A natureza é opcional: sem ela o recurso funciona, mas “Meta humano com Poder” não pode ser determinada.</p>
 
       <h4>Rótulos de natureza</h4>

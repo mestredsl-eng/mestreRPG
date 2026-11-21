@@ -182,6 +182,40 @@ try {
     ok("API. pontos preservados", JSON.stringify(r.json?.config?.pontos) === JSON.stringify(pontosAntes ?? r.json?.config?.pontos));
   }
 
+  // ---------- 3b. P2: esvaziar seções-objeto realmente limpa (merge parcial) ----------
+  {
+    const { ctx, page } = await novaPagina(cookie);
+    await abrirRegrasSangue(page);
+    const painel = page.locator(".painel-sangue");
+
+    // Escalares: opção vazia bloqueada quando há vínculo (não promete limpeza impossível)
+    const opcaoVaziaCap = await painel.locator('#sangue-campo-capacidade option[value=""]').getAttribute("disabled");
+    ok("P2. select capacidade: opção vazia desabilitada com vínculo", opcaoVaziaCap !== null, `disabled=${opcaoVaziaCap}`);
+    const dicaVinculo = await painel.locator(".meta", { hasText: "não podem ser removidos" }).count();
+    ok("P2. dica de vínculo não-removível visível", dicaVinculo >= 1);
+
+    // Esvazia naturezas (3 linhas), custos de Poder e recuperação
+    for (let i = 0; i < 3; i++) {
+      await painel.locator(".sangue-natureza").first().locator("button", { hasText: "✕" }).click();
+    }
+    await painel.locator('input[aria-label="Custo de Sangue do Poder Chicote Sanguíneo"]').fill("");
+    await painel.locator('input[aria-label="Custo de Sangue do Poder Sede de Sangue"]').fill("");
+    await painel.locator('input[aria-label="Habilitar sinalizador de recuperação"]').uncheck();
+    await painel.locator('input[aria-label="Habilitar ação Descansar"]').uncheck();
+    await painel.locator('input[aria-label="Habilitar ação Alimentar-se"]').uncheck();
+
+    await painel.getByRole("button", { name: "Salvar Pontos de Sangue" }).click();
+    await painel.locator(".online").waitFor({ timeout: 15000 });
+    await ctx.close();
+
+    const r2 = await req(BASE, "GET", `/campaigns/${campId}/regras`, { cookie });
+    const s2 = r2.json?.config?.sangue;
+    ok("P2. naturezas esvaziadas persistem vazias", s2?.naturezas !== undefined && Object.keys(s2.naturezas ?? {}).length === 0, JSON.stringify(s2?.naturezas));
+    ok("P2. poderes esvaziados persistem vazios", s2?.poderes !== undefined && Object.keys(s2.poderes ?? {}).length === 0, JSON.stringify(s2?.poderes));
+    ok("P2. recuperacaoSangue esvaziada persiste vazia", s2?.recuperacaoSangue !== undefined && Object.keys(s2.recuperacaoSangue ?? {}).length === 0, JSON.stringify(s2.recuperacaoSangue));
+    ok("P2. escalares preservados (merge parcial)", s2?.campoCapacidadeId === "sangue_nivel" && s2?.campoNaturezaId === "natureza", `cap=${s2?.campoCapacidadeId} nat=${s2?.campoNaturezaId}`);
+  }
+
   // ---------- 4. Jogador não tem acesso à aba Regras ----------
   {
     const { ctx, page } = await novaPagina(jogadores.j1.cookie);
