@@ -130,7 +130,13 @@ try {
   });
   const CHAR2 = pj2.json?.personagem?.id ?? pj2.json?.id;
   setSangue(CHAR2, { saldo: 4, capacidade: 8, usos: {}, historico: [] });
-  t("fixture: personagens", !!(CHAR && CHAR2));
+  // Personagem do PRÓPRIO mestre — dono real para a corrida de posse
+  const pjM = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+    cookie: M, body: { name: "Ficha do Mestre", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [] } },
+  });
+  const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
+  setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
+  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM));
 
   // ---------- helpers UI ----------
   const browser = await chromium.launch();
@@ -261,6 +267,90 @@ try {
       t("UI. espectador sem painel de Sangue em lugar nenhum", await page.locator(".painel-sangue-leitura").count() === 0);
     } else {
       t("UI. espectador sem acesso à campanha", true);
+    }
+    await ctx.close();
+  }
+
+  // ---------- 4b. Corrida de posse: lista de A atrasada × B ----------
+  sec("UI. corrida de posse — lista de A resolve depois da troca");
+  {
+    const s = await req(BASE, "POST", `/campaigns/${CID}/sessoes`, { cookie: M, body: { name: "Sessão Posse" } });
+    const { ctx, page } = await novaPagina(M);
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Ações UI" }).click();
+    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.waitForTimeout(800);
+    const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Posse" }).first();
+    t("UI. corrida: sessão encontrada", (await sessaoRow.count()) === 1);
+    if (await sessaoRow.count()) {
+      await sessaoRow.click();
+      await page.waitForTimeout(1200);
+      // Atrasa SÓ a PRIMEIRA chamada da lista após isto (a de A=CHARM,
+      // do mestre). A de B=CHAR (J1) responde normal.
+      let atrasarProxima = true;
+      await page.route(/\/api\/campaigns\/[^/]+\/characters(\?.*)?$/, async (route) => {
+        if (atrasarProxima) { atrasarProxima = false; await new Promise((r) => setTimeout(r, 2500)); }
+        await route.continue();
+      });
+      const sel = page.locator(".formulario select").first();
+      // A (do mestre, dono real) primeiro — sua lista fica pendente;
+      // troca para B (do J1 — mestre NÃO é dono) antes dela resolver.
+      await sel.selectOption(CHARM);
+      await page.waitForTimeout(800); // garante que a lista de A já disparou
+      await sel.selectOption(CHAR);
+      await page.waitForSelector(".painel-sangue-leitura", { timeout: 15000 });
+      // espera a lista atrasada de A resolver E a carga de B assentar
+      await page.waitForTimeout(3500);
+      const painel = page.locator(".painel-sangue-leitura");
+      const txt = await painel.innerText();
+      t("UI. corrida: painel de B carregado (saldo 8)", /8/.test(txt), txt.slice(0, 160));
+      t("UI. corrida: posse de A NÃO vazou para B (sem Descansar/Ativar)",
+        await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0);
+      t("UI. corrida: mestre segue vendo 'Ações do mestre' em B",
+        await painel.locator(".painel-sangue-mestre").count() === 1);
+    }
+    await ctx.close();
+  }
+
+  // ---------- 4c. Lista da campanha falha → fail-closed ----------
+  sec("UI. lista falha — dono sem controles, leitura preservada");
+  {
+    const { ctx, page } = await novaPagina(M);
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Ações UI" }).click();
+    await page.getByRole("button", { name: "Mesa", exact: true }).click();
+    await page.waitForTimeout(800);
+    const sessaoRow = page.locator("table.tabela tbody tr.clicavel", { hasText: "Sessão Posse" }).first();
+    t("UI. fail-closed: sessão encontrada", (await sessaoRow.count()) === 1);
+    if (await sessaoRow.count()) {
+      await sessaoRow.click();
+      await page.waitForTimeout(1200);
+      const sel = page.locator(".formulario select").first();
+      const painel = page.locator(".painel-sangue-leitura");
+      // 1) CHARM é do próprio mestre → com a lista OK, Descansar aparece
+      await sel.selectOption(CHARM);
+      await page.waitForSelector(".painel-sangue-leitura", { timeout: 15000 });
+      await page.waitForFunction(() => {
+        const p = document.querySelector(".painel-sangue-leitura");
+        return p && !p.innerText.includes("Carregando");
+      }, { timeout: 15000 });
+      t("UI. fail-closed: dono vê Descansar com lista OK", await painel.getByRole("button", { name: /Descansar/ }).count() === 1);
+      // 2) troca p/ CHAR, depois aborta a lista e volta p/ CHARM
+      await sel.selectOption(CHAR);
+      await page.waitForTimeout(800);
+      await page.route(/\/api\/campaigns\/[^/]+\/characters(\?.*)?$/, (route) => route.abort());
+      await sel.selectOption(CHARM);
+      await page.waitForFunction(() => {
+        const p = document.querySelector(".painel-sangue-leitura");
+        return p && !p.innerText.includes("Carregando");
+      }, { timeout: 15000 });
+      const txt = await painel.innerText();
+      t("UI. fail-closed: saldo do mestre segue visível", /3/.test(txt), txt.slice(0, 160));
+      t("UI. fail-closed: lista abortada → NENHUM controle de dono",
+        await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0
+        && await painel.locator("select[aria-label='Poder a ativar']").count() === 0);
     }
     await ctx.close();
   }

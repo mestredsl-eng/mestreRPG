@@ -84,6 +84,9 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
       let ehDono = false;
       if (cid) {
         const lista = await api.listarPersonagens(cid).catch(() => null);
+        // Guarda de geração IMEDIATA após o await: sem ela, a posse de
+        // A poderia ser gravada no estado de B numa troca de ficha.
+        if (g !== geracao.current) return;
         ehDono = lista?.personagens?.some((p) => p.id === characterId && p.ehEu === true) === true;
       }
       setEhEu(ehDono);
