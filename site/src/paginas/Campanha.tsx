@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
@@ -202,6 +202,26 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     void enviarConvite();
   };
 
+  const navegarAbas = (event: KeyboardEvent<HTMLButtonElement>) => {
+    const lista = event.currentTarget.closest('[role="tablist"]');
+    if (!lista) return;
+    const tabs = Array.from(lista.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    const atual = tabs.indexOf(event.currentTarget);
+    if (atual < 0 || tabs.length === 0) return;
+
+    let proximo = atual;
+    if (event.key === "ArrowRight") proximo = (atual + 1) % tabs.length;
+    else if (event.key === "ArrowLeft") proximo = (atual - 1 + tabs.length) % tabs.length;
+    else if (event.key === "Home") proximo = 0;
+    else if (event.key === "End") proximo = tabs.length - 1;
+    else return;
+
+    event.preventDefault();
+    const destino = tabs[proximo];
+    destino.focus();
+    destino.click();
+  };
+
   if (!campanha) {
     return <section className="cartao"><p>{erro ?? "Carregando…"}</p><button className="secundario" onClick={aoVoltar}>Voltar</button></section>;
   }
@@ -223,37 +243,58 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </div>
         {campanha.description && <p>{campanha.description}</p>}
 
-        <div className="abas" role="tablist">
+        <div className="abas" role="tablist" aria-label="Seções da campanha" aria-orientation="horizontal">
           {/* Issue #233 — ícones complementam os rótulos (que permanecem
               como accessible name); nunca substituem o texto. */}
-          <button type="button" role="tab" aria-selected={aba === "info"} className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}><IconeInterface nome="informacoes" />Informações</button>
-          <button type="button" role="tab" aria-selected={aba === "mesa"} className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}><IconeInterface nome="mesa" />Mesa</button>
-          {vePersonagens && <button type="button" role="tab" aria-selected={aba === "personagens"} className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}><IconeInterface nome="personagens" />Personagens</button>}
-          <button type="button" role="tab" aria-selected={aba === "diario"} className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}><IconeInterface nome="diario" />Diário</button>
-          <button type="button" role="tab" aria-selected={aba === "historico"} className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}><IconeInterface nome="historico" />Histórico</button>
-          <button type="button" role="tab" aria-selected={aba === "arquivos"} className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}><IconeInterface nome="arquivos" />Arquivos</button>
+          <button id="campanha-tab-info" aria-controls="campanha-panel-info" tabIndex={aba === "info" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "info"} className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}><IconeInterface nome="informacoes" />Informações</button>
+          <button id="campanha-tab-mesa" aria-controls="campanha-panel-mesa" tabIndex={aba === "mesa" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "mesa"} className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}><IconeInterface nome="mesa" />Mesa</button>
+          {vePersonagens && <button id="campanha-tab-personagens" aria-controls="campanha-panel-personagens" tabIndex={aba === "personagens" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "personagens"} className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}><IconeInterface nome="personagens" />Personagens</button>}
+          <button id="campanha-tab-diario" aria-controls="campanha-panel-diario" tabIndex={aba === "diario" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "diario"} className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}><IconeInterface nome="diario" />Diário</button>
+          <button id="campanha-tab-historico" aria-controls="campanha-panel-historico" tabIndex={aba === "historico" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "historico"} className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}><IconeInterface nome="historico" />Histórico</button>
+          <button id="campanha-tab-arquivos" aria-controls="campanha-panel-arquivos" tabIndex={aba === "arquivos" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "arquivos"} className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}><IconeInterface nome="arquivos" />Arquivos</button>
           {souMestre && (
             <>
-              <button type="button" role="tab" aria-selected={aba === "fichas"} className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}><IconeInterface nome="fichas" />Fichas</button>
-              <button type="button" role="tab" aria-selected={aba === "regras"} className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}><IconeInterface nome="regras" />Regras</button>
-              <button type="button" role="tab" aria-selected={aba === "participantes"} className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}><IconeInterface nome="participantes" />Participantes ({membros.length})</button>
-              <button type="button" role="tab" aria-selected={aba === "convites"} className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}><IconeInterface nome="convites" />Convites ({convites.length})</button>
+              <button id="campanha-tab-fichas" aria-controls="campanha-panel-fichas" tabIndex={aba === "fichas" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "fichas"} className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}><IconeInterface nome="fichas" />Fichas</button>
+              <button id="campanha-tab-regras" aria-controls="campanha-panel-regras" tabIndex={aba === "regras" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "regras"} className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}><IconeInterface nome="regras" />Regras</button>
+              <button id="campanha-tab-participantes" aria-controls="campanha-panel-participantes" tabIndex={aba === "participantes" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "participantes"} className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}><IconeInterface nome="participantes" />Participantes ({membros.length})</button>
+              <button id="campanha-tab-convites" aria-controls="campanha-panel-convites" tabIndex={aba === "convites" ? 0 : -1} onKeyDown={navegarAbas} type="button" role="tab" aria-selected={aba === "convites"} className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}><IconeInterface nome="convites" />Convites ({convites.length})</button>
             </>
           )}
         </div>
       </section>
 
-      {aba === "mesa" && <Mesa campaignId={id} campanha={campanha} />}
-      {aba === "personagens" && vePersonagens && <Personagens campaignId={id} campanha={campanha} />}
-      {aba === "diario" && <Diario campaignId={id} campanha={campanha} />}
-      {aba === "historico" && <Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} />}
-      {aba === "arquivos" && <Arquivos campaignId={id} campanha={campanha} />}
-      {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
-      {aba === "regras" && souMestre && <Regras campaignId={id} />}
+      <div id="campanha-panel-mesa" role="tabpanel" aria-labelledby="campanha-tab-mesa" tabIndex={0} hidden={aba !== "mesa"}>
+        {aba === "mesa" && <Mesa campaignId={id} campanha={campanha} />}
+      </div>
+      {vePersonagens && (
+        <div id="campanha-panel-personagens" role="tabpanel" aria-labelledby="campanha-tab-personagens" tabIndex={0} hidden={aba !== "personagens"}>
+          {aba === "personagens" && <Personagens campaignId={id} campanha={campanha} />}
+        </div>
+      )}
+      <div id="campanha-panel-diario" role="tabpanel" aria-labelledby="campanha-tab-diario" tabIndex={0} hidden={aba !== "diario"}>
+        {aba === "diario" && <Diario campaignId={id} campanha={campanha} />}
+      </div>
+      <div id="campanha-panel-historico" role="tabpanel" aria-labelledby="campanha-tab-historico" tabIndex={0} hidden={aba !== "historico"}>
+        {aba === "historico" && <Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} />}
+      </div>
+      <div id="campanha-panel-arquivos" role="tabpanel" aria-labelledby="campanha-tab-arquivos" tabIndex={0} hidden={aba !== "arquivos"}>
+        {aba === "arquivos" && <Arquivos campaignId={id} campanha={campanha} />}
+      </div>
+      {souMestre && (
+        <div id="campanha-panel-fichas" role="tabpanel" aria-labelledby="campanha-tab-fichas" tabIndex={0} hidden={aba !== "fichas"}>
+          {aba === "fichas" && <ModelosFicha campaignId={id} />}
+        </div>
+      )}
+      {souMestre && (
+        <div id="campanha-panel-regras" role="tabpanel" aria-labelledby="campanha-tab-regras" tabIndex={0} hidden={aba !== "regras"}>
+          {aba === "regras" && <Regras campaignId={id} />}
+        </div>
+      )}
 
       {erro && <EstadoErro aoTentarNovamente={() => void carregar()}>{erro}</EstadoErro>}
       {erroAcao && <EstadoErro aoTentarNovamente={erroAcao.retry}>{erroAcao.texto}</EstadoErro>}
 
+      <div id="campanha-panel-info" role="tabpanel" aria-labelledby="campanha-tab-info" tabIndex={0} hidden={aba !== "info"}>
       {aba === "info" && (
         <section className="cartao">
           {!editando ? (
@@ -282,6 +323,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </section>
       )}
 
+      </div>
+
+      {souMestre && (
+        <div id="campanha-panel-participantes" role="tabpanel" aria-labelledby="campanha-tab-participantes" tabIndex={0} hidden={aba !== "participantes"}>
       {aba === "participantes" && souMestre && (
         <section className="cartao">
           <h2>Participantes</h2>
@@ -437,6 +482,11 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </section>
       )}
 
+        </div>
+      )}
+
+      {souMestre && (
+        <div id="campanha-panel-convites" role="tabpanel" aria-labelledby="campanha-tab-convites" tabIndex={0} hidden={aba !== "convites"}>
       {aba === "convites" && souMestre && (
         <section className="cartao">
           <h2>Convites</h2>
@@ -514,6 +564,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             ))}
           </div>
         </section>
+      )}
+
+        </div>
       )}
 
       {confirmando && (
