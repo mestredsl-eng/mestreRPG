@@ -104,8 +104,10 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
           const v = valores[campo.id];
           if (!Array.isArray(v)) continue;
           for (const item of v as { key?: unknown; nivel?: unknown }[]) {
+            // Poder adquirido = nível numérico finito > 0 (frações como
+            // 0.5 contam — mesmo critério do D10/#237 e do socket R6.3).
             if (item && typeof item === "object" && typeof item.key === "string" && item.key
-              && typeof item.nivel === "number" && item.nivel >= 1) chaves.add(item.key);
+              && typeof item.nivel === "number" && Number.isFinite(item.nivel) && item.nivel > 0) chaves.add(item.key);
           }
         }
       }

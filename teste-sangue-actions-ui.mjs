@@ -69,7 +69,13 @@ const CFG = {
       alimentar: { habilitada: true, quantidade: 3 },
     },
   },
-  poderes: { poder_fogo: { custo: 2 } },
+  poderes: {
+    poder_fogo: { custo: 2 },
+    poder_frac: { custo: 1 },
+    poder_zero: { custo: 1 },
+    poder_neg: { custo: 1 },
+    poder_sem: { custo: 1 },
+  },
 };
 
 try {
@@ -103,6 +109,18 @@ try {
   await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
     cookie: M, body: { kind: "poder", key: "poder_fogo", name: "Poder de Fogo", definition: { disponivel: true } },
   });
+  // Poderes para a prova de nível fracionário: todos existem na
+  // biblioteca — só o filtro de nível (finito > 0) separa os válidos.
+  for (const [key, name] of [
+    ["poder_frac", "Poder Fracionado"],
+    ["poder_zero", "Poder Zero"],
+    ["poder_neg", "Poder Negativo"],
+    ["poder_sem", "Poder Sem Nivel"],
+  ]) {
+    await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
+      cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true } },
+    });
+  }
   const mod = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Ações" } });
   const tid = mod.json.modelo.id, vid = mod.json.modelo.versionId;
   const estrutura = {
@@ -136,7 +154,38 @@ try {
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
-  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM));
+  // Ficha com níveis de Poder na fronteira: 0.5 (adquirido), 0, -2 e
+  // sem nivel (não adquiridos — mesmo existindo na biblioteca).
+  const pjF = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
+    cookie: J1, body: {
+      name: "Frações", templateVersionId: vid,
+      // nivel 1 na escrita: a validação selecao_nivel desta linhagem
+      // exige inteiro 1..5; o 0.5 do contrato D10/#237 chega via
+      // propagação — injetado no banco abaixo (leitura não revalida).
+      data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_frac", nivel: 1 }] },
+    },
+  });
+  const CHARF = pjF.json?.personagem?.id ?? pjF.json?.id;
+  // Níveis inválidos injetados direto no banco: a validação de escrita
+  // já os rejeitaria, mas o filtro da UI é defesa em profundidade —
+  // dado envenenado não pode oferecer Poder não adquirido.
+  {
+    const w = db();
+    try {
+      const row = w.prepare("select data from characters where id=?").get(CHARF);
+      const data = JSON.parse(row.data || "{}");
+      data.poderes = [
+        { key: "poder_frac", nivel: 0.5 },
+        { key: "poder_zero", nivel: 0 },
+        { key: "poder_neg", nivel: -2 },
+        { key: "poder_sem", nivel: null },
+        { key: "poder_texto", nivel: "NaN" },
+      ];
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(data), CHARF);
+    } finally { w.close(); }
+  }
+  setSangue(CHARF, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM && CHARF));
 
   // ---------- helpers UI ----------
   const browser = await chromium.launch();
@@ -459,6 +508,58 @@ try {
       cap4.length === 4 && uuidOk(cap4[3].requestId) && cap4[3].requestId !== cap1[0].requestId,
       JSON.stringify(cap4.map((c) => c.requestId)));
     t("UI. rid: ajuste final aplicado (1→0)", saldoDe(CHAR2) === 0, `db=${saldoDe(CHAR2)}`);
+    await ctx.close();
+  }
+
+  // ---------- 4e. Poder com nível fracionário 0.5 é adquirido ----------
+  sec("UI. poder nível 0.5 aparece e ativa; níveis inválidos não aparecem");
+  {
+    const { ctx, page } = await novaPagina(J1);
+    await abrirFicha(page, "Frações");
+    const painel = page.locator(".painel-sangue-leitura");
+    const selPoder = painel.locator("select[aria-label='Poder a ativar']");
+    await page.waitForTimeout(800); // lista de poderes assíncrona
+    t("UI. frac: opção 'Poder Fracionado' (nível 0.5) presente",
+      await selPoder.locator("option", { hasText: "Poder Fracionado" }).count() === 1);
+    t("UI. frac: 'Poder Zero' (nível 0) ausente",
+      await selPoder.locator("option", { hasText: "Poder Zero" }).count() === 0);
+    t("UI. frac: 'Poder Negativo' (nível -2) ausente",
+      await selPoder.locator("option", { hasText: "Poder Negativo" }).count() === 0);
+    t("UI. frac: 'Poder Sem Nivel' (sem nivel) ausente",
+      await selPoder.locator("option", { hasText: "Poder Sem Nivel" }).count() === 0);
+    // captura o emit de sangue:ativar: a UI deve ENVIAR a key do poder
+    // fracionado. Nesta linhagem o servidor ainda exige level >= 1
+    // (contrato > 0 chega via #230) — o ACK de rejeição é esperado e
+    // documentado; o que provamos aqui é o lado cliente.
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      if (!s || s.__capAtivar) return;
+      s.__capAtivar = [];
+      const orig = s.emit.bind(s);
+      s.emit = (ev, p, cb) => {
+        if (ev === "sangue:ativar" && p && typeof p === "object") {
+          s.__capAtivar.push({ poderKey: p.poderKey, requestId: p.requestId });
+        }
+        return orig(ev, p, cb);
+      };
+    });
+    await selPoder.selectOption({ label: "Poder Fracionado" });
+    await painel.getByRole("button", { name: "Ativar poder" }).click();
+    await page.waitForFunction(() => {
+      const p = document.querySelector(".painel-sangue-leitura");
+      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ativar/.test(x.textContent));
+      return p && /não possui|ativado|Falha/i.test(p.innerText) && b && !/Ativando/.test(b.textContent);
+    }, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(400);
+    const capAtivar = await page.evaluate(() => window.__mesaSocket.__capAtivar);
+    t("UI. frac: UI emite sangue:ativar com poderKey=poder_frac + requestId UUID",
+      capAtivar.length === 1 && capAtivar[0].poderKey === "poder_frac"
+      && /^[0-9a-f-]{36}$/i.test(capAtivar[0].requestId ?? ""),
+      JSON.stringify(capAtivar));
+    // servidor DESTA linhagem rejeita (level>=1 legado) — comportamento
+    // esperado até a propagação de #230; saldo permanece intacto.
+    t("UI. frac: ACK do servidor não credita (linhagem sem level>0)",
+      saldoDe(CHARF) === 5, `db=${saldoDe(CHARF)}`);
     await ctx.close();
   }
 
