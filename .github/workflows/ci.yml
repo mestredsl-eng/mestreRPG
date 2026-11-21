@@ -209,6 +209,8 @@ jobs:
             teste-mesa-seguranca.mjs \
             teste-mesa-virtual.mjs \
             teste-npc-visibilidade.mjs \
+            teste-vtt-vida-p1-privacidade.mjs \
+            teste-vtt-vida.mjs \
             teste-temporizador.mjs \
             teste-convite-cadastro.mjs \
             homologacao-equipamentos.mjs \
@@ -369,6 +371,7 @@ jobs:
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
             teste-vtt-regua.mjs \
+            homologacao-vida-vtt.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \
