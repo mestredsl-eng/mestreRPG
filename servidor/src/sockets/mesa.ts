@@ -188,35 +188,77 @@ const UUID_TESTE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
  *    (revalidado na tx — ficha pode ter mudado desde o pedido);
  *  - custo vem de `config.sangue.poderes[key].custo` do ruleset —
  *    NUNCA do cliente; ausente/zero = gratuito;
- *  - campo poder ESCALAR (sem elementoKey) não identifica um Poder
- *    específico → sem custo configurável → gratuito (lacuna de
- *    produto documentada na PR).
+ *  - `config.sangue.habilitado !== true` (ou config ausente) → roll
+ *    D10 legado, sem débito nem escrita no ledger (P2-1);
+ *  - campo ligado a Poder SEM identidade de elemento (escalar ou
+ *    selecao_nivel sem `elementoKey`, e sem `regra.key` vinculada)
+ *    → fail-closed `poder_nao_identificado`, sem roll nem débito
+ *    parcial (P2-2) — nunca vira Poder gratuito silencioso.
  *  Retorna "erro" para fail-closed: poder sumiu da ficha, custo
- *  inválido ou identidade de teste incompativel com o ledger. */
+ *  inválido, identidade de teste incompativel com o ledger ou Poder
+ *  não identificável. */
 function resolverCobrancaSangueD10(
   skillRef: unknown,
   dadosFicha: Record<string, unknown>,
   regras: RegrasCampanha,
+  campoSel?: CampoDef | null,
 ):
   | { tipo: "livre" }
   | { tipo: "debitar"; custo: number; poderKey: string }
-  | { tipo: "erro"; erro: "poder_nao_adquirido" | "custo_invalido" | "test_id_invalido" } {
+  | { tipo: "erro"; erro: "poder_nao_adquirido" | "poder_nao_identificado" | "custo_invalido" | "test_id_invalido" } {
   if (!skillRef || typeof skillRef !== "object" || Array.isArray(skillRef)) return { tipo: "livre" };
+  // P2-1: recurso de Sangue desabilitado/ausente → comportamento D10
+  // legado. O roll acontece normalmente, sem débito nem mutação do
+  // ledger — `habilitado:false` nunca vira ativação gratuita.
+  const cfgSangue = regras.config.sangue;
+  if (!cfgSangue || cfgSangue.habilitado !== true) return { tipo: "livre" };
   const ref = skillRef as Record<string, unknown>;
-  const elementoKey = typeof ref.elementoKey === "string" ? ref.elementoKey : "";
-  if (!elementoKey) return { tipo: "livre" };
+  let elementoKey = typeof ref.elementoKey === "string" ? ref.elementoKey : "";
+  // Posse por lista de elementos (selecao_nivel) só se aplica quando a
+  // identidade veio do skillRef; vínculo `regra.key` do campo prova a
+  // posse pelo próprio valor numérico do campo (revalidado abaixo).
+  let posseLista = true;
+  if (!elementoKey) {
+    // P2-2: campo ligado a Poder sem `elementoKey` no skillRef.
+    const ehPoder = !!campoSel && (campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder");
+    if (!ehPoder) return { tipo: "livre" };
+    const keyRegra = campoSel!.regra?.kind === "poder" ? campoSel!.regra.key : "";
+    if (!keyRegra) return { tipo: "erro", erro: "poder_nao_identificado" };
+    elementoKey = keyRegra;
+    posseLista = false;
+  }
   // só debita quando o elemento é de fato um Poder das regras vigentes
   const elemento = regras.elementos.get(`poder:${elementoKey}`);
-  if (!elemento) return { tipo: "livre" };
-  // revalidação de posse: o elemento precisa existir na ficha atual
-  const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
-  const lista = campoId && Array.isArray(dadosFicha[campoId])
-    ? (dadosFicha[campoId] as { key?: unknown }[])
-    : [];
-  if (!lista.some((i) => i && typeof i === "object" && i.key === elementoKey)) {
-    return { tipo: "erro", erro: "poder_nao_adquirido" };
+  if (!elemento) {
+    // identidade vinda do vínculo do campo aponta para elemento
+    // inexistente → fail-closed; elementoKey do cliente sem elemento
+    // correspondente segue "não é teste de Poder" (livre).
+    if (!posseLista) return { tipo: "erro", erro: "poder_nao_identificado" };
+    return { tipo: "livre" };
   }
-  const custoBruto = (regras.config.sangue?.poderes as Record<string, { custo?: unknown }> | undefined)?.[elementoKey]?.custo;
+  const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
+  if (posseLista) {
+    // revalidação de posse: o elemento precisa existir na ficha atual
+    const lista = campoId && Array.isArray(dadosFicha[campoId])
+      ? (dadosFicha[campoId] as { key?: unknown }[])
+      : [];
+    if (!lista.some((i) => i && typeof i === "object" && i.key === elementoKey)) {
+      return { tipo: "erro", erro: "poder_nao_adquirido" };
+    }
+  } else {
+    // vínculo regra.key: a posse é o valor numérico do próprio campo —
+    // revalidado na ficha atual (pode ter mudado desde o pedido).
+    // Convenção do motor (nivelNoVinculo/aplicarNivelDados): 0 = ausente
+    // e valores não-positivos não representam nível adquirido — um campo
+    // zerado/negativo NUNCA autoriza débito de Sangue por um Poder que o
+    // sistema considera não adquirido.
+    const campoRegraId = campoSel?.id ?? campoId;
+    const v = campoRegraId ? dadosFicha[campoRegraId] : undefined;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      return { tipo: "erro", erro: "poder_nao_adquirido" };
+    }
+  }
+  const custoBruto = (cfgSangue.poderes as Record<string, { custo?: unknown }> | undefined)?.[elementoKey]?.custo;
   if (custoBruto === undefined || custoBruto === null) return { tipo: "livre" };
   if (typeof custoBruto !== "number" || !Number.isFinite(custoBruto) || custoBruto < 0) {
     return { tipo: "erro", erro: "custo_invalido" };
@@ -1350,13 +1392,35 @@ function socket_handlers(
           // transição pendente→rolado. usoId `d10:<testId>` é
           // idempotente no ledger — retry/concorrência nunca debita
           // duas vezes; jaRolado retorna antes daqui.
+          // P2-2: para detectar campo ligado a Poder sem identidade de
+          // elemento, resolve o CampoDef da estrutura da ficha — somente
+          // quando Sangue está habilitado e o skillRef não traz
+          // elementoKey (selecao_nivel já se identifica sozinha).
+          let campoSelD10: CampoDef | null = null;
+          const refSkill = tTx.skillRef && typeof tTx.skillRef === "object" && !Array.isArray(tTx.skillRef)
+            ? tTx.skillRef as Record<string, unknown> : null;
+          const refCampoId = typeof refSkill?.campoId === "string" ? refSkill.campoId : "";
+          const refElementoKey = typeof refSkill?.elementoKey === "string" ? refSkill.elementoKey : "";
+          if (
+            regrasTx.config.sangue?.habilitado === true &&
+            refCampoId && !refElementoKey && cTx.templateVersionId
+          ) {
+            const [verD10] = tx.select({ structure: sheetVersions.structure })
+              .from(sheetVersions).where(eq(sheetVersions.id, cTx.templateVersionId)).limit(1).all();
+            const parseD10 = verD10 ? estruturaFichaSchema.safeParse(verD10.structure) : null;
+            if (parseD10?.success) {
+              campoSelD10 = mapaCampos(parseD10.data).get(refCampoId) ?? null;
+            }
+          }
           const cobranca = resolverCobrancaSangueD10(
             tTx.skillRef,
             (cTx.data ?? {}) as Record<string, unknown>,
             regrasTx,
+            campoSelD10,
           );
           if (cobranca.tipo === "erro") {
             if (cobranca.erro === "poder_nao_adquirido") return { tipo: "poderNaoAdquirido" };
+            if (cobranca.erro === "poder_nao_identificado") return { tipo: "cobrancaErro", erro: "poder_nao_identificado" };
             if (cobranca.erro === "test_id_invalido") return { tipo: "cobrancaErro", erro: "test_id_invalido" };
             return { tipo: "cobrancaErro", erro: "custo_invalido" };
           }
