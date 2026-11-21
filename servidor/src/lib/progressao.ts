@@ -84,6 +84,9 @@ export interface EventoXp {
   autorId: string | null;
   autorNome: string | null;
   saldoResultante: number;
+  /** requestId do lote que originou o evento (Issue #185) — ausente em
+   *  concessões individuais. Opcional: pacotes antigos não têm o campo. */
+  loteRequestId?: string;
   /** Preenchido quando tipo === "compra". */
   compra?: {
     kind: string;
@@ -168,7 +171,7 @@ export function saldoXp(dados: Record<string, unknown>): number {
 export function aplicarXp(
   dados: Record<string, unknown>,
   delta: number,
-  evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null },
+  evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null; loteRequestId?: string | null },
 ): { dados: Record<string, unknown>; estado: EstadoXp } {
   const estado = lerXp(dados);
   const saldo = xpNum(estado.saldo + delta);
@@ -182,6 +185,7 @@ export function aplicarXp(
       autorId: evento.autorId,
       autorNome: evento.autorNome,
       saldoResultante: saldo,
+      ...(evento.loteRequestId ? { loteRequestId: evento.loteRequestId } : {}),
     },
   ];
   const truncado = historicoNovo.length > MAX_HISTORICO;
