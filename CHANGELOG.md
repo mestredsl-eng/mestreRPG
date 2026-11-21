@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.0.0.7] - 2026-11-20
+
+### Novidades
+
+- **Patrimônio com permissões granulares (PR #177):** a campanha configura sete permissões separadas — itens, equipamentos, veículos, contas, compra, venda e PIX fictício — e o painel de Regras atualiza cada alteração em tempo real para todos os jogadores.
+- **Régua de distância na Mesa Virtual (PR #178):** o mestre mede distâncias entre dois pontos do tabuleiro ou do mapa, com calibração exclusiva do mestre, suporte a mouse e toque, ajuste de proporção do mapa e encaixe por hit-test que não conflita com o pincel de desenho.
+- **Registro na Central de Novidades:** a migration `0031_release_1007_patrimonio_regua_news.sql` publica esta entrega na categoria `novidade`, versão `1.0.7`, com seed idempotente por ID estável.
+
 ## [1.0.0.6] - 2026-11-19
 
 ### Atualização automática na inicialização
@@ -10,11 +18,17 @@
 - **Proteções contra atualização insegura:** o updater se recusa a atualizar com Git ausente, sem `.git`, remoto diferente do oficial (incluindo URLs reescritas por `url.*.insteadOf` e múltiplas URLs), branch detached, upstream que não seja `origin/<branch-atual>`, árvore suja (rastreada ou não) ou divergência. Falhas de rede, autenticação e timeout apenas adiam a atualização — nunca bloqueiam a inicialização.
 - **Rollback controlado:** se dependências ou builds falharem após o pull, o updater restaura o commit anterior somente com árvore limpa, HEAD exato e mesma branch, reinstala dependências e recompila ambos os workspaces; se a integridade não puder ser garantida, encerra com código de erro e instruções, sem sucesso falso.
 - **Execução segura de npm no Windows:** comandos npm passam por allowlist fixa via `ComSpec`, sem shell livre; variáveis `GIT_*` herdadas do processo são descartadas para impedir redirecionamento de repositório.
-- **Registro na Central de Novidades:** migration `0030_release_1006_auto_update_news.sql`, com seed idempotente próprio (`INSERT OR IGNORE`), publica esta funcionalidade na versão `1.0.6`, categoria `novidade`.
+- **Registro na Central de Novidades:** migration `0033_release_1006_auto_update_news.sql`, com seed idempotente próprio (`INSERT OR IGNORE`), publica esta funcionalidade na versão `1.0.6`, categoria `novidade`.
 
 ### Testes
 
 - `teste-auto-update.mjs` cobre 80 cenários: ausência de Git, instalação sem repositório, fast-forward, falhas de rede/auth/timeout, URLs reescritas e ambíguas, árvore suja, upstream inválido ou de fork, divergência, falhas de dependências e build, rollback completo com rebuild dos dois workspaces, proteção contra alterações locais durante o rollback, lockfiles aninhados, variáveis `GIT_*` hostis e recuperação manual pelo arquivo de estado — incluindo execução real de `npm.cmd` no runner Windows.
+### Correções e permissões
+
+- **Edição de anotações respeita o compartilhamento da campanha:** com `jogadorCompartilha` desligado, o jogador só pode alterar anotações cuja visibilidade efetiva continue `privada`. Antes, um PATCH apenas de conteúdo ou de destinatários sobre nota pública ou selecionada contornava a restrição, e um jogador podia promover a própria nota a `kind: "mestre"`.
+- **Downgrade controlado preservado:** o jogador ainda pode tornar uma nota compartilhada privada no mesmo PATCH, e o servidor limpa os destinatários ao fazer isso.
+- **Paridade com a criação:** a mesma regra de `kind`/`visibility` aplicada no POST agora vale para o PATCH; mestres permanecem isentos e a propriedade da nota continua obrigatória.
+- **Registro na Central de Novidades:** a migration `0030_release_1006_diario_permissoes_news.sql` publica esta correção na categoria `correcao`, versão `1.0.6`.
 
 ## [1.0.0.5] - 2026-11-19
 

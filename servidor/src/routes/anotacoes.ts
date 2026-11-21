@@ -163,30 +163,50 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
   const body = notaSchema.partial().safeParse(req.body);
   if (!body.success) { res.status(400).json({ erro: "Dados inválidos", detalhes: body.error.issues }); return; }
   const d = somenteEnviados(body.data, req.body);
+  const papel = req.membership!.role;
+  const ehMestre = papel === "mestre";
+  // Paridade com POST: não-mestre nunca promove nota a kind "mestre".
+  if (!ehMestre && d.kind === "mestre") {
+    res.status(403).json({ erro: "Só o mestre cria anotações do mestre" }); return;
+  }
+  // Issue #171: com compartilhamento desligado, o PATCH só é válido se a
+  // visibilidade EFETIVA (enviada ou atual) for "privada" — cobre edição
+  // de conteúdo, recipients e qualquer campo sem visibility explícita.
+  // Editar nota compartilhada exige rebaixá-la para privada no mesmo PATCH.
+  if (!ehMestre) {
+    const visEfetiva = d.visibility ?? n.visibility;
+    if (visEfetiva !== "privada") {
+      const regras = await carregarRegras(req.params.campaignId);
+      if (!regras.config.notas?.jogadorCompartilha) {
+        res.status(403).json({ erro: "Compartilhamento não permitido nesta campanha" }); return;
+      }
+    }
+  }
   // revalida personagem ao trocar characterId
   if (d.characterId && d.characterId !== n.characterId) {
     const [char] = await db.select().from(characters).where(and(eq(characters.id, d.characterId), eq(characters.campaignId, req.params.campaignId))).limit(1);
     if (!char) { res.status(400).json({ erro: "Personagem não encontrado" }); return; }
     if (char.status === "arquivado") { res.status(409).json({ erro: "Personagem arquivado — restaure-o antes de vincular anotações" }); return; }
-    if (req.membership!.role !== "mestre") {
+    if (!ehMestre) {
       const [md] = await db.select({ userId: memberships.userId }).from(memberships).where(eq(memberships.id, char.membershipId)).limit(1);
       if (md?.userId !== req.usuario!.id) { res.status(403).json({ erro: "Diário pertence a outro jogador" }); return; }
     }
   }
-  // mudar visibilidade para compartilhada exige a mesma regra da criação
-  if (req.membership!.role !== "mestre" && d.visibility && d.visibility !== "privada") {
-    const regras = await carregarRegras(req.params.campaignId);
-    if (!regras.config.notas?.jogadorCompartilha) {
-      res.status(403).json({ erro: "Compartilhamento não permitido nesta campanha" }); return;
-    }
-  }
-  let recips: string[] | null | undefined;
-  if (d.visibility === "selecionada" || (d.recipients !== undefined && d.visibility !== "privada" && d.visibility !== "mestre" && d.visibility !== "publica")) {
-    if (d.recipients !== undefined) {
-      const validados = await validarDestinatarios(req.params.campaignId, d.recipients);
-      if (validados === null) { res.status(400).json({ erro: "Destinatários inválidos" }); return; }
-      recips = validados;
-    }
+  const visibilidadeFinal = d.visibility ?? n.visibility;
+  let recips: string[] | null;
+  if (visibilidadeFinal !== "selecionada") {
+    // P2-A: nota que não está "selecionada" nunca retém destinatários —
+    // impede lista latente ser reativada numa promoção posterior.
+    recips = null;
+  } else if (d.recipients !== undefined) {
+    const validados = await validarDestinatarios(req.params.campaignId, d.recipients);
+    if (validados === null || validados.length === 0) { res.status(400).json({ erro: "Destinatários inválidos" }); return; }
+    recips = validados;
+  } else if (n.visibility !== "selecionada") {
+    // promoção para "selecionada" sem lista nova: não herda recipients antigos
+    res.status(400).json({ erro: "Informe ao menos um destinatário" }); return;
+  } else {
+    recips = (n.recipients as string[] | null) ?? null;
   }
   await db.update(notes).set({
     title: d.title ?? n.title,
@@ -196,7 +216,7 @@ anotacoesRouter.patch("/:noteId", requirePapel("mestre", "jogador"), async (req,
     kind: d.kind ?? n.kind,
     important: d.important !== undefined ? (d.important ? 1 : 0) : n.important,
     visibility: d.visibility ?? n.visibility,
-    recipients: recips !== undefined ? recips : (d.visibility && d.visibility !== "selecionada" ? null : n.recipients),
+    recipients: recips,
     status: d.status ?? n.status,
     updatedAt: new Date(),
   }).where(eq(notes.id, n.id));

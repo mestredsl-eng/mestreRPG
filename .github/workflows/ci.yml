@@ -160,6 +160,7 @@ jobs:
             teste-sessoes-conta.mjs \
             teste-prerequisitos-patrimonio.mjs \
             teste-patrimonio-permissoes.mjs \
+            teste-patrimonio-ui-permissoes.mjs \
             teste-escopo-cruzado.mjs \
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
@@ -167,7 +168,8 @@ jobs:
             teste-regras.mjs \
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
-            teste-defeitos-mesa.mjs
+            teste-defeitos-mesa.mjs \
+            teste-xp-lote.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
@@ -267,6 +269,7 @@ jobs:
             homologacao-patrimonio.mjs \
             homologacao-npc-patrimonio.mjs \
             homologacao-compras-vendas.mjs \
+            homologacao-patrimonio-permissoes.mjs \
             homologacao-fin-integracao.mjs \
             homologacao-conversao.mjs \
             homologacao-novidades.mjs \
@@ -279,6 +282,7 @@ jobs:
             homologacao-busca-filtros.mjs \
             teste-realtime-paginas.mjs \
             homologacao-mesa-virtual.mjs \
+            homologacao-regua.mjs \
             homologacao-nevoa.mjs \
             homologacao-guildas.mjs \
             homologacao-sessoes.mjs \
@@ -288,6 +292,7 @@ jobs:
             homologacao-responsavel-guilda.mjs \
             teste-vtt-rollback-p6.mjs \
             teste-vtt-nevoa.mjs \
+            teste-vtt-regua.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \

@@ -1,6 +1,7 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { sessions, memberships, characters } from "../db/schema.js";
+import { calibracaoValida, type CalibracaoRegua } from "./regua.js";
 
 // ---------- Mesa virtual: estado compartilhado (mapa + tokens + névoa) ----------
 // Modelo único usado pelo Socket.IO (sockets/mesa.ts) e pelas rotas HTTP
@@ -18,7 +19,13 @@ export interface MapaVtt { fileId: string; nome: string; largura?: number; altur
 export interface PontoNevoa { x: number; y: number }
 export interface TracoNevoa { id: string; raioX: number; raioY: number; pontos: PontoNevoa[] }
 export interface NevoaVtt { ativa: boolean; revelados: TracoNevoa[] }
-export interface VttState { mapa: MapaVtt | null; tokens: TokenVtt[]; nevoa: NevoaVtt }
+export interface VttState {
+  mapa: MapaVtt | null; tokens: TokenVtt[]; nevoa: NevoaVtt;
+  // Calibração da régua de distância (Issue #125): configuração da sessão,
+  // gravada somente pelo mestre via mesa:vtt:mapa acao="calibrar". A
+  // medição em si é local/efêmera no cliente — nunca trafega por socket.
+  regua?: CalibracaoRegua | null;
+}
 
 export const VTT_MAX_TOKENS = 100;
 export const VTT_MAX_BYTES = 64 * 1024;
@@ -128,11 +135,17 @@ export function vttDeTexto(raw: unknown, sessionId: string): VttState {
     ? {
         fileId: mp.fileId,
         nome: typeof mp.nome === "string" ? mp.nome : "Mapa",
-        largura: typeof mp.largura === "number" && Number.isFinite(mp.largura) ? mp.largura : undefined,
-        altura: typeof mp.altura === "number" && Number.isFinite(mp.altura) ? mp.altura : undefined,
+        largura: typeof mp.largura === "number" && Number.isFinite(mp.largura) && mp.largura > 0 ? mp.largura : undefined,
+        altura: typeof mp.altura === "number" && Number.isFinite(mp.altura) && mp.altura > 0 ? mp.altura : undefined,
       }
     : null;
-  return { mapa, tokens, nevoa: nevoaSanitizada(o?.nevoa, sessionId) };
+  // Calibração persistida: inválida é descartada (null) — nunca propaga
+  // configuração malformada para os clientes.
+  const reguaBruta = (o as { regua?: unknown } | null)?.regua;
+  const regua = calibracaoValida(reguaBruta)
+    ? { unidade: reguaBruta.unidade.trim(), distanciaReferencia: reguaBruta.distanciaReferencia, valorReferencia: reguaBruta.valorReferencia }
+    : null;
+  return { mapa, tokens, nevoa: nevoaSanitizada(o?.nevoa, sessionId), regua };
 }
 
 /** Lê vtt_state como texto bruto (contorna o parse json do Drizzle). */
