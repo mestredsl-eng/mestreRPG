@@ -59,11 +59,12 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   // Geração da carga: resposta de um characterId anterior que chegue
   // DEPOIS da troca é descartada — nunca sobrescreve o estado atual.
   const geracao = useRef(0);
-  // requestId por intenção de ativar/recuperar/ajustar — reutilizado
-  // em retry da MESMA operação (idempotência ativar:/recuperar:/
-  // ajustar: no servidor); payload novo gera UUID novo via
-  // novoRequestId() nos onChange.
-  const reqIdRef = useRef<{ evento: string; id: string } | null>(null);
+  // requestId UUID por INTENÇÃO completa (evento + characterId +
+  // payload normalizado) — ativar:/recuperar:/ajustar: idempotentes
+  // no servidor (#230). Retry da MESMA intenção reutiliza o UUID;
+  // payload diferente gera UUID novo; somente ACK ok limpa a
+  // intenção (timeout/erro ambíguo preserva para o retry).
+  const reqIdRef = useRef<{ chave: string; id: string } | null>(null);
 
   const carregar = useCallback(async () => {
     const g = ++geracao.current;
@@ -147,14 +148,16 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
     return () => { socket.off("personagens:atualizados", aoMudar); };
   }, [characterId, carregar]);
 
-  /** Emite evento R6.3 com ACK — requestId UUID estável por intenção. */
-  const emitir = useCallback((evento: string, payload: Record<string, unknown>, comRequestId: boolean): Promise<AckSangue> => {
+  /** Emite evento R6.3 com ACK — requestId UUID estável por intenção.
+   *  `chaveIntencao` identifica a intenção completa (evento+payload
+   *  normalizado): mesma chave → mesmo UUID; chave nova → UUID novo. */
+  const emitir = useCallback((evento: string, payload: Record<string, unknown>, comRequestId: boolean, chaveIntencao?: string): Promise<AckSangue> => {
     return new Promise((resolve) => {
       const socket = getSocket();
       let reqId: string | undefined;
-      if (comRequestId) {
-        if (!reqIdRef.current || reqIdRef.current.evento !== evento) {
-          reqIdRef.current = { evento, id: crypto.randomUUID() };
+      if (comRequestId && chaveIntencao) {
+        if (reqIdRef.current?.chave !== chaveIntencao) {
+          reqIdRef.current = { chave: chaveIntencao, id: crypto.randomUUID() };
         }
         reqId = reqIdRef.current.id;
       }
@@ -166,13 +169,17 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
     });
   }, []);
 
-  const novoRequestId = useCallback(() => { reqIdRef.current = null; }, []);
-
   const executar = useCallback(async (chave: string, evento: string, payload: Record<string, unknown>, comRequestId: boolean, okMsg: string) => {
     if (ocupado) return;
     setOcupado(chave);
     setMsgAcao(null);
-    const ack = await emitir(evento, { characterId, ...payload }, comRequestId);
+    const payloadFull = { characterId, ...payload };
+    // Payload já chega normalizado pelos call sites (delta numérico,
+    // motivo trim); a chave cobre evento+characterId+payload —
+    // intenção idêntica reutiliza o UUID mesmo após edições
+    // intermediárias que voltaram ao mesmo valor.
+    const chaveIntencao = comRequestId ? `${evento}|${JSON.stringify(payloadFull)}` : undefined;
+    const ack = await emitir(evento, payloadFull, comRequestId, chaveIntencao);
     if (ack.ok) {
       reqIdRef.current = null; // operação concluída — próxima é nova
       setMsgAcao({ tipo: "ok", texto: ack.replay ? `${okMsg} (repetição já processada)` : okMsg });
@@ -253,7 +260,7 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
               {poderes.length > 0 && (
                 <>
                   <select
-                    value={poderSel} onChange={(e) => { setPoderSel(e.target.value); novoRequestId(); }}
+                    value={poderSel} onChange={(e) => setPoderSel(e.target.value)}
                     aria-label="Poder a ativar" disabled={ocupado !== null}
                   >
                     {poderes.map((p) => <option key={p.key} value={p.key}>{p.nome}</option>)}
@@ -278,13 +285,13 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
               <div className="linha" style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
                 <input
                   type="number" step="1" value={deltaAjuste}
-                  onChange={(e) => { setDeltaAjuste(e.target.value); novoRequestId(); }}
+                  onChange={(e) => setDeltaAjuste(e.target.value)}
                   aria-label="Delta de Sangue (positivo ou negativo)"
                   placeholder="Δ saldo" style={{ width: "7em" }}
                 />
                 <input
                   type="text" value={motivoAjuste}
-                  onChange={(e) => { setMotivoAjuste(e.target.value); novoRequestId(); }}
+                  onChange={(e) => setMotivoAjuste(e.target.value)}
                   aria-label="Motivo do ajuste de Sangue"
                   placeholder="Motivo (obrigatório)" style={{ flex: "1 1 10em", minWidth: "8em" }}
                 />

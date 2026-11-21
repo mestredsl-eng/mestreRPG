@@ -355,6 +355,113 @@ try {
     await ctx.close();
   }
 
+  // ---------- 4d. requestId estável por intenção (contrato #230) ----------
+  sec("UI. requestId — retry idêntico reutiliza UUID, payload novo gera UUID novo");
+  {
+    const { ctx, page } = await novaPagina(M);
+    await abrirFicha(page, "Outro Ações");
+    const painel = page.locator(".painel-sangue-leitura");
+    t("UI. rid: saldo inicial de CHAR2 = 4", saldoDe(CHAR2) === 4, `db=${saldoDe(CHAR2)}`);
+    await painel.locator(".painel-sangue-mestre").locator("summary").click();
+
+    // Envelope o emit do socket do app: registra requestId/delta/motivo
+    // de cada sangue:ajustar e, quando __dropNextAj>0, NÃO encaminha ao
+    // servidor e devolve ACK ambíguo de timeout — simula resposta
+    // perdida sem commit (a prova de replay pós-commit é do servidor
+    // #230; aqui validamos o contrato do cliente).
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      if (!s || s.__capAj) return;
+      s.__capAj = [];
+      s.__dropNextAj = 0;
+      const orig = s.emit.bind(s);
+      s.emit = (ev, p, cb) => {
+        if (ev === "sangue:ajustar" && p && typeof p === "object") {
+          s.__capAj.push({ requestId: p.requestId, delta: p.delta, motivo: p.motivo });
+          if (s.__dropNextAj > 0) {
+            s.__dropNextAj--;
+            if (typeof cb === "function") setTimeout(() => cb({ ok: false, codigo: "timeout", erro: "Sem resposta do servidor" }), 60);
+            return s;
+          }
+        }
+        return orig(ev, p, cb);
+      };
+    });
+    const capAj = () => page.evaluate(() => window.__mesaSocket.__capAj);
+    const uuidOk = (u) => typeof u === "string" && /^[0-9a-f-]{36}$/i.test(u);
+    // O <details> das ações do mestre pode fechar no re-render pós-ACK
+    // (carregar() refaz a leitura) — reabre antes de cada interação.
+    const abrirAcoes = () => painel.locator(".painel-sangue-mestre").evaluate((d) => { if (!d.open) d.querySelector("summary").click(); });
+
+    const deltaIn = painel.locator("input[aria-label='Delta de Sangue (positivo ou negativo)']");
+    const motIn = painel.locator("input[aria-label='Motivo do ajuste de Sangue']");
+    const btnAj = painel.getByRole("button", { name: "Ajustar saldo" });
+
+    // 1) ACK ambíguo: emissão descartada → timeout; saldo NÃO muda
+    //    (cliente nunca atualiza otimisticamente — espera o servidor).
+    await deltaIn.fill("-1");
+    await motIn.fill("perda de ack");
+    await page.evaluate(() => { window.__mesaSocket.__dropNextAj = 1; });
+    await btnAj.click();
+    await page.waitForFunction(() => {
+      const p = document.querySelector(".painel-sangue-leitura");
+      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ajustar/.test(x.textContent));
+      return p && /timeout|Sem resposta/i.test(p.innerText) && b && !/Ajustando/.test(b.textContent);
+    }, { timeout: 10000 }).catch(() => null);
+    await page.waitForTimeout(300);
+    const cap1 = await capAj();
+    t("UI. rid: 1ª emissão leva requestId UUID", uuidOk(cap1[0]?.requestId), JSON.stringify(cap1[0]));
+    t("UI. rid: erro ambíguo não altera saldo (sem otimista)", saldoDe(CHAR2) === 4 && (await saldoNaTela(page)) === 4,
+      `db=${saldoDe(CHAR2)} tela=${await saldoNaTela(page)}`);
+
+    // 2) Retry IDÊNTICO → mesmo UUID reenviado; servidor aplica 1×.
+    await btnAj.click();
+    await page.waitForFunction(() => {
+      const p = document.querySelector(".painel-sangue-leitura");
+      return p && /ajustado/i.test(p.innerText);
+    }, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(400);
+    const cap2 = await capAj();
+    t("UI. rid: retry idêntico reutiliza o MESMO requestId",
+      cap2.length === 2 && cap2[1].requestId === cap1[0].requestId,
+      JSON.stringify(cap2.map((c) => c.requestId)));
+    t("UI. rid: delta aplicado uma única vez (4→3)", saldoDe(CHAR2) === 3, `db=${saldoDe(CHAR2)}`);
+
+    // 3) Mudança de payload após erro/sucesso → UUID novo.
+    await abrirAcoes();
+    await deltaIn.fill("-2");
+    await btnAj.click();
+    await page.waitForFunction((n) => {
+      const s = window.__mesaSocket;
+      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ajustar/.test(x.textContent));
+      return s?.__capAj?.length >= n && b && !/Ajustando/.test(b.textContent);
+    }, 3, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(400);
+    const cap3 = await capAj();
+    t("UI. rid: payload novo gera requestId NOVO",
+      cap3.length === 3 && uuidOk(cap3[2].requestId) && cap3[2].requestId !== cap1[0].requestId,
+      JSON.stringify(cap3.map((c) => c.requestId)));
+    t("UI. rid: ajuste -2 aplicado (3→1)", saldoDe(CHAR2) === 1, `db=${saldoDe(CHAR2)}`);
+
+    // 4) ACK ok limpa a intenção: repetir o payload original gera UUID novo.
+    await abrirAcoes();
+    await deltaIn.fill("-1");
+    await motIn.fill("perda de ack");
+    await btnAj.click();
+    await page.waitForFunction((n) => {
+      const s = window.__mesaSocket;
+      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ajustar/.test(x.textContent));
+      return s?.__capAj?.length >= n && b && !/Ajustando/.test(b.textContent);
+    }, 4, { timeout: 15000 }).catch(() => null);
+    await page.waitForTimeout(400);
+    const cap4 = await capAj();
+    t("UI. rid: após ACK ok, mesma payload é nova intenção (UUID novo)",
+      cap4.length === 4 && uuidOk(cap4[3].requestId) && cap4[3].requestId !== cap1[0].requestId,
+      JSON.stringify(cap4.map((c) => c.requestId)));
+    t("UI. rid: ajuste final aplicado (1→0)", saldoDe(CHAR2) === 0, `db=${saldoDe(CHAR2)}`);
+    await ctx.close();
+  }
+
   // ---------- 5. Mobile 390px ----------
   sec("UI. mobile 390px");
   {
