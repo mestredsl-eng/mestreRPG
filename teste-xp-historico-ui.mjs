@@ -271,11 +271,11 @@ try {
     await page2.waitForSelector(".extrato-xp", { timeout: 15000 });
     await page2.waitForSelector("text=XP disponíveis", { timeout: 15000 });
     const btn = page2.getByRole("button", { name: /Mostrar mais/ });
-    ok("CSS. botão Mostrar mais presente na fixture longa", (await btn.count()) === 1, `count=${await btn.count()}`);
+    const nBtn = await btn.count();
     // focusVisible:true força :focus-visible (foco de teclado) de forma determinística
-    await btn.evaluate((el) => el.focus({ focusVisible: true }));
-    const outline = await btn.evaluate((el) => getComputedStyle(el).outlineStyle);
-    ok("CSS. botão Mostrar mais com foco visível", outline !== "none", outline);
+    if (nBtn === 1) await btn.evaluate((el) => el.focus({ focusVisible: true }));
+    const outline = nBtn === 1 ? await btn.evaluate((el) => getComputedStyle(el).outlineStyle) : "ausente";
+    ok("CSS. botão Mostrar mais presente e com foco visível", nBtn === 1 && outline !== "none" && outline !== "ausente", `count=${nBtn} outline=${outline}`);
     await ctx2.close();
   }
 
