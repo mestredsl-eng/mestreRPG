@@ -323,6 +323,28 @@ describe("operações de ledger", () => {
     }
   });
 
+  it("ativar: mesmo requestId com poderKey divergente → uso_conflito (P2 R6.4)", () => {
+    let dados: Record<string, unknown> = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
+    const p = { ...AUTOR, poderKey: "magia", custo: 1, requestId: REQ1 };
+    const r1 = registrarAtivacaoSangue(dados, p);
+    assert.equal(r1.ok, true);
+    if (r1.ok) dados = r1.dados;
+    const antes = JSON.stringify(dados);
+    // mesmo UUID + mesmo poder → replay (já coberto acima); aqui:
+    // mesmo UUID + OUTRO poder → conflito estável, zero mutação.
+    const divergente = registrarAtivacaoSangue(dados, { ...p, poderKey: "fogo" });
+    assert.equal(divergente.ok, false);
+    if (!divergente.ok) assert.equal(divergente.codigo, "uso_conflito");
+    assert.equal(JSON.stringify(dados), antes);
+    // requestId novo com outro poder → operação independente normal
+    const novo = registrarAtivacaoSangue(dados, { ...p, poderKey: "fogo", requestId: REQ2 });
+    assert.equal(novo.ok, true);
+    if (novo.ok) {
+      assert.equal(novo.estado.saldo, 3);
+      assert.equal(Object.keys(novo.estado.usos).length, 2);
+    }
+  });
+
   it("ativar com custo 0 registra uso sem mover saldo", () => {
     const dados = { [CHAVE_SANGUE]: { saldo: 3, usos: {}, historico: [] } };
     const r = registrarAtivacaoSangue(dados, { ...AUTOR, poderKey: "gratuito", custo: 0, requestId: REQ2 });

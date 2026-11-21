@@ -114,6 +114,11 @@ try {
     const agora = Date.now();
     db.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
       .run(crypto.randomUUID(), rs.id, "poder", "poder_fogo", "Poder de Fogo", null, null, "{}", agora, agora);
+    // segundo Poder do ruleset — prova de fingerprint divergente
+    // em sangue:ativar (mesmo requestId + poderKey diferente →
+    // uso_conflito, nunca replay silencioso).
+    db.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), rs.id, "poder", "poder_fogo2", "Poder de Gelo", null, null, "{}", agora, agora);
     db.close();
   }
   // templateVersion dedicado
@@ -140,7 +145,7 @@ try {
   };
   const sangue = (saldo, extra = {}) => ({ saldo, capacidade: 10, usos: {}, historico: [], ...extra });
   const charVampiro = novoChar(c.jogadores.jogador1.membershipId, "Vampiro J1", {
-    cap: 10, nat: "Vampiro", poderes: [{ key: "poder_fogo", nivel: 2 }],
+    cap: 10, nat: "Vampiro", poderes: [{ key: "poder_fogo", nivel: 2 }, { key: "poder_fogo2", nivel: 1 }],
     __sangue: sangue(5),
   });
   const charHumano = novoChar(c.jogadores.jogador1.membershipId, "Humano J1", {
@@ -210,6 +215,15 @@ try {
     t("um único usoId para o requestId concorrente", usosSangue(charVampiro).filter((u) => u === `ativar:${reqConc}`).length === 1);
     t("dois usoIds ativar no total", usosSangue(charVampiro).filter((u) => u.startsWith("ativar:")).length === 2);
     t("evento personagens:atualizados emitido", eventosAtualizados.some((e) => e?.characterId === charVampiro));
+    // P2 R6.4 — fingerprint divergente: mesmo requestId `reqId`
+    // (já usado com poder_fogo) + poderKey diferente → uso_conflito,
+    // saldo/ledger/histórico byte-a-byte estáveis.
+    const dadosAntesDiv = JSON.stringify(dadosChar(charVampiro));
+    const rDiv = await emitir(sockJ1, "sangue:ativar", { characterId: charVampiro, poderKey: "poder_fogo2", requestId: reqId });
+    t("mesmo requestId + poder divergente → uso_conflito", rDiv?.ok === false && rDiv?.codigo === "uso_conflito", JSON.stringify(rDiv).slice(0, 200));
+    t("saldo intacto após conflito", saldoSangue(charVampiro) === 1, `saldo=${saldoSangue(charVampiro)}`);
+    t("characters.data byte-a-byte intacto no conflito", JSON.stringify(dadosChar(charVampiro)) === dadosAntesDiv);
+    t("sem usoId novo no conflito", usosSangue(charVampiro).filter((u) => u.startsWith("ativar:")).length === 2);
   }
 
   sec("2. Ativação — custo zero / ausente / inválido / não-adquirido");
