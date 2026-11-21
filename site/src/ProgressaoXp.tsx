@@ -124,6 +124,15 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
     }
   };
 
+  // Exceção #186 (contrato do PAI, PR #226): a Característica que
+  // fornece a capacidade de Sangue é a ÚNICA `caracteristica` que o
+  // servidor pode marcar como evoluível — as demais sempre voltam com
+  // o motivo genérico de bloqueio. Identificamos pelo kind + motivo
+  // divergente; nunca liberamos nada por conta própria — o GET e o
+  // POST /comprar-ponto seguem sendo a autoridade.
+  const ehCapacidadeSangue = (el: ElementoDisponivel): boolean =>
+    el.kind === "caracteristica" && !(el.motivo ?? "").includes("nao pode evoluir");
+
   if (erro && !prog) return <div className="cartao"><p className="ficha-aviso">{erro}</p></div>;
   if (!prog) return null;
 
@@ -180,23 +189,39 @@ export default function ProgressaoXp({ characterId, ehMestre }: { characterId: s
             {prog.disponiveis.map((el) => {
               const alvo = el.nivelAtual + 1;
               const confirmandoEste = confirmando?.key === el.key && confirmando?.kind === el.kind;
+              const capacidadeSangue = ehCapacidadeSangue(el);
               return (
                 <tr key={`${el.kind}:${el.key}`}>
-                  <td>{el.nome}<span className="meta"> ({el.kind})</span></td>
+                  <td>
+                    {el.nome}
+                    <span className="meta"> ({el.kind})</span>
+                    {capacidadeSangue && (
+                      <span className="selo" title="Característica que define a capacidade máxima de Pontos de Sangue">
+                        {" "}Capacidade de Sangue
+                      </span>
+                    )}
+                  </td>
                   <td>{el.nivelAtual}</td>
                   <td>{alvo}</td>
                   <td>{el.precoProximo ?? "—"}</td>
                   <td>
                     {el.compravel ? (
                       confirmandoEste ? (
-                        <span className="linha">
-                          <button
-                            type="button" className="mini perigo" disabled={ocupado}
-                            onClick={() => void comprar(el)}
-                          >
-                            Confirmar −{el.precoProximo} XP
-                          </button>
-                          <button type="button" className="mini secundario" onClick={() => setConfirmando(null)}>Cancelar</button>
+                        <span className="linha" style={{ flexDirection: "column", alignItems: "flex-start", gap: "0.25rem" }}>
+                          {capacidadeSangue && (
+                            <span className="meta" role="note">
+                              Aumenta apenas a capacidade máxima de Sangue — não adiciona Sangue ao saldo.
+                            </span>
+                          )}
+                          <span className="linha">
+                            <button
+                              type="button" className="mini perigo" disabled={ocupado}
+                              onClick={() => void comprar(el)}
+                            >
+                              Confirmar −{el.precoProximo} XP
+                            </button>
+                            <button type="button" className="mini secundario" onClick={() => setConfirmando(null)}>Cancelar</button>
+                          </span>
                         </span>
                       ) : (
                         <button type="button" className="mini" disabled={ocupado} onClick={() => setConfirmando(el)}>
