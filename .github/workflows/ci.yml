@@ -202,7 +202,9 @@ jobs:
             teste-sangue-hmac-v2.mjs \
             teste-sangue-config.mjs \
             teste-d10-transacao.mjs \
-            teste-autorizacao-negativa.mjs
+            teste-autorizacao-negativa.mjs \
+            teste-autorizacao-eventos-passivos.mjs \
+            teste-autorizacao-concorrencia.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
