@@ -26,6 +26,9 @@ on:
       - feat/issue-186-sangue-actions-ui
       # Base real da PR #218 (movimento reduzido) — faz o CI rodar nela.
       - feat/issue-132-recomendacoes-visuais-locais
+      # Base real da PR #238 (estados vazios, empilhada na #235) —
+      # faz o CI rodar nela; SKIP explícito cobre refs sem o arquivo.
+      - feat/issue-132-icones-abas
     types:
       - opened
       - synchronize
@@ -352,7 +355,8 @@ jobs:
             teste-sangue-xp-capacidade-ui.mjs \
             teste-sangue-player-read-ui.mjs \
             teste-sangue-actions-ui.mjs \
-            teste-reduced-motion.mjs
+            teste-reduced-motion.mjs \
+            teste-estados-vazios-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
