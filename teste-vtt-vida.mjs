@@ -39,6 +39,7 @@ function conectar(cookie) {
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
 const emitirCb = (s, ev, p) => new Promise((r) => { const to = setTimeout(() => r({ ok: false, erro: "timeout" }), 8000); s.emit(ev, p, (x) => { clearTimeout(to); r(x); }); });
 const sincronizar = (s) => emitirCb(s, "mesa:vtt:sincronizar", { sessionId: sid });
+const sincronizarNevoa = (s) => emitirCb(s, "mesa:vtt:nevoa:sincronizar", { sessionId: sid });
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
 async function esperarVtt(socket, timeout = 8000) {
   const ini = cntVtt.get(socket) ?? 0;
@@ -273,10 +274,23 @@ try {
     t("segundo socket do mesmo usuário também recebe RATE_LIMITED",
       rA2?.codigo === "RATE_LIMITED" && typeof rA2?.retryAfterMs === "number" && rA2.retryAfterMs > 0,
       JSON.stringify(rA2).slice(0, 140));
-    // cota reposta → sincronização legítima volta e HP segue correto
+    // sync de névoa divide o MESMO balde vttSync: com o bucket acabado
+    // de esvaziar pela rajada acima, ela também é rejeitada — em
+    // qualquer socket do mesmo usuário
+    const rNevA = await sincronizarNevoa(sA);
+    t("sync de névoa compartilha o balde vttSync (RATE_LIMITED)",
+      rNevA?.codigo === "RATE_LIMITED" && typeof rNevA?.retryAfterMs === "number" && rNevA.retryAfterMs > 0,
+      JSON.stringify(rNevA).slice(0, 140));
+    const rNevA2 = await sincronizarNevoa(sA2);
+    t("sync de névoa no 2º socket do mesmo usuário também RATE_LIMITED",
+      rNevA2?.codigo === "RATE_LIMITED" && typeof rNevA2?.retryAfterMs === "number" && rNevA2.retryAfterMs > 0,
+      JSON.stringify(rNevA2).slice(0, 140));
+    // cota reposta → sincronizações legítimas voltam e HP segue correto
     await dormir(1600);
     const rOk = await sincronizar(sA);
     t("sync legítimo após reposição da cota → ok", rOk?.ok === true, JSON.stringify(rOk).slice(0, 140));
+    const rOkNev = await sincronizarNevoa(sA);
+    t("sync de névoa legítimo após reposição → ok", rOkNev?.ok === true, JSON.stringify(rOkNev).slice(0, 140));
     t("HP atualizado continua chegando no sync", tok(rOk?.vtt, "tkpj1-aa11")?.vida?.hp?.atual === 110,
       JSON.stringify(tok(rOk?.vtt, "tkpj1-aa11")?.vida));
   }

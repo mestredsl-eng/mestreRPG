@@ -7,7 +7,8 @@
 //   - rejeições não gravam nada (chat_messages);
 //   - idempotência requestId/clientId preservada;
 //   - névoa: gestos legítimos passam, flood é rejeitado e a
-//     sincronização ordenada (mesa:vtt:nevoa:sincronizar) é isenta;
+//     sincronização ordenada (mesa:vtt:nevoa:sincronizar) divide o
+//     mesmo balde vttSync da sincronização completa;
 //   - mesa:sair e ping não são limitados;
 //   - turno/timer, tokens VTT e entrada têm cotas próprias.
 import { io as ioClient } from "socket.io-client";
@@ -143,7 +144,7 @@ try {
   t("duplicata idempotente não grava duas vezes", contarChat("RL-idem") === 1, JSON.stringify([d1?.ok, d2?.ok, d1?.duplicado, d2?.duplicado]));
 
   // ---------- G. Névoa — gestos legítimos e flood ----------
-  sec("G. névoa — gesto legítimo passa, flood é limitado, sync é isenta");
+  sec("G. névoa — gesto legítimo passa, flood é limitado, sync divide cota vttSync");
   const traco = { raioX: 0.2, raioY: 0.2, pontos: [{ x: 0.5, y: 0.5 }] };
   const legit = await rajada(sM, "mesa:vtt:nevoa", () => ({ sessionId: sid, acao: "revelar", traco }), 8);
   t("8 gestos de névoa legítimos passam", legit.every((r) => r?.ok === true), JSON.stringify(legit.filter((r) => r?.ok !== true)));
@@ -151,9 +152,23 @@ try {
   const flood = await rajada(sM, "mesa:vtt:nevoa", (i) => ({ sessionId: sid, acao: "ocultarTudo", clientId: `rl-n-${i}` }), 40);
   const rlNevoa = flood.filter(ehRateLimited);
   t("flood de névoa rejeitado com RATE_LIMITED", rlNevoa.length >= 5, `limitados=${rlNevoa.length}`);
-  // sincronização ordenada NUNCA é limitada (mecanismo de recuperação da névoa)
-  const syncs = await rajada(sM, "mesa:vtt:nevoa:sincronizar", () => ({ sessionId: sid }), 12);
-  t("sincronização de névoa isenta de rate limit", syncs.every((r) => r?.ok === true), JSON.stringify(syncs.slice(0, 3)));
+  // sincronização ordenada de névoa compartilha o balde vttSync com
+  // mesa:vtt:sincronizar: 40 syncs VTT consomem o burst (48) e a
+  // rajada seguinte de 40 syncs de névoa estoura a cota — se fossem
+  // baldes separados, 40 < 48 em cada um e nada seria rejeitado.
+  const syncsVtt = await rajada(sJ, "mesa:vtt:sincronizar", () => ({ sessionId: sid }), 40);
+  t("40 syncs VTT passam dentro do burst", syncsVtt.every((r) => r?.ok === true),
+    JSON.stringify(syncsVtt.filter((r) => r?.ok !== true).slice(0, 3)));
+  const syncsNev = await rajada(sJ, "mesa:vtt:nevoa:sincronizar", () => ({ sessionId: sid }), 40);
+  const rlNev = syncsNev.filter(ehRateLimited);
+  t("sync de névoa rejeitada após esgotar o balde vttSync compartilhado",
+    rlNev.length >= 5, `limitados=${rlNev.length} total=${syncsNev.length}`);
+  t("rejeição traz codigo RATE_LIMITED e retryAfterMs > 0",
+    rlNev.every((r) => r?.codigo === "RATE_LIMITED" && typeof r?.retryAfterMs === "number" && r.retryAfterMs > 0));
+  // após a janela, a sincronização legítima de névoa volta a funcionar
+  await dormir(Math.min(2000, (rlNev[0]?.retryAfterMs ?? 500) + 500));
+  const posNev = await emitirCb(sJ, "mesa:vtt:nevoa:sincronizar", { sessionId: sid });
+  t("sincronização de névoa volta após reposição da cota", posNev?.ok === true, JSON.stringify(posNev).slice(0, 140));
 
   // ---------- H. Timer/turno tem cota própria ----------
   sec("H. mesa:timer — flood limitado");
