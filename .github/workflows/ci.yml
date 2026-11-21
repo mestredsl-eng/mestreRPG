@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - feat/issue-132-icones-abas
       - feat/issue-132-estados-vazios
       - feat/mesa-virtual-mapas-tokens
       - feat/mesa-virtual-nevoa-backend
