@@ -616,6 +616,11 @@ export interface ElementoDisponivel {
   precoProximo: number | null;
   compravel: boolean;
   motivo?: string;
+  /** Marcador positivo e autoritativo (Issue #186 adendo): true
+   *  SOMENTE quando o vínculo efetivo deste elemento escreve no
+   *  `config.sangue.campoCapacidadeId` — a UI nunca deve deduzir a
+   *  identidade por texto de `motivo`. */
+  capacidadeSangue?: boolean;
 }
 
 export interface OpcoesProgressao {
@@ -720,6 +725,7 @@ export function resumoProgressao(
       precoProximo,
       compravel,
       motivo,
+      ...(excecao ? { capacidadeSangue: true } : {}),
     });
   }
   disponiveis.sort((a, b) => a.kind.localeCompare(b.kind) || a.nome.localeCompare(b.nome));
