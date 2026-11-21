@@ -117,6 +117,18 @@ try {
   t("rascunho virou Ocultismo (prévia violeta)", await p.locator(".pv-visual").getAttribute("data-cor-destaque") === "violeta");
   t("histórico não cresceu", historicoDe(j1.id).length === 4);
 
+  sec("P1 — alternar aprendizado não descarta prévia não aplicada");
+  // recarregar() troca o objeto usuario; o rascunho (prévia violeta) deve
+  // sobreviver porque o visual SALVO não mudou — só dados de aprendizado.
+  await p.getByRole("button", { name: "Aprendizado ativado" }).click();
+  await p.waitForTimeout(400);
+  await p.getByRole("button", { name: "Ativar aprendizado" }).click();
+  await p.waitForTimeout(400);
+  t("prévia preservada após toggle de aprendizado", await p.locator(".pv-visual").getAttribute("data-cor-destaque") === "violeta",
+    await p.locator(".pv-visual").getAttribute("data-cor-destaque"));
+  t("sugestão reaparece após reativar", await p.locator(".prefs-sugestao").count() === 1);
+  t("toggles não enviaram visual", patches.slice(-2).every((b) => !b.visual && b.visualAprendizado), JSON.stringify(patches.slice(-2)));
+
   sec("Aplicar sugestão — única confirmação");
   await sug.getByRole("button", { name: "Aplicar sugestão" }).click();
   await p.waitForTimeout(500);
@@ -143,6 +155,41 @@ try {
   t("opt-in off → apply não coletou", historicoDe(j1.id).length === antes, `antes=${antes} depois=${historicoDe(j1.id).length}`);
   t("optIn=false persistido", optInDe(j1.id) === false);
   t("sugestão oculta com opt-in off", await p.locator(".prefs-sugestao").count() === 0);
+
+  sec("P2 — apagar histórico disponível com aprendizado desligado");
+  t("botão Apagar histórico visível com opt-in off", await p.getByRole("button", { name: "Apagar histórico" }).count() === 1);
+  await p.getByRole("button", { name: "Apagar histórico" }).click();
+  await p.waitForTimeout(400);
+  t("histórico zerado com opt-in off", historicoDe(j1.id).length === 0);
+  t("optIn continua false após apagar", optInDe(j1.id) === false);
+  const patchApagarOff = [...patches].reverse().find((b) => Array.isArray(b.visualAprendizado?.historico));
+  t("PATCH de apagar não levou optIn", patchApagarOff && !("optIn" in (patchApagarOff.visualAprendizado ?? {})), JSON.stringify(patchApagarOff));
+
+  sec("P1 — aba obsoleta não reativa consentimento ao apagar");
+  // Rebuild: opt-in on + histórico >= 2 para a aba A ficar "stale" com optIn=true.
+  await p.getByRole("button", { name: "Ativar aprendizado" }).click();
+  await p.waitForTimeout(400);
+  await aplicarPreset("Arquivo Oculto");
+  await aplicarPreset("Ocultismo");
+  t("histórico reconstruído", historicoDe(j1.id).length >= 2, `n=${historicoDe(j1.id).length}`);
+  // Aba B (sessão paralela do mesmo usuário) desliga o aprendizado.
+  const ctxB = await ctxComCookie(j1.cookie);
+  const pB = await ctxB.newPage();
+  await pB.goto(BASE, { waitUntil: "networkidle" });
+  await pB.getByRole("button", { name: "Conta", exact: true }).click();
+  await pB.locator(".prefs-visuais").waitFor({ timeout: 10000 });
+  await pB.getByRole("button", { name: "Aprendizado ativado" }).click();
+  await pB.waitForTimeout(400);
+  t("aba B desligou opt-in", optInDe(j1.id) === false);
+  // Aba A continua achando que opt-in está ligado (estado local obsoleto).
+  const patchesAntesMulti = patches.length;
+  await p.getByRole("button", { name: "Apagar histórico" }).click();
+  await p.waitForTimeout(400);
+  const patchMulti = patches.slice(patchesAntesMulti).find((b) => Array.isArray(b.visualAprendizado?.historico));
+  t("aba A apagou histórico", historicoDe(j1.id).length === 0);
+  t("aba A NÃO reenviou optIn (consentimento preservado)", patchMulti && !("optIn" in (patchMulti.visualAprendizado ?? {})), JSON.stringify(patchMulti));
+  t("optIn permanece false no servidor", optInDe(j1.id) === false);
+  await ctxB.close();
 
   sec("Mobile — área acessível em viewport estreito");
   const ctxM = await ctxComCookie(j1.cookie, { viewport: { width: 390, height: 844 } });

@@ -90,11 +90,15 @@ export default function PreferenciasVisuais({ usuario, recarregar }: { usuario: 
   const { notificar } = useNotificar();
   const [sistemaReduz] = useState(sistemaPrefereReducao);
 
-  // Recarrega o rascunho quando o usuário muda ou as preferências salvas mudam.
+  // Recarrega o rascunho quando o usuário muda ou as preferências salvas
+  // mudam de VALOR. A dependência é a serialização (não a identidade do
+  // objeto): recarregar() substitui `usuario` por um objeto novo mesmo sem
+  // mudança visual, e sem isso uma prévia não aplicada seria perdida.
+  const salvoJson = JSON.stringify(salvo);
   useEffect(() => {
     setRascunho(preferenciasVisuaisDe(usuario.preferences?.visual));
     setErro(null);
-  }, [usuario.id, usuario.preferences?.visual]);
+  }, [usuario.id, salvoJson]);
 
   const sujo = !mesmoVisual(rascunho, salvo);
 
@@ -156,7 +160,10 @@ export default function PreferenciasVisuais({ usuario, recarregar }: { usuario: 
   };
 
   const alternarOptIn = () => void enviarAprendizado({ optIn: !aprendizadoOptIn });
-  const apagarHistorico = () => void enviarAprendizado({ optIn: aprendizadoOptIn, historico: [] });
+  // Apagar histórico NÃO reenvia optIn: o servidor mescla por chave e
+  // preserva o consentimento atual do banco — uma aba obsoleta não pode
+  // reativar a coleta por engano.
+  const apagarHistorico = () => void enviarAprendizado({ historico: [] });
   // Pré-visualizar só muda o rascunho — o painel de prévia existente já
   // reflete; nenhum PATCH é enviado e o tema global não muda.
   const preVisualizarSugestao = () => {
@@ -292,7 +299,7 @@ export default function PreferenciasVisuais({ usuario, recarregar }: { usuario: 
           >
             {aprendizadoOptIn ? "Aprendizado ativado" : "Ativar aprendizado"}
           </button>
-          {aprendizadoOptIn && historicoAprendizado.length > 0 && (
+          {historicoAprendizado.length > 0 && (
             <button
               type="button"
               className="secundario"

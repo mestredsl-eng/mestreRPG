@@ -303,7 +303,11 @@ const visualSchema = z
 // máximo 8 entradas — o servidor é quem corta o excesso.
 const visualAprendizadoSchema = z
   .object({
-    optIn: z.boolean(),
+    // optIn é opcional: ausente = "não alterar" (o merge preserva o
+    // consentimento atual). Obrigatório aqui impediria o "apagar
+    // histórico" de enviar só `{ historico: [] }` sem reenviar um
+    // opt-in possivelmente obsoleto vindo de outra aba.
+    optIn: z.boolean().optional(),
     historico: z.array(visualSchema).max(8).optional(),
   })
   .strict();
