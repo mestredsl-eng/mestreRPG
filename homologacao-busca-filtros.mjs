@@ -172,7 +172,7 @@ try {
     await abas.getByRole("button", { name: "Anotações do mestre" }).click();
     await p.waitForTimeout(1000);
     // volta à aba Diário: todos os campos devem estar limpos
-    await abas.getByRole("tab", { name: "Diário", exact: true }).click();
+    await abas.getByRole("button", { name: "Diário", exact: true }).click();
     await p.waitForTimeout(1000);
     t("diário: busca limpa após trocar de aba", (await buscaD.inputValue()) === "");
     t("diário: filtro visibilidade limpo", (await p.getByLabel("Filtrar por visibilidade").inputValue()) === "");
