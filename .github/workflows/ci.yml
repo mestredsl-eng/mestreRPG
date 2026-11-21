@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - feat/issue-132-estados-vazios
       - feat/mesa-virtual-mapas-tokens
       - feat/mesa-virtual-nevoa-backend
       - feat/mesa-virtual-nevoa-frontend
@@ -267,6 +268,7 @@ jobs:
             homologacao-exclusao-personagem.mjs \
             homologacao-busca-filtros.mjs \
             teste-realtime-paginas.mjs \
+            teste-feedback-listas-ui.mjs \
             homologacao-mesa-virtual.mjs \
             homologacao-regua.mjs \
             homologacao-nevoa.mjs \
