@@ -253,20 +253,57 @@ export const configRegrasSchema = z.object({
         })
         .optional(),
       // Rótulos de natureza são livres da campanha; cada entrada pode
-      // declarar metaHumanoComPoder e um rótulo opaco de recuperação.
+      // declarar metaHumanoComPoder e a ação de recuperação mapeada.
       // Natureza sem mapeamento permanece desconhecida (fail-closed).
+      // `recuperacao` referencia uma das ações canônicas de
+      // `recuperacaoSangue.acoes` — nunca string livre (contrato de
+      // produto #7055515759: a ação é Descansar ou Alimentar-se).
       naturezas: z
         .record(
           z.string().min(1).max(80),
           z.object({
             metaHumanoComPoder: z.boolean().optional(),
-            recuperacao: z.string().max(120).optional(),
+            recuperacao: z.enum(["descansar", "alimentar"]).optional(),
           })
         )
         .optional(),
-      // Ausência nunca habilita recuperação — só `habilitado:true` liga.
+      // Ações canônicas de recuperação (Issue #186, contrato aprovado):
+      // "descansar" e "alimentar". Cada ação exige `habilitada` boolean
+      // explícita e `quantidade` positiva finita quando habilitada —
+      // configuração parcial é rejeitada na validação (fail-closed),
+      // nunca completada com valor inventado. Ação ausente ou
+      // `habilitada:false` = desabilitada.
       recuperacaoSangue: z
-        .object({ habilitado: z.boolean().optional() })
+        .object({
+          habilitado: z.boolean().optional(),
+          acoes: z
+            .object({
+              descansar: z
+                .object({
+                  habilitada: z.boolean().optional(),
+                  quantidade: z.number().positive().optional(),
+                })
+                .optional(),
+              alimentar: z
+                .object({
+                  habilitada: z.boolean().optional(),
+                  quantidade: z.number().positive().optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+      // Custo de ativação por Poder (Issue #186, contrato aprovado):
+      // chave = `key` do elemento kind="poder" em rule_definitions do
+      // MESMO rule_set da campanha (identidade de Poder é ruleset-scoped,
+      // não template-scoped — ver PR). Campo sem entrada = gratuito;
+      // custo zero é válido; negativo/NaN/Infinity rejeitados.
+      poderes: z
+        .record(
+          z.string().min(1).max(80),
+          z.object({ custo: z.number().nonnegative() })
+        )
         .optional(),
     })
     .default({ habilitado: false }),
@@ -402,10 +439,16 @@ export function errosVinculosSangueConfig(
   // coeficiente finito é exigido aqui, antes de validar os vínculos.
   const bq = sang.capacidade?.bonusQualidade;
   const bqAtivo = !!bq && Object.values(bq).some((v) => v !== undefined);
+  const acoes = sang.recuperacaoSangue?.acoes;
+  const temAcao = !!acoes && (acoes.descansar !== undefined || acoes.alimentar !== undefined);
+  const poderes = sang.poderes;
+  const temPoderes = !!poderes && Object.keys(poderes).length > 0;
   const temVinculo = !!(
     sang.campoCapacidadeId ||
     sang.campoNaturezaId ||
-    bqAtivo
+    bqAtivo ||
+    temAcao ||
+    temPoderes
   );
   if (!sang.habilitado && !temVinculo) return erros;
   // Checagens de nível de config SEMPRE executam — mesmo sem nenhuma
@@ -415,6 +458,28 @@ export function errosVinculosSangueConfig(
       "config.sangue.capacidade.bonusQualidade: exige campoId e coeficiente numérico finito quando qualquer opção é definida",
     );
     return erros;
+  }
+  // Ações de recuperação (contrato #7055515759): objeto de ação presente
+  // exige `habilitada` boolean explícita; ação habilitada exige
+  // `quantidade` finita > 0. Configuração incompleta/parcial é rejeitada
+  // — nunca completada com valor inventado. Ação ausente ou
+  // `habilitada:false` permanece desabilitada.
+  if (temAcao) {
+    for (const nome of ["descansar", "alimentar"] as const) {
+      const acao = acoes![nome];
+      if (acao === undefined) continue;
+      if (typeof acao.habilitada !== "boolean") {
+        erros.push(`config.sangue.recuperacaoSangue.acoes.${nome}: exige habilitada (boolean) explícita`);
+        continue;
+      }
+      if (acao.habilitada === true) {
+        const q = acao.quantidade;
+        if (typeof q !== "number" || !Number.isFinite(q) || q <= 0) {
+          erros.push(`config.sangue.recuperacaoSangue.acoes.${nome}: habilitada exige quantidade finita > 0`);
+        }
+      }
+    }
+    if (erros.length) return erros;
   }
   if (sang.habilitado && !sang.campoCapacidadeId) {
     erros.push("config.sangue: habilitado exige campoCapacidadeId");
@@ -454,6 +519,37 @@ export function errosVinculosSangueConfig(
           `${prefixo}: campoNaturezaId "${sang.campoNaturezaId}" (tipo ${campoNat.tipo}) não produz rótulo selecionável`,
         );
       }
+    }
+  }
+  return erros;
+}
+
+/**
+ * Valida `config.sangue.poderes` contra as chaves de elementos
+ * kind="poder" do MESMO rule_set da campanha.
+ *
+ * Identidade de Poder = `key` em rule_definitions (ruleset-scoped,
+ * único por (ruleSetId, kind, key)) — NÃO é campoId de ficha nem
+ * templateVersionId. A coleta das chaves é responsabilidade da rota;
+ * esta função é pura. Custo já vem validado pelo schema
+ * (nonnegative); a checagem finita aqui é defesa em profundidade.
+ */
+export function errosPoderesSangueConfig(
+  config: ConfigRegras,
+  chavesPoderesValidas: ReadonlySet<string>,
+): string[] {
+  const erros: string[] = [];
+  const poderes = config.sangue?.poderes;
+  if (!poderes) return erros;
+  for (const [key, entrada] of Object.entries(poderes)) {
+    if (!chavesPoderesValidas.has(key)) {
+      erros.push(
+        `config.sangue.poderes: "${key}" não é um Poder (kind="poder") das regras desta campanha`,
+      );
+    }
+    const custo = entrada?.custo;
+    if (typeof custo !== "number" || !Number.isFinite(custo) || custo < 0) {
+      erros.push(`config.sangue.poderes."${key}".custo: exige número finito >= 0`);
     }
   }
   return erros;
