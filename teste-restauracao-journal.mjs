@@ -14,7 +14,7 @@ import { dirTeste, abrirDb } from "./teste-base.mjs";
 
 const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
-const { instalacaoId, dirEstado, gravarReciboInstalacao, lerReciboInstalacao,
+const { instalacaoId, caminhoCanonico, dirEstado, gravarReciboInstalacao, lerReciboInstalacao,
   gravarAutorizacaoBootstrap, lerAutorizacaoBootstrap, diagnosticarBootstrap } = await import("./scripts/estado-externo.mjs");
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
@@ -115,7 +115,7 @@ function componentes(estados) {
 function gravarJournal(raiz, dados) {
   mkdirSync(stateDir(raiz), { recursive: true });
   writeFileSync(journalPath(raiz), JSON.stringify({
-    protocoloVersao: 1, instalacaoId: ID, repoCanon: process.cwd().toLowerCase(),
+    protocoloVersao: 1, instalacaoId: ID, repoCanon: caminhoCanonico(RAIZ_REPO),
     atualizadoEm: new Date().toISOString(), ...dados,
   }));
 }
