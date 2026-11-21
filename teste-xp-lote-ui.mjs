@@ -189,6 +189,16 @@ try {
     const erroTxt = await p.locator(".modal-fundo .erro").textContent();
     ok("UI. ficha não selada mostra erro do backend", /selo/i.test(erroTxt), erroTxt);
     ok("UI. sem falso sucesso", await p.locator("text=XP concedido").count() === 0);
+    // CSS: item com erro de campo recebe destaque visual dedicado
+    const itemErro = p.locator(".xp-lote-item.erro-campo");
+    ok("CSS. item com erro marcado (.erro-campo)", await itemErro.count() === 1);
+    if (await itemErro.count()) {
+      const cs = await itemErro.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { border: s.borderColor, bg: s.backgroundColor };
+      });
+      ok("CSS. .erro-campo tem borda de erro", /172|125|46/.test(cs.border), JSON.stringify(cs));
+    }
     await cM.close();
   }
 
@@ -246,7 +256,43 @@ try {
     ok("API. mesmo requestId+payload → repetido", r3.status === 200 && r3.json?.repetido === true);
   }
 
-  // ---------- 6. Mobile ----------
+  // ---------- 6. Acabamento visual — estilos dedicados xp-lote-* ----------
+  {
+    const cM = await ctx(cookieMestre.split("=").slice(1).join("="));
+    const p = await cM.newPage();
+    await abrirPersonagens(p);
+    await p.getByRole("button", { name: "XP em lote" }).click();
+    await p.waitForSelector(".xp-lote-lista");
+    const estilo = (sel, prop) => p.locator(sel).first().evaluate((el, pr) => getComputedStyle(el)[pr], prop);
+    ok("CSS. .xp-lote-lista flex column", (await estilo(".xp-lote-lista", "display")) === "flex" && (await estilo(".xp-lote-lista", "flexDirection")) === "column");
+    ok("CSS. .xp-lote-lista rolagem vertical dedicada", (await estilo(".xp-lote-lista", "overflowY")) === "auto");
+    ok("CSS. .xp-lote-lista com borda", parseFloat(await estilo(".xp-lote-lista", "borderTopWidth")) > 0);
+
+    const itemHerói = p.locator(".xp-lote-item", { hasText: "Herói A" });
+    await itemHerói.locator('input[type="checkbox"]').check();
+    const selItem = p.locator(".xp-lote-item.selecionado").first();
+    ok("CSS. seleção aplica .selecionado", await selItem.count() >= 1);
+    const bgSel = await selItem.evaluate((el) => getComputedStyle(el).backgroundColor);
+    const bgNorm = await p.locator(".xp-lote-item:not(.selecionado)").first().evaluate((el) => getComputedStyle(el).backgroundColor);
+    ok("CSS. selecionado visualmente distinto", bgSel !== bgNorm, `${bgSel} vs ${bgNorm}`);
+
+    const qtdInput = p.locator(".xp-lote-qtd input").first();
+    ok("CSS. campo XP aparece ao selecionar", await qtdInput.count() === 1);
+    const wQtd = parseFloat(await qtdInput.evaluate((el) => getComputedStyle(el).width));
+    ok("CSS. input XP com largura dedicada", wQtd >= 80 && wQtd <= 100, `w=${wQtd}`);
+
+    await p.locator('input[aria-label="Quantidade de XP para Herói A"]').fill("5");
+    await p.locator('input[aria-label="Motivo da concessão"]').fill("CSS check");
+    await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    await p.waitForSelector(".xp-lote-resumo");
+    ok("CSS. .xp-lote-resumo li com cartão", parseFloat(await estilo(".xp-lote-resumo li", "borderTopWidth")) > 0);
+    ok("CSS. .xp-lote-resumo com rolagem", (await estilo(".xp-lote-resumo", "overflowY")) === "auto");
+    await p.getByRole("dialog", { name: "Confirmar concessão de XP" }).getByRole("button", { name: "Voltar" }).click();
+    await p.getByRole("button", { name: "Cancelar" }).last().click();
+    await cM.close();
+  }
+
+  // ---------- 7. Mobile ----------
   {
     const cM = await browser.newContext({ viewport: { width: 390, height: 844 } });
     await cM.addCookies([{ name: "mestre_rpg_session", value: cookieMestre.split("=").slice(1).join("="), url: BASE }]);
@@ -256,6 +302,8 @@ try {
     await p.waitForSelector(".modal-fundo");
     const overflow = await p.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
     ok("UI. mobile: modal utilizável sem overflow horizontal", !overflow);
+    const wrap = await p.locator(".xp-lote-item").first().evaluate((el) => getComputedStyle(el).flexWrap);
+    ok("UI. mobile: item XP empilha campo de quantidade", wrap === "wrap", wrap);
     await p.getByRole("button", { name: "Cancelar" }).click();
     await cM.close();
   }

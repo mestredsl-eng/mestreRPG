@@ -2404,3 +2404,87 @@ textarea:focus-visible,
   .chat-falar-como { align-items: stretch; flex-direction: column; }
   .chat-falar-como select { width: 100%; }
 }
+
+/* ---- Concessão de XP em lote (modal do mestre) ---- */
+.xp-lote-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  margin: 10px 0;
+  padding: 6px;
+  border: 1px solid var(--borda, #2a2f3f);
+  border-radius: 8px;
+  background: var(--fundo-input, #0f1219);
+}
+.xp-lote-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+}
+.xp-lote-item.selecionado {
+  border-color: #3b5bdb;
+  background: rgba(59, 91, 219, 0.12);
+}
+.xp-lote-item.erro-campo {
+  border-color: #7a2e2e;
+  background: #2a1518;
+}
+.xp-lote-item .check {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.xp-lote-qtd {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  font-size: 13px;
+  color: var(--texto-fraco, #8b93a7);
+}
+.xp-lote-qtd input {
+  width: 90px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--borda, #2a2f3f);
+  background: var(--fundo-cartao, #161a26);
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+.xp-lote-item.erro-campo .xp-lote-qtd input {
+  border-color: #f87171;
+}
+.xp-lote-resumo {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.xp-lote-resumo li {
+  padding: 6px 10px;
+  border: 1px solid var(--borda, #2a2f3f);
+  border-radius: 6px;
+  background: var(--fundo-input, #0f1219);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 480px) {
+  .xp-lote-item {
+    flex-wrap: wrap;
+  }
+  .xp-lote-qtd {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .xp-lote-qtd input {
+    width: 110px;
+  }
+}
