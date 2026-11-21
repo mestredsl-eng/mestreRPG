@@ -15,6 +15,7 @@ import {
   type TipoRegra,
 } from "../api";
 import { ModalConfirmar } from "../Modal";
+import RegrasSangue from "./RegrasSangue";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const ROTULO_KIND: Record<TipoRegra, string> = {
@@ -37,7 +38,7 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
 
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
 
-type Aba = "biblioteca" | "pontuacao" | "validacao" | "acervo";
+type Aba = "biblioteca" | "pontuacao" | "sangue" | "validacao" | "acervo";
 
 /** Extrai campo/mensagem dos issues de validação retornados pela API. */
 function mensagemApi(e: unknown, padrao: string): string {
@@ -288,6 +289,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       <div className="abas">
         <button className={aba === "biblioteca" ? "ativo" : "secundario"} onClick={() => setAba("biblioteca")}>Biblioteca</button>
         <button className={aba === "pontuacao" ? "ativo" : "secundario"} onClick={() => setAba("pontuacao")}>Pontuação</button>
+        <button className={aba === "sangue" ? "ativo" : "secundario"} onClick={() => setAba("sangue")}>Sangue</button>
         <button className={aba === "validacao" ? "ativo" : "secundario"} onClick={() => { setAba("validacao"); void carregarPersonagens(); }}>Validação de fichas</button>
         <button className={aba === "acervo" ? "ativo" : "secundario"} onClick={() => setAba("acervo")}>Acervo</button>
       </div>
@@ -394,6 +396,29 @@ export default function Regras({ campaignId }: { campaignId: string }) {
 
       {aba === "pontuacao" && regras && (
         <PainelPontuacao config={regras.config} onSalvar={salvarConfig} campaignId={campaignId} />
+      )}
+
+      {aba === "sangue" && regras && (
+        <RegrasSangue
+          config={regras.config.sangue}
+          poderes={regras.elementos.filter((el) => el.kind === "poder")}
+          campaignId={campaignId}
+          onSalvar={async (sangue) => {
+            // PUT /regras/config aceita merge parcial — enviamos APENAS a
+            // chave `sangue`; as demais configurações ficam intactas no
+            // servidor. A validação autoritativa é do backend (400 exibido
+            // pelo próprio painel).
+            try {
+              await api.atualizarConfigRegras(campaignId, { sangue });
+              setAviso("Configuração de Pontos de Sangue salva.");
+              await carregar();
+            } catch (e) {
+              // O painel exibe o erro do servidor (400/403) — não engolir
+              // aqui para não simular sucesso.
+              throw e;
+            }
+          }}
+        />
       )}
 
       {aba === "validacao" && (
