@@ -244,6 +244,29 @@ try {
     await ctx.close();
   }
 
+  // ---------- 7. Acabamento visual — estilos dedicados extrato-xp-* ----------
+  {
+    const { ctx, page } = await novaPagina(jogadores.j1.cookie);
+    await abrirPersonagem(page, "Campanha Extrato XP", "Herói Ledger");
+    await page.waitForSelector(".extrato-xp .progresso-saldo", { timeout: 15000 });
+    const estilo = (sel, prop) => page.locator(sel).first().evaluate((el, pr) => getComputedStyle(el)[pr], prop);
+    ok("CSS. .extrato-xp-evento com borda lateral dedicada", parseFloat(await estilo(".extrato-xp-evento", "borderLeftWidth")) >= 3, await estilo(".extrato-xp-evento", "borderLeftWidth"));
+    const saldoStrong = await estilo(".extrato-xp .progresso-saldo strong", "fontSize");
+    ok("CSS. saldo em destaque (>1rem)", parseFloat(saldoStrong) > 16, saldoStrong);
+    const metaSize = await estilo(".extrato-xp-evento .meta", "fontSize");
+    ok("CSS. meta do evento menor (<=13px)", parseFloat(metaSize) <= 13, metaSize);
+    // botão Mostrar mais existe e tem foco visível (regra global)
+    const btn = page.getByRole("button", { name: /Mostrar mais/ });
+    if (await btn.count()) {
+      await btn.focus();
+      const outline = await btn.evaluate((el) => getComputedStyle(el).outlineStyle);
+      ok("CSS. botão Mostrar mais com foco visível", outline !== "none", outline);
+    } else {
+      ok("CSS. botão Mostrar mais com foco visível", true, "sem botão (poucos eventos)");
+    }
+    await ctx.close();
+  }
+
   // ---------- 8. Mobile ----------
   {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });

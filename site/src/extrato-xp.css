@@ -1,0 +1,45 @@
+/* ---- Extrato de XP somente-leitura (Issue #185) ----
+   Escopo exclusivo `.extrato-xp*` — tokens do tema, sem paleta paralela. */
+
+.extrato-xp h3 {
+  margin-top: 0;
+}
+
+.extrato-xp .progresso-saldo {
+  font-size: 1.05rem;
+  margin: 4px 0 10px;
+}
+
+.extrato-xp .progresso-saldo strong {
+  font-size: 1.35rem;
+  font-variant-numeric: tabular-nums;
+  color: #8ab4ff;
+}
+
+.extrato-xp .extrato-xp-lista {
+  margin: 8px 0;
+}
+
+.extrato-xp .extrato-xp-evento {
+  border-left: 3px solid var(--borda, #2a2f3f);
+  padding-left: 10px;
+}
+
+.extrato-xp .extrato-xp-evento strong {
+  font-weight: 600;
+}
+
+.extrato-xp .extrato-xp-evento .meta {
+  font-size: 12px;
+  color: var(--texto-fraco, #8b93a7);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 480px) {
+  .extrato-xp .extrato-xp-evento {
+    padding-left: 8px;
+  }
+  .extrato-xp .progresso-saldo strong {
+    font-size: 1.2rem;
+  }
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSocket } from "./socket";
 import { apiProgressao, type EventoXp, type Progressao } from "./api-progressao";
+import "./extrato-xp.css";
 
 /**
  * Extrato de XP somente-leitura (Issue #185 — Mission 2).
