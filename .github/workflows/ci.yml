@@ -11,6 +11,7 @@ on:
       - feat/guilda-responsavel-backend
       - feat/issue-186-sangue-core
       - feat/issue-127-token-vida
+      - fix/issue-155-boot-lock
     types:
       - opened
       - synchronize
@@ -134,6 +135,13 @@ jobs:
           else
             echo "revinculacao-ficha.test.ts ausente nesta ref (pré-C7) — pulado"
           fi
+      - name: Testes unitários do contrato de backup (Issue #155 W16)
+        run: |
+          if [ -f servidor/testes/backup-contrato.test.ts ]; then
+            npx tsx --test servidor/testes/backup-contrato.test.ts
+          else
+            echo "backup-contrato.test.ts ausente nesta ref (pré-#193) — pulado"
+          fi
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
@@ -193,7 +201,8 @@ jobs:
             teste-defeitos-mesa.mjs \
             teste-sangue-hmac-v2.mjs \
             teste-sangue-config.mjs \
-            teste-d10-transacao.mjs
+            teste-d10-transacao.mjs \
+            teste-autorizacao-negativa.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
