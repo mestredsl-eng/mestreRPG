@@ -3,6 +3,8 @@ import { ModalConfirmar } from "../Modal";
 import AvatarRetrato from "../AvatarRetrato";
 import { api, type Anotacao, type ArquivoBiblioteca, type CampanhaResumo, type Membro, type PersonagemResumo } from "../api";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
+import EstadoVazio from "../EstadoVazio";
+import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
 const CATEGORIAS = ["acontecimento", "pista", "npc", "local", "objetivo", "suspeita", "informacao", "lembrete", "livre", "segredo", "planejamento", "evento_futuro", "consequencia"];
 const VISIBILIDADES = [
@@ -30,6 +32,9 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const [editando, setEditando] = useState<Anotacao | null>(null);
   const [novo, setNovo] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Issue #239 — loading só na primeira carga da aba atual.
+  const [carregando, setCarregando] = useState(true);
+  const primeiraCarga = useRef(true);
   const [busca, setBusca] = useState("");
   const [filtroVis, setFiltroVis] = useState("");
   const [filtroCat, setFiltroCat] = useState("");
@@ -47,12 +52,15 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
   const geracao = useRef(0);
   const carregar = useCallback(async () => {
     const g = ++geracao.current;
+    const inicial = primeiraCarga.current;
+    if (inicial) setCarregando(true);
     try {
       const { anotacoes: lista } = await api.listarAnotacoes(campaignId, aba);
       if (g !== geracao.current) return;
       setAnotacoes(lista);
       setErro(null);
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
+    finally { primeiraCarga.current = false; if (g === geracao.current) setCarregando(false); }
   }, [campaignId, aba]);
 
   useEffect(() => { void carregar(); }, [carregar]);
@@ -143,7 +151,8 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
         <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}>Diário</button>
         <button className={aba === "mestre" ? "ativo" : "secundario"} onClick={() => setAba("mestre")}>Anotações do mestre</button>
       </div>
-      {erro && <p className="erro">{erro}</p>}
+      {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
+      {carregando && <EstadoCarregando>Carregando anotações…</EstadoCarregando>}
 
       {aba === "mestre" && !souMestre && (
         <p className="dica">Você vê apenas anotações do mestre compartilhadas com você.</p>
@@ -260,8 +269,8 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
             </div>
           </li>
         ))}
-        {!anotacoes.length && <li className="dica">Nenhuma anotação.</li>}
-        {anotacoes.length > 0 && !visiveis.length && <li className="dica">{temFiltro ? "Nenhuma anotação corresponde aos filtros." : "Nenhuma anotação."}</li>}
+        {!anotacoes.length && <li><EstadoVazio icone="vazio-lista">Nenhuma anotação.</EstadoVazio></li>}
+        {anotacoes.length > 0 && !visiveis.length && <li><EstadoVazio icone="vazio-busca">{temFiltro ? "Nenhuma anotação corresponde aos filtros." : "Nenhuma anotação."}</EstadoVazio></li>}
       </ul>
       {confirmando && (
         <ModalConfirmar
