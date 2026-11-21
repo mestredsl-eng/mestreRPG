@@ -78,7 +78,11 @@ try {
     await abrirRegrasSangue(page);
     const painel = page.locator(".painel-sangue");
     ok("UI. painel Pontos de Sangue visível ao mestre", await painel.count() === 1);
-    ok("UI. aviso de escopo (só vínculos)", (await painel.textContent()).includes("somente vínculos"));
+    const avisoEscopo = await painel.textContent();
+    ok("UI. aviso de escopo descreve valores configuráveis e runtime",
+      avisoEscopo.includes("custos por Poder")
+      && avisoEscopo.includes("quantidades de recuperação")
+      && avisoEscopo.includes("runtime"));
     ok("UI. config antiga ausente → habilitado desmarcado",
       await painel.locator('input[aria-label="Habilitar Pontos de Sangue"]').isChecked() === false);
 
@@ -180,6 +184,42 @@ try {
     ok("API. poder custo zero válido", s?.poderes?.sede_sanguis?.custo === 0);
     ok("API. recuperacaoSangue", s?.recuperacaoSangue?.habilitado === true);
     ok("API. pontos preservados", JSON.stringify(r.json?.config?.pontos) === JSON.stringify(pontosAntes ?? r.json?.config?.pontos));
+  }
+
+  // ---------- 3a. P3: custo inválido não pode apagar config silenciosamente ----------
+  {
+    const { ctx, page } = await novaPagina(cookie);
+    await abrirRegrasSangue(page);
+    const painel = page.locator(".painel-sangue");
+    const endpoint = `/campaigns/${campId}/regras/config`;
+    let putsConfig = 0;
+    page.on("request", (request) => {
+      if (request.method() === "PUT" && request.url().includes(endpoint)) putsConfig += 1;
+    });
+
+    const custo = painel.locator('input[aria-label="Custo de Sangue do Poder Chicote Sanguíneo"]');
+    await custo.fill("-1");
+    await painel.getByRole("button", { name: "Salvar Pontos de Sangue" }).click();
+    await painel.locator(".erro").waitFor({ timeout: 5000 });
+    const erroCusto = await painel.locator(".erro").textContent();
+    ok("P3. custo negativo identifica o Poder e explica a regra",
+      /Chicote Sanguíneo/.test(erroCusto) && /maior ou igual a zero/.test(erroCusto), erroCusto);
+    ok("P3. custo inválido não envia PUT", putsConfig === 0, `PUTs=${putsConfig}`);
+
+    const antesZero = await req(BASE, "GET", `/campaigns/${campId}/regras`, { cookie });
+    ok("P3. custo anterior permanece após tentativa inválida",
+      antesZero.json?.config?.sangue?.poderes?.chicote_sanguineo?.custo === 2);
+
+    const respostaPut = page.waitForResponse((response) =>
+      response.request().method() === "PUT" && response.url().includes(endpoint), { timeout: 10000 });
+    await custo.fill("0");
+    await painel.getByRole("button", { name: "Salvar Pontos de Sangue" }).click();
+    const resposta = await respostaPut;
+    ok("P3. custo zero é aceito e salva", resposta.ok(), `HTTP ${resposta.status()}`);
+    ok("P3. custo zero persiste sem ser tratado como vazio",
+      (await req(BASE, "GET", `/campaigns/${campId}/regras`, { cookie }))
+        .json?.config?.sangue?.poderes?.chicote_sanguineo?.custo === 0);
+    await ctx.close();
   }
 
   // ---------- 3b. P2: esvaziar seções-objeto realmente limpa (merge parcial) ----------

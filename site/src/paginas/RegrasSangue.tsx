@@ -10,9 +10,10 @@ import { api, type ConfigAcaoRecuperacao, type ConfigCapacidadeSangue, type Conf
  * campo por modo, mapa obrigatório, coeficiente, vínculos em TODAS as
  * estruturas ativas) continua no servidor — erros 400 são exibidos.
  *
- * Escopo: vínculos já suportados pelo schema C1. Custo por Poder,
- * quantidades de recuperação e consequências em jogo NÃO existem neste
- * contrato e não são editáveis aqui.
+ * Escopo: edita vínculos, capacidade, bônus, naturezas, custos por Poder
+ * e quantidades de recuperação de Sangue já suportados pelo schema atual.
+ * Ativar Poderes, debitar Sangue e executar ações de recuperação durante a
+ * sessão pertencem ao runtime e não são acionados por esta tela.
  */
 
 // Mesma classificação do servidor (regras.ts): tipos que produzem
@@ -285,7 +286,20 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
   };
 
   const salvar = async () => {
-    setErro(null); setAviso(null); setSalvando(true);
+    setErro(null); setAviso(null);
+    const custoInvalido = Object.entries(custoPoderes).find(([key, txt]) => {
+      if (txt.trim() === "") return false; // vazio = gratuito
+      const n = Number(txt);
+      return !Number.isFinite(n) || n < 0;
+    });
+    if (custoInvalido) {
+      const [key] = custoInvalido;
+      const nome = poderes.find((p) => p.key === key)?.name ?? key;
+      setErro(`Custo de Sangue inválido para ${nome}: informe um número finito maior ou igual a zero, ou deixe vazio para gratuito.`);
+      setSujo(true);
+      return; // não chamar onSalvar: nenhuma configuração é enviada
+    }
+    setSalvando(true);
     try {
       await onSalvar(montarPayload());
       setSujo(false);
@@ -305,10 +319,11 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
     <section className="cartao painel-sangue" onChangeCapture={() => setSujo(true)}>
       <h3>Pontos de Sangue</h3>
       <p className="dica">
-        Esta tela configura <strong>somente vínculos</strong> da ficha e rótulos de natureza.
-        Ativação de Poder, cobrança de Sangue e ações de recuperação em jogo
-        ainda não estão disponíveis nesta etapa — os valores de custo e
-        quantidade não fazem parte deste contrato.
+        Esta tela configura vínculos de ficha, capacidade, bônus, naturezas,
+        custos por Poder e quantidades de recuperação de Sangue.
+        Ativar Poderes, debitar Sangue e executar ações de recuperação durante
+        a sessão ainda dependem das etapas de runtime; esta tela apenas salva
+        a configuração.
       </p>
 
       <label className="check">
