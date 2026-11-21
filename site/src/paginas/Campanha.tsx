@@ -12,6 +12,7 @@ import Historico from "./Historico";
 import Arquivos from "./Arquivos";
 import IconeInterface from "../IconeInterface";
 import EstadoVazio from "../EstadoVazio";
+import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
 const STATUS_OPCOES = [
   ["preparacao", "Em preparação"],
@@ -32,6 +33,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const abaRef = useRef<Aba>("info");
   abaRef.current = aba;
   const [erro, setErro] = useState<string | null>(null);
+  // Issue #239 — membros/convites carregam junto da campanha; gate
+  // evita o "EstadoVazio" de convites piscar antes do GET resolver.
+  const [extrasCarregados, setExtrasCarregados] = useState(false);
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
   const [conviteCriado, setConviteCriado] = useState<{ code: string } | null>(null);
@@ -62,6 +66,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         const { membros } = await api.listarMembros(id);
         setMembros(membros);
       }
+      setExtrasCarregados(true);
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
@@ -208,7 +213,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
       {aba === "regras" && souMestre && <Regras campaignId={id} />}
 
-      {erro && <p className="erro">{erro}</p>}
+      {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
 
       {aba === "info" && (
         <section className="cartao">
@@ -424,9 +429,11 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             <button type="submit">Gerar convite</button>
           </form>
 
-          {convites.length === 0 && (
+          {!extrasCarregados ? (
+            <EstadoCarregando>Carregando convites…</EstadoCarregando>
+          ) : convites.length === 0 ? (
             <EstadoVazio icone="vazio-lista">Nenhum convite gerado ainda.</EstadoVazio>
-          )}
+          ) : null}
 
           <table className="tabela tabela-responsiva">
             <thead>

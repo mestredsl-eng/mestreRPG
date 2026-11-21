@@ -1,0 +1,46 @@
+/* Issue #239 — feedback acessível de carregamento/erro.
+   Folha namespaced importada apenas por EstadoFeedback.tsx.
+   Cores reutilizam tokens do tema; o tom de erro segue a convenção
+   de .erro (estilos.css). A animação do spinner é neutralizada pela
+   regra global de movimento reduzido (#218) — o texto nunca some. */
+
+.estado-feedback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 1.2rem 1rem;
+  text-align: center;
+}
+
+.estado-feedback-icone {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--texto-fraco, #9aa3b2);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: estado-feedback-girar 0.9s linear infinite;
+}
+
+@keyframes estado-feedback-girar {
+  to { transform: rotate(360deg); }
+}
+
+.estado-feedback-icone-svg {
+  width: 22px;
+  height: 22px;
+  color: #f87171;
+}
+
+.estado-feedback-texto {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.estado-feedback-erro .estado-feedback-texto {
+  color: #f87171;
+}
+
+.estado-feedback-retry {
+  margin-top: 0.2rem;
+}
