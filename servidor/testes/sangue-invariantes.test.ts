@@ -91,7 +91,7 @@ describe("invariantes — sequências combinadas", () => {
       }]);
       if (i % 5 === 0) {
         passos.push([`ajuste-${i}`, () => {
-          const r = ajustarSangueManual(d, { ...AUTOR, delta: i % 10 === 0 ? -1 : 1, motivo: `ajuste ${i}` });
+          const r = ajustarSangueManual(d, { ...AUTOR, delta: i % 10 === 0 ? -1 : 1, motivo: `ajuste ${i}`, requestId: rid(200 + i) });
           return r.ok ? r.dados : d;
         }]);
       }
@@ -170,7 +170,7 @@ describe("invariantes — sequências combinadas", () => {
     const d = { [CHAVE_SANGUE]: { saldo: "quebrado", usos: {}, historico: [] } };
     const antes = JSON.stringify(d);
     assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG }).ok, false);
-    assert.equal(ajustarSangueManual(d, { ...AUTOR, delta: 1, motivo: "x" }).ok, false);
+    assert.equal(ajustarSangueManual(d, { ...AUTOR, delta: 1, motivo: "x", requestId: rid(400) }).ok, false);
     assert.equal(reconciliarCapacidade(d, { ...AUTOR, capacidadeNova: 5, motivo: "x" }).ok, false);
     assert.equal(JSON.stringify(d), antes);
   });
