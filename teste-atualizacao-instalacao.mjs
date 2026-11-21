@@ -214,6 +214,15 @@ try {
   for (const [tb, rows] of Object.entries(antes)) {
     if (tb.includes("migration")) continue; // journal do drizzle MUDA por definição
     const d = depois[tb];
+    if (tb === "backups") {
+      // P10-B: db:migrate agora cria backup pré-migration automático —
+      // `backups` acumula linhas novas por desenho. O invariante
+      // preservado é: nenhuma linha PRÉ-EXISTENTE alterada ou perdida.
+      const depoisSet = new Set((d ?? []).map((r) => JSON.stringify(r)));
+      const sumiu = rows.filter((r) => !depoisSet.has(JSON.stringify(r)));
+      if (sumiu.length) divergencias.push(`${tb}(-${sumiu.length} linhas pré-existentes)`);
+      continue;
+    }
     if (JSON.stringify(rows) !== JSON.stringify(d)) {
       // tolera colunas novas em linhas antigas? migrations só ADD em tabelas novas
       // ou colunas com default — comparar chaves presentes no antes
