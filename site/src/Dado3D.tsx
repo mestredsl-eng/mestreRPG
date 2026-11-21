@@ -5,6 +5,7 @@ import {
   alturaDeRepouso, criarEstadoFisica, passoFisica,
   type Quat, type Vec3,
 } from "./fisicaDado";
+import { movimentoReduzido } from "./visualUsuario";
 
 interface Props {
   lados: number;
@@ -30,7 +31,7 @@ export default function Dado3D({ lados, valor, indice = 0, estado, className }: 
     const target = fromTo(normalFor(vertices, faces[faceIndex]), [0, 0, 1]);
     const spin: Quat = qNormalize([0.78, 0.28 + indice * 0.013, 0.42, 0.31]);
     const start = qMultiply(spin, target);
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = movimentoReduzido();
     // Física local de corpo rígido simplificado (ver fisicaDado.ts):
     // gravidade, quique no tampo, atrito, limites e assentamento na face
     // do valor recebido do servidor — nunca sorteia resultado.
