@@ -17,7 +17,8 @@
 |---|---|
 | Updater / `.bat` legados (N-1) | `7ce5b99bb20a0f951ffe5b70a96fe46ee5a157a0` — PR #176 |
 | `.bat` extraído para W0/W9/W10 | `git show 7ce5b99:iniciar-mestre-rpg.bat` — byte-a-byte, nunca cópia de trabalho nem simulação textual |
-| Boot Lock (N candidato) | PR #189 head `f22effdd8904711a9be728f631b645239ebef727` — **Draft, não integrado** |
+| Boot Lock (N candidato) | PR #189 head `7a68313f001b49a2c9d32a656cd9302b5b2dedd5`, base `fix/issue-155-status-hardening` @ `28e742d03752b68a88f3d7e4154cd168e978faad` — **Draft, não integrado**; bloqueios P1/P2 confirmados em #7068654416 (§4, B12) |
+| Harness executável W0–W16 | PR #192 head `90ea092d9781310260987a8e99902664fa9ef700`; #207 `8413b5b` é ancestor; diff próprio limitado a harness+relatório; reauditoria independente **APROVADA** (#7068382489) |
 | Hardening árvore suja / buffer | PR #188 (`fix/issue-155-status-hardening`) — **Draft** |
 | Restauração pendente | `servidor/src/db/aplicar-restauracao.ts` — flag `restauracao_pendente` em `server_settings` **do próprio banco** |
 | Trava de instância | `servidor/src/db/trava-instancia.ts` — SQLite `BEGIN EXCLUSIVE`, processo servidor, **não** substitui Boot Lock |
@@ -50,7 +51,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Preparação:** bare repo "origin" com N-1 + commit que altera o `.bat`; clone na revisão N-1; executar `cmd /c iniciar-mestre-rpg.bat` com log integral.
 - **Injeção:** o próprio pull dentro de `node scripts\auto-update.mjs`.
 - **Esperado:** documentar com evidência se o `cmd.exe` relê ou usa cauda em buffer; quais etapas pós-update executam sobre código novo; presença/ausência de corrupção de parsing. **Não presumir** recuperação garantida.
-- **PASS:** comportamento capturado em log integral e descrito objetivamente. **FAIL:** resultado imprevisível não documentado como limitação aceita / boot sobre estado inconsistente sem abort. **BLOCKED:** versão N com handoff ainda não integrada (então o cenário fica restrito ao legado).
+- **PASS:** comportamento capturado em log integral e descrito objetivamente. **FAIL:** resultado imprevisível não documentado como limitação aceita / boot sobre estado inconsistente sem abort. **BLOCKED:** versão N com handoff ainda não integrada (então o cenário fica restrito ao legado). **Estado atual no harness #192:** BLOQUEADO — o modo remoto GitHub/branch efêmera (`HOMOLOG_W_REMOTO_GITHUB=1`) está declarado mas **não implementado**; o único remoto usado é bare local `file:///` em `%TEMP%`, portanto o pull ff-only que alteraria o `.bat` nunca pode ser exercitado sem autorização explícita. O harness é estruturalmente incapaz de tocar o origin oficial — bloqueio por capacidade/autorização, **não** PASS nem FAIL.
 - **Artefatos:** log integral do `.bat`, `git log`, diff do `.bat` entre revisões.
 - **Limpeza:** remover diretório do fixture e bare repo.
 - **CI/Windows:** Windows real obrigatório (parsing de batch não é fiel em Linux); job `windows-latest` pode automatizar a primeira prova, mas homologação inicial é manual.
@@ -88,6 +89,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 
 - **Objetivo/risco:** pull fast-forward concluído com sucesso mas **sem** journal/estado por fase (simulando N-1 ou perda de estado): o próximo boot não pode presumir fase; deve reconstruir conservadoramente.
 - **Classe:** [INTEGRAÇÃO]+[CONTRATO] (depende de como N trata estado ausente após ativação do protocolo — W13-related).
+- **Contrato fail-closed exato:** ausência de state **sem prova independente de instalação nova** bloqueia operações mutáveis — o boot não pode distinguir "nunca houve estado" de "estado perdido" sem marcador persistido em local distinto (ver W13). A única exceção limitada admitida é a transição N-1→N documentada no protocolo, que **não** se generaliza a reconstrução de estado arbitrário.
 - **Fixture:** clone N-1; forçar pull limpo e remover/omitir estado externo antes do próximo boot.
 - **Esperado:** comportamento documentado do contrato para "estado inesperadamente ausente" — fail-closed ou reconstrução explícita; nunca presunção silenciosa de fase.
 - **PASS:** comportamento conforme contrato, com evidência. **FAIL:** boot presume "tudo concluído" sem prova. **BLOCKED:** definição de estado-ausente no contrato.
@@ -110,6 +112,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Fixture:** `xcopy`/clone da instalação para `%TEMP%\w6-*`; `servidor.json` com porta livre; banco vazio do fixture.
 - **Esperado:** servidor filho sobe, `/api/health` responde, processo encerrado limpo. **Registrar explicitamente:** smoke em cópia vazia prova disponibilidade HTTP do build, **não** integridade do banco real (isso é W12).
 - **PASS:** health 200 + encerramento limpo + isolamento comprovado (porta/config/banco do fixture). **FAIL:** smoke toca instalação real ou é reportado como prova de dados.
+- **Estado atual no harness #192 (`90ea092`):** isolamento **aprovado por leitura de código** na reauditoria I6-B (#7068382489) — app copiada em `%TEMP%`, `configuracao/servidor.json` próprio (ambos os caminhos efetivos), porta efêmera provada livre antes do spawn, posse HTTP do filho (vivo + porta morre com ele), snapshot completo de `banco/arquivos/backups/configuracao` da instalação real antes/depois, `MESTRE_HOME` dedicado. **Porém o harness integral NÃO foi reexecutado nesse SHA — execução atual: NÃO VALIDADA.** O PASS de 2026-11-20 (SHA `7ce5b99`) refere-se à versão anterior do harness e não é reutilizado aqui.
 - **CI/Windows:** CI possível com config/porta efêmeras; homologação inicial Windows.
 
 ### W7 — State corrompido ou divergente
@@ -141,6 +144,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Injeção:** `taskkill` no PID do `cmd.exe` (ou do node servidor se já iniciado) temporizado para a janela pós-updater/pré-migrate — ex.: wrapper que monitora o log do `.bat` e mata ao ver a linha "Aplicando migracoes" **antes** dela executar, ou kill após "Verificando restauracao pendente".
 - **Esperado:** HEAD=N, updater concluído, etapas da cauda não executadas; próximo boot: updater "sem atualização", `.bat` reexecuta cauda — documentar idempotência real (build por timestamp, migrate idempotente, restore sem flag = no-op).
 - **PASS:** próximo boot converge para servidor íntegro ou aborta com instrução; sem efeito colateral duplicado. **FAIL:** estado parcial silencioso.
+- **Estado atual no harness #192 (`90ea092`):** barreiras determinísticas `.chegou`/`.liberar`/`.executou` (stub `npm.cmd` restrito à fixture, PATH dedicado) **herdadas de #207** — confirmadas por ancestry (#207 `8413b5b` é ancestor) e revisão estática; kill só após `.chegou`, prova = `.executou` ausente. A execução de W9/W10 registrada no commit `8413b5b` ("W9 e W10 aprovados com barreiras determinísticas") ocorreu **no contexto de #207**, não foi repetida no HEAD `90ea092` — tratar como evidência herdada, não execução nova. Remoto = bare local `file:///`; origin oficial intocado.
 - **CI/Windows:** Windows real.
 
 ### W10 — Queda após migration legada e antes do servidor
@@ -151,7 +155,8 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 - **Fixture/Preparação:** como W9.
 - **Interrupção:** após `call npm run db:migrate` retornar 0 e antes de `call npm run start -w servidor`.
 - **Esperado:** próximo boot executa updater (sem update), cauda do `.bat`, restore (sem flag → no-op), migrate (nada pendente), start; **sem** qualquer verificação de "estado deixado pela sessão anterior" — documentar.
-- **PASS:** comportamento do próximo boot documentado com logs; lacuna W8 confirmada em contexto. **CI/Windows:** Windows real.
+- **PASS:** comportamento do próximo boot documentado com logs; lacuna W8 confirmada em contexto. **Estado atual no harness #192 (`90ea092`):** mesma herança de W9 — barreiras determinísticas confirmadas por ancestry/revisão estática; execução registrada em #207, **não repetida** neste SHA. Prova adicional `servidorNoArAposKill=false` no kill pré-start.
+- **CI/Windows:** Windows real.
 
 ### W11 — Helper de Boot Lock ausente em N — **Gate 0**
 
@@ -227,6 +232,7 @@ Exit code 0 sozinho **não** é prova. Smoke HTTP em cópia vazia **não** é pr
 | B9 | Journal externo de restauração | W15 | Inexistente |
 | B10 | Versionamento provisório 1.0.6/0030/UUID…0107 | Todos | Realocar na sequência coordenada |
 | B11 | Issue #156 / rollout | Todos | Kill-switch ≠ consentimento; auditoria #156 só vale para o banco local |
+| B12 | Cadeia Boot Lock #189 — bloqueios independentes (#7068654416, I6-E) | W1–W3, W11 e toda a cadeia .9 | **P1:** nenhum produtor em produção para bootstrap/recibo; **P1:** `criarBackupPreUpdate()` sem caller no boot; **P1:** divergência versão/journal (1.0.6/0030 contra main 1.0.7/0031–0032); **P2:** nenhum dispatch de #190 contra `refs/pull/189/merge` (o dispatch conhecido testou #193). Bloqueia a cadeia .9 — CI verde de outra ref não fecha esses pontos |
 
 ## 5. CI × Windows real × intervenção
 
@@ -269,16 +275,19 @@ Limpeza: ______
 
 ## 9. Declaração de honestidade
 
-- Nenhum W é declarado executado neste documento; itens sem implementação estão BLOCKED/CORREÇÃO/INTEGRAÇÃO.
+- Nenhum W é declarado executado **neste documento**; itens sem implementação estão BLOCKED/CORREÇÃO/INTEGRAÇÃO.
+- **Escopo desta ata (#191, documental):** registrar contrato, evidência e classificação — **não** executa o harness. O harness executável vive na #192 (`homologacao-155-w.mjs`); execuções atribuídas a SHAs diferentes são marcadas como herdadas.
+- Toda linha de §10 distingue: SHA testado, comando, exit code, artefato, **execução independente vs herdada**, SKIP, bloqueio e lacuna. PASS antigo nunca é reutilizado para SHA novo sem reexecução.
 - Resultados de execução futura serão registrados em §10 com evidências verificáveis.
 
 ## 10. Registro de execuções
 
 | W | Data | SHA | SO/Node | Comando | Exit | Decisão | Artefato |
 |---|---|---|---|---|---|---|---|
-| W14 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w14` | — | **reprovado** (fail-open: 3 cenários exit 0) | relatório de execução na branch `test/issue-155-homologacao-w` |
-| W8 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w8` | migrate 0 | **aprovado** (lacuna demonstrada: 31 migrations, 0 backups, 0 marcadores) | idem |
-| W6 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w6` | — | **aprovado** (health 200 isolado) | idem |
-| W16 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w16` | — | **reprovado** (manifesto ausente → ok:true) | idem |
-| W0/W9/W10 | — | — | — | — | — | **não executado** — servidor real ocupa porta 3001 | — |
-| W1–W5/W7/W11/W12.3/W13/W15 | — | — | — | — | — | **bloqueado** — versão N não integrada | — |
+| W14 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w14` | — | **reprovado** (fail-open: 3 cenários exit 0) — mantido no #192 `90ea092` | relatório de execução na branch `test/issue-155-homologacao-w` |
+| W8 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w8` | migrate 0 | **aprovado** (lacuna demonstrada: 31 migrations, 0 backups, 0 marcadores) — mantido como demonstração de lacuna de proveniência, não prova de backup correto | idem |
+| W6 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w6` | — | **aprovado na época** (health 200 isolado) — **NÃO VALIDADO em `90ea092`**: isolamento novo aprovado só por leitura de código (I6-B); harness não reexecutado | idem |
+| W16 | 2026-11-20 | 7ce5b99 | Win/Node 26.13.0 | `node homologacao-155-w.mjs w16` | — | **reprovado** (manifesto ausente → ok:true; adulteração de arquivo rejeitada) — FAILs mantidos no #192 `90ea092` | idem |
+| W9/W10 | ~2026-11-20 | contexto #207 `8413b5b` | Win | `node homologacao-155-w.mjs w9` / `w10` | — | **aprovado herdado** (commit `8413b5b`: barreiras `migrate.chegou/execute=false`, retomada health=200, `servidorNoArAposKill=false`) — execução no SHA de #207, **não repetida** em `90ea092` | idem |
+| W0 | — | — | — | — | — | **bloqueado** — modo remoto GitHub/branch efêmera não implementado; harness incapaz de tocar origin oficial (bare local apenas) | — |
+| W1–W5/W7/W11/W12.3/W13/W15 | — | — | — | — | — | **bloqueado** — versão N não integrada; cadeia .9 com bloqueios P1/P2 da #189 (B12) | — |
