@@ -879,7 +879,16 @@ export interface ConfigCapacidadeSangue {
 
 export interface ConfigNaturezaSangue {
   metaHumanoComPoder?: boolean;
-  recuperacao?: string;
+  /** Ação canônica de recuperação (contrato #216) — nunca string livre. */
+  recuperacao?: "descansar" | "alimentar";
+}
+
+/** Ação canônica de recuperação de Sangue (Descansar/Alimentar-se). */
+export interface ConfigAcaoRecuperacao {
+  /** Obrigatória quando a ação está presente; false = inerte. */
+  habilitada?: boolean;
+  /** Obrigatória > 0 quando habilitada:true; ausente/inválida → 400. */
+  quantidade?: number;
 }
 
 export interface ConfigSangue {
@@ -890,7 +899,17 @@ export interface ConfigSangue {
   /** Rótulos de natureza livres da campanha; sem mapeamento = desconhecida (fail-closed). */
   naturezas?: Record<string, ConfigNaturezaSangue>;
   /** Ausência nunca habilita recuperação — só habilitado:true liga. */
-  recuperacaoSangue?: { habilitado?: boolean };
+  recuperacaoSangue?: {
+    habilitado?: boolean;
+    /** Ações canônicas; ação ausente = desabilitada. */
+    acoes?: {
+      descansar?: ConfigAcaoRecuperacao;
+      alimentar?: ConfigAcaoRecuperacao;
+    };
+  };
+  /** Custo de Sangue por Poder (key de rule_definitions kind="poder").
+   *  Campo sem entrada = gratuito; custo deve ser finito >= 0. */
+  poderes?: Record<string, { custo: number }>;
 }
 
 export interface RegrasCampanha {

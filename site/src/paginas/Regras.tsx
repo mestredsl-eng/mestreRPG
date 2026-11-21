@@ -401,6 +401,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       {aba === "sangue" && regras && (
         <RegrasSangue
           config={regras.config.sangue}
+          poderes={regras.elementos.filter((el) => el.kind === "poder")}
           campaignId={campaignId}
           onSalvar={async (sangue) => {
             // PUT /regras/config aceita merge parcial — enviamos APENAS a

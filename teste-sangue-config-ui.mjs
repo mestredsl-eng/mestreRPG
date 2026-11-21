@@ -48,6 +48,11 @@ try {
       { id: "qualidade_sangue", label: "Qualidade Sangue", tipo: "inteiro", semantico: "livre", padrao: 0 },
     );
     w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(est), v.id);
+    // Poder na biblioteca de regras (kind="poder") para o editor de custo
+    const rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const agora = Date.now();
+    w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), rs.id, "poder", "chicote_sanguineo", "Chicote Sanguíneo", null, null, "{}", agora, agora);
     w.close();
   }
 
@@ -108,11 +113,20 @@ try {
     await painel.locator("#sangue-campo-qualidade").selectOption("qualidade_sangue");
     await painel.locator('input[aria-label="Coeficiente do bônus de qualidade"]').fill("0.5");
 
-    // Natureza + rótulo
+    // Custo do Poder
+    await painel.locator('input[aria-label="Custo de Sangue do Poder Chicote Sanguíneo"]').fill("2");
+
+    // Ações de recuperação
+    await painel.locator('input[aria-label="Habilitar ação Descansar"]').check();
+    await painel.locator('input[aria-label="Quantidade de Sangue — Descansar"]').fill("3");
+    await painel.locator('input[aria-label="Habilitar ação Alimentar-se"]').check();
+    await painel.locator('input[aria-label="Quantidade de Sangue — Alimentar-se"]').fill("1");
+
+    // Natureza + rótulo (ação canônica via select)
     await painel.locator("#sangue-campo-natureza").selectOption("natureza");
     await painel.getByRole("button", { name: "+ natureza" }).click();
     await painel.locator('input[aria-label="Natureza 1 rótulo"]').fill("Vampiro");
-    await painel.locator('input[aria-label="Natureza 1 recuperação"]').fill("sangue_raro");
+    await painel.locator('select[aria-label="Natureza 1 ação de recuperação"]').selectOption("descansar");
     await painel.locator('input[aria-label="Meta humano com Poder natureza 1"]').check();
 
     // Recuperação sinalizador
@@ -135,7 +149,12 @@ try {
       && s?.capacidade?.bonusQualidade?.coeficiente === 0.5);
     ok("API. campoNaturezaId", s?.campoNaturezaId === "natureza");
     ok("API. naturezas Vampiro", s?.naturezas?.Vampiro?.metaHumanoComPoder === true
-      && s?.naturezas?.Vampiro?.recuperacao === "sangue_raro");
+      && s?.naturezas?.Vampiro?.recuperacao === "descansar");
+    ok("API. poderes custo", s?.poderes?.chicote_sanguineo?.custo === 2);
+    ok("API. acoes descansar", s?.recuperacaoSangue?.acoes?.descansar?.habilitada === true
+      && s?.recuperacaoSangue?.acoes?.descansar?.quantidade === 3);
+    ok("API. acoes alimentar", s?.recuperacaoSangue?.acoes?.alimentar?.habilitada === true
+      && s?.recuperacaoSangue?.acoes?.alimentar?.quantidade === 1);
     ok("API. recuperacaoSangue", s?.recuperacaoSangue?.habilitado === true);
     ok("API. pontos preservados", JSON.stringify(r.json?.config?.pontos) === JSON.stringify(pontosAntes ?? r.json?.config?.pontos));
   }

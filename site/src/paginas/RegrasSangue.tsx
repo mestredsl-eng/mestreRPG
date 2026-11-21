@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, type ConfigCapacidadeSangue, type ConfigNaturezaSangue, type ConfigSangue, type ModoCapacidadeSangue } from "../api";
+import { api, type ConfigAcaoRecuperacao, type ConfigCapacidadeSangue, type ConfigNaturezaSangue, type ConfigSangue, type ElementoRegra, type ModoCapacidadeSangue } from "../api";
 
 /**
  * Painel "Pontos de Sangue" das Regras do mestre (Issue #186, C8-A).
@@ -44,7 +44,7 @@ interface CampoFicha {
   versao: number;
 }
 
-interface NaturezaForm { rotulo: string; metaHumano: boolean; recuperacao: string }
+interface NaturezaForm { rotulo: string; metaHumano: boolean; recuperacao: "" | "descansar" | "alimentar" }
 interface MapaLinha { rotulo: string; valor: string }
 
 const msgErro = (e: unknown, padrao: string) => {
@@ -112,8 +112,10 @@ function SeletorCampo({ campos, valor, rotuloVazio, onChange, filtroTipos, id }:
   );
 }
 
-export default function RegrasSangue({ config, campaignId, onSalvar }: {
+export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: {
   config: ConfigSangue | undefined;
+  /** Elementos kind="poder" do ruleset — chave do custo é `key`, nunca campoId. */
+  poderes: ElementoRegra[];
   campaignId: string;
   onSalvar: (sangue: ConfigSangue) => Promise<void>;
 }) {
@@ -124,6 +126,9 @@ export default function RegrasSangue({ config, campaignId, onSalvar }: {
   const [campos, setCampos] = useState<CampoFicha[] | null>(null);
   const [bqAtivo, setBqAtivo] = useState(false);
   const [naturezas, setNaturezas] = useState<NaturezaForm[]>([]);
+  const [custoPoderes, setCustoPoderes] = useState<Record<string, string>>({});
+  const [acaoDescansar, setAcaoDescansar] = useState<{ on: boolean; qtd: string }>({ on: false, qtd: "" });
+  const [acaoAlimentar, setAcaoAlimentar] = useState<{ on: boolean; qtd: string }>({ on: false, qtd: "" });
   const [mapaCap, setMapaCap] = useState<MapaLinha[]>([]);
   const [mapaBq, setMapaBq] = useState<MapaLinha[]>([]);
 
@@ -132,8 +137,13 @@ export default function RegrasSangue({ config, campaignId, onSalvar }: {
     const bq = config?.capacidade?.bonusQualidade;
     setBqAtivo(!!bq && Object.values(bq).some((v) => v !== undefined));
     setNaturezas(Object.entries(config?.naturezas ?? {}).map(([rotulo, n]) => ({
-      rotulo, metaHumano: n.metaHumanoComPoder === true, recuperacao: n.recuperacao ?? "",
+      rotulo, metaHumano: n.metaHumanoComPoder === true,
+      recuperacao: (n.recuperacao ?? "") as NaturezaForm["recuperacao"],
     })));
+    setCustoPoderes(Object.fromEntries(Object.entries(config?.poderes ?? {}).map(([k, v]) => [k, String(v.custo)])));
+    const acoes = config?.recuperacaoSangue?.acoes;
+    setAcaoDescansar({ on: acoes?.descansar?.habilitada === true, qtd: acoes?.descansar?.quantidade !== undefined ? String(acoes.descansar.quantidade) : "" });
+    setAcaoAlimentar({ on: acoes?.alimentar?.habilitada === true, qtd: acoes?.alimentar?.quantidade !== undefined ? String(acoes.alimentar.quantidade) : "" });
     setMapaCap(Object.entries(config?.capacidade?.mapa ?? {}).map(([rotulo, valor]) => ({ rotulo, valor: String(valor) })));
     setMapaBq(Object.entries(bq?.mapa ?? {}).map(([rotulo, valor]) => ({ rotulo, valor: String(valor) })));
   }, [config]);
@@ -224,11 +234,28 @@ export default function RegrasSangue({ config, campaignId, onSalvar }: {
       if (!n.rotulo.trim()) continue;
       const entrada: ConfigNaturezaSangue = {};
       if (n.metaHumano) entrada.metaHumanoComPoder = true;
-      if (n.recuperacao.trim()) entrada.recuperacao = n.recuperacao.trim();
+      if (n.recuperacao) entrada.recuperacao = n.recuperacao;
       nats[n.rotulo.trim()] = entrada;
     }
     if (Object.keys(nats).length) s.naturezas = nats;
-    if (form.recuperacaoSangue?.habilitado) s.recuperacaoSangue = { habilitado: true };
+    const recSangue: NonNullable<ConfigSangue["recuperacaoSangue"]> = {};
+    if (form.recuperacaoSangue?.habilitado) recSangue.habilitado = true;
+    const montarAcao = (a: { on: boolean; qtd: string }): ConfigAcaoRecuperacao | undefined => {
+      if (!a.on) return undefined; // ação desabilitada = ausente (inerte)
+      const q = Number(a.qtd);
+      return { habilitada: true, quantidade: Number.isFinite(q) ? q : undefined };
+    };
+    const aD = montarAcao(acaoDescansar);
+    const aA = montarAcao(acaoAlimentar);
+    if (aD || aA) recSangue.acoes = { ...(aD ? { descansar: aD } : {}), ...(aA ? { alimentar: aA } : {}) };
+    if (Object.keys(recSangue).length) s.recuperacaoSangue = recSangue;
+    const pds: Record<string, { custo: number }> = {};
+    for (const [key, txt] of Object.entries(custoPoderes)) {
+      if (txt.trim() === "") continue; // vazio = gratuito (sem entrada)
+      const n = Number(txt);
+      if (Number.isFinite(n) && n >= 0) pds[key] = { custo: n };
+    }
+    if (Object.keys(pds).length) s.poderes = pds;
     return s;
   };
 
@@ -410,17 +437,40 @@ export default function RegrasSangue({ config, campaignId, onSalvar }: {
             </label>
             <button type="button" className="secundario" onClick={() => setNaturezas(naturezas.filter((_, j) => j !== i))}>✕</button>
           </div>
-          <input
-            aria-label={`Natureza ${i + 1} recuperação`}
-            placeholder="Rótulo de recuperação (opcional, opaco)"
+          <select
+            aria-label={`Natureza ${i + 1} ação de recuperação`}
             value={n.recuperacao}
-            onChange={(e) => setNaturezas(naturezas.map((x, j) => j === i ? { ...x, recuperacao: e.target.value } : x))}
-          />
+            onChange={(e) => setNaturezas(naturezas.map((x, j) => j === i ? { ...x, recuperacao: e.target.value as NaturezaForm["recuperacao"] } : x))}
+          >
+            <option value="">— sem ação de recuperação —</option>
+            <option value="descansar">Descansar</option>
+            <option value="alimentar">Alimentar-se</option>
+          </select>
         </div>
       ))}
       <button type="button" className="secundario" onClick={() => setNaturezas([...naturezas, { rotulo: "", metaHumano: false, recuperacao: "" }])}>
         + natureza
       </button>
+
+      <h4>Poderes — custo de Sangue por ativação</h4>
+      {poderes.length === 0 ? (
+        <p className="meta">Nenhum Poder cadastrado na biblioteca de regras desta campanha.</p>
+      ) : (
+        <>
+          <p className="meta">Custo em pontos de Sangue debitado a cada ativação do Poder. Campo vazio = gratuito; zero é válido.</p>
+          {poderes.map((p) => (
+            <div className="linha" key={p.key}>
+              <span>{p.name} <span className="meta">({p.key})</span></span>
+              <input
+                aria-label={`Custo de Sangue do Poder ${p.name}`}
+                type="number" min={0} step="any" placeholder="gratuito"
+                value={custoPoderes[p.key] ?? ""}
+                onChange={(e) => setCustoPoderes((m) => ({ ...m, [p.key]: e.target.value }))}
+              />
+            </div>
+          ))}
+        </>
+      )}
 
       <h4>Recuperação de Sangue</h4>
       <label className="check">
@@ -432,7 +482,29 @@ export default function RegrasSangue({ config, campaignId, onSalvar }: {
         />
         Habilitar sinalizador de recuperação de Sangue
       </label>
-      <p className="meta">Somente o sinalizador faz parte do contrato C1 — quantidade, taxa e cooldown serão definidos em etapa futura.</p>
+      <h5>Ações de recuperação (opcional)</h5>
+      <p className="meta">Cada ação exige quantidade quando habilitada. Ação desabilitada/ausente não recupera Sangue. O vínculo natureza→ação é definido nos rótulos acima.</p>
+      {([["descansar", "Descansar", acaoDescansar, setAcaoDescansar], ["alimentar", "Alimentar-se", acaoAlimentar, setAcaoAlimentar]] as const).map(([id, rotulo, estado, setEstado]) => (
+        <div className="linha" key={id}>
+          <label className="check">
+            <input
+              type="checkbox"
+              aria-label={`Habilitar ação ${rotulo}`}
+              checked={estado.on}
+              onChange={(e) => setEstado({ on: e.target.checked, qtd: estado.qtd })}
+            />
+            {rotulo}
+          </label>
+          {estado.on && (
+            <input
+              aria-label={`Quantidade de Sangue — ${rotulo}`}
+              type="number" min={0} step="any" placeholder="quantidade"
+              value={estado.qtd}
+              onChange={(e) => setEstado({ on: estado.on, qtd: e.target.value })}
+            />
+          )}
+        </div>
+      ))}
 
       {erro && <p className="erro">{erro}</p>}
       {aviso && <p className="online">{aviso}</p>}
