@@ -93,21 +93,36 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
         ehDono = lista?.personagens?.some((p) => p.id === characterId && p.ehEu === true) === true;
       }
       setEhEu(ehDono);
-      // Poderes do próprio personagem: campos selecao_nivel com
-      // regraKind==="poder" e itens nível>=1. Nomes via biblioteca.
+      // Poderes do próprio personagem — dois caminhos canônicos
+      // (mesma semântica de extrairEscolhas em regras.ts):
+      //  a) selecao_nivel ligada a Poder (regraKind ou regra.kind):
+      //     itens com nivel INTEIRO finito 1..5 — o contrato formal
+      //     do tipo; fração aqui é dado corrompido e não conta;
+      //  b) campo escalar inteiro/decimal vinculado via
+      //     campo.regra {kind:"poder", key}: valor numérico finito
+      //     > 0 — 0.5 é posse válida (selecionado = n > 0).
+      // Nomes via biblioteca.
       const ficha = det?.ficha;
       const valores = ficha?.campos ?? {};
       const chaves = new Set<string>();
       for (const s of ficha?.estrutura?.secoes ?? []) {
         for (const campo of s.campos ?? []) {
-          if (campo.tipo !== "selecao_nivel" || campo.regraKind !== "poder") continue;
-          const v = valores[campo.id];
-          if (!Array.isArray(v)) continue;
-          for (const item of v as { key?: unknown; nivel?: unknown }[]) {
-            // Poder adquirido = nível numérico finito > 0 (frações como
-            // 0.5 contam — mesmo critério do D10/#237 e do socket R6.3).
-            if (item && typeof item === "object" && typeof item.key === "string" && item.key
-              && typeof item.nivel === "number" && Number.isFinite(item.nivel) && item.nivel > 0) chaves.add(item.key);
+          if (campo.tipo === "selecao_nivel"
+            && (campo.regraKind === "poder" || campo.regra?.kind === "poder")) {
+            const v = valores[campo.id];
+            if (!Array.isArray(v)) continue;
+            for (const item of v as { key?: unknown; nivel?: unknown }[]) {
+              if (item && typeof item === "object" && typeof item.key === "string" && item.key
+                && typeof item.nivel === "number" && Number.isInteger(item.nivel)
+                && item.nivel >= 1 && item.nivel <= 5) chaves.add(item.key);
+            }
+            continue;
+          }
+          if ((campo.tipo === "decimal" || campo.tipo === "inteiro")
+            && campo.regra?.kind === "poder"
+            && typeof campo.regra.key === "string" && campo.regra.key) {
+            const n = valores[campo.id];
+            if (typeof n === "number" && Number.isFinite(n) && n > 0) chaves.add(campo.regra.key);
           }
         }
       }

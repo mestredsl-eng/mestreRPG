@@ -45,6 +45,15 @@ function setSangueConfig(campId, sangue) {
     w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
   } finally { w.close(); }
 }
+function setPoderesLimite(campId, limite) {
+  const w = db();
+  try {
+    const rs = w.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const cfg = JSON.parse(rs.config || "{}");
+    cfg.poderes = { ...(cfg.poderes || {}), limitePoderes: limite };
+    w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+  } finally { w.close(); }
+}
 function saldoDe(charId) {
   const w = db();
   try {
@@ -75,6 +84,10 @@ const CFG = {
     poder_zero: { custo: 1 },
     poder_neg: { custo: 1 },
     poder_sem: { custo: 1 },
+    poder_szero: { custo: 1 },
+    poder_sneg: { custo: 1 },
+    poder_stxt: { custo: 1 },
+    poder_saus: { custo: 1 },
   },
 };
 
@@ -116,6 +129,12 @@ try {
     ["poder_zero", "Poder Zero"],
     ["poder_neg", "Poder Negativo"],
     ["poder_sem", "Poder Sem Nivel"],
+    // Chaves distintas p/ o caminho ESCALAR (campo.regra.key) — assim
+    // cada assert de ausência atribui o fracasso ao caminho certo.
+    ["poder_szero", "Poder Escalar Zero"],
+    ["poder_sneg", "Poder Escalar Negativo"],
+    ["poder_stxt", "Poder Escalar Texto"],
+    ["poder_saus", "Poder Escalar Ausente"],
   ]) {
     await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
       cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true } },
@@ -130,6 +149,13 @@ try {
         { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "atributo", minimo: 1, maximo: 30 },
         { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", opcoes: ["Humano", "Vampiro"] },
         { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder" },
+        // Campos escalares vinculados a Poder via campo.regra — o
+        // caminho canônico p/ nível fracionário (0.5 é posse válida).
+        { id: "pdec_ok", label: "Poder Dec Ok", tipo: "decimal", regra: { kind: "poder", key: "poder_frac" } },
+        { id: "pdec_szero", label: "Poder Dec Szero", tipo: "decimal", regra: { kind: "poder", key: "poder_szero" } },
+        { id: "pdec_sneg", label: "Poder Dec Sneg", tipo: "decimal", regra: { kind: "poder", key: "poder_sneg" } },
+        { id: "pdec_stxt", label: "Poder Dec Stxt", tipo: "decimal", regra: { kind: "poder", key: "poder_stxt" } },
+        { id: "pdec_saus", label: "Poder Dec Saus", tipo: "decimal", regra: { kind: "poder", key: "poder_saus" } },
       ],
     }],
     pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
@@ -137,6 +163,9 @@ try {
   await req(BASE, "PUT", `/campaigns/${CID}/sheet-templates/${tid}/versions/${vid}`, { cookie: M, body: { estrutura } });
   await req(BASE, "POST", `/campaigns/${CID}/sheet-templates/${tid}/publish`, { cookie: M, body: { versionId: vid } });
   setSangueConfig(CID, CFG);
+  // A ficha "Frações" carrega 2 poderes válidos (selecao_nivel + escalar)
+  // — o limite default da campanha é 1.
+  setPoderesLimite(CID, 10);
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
     cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
@@ -154,34 +183,44 @@ try {
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
-  // Ficha com níveis de Poder na fronteira: 0.5 (adquirido), 0, -2 e
-  // sem nivel (não adquiridos — mesmo existindo na biblioteca).
+  // Ficha "Frações": prova dos DOIS caminhos canônicos de Poder —
+  //  a) selecao_nivel (contrato inteiro 1..5): nivel 2 válido via API;
+  //  b) campo escalar decimal vinculado (campo.regra.key): 0.5 via API
+  //     — fração é posse válida nesse caminho.
   const pjF = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
     cookie: J1, body: {
       name: "Frações", templateVersionId: vid,
-      // nivel 1 na escrita: a validação selecao_nivel desta linhagem
-      // exige inteiro 1..5; o 0.5 do contrato D10/#237 chega via
-      // propagação — injetado no banco abaixo (leitura não revalida).
-      data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_frac", nivel: 1 }] },
+      data: {
+        cap: 10, nat: "Humano",
+        poderes: [{ key: "poder_fogo", nivel: 2 }],
+        pdec_ok: 0.5,
+      },
     },
   });
   const CHARF = pjF.json?.personagem?.id ?? pjF.json?.id;
-  // Níveis inválidos injetados direto no banco: a validação de escrita
-  // já os rejeitaria, mas o filtro da UI é defesa em profundidade —
-  // dado envenenado não pode oferecer Poder não adquirido.
+  // Veneno injetado direto no banco (defesa em profundidade — a
+  // validação de escrita já rejeitaria; o filtro da UI não pode
+  // confiar que o dado passou por ela):
+  //  - selecao_nivel: 0.5 (não inteiro), 0, -2, null, "NaN", ausente —
+  //    TODOS devem ser recusados (contrato do tipo é inteiro 1..5);
+  //  - escalar decimal: 0, -1, "NaN", null — recusados (>0 finito).
   {
     const w = db();
     try {
       const row = w.prepare("select data from characters where id=?").get(CHARF);
       const data = JSON.parse(row.data || "{}");
       data.poderes = [
-        { key: "poder_frac", nivel: 0.5 },
-        { key: "poder_zero", nivel: 0 },
-        { key: "poder_neg", nivel: -2 },
+        { key: "poder_fogo", nivel: 2 },   // válido — prova o caminho a)
+        { key: "poder_zero", nivel: 0.5 }, // fração em selecao_nivel: inválida
+        { key: "poder_neg", nivel: 0 },
         { key: "poder_sem", nivel: null },
-        { key: "poder_texto", nivel: "NaN" },
+        { key: "poder_sem", nivel: "NaN" },
         { key: "poder_sem" }, // nivel ausente por completo
       ];
+      data.pdec_szero = 0;
+      data.pdec_sneg = -1;
+      data.pdec_stxt = "NaN";
+      data.pdec_saus = null;
       w.prepare("update characters set data=? where id=?").run(JSON.stringify(data), CHARF);
     } finally { w.close(); }
   }
@@ -512,26 +551,41 @@ try {
     await ctx.close();
   }
 
-  // ---------- 4e. Poder com nível fracionário 0.5 é adquirido ----------
-  sec("UI. poder nível 0.5 aparece e ativa; níveis inválidos não aparecem");
+  // ---------- 4e. Poder: selecao_nivel inteiro 1..5 + escalar >0 ----------
+  sec("UI. poder — selecao_nivel 1..5 inteiro e escalar decimal >0");
   {
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Frações");
     const painel = page.locator(".painel-sangue-leitura");
     const selPoder = painel.locator("select[aria-label='Poder a ativar']");
     await page.waitForTimeout(800); // lista de poderes assíncrona
-    t("UI. frac: opção 'Poder Fracionado' (nível 0.5) presente",
-      await selPoder.locator("option", { hasText: "Poder Fracionado" }).count() === 1);
-    t("UI. frac: 'Poder Zero' (nível 0) ausente",
+    const opcoes = () => selPoder.locator("option").allInnerTexts();
+    // Caminho a) selecao_nivel: só inteiro 1..5 — nivel 2 aparece.
+    t("UI. sel: 'Poder de Fogo' (selecao_nivel nivel 2) presente",
+      await selPoder.locator("option", { hasText: "Poder de Fogo" }).count() === 1);
+    t("UI. sel: 'Poder Zero' (selecao_nivel nivel 0.5 não inteiro) ausente",
       await selPoder.locator("option", { hasText: "Poder Zero" }).count() === 0);
-    t("UI. frac: 'Poder Negativo' (nível -2) ausente",
+    t("UI. sel: 'Poder Negativo' (selecao_nivel nivel 0) ausente",
       await selPoder.locator("option", { hasText: "Poder Negativo" }).count() === 0);
-    t("UI. frac: 'Poder Sem Nivel' (sem nivel) ausente",
+    t("UI. sel: 'Poder Sem Nivel' (null/texto/ausente) ausente",
       await selPoder.locator("option", { hasText: "Poder Sem Nivel" }).count() === 0);
+    // Caminho b) escalar decimal vinculado: 0.5 é posse válida.
+    t("UI. esc: 'Poder Fracionado' (decimal 0.5 via API) presente",
+      await selPoder.locator("option", { hasText: "Poder Fracionado" }).count() === 1);
+    t("UI. esc: 'Poder Escalar Zero' (0) ausente",
+      await selPoder.locator("option", { hasText: "Poder Escalar Zero" }).count() === 0);
+    t("UI. esc: 'Poder Escalar Negativo' (-1) ausente",
+      await selPoder.locator("option", { hasText: "Poder Escalar Negativo" }).count() === 0);
+    t("UI. esc: 'Poder Escalar Texto' (\"NaN\") ausente",
+      await selPoder.locator("option", { hasText: "Poder Escalar Texto" }).count() === 0);
+    t("UI. esc: 'Poder Escalar Ausente' (null) ausente",
+      await selPoder.locator("option", { hasText: "Poder Escalar Ausente" }).count() === 0);
+    t("UI. total: exatamente 2 opções de Poder", (await opcoes()).length === 2, JSON.stringify(await opcoes()));
     // captura o emit de sangue:ativar: a UI deve ENVIAR a key do poder
-    // fracionado. Nesta linhagem o servidor ainda exige level >= 1
-    // (contrato > 0 chega via #230) — o ACK de rejeição é esperado e
-    // documentado; o que provamos aqui é o lado cliente.
+    // fracionado (escopo do campo decimal). Nesta linhagem o servidor
+    // ainda exige level >= 1 / não conhece o vínculo escalar (contrato
+    // > 0 chega via #230) — o ACK de rejeição é esperado e documentado;
+    // o que provamos aqui é o lado cliente.
     await page.evaluate(() => {
       const s = window.__mesaSocket;
       if (!s || s.__capAtivar) return;
@@ -553,13 +607,14 @@ try {
     }, { timeout: 15000 }).catch(() => null);
     await page.waitForTimeout(400);
     const capAtivar = await page.evaluate(() => window.__mesaSocket.__capAtivar);
-    t("UI. frac: UI emite sangue:ativar com poderKey=poder_frac + requestId UUID",
+    t("UI. ativ: UI emite sangue:ativar com poderKey=poder_frac + requestId UUID",
       capAtivar.length === 1 && capAtivar[0].poderKey === "poder_frac"
       && /^[0-9a-f-]{36}$/i.test(capAtivar[0].requestId ?? ""),
       JSON.stringify(capAtivar));
-    // servidor DESTA linhagem rejeita (level>=1 legado) — comportamento
-    // esperado até a propagação de #230; saldo permanece intacto.
-    t("UI. frac: ACK do servidor não credita (linhagem sem level>0)",
+    // servidor DESTA linhagem rejeita (level>=1 legado / vínculo
+    // escalar não suportado) — comportamento esperado até a
+    // propagação de #230; saldo permanece intacto.
+    t("UI. ativ: ACK do servidor não credita (linhagem sem level>0)",
       saldoDe(CHARF) === 5, `db=${saldoDe(CHARF)}`);
     await ctx.close();
   }
