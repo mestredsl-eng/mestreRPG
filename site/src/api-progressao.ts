@@ -10,11 +10,13 @@ const API_BASE = "/api";
 export class ApiErrorProgresso extends Error {
   detalhes?: unknown;
   codigo?: string;
+  characterId?: string;
   status: number;
-  constructor(mensagem: string, detalhes?: unknown, status = 0, codigo?: string) {
+  constructor(mensagem: string, detalhes?: unknown, status = 0, codigo?: string, characterId?: string) {
     super(mensagem);
     this.detalhes = detalhes;
     this.codigo = codigo;
+    this.characterId = characterId;
     this.status = status;
   }
 }
@@ -27,8 +29,8 @@ async function requisicao<T>(caminho: string, opcoes: RequestInit = {}): Promise
   });
   const corpo = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const c = corpo as { erro?: string; mensagem?: string; detalhes?: unknown; codigo?: string };
-    throw new ApiErrorProgresso(c.mensagem ?? c.erro ?? `HTTP ${res.status}`, c.detalhes, res.status, c.codigo);
+    const c = corpo as { erro?: string; mensagem?: string; detalhes?: unknown; codigo?: string; characterId?: string };
+    throw new ApiErrorProgresso(c.mensagem ?? c.erro ?? `HTTP ${res.status}`, c.detalhes, res.status, c.codigo, c.characterId);
   }
   return corpo as T;
 }
@@ -84,6 +86,19 @@ export const apiProgressao = {
 
   comprarNivel: (characterId: string, dados: { kind: string; key: string; nivelAlvo: number }) =>
     requisicao<{ ok: boolean; xp: { saldo: number }; compra: CompraXp }>(`/characters/${characterId}/comprar-ponto`, {
+      method: "POST",
+      body: JSON.stringify(dados),
+    }),
+
+  // Issue #185 item 3: concessão de XP em lote (mestre-only, tudo-ou-nada,
+  // idempotente por requestId no escopo da campanha).
+  concederXpLote: (campaignId: string, dados: { requestId: string; motivo: string; itens: { characterId: string; quantidade: number }[] }) =>
+    requisicao<{
+      ok: boolean;
+      repetido: boolean;
+      lote: { requestId: string; motivo: string; totalPersonagens: number; totalXp: number; criadoEm: string };
+      itens: { characterId: string; quantidade: number; saldoResultante: number }[];
+    }>(`/campaigns/${campaignId}/xp-lote`, {
       method: "POST",
       body: JSON.stringify(dados),
     }),
