@@ -582,10 +582,9 @@ try {
       await selPoder.locator("option", { hasText: "Poder Escalar Ausente" }).count() === 0);
     t("UI. total: exatamente 2 opções de Poder", (await opcoes()).length === 2, JSON.stringify(await opcoes()));
     // captura o emit de sangue:ativar: a UI deve ENVIAR a key do poder
-    // fracionado (escopo do campo decimal). Nesta linhagem o servidor
-    // ainda exige level >= 1 / não conhece o vínculo escalar (contrato
-    // > 0 chega via #230) — o ACK de rejeição é esperado e documentado;
-    // o que provamos aqui é o lado cliente.
+    // Na árvore .8 integrada (#230 runtime presente), o servidor aceita
+    // o vínculo escalar `nivel > 0` e debita o custo configurado — o
+    // ACK de rejeição documentado na linhagem anterior não se aplica.
     await page.evaluate(() => {
       const s = window.__mesaSocket;
       if (!s || s.__capAtivar) return;
@@ -593,7 +592,7 @@ try {
       const orig = s.emit.bind(s);
       s.emit = (ev, p, cb) => {
         if (ev === "sangue:ativar" && p && typeof p === "object") {
-          s.__capAtivar.push({ poderKey: p.poderKey, requestId: p.requestId });
+          s.__capAtivar.push({ poderKey: p.poderKey, requestId: p.requestId, payload: { ...p } });
         }
         return orig(ev, p, cb);
       };
@@ -611,11 +610,20 @@ try {
       capAtivar.length === 1 && capAtivar[0].poderKey === "poder_frac"
       && /^[0-9a-f-]{36}$/i.test(capAtivar[0].requestId ?? ""),
       JSON.stringify(capAtivar));
-    // servidor DESTA linhagem rejeita (level>=1 legado / vínculo
-    // escalar não suportado) — comportamento esperado até a
-    // propagação de #230; saldo permanece intacto.
-    t("UI. ativ: ACK do servidor não credita (linhagem sem level>0)",
-      saldoDe(CHARF) === 5, `db=${saldoDe(CHARF)}`);
+    // servidor da árvore .8 (#230 integrado) ACEITA o escalar nivel>0:
+    // custo 1 debitado uma única vez — 5→4. Replay com o mesmo
+    // requestId não pode gerar segundo débito (dedupe do runtime).
+    t("UI. ativ: ACK do servidor credita escalar nivel>0 (5→4, débito único)",
+      saldoDe(CHARF) === 4, `db=${saldoDe(CHARF)}`);
+    // replay: reenvia o MESMO payload/requestId — o dedupe do runtime
+    // deve reconhecer a repetição e NÃO gerar segundo débito.
+    const ackReplay = await page.evaluate((pl) => new Promise((res) => {
+      const s = window.__mesaSocket;
+      s.emit("sangue:ativar", pl, (ack) => res(ack ?? { ok: false }));
+    }), capAtivar[0].payload);
+    await page.waitForTimeout(600);
+    t("UI. ativ: replay mesmo requestId não duplica débito (segue 4)",
+      saldoDe(CHARF) === 4, `db=${saldoDe(CHARF)} ack=${JSON.stringify(ackReplay)}`);
     await ctx.close();
   }
 
