@@ -10,8 +10,8 @@ import { apiSangue, ApiErrorSangue, type SangueLeitura } from "./api-sangue";
  * Socket.IO R6.3 (#230):
  *  - dono da ficha: `sangue:ativar` (poderKey + requestId UUID) e
  *    `sangue:recuperar` (requestId UUID);
- *  - mestre ativo: `sangue:ajustar` (delta+m otivo) e
- *    `sangue:reconciliar-capacidade` (motivo).
+ *  - mestre ativo: `sangue:ajustar` (delta+motivo+requestId UUID)
+ *    e `sangue:reconciliar-capacidade` (motivo).
  * O cliente NUNCA envia custo, ação, quantidade, capacidade ou
  * natureza — o servidor resolve tudo e o ACK devolve códigos
  * estáveis. `personagens:atualizados` pós-commit já dispara a
@@ -59,8 +59,10 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   // Geração da carga: resposta de um characterId anterior que chegue
   // DEPOIS da troca é descartada — nunca sobrescreve o estado atual.
   const geracao = useRef(0);
-  // requestId por intenção de ativar/recuperar — reutilizado em retry
-  // da MESMA operação (idempotência ativar:/recuperar: no servidor).
+  // requestId por intenção de ativar/recuperar/ajustar — reutilizado
+  // em retry da MESMA operação (idempotência ativar:/recuperar:/
+  // ajustar: no servidor); payload novo gera UUID novo via
+  // novoRequestId() nos onChange.
   const reqIdRef = useRef<{ evento: string; id: string } | null>(null);
 
   const carregar = useCallback(async () => {
@@ -276,13 +278,13 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
               <div className="linha" style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
                 <input
                   type="number" step="1" value={deltaAjuste}
-                  onChange={(e) => setDeltaAjuste(e.target.value)}
+                  onChange={(e) => { setDeltaAjuste(e.target.value); novoRequestId(); }}
                   aria-label="Delta de Sangue (positivo ou negativo)"
                   placeholder="Δ saldo" style={{ width: "7em" }}
                 />
                 <input
                   type="text" value={motivoAjuste}
-                  onChange={(e) => setMotivoAjuste(e.target.value)}
+                  onChange={(e) => { setMotivoAjuste(e.target.value); novoRequestId(); }}
                   aria-label="Motivo do ajuste de Sangue"
                   placeholder="Motivo (obrigatório)" style={{ flex: "1 1 10em", minWidth: "8em" }}
                 />
@@ -294,7 +296,7 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
                       setMsgAcao({ tipo: "erro", texto: "Informe um delta ≠ 0 e um motivo." });
                       return;
                     }
-                    void executar("ajustar", "sangue:ajustar", { delta, motivo: motivoAjuste.trim() }, false, "Saldo ajustado");
+                    void executar("ajustar", "sangue:ajustar", { delta, motivo: motivoAjuste.trim() }, true, "Saldo ajustado");
                   }}
                 >
                   {ocupado === "ajustar" ? "Ajustando…" : "Ajustar saldo"}
