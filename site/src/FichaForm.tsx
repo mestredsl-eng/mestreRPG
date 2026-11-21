@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
+import PainelSangue from "./PainelSangue";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -241,6 +242,12 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           autoridade de saldo/preço/nível e das permissões. */}
       {personagemId && !simulacao && (
         <ProgressaoXp characterId={personagemId} ehMestre={!!ehMestre} />
+      )}
+      {/* Pontos de Sangue (Issue #186, C8-C1): painel somente leitura
+          via GET /characters/:id/sangue — sem controles de mutação;
+          some sozinho para quem não tem acesso (403). */}
+      {personagemId && !simulacao && (
+        <PainelSangue characterId={personagemId} />
       )}
     </div>
   );
