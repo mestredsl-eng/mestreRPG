@@ -47,6 +47,40 @@ async function abrirCampanha(page, nome = "Campanha Teste") {
 
 // Para cada aba esperada: botão existe, tem svg.icone-interface e o
 // rótulo textual permanece (ícone nunca substitui o nome acessível).
+
+// Verifica o contrato completo APG: nome, relações tab/painel, roving tabindex
+// e exatamente um painel visível/associado à aba selecionada.
+async function checarContratoTabs(page, papel) {
+  const info = await page.evaluate(() => {
+    const lista = document.querySelector('.abas[role="tablist"]');
+    const tabs = [...(lista?.querySelectorAll('[role="tab"]') ?? [])];
+    const selecionadas = tabs.filter((tab) => tab.getAttribute("aria-selected") === "true");
+    const painelsVisiveis = [...document.querySelectorAll('[role="tabpanel"]')].filter((panel) => !panel.hidden);
+    const associacoes = tabs.every((tab) => {
+      const id = tab.getAttribute("id");
+      const controls = tab.getAttribute("aria-controls");
+      const panel = controls ? document.getElementById(controls) : null;
+      return Boolean(id && panel?.getAttribute("role") === "tabpanel" &&
+        panel.getAttribute("aria-labelledby") === id);
+    });
+    const foco = tabs.every((tab) => tab.tabIndex === (tab.getAttribute("aria-selected") === "true" ? 0 : -1));
+    return {
+      nome: lista?.getAttribute("aria-label"),
+      associacoes,
+      foco,
+      selecionadas: selecionadas.length,
+      painelUnico: painelsVisiveis.length === 1 &&
+        painelsVisiveis[0].getAttribute("aria-labelledby") === selecionadas[0]?.id,
+      painels: document.querySelectorAll('[role="tabpanel"]').length,
+      tabs: tabs.length,
+    };
+  });
+  ok(`${papel}. tablist tem nome acessível`, info.nome === "Seções da campanha", String(info.nome));
+  ok(`${papel}. cada tab controla um tabpanel associado`, info.associacoes, `tabs=${info.tabs} painéis=${info.painels}`);
+  ok(`${papel}. roving tabindex (uma tab no fluxo)`, info.foco);
+  ok(`${papel}. apenas um painel visível e ligado à seleção`, info.selecionadas === 1 && info.painelUnico);
+}
+
 async function checarAbas(page, esperadas, papel) {
   const botoes = page.locator(".abas button");
   const total = await botoes.count();
@@ -88,20 +122,7 @@ try {
     const ativo = await page.locator(".abas button.ativo").first().innerText();
     ok("mestre. troca para Diário marca botão ativo", ativo.includes("Diário"), ativo.trim());
 
-    // F9 — semântica acessível das abas (P3 do relatório integrado):
-    // tablist + role=tab + aria-selected, exatamente uma selecionada.
-    const semMestre = await page.evaluate(() => {
-      const lista = document.querySelector(".abas[role=tablist]");
-      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
-      return {
-        tablist: lista?.getAttribute("role") === "tablist",
-        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab" && b.getAttribute("type") === "button"),
-        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").map((b) => b.textContent.trim()),
-      };
-    });
-    ok("mestre. container .abas expõe role=tablist", semMestre.tablist);
-    ok("mestre. todas as abas têm role=tab + type=button", semMestre.todasTabs);
-    ok("mestre. exatamente uma aba aria-selected=true", semMestre.selecionadas.length === 1 && semMestre.selecionadas[0].startsWith("Diário"), semMestre.selecionadas.join("|"));
+    await checarContratoTabs(page, "mestre");
 
     // Troca por teclado (Enter na aba focada) atualiza aria-selected.
     await page.locator(".abas button", { hasText: "Histórico" }).focus();
@@ -111,15 +132,33 @@ try {
       [...document.querySelectorAll(".abas[role=tablist] button")].filter((b) => b.getAttribute("aria-selected") === "true").map((b) => b.textContent.trim()));
     ok("mestre. troca por teclado move aria-selected", selTeclado.length === 1 && selTeclado[0].startsWith("Histórico"), selTeclado.join("|"));
 
-    // Foco de teclado: Tab real dispara :focus-visible (outline 2px solid).
-    await page.locator(".abas button").first().focus();
-    await page.keyboard.press("Tab");
+    // APG Tabs: setas com wrap e Home/End movem foco + seleção.
+    const tabsMestre = page.locator('.abas [role="tab"]');
+    const totalTabsMestre = await tabsMestre.count();
+    await tabsMestre.nth(totalTabsMestre - 1).focus();
+    await page.keyboard.press("ArrowRight");
+    let teclado = await page.evaluate(() => ({ id: document.activeElement.id, selecionada: document.querySelector('.abas [aria-selected="true"]')?.id }));
+    ok("mestre. ArrowRight faz wrap da última para a primeira", teclado.id === "campanha-tab-info" && teclado.selecionada === teclado.id);
+    await tabsMestre.first().focus();
+    await page.keyboard.press("ArrowLeft");
+    teclado = await page.evaluate(() => ({ id: document.activeElement.id, selecionada: document.querySelector('.abas [aria-selected="true"]')?.id }));
+    ok("mestre. ArrowLeft faz wrap da primeira para a última", teclado.id === "campanha-tab-convites" && teclado.selecionada === teclado.id);
+    await tabsMestre.nth(3).focus();
+    await page.keyboard.press("Home");
+    teclado = await page.evaluate(() => ({ id: document.activeElement.id, selecionada: document.querySelector('.abas [aria-selected="true"]')?.id }));
+    ok("mestre. Home move para primeira aba", teclado.id === "campanha-tab-info" && teclado.selecionada === teclado.id);
+    await tabsMestre.first().focus();
+    await page.keyboard.press("End");
+    teclado = await page.evaluate(() => ({ id: document.activeElement.id, selecionada: document.querySelector('.abas [aria-selected="true"]')?.id }));
+    ok("mestre. End move para última aba", teclado.id === "campanha-tab-convites" && teclado.selecionada === teclado.id);
+
+    // O foco do teclado permanece visível no botão ativado pela navegação.
     const foco = await page.evaluate(() => {
       const el = document.activeElement;
       const cs = getComputedStyle(el);
-      return { tag: el.tagName, cls: el.className, outline: `${cs.outlineStyle} ${cs.outlineWidth}` };
+      return { tag: el.tagName, id: el.id, outline: `${cs.outlineStyle} ${cs.outlineWidth}` };
     });
-    ok("mestre. aba focável por teclado com outline visível", foco.tag === "BUTTON" && /abas|secundario|ativo/.test(foco.cls) && /solid 2px/.test(foco.outline), JSON.stringify(foco));
+    ok("mestre. foco por teclado permanece na aba com outline visível", foco.tag === "BUTTON" && foco.id === "campanha-tab-convites" && /solid 2px/.test(foco.outline), JSON.stringify(foco));
 
     // Mobile 390px: abas não estouram a viewport (flex-wrap permite rolagem interna).
     await page.setViewportSize({ width: 390, height: 844 });
@@ -142,18 +181,7 @@ try {
       const n = await page.locator(".abas button", { hasText: rotulo }).count();
       ok(`jogador. aba mestre "${rotulo}" ausente`, n === 0, `encontradas=${n}`);
     }
-    // F9 — semântica acessível também vale para jogador (abas de mestre
-    // ausentes não podem deixar tab órfã/selecionada).
-    const semJogador = await page.evaluate(() => {
-      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
-      return {
-        tablist: document.querySelector(".abas[role=tablist]")?.getAttribute("role") === "tablist",
-        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab"),
-        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").length,
-      };
-    });
-    ok("jogador. tablist + role=tab em todas as abas visíveis", semJogador.tablist && semJogador.todasTabs);
-    ok("jogador. exatamente uma aba selecionada", semJogador.selecionadas === 1, `selecionadas=${semJogador.selecionadas}`);
+    await checarContratoTabs(page, "jogador");
     await ctx.close();
   }
 
@@ -174,18 +202,7 @@ try {
     }
     const icones = await page.locator(".abas button svg.icone-interface").count();
     ok("espectador. ícones presentes nas abas visíveis", icones === nomes.length, `icones=${icones}`);
-    // F9 — espectador também recebe semântica de aba correta.
-    const semEspectador = await page.evaluate(() => {
-      const tabs = [...document.querySelectorAll(".abas[role=tablist] button")];
-      return {
-        tablist: document.querySelector(".abas[role=tablist]")?.getAttribute("role") === "tablist",
-        todasTabs: tabs.every((b) => b.getAttribute("role") === "tab"),
-        selecionadas: tabs.filter((b) => b.getAttribute("aria-selected") === "true").length,
-      };
-    });
-    ok("espectador. tablist + role=tab + exatamente uma selecionada",
-      semEspectador.tablist && semEspectador.todasTabs && semEspectador.selecionadas === 1,
-      JSON.stringify(semEspectador));
+    await checarContratoTabs(page, "espectador");
     await ctx.close();
   }
 
