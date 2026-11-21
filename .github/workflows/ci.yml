@@ -9,6 +9,7 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
+      - fix/issue-155-status-hardening
       - fix/issue-155-boot-lock
     types:
       - opened
