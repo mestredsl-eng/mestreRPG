@@ -39,10 +39,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
-  readFileSync, renameSync, rmSync, writeSync,
+  readFileSync, renameSync, rmSync, statSync, writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { caminhoCanonicoRepo, instalacaoId as instalacaoIdBoot } from "./boot-lock.mjs";
 
 export const PROTOCOLO_VERSAO = 1;
@@ -397,4 +397,89 @@ export function avaliarBoot(repoDir, env = process.env) {
     }
   }
   return { seguroIniciar: true, motivo: "ok" };
+}
+
+// ---------- produtor confiável de primeiro bootstrap (P10-A) ----------
+// Emite `bootstrap-autorizacao.json` (uso único) SOMENTE quando a prova
+// combinada de instalação limpa passa por inteiro. Nunca autoriza
+// apenas porque o banco não existe: qualquer estado corrompido,
+// incompatível, divergente, desconhecido ou interrompido bloqueia.
+// O consumidor (aplicar-restauracao) já existe; o produtor é este
+// módulo + scripts/autorizar-bootstrap.mjs (entrypoint do .bat na
+// integração P10-C). Recibo permanente só é gravado por
+// concluirBootstrapAposHealth, chamado pelo servidor após listen
+// confirmado (health-ready real) com o banco comprovadamente populado.
+
+/** Caminho do banco configurado — espelha CAMINHOS.banco de
+ *  servidor/src/db/index.ts: MESTRE_BANCO ou <repo>/banco/mestre-rpg.db. */
+export function caminhoBancoConfigurado(repoDir, env = process.env) {
+  const override = (env.MESTRE_BANCO ?? "").trim();
+  if (override) return resolve(override);
+  return join(repoDir, "banco", "mestre-rpg.db");
+}
+
+/**
+ * Produtor de autorização de primeiro bootstrap — fail-closed.
+ * Retorno: { autorizado:true, motivo:"emitida"|"ja-autorizado", dados } |
+ *          { autorizado:false, motivo }.
+ * Provas exigidas (todas):
+ *   1. state dir legível (readdir não falha);
+ *   2. journals de update e restauração AUSENTES (qualquer status
+ *      diferente de "ausente" — inclusive ok/corrompido/divergente —
+ *      bloqueia);
+ *   3. recibo de instalação ausente (recibo válido ⇒ já concluída);
+ *   4. autorização existente: válida ⇒ idempotente ("ja-autorizado",
+ *      sem regravar); inválida/divergente/corrompida ⇒ bloqueia;
+ *   5. nenhuma autorização consumida sem recibo (bootstrap-interrompido
+ *      NUNCA é reemitido);
+ *   6. banco configurado ausente ou vazio (0 bytes) — arquivo com
+ *      conteúdo ⇒ "banco-existente" ⇒ bloqueia.
+ */
+export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  let nomes = [];
+  try { nomes = existsSync(dir) ? readdirSync(dir) : []; }
+  catch { return { autorizado: false, motivo: "state-ilegivel" }; }
+  for (const j of [JOURNAL_UPDATE, JOURNAL_RESTAURACAO]) {
+    const r = lerJournal(repoDir, j, env);
+    if (r.status !== "ausente") return { autorizado: false, motivo: `journal-${j}-${r.status}` };
+  }
+  const recibo = lerReciboInstalacao(repoDir, env);
+  if (recibo.status === "ok") return { autorizado: false, motivo: "instalacao-ja-concluida" };
+  if (recibo.status !== "ausente") return { autorizado: false, motivo: `recibo-${recibo.status}` };
+  const auth = lerAutorizacaoBootstrap(repoDir, env);
+  if (auth.status === "ok") return { autorizado: true, motivo: "ja-autorizado", dados: auth.dados };
+  if (auth.status !== "ausente") return { autorizado: false, motivo: `autorizacao-${auth.status}` };
+  if (nomes.some((n) => n.startsWith(PREFIXO_AUTORIZACAO_CONSUMIDA))) {
+    return { autorizado: false, motivo: "bootstrap-interrompido" };
+  }
+  const banco = caminhoBancoConfigurado(repoDir, env);
+  if (existsSync(banco)) {
+    let tamanho;
+    try { tamanho = statSync(banco).size; }
+    catch { return { autorizado: false, motivo: "banco-ilegivel" }; }
+    if (tamanho > 0) return { autorizado: false, motivo: "banco-existente" };
+  }
+  const dados = gravarAutorizacaoBootstrap(repoDir, env);
+  return { autorizado: true, motivo: "emitida", dados };
+}
+
+/**
+ * Conclusão do bootstrap — grava o recibo permanente SOMENTE quando a
+ * instalação está comprovadamente concluída: estado
+ * "bootstrap-interrompido" (autorização consumida, sem recibo) E o
+ * chamador atesta `bancoComDados` (health-ready real + DB populado).
+ * `npm run start` bloqueia o .bat, por isso quem prova a escuta é o
+ * próprio servidor (listen confirmado em index.ts). Idempotente:
+ * recibo já existente ⇒ diagnosticarBootstrap retorna
+ * "instalacao-concluida" ⇒ não regrava. Retorno:
+ * { concluido:true, motivo:"recibo-gravado", recibo } |
+ * { concluido:false, motivo }.
+ */
+export function concluirBootstrapAposHealth(repoDir, env = process.env, bancoComDados = false) {
+  const diag = diagnosticarBootstrap(repoDir, env);
+  if (diag !== "bootstrap-interrompido") return { concluido: false, motivo: diag };
+  if (bancoComDados !== true) return { concluido: false, motivo: "banco-nao-comprovado" };
+  const recibo = gravarReciboInstalacao(repoDir, env);
+  return { concluido: true, motivo: "recibo-gravado", recibo };
 }
