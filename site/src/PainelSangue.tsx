@@ -59,14 +59,12 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   // Geração da carga: resposta de um characterId anterior que chegue
   // DEPOIS da troca é descartada — nunca sobrescreve o estado atual.
   const geracao = useRef(0);
-  // Guarda o personagem da instância atual: ACKs atrasados da ficha
-  // anterior não podem atualizar a ficha que está sendo exibida agora.
-  const personagemAtualRef = useRef(characterId);
-  personagemAtualRef.current = characterId;
-  // Um mapa mantém UUIDs de várias intenções com ACK ambíguo. Assim,
-  // editar A→B→A reutiliza o UUID original de A; gerar outro poderia
-  // duplicar uma mutação que o servidor já commitou sem entregar ACK.
-  const reqIdsRef = useRef(new Map<string, string>());
+  // requestId UUID por INTENÇÃO completa (evento + characterId +
+  // payload normalizado) — ativar:/recuperar:/ajustar: idempotentes
+  // no servidor (#230). Retry da MESMA intenção reutiliza o UUID;
+  // payload diferente gera UUID novo; somente ACK ok limpa a
+  // intenção (timeout/erro ambíguo preserva para o retry).
+  const reqIdRef = useRef<{ chave: string; id: string } | null>(null);
 
   const carregar = useCallback(async () => {
     const g = ++geracao.current;
@@ -155,19 +153,6 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
     }
   }, [characterId]);
 
-  // Trocar de ficha limpa o estado transitório, sem descartar UUIDs de
-  // pedidos ambíguos que ainda podem precisar de retry se voltarmos à ficha.
-  useEffect(() => {
-    setOcupado(null);
-    setMsgAcao(null);
-    setEhEu(false);
-    setPoderes([]);
-    setPoderSel("");
-    setDeltaAjuste("");
-    setMotivoAjuste("");
-    setMotivoReconciliar("");
-  }, [characterId]);
-
   useEffect(() => { void carregar(); }, [carregar]);
 
   // Tempo real: mutações do personagem emitem personagens:atualizados.
@@ -188,12 +173,10 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
       const socket = getSocket();
       let reqId: string | undefined;
       if (comRequestId && chaveIntencao) {
-        let id = reqIdsRef.current.get(chaveIntencao);
-        if (!id) {
-          id = crypto.randomUUID();
-          reqIdsRef.current.set(chaveIntencao, id);
+        if (reqIdRef.current?.chave !== chaveIntencao) {
+          reqIdRef.current = { chave: chaveIntencao, id: crypto.randomUUID() };
         }
-        reqId = id;
+        reqId = reqIdRef.current.id;
       }
       const timer = window.setTimeout(() => resolve({ ok: false, codigo: "timeout", erro: "Sem resposta do servidor" }), 15000);
       socket.emit(evento, { ...payload, ...(reqId ? { requestId: reqId } : {}) }, (ack: AckSangue) => {
@@ -205,20 +188,17 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
 
   const executar = useCallback(async (chave: string, evento: string, payload: Record<string, unknown>, comRequestId: boolean, okMsg: string) => {
     if (ocupado) return;
-    const characterIdDaAcao = characterId;
     setOcupado(chave);
     setMsgAcao(null);
-    const payloadFull = { characterId: characterIdDaAcao, ...payload };
+    const payloadFull = { characterId, ...payload };
     // Payload já chega normalizado pelos call sites (delta numérico,
     // motivo trim); a chave cobre evento+characterId+payload —
     // intenção idêntica reutiliza o UUID mesmo após edições
     // intermediárias que voltaram ao mesmo valor.
     const chaveIntencao = comRequestId ? `${evento}|${JSON.stringify(payloadFull)}` : undefined;
     const ack = await emitir(evento, payloadFull, comRequestId, chaveIntencao);
-    // Não aplicar ACK/erro/recarga de uma ação iniciada em outra ficha.
-    if (personagemAtualRef.current !== characterIdDaAcao) return;
     if (ack.ok) {
-      if (chaveIntencao) reqIdsRef.current.delete(chaveIntencao);
+      reqIdRef.current = null; // operação concluída — próxima é nova
       setMsgAcao({ tipo: "ok", texto: ack.replay ? `${okMsg} (repetição já processada)` : okMsg });
       void carregar();
     } else {
