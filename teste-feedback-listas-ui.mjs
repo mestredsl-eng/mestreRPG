@@ -61,6 +61,17 @@ try {
   ok("loading. role=status presente", (await st.getAttribute("role")) === "status");
   ok("loading. texto sempre visível", (await st.locator(".estado-feedback-texto").innerText()).includes("Carregando"));
   ok("loading. indicador visual discreto presente", (await st.locator(".estado-feedback-icone").count()) === 1);
+  // ---- asserts de CSS da folha dedicada estado-feedback.css ----
+  const css = await st.evaluate((el) => {
+    const s = getComputedStyle(el);
+    const icone = getComputedStyle(el.querySelector(".estado-feedback-icone"));
+    return {
+      display: s.display, dir: s.flexDirection, anim: icone.animationName,
+      raio: icone.borderRadius, rolagem: el.scrollWidth <= el.clientWidth + 1,
+    };
+  });
+  ok("css. folha dedicada: container flex-column centralizado", css.display === "flex" && css.dir === "column", JSON.stringify(css));
+  ok("css. spinner com animação própria e borda circular", css.anim === "estado-feedback-girar" && css.raio === "50%", `anim=${css.anim} raio=${css.raio}`);
   liberarChars();
   await pm.waitForSelector(".estado-feedback-carregando", { state: "detached", timeout: 8000 }).catch(() => {});
   await pm.unroute(urlChars);
@@ -89,6 +100,14 @@ try {
   const txtErro = await er.locator(".estado-feedback-texto").innerText();
   ok("erro. mensagem útil e segura (sem stack/token)", txtErro.length > 3 && !/stack|at \w+ \(|token|sqlite|SELECT/i.test(txtErro), `"${txtErro.trim()}"`);
   ok("erro. botão Tentar novamente visível", (await er.getByRole("button", { name: "Tentar novamente" }).count()) === 1);
+  const corErro = await er.locator(".estado-feedback-texto").evaluate((el) => getComputedStyle(el).color);
+  ok("css. texto de erro usa tom de erro do tema (#f87171)", corErro === "rgb(248, 113, 113)", corErro);
+  const focoRetry = await er.getByRole("button", { name: "Tentar novamente" }).evaluate((el) => {
+    el.focus();
+    const s = getComputedStyle(el);
+    return { tag: el.tagName, outline: s.outlineStyle, tab: el.tabIndex };
+  });
+  ok("css. retry focável por teclado", focoRetry.tag === "BUTTON" && focoRetry.tab === 0, JSON.stringify(focoRetry));
   falharChars = false;
   const reqsAntesRetry = reqsChars;
   await er.getByRole("button", { name: "Tentar novamente" }).click();
