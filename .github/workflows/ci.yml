@@ -9,6 +9,39 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
+      - feat/issue-186-sangue-core
+      - feat/issue-127-token-vida
+      # Cadeia Issue #186 (missão #7056575362): bases #222–#230
+      - feat/issue-186-d10-sangue-cobranca
+      - feat/issue-186-sangue-poderes-ui
+      - feat/issue-186-sangue-actions-service
+      - test/issue-186-sangue-invariantes
+      - feat/issue-186-sangue-xp-capacidade
+      - feat/issue-186-sangue-read-api
+      - feat/issue-186-sangue-xp-ui
+      - feat/issue-186-sangue-player-read-ui
+      - feat/issue-186-sangue-runtime-actions
+      - feat/issue-186-sangue-config
+      - feat/issue-186-sangue-rules-runtime-config
+      - feat/issue-186-d10-transaction-core
+      - feat/issue-186-sangue-d10-zero-custo
+      - feat/issue-186-sangue-capacidade-reducao
+      - feat/issue-186-poder-d10-eligibility
+      - feat/issue-186-sangue-capacidade-flag
+      - fix/issue-186-d10-sangue-cobranca-p2s
+      # Base da PR empilhada sobre #232 (ex.: C8-D) — a #232 em si já
+      # é coberta pela base feat/issue-186-sangue-player-read-ui acima.
+      - feat/issue-186-sangue-actions-ui
+      # Base real da PR #218 (movimento reduzido) — faz o CI rodar nela.
+      - feat/issue-132-recomendacoes-visuais-locais
+      - feat/issue-132-reduced-motion
+      - feat/issue-132-icones-abas
+      - feat/issue-185-xp-lote
+      - ci/issue-186-sangue-hmac-v2-tests
+      - feat/issue-155-startup-auto-update
+      - fix/issue-155-status-hardening
+      - fix/issue-155-boot-lock
+      - test/issue-155-homologacao-w
     types:
       - opened
       - synchronize
@@ -97,6 +130,13 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Testes unitários do contrato de backup (Issue #155 W16)
+        run: |
+          if [ -f servidor/testes/backup-contrato.test.ts ]; then
+            npx tsx --test servidor/testes/backup-contrato.test.ts
+          else
+            echo "backup-contrato.test.ts ausente nesta ref (pré-#193) — pulado"
+          fi
       - name: Testes unitários do catálogo visual (Issue #132, etapa 2.2a)
         run: npx tsx teste-temas-visuais.mjs
       - name: Testes unitários do limitador Socket.IO
@@ -111,6 +151,41 @@ jobs:
         run: npm run test:guildas-guarda --workspace servidor
       - name: Testes de formatação das rolagens do histórico
         run: npx tsx teste-historico-rolagens.mjs
+      - name: Testes unitários HMAC v2 XP+Sangue (Issue #186 C3)
+        run: |
+          if [ -f servidor/testes/assinatura-v2.test.ts ]; then
+            npx tsx --test servidor/testes/assinatura-v2.test.ts
+          else
+            echo "assinatura-v2.test.ts ausente nesta ref (pré-C3) — pulado"
+          fi
+      - name: Testes unitários do ledger de Sangue (Issue #186 C2/C4)
+        run: |
+          if [ -f servidor/testes/sangue.test.ts ]; then
+            npx tsx --test servidor/testes/sangue.test.ts
+          else
+            echo "sangue.test.ts ausente nesta ref (pré-C2) — pulado"
+          fi
+      - name: Testes unitários da revinculação de ficha (Issue #186 C7)
+        run: |
+          if [ -f servidor/testes/revinculacao-ficha.test.ts ]; then
+            npx tsx --test servidor/testes/revinculacao-ficha.test.ts
+          else
+            echo "revinculacao-ficha.test.ts ausente nesta ref (pré-C7) — pulado"
+          fi
+      - name: Testes unitários das ações de Sangue (Issue #186 #224)
+        run: |
+          if [ -f servidor/testes/sangue-acoes.test.ts ]; then
+            npx tsx --test servidor/testes/sangue-acoes.test.ts
+          else
+            echo "sangue-acoes.test.ts ausente nesta ref (pré-#224) — pulado"
+          fi
+      - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
+        run: |
+          if [ -f servidor/testes/sangue-invariantes.test.ts ]; then
+            npx tsx --test servidor/testes/sangue-invariantes.test.ts
+          else
+            echo "sangue-invariantes.test.ts ausente nesta ref (pré-#225) — pulado"
+          fi
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
@@ -123,6 +198,8 @@ jobs:
             teste-fisica-mesa.mjs \
             teste-d10-minimo-servidor.mjs \
             teste-restauracao-boot.mjs \
+            teste-estado-externo.mjs \
+            teste-restauracao-journal.mjs \
             teste-trava-instancia.mjs \
             teste-atualizacao-instalacao.mjs \
             teste-docs-operacao.mjs \
@@ -168,6 +245,18 @@ jobs:
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
             teste-defeitos-mesa.mjs \
+            teste-sangue-hmac-v2.mjs \
+            teste-sangue-config.mjs \
+            teste-d10-transacao.mjs \
+            teste-d10-sangue-cobranca.mjs \
+            teste-sangue-xp-capacidade.mjs \
+            teste-sangue-read-api.mjs \
+            teste-sangue-runtime.mjs \
+            teste-sangue-poderes-acoes.mjs \
+            teste-autorizacao-negativa.mjs \
+            teste-autorizacao-eventos-passivos.mjs \
+            teste-autorizacao-concorrencia.mjs \
+            teste-guilda-responsavel-concorrencia.mjs \
             teste-xp-lote.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
@@ -289,7 +378,16 @@ jobs:
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
             homologacao-papeis-ui.mjs \
-            auditoria-visual.mjs
+            auditoria-visual.mjs \
+            teste-sangue-config-ui.mjs \
+            teste-sangue-xp-capacidade-ui.mjs \
+            teste-sangue-player-read-ui.mjs \
+            teste-sangue-actions-ui.mjs \
+            teste-reduced-motion.mjs \
+            teste-icones-abas-campanha.mjs \
+            teste-estados-vazios-ui.mjs \
+            teste-feedback-listas-ui.mjs \
+            teste-xp-lote-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
