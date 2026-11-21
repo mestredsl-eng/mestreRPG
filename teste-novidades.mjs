@@ -638,6 +638,60 @@ sec("Migration em banco existente preserva dados");
   }
 }
 
+// ---------- P1: upgrade que já aplicou 0032 precisa receber 0033 ----------
+// Regressão do `when` do journal: a 0033 tinha timestamp MENOR que a 0032.
+// O migrador do Drizzle aplica apenas entradas com folderMillis maior que
+// o created_at da última migration registrada — bancos já em 0032 pulavam
+// a 0033 silenciosamente e o seed 0109 nunca era publicado.
+sec("Upgrade a partir de 0032 aplica 0033 (P1 when)");
+{
+  const RAIZ3 = dirTeste("novidades-upgrade-0032");
+  try {
+    const ATÉ_0032 = join(RAIZ3, "migrations-0032");
+    mkdirSync(join(ATÉ_0032, "meta"), { recursive: true });
+    const journal = JSON.parse(readFileSync(join(MIGRATIONS, "meta/_journal.json"), "utf8"));
+    const entradas32 = journal.entries.filter((e) => e.idx <= 32);
+    for (const e of entradas32) cpSync(join(MIGRATIONS, `${e.tag}.sql`), join(ATÉ_0032, `${e.tag}.sql`));
+    writeFileSync(join(ATÉ_0032, "meta/_journal.json"), JSON.stringify({ ...journal, entries: entradas32 }));
+
+    const BANCO_32 = join(RAIZ3, "banco", "mestre-rpg.db");
+    mkdirSync(dirname(BANCO_32), { recursive: true });
+    {
+      const sqlite = new Database(BANCO_32);
+      sqlite.pragma("journal_mode = WAL");
+      const db = drizzle(sqlite);
+      await migrate(db, { migrationsFolder: ATÉ_0032 });
+      sqlite.close();
+    }
+    // pré-condição: o banco parou exatamente em 0032, sem o seed 0109
+    t("banco em 0032 ainda não tem seed 0109",
+      comDb(BANCO_32, (db) => db.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_AUTO_1006).c) === 0);
+
+    // upgrade real: o migrador de produção deve aplicar somente a 0033
+    const mig = spawnSync("node", [MIGRADOR], { env: { ...process.env, MESTRE_BANCO: BANCO_32 }, encoding: "utf8" });
+    t("migrate 0032→0033 -> exit 0", mig.status === 0, (mig.stderr ?? "").slice(-300));
+    const totalEsperado = journal.entries.length;
+    const aplicadas = comDb(BANCO_32, (db) => db.prepare("select count(*) c from __drizzle_migrations").get().c);
+    t("todas as migrations registradas após upgrade", aplicadas === totalEsperado, `${aplicadas}/${totalEsperado}`);
+    const seed = comDb(BANCO_32, (db) => db.prepare("select versao, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_AUTO_1006));
+    t("seed 0109 presente após upgrade de banco em 0032",
+      seed?.versao === "1.0.6" && seed?.estado === "publicada" && !!seed?.publicado_em, JSON.stringify(seed));
+
+    // replay idempotente: novo migrate não reaplica; SQL direto não duplica
+    const mig2 = spawnSync("node", [MIGRADOR], { env: { ...process.env, MESTRE_BANCO: BANCO_32 }, encoding: "utf8" });
+    t("replay do migrador -> exit 0", mig2.status === 0, (mig2.stderr ?? "").slice(-300));
+    {
+      const w = new Database(BANCO_32);
+      w.exec(readFileSync(join(MIGRATIONS, "0033_release_1006_auto_update_news.sql"), "utf8"));
+      t("seed 0109 permanece único após replay do SQL",
+        w.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_AUTO_1006).c === 1);
+      w.close();
+    }
+  } finally {
+    limparDir(RAIZ3);
+  }
+}
+
 limparDir(DIR);
 console.log(`\n==== novidades: ${pass} ok, ${fail} falhas ====`);
 process.exit(fail ? 1 : 0);
