@@ -2404,3 +2404,21 @@ textarea:focus-visible,
   .chat-falar-como { align-items: stretch; flex-direction: column; }
   .chat-falar-como select { width: 100%; }
 }
+
+/* ---- Movimento reduzido (Issue #132) ----
+   Duas fontes, um único resultado: prefers-reduced-motion do SO já é
+   tratado pelo bloco global em identidade-visual.css; aqui cobrimos a
+   preferência do app. data-movimento-efetivo="reduzido" é aplicado por
+   visualUsuario.ts e já incorpora a redução do SO (o SO sempre
+   prevalece — temasVisuais.movimentoEfetivo). A neutralização replica
+   o bloco do SO: estados finais continuam visíveis (cores, bordas e
+   textos mudam instantaneamente), apenas o movimento decorativo some.
+   Foco de teclado (:focus-visible) não é uma animação e não é afetado. */
+[data-movimento-efetivo="reduzido"] *,
+[data-movimento-efetivo="reduzido"] *::before,
+[data-movimento-efetivo="reduzido"] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
