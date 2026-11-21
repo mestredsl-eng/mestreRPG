@@ -11,6 +11,16 @@ on:
       - feat/guilda-responsavel-backend
       - feat/issue-186-sangue-core
       - feat/issue-127-token-vida
+      # Cadeia Issue #186 (missão #7056575362): bases #222–#230
+      - feat/issue-186-d10-sangue-cobranca
+      - feat/issue-186-sangue-poderes-ui
+      - feat/issue-186-sangue-actions-service
+      - test/issue-186-sangue-invariantes
+      - feat/issue-186-sangue-xp-capacidade
+      - feat/issue-186-sangue-read-api
+      - feat/issue-186-sangue-xp-ui
+      - feat/issue-186-sangue-player-read-ui
+      - feat/issue-186-sangue-runtime-actions
     types:
       - opened
       - synchronize
@@ -134,6 +144,20 @@ jobs:
           else
             echo "revinculacao-ficha.test.ts ausente nesta ref (pré-C7) — pulado"
           fi
+      - name: Testes unitários das ações de Sangue (Issue #186 #224)
+        run: |
+          if [ -f servidor/testes/sangue-acoes.test.ts ]; then
+            npx tsx --test servidor/testes/sangue-acoes.test.ts
+          else
+            echo "sangue-acoes.test.ts ausente nesta ref (pré-#224) — pulado"
+          fi
+      - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
+        run: |
+          if [ -f servidor/testes/sangue-invariantes.test.ts ]; then
+            npx tsx --test servidor/testes/sangue-invariantes.test.ts
+          else
+            echo "sangue-invariantes.test.ts ausente nesta ref (pré-#225) — pulado"
+          fi
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
@@ -193,7 +217,11 @@ jobs:
             teste-defeitos-mesa.mjs \
             teste-sangue-hmac-v2.mjs \
             teste-sangue-config.mjs \
-            teste-d10-transacao.mjs
+            teste-d10-transacao.mjs \
+            teste-d10-sangue-cobranca.mjs \
+            teste-sangue-xp-capacidade.mjs \
+            teste-sangue-read-api.mjs \
+            teste-sangue-runtime.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
@@ -314,7 +342,10 @@ jobs:
             homologacao-defeitos-mesa.mjs \
             homologacao-preferencias-visuais.mjs \
             homologacao-papeis-ui.mjs \
-            auditoria-visual.mjs
+            auditoria-visual.mjs \
+            teste-sangue-config-ui.mjs \
+            teste-sangue-xp-capacidade-ui.mjs \
+            teste-sangue-player-read-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
