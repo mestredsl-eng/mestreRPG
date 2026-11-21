@@ -2,11 +2,12 @@
 // Executa o migrate.ts REAL via tsx contra bancos temporários
 // (MESTRE_BANCO/MESTRE_BACKUPS/MESTRE_ARQUIVOS/MESTRE_STATE_DIR) —
 // prova ordem backup→migrate, bloqueio em falha e ausência de
-// backup em instalação nova ou banco em dia. Journal é truncado e
-// restaurado dentro do teste para fabricar "migrations pendentes"
-// reais, nunca estado falso.
+// backup em instalação nova ou banco em dia. "Migrations pendentes"
+// é fabricado copiando servidor/migrations para %TEMP% e truncando
+// o journal DA CÓPIA (MESTRE_MIGRATIONS_FOLDER) — o journal
+// versionado nunca é escrito pelo teste.
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, rmSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -20,8 +21,8 @@ const sec = (n) => console.log("\n== " + n + " ==");
 
 const ROOT = process.cwd();
 const TSX = join(ROOT, "node_modules", "tsx", "dist", "cli.mjs");
-const JOURNAL_PATH = join(ROOT, "servidor", "migrations", "meta", "_journal.json");
-const journalOriginal = readFileSync(JOURNAL_PATH, "utf8");
+const MIGRATIONS_SRC = join(ROOT, "servidor", "migrations");
+const journalOriginal = readFileSync(join(MIGRATIONS_SRC, "meta", "_journal.json"), "utf8");
 const totalJournal = JSON.parse(journalOriginal).entries.length;
 
 const BASE = mkdtempSync(join(tmpdir(), "mestre-prebackup-"));
@@ -38,6 +39,19 @@ const cenario = () => {
       MESTRE_STATE_DIR: join(dir, "state"),
     },
   };
+};
+// Copia a árvore de migrations para dentro do cenário e, se k for
+// informado, trunca o journal DA CÓPIA — isolado do repo.
+const pastaMigrations = (c, k = null) => {
+  const dest = join(c.dir, `migrations-${seq}-${k ?? "full"}`);
+  cpSync(MIGRATIONS_SRC, dest, { recursive: true });
+  if (k !== null) {
+    const jp = join(dest, "meta", "_journal.json");
+    const j = JSON.parse(readFileSync(jp, "utf8"));
+    j.entries = j.entries.slice(0, k);
+    writeFileSync(jp, JSON.stringify(j, null, 2));
+  }
+  return dest;
 };
 const migrar = (env) => spawnSync(process.execPath, [TSX, "servidor/src/db/migrate.ts"], {
   cwd: ROOT, env: { ...process.env, ...env }, encoding: "utf8", timeout: 120000,
@@ -63,16 +77,12 @@ const backupsPreUpdate = (dir) => {
   varrer(base);
   return achados;
 };
-const truncarJournal = (k) => {
-  const j = JSON.parse(journalOriginal);
-  j.entries = j.entries.slice(0, k);
-  writeFileSync(JOURNAL_PATH, JSON.stringify(j, null, 2));
-};
 
 try {
   sec("1. Instalação nova — sem backup, migra tudo");
   {
     const c = cenario();
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const r = migrar(c.env);
     t("exit 0", r.status === 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
     t("todas as migrations aplicadas", aplicadas(c.env.MESTRE_BANCO) === totalJournal, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)} total=${totalJournal}`);
@@ -83,11 +93,12 @@ try {
   {
     const c = cenario();
     const K = 15;
-    truncarJournal(K);
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c, K);
     const r1 = migrar(c.env);
     t("fase 1 (journal truncado) exit 0", r1.status === 0, `status=${r1.status}`);
     t("fase 1 aplicou só K", aplicadas(c.env.MESTRE_BANCO) === K, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
-    writeFileSync(JOURNAL_PATH, journalOriginal);
+    // Troca para pasta com journal cheio — banco segue em K ⇒ pendência real
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const antes = backupsPreUpdate(c.dir).length;
     const r2 = migrar(c.env);
     t("fase 2 (journal cheio) exit 0", r2.status === 0, `status=${r2.status} stderr=${String(r2.stderr).slice(-300)}`);
@@ -95,11 +106,14 @@ try {
     const man = backupsPreUpdate(c.dir).at(-1);
     t("manifesto presente no backup", !!man && existsSync(join(man, "manifesto.json")));
     t("todas as migrations aplicadas após", aplicadas(c.env.MESTRE_BANCO) === totalJournal);
+    // journal versionado intacto
+    t("journal versionado não foi tocado", readFileSync(join(MIGRATIONS_SRC, "meta", "_journal.json"), "utf8") === journalOriginal);
   }
 
   sec("3. Banco em dia — segundo boot não repete backup");
   {
     const c = cenario();
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const r1 = migrar(c.env);
     t("primeira migração ok", r1.status === 0);
     const antes = backupsPreUpdate(c.dir).length;
@@ -112,10 +126,10 @@ try {
   {
     const c = cenario();
     const K = 15;
-    truncarJournal(K);
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c, K);
     migrar(c.env);
-    writeFileSync(JOURNAL_PATH, journalOriginal);
-    // MESTRE_BACKUPS aponta para um ARQUIVO — mkdir do backup falha
+    // Banco em K; troca para journal cheio + MESTRE_BACKUPS inválido
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
     const bloqueio = join(c.dir, "backups-bloqueado");
     writeFileSync(bloqueio, "nao-e-diretorio");
     const env = { ...c.env, MESTRE_BACKUPS: bloqueio };
@@ -124,7 +138,6 @@ try {
     t("zero migrations novas (segue em K)", aplicadas(c.env.MESTRE_BANCO) === K, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
   }
 } finally {
-  writeFileSync(JOURNAL_PATH, journalOriginal);
   rmSync(BASE, { recursive: true, force: true });
 }
 

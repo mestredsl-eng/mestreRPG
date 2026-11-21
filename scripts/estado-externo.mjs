@@ -39,7 +39,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
-  readFileSync, renameSync, rmSync, statSync, writeSync,
+  readFileSync, renameSync, rmSync, writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -432,8 +432,8 @@ export function caminhoBancoConfigurado(repoDir, env = process.env) {
  *      sem regravar); inválida/divergente/corrompida ⇒ bloqueia;
  *   5. nenhuma autorização consumida sem recibo (bootstrap-interrompido
  *      NUNCA é reemitido);
- *   6. banco configurado ausente ou vazio (0 bytes) — arquivo com
- *      conteúdo ⇒ "banco-existente" ⇒ bloqueia.
+ *   6. banco configurado AUSENTE — qualquer arquivo presente, mesmo
+ *      vazio (0 bytes), é estado ambíguo e bloqueia ("banco-existente").
  */
 export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
   const dir = dirEstado(repoDir, env);
@@ -455,10 +455,9 @@ export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
   }
   const banco = caminhoBancoConfigurado(repoDir, env);
   if (existsSync(banco)) {
-    let tamanho;
-    try { tamanho = statSync(banco).size; }
-    catch { return { autorizado: false, motivo: "banco-ilegivel" }; }
-    if (tamanho > 0) return { autorizado: false, motivo: "banco-existente" };
+    // Qualquer arquivo presente — mesmo 0 bytes — é ambíguo: pode ser
+    // resto de crash, dump parcial ou adulteração. Fail-closed.
+    return { autorizado: false, motivo: "banco-existente" };
   }
   const dados = gravarAutorizacaoBootstrap(repoDir, env);
   return { autorizado: true, motivo: "emitida", dados };

@@ -7,7 +7,11 @@ import { criarBanco, CAMINHOS } from "./index.js";
 import { criarBackupPreUpdate } from "./backup-pre-update.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const migrationsFolder = resolve(__dirname, "..", "..", "migrations");
+// Override existe para testes isolarem fixtures de journal sem tocar
+// nos arquivos versionados em servidor/migrations. Produção nunca seta.
+const migrationsFolder = resolve(
+  process.env.MESTRE_MIGRATIONS_FOLDER ?? join(__dirname, "..", "..", "migrations"),
+);
 
 /**
  * P10-B: decide se o banco é LEGADO com migrations pendentes — único

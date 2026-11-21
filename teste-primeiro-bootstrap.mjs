@@ -85,13 +85,14 @@ sec("4. Banco configurado existente bloqueia");
   t("nada emitido", authsEm(r, env).length === 0);
 }
 
-sec("5. Banco vazio (0 bytes) ainda é ausente");
+sec("5. Banco vazio (0 bytes) BLOQUEIA — arquivo presente é ambíguo");
 {
   const r = repo(); const env = envDe(r);
   mkdirSync(join(r, "banco"), { recursive: true });
   writeFileSync(env.MESTRE_BANCO, "");
   const a = autorizarPrimeiroBootstrap(r, env);
-  t("0 bytes → emitida", a.autorizado === true, a.motivo);
+  t("0 bytes → banco-existente", a.autorizado === false && a.motivo === "banco-existente", a.motivo);
+  t("nada emitido", authsEm(r, env).length === 0);
 }
 
 sec("6. Journal de update presente bloqueia");
