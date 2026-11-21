@@ -21,6 +21,8 @@ const PID = "11111111-2222-4333-8444-555555555555";
 const PID2 = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 const AUTOR = { personagemId: PID, autorId: "u1", autorNome: "Mestre" };
 const AUTOR2 = { ...AUTOR, personagemId: PID2 };
+// Conjunto derivado do ruleset da fixture — poderes kind="poder" realmente presentes.
+const PODERES_VALIDOS: ReadonlySet<string> = new Set(["fogo", "gratis"]);
 
 // UUIDs determinísticos por índice — requestIds únicos por operação.
 const rid = (n: number) =>
@@ -80,7 +82,7 @@ describe("invariantes — sequências combinadas", () => {
     // intercala operações válidas e inválidas; inválidas nunca mutam
     for (let i = 1; i <= 30; i++) {
       passos.push([`ativar-${i}`, () => {
-        const r = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(i), poderKey: i % 3 === 0 ? "gratis" : "fogo", config: CONFIG });
+        const r = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(i), poderKey: i % 3 === 0 ? "gratis" : "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
         return r.ok ? r.dados : d;
       }]);
       passos.push([`recuperar-${i}`, () => {
@@ -112,7 +114,7 @@ describe("invariantes — sequências combinadas", () => {
     let d = dados(10);
     const req = rid(7);
     // ativa, recupera, replay da ativação, replay da recuperação, ativa de novo com OUTRO id
-    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", config: CONFIG });
+    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r1.ok, true); if (r1.ok) d = r1.dados;
     const saldoAposAtivar = estadoSangueAtual(d);
     assert.equal(saldoAposAtivar.ok && saldoAposAtivar.estado.saldo, 8);
@@ -121,7 +123,7 @@ describe("invariantes — sequências combinadas", () => {
     assert.equal(rec1.ok, true); if (rec1.ok) d = rec1.dados;
     // saldo: 8 + 2 = 10 (capacidadeMax não passado → sem teto)
 
-    const replay = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", config: CONFIG });
+    const replay = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(replay.ok, true);
     if (replay.ok) {
       assert.equal(replay.replay, true);
@@ -132,20 +134,42 @@ describe("invariantes — sequências combinadas", () => {
 
   it("operação inválida no meio da sequência não muta estado", () => {
     let d = dados(10);
-    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", config: CONFIG });
+    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     if (r1.ok) d = r1.dados;
     const antes = JSON.stringify(d);
     // três inválidas seguidas
-    assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: "x", poderKey: "fogo", config: CONFIG }).ok, false);
+    assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: "x", poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG }).ok, false);
     assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(2), poderKey: "nao-existe", config: CONFIG, poderesValidos: new Set(["fogo"]) }).ok, false);
     assert.equal(recuperarSangue(d, { ...AUTOR, requestId: rid(3), estrutura: EST, dadosFicha: ficha("Vampiro"), config: { ...CONFIG, recuperacaoSangue: { habilitado: false } } }).ok, false);
+    assert.equal(JSON.stringify(d), antes);
+  });
+
+  it("poder fora do conjunto do ruleset é rejeitado sem mutação (contrato R6.3)", () => {
+    let d = dados(10);
+    const antes = JSON.stringify(d);
+    // "fogo" existe em config.poderes mas NÃO está em poderesValidos
+    // (ex.: ruleset sem esse elemento kind="poder") → fail-closed
+    const r = ativarPoderNarrativo(d, {
+      ...AUTOR, requestId: rid(300), poderKey: "fogo",
+      config: CONFIG, poderesValidos: new Set(["gratis"]),
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "poder_desconhecido");
+    assert.equal(JSON.stringify(d), antes);
+    // conjunto vazio também rejeita qualquer poder
+    const r2 = ativarPoderNarrativo(d, {
+      ...AUTOR, requestId: rid(301), poderKey: "fogo",
+      config: CONFIG, poderesValidos: new Set(),
+    });
+    assert.equal(r2.ok, false);
+    if (!r2.ok) assert.equal(r2.codigo, "poder_desconhecido");
     assert.equal(JSON.stringify(d), antes);
   });
 
   it("ledger malformado falha sem mutação em qualquer operação", () => {
     const d = { [CHAVE_SANGUE]: { saldo: "quebrado", usos: {}, historico: [] } };
     const antes = JSON.stringify(d);
-    assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", config: CONFIG }).ok, false);
+    assert.equal(ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG }).ok, false);
     assert.equal(ajustarSangueManual(d, { ...AUTOR, delta: 1, motivo: "x" }).ok, false);
     assert.equal(reconciliarCapacidade(d, { ...AUTOR, capacidadeNova: 5, motivo: "x" }).ok, false);
     assert.equal(JSON.stringify(d), antes);
@@ -154,10 +178,10 @@ describe("invariantes — sequências combinadas", () => {
   it("custo zero mantém registro idempotente dentro de sequência", () => {
     let d = dados(10);
     const req = rid(9);
-    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "gratis", config: CONFIG });
+    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "gratis", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r1.ok, true); if (r1.ok) d = r1.dados;
     // operação paga no meio
-    const r2 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(10), poderKey: "fogo", config: CONFIG });
+    const r2 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(10), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r2.ok, true); if (r2.ok) d = r2.dados;
     const lido = estadoSangueAtual(d);
     assert.equal(lido.ok && lido.estado.saldo, 8);
@@ -166,7 +190,7 @@ describe("invariantes — sequências combinadas", () => {
       assert.equal(Object.keys(lido.estado.usos).length, 2);
     }
     // replay do grátis depois da paga
-    const r3 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "gratis", config: CONFIG });
+    const r3 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "gratis", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r3.ok, true);
     if (r3.ok) assert.equal(r3.replay, true);
   });
@@ -191,7 +215,7 @@ describe("invariantes — sequências combinadas", () => {
   it("redução de capacidade preserva histórico e fixa saldo no teto", () => {
     let d = dados(10);
     // gera histórico antes da redução
-    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", config: CONFIG });
+    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(1), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     if (r1.ok) d = r1.dados;
     const r2 = recuperarSangue(d, { ...AUTOR, requestId: rid(2), estrutura: EST, dadosFicha: ficha("Humano"), config: CONFIG });
     assert.equal(r2.ok, true); if (r2.ok) d = r2.dados;
@@ -208,7 +232,7 @@ describe("invariantes — sequências combinadas", () => {
     assert.equal(r3.estado.historico[1].tipo, "recuperacao");
     assert.equal(r3.estado.historico[2].tipo, "ajuste");
     // operações seguintes partem do teto
-    const r4 = ativarPoderNarrativo(r3.dados, { ...AUTOR, requestId: rid(3), poderKey: "fogo", config: CONFIG });
+    const r4 = ativarPoderNarrativo(r3.dados, { ...AUTOR, requestId: rid(3), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r4.ok, true);
     if (r4.ok) assert.equal(r4.estado.saldo, 2);
   });
@@ -216,10 +240,10 @@ describe("invariantes — sequências combinadas", () => {
   it("mesmo requestId em personagens diferentes → conflito sem mutação", () => {
     let d = dados(10);
     const req = rid(77);
-    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", config: CONFIG });
+    const r1 = ativarPoderNarrativo(d, { ...AUTOR, requestId: req, poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r1.ok, true); if (r1.ok) d = r1.dados;
     const antes = JSON.stringify(d);
-    const r2 = ativarPoderNarrativo(d, { ...AUTOR2, requestId: req, poderKey: "fogo", config: CONFIG });
+    const r2 = ativarPoderNarrativo(d, { ...AUTOR2, requestId: req, poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r2.ok, false);
     if (!r2.ok) assert.equal(r2.codigo, "uso_conflito");
     assert.equal(JSON.stringify(d), antes);
@@ -229,13 +253,13 @@ describe("invariantes — sequências combinadas", () => {
     let d = dados(10);
     const saldos: number[] = [];
     for (let i = 1; i <= 5; i++) {
-      const r = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(200 + i), poderKey: "fogo", config: CONFIG });
+      const r = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(200 + i), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
       assert.equal(r.ok, true);
       if (r.ok) { d = r.dados; saldos.push(r.estado.saldo); }
     }
     assert.deepEqual(saldos, [8, 6, 4, 2, 0]);
     // sexto falha por saldo
-    const r6 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(206), poderKey: "fogo", config: CONFIG });
+    const r6 = ativarPoderNarrativo(d, { ...AUTOR, requestId: rid(206), poderKey: "fogo", poderesValidos: PODERES_VALIDOS, config: CONFIG });
     assert.equal(r6.ok, false);
     if (!r6.ok) assert.equal(r6.codigo, "saldo_insuficiente");
   });
