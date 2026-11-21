@@ -33,6 +33,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const abaRef = useRef<Aba>("info");
   abaRef.current = aba;
   const [erro, setErro] = useState<string | null>(null);
+  // Erro de leitura (carregar) é separado de erro de ação (PATCH/POST):
+  // o retry de uma ação rejeitada reenvia a MESMA mutação com os dados
+  // atuais — nunca um GET que sobrescreveria o rascunho local.
+  const [erroAcao, setErroAcao] = useState<{ texto: string; retry?: () => void } | null>(null);
   // Issue #239 — membros/convites carregam junto da campanha; gate
   // evita o "EstadoVazio" de convites piscar antes do GET resolver.
   const [extrasCarregados, setExtrasCarregados] = useState(false);
@@ -42,6 +46,12 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const [conviteForm, setConviteForm] = useState({ role: "jogador", maxUses: "", expiresInHours: "", requiresApproval: false });
   const [confirmando, setConfirmando] = useState<{ m: Membro; acao: "remover" | "transferir" } | null>(null);
   const [ocupado, setOcupado] = useState(false);
+  // Refs espelham os formulários para que o retry de uma ação rejeitada
+  // envie o rascunho MAIS RECENTE (o closure do erro pode ser antigo).
+  const formRef = useRef(form);
+  formRef.current = form;
+  const conviteFormRef = useRef(conviteForm);
+  conviteFormRef.current = conviteForm;
 
   const souMestre = campanha?.meuPapel === "mestre";
   // Personagens exige mestre/jogador no backend (GET /characters → 403
@@ -107,28 +117,43 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     if (aba !== "mesa") getSocket().emit("entrar-campanha", id);
   }, [aba, id]);
 
-  const salvarEdicao = async (e: FormEvent) => {
-    e.preventDefault();
+  const salvarDados = async () => {
+    const f = formRef.current;
     try {
       await api.atualizarCampanha(id, {
-        name: form.name,
-        description: form.description,
-        system: form.system,
-        status: form.status,
+        name: f.name,
+        description: f.description,
+        system: f.system,
+        status: f.status,
       });
+      setErroAcao(null);
       setEditando(false);
       await carregar();
     } catch (err) {
-      setErro(err instanceof Error ? err.message : "Erro ao salvar");
+      // PATCH rejeitado: form/rascunho permanecem intactos; o retry
+      // reenvia a mutação com o estado atual, não um reload.
+      setErroAcao({
+        texto: err instanceof Error ? err.message : "Erro ao salvar",
+        retry: () => void salvarDados(),
+      });
     }
+  };
+
+  const salvarEdicao = (e: FormEvent) => {
+    e.preventDefault();
+    void salvarDados();
   };
 
   const mudarMembro = async (m: Membro, dados: { role?: string; status?: string; permissions?: PermissoesMembro }) => {
     try {
       await api.atualizarMembro(id, m.membershipId, dados);
+      setErroAcao(null);
       await carregar();
     } catch (err) {
-      setErro(err instanceof Error ? err.message : "Erro ao atualizar participante");
+      setErroAcao({
+        texto: err instanceof Error ? err.message : "Erro ao atualizar participante",
+        retry: () => void mudarMembro(m, dados),
+      });
     }
   };
 
@@ -140,28 +165,41 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       if (acao === "remover") await api.removerMembro(id, m.membershipId);
       else await api.transferirTitularidade(id, m.membershipId);
       setConfirmando(null);
+      setErroAcao(null);
       await carregar();
     } catch (err) {
-      setErro(err instanceof Error ? err.message : acao === "remover" ? "Erro ao remover participante" : "Erro ao transferir titularidade");
+      setErroAcao({
+        texto: err instanceof Error ? err.message : acao === "remover" ? "Erro ao remover participante" : "Erro ao transferir titularidade",
+        retry: () => void confirmarAcao(),
+      });
     } finally {
       setOcupado(false);
     }
   };
 
-  const criarConvite = async (e: FormEvent) => {
-    e.preventDefault();
+  const enviarConvite = async () => {
+    const f = conviteFormRef.current;
     try {
       const { convite } = await api.criarConvite(id, {
-        role: conviteForm.role,
-        maxUses: conviteForm.maxUses ? Number(conviteForm.maxUses) : undefined,
-        expiresInHours: conviteForm.expiresInHours ? Number(conviteForm.expiresInHours) : undefined,
-        requiresApproval: conviteForm.requiresApproval,
+        role: f.role,
+        maxUses: f.maxUses ? Number(f.maxUses) : undefined,
+        expiresInHours: f.expiresInHours ? Number(f.expiresInHours) : undefined,
+        requiresApproval: f.requiresApproval,
       });
       setConviteCriado({ code: convite.code });
+      setErroAcao(null);
       await carregar();
     } catch (err) {
-      setErro(err instanceof Error ? err.message : "Erro ao criar convite");
+      setErroAcao({
+        texto: err instanceof Error ? err.message : "Erro ao criar convite",
+        retry: () => void enviarConvite(),
+      });
     }
+  };
+
+  const criarConvite = (e: FormEvent) => {
+    e.preventDefault();
+    void enviarConvite();
   };
 
   if (!campanha) {
@@ -213,7 +251,8 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
       {aba === "regras" && souMestre && <Regras campaignId={id} />}
 
-      {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
+      {erro && <EstadoErro aoTentarNovamente={() => void carregar()}>{erro}</EstadoErro>}
+      {erroAcao && <EstadoErro aoTentarNovamente={erroAcao.retry}>{erroAcao.texto}</EstadoErro>}
 
       {aba === "info" && (
         <section className="cartao">
@@ -226,14 +265,14 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             </>
           ) : (
             <form className="formulario" onSubmit={salvarEdicao}>
-              <label>Nome<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} /></label>
+              <label>Nome<input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} maxLength={120} /></label>
               <label>Sistema de RPG<input value={form.system} onChange={(e) => setForm({ ...form, system: e.target.value })} /></label>
               <label>Status
                 <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                   {STATUS_OPCOES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>
               </label>
-              <label>Descrição<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} /></label>
+              <label>Descrição<textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3} maxLength={4000} /></label>
               <div className="linha">
                 <button type="submit">Salvar</button>
                 <button type="button" className="secundario" onClick={() => setEditando(false)}>Cancelar</button>

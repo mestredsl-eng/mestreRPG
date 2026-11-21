@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import IconeInterface from "./IconeInterface";
 import "./estado-feedback.css";
 
@@ -7,11 +7,17 @@ import "./estado-feedback.css";
 // retry só existe quando a página já possui recarga segura (GET
 // idempotente) — o botão apenas reexecuta essa função, sem mutation.
 
-export function EstadoCarregando({ children = "Carregando…" }: { children?: ReactNode }) {
+export function EstadoCarregando({ children = "Carregando…" }: { children?: string }) {
+  // Live region estável: o nó role="status" monta vazio e recebe o texto
+  // no MESMO nó via efeito — leitores de tela anunciam a atualização sem
+  // depender de a região já existir antes do mount do componente, e sem
+  // anúncio duplicado quando `children` muda.
+  const [texto, setTexto] = useState("");
+  useEffect(() => setTexto(children), [children]);
   return (
-    <div className="estado-feedback estado-feedback-carregando" role="status">
+    <div className="estado-feedback estado-feedback-carregando">
       <span className="estado-feedback-icone" aria-hidden="true" />
-      <p className="estado-feedback-texto">{children}</p>
+      <p className="estado-feedback-texto" role="status">{texto}</p>
     </div>
   );
 }

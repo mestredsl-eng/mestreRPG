@@ -58,8 +58,15 @@ try {
   await abrirAba(pm, "Personagens");
   await pm.waitForSelector(".estado-feedback-carregando", { timeout: 8000 });
   const st = pm.locator(".estado-feedback-carregando");
-  ok("loading. role=status presente", (await st.getAttribute("role")) === "status");
-  ok("loading. texto sempre visível", (await st.locator(".estado-feedback-texto").innerText()).includes("Carregando"));
+  const live = st.locator(".estado-feedback-texto");
+  ok("loading. role=status presente no nó de texto", (await live.getAttribute("role")) === "status");
+  // Live region estável (P3 #238): o nó role=status monta vazio e é
+  // preenchido no MESMO nó — leitores de tela anunciam a atualização.
+  const noStatus = await live.elementHandle();
+  await pm.waitForFunction((el) => !!el && (el.textContent ?? "").includes("Carregando"), noStatus, { timeout: 8000 }).catch(() => {});
+  ok("loading. texto sempre visível", (await live.innerText()).includes("Carregando"));
+  const mesmoNoStatus = await live.evaluate((el) => el === document.querySelector(".estado-feedback-carregando .estado-feedback-texto[role='status']"));
+  ok("live region. identidade do nó estável antes/depois do preenchimento", mesmoNoStatus === true);
   ok("loading. indicador visual discreto presente", (await st.locator(".estado-feedback-icone").count()) === 1);
   // ---- asserts de CSS da folha dedicada estado-feedback.css ----
   const css = await st.evaluate((el) => {
@@ -135,6 +142,39 @@ try {
   await pm.waitForTimeout(300);
   ok("convites. vazio real aparece após carga", (await pm.locator(".estado-vazio:has-text('Nenhum convite')").count()) === 1);
   ok("convites. formulário Gerar convite preservado", (await pm.locator('button[type="submit"]', { hasText: "Gerar convite" }).count()) === 1);
+
+  // ---------- 3b) Campanha: PATCH rejeitado preserva rascunho; retry reenvia a mutação ----------
+  await abrirAba(pm, "Informações");
+  let falharPatchCamp = true;
+  let patchesCamp = 0;
+  await pm.route(`**/api/campaigns/${c.campId}`, async (route) => {
+    if (route.request().method() !== "PATCH") return route.continue();
+    patchesCamp++;
+    if (falharPatchCamp) {
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ erro: "falha simulada" }) });
+    }
+    return route.continue();
+  });
+  await pm.getByRole("button", { name: "Editar campanha" }).click();
+  const nomeInput = pm.locator("form.formulario label", { hasText: "Nome" }).locator("input");
+  const descInput = pm.locator("form.formulario label", { hasText: "Descrição" }).locator("textarea");
+  await nomeInput.fill("Rascunho Secreto 123");
+  await descInput.fill("Descrição rascunho que não pode sumir");
+  await pm.getByRole("button", { name: "Salvar", exact: true }).click();
+  await pm.waitForSelector(".estado-feedback-erro", { timeout: 8000 });
+  ok("campanha. erro de ação visível (role=alert)", (await pm.locator(".estado-feedback-erro").first().getAttribute("role")) === "alert");
+  ok("campanha. rascunho preservado após PATCH rejeitado",
+    (await nomeInput.inputValue()) === "Rascunho Secreto 123" && (await descInput.inputValue()).includes("não pode sumir"),
+    `nome="${await nomeInput.inputValue()}"`);
+  falharPatchCamp = false;
+  const patchesAntesRetry = patchesCamp;
+  await pm.locator(".estado-feedback-erro").first().getByRole("button", { name: "Tentar novamente" }).click();
+  await pm.waitForTimeout(1500);
+  ok("campanha. retry reenvia PATCH da mutação (não GET de carga)", patchesCamp === patchesAntesRetry + 1, `patches ${patchesAntesRetry}→${patchesCamp}`);
+  ok("campanha. edição salva e volta ao modo leitura", (await pm.getByRole("button", { name: "Editar campanha" }).count()) === 1);
+  // restaura o nome original — seções seguintes localizam "Campanha Teste"
+  await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { name: "Campanha Teste" } });
+  await pm.unroute(`**/api/campaigns/${c.campId}`);
 
   // ---------- 4) Reduced motion: texto permanece, animação desligada ----------
   await pm.emulateMedia({ reducedMotion: "reduce" });
