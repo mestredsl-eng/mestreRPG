@@ -225,6 +225,13 @@
       "when": 1795212981626,
       "tag": "0031_release_1007_patrimonio_regua_news",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795223232737,
+      "tag": "0032_release_1009_xp_lote",
+      "breakpoints": true
     }
   ]
 }

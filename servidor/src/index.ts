@@ -10,6 +10,7 @@ import { convitesRouter, convitesPublicoRouter } from "./routes/convites.js";
 import { modelosRouter } from "./routes/modelos.js";
 import { personagensRouter } from "./routes/personagens.js";
 import { progressaoRouter } from "./routes/progressao.js";
+import { xpLoteRouter } from "./routes/xp-lote.js";
 import { defeitosRouter } from "./routes/defeitos.js";
 import { regrasRouter } from "./routes/regras.js";
 import { patrimonioRouter } from "./routes/patrimonio.js";
@@ -88,7 +89,7 @@ app.use(express.json({ limit: "2mb" }));
 const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
-  personagensRouter, progressaoRouter, regrasRouter, patrimonioRouter, catalogoRouter,
+  personagensRouter, progressaoRouter, xpLoteRouter, regrasRouter, patrimonioRouter, catalogoRouter,
   defeitosRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
@@ -109,6 +110,7 @@ app.use("/api/admin/servidor", servidorRouter);
 app.use("/api/local", localRouter);
 app.use("/api/campaigns", campanhasRouter);
 app.use("/api/campaigns", campanhaIORouter);
+app.use("/api/campaigns", xpLoteRouter);
 app.use("/api/convites", convitesPublicoRouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
