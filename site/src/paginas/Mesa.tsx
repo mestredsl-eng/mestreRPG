@@ -1459,7 +1459,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // Mesmo critério do backend (campoElegivelParaTeste em lib/ficha.ts):
 // usadoEmTestes explícito manda; sem a flag (fichas antigas), cai no
 // fallback por semântica — números "livres" (idade, contadores) não entram.
-const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento", "poder"]);
 
 // Regra compartilhada com o backend (campoElegivelParaTeste* em
 // servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback

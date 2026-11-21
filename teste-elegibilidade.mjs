@@ -5,17 +5,18 @@ import Database from "better-sqlite3";
 import { io as ioClient } from "socket.io-client";
 import { hashToken } from "./servidor/dist/lib/password.js";
 
-const BASE = "http://localhost:3001";
-const CID = "179dd61c-6f4e-4c54-bf88-1e255a506743";
+const BASE = process.env.MESTRE_TESTE_BASE ?? "http://localhost:3001";
+const DB_PATH = process.env.MESTRE_TESTE_BANCO ?? "banco/mestre-rpg.db";
+const CID = process.env.MESTRE_TESTE_CAMPANHA ?? "179dd61c-6f4e-4c54-bf88-1e255a506743";
 const resultados = [];
 const ok = (nome, cond, extra = "") => {
   resultados.push({ nome, ok: !!cond });
   console.log(`${cond ? "ok" : "FALHOU"} ${nome}${extra ? " — " + extra : ""}`);
 };
 
-const db = new Database("banco/mestre-rpg.db");
+const db = new Database(DB_PATH);
 const admin = db.prepare("select id from users where username='administrador'").get();
-const jog = db.prepare("select id from users where username='jogador_teste'").get();
+const jog = db.prepare("select id from users where username=?").get(process.env.MESTRE_TESTE_JOGADOR ?? "jogador_teste");
 
 // ---------- fixture: modelo com todos os casos de elegibilidade ----------
 const campos = [
@@ -32,6 +33,15 @@ const campos = [
   ["el_item",         "Teste Item",          "inteiro", "item",        true,   11],
   ["el_texto",        "Teste Texto",         "texto",   "livre",       true,   null],
   ["el_calc",         "Teste Calculado",     "calculado","atributo",   true,   null],
+  // R1.2: semântica "poder" (tipicamente selecao_nivel) entra no fallback.
+  // valor = lista persistida de elementos {key,nivel}; nivel<1 simula
+  // elemento inválido/não adquirido — nunca pode virar opção.
+  ["el_fb_poder",     "Teste FB Poder",      "selecao_nivel", "poder", undefined,
+    [{ key: "poder-alpha", nivel: 2 }, { key: "poder-beta", nivel: 0 }]],
+  ["el_true_poder",   "Teste True Poder",    "selecao_nivel", "poder", true,
+    [{ key: "poder-x", nivel: 3 }]],
+  ["el_false_poder",  "Teste False Poder",   "selecao_nivel", "poder", false,
+    [{ key: "poder-y", nivel: 4 }]],
 ];
 const estrutura = {
   versao: 1,
@@ -46,7 +56,7 @@ const estrutura = {
   }],
 };
 const dados = {};
-for (const [id, , , , , v] of campos) if (typeof v === "number") dados[id] = v;
+for (const [id, , , , , v] of campos) if (typeof v === "number" || Array.isArray(v)) dados[id] = v;
 
 const mem = db.prepare("select id from memberships where campaign_id=? and user_id=? and status='ativo'").get(CID, jog.id);
 if (!mem) { console.error("membership de jogador_teste ausente — rode teste-d10-desafio antes"); process.exit(1); }
@@ -99,7 +109,16 @@ const sock = ioClient(BASE, { extraHeaders: { cookie: `mestre_rpg_session=${toke
 await new Promise((r) => sock.on("connect", r));
 const entrar = await new Promise((res) => sock.emit("mesa:entrar", { sessionId: SID }, res));
 ok("mestre entrou na mesa", entrar?.ok === true, JSON.stringify(entrar));
-const emitir = (ev, payload) => new Promise((res) => sock.emit(ev, payload, res));
+// O limitador mesa:teste:pedir é 15/3s por usuário — a suíte emite ~25
+// pedidos em sequência; pacing mínimo evita RATE_LIMITED espúrio sem
+// afrouxar nenhuma assertion (o que se testa é a elegibilidade, não a cota).
+let ultimoEmitir = 0;
+const emitir = async (ev, payload) => {
+  const espera = Math.max(0, 340 - (Date.now() - ultimoEmitir));
+  if (espera) await new Promise((r) => setTimeout(r, espera));
+  ultimoEmitir = Date.now();
+  return new Promise((res) => sock.emit(ev, payload, res));
+};
 const criados = [];
 
 // ---------- elegibilidade via backend ----------
@@ -126,6 +145,42 @@ for (const [campoId, esperado, nome] of casos) {
   const elegivel = r?.ok === true;
   ok(nome, elegivel === esperado, JSON.stringify(r));
   if (elegivel && r?.id) criados.push(r.id);
+}
+
+// ---------- R1.2: Poder (selecao_nivel) — elegibilidade por ELEMENTO ----------
+// Cada elemento selecionado vira opção própria com seu nível individual;
+// flag explícita manda sobre o fallback; nível inválido/ausente rejeita.
+const casosPoder = [
+  ["el_fb_poder",    "poder-alpha",       true,  "sem flag + poder (elemento nível 2) → elegível"],
+  ["el_true_poder",  "poder-x",           true,  "usadoEmTestes:true + poder → elegível"],
+  ["el_false_poder", "poder-y",           false, "usadoEmTestes:false + poder → inelegível (flag vence)"],
+  ["el_fb_poder",    "poder-beta",        false, "elemento nível 0 → rejeitado (não vira opção)"],
+  ["el_fb_poder",    "poder-inexistente", false, "elemento não adquirido → rejeitado"],
+  ["el_fb_poder",    "",                  false, "selecao_nivel sem elementoKey → rejeitado"],
+];
+for (const [campoId, elementoKey, esperado, nome] of casosPoder) {
+  const r = await emitir("mesa:teste:pedir", {
+    sessionId: SID, characterId: charId, campoId,
+    ...(elementoKey ? { elementoKey } : {}),
+    rotulo: `${campoId}/${elementoKey || "-"}`,
+    dadosLados: 10, requestId: "eleg-" + crypto.randomUUID().slice(0, 8),
+  });
+  const elegivel = r?.ok === true;
+  ok(nome, elegivel === esperado, JSON.stringify(r));
+  if (elegivel && r?.id) criados.push(r.id);
+}
+
+// prova de nível individual: dados positivos = nivel do elemento (2), não a soma
+{
+  const r = await emitir("mesa:teste:pedir", {
+    sessionId: SID, characterId: charId, campoId: "el_fb_poder", elementoKey: "poder-alpha",
+    rotulo: "Poder Alpha", dadosLados: 10, malus: 0,
+    requestId: "eleg-" + crypto.randomUUID().slice(0, 8),
+  });
+  const row = r?.id ? db.prepare("select dice_count,dice_sides from tests where id=?").get(r.id) : null;
+  // 2 níveis - 0 malus = 2 dados; nunca 2+0(soma) nem custo de aquisição
+  ok("poder: dados = nível individual do elemento (2d10)", r?.ok === true && row?.dice_count === 2 && row?.dice_sides === 10, JSON.stringify(row ?? r));
+  if (r?.id) criados.push(r.id);
 }
 
 // ---------- casos que exigem rejeição mesmo com dados "plausíveis" ----------
@@ -178,7 +233,7 @@ try {
   const clicou = async (sel, txt) => { try { await p.locator(sel, { hasText: txt }).first().click({ timeout: 4000 }); return true; } catch { return false; } };
   await clicou(".topo nav button", "Campanhas");
   await p.waitForTimeout(600);
-  const card = p.locator(".cartao-campanha", { hasText: "teste-mestree" }).first();
+  const card = p.locator(".cartao-campanha", { hasText: process.env.MESTRE_TESTE_CAMPANHA_NOME ?? "teste-mestree" }).first();
   if (await card.count()) await card.click(); else await p.locator(".cartao-campanha").first().click();
   await p.waitForTimeout(900);
   await clicou(".abas button", "Mesa");
@@ -203,6 +258,12 @@ try {
     ok("UI: profissão NÃO aparece", !tem("Teste FB Profissao"));
     ok("UI: moeda NÃO aparece", !tem("Teste Moeda"));
     ok("UI: item NÃO aparece", !tem("Teste Item"));
+    // R1.2: Poder elegível aparece POR ELEMENTO (nível individual); flag
+    // false some; elemento nível 0/não adquirido nunca vira opção.
+    ok("UI: poder fb aparece (elemento)", tem("Teste FB Poder — poder-alpha"));
+    ok("UI: poder nível 0 NÃO aparece", !tem("poder-beta"));
+    ok("UI: poder true aparece", tem("Teste True Poder — poder-x"));
+    ok("UI: poder false NÃO aparece", !tem("Teste False Poder"));
   } else {
     console.log("  (sessão não encontrada na UI — pulando verificação visual)");
     resultados.push({ nome: "UI: sessão encontrada", ok: false });
