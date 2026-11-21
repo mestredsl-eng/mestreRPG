@@ -51,7 +51,7 @@ async function medirPagina(page, tela, vp) {
       const tag = el.tagName.toLowerCase();
       const id = el.id ? `#${el.id}` : "";
       const classes = typeof el.className === "string"
-        ? el.className.split(/\\s+/).filter(Boolean).slice(0, 2).map((c) => `.${c}`).join("")
+        ? el.className.split(/\s+/).filter(Boolean).slice(0, 2).map((c) => `.${c}`).join("")
         : "";
       return `${tag}${id}${classes}`;
     };
