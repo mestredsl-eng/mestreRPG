@@ -1,10 +1,12 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Modal } from "./Modal";
 import { apiProgressao, ApiErrorProgresso } from "./api-progressao";
 import type { PersonagemResumo } from "./api";
 import "./xp-lote.css";
 
 interface ResultadoItem { characterId: string; quantidade: number; saldoResultante: number }
+
+export interface OperacaoXpLote { hash: string; requestId: string }
 
 /**
  * Concessão de XP em lote (Issue #185 item 3) — somente mestre.
@@ -16,10 +18,11 @@ interface ResultadoItem { characterId: string; quantidade: number; saldoResultan
  * payload gera um novo ID (nova operação). Duplo clique é bloqueado
  * por `enviando` + `ocupado` no Modal.
  */
-export default function XpLote({ campaignId, personagens, nomes, aoFechar }: {
+export default function XpLote({ campaignId, personagens, nomes, operacaoRef, aoFechar }: {
   campaignId: string;
   personagens: PersonagemResumo[];
   nomes: Map<string, string>;
+  operacaoRef: { current: OperacaoXpLote | null };
   aoFechar: () => void;
 }) {
   // Apenas personagens NÃO arquivados são elegíveis — arquivado é
@@ -33,9 +36,9 @@ export default function XpLote({ campaignId, personagens, nomes, aoFechar }: {
   const [erro, setErro] = useState<string | null>(null);
   const [erroCampo, setErroCampo] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
-  // requestId da operação em curso: payload→id. Retry com o mesmo
-  // payload reutiliza; payload diferente gera novo.
-  const operacao = useRef<{ hash: string; requestId: string } | null>(null);
+  // A intenção vive no componente pai, que não desmonta quando o modal
+  // fecha. Assim um ACK perdido não apaga o requestId da operação.
+  const operacao = operacaoRef;
 
   const qtdDe = (id: string) => {
     const n = Number.parseInt(itens[id] ?? "", 10);
@@ -63,6 +66,7 @@ export default function XpLote({ campaignId, personagens, nomes, aoFechar }: {
   };
 
   const payloadHash = () => JSON.stringify({
+    campaignId,
     motivo: motivo.trim(),
     itens: itensValidos.map((i) => [i.characterId, i.quantidade]).sort(),
   });
@@ -92,9 +96,8 @@ export default function XpLote({ campaignId, personagens, nomes, aoFechar }: {
       const api = e instanceof ApiErrorProgresso ? e : null;
       const msg = api?.message ?? (e instanceof Error ? e.message : "Falha ao conceder XP");
       setErro(msg);
-      // 409 requestId_divergente: o requestId ficou preso a outro payload —
-      // descarta a operação para que a próxima tentativa gere ID novo.
-      if (api?.status === 409) operacao.current = null;
+      // Qualquer erro é potencialmente ambíguo: preserve a intenção.
+      // Se o payload mudar, requestIdPara gera uma nova operação por hash.
       if (api?.characterId) setErroCampo(api.characterId);
       // 400/403/404/409: permanece na etapa de confirmação? Não — volta à
       // edição para o mestre revisar/corrigir (sem sucesso falso).

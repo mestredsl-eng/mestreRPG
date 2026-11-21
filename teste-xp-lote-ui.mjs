@@ -2,7 +2,7 @@
 // Teste E2E da UI de XP em lote (Issue #185 item 3) — Playwright real.
 // Cobre: visibilidade mestre/jogador/espectador, cancelamento, lote válido,
 // arquivado ausente, ficha não selada (403 backend), retry de rede com o
-// MESMO requestId (idempotente), requestId divergente (409), duplo clique e
+// MESMO requestId após fechar/reabrir, payload alterado com UUID novo, duplo clique e
 // layout mobile. Servidor + SQLite + site/dist descartáveis.
 import { chromium } from "playwright";
 import {
@@ -202,15 +202,18 @@ try {
     await cM.close();
   }
 
-  // ---------- 4. Retry de rede: mesmo requestId → idempotente ----------
+  // ---------- 4. Retry após fechar/reabrir: intenção idempotente ----------
   {
     const cM = await ctx(cookieMestre.split("=").slice(1).join("="));
     const p = await cM.newPage();
     let abortou = false;
+    const requestIds = [];
     await p.route("**/xp-lote", async (route) => {
-      if (!abortou && route.request().method() === "POST") {
+      if (route.request().method() !== "POST") return route.continue();
+      try { requestIds.push(JSON.parse(route.request().postData() || "{}").requestId ?? null); } catch { requestIds.push(null); }
+      if (!abortou) {
         abortou = true;
-        // Executa no servidor mas aborta a resposta → cliente vê falha de rede.
+        // O servidor confirma o commit; só a resposta ao navegador é perdida.
         await route.fetch();
         await route.abort();
       } else {
@@ -218,24 +221,101 @@ try {
       }
     });
     await abrirPersonagens(p);
-    await p.getByRole("button", { name: "XP em lote" }).click();
-    await p.waitForSelector(".modal-fundo");
-    await p.locator(".xp-lote-item", { hasText: "Herói A" }).locator('input[type="checkbox"]').check();
-    await p.locator('input[aria-label="Quantidade de XP para Herói A"]').fill("7");
-    await p.locator('input[aria-label="Motivo da concessão"]').fill("Retry teste");
-    await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    const preencherLote = async () => {
+      await p.getByRole("button", { name: "XP em lote" }).click();
+      await p.waitForSelector(".modal-fundo");
+      await p.locator(".xp-lote-item", { hasText: "Herói A" }).locator('input[type="checkbox"]').check();
+      await p.locator('input[aria-label="Quantidade de XP para Herói A"]').fill("7");
+      await p.locator('input[aria-label="Motivo da concessão"]').fill("Retry teste");
+      await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    };
+    const confirmar = async () => p.getByRole("button", { name: "Confirmar concessão" }).click();
+
+    await preencherLote();
+    await confirmar();
+    await p.waitForSelector(".modal-fundo .erro", { timeout: 15000 });
+    const primeira = requestIds[0];
+    ok("UI. primeiro POST tem requestId UUID", /^[0-9a-f-]{36}$/i.test(primeira ?? ""), String(primeira));
+
+    // Fecha o modal (desmonta XpLote) depois do erro de rede ambíguo.
+    await p.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForSelector(".modal-fundo", { state: "detached", timeout: 5000 });
+    // Reabre e recompõe exatamente o mesmo payload.
+    await preencherLote();
+    await confirmar();
+    await p.waitForSelector("text=já havia sido registrada", { timeout: 15000 });
+    ok("UI. reabrir modal reutiliza o mesmo requestId", requestIds.length >= 2 && requestIds[1] === primeira, String(primeira) + " / " + String(requestIds[1]));
+    ok("UI. servidor confirma replay sem novo lote", (await p.locator(".modal-fundo").textContent()).includes("já havia sido registrada"));
+
+    let rA = await req(BASE, "GET", "/characters/" + charA + "/progressao", { cookie: "mestre_rpg_session=" + cookieJ1 });
+    ok("API. retry após remontagem credita apenas 7 XP (15+7=22)", rA.json?.xp?.saldo === 22, "saldo=" + rA.json?.xp?.saldo);
+    let w = abrirDb(BANCO);
+    let n = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
+    w.close();
+    ok("API. resposta perdida + replay persistem apenas 1 novo lote", n === 2, "n=" + n);
+
+    // Após ACK positivo do replay, a mesma ação feita de propósito é nova.
+    await p.getByRole("button", { name: "Fechar" }).click();
+    await p.waitForSelector(".modal-fundo", { state: "detached", timeout: 5000 });
+    await preencherLote();
+    await confirmar();
+    await p.waitForSelector("text=XP concedido", { timeout: 15000 });
+    ok("UI. nova intenção após ACK positivo recebe UUID novo", requestIds.length >= 3 && requestIds[2] !== requestIds[1], String(requestIds[1]) + " / " + String(requestIds[2]));
+    ok("UI. nova intenção não aparece como replay", !(await p.locator(".modal-fundo").textContent()).includes("já havia sido registrada"));
+    await p.getByRole("button", { name: "Fechar" }).click();
+    rA = await req(BASE, "GET", "/characters/" + charA + "/progressao", { cookie: "mestre_rpg_session=" + cookieJ1 });
+    ok("API. mesma concessão intencional após sucesso credita novo lote", rA.json?.xp?.saldo === 29, "saldo=" + rA.json?.xp?.saldo);
+    w = abrirDb(BANCO);
+    n = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
+    w.close();
+    ok("API. terceiro POST intencional grava exatamente 1 novo lote", n === 3, "n=" + n);
+    await cM.close();
+  }
+
+  // ---------- 4b. Payload alterado após ACK ambíguo recebe UUID novo ----------
+  {
+    const cM = await ctx(cookieMestre.split("=").slice(1).join("="));
+    const p = await cM.newPage();
+    let abortou = false;
+    const requestIds = [];
+    await p.route("**/xp-lote", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      try { requestIds.push(JSON.parse(route.request().postData() || "{}").requestId ?? null); } catch { requestIds.push(null); }
+      if (!abortou) {
+        abortou = true;
+        await route.fetch();
+        await route.abort();
+      } else {
+        await route.continue();
+      }
+    });
+    await abrirPersonagens(p);
+    const preencher = async (quantidade) => {
+      await p.getByRole("button", { name: "XP em lote" }).click();
+      await p.waitForSelector(".modal-fundo");
+      await p.locator(".xp-lote-item", { hasText: "Mestre Personagem" }).locator('input[type="checkbox"]').check();
+      await p.locator('input[aria-label="Quantidade de XP para Mestre Personagem"]').fill(String(quantidade));
+      await p.locator('input[aria-label="Motivo da concessão"]').fill("Payload alterado");
+      await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    };
+    await preencher(3);
     await p.getByRole("button", { name: "Confirmar concessão" }).click();
     await p.waitForSelector(".modal-fundo .erro", { timeout: 15000 });
-    // Retry: payload idêntico → MESMO requestId → servidor devolve repetido
-    await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    const idPayloadOriginal = requestIds[0];
+    await p.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForSelector(".modal-fundo", { state: "detached", timeout: 5000 });
+    // O valor foi alterado de 3 para 4 depois de possível commit.
+    await preencher(4);
     await p.getByRole("button", { name: "Confirmar concessão" }).click();
-    await p.waitForSelector("text=já havia sido registrada", { timeout: 15000 });
-    const rA = await req(BASE, "GET", `/characters/${charA}/progressao`, { cookie: `mestre_rpg_session=${cookieJ1}` });
-    ok("API. retry idempotente — saldo 15+7=22 (não 29)", rA.json?.xp?.saldo === 22, `saldo=${rA.json?.xp?.saldo}`);
+    await p.waitForSelector("text=XP concedido", { timeout: 15000 });
+    ok("UI. payload alterado após resposta perdida recebe UUID novo", requestIds.length >= 2 && requestIds[1] !== idPayloadOriginal, String(idPayloadOriginal) + " / " + String(requestIds[1]));
+    ok("UI. payload alterado é operação nova, não replay", !(await p.locator(".modal-fundo").textContent()).includes("já havia sido registrada"));
+    const saldo = await req(BASE, "GET", "/characters/" + charM + "/progressao", { cookie: cookieMestre });
+    ok("API. original ambíguo + payload alterado são dois lotes distintos", saldo.json?.xp?.saldo === 7, "saldo=" + saldo.json?.xp?.saldo);
     const w = abrirDb(BANCO);
     const n = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
     w.close();
-    ok("API. retry gerou apenas +1 lote", n === 2, `n=${n}`);
+    ok("API. payload alterado gera lote independente", n === 5, "n=" + n);
     await cM.close();
   }
 
