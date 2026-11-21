@@ -334,3 +334,59 @@ export const ATMOSFERAS_VISUAIS: readonly Readonly<AtmosferaVisual>[] = Object.f
 export function atmosferaPorId(id: string): AtmosferaVisual | undefined {
   return ATMOSFERAS_VISUAIS.find((a) => a.id === id);
 }
+
+// ---------- Sugestão determinística de aprendizado (Issue #132) ----------
+// Regra fechada e explicável: uma combinação completa só é sugerida
+// quando aparece pelo menos 2 vezes nas últimas 6 escolhas válidas do
+// histórico. Empate de contagem → a ocorrência mais recente vence.
+// O visual atualmente salvo nunca é sugerido (seria redundante).
+
+export interface SugestaoVisual {
+  preferencias: PreferenciasVisuais;
+  vezes: number;
+}
+
+function visualEstritoValido(entrada: unknown): entrada is PreferenciasVisuais {
+  if (typeof entrada !== "object" || entrada === null || Array.isArray(entrada)) return false;
+  const b = entrada as Record<string, unknown>;
+  return (
+    INTENSIDADES.includes(b.intensidade as IntensidadeVisual) &&
+    CORES_DESTAQUE.includes(b.corDestaque as CorDestaqueVisual) &&
+    SUPERFICIES.includes(b.superficies as SuperficieVisual) &&
+    TEXTURAS.includes(b.textura as TexturaVisual) &&
+    ANIMACOES.includes(b.animacoes as AnimacoesVisual) &&
+    DENSIDADES.includes(b.densidade as DensidadeVisual)
+  );
+}
+
+const chaveVisual = (v: PreferenciasVisuais): string =>
+  [v.intensidade, v.corDestaque, v.superficies, v.textura, v.animacoes, v.densidade].join("|");
+
+export function sugestaoVisualAprendizado(
+  historico: readonly unknown[],
+  atual: PreferenciasVisuais,
+): SugestaoVisual | null {
+  const ultimas = historico.slice(-6).filter(visualEstritoValido);
+  const contagem = new Map<string, { visual: PreferenciasVisuais; vezes: number; ultima: number }>();
+  ultimas.forEach((v, i) => {
+    const chave = chaveVisual(v);
+    const entrada = contagem.get(chave);
+    if (entrada) {
+      entrada.vezes += 1;
+      entrada.ultima = i;
+    } else {
+      contagem.set(chave, { visual: v, vezes: 1, ultima: i });
+    }
+  });
+  const chaveAtual = chaveVisual(atual);
+  let melhor: SugestaoVisual | null = null;
+  let melhorUltima = -1;
+  for (const { visual, vezes, ultima } of contagem.values()) {
+    if (vezes < 2 || chaveVisual(visual) === chaveAtual) continue;
+    if (!melhor || vezes > melhor.vezes || (vezes === melhor.vezes && ultima > melhorUltima)) {
+      melhor = { preferencias: visual, vezes };
+      melhorUltima = ultima;
+    }
+  }
+  return melhor;
+}
