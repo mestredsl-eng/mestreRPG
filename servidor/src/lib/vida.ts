@@ -231,14 +231,28 @@ export function vidaParaFicha(opts: {
     [CHAVE_HP]: dados[CHAVE_HP],
     [CHAVE_VITALIDADE]: dados[CHAVE_VITALIDADE],
   };
-  const hp = resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
+
+  // O HP atual persistido foi produzido sob o máximo REAL. Se o campo que
+  // define esse máximo for mestre-only, nem o atual nem o máximo calculado
+  // sobre a ficha filtrada podem ser publicados: 80/100 versus 100/100
+  // permite inferir o valor secreto mesmo depois do clamp. Comparar o ID
+  // do campo escolhido na estrutura completa evita aceitar outro campo
+  // público com o mesmo semântico como substituto.
+  const campoQueDefineHp = regras.config.hp?.habilitado
+    ? campoHp(estrutura, regras.config.hp)
+    : null;
+  const hpDependeDeCampoOculto = !!campoQueDefineHp &&
+    !estruturaFiltrada.secoes.some((secao) =>
+      secao.campos.some((campo) => campo.id === campoQueDefineHp.id)
+    );
+  const hp = hpDependeDeCampoOculto
+    ? null
+    : resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
   if (hp) hp.historico = [];
+
   const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
   if (vit) {
     vit.historico = [];
-    // Conversão automática: % sobre o HP MÁXIMO REAL (oculto do leitor)
-    // denunciaria atributo privado — avalia pelo SNAPSHOT de limiares do
-    // evento que produziu o nível, com piso manual como piso narrativo.
     const cfgVit = regras.config.vitalidade;
     const estadoVit = lerVitalidade(dados);
     const histVit = estadoVit.historico ?? [];
@@ -250,25 +264,48 @@ export function vidaParaFicha(opts: {
         }
       }
     }
-    const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
-    const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
-    if (veioDeConversao && cfgVit?.niveis?.length) {
-      const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
-      const limiaresEv = Array.isArray(ultimoVit?.limiares) ? ultimoVit.limiares : null;
-      const tetoPublico = limiaresEv
-        ? Math.min(
-            nivelExigidoPorHp({ habilitada: true, limiares: limiaresEv }, pctPublico) ?? 0,
-            cfgVit.niveis.length - 1
-          )
-        : 0;
-      const pisoNaEscala = Math.min(pisoManual, cfgVit.niveis.length - 1);
-      const nivelExibido = Math.max(pisoNaEscala, Math.min(vit.nivel, tetoPublico));
-      if (nivelExibido !== vit.nivel) {
-        const niv = cfgVit.niveis[nivelExibido];
-        vit.nivel = nivelExibido;
-        vit.nome = niv.nome;
-        vit.penalidadeDados = niv.penalidadeDados;
-        vit.bloqueiaAcoes = niv.bloqueiaAcoes;
+
+    if (hpDependeDeCampoOculto) {
+      // A vitalidade automática também deriva da razão HP atual/máximo.
+      // Quando o atributo do máximo é privado, só o piso narrativo
+      // definido manualmente é seguro para não-mestre; timestamps e autoria
+      // poderiam denunciar uma conversão causada pelo HP secreto.
+      if (cfgVit?.niveis?.length) {
+        const nivelSeguro = Math.min(
+          Math.max(0, Math.floor(pisoManual)),
+          cfgVit.niveis.length - 1
+        );
+        const definicao = cfgVit.niveis[nivelSeguro];
+        vit.nivel = nivelSeguro;
+        vit.nome = definicao.nome;
+        vit.penalidadeDados = definicao.penalidadeDados;
+        vit.bloqueiaAcoes = definicao.bloqueiaAcoes;
+      }
+      vit.alteradoEm = null;
+      vit.alteradoPor = null;
+    } else {
+      // Com o campo que define o máximo visível, a vitalidade automática
+      // pode ser limitada pelo snapshot histórico sem expor atributo oculto.
+      const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
+      const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
+      if (veioDeConversao && cfgVit?.niveis?.length) {
+        const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
+        const limiaresEv = Array.isArray(ultimoVit?.limiares) ? ultimoVit.limiares : null;
+        const tetoPublico = limiaresEv
+          ? Math.min(
+              nivelExigidoPorHp({ habilitada: true, limiares: limiaresEv }, pctPublico) ?? 0,
+              cfgVit.niveis.length - 1
+            )
+          : 0;
+        const pisoNaEscala = Math.min(Math.max(0, Math.floor(pisoManual)), cfgVit.niveis.length - 1);
+        const nivelExibido = Math.max(pisoNaEscala, Math.min(vit.nivel, tetoPublico));
+        if (nivelExibido !== vit.nivel) {
+          const niv = cfgVit.niveis[nivelExibido];
+          vit.nivel = nivelExibido;
+          vit.nome = niv.nome;
+          vit.penalidadeDados = niv.penalidadeDados;
+          vit.bloqueiaAcoes = niv.bloqueiaAcoes;
+        }
       }
     }
   }
