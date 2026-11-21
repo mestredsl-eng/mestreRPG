@@ -247,7 +247,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
           via GET /characters/:id/sangue — sem controles de mutação;
           some sozinho para quem não tem acesso (403). */}
       {personagemId && !simulacao && (
-        <PainelSangue characterId={personagemId} />
+        <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
       )}
     </div>
   );

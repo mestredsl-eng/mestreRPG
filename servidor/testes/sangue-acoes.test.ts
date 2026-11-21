@@ -117,16 +117,58 @@ describe("ativarPoderNarrativo", () => {
     };
     for (const key of ["fogo", "gratis"]) {
       const r = ativarPoderNarrativo(dadosCom(), {
-        ...AUTOR, requestId: REQ1, poderKey: key, config: cfgRuim,
+        ...AUTOR, requestId: REQ1, poderKey: key, config: cfgRuim, poderesValidos: PODERES_VALIDOS,
       });
       assert.equal(r.ok, false, key);
       if (!r.ok) assert.equal(r.codigo, "custo_invalido");
     }
   });
 
+  it("config ausente ou habilitado:false → recurso_desabilitado (custo positivo e ausente)", () => {
+    const casos: Array<ConfigSangueAcoes | null | undefined> = [
+      null,
+      undefined,
+      { ...CONFIG, habilitado: false },
+      // desabilitado com custo configurado E sem custo — ambos cortados
+      { ...CONFIG, habilitado: false, poderes: { fogo: { custo: 2 } } },
+      { ...CONFIG, habilitado: false, poderes: {} },
+    ];
+    for (const config of casos) {
+      for (const poderKey of ["fogo", "gratis"]) {
+        const dados = dadosCom(10);
+        const antes = JSON.stringify(dados);
+        const r = ativarPoderNarrativo(dados, {
+          ...AUTOR, requestId: REQ1, poderKey, config, poderesValidos: PODERES_VALIDOS,
+        });
+        assert.equal(r.ok, false, `${poderKey} cfg=${JSON.stringify(config?.habilitado)}`);
+        if (!r.ok) assert.equal(r.codigo, "recurso_desabilitado");
+        assert.equal(JSON.stringify(dados), antes, "ledger intacto");
+      }
+    }
+  });
+
+  it("poderesValidos ausente/vazio → poder_desconhecido (fail-closed)", () => {
+    const dados = dadosCom();
+    const antes = JSON.stringify(dados);
+    // conjunto vazio: nenhuma chave é válida
+    const r1 = ativarPoderNarrativo(dados, {
+      ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG, poderesValidos: new Set(),
+    });
+    assert.equal(r1.ok, false);
+    if (!r1.ok) assert.equal(r1.codigo, "poder_desconhecido");
+    // parâmetro omitido por caller JS não-tipado → mesmo fail-closed
+    const r2 = ativarPoderNarrativo(dados, {
+      ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG,
+      poderesValidos: undefined as unknown as ReadonlySet<string>,
+    });
+    assert.equal(r2.ok, false);
+    if (!r2.ok) assert.equal(r2.codigo, "poder_desconhecido");
+    assert.equal(JSON.stringify(dados), antes);
+  });
+
   it("requestId repetido → replay sem segundo débito", () => {
     let dados = dadosCom();
-    const p = { ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG };
+    const p = { ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS };
     const r1 = ativarPoderNarrativo(dados, p);
     if (r1.ok) dados = r1.dados;
     const r2 = ativarPoderNarrativo(dados, p);
@@ -142,7 +184,7 @@ describe("ativarPoderNarrativo", () => {
     const dados = dadosCom(1);
     const antes = JSON.stringify(dados);
     const r = ativarPoderNarrativo(dados, {
-      ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG,
+      ...AUTOR, requestId: REQ1, poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
     });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.codigo, "saldo_insuficiente");
@@ -151,7 +193,7 @@ describe("ativarPoderNarrativo", () => {
 
   it("requestId inválido → uso_invalido", () => {
     const r = ativarPoderNarrativo(dadosCom(), {
-      ...AUTOR, requestId: "nao-uuid", poderKey: "fogo", config: CONFIG,
+      ...AUTOR, requestId: "nao-uuid", poderKey: "fogo", config: CONFIG, poderesValidos: PODERES_VALIDOS,
     });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.codigo, "uso_invalido");

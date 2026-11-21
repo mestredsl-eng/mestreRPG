@@ -1245,7 +1245,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} ehMestre={ehMestreAtual} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
@@ -1493,8 +1493,8 @@ interface CampoTeste {
 }
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
-  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro, ehMestre = false }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void; ehMestre?: boolean;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
@@ -1651,7 +1651,7 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
           no desafio — somente leitura via GET /characters/:id/sangue;
           some sozinho quando o usuário não tem acesso (403). */}
       {aberto && characterId && (
-        <PainelSangue characterId={characterId} />
+        <PainelSangue characterId={characterId} ehMestre={ehMestre} />
       )}
     </section>
   );
