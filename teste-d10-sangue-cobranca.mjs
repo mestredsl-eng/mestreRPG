@@ -285,15 +285,21 @@ try {
     t("sem usoId", !usosSangue(charCusto).includes(`d10:${tid}`));
   }
 
-  sec("10. Não-Poder com elementoKey — gratuito");
+  sec("10. Não-Poder com elementoKey — gratuito (campoSel autoritativo)");
   {
     const charNormal = c.novoPersonagem(c.jogadores.jogador1.membershipId, "Herói Normal", { for: 5 });
     const tid = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id,
       skillRef: { campoId: "for", rotulo: "FOR", tipo: "inteiro", semantico: "atributo", elementoKey: "poder_fogo" } });
+    const dadosAntes = JSON.stringify(dadosChar(charNormal));
     const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
-    // elementoKey aponta para poder do ruleset MAS a ficha não tem o
-    // elemento na lista do campo → poder_nao_adquirido (fail-closed)
-    t("elemento ausente da ficha → recusado", r?.ok === false, JSON.stringify(r).slice(0, 150));
+    // Campo conhecido NÃO-Poder é autoritativo: elementoKey homônimo a
+    // um Poder do ruleset NÃO promove o teste a cobrança de Sangue —
+    // o roll segue como D10 legado, sem débito, sem usoId e sem
+    // escrita no ledger (refresh P1, seções 17/18 cobrem os demais).
+    t("campo não-Poder rola como D10 legado", r?.ok === true, JSON.stringify(r).slice(0, 150));
+    t("characters.data byte-a-byte intacto", JSON.stringify(dadosChar(charNormal)) === dadosAntes);
+    t("sem usoId d10:<testId> no ledger", !usosSangue(charNormal).includes(`d10:${tid}`));
+    t("teste rolado normalmente", testeRow(tid)?.status === "rolado");
   }
 
   // ---------- P2-2: campo ligado a Poder sem elementoKey ----------
