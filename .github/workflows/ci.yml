@@ -21,6 +21,9 @@ on:
       - feat/issue-186-sangue-xp-ui
       - feat/issue-186-sangue-player-read-ui
       - feat/issue-186-sangue-runtime-actions
+      # Base da PR empilhada sobre #232 (ex.: C8-D) — a #232 em si já
+      # é coberta pela base feat/issue-186-sangue-player-read-ui acima.
+      - feat/issue-186-sangue-actions-ui
     types:
       - opened
       - synchronize
@@ -345,7 +348,8 @@ jobs:
             auditoria-visual.mjs \
             teste-sangue-config-ui.mjs \
             teste-sangue-xp-capacidade-ui.mjs \
-            teste-sangue-player-read-ui.mjs
+            teste-sangue-player-read-ui.mjs \
+            teste-sangue-actions-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
