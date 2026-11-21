@@ -307,7 +307,9 @@ function registrarOperacao(
   // retry posterior, após a capacidade liberar espaço, creditaria
   // de novo o mesmo requestId. O uso é registrado sempre; o delta
   // efetivo (possivelmente 0) vai para o histórico.
-  let delta = params.delta;
+  // `-0` (de `-custo` com custo 0) é normalizado para `0` — o evento
+  // de histórico deve registrar quantidade neutra, não negativa-zero.
+  let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
     const espaco = Math.max(0, params.capacidadeMax - estado.saldo);
     if (delta > espaco) delta = espaco;
@@ -391,13 +393,25 @@ export interface ParamsUsoSangue extends ContextoEvento {
 
 /** Débito via teste D10 — `usoId = "d10:" + testId` (v5 §2).
  *  A transição `tests.status` e este débito devem ocorrer na MESMA
- *  transação do handler (C6) — esta função só toca `characters.data`. */
+ *  transação do handler (C6) — esta função só toca `characters.data`.
+ *
+ *  `custo` deve ser resolvido pelo CHAMADOR a partir da configuração
+ *  autoritativa (`config.sangue.poderes[key].custo`): entrada ausente
+ *  ou custo zero = Poder gratuito → o chamador passa `custo: 0`.
+ *  Esta primitiva NÃO aceita custo omitido/undefined — a resolução
+ *  de "sem custo configurado" é responsabilidade do runtime, para
+ *  que a decisão de gratuidade fique auditável na camada de config.
+ *  Custo zero ainda registra `usos["d10:<testId>"]` e um evento de
+ *  histórico com `quantidade: 0` — o registro durável é o que torna
+ *  o retry idempotente; como `usos` é consultado antes de qualquer
+ *  débito, um replay nunca pode cobrar depois (não há caminho que
+ *  "reabra" o uso para cobrança). */
 export function registrarUsoD10(
   dados: Record<string, unknown>,
   params: ParamsUsoSangue & { testId: string; requestId?: string | null },
 ): ResultadoSangue {
   if (!UUID_RE.test(params.testId)) return { ok: false, codigo: "uso_invalido" };
-  if (!Number.isFinite(params.custo) || params.custo <= 0) {
+  if (!Number.isFinite(params.custo) || params.custo < 0) {
     return { ok: false, codigo: "quantidade_invalida" };
   }
   return registrarOperacao(dados, {
