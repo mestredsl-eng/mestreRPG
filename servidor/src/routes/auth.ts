@@ -297,6 +297,20 @@ const visualSchema = z
     densidade: z.enum(["compacta", "padrao", "ampla"]),
   })
   .strict();
+// Aprendizado de preferências visuais (Issue #132): opt-in explícito e
+// histórico das combinações efetivamente aplicadas. Fechado: `historico`
+// só aceita combinações válidas do catálogo (mesmo visualSchema) e no
+// máximo 8 entradas — o servidor é quem corta o excesso.
+const visualAprendizadoSchema = z
+  .object({
+    // optIn é opcional: ausente = "não alterar" (o merge preserva o
+    // consentimento atual). Obrigatório aqui impediria o "apagar
+    // histórico" de enviar só `{ historico: [] }` sem reenviar um
+    // opt-in possivelmente obsoleto vindo de outra aba.
+    optIn: z.boolean().optional(),
+    historico: z.array(visualSchema).max(8).optional(),
+  })
+  .strict();
 const preferenciasSchema = z
   .object({
     dados: z
@@ -305,6 +319,7 @@ const preferenciasSchema = z
       .optional(),
     temaMesa: z.enum(TEMAS_MESA).optional(),
     visual: visualSchema.optional(),
+    visualAprendizado: visualAprendizadoSchema.optional(),
     // Visibilidade individual de seções da mesa (Issue #147): cada opção
     // é independente e só afeta a apresentação do próprio usuário.
     // Contas antigas sem o objeto mantêm tudo visível (default true).
@@ -339,6 +354,27 @@ authRouter.patch("/preferences", requireAuth, async (req, res) => {
     // visibilidade mescla por chave: PATCH parcial não apaga toggles irmãos
     if (body.data.visibilidade && typeof atuais.visibilidade === "object" && atuais.visibilidade !== null) {
       novas.visibilidade = { ...(atuais.visibilidade as Record<string, unknown>), ...body.data.visibilidade };
+    }
+    // visualAprendizado mescla por chave pelo mesmo motivo. O histórico
+    // só cresce quando uma combinação visual é de fato aplicada — ou
+    // seja, este PATCH também carrega `visual` e o opt-in efetivo está
+    // ligado. `historico` enviado explicitamente (ex.: "apagar
+    // histórico") é autoritativo e não recebe acréscimo automático.
+    if (body.data.visual || body.data.visualAprendizado) {
+      const atualApr =
+        typeof atuais.visualAprendizado === "object" && atuais.visualAprendizado !== null
+          ? (atuais.visualAprendizado as Record<string, unknown>)
+          : {};
+      const enviadoApr = (body.data.visualAprendizado ?? {}) as Record<string, unknown>;
+      const fundido: Record<string, unknown> = { ...atualApr, ...enviadoApr };
+      const historicoExplicito = enviadoApr.historico !== undefined;
+      if (body.data.visual && fundido.optIn === true && !historicoExplicito) {
+        const base = Array.isArray(fundido.historico)
+          ? (fundido.historico as unknown[]).filter((h) => h !== null && typeof h === "object")
+          : [];
+        fundido.historico = [...base, body.data.visual].slice(-8);
+      }
+      if (Object.keys(fundido).length > 0) novas.visualAprendizado = fundido;
     }
     tx.update(users)
       .set({ preferences: novas, updatedAt: new Date() })
