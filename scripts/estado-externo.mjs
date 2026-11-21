@@ -454,6 +454,34 @@ export function caminhoBancoConfigurado(repoDir, env = process.env) {
   return join(repoDir, "banco", "mestre-rpg.db");
 }
 
+/** Restos de instalação anterior dentro do repo — só existem depois
+ *  que o servidor rodou de verdade: backups criados (backups/ tem
+ *  conteúdo além do .gitkeep versionado) e sidecars do banco
+ *  (mestre-rpg.db-wal/-shm/-journal no diretório configurado).
+ *  Sobrevivem à perda conjunta DB+state e provam que a instalação
+ *  existiu — sem eles, um wipe total é indistinguível de clone novo
+ *  (aceito: não há mais evidência a proteger). Varredura env-aware
+ *  (MESTRE_BACKUPS/MESTRE_BANCO) para testes isolados. */
+function restosDeInstalacao(repoDir, env) {
+  const restos = [];
+  const backups = (env.MESTRE_BACKUPS ?? "").trim() || join(repoDir, "backups");
+  try {
+    if (existsSync(backups) && readdirSync(backups).some((n) => n !== ".gitkeep")) {
+      restos.push("backups");
+    }
+  } catch { restos.push("backups-ilegivel"); }
+  const banco = caminhoBancoConfigurado(repoDir, env);
+  const base = banco.split(/[\\/]/).pop();
+  try {
+    const dirBanco = dirname(banco);
+    if (existsSync(dirBanco)
+        && readdirSync(dirBanco).some((n) => n.startsWith(base) && n !== base)) {
+      restos.push("banco-sidecars");
+    }
+  } catch { restos.push("banco-ilegivel"); }
+  return restos;
+}
+
 /**
  * Produtor de autorização de primeiro bootstrap — fail-closed.
  * Retorno: { autorizado:true, motivo:"emitida"|"ja-autorizado", dados } |
@@ -473,7 +501,11 @@ export function caminhoBancoConfigurado(repoDir, env = process.env) {
  *   4. nenhuma autorização consumida sem recibo (bootstrap-interrompido
  *      NUNCA é reemitido);
  *   5. banco configurado AUSENTE — qualquer arquivo presente, mesmo
- *      vazio (0 bytes), é estado ambíguo e bloqueia ("banco-existente").
+ *      vazio (0 bytes), é estado ambíguo e bloqueia ("banco-existente");
+ *   6. nenhum resto de instalação anterior (backups com conteúdo,
+ *      sidecars do banco) — sobrevivem ao wipe DB+state e provam que
+ *      a instalação existiu; reemitir sobre eles seria reset
+ *      destrutivo implícito.
  */
 export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
   const dir = dirEstado(repoDir, env);
@@ -502,6 +534,8 @@ export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
     // resto de crash, dump parcial ou adulteração. Fail-closed.
     return { autorizado: false, motivo: "banco-existente" };
   }
+  const restos = restosDeInstalacao(repoDir, env);
+  if (restos.length) return { autorizado: false, motivo: `restos-${restos.join("+")}` };
   const dados = gravarAutorizacaoBootstrap(repoDir, env);
   return { autorizado: true, motivo: "emitida", dados };
 }

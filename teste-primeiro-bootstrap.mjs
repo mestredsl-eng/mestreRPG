@@ -211,6 +211,7 @@ sec("15. Entrypoint exige --confirmar-provisionamento");
     ...process.env,
     MESTRE_STATE_DIR: join(BASE, "state-entry"),
     MESTRE_BANCO: join(BASE, "banco-entry", "mestre-rpg.db"),
+    MESTRE_BACKUPS: join(BASE, "backups-entry"), // isola restos do repo real
   };
   const semFlag = spawnSync(process.execPath, [script], { env, encoding: "utf8" });
   t("sem flag → exit 2", semFlag.status === 2, `status=${semFlag.status}`);
@@ -223,6 +224,42 @@ sec("15. Entrypoint exige --confirmar-provisionamento");
   t("autorização emitida pelo entrypoint", temAuth);
   const replay = spawnSync(process.execPath, [script, "--confirmar-provisionamento"], { env, encoding: "utf8" });
   t("replay idempotente → exit 0", replay.status === 0, `status=${replay.status}`);
+}
+
+sec("16. Instalação concluída + wipe DB+state + restos → NUNCA re-emite");
+{
+  const r = repo(); const env = envDe(r);
+  provisionar(r, env);
+  autorizarPrimeiroBootstrap(r, env);
+  consumirAutorizacaoBootstrap(r, env);
+  concluirBootstrapAposHealth(r, env, true); // recibo permanente
+  // Perda conjunta: apaga DB (já ausente) e o state dir INTEIRO —
+  // recibo, autorização e marcador desaparecem juntos.
+  rmSync(dirEstado(r, env), { recursive: true, force: true });
+  // Restos de instalação anterior sobrevivem: backups com conteúdo.
+  mkdirSync(join(r, "backups", "2020-01-01T00-00-00-000Z_manual"), { recursive: true });
+  writeFileSync(join(r, "backups", "2020-01-01T00-00-00-000Z_manual", "manifesto.json"), "{}");
+  const script = join(process.cwd(), "scripts", "autorizar-bootstrap.mjs");
+  const envFilho = { ...process.env, ...env, MESTRE_BACKUPS: join(r, "backups") };
+  const semFlag = spawnSync(process.execPath, [script], { env: envFilho, encoding: "utf8" });
+  t("sem flag → exit 2", semFlag.status === 2, `status=${semFlag.status}`);
+  const comFlag = spawnSync(process.execPath, [script, "--confirmar-provisionamento"], { env: envFilho, encoding: "utf8" });
+  t("com flag → BLOQUEADO (restos)", comFlag.status === 1, `status=${comFlag.status} ${comFlag.stdout}`);
+  provisionar(r, env); // entrypoint grava o marcador antes de autorizar
+  const a = autorizarPrimeiroBootstrap(r, env);
+  t("produtor → restos-*", a.autorizado === false && String(a.motivo).startsWith("restos-"), a.motivo);
+  t("nada emitido", authsEm(r, env).length === 0);
+  // Sidecars do banco também são resto, mesmo sem backups/.
+  rmSync(join(r, "backups"), { recursive: true, force: true });
+  mkdirSync(join(r, "banco"), { recursive: true });
+  writeFileSync(join(r, "banco", "mestre-rpg.db-wal"), "wal");
+  const b = autorizarPrimeiroBootstrap(r, env);
+  t("sidecar -wal → bloqueado", b.autorizado === false && String(b.motivo).includes("banco-sidecars"), b.motivo);
+  // Wipe TOTAL (sem nenhum resto) é indistinguível de clone novo —
+  // documentado: não há evidência restante a proteger.
+  rmSync(join(r, "banco"), { recursive: true, force: true });
+  const c = autorizarPrimeiroBootstrap(r, env);
+  t("wipe total → emitida (indistinguível de fresh)", c.autorizado === true, c.motivo);
 }
 
 console.log(`\n${pass} ok / ${fail} falhas`);

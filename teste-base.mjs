@@ -28,7 +28,12 @@ export async function prepararBanco(banco) {
   // instalação é reconhecido (bootstrap autorizado). Provisiona o
   // state dir isolado por banco — mesmo env que o filho recebe.
   const stateDir = join(dirname(banco), "state-externo");
-  const envEstado = { ...process.env, MESTRE_STATE_DIR: stateDir, MESTRE_BANCO: banco };
+  const envEstado = {
+    ...process.env,
+    MESTRE_STATE_DIR: stateDir,
+    MESTRE_BANCO: banco,
+    MESTRE_BACKUPS: join(dirname(banco), "backups"),
+  };
   if (lerProvisionamento(REPO, envEstado).status === "ausente") {
     gravarProvisionamento(REPO, envEstado);
   }
@@ -38,7 +43,7 @@ export async function prepararBanco(banco) {
   }
   await new Promise((res, rej) => {
     const p = spawn("node", ["servidor/dist/db/migrate.js"], {
-      env: { ...process.env, MESTRE_BANCO: banco, MESTRE_STATE_DIR: stateDir },
+      env: { ...process.env, MESTRE_BANCO: banco, MESTRE_STATE_DIR: stateDir, MESTRE_BACKUPS: join(dirname(banco), "backups") },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err = "";

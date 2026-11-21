@@ -196,6 +196,45 @@ try {
     t("exit não-zero", r.status !== 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
     t("banco NÃO foi recriado", !existsSync(c.env.MESTRE_BANCO), c.env.MESTRE_BANCO);
   }
+
+  sec("8. DB 0 bytes + bootstrap autorizado — classe vazio, migra");
+  {
+    const c = cenario();
+    bootstrapar(c); // banco ainda ausente — autorização exige ausência
+    mkdirSync(dirname(c.env.MESTRE_BANCO), { recursive: true });
+    writeFileSync(c.env.MESTRE_BANCO, ""); // 0 bytes APÓS autorizar
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    const r = migrar(c.env);
+    t("exit 0", r.status === 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
+    t("todas as migrations aplicadas", aplicadas(c.env.MESTRE_BANCO) === totalJournal);
+    t("nenhum backup criado", backupsPreUpdate(c.dir).length === 0);
+  }
+
+  sec("9. SQLite válido sem tabelas + bootstrap — classe vazio, migra");
+  {
+    const c = cenario();
+    bootstrapar(c);
+    mkdirSync(dirname(c.env.MESTRE_BANCO), { recursive: true });
+    const s = new Database(c.env.MESTRE_BANCO);
+    s.exec("create table _t(x); drop table _t"); // sqlite válido, zero tabelas
+    s.close();
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    const r = migrar(c.env);
+    t("exit 0", r.status === 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
+    t("todas as migrations aplicadas", aplicadas(c.env.MESTRE_BANCO) === totalJournal);
+    t("nenhum backup criado", backupsPreUpdate(c.dir).length === 0);
+  }
+
+  sec("10. DB 0 bytes SEM bootstrap — bloqueia como vazio não reconhecido");
+  {
+    const c = cenario();
+    mkdirSync(dirname(c.env.MESTRE_BANCO), { recursive: true });
+    writeFileSync(c.env.MESTRE_BANCO, "");
+    c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    const r = migrar(c.env);
+    t("exit não-zero", r.status !== 0, `status=${r.status}`);
+    t("zero migrations", aplicadas(c.env.MESTRE_BANCO) === 0);
+  }
 } finally {
   rmSync(BASE, { recursive: true, force: true });
 }
