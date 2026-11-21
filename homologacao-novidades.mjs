@@ -43,21 +43,13 @@ try {
   // teste-novidades.mjs. BANCO é sempre temporário.
   {
     const db = abrirDb(BANCO);
-<<<<<<< HEAD
-    db.prepare("delete from novidades where id=?")
-      .run("00000000-0000-4000-8000-000000000105");
-    db.prepare("delete from novidades where id=?")
-      .run("00000000-0000-4000-8000-000000000106");
-    db.prepare("delete from novidades where id=?")
-      .run("00000000-0000-4000-8000-000000000107");
-=======
     for (const id of [
       "00000000-0000-4000-8000-000000000105",
       "00000000-0000-4000-8000-000000000106",
       "00000000-0000-4000-8000-000000000107",
       "00000000-0000-4000-8000-000000000108",
+      "00000000-0000-4000-8000-000000000109",
     ]) db.prepare("delete from novidades where id=?").run(id);
->>>>>>> origin/main
     db.close();
   }
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: ARQ, backups: BKS });
