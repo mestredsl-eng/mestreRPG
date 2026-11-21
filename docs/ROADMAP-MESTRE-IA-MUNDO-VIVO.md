@@ -31,7 +31,7 @@ A IA pode propor que um NPC ataque, fuja, negocie ou investigue. Ela não pode i
 
 Toda ação deverá passar pelo mesmo fluxo de validação, permissões, motor de regras, persistência e histórico usado pelos jogadores e pelo mestre humano. O servidor continua sendo a fonte oficial do estado da campanha.
 
-A saída do modelo deve ser tratada como dado não confiável. Não permitir SQL livre, execução arbitrária de código, acesso direto ao banco, exposição de chaves ou bypass de permissões. Respeitar informações privadas e ocultas por campanha e personagem.
+As intenções produzidas pelo parser e pelo motor de comportamento são dados não confiáveis até a validação do servidor. Não permitir SQL livre, execução arbitrária de código, acesso direto ao banco, exposição de segredos internos ou bypass de permissões. Respeitar informações privadas e ocultas por campanha e personagem.
 
 ## Experiência desejada
 
@@ -82,11 +82,11 @@ Cada fase deverá ser quebrada em Issues menores e PRs revisáveis. Não desenvo
 ## Restrições de qualidade e operação
 
 - Nenhuma duplicação de campanhas, personagens, fichas, inventário, rolagens, chat, sessões ou histórico sem justificativa técnica aprovada.
-- Não duplicar regras executáveis em prompts; o motor do servidor permanece autoritativo.
-- Segredos de provedores ficam somente no servidor.
+- Não duplicar regras executáveis em agentes, árvores de comportamento ou parser; o motor de regras do servidor permanece autoritativo.
+- Não haverá provedor de LLM, SDK de modelo, serviço externo de inferência ou chave de IA: a inteligência será implementada em TypeScript e executada pelo servidor atual.
 - Isolamento rigoroso por campanha e respeito às permissões e informações privadas atuais.
 - Mestre pode revisar, pausar, aprovar e limitar autonomia; ações relevantes são auditáveis.
-- Definir orçamento, frequência, contexto, retentativas e limites de chamadas de IA.
+- Definir orçamento de processamento por campanha/agente/ciclo: frequência, operações, concorrência, memória, filas e retentativas idempotentes.
 - Persistência e migrations incrementais, compatíveis com os dados existentes.
 - Testes comprovam que IA e jogadores passam pelas mesmas validações e geram eventos autoritativos.
 - Campanhas sem IA continuam funcionando sem mudanças.
@@ -94,9 +94,9 @@ Cada fase deverá ser quebrada em Issues menores e PRs revisáveis. Não desenvo
 ## Fora do escopo inicial
 
 - Aplicação separada ou segundo banco/motor de RPG.
-- Dezenas de agentes chamando IA continuamente.
+- Dezenas ou centenas de agentes executando ciclos continuamente sem limites.
 - Simulação de todos os NPCs em tempo real.
-- Modelo executando SQL, código arbitrário ou mudanças diretas de estado.
+- Agentes, parsers ou rotinas executando SQL livre, código arbitrário ou mudanças diretas de estado.
 - Autonomia irrestrita sem controles do mestre.
 - Substituir ou interromper o modo de mestre humano.
 
@@ -138,7 +138,7 @@ O modelo atual de guildas é orientado a usuários: guild_members vincula guildI
 
 ### Snapshots, contexto e memória
 
-O exportador de campanha já reúne personagens, fichas, regras, catálogo, inventários, contas, transações, sessões, chat, rolagens, testes, notas e arquivos. Isso é útil para backup e recuperação, mas **não deve ser enviado integralmente ao modelo de IA**: inclui conteúdo privado e dados fora do escopo de conhecimento de cada agente. A IA precisa de um projetor de contexto que monte somente fatos autorizados para aquele NPC/agente, campanha, cena e momento.
+O exportador de campanha já reúne personagens, fichas, regras, catálogo, inventários, contas, transações, sessões, chat, rolagens, testes, notas e arquivos. Isso é útil para backup e recuperação, mas **não deve ser disponibilizado integralmente a nenhum agente ou rotina de simulação**: inclui conteúdo privado e dados fora do escopo de conhecimento de cada agente. O servidor deve montar uma projeção de contexto com apenas os fatos autorizados para aquele NPC/agente, campanha, cena e momento.
 
 Notas e diário existentes são recursos de jogadores/mestres com suas próprias regras de visibilidade; não equivalem automaticamente à memória epistemológica de um NPC. Definir memória por campanha/personagem, com fatos conhecidos, origem, momento de aquisição, confiança/validade e escopo público/privado/segredo. Reutilizar as políticas de visibilidade como referência, sem criar ACL paralela ou vazar informações.
 
@@ -150,8 +150,8 @@ O autosave atual usa debounce por campanha e setTimeout para criar snapshots ap�
 
 - O Acervo/biblioteca tem versionamento e backups; as definições de regras e o catálogo de itens também têm escopo de campanha. A Fase 0 deve definir onde o conteúdo gerado será revisado, aprovado e versionado, sem gravá-lo diretamente numa biblioteca global ou substituir regras publicadas.
 - O projeto já possui fluxos de XP/progressão com concessão pelo mestre, compra validada pelo servidor e exigência de ficha selada. A IA deve propor uma concessão/compra; nunca alterar ledger ou personagem diretamente. A execução precisa continuar sujeita às permissões, limites e trilha de auditoria existentes.
-- A trilha de auditoria precisa distinguir ações propostas por IA, ações aprovadas por humano e ações efetivamente aplicadas pelo servidor, vinculando-as a agente/personagem, campanha, ciclo e requestId. Não registrar chaves, prompts sensíveis ou contexto privado desnecessário.
-- O rate limit atual de Socket.IO é por usuário/ação e em memória; ele protege eventos da mesa, mas não é orçamento de tokens/custos nem controle durável de chamadas de IA. O orçamento da IA precisa ser próprio, por campanha/agente/ciclo.
+- A trilha de auditoria precisa distinguir decisões/intencões propostas pelo agente, ações aprovadas quando exigido e efeitos efetivamente aplicados pelo servidor, vinculando agente/personagem, campanha, ciclo e requestId. Não registrar segredos nem conteúdo privado desnecessário.
+- O rate limit atual de Socket.IO é por usuário/ação e em memória; ele protege eventos da mesa, mas não é um orçamento de ciclos, decisões ou operações da simulação. O orçamento de processamento precisa ser próprio, por campanha/agente/ciclo.
 
 ### Dependências de planejamento
 
@@ -165,13 +165,13 @@ As decisões acima devem ser resolvidas na Fase 0, antes de implementar grupos a
 
 Essas decisões não alteram a prioridade da linha 1.x: o D10 e a estabilidade da mesa continuam à frente. O Mundo Vivo permanece como trilha planejada da versão 2.0, com implementação somente após liberação explícita da coordenação.
 
-## Complemento da Fase 0 — identidade de serviço, execução e provedor de IA
+## Complemento da Fase 0 — identidade de serviço, execução e motor determinístico
 
 A auditoria do código confirmou que a IA ainda não tem identidade técnica para agir na mesa. O fluxo Socket.IO resolve usuário autenticado, membership e papel por sessão (resolverCtx em sockets/mesa.ts). Uma IA não é um usuário humano e não deve receber uma conta-mestre compartilhada nem simular silenciosamente o mestre.
 
 ### Identidade de serviço e autorização
 
-- Definir um principal interno não humano, com escopo explícito de campanha, agente/personagem e capacidades permitidas. A autorização deve ser verificada no servidor em cada ação e nunca depender apenas do prompt.
+- Definir um principal interno não humano, com escopo explícito de campanha, agente/personagem e capacidades permitidas. A autorização deve ser verificada no servidor em cada ação e nunca depender apenas da intenção produzida pelo agente ou parser.
 - Diferenciar quatro identidades: usuário humano responsável/aprovador, agente de IA que propôs, NPC que aparece como autor/falante e principal de serviço que executa o comando autorizado.
 - A tabela audit_logs atual tem actor_id como FK para users.id; não representa diretamente um ator não humano. A Fase 0 deve propor uma extensão aditiva (por exemplo actor_type/agent_id/request_id), mantendo o usuário humano responsável quando existir, sem criar usuário fake nem perder a autoria da aprovação.
 - Snapshots também exigem createdBy ligado a users. Ações autônomas não devem criar snapshots fingindo autoria humana; definir a política de proprietário/aprovador para snapshots e ciclos.
@@ -181,26 +181,26 @@ A auditoria do código confirmou que a IA ainda não tem identidade técnica par
 
 Hoje autenticação, papel e lógica de ações estão acoplados aos handlers Socket.IO. Antes da IA, extrair funções de aplicação testáveis para chat, pedido/rolagem de teste D10 e aplicação de HP/dano. Os handlers de socket e as rotas REST devem chamar os mesmos serviços. A extração não pode alterar contratos, permissões, emissão de eventos, idempotência nem resultados; a suíte de regressão existente precisa provar paridade.
 
-### Provedor LLM, segredos e telemetria
+### Motor determinístico, telemetria e orçamento de processamento
 
-A auditoria confirmou que não existe cliente/SDK de provedor LLM nas dependências atuais do monorepo. A Fase 0 deve definir um contrato independente do provedor (ProvedorIA) e uma implementação fake/determinística para testes sem rede. Não escolher nem habilitar provedor real nesta etapa.
+A decisão de produto do épico #180 é implementar toda a inteligência em TypeScript no servidor Mestre RPG, sem LLM, provedor comercial, modelo local de terceiros como dependência, SDK ou API externa de inferência. A Fase 0 deve definir contratos internos do motor de comportamento e do parser determinístico de intenções, com estados, objetivos, regras, árvores de comportamento, pontuação de ações, agendas e memória estruturada. Testes devem usar entradas/estados controlados e resultados reproduzíveis; não criar abstração de provedor nem fake de LLM.
 
-Quando houver autorização para um provedor real, a chave deverá existir somente no servidor, fora do navegador, do repositório e dos logs. Antes disso, definir limites de contexto, retenção, consentimento, política de dados e como o custo será apresentado ao mestre.
+O texto livre será interpretado por vocabulário, padrões, sinônimos, contexto e catálogo de intenções programados. Quando a intenção não for reconhecida ou for ambígua, o sistema deve pedir esclarecimento ou apresentar opções; nunca inventar compreensão ou executar por aproximação.
 
-A telemetria deverá registrar metadados mínimos por chamada (campanha, agente, provedor/modelo quando houver, tokens de entrada/saída, latência, custo estimado, status, requestId e ciclo), sem armazenar prompts/respostas completos por padrão. Orçamento de IA deve ser separado do rate limit Socket.IO, que é por usuário/ação e em memória.
+A telemetria deve registrar metadados mínimos por ciclo/decisão (campanha, agente, requestId, ciclo, tipo de decisão/ação, resultado, duração, operações processadas, tamanho de fila e status), sem armazenar contexto privado desnecessário. O orçamento deve limitar processamento por campanha/agente/ciclo, incluindo concorrência, decisões, operações, memória e duração; não há tokens, custo por chamada ou provedor a contabilizar.
 
 ### Scheduler, mundo entre sessões e PVP
 
 O autosave existente é um debounce de snapshot, não um worker nem uma fila durável. Ciclos do mundo exigem mecanismo persistente, idempotente, retomável após reinício, pausável por campanha e limitado por orçamento. A escolha entre ciclo disparado pelo mestre, fila persistente ou worker deve anteceder simulação autônoma.
 
-O motor atual tem rolagens, testes, iniciativa e aplicação de HP, mas não um resolvedor completo de combate automático. PVP entre grupos também exige política explícita de consentimento, limites, permissões e consequências permanentes; não pode ser decidido apenas por instruções narrativas ao modelo.
+O motor atual tem rolagens, testes, iniciativa e aplicação de HP, mas não um resolvedor completo de combate automático. PVP entre grupos também exige política explícita de consentimento, limites, permissões e consequências permanentes; não pode ser decidido apenas por heurísticas narrativas do agente.
 
 ### Backlog sequenciado da Fase 0 (planejamento; execução depende de liberação)
 
 A sequência inicial proposta é:
 1. Identidade de serviço, capacidades e projeção de contexto privado ([#182](https://github.com/mestredsl-eng/mestreRPG/issues/182)).
 2. Extração dos serviços internos de chat, D10 e HP com paridade dos handlers atuais ([#183](https://github.com/mestredsl-eng/mestreRPG/issues/183)).
-3. Interface ProvedorIA fake, telemetria e limites de orçamento sem provedor real ([#184](https://github.com/mestredsl-eng/mestreRPG/issues/184)).
+3. Contratos do motor determinístico, parser de intenções, telemetria de ciclos/decisões e limites de processamento ([#184](https://github.com/mestredsl-eng/mestreRPG/issues/184)).
 4. Depois da fundação, detalhar o Criador de Campanhas revisável e aprovado por humano.
 
 A Fase 0 continua sem autorização para começar implementação até liberação explícita da coordenação. D10 e estabilização da linha 1.x permanecem prioritários; a versão 2.0 evoluirá lentamente, sem ser esquecida e sem competir com a entrega jogável atual.
@@ -215,14 +215,14 @@ Parâmetros mínimos:
 
 - **Dinheiro/economia:** taxas ou multiplicadores separados para rendimentos, salários, recompensas, preços, serviços, comércio e recursos encontrados. Cada taxa deve indicar claramente quais operações afeta.
 - **XP/progressão:** ritmo de concessão e recompensas, limites por sessão/ciclo e velocidade de progressão. Concessões e compras deverão passar pelos serviços de XP e motor de regras já existentes; a IA não escreve saldo nem níveis diretamente.
-- **Dificuldade:** presets editáveis e parâmetros separados para investigação, testes, sobrevivência, combate/conflitos e comportamento tático. A dificuldade ajusta preparação, informação, recursos e desafios, sem duplicar regras no prompt.
+- **Dificuldade:** presets editáveis e parâmetros separados para investigação, testes, sobrevivência, combate/conflitos e comportamento tático. A dificuldade ajusta preparação, informação, recursos e desafios, sem duplicar regras de domínio na lógica dos agentes.
 - **Mundo/localidades:** recursos, serviços, pontos de interesse, zonas seguras/perigosas, clima/eventos, rotas, transporte, densidade de população, facções e locais secretos.
 - **População e NPCs:** densidade e quantidade de NPCs, incluindo civis, serviços, figuras importantes e ameaças; definir limites de memória e simulação.
 - **Squads IA:** quantidade de squads no início, número de personagens por squad, composição/arquetipos, papel, facção, recursos/equipamentos, objetivo, autonomia e localização inicial. Configurar limites máximos, squads de reserva e regras para criar novos grupos.
 - **Conflitos e consequências:** habilitar/configurar PVP, NPC vs NPC, guerras, mortes, ferimentos permanentes, roubo e efeitos econômicos.
 - **Conteúdo 18+:** temas, intensidade, proibições e limites dos participantes.
 
-A interface apresentará um resumo e uma prévia do mundo, mapa, localidades, população e squads, além de estimativa de carga e custo de IA. Presets serão apenas ponto de partida, sempre editável. Mudanças pós-início deverão gerar histórico e não poderão alterar retroativamente eventos ocorridos.
+A interface apresentará um resumo e uma prévia do mundo, mapa, localidades, população e squads, além de estimativa de carga de processamento e consumo de recursos do servidor. Presets serão apenas ponto de partida, sempre editável. Mudanças pós-início deverão gerar histórico e não poderão alterar retroativamente eventos ocorridos.
 
 ### Mapa inicial deliberadamente compacto
 
