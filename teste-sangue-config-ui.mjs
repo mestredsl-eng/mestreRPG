@@ -51,8 +51,9 @@ try {
     // Poder na biblioteca de regras (kind="poder") para o editor de custo
     const rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
     const agora = Date.now();
-    w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
-      .run(crypto.randomUUID(), rs.id, "poder", "chicote_sanguineo", "Chicote Sanguíneo", null, null, "{}", agora, agora);
+    const insPoder = w.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)");
+    insPoder.run(crypto.randomUUID(), rs.id, "poder", "chicote_sanguineo", "Chicote Sanguíneo", null, null, "{}", agora, agora);
+    insPoder.run(crypto.randomUUID(), rs.id, "poder", "sede_sanguis", "Sede de Sangue", null, null, "{}", agora, agora);
     w.close();
   }
 
@@ -87,6 +88,18 @@ try {
     await painel.locator(".erro").waitFor({ timeout: 15000 });
     const erroTxt = await painel.locator(".erro").textContent();
     ok("UI. 400 exibido (capacidade exigida)", /capacidade/i.test(erroTxt), erroTxt.slice(0, 100));
+
+    // Ação habilitada sem quantidade → 400 do servidor, sem persistir
+    await painel.locator('input[aria-label="Habilitar ação Descansar"]').check();
+    await painel.getByRole("button", { name: "Salvar Pontos de Sangue" }).click();
+    await painel.locator(".erro").waitFor({ timeout: 15000 });
+    const erro2 = await painel.locator(".erro").textContent();
+    ok("UI. ação incompleta → 400 (quantidade exigida)", /quantidade/i.test(erro2), erro2.slice(0, 100));
+
+    // Reverter descarta edições locais
+    await painel.getByRole("button", { name: "Reverter alterações" }).click();
+    ok("UI. reverter desmarca habilitado", await painel.locator('input[aria-label="Habilitar Pontos de Sangue"]').isChecked() === false);
+    ok("UI. reverter desmarca ação", await painel.locator('input[aria-label="Habilitar ação Descansar"]').isChecked() === false);
     await ctx.close();
   }
 
@@ -113,8 +126,9 @@ try {
     await painel.locator("#sangue-campo-qualidade").selectOption("qualidade_sangue");
     await painel.locator('input[aria-label="Coeficiente do bônus de qualidade"]').fill("0.5");
 
-    // Custo do Poder
+    // Custos dos Poderes (2 e 0 — zero é válido)
     await painel.locator('input[aria-label="Custo de Sangue do Poder Chicote Sanguíneo"]').fill("2");
+    await painel.locator('input[aria-label="Custo de Sangue do Poder Sede de Sangue"]').fill("0");
 
     // Ações de recuperação
     await painel.locator('input[aria-label="Habilitar ação Descansar"]').check();
@@ -128,6 +142,12 @@ try {
     await painel.locator('input[aria-label="Natureza 1 rótulo"]').fill("Vampiro");
     await painel.locator('select[aria-label="Natureza 1 ação de recuperação"]').selectOption("descansar");
     await painel.locator('input[aria-label="Meta humano com Poder natureza 1"]').check();
+    // Segunda natureza → ação distinta; terceira sem mapeamento
+    await painel.getByRole("button", { name: "+ natureza" }).click();
+    await painel.locator('input[aria-label="Natureza 2 rótulo"]').fill("Humano");
+    await painel.locator('select[aria-label="Natureza 2 ação de recuperação"]').selectOption("alimentar");
+    await painel.getByRole("button", { name: "+ natureza" }).click();
+    await painel.locator('input[aria-label="Natureza 3 rótulo"]').fill("Desconhecida");
 
     // Recuperação sinalizador
     await painel.locator('input[aria-label="Habilitar sinalizador de recuperação"]').check();
@@ -155,6 +175,9 @@ try {
       && s?.recuperacaoSangue?.acoes?.descansar?.quantidade === 3);
     ok("API. acoes alimentar", s?.recuperacaoSangue?.acoes?.alimentar?.habilitada === true
       && s?.recuperacaoSangue?.acoes?.alimentar?.quantidade === 1);
+    ok("API. natureza Humano→alimentar", s?.naturezas?.Humano?.recuperacao === "alimentar");
+    ok("API. natureza sem ação", s?.naturezas?.Desconhecida !== undefined && !("recuperacao" in (s?.naturezas?.Desconhecida ?? {})));
+    ok("API. poder custo zero válido", s?.poderes?.sede_sanguis?.custo === 0);
     ok("API. recuperacaoSangue", s?.recuperacaoSangue?.habilitado === true);
     ok("API. pontos preservados", JSON.stringify(r.json?.config?.pontos) === JSON.stringify(pontosAntes ?? r.json?.config?.pontos));
   }

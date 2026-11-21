@@ -132,20 +132,27 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
   const [mapaCap, setMapaCap] = useState<MapaLinha[]>([]);
   const [mapaBq, setMapaBq] = useState<MapaLinha[]>([]);
 
-  useEffect(() => {
-    setForm({ habilitado: false, ...config });
-    const bq = config?.capacidade?.bonusQualidade;
+  // Formulário "sujo": sync externo (regras:atualizadas) atualiza o config
+  // mas NÃO sobrescreve edições em andamento — o mestre reverte ou salva.
+  const [sujo, setSujo] = useState(false);
+  const aplicarDeConfig = (cfg: ConfigSangue | undefined) => {
+    setForm({ habilitado: false, ...cfg });
+    const bq = cfg?.capacidade?.bonusQualidade;
     setBqAtivo(!!bq && Object.values(bq).some((v) => v !== undefined));
-    setNaturezas(Object.entries(config?.naturezas ?? {}).map(([rotulo, n]) => ({
+    setNaturezas(Object.entries(cfg?.naturezas ?? {}).map(([rotulo, n]) => ({
       rotulo, metaHumano: n.metaHumanoComPoder === true,
       recuperacao: (n.recuperacao ?? "") as NaturezaForm["recuperacao"],
     })));
-    setCustoPoderes(Object.fromEntries(Object.entries(config?.poderes ?? {}).map(([k, v]) => [k, String(v.custo)])));
-    const acoes = config?.recuperacaoSangue?.acoes;
+    setCustoPoderes(Object.fromEntries(Object.entries(cfg?.poderes ?? {}).map(([k, v]) => [k, String(v.custo)])));
+    const acoes = cfg?.recuperacaoSangue?.acoes;
     setAcaoDescansar({ on: acoes?.descansar?.habilitada === true, qtd: acoes?.descansar?.quantidade !== undefined ? String(acoes.descansar.quantidade) : "" });
     setAcaoAlimentar({ on: acoes?.alimentar?.habilitada === true, qtd: acoes?.alimentar?.quantidade !== undefined ? String(acoes.alimentar.quantidade) : "" });
-    setMapaCap(Object.entries(config?.capacidade?.mapa ?? {}).map(([rotulo, valor]) => ({ rotulo, valor: String(valor) })));
+    setMapaCap(Object.entries(cfg?.capacidade?.mapa ?? {}).map(([rotulo, valor]) => ({ rotulo, valor: String(valor) })));
     setMapaBq(Object.entries(bq?.mapa ?? {}).map(([rotulo, valor]) => ({ rotulo, valor: String(valor) })));
+  };
+  useEffect(() => {
+    if (!sujo) aplicarDeConfig(config);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
 
   // Campos de TODAS as versões publicadas dos modelos ativos — personagens
@@ -206,8 +213,9 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
     if (modoCap === "mapa" || (!modoCap && campoCap && modoInferido(campoCap.tipo) === "mapa")) {
       const mapa: Record<string, number> = {};
       for (const l of mapaCap) {
+        if (!l.rotulo.trim() || l.valor.trim() === "") continue;
         const n = Number(l.valor);
-        if (l.rotulo.trim() && Number.isFinite(n) && n >= 0) mapa[l.rotulo.trim()] = n;
+        if (Number.isFinite(n) && n >= 0) mapa[l.rotulo.trim()] = n;
       }
       if (Object.keys(mapa).length) cap.mapa = mapa;
     }
@@ -221,8 +229,9 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
       if (modoBq === "mapa") {
         const mapa: Record<string, number> = {};
         for (const l of mapaBq) {
+          if (!l.rotulo.trim() || l.valor.trim() === "") continue;
           const n = Number(l.valor);
-          if (l.rotulo.trim() && Number.isFinite(n) && n >= 0) mapa[l.rotulo.trim()] = n;
+          if (Number.isFinite(n) && n >= 0) mapa[l.rotulo.trim()] = n;
         }
         if (Object.keys(mapa).length) nbq.mapa = mapa;
       }
@@ -242,7 +251,9 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
     if (form.recuperacaoSangue?.habilitado) recSangue.habilitado = true;
     const montarAcao = (a: { on: boolean; qtd: string }): ConfigAcaoRecuperacao | undefined => {
       if (!a.on) return undefined; // ação desabilitada = ausente (inerte)
-      const q = Number(a.qtd);
+      // qtd vazia → quantidade ausente (servidor rejeita: fail-closed).
+      // Number("") seria 0 — nunca enviar zero disfarçado.
+      const q = a.qtd.trim() === "" ? NaN : Number(a.qtd);
       return { habilitada: true, quantidade: Number.isFinite(q) ? q : undefined };
     };
     const aD = montarAcao(acaoDescansar);
@@ -263,6 +274,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
     setErro(null); setAviso(null); setSalvando(true);
     try {
       await onSalvar(montarPayload());
+      setSujo(false);
       setAviso("Configuração de Pontos de Sangue salva.");
     } catch (e) {
       setErro(msgErro(e, "Erro ao salvar configuração de Sangue"));
@@ -276,7 +288,7 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
   const precisaMapaCap = (form.capacidade?.modo ?? (campoCap ? modoInferido(campoCap.tipo) : undefined)) === "mapa";
 
   return (
-    <section className="cartao painel-sangue">
+    <section className="cartao painel-sangue" onChangeCapture={() => setSujo(true)}>
       <h3>Pontos de Sangue</h3>
       <p className="dica">
         Esta tela configura <strong>somente vínculos</strong> da ficha e rótulos de natureza.
@@ -511,6 +523,12 @@ export default function RegrasSangue({ config, poderes, campaignId, onSalvar }: 
       <div className="linha">
         <button type="button" onClick={() => void salvar()} disabled={salvando}>
           {salvando ? "Salvando…" : "Salvar Pontos de Sangue"}
+        </button>
+        <button
+          type="button" className="secundario" disabled={salvando}
+          onClick={() => { aplicarDeConfig(config); setSujo(false); setErro(null); setAviso(null); }}
+        >
+          Reverter alterações
         </button>
       </div>
     </section>
