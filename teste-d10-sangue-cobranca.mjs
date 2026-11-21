@@ -65,6 +65,26 @@ function definirCusto(c, custo) {
     db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
   } finally { db.close(); }
 }
+function definirSangue(c, modo) {
+  // modo: "off" → habilitado:false (poderes preservados); "ausente" → bloco removido
+  const db = abrirDb(BANCO);
+  try {
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+    const cfg = JSON.parse(rs.config);
+    if (modo === "ausente") delete cfg.sangue;
+    else cfg.sangue = { ...(cfg.sangue ?? {}), habilitado: false };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+  } finally { db.close(); }
+}
+function reabilitarSangue(c) {
+  const db = abrirDb(BANCO);
+  try {
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(c.campId);
+    const cfg = JSON.parse(rs.config);
+    cfg.sangue = { ...(cfg.sangue ?? {}), habilitado: true, poderes: { poder_fogo: { custo: 2 } } };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+  } finally { db.close(); }
+}
 
 try {
   await prepararBanco(BANCO);
@@ -123,6 +143,7 @@ try {
   {
     const tid = novoTeste(c, { sessionId: SID, characterId: charCusto, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
     const antes = contarRolls(c.campId);
+    await sono(700);
     const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     t("roll ok", r?.ok === true, JSON.stringify(r).slice(0, 200));
     t("saldo 10→8", saldoSangue(charCusto) === 8, `saldo=${saldoSangue(charCusto)}`);
@@ -257,6 +278,101 @@ try {
     // elementoKey aponta para poder do ruleset MAS a ficha não tem o
     // elemento na lista do campo → poder_nao_adquirido (fail-closed)
     t("elemento ausente da ficha → recusado", r?.ok === false, JSON.stringify(r).slice(0, 150));
+  }
+
+  // ---------- P2-2: campo ligado a Poder sem elementoKey ----------
+  // Template dedicado com campos escalares ligados a Poder:
+  //  - poder_geral: regraKind="poder" sem vínculo → NÃO identifica
+  //    qual Poder → fail-closed, nunca gratuito silencioso;
+  //  - poder_vinculado: regra={kind:"poder",key:"poder_fogo"} →
+  //    identidade autoritativa do campo → debita o custo configurado.
+  let verPoderId = null;
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    const tplId = crypto.randomUUID(); verPoderId = crypto.randomUUID();
+    const estrutura = {
+      versao: 1,
+      secoes: [{ id: "s1", titulo: "Poderes", ordem: 0, campos: [
+        { id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" },
+        { id: "poder_geral", label: "Poder Geral", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regraKind: "poder" },
+        { id: "poder_vinculado", label: "Poder Vinculado", tipo: "inteiro", semantico: "atributo", usadoEmTestes: true, regra: { kind: "poder", key: "poder_fogo" } },
+      ] }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    db.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,0,?,?)")
+      .run(tplId, c.campId, "Ficha Poder Escalar", null, c.adminId, agora, agora);
+    db.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+      .run(verPoderId, tplId, JSON.stringify(estrutura), agora, agora);
+    db.prepare("update sheet_templates set current_version_id=? where id=?").run(verPoderId, tplId);
+    db.close();
+  }
+  const novoCharPoder = (nome, dataExtra) => {
+    const db = abrirDb(BANCO);
+    try {
+      const id = crypto.randomUUID(), agora = Date.now();
+      db.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, c.campId, c.jogadores.jogador1.membershipId, verPoderId, nome,
+          JSON.stringify({ for: 5, ...dataExtra }), "{}", "aprovada", 0, agora, agora);
+      return id;
+    } finally { db.close(); }
+  };
+  const charEscalar = novoCharPoder("Poder sem identidade", {
+    poder_geral: 3,
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+  const charVinculado = novoCharPoder("Poder vinculado", {
+    poder_vinculado: 4,
+    __sangue: { saldo: 10, capacidade: 15, historico: [], usos: {} },
+  });
+
+  sec("11. P2-2 — Poder escalar sem identidade → fail-closed");
+  {
+    const tid = novoTeste(c, { sessionId: SID, characterId: charEscalar, userId: c.jogadores.jogador1.id,
+      skillRef: { campoId: "poder_geral", rotulo: "Poder Geral", tipo: "inteiro", semantico: "atributo" } });
+    const antes = contarRolls(c.campId);
+    const dadosAntes = JSON.stringify(dadosChar(charEscalar));
+    await sono(700);
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("ACK erro poder_nao_identificado", r?.ok === false && /poder_nao_identificado/.test(JSON.stringify(r)), JSON.stringify(r).slice(0, 200));
+    t("zero roll novo", contarRolls(c.campId) === antes);
+    t("teste continua pendente", testeRow(tid)?.status === "pendente");
+    t("characters.data byte-a-byte intacto", JSON.stringify(dadosChar(charEscalar)) === dadosAntes);
+    t("sem usoId", usosSangue(charEscalar).length === 0);
+  }
+
+  sec("12. P2-2 — Poder escalar COM vínculo regra.key → debita custo");
+  {
+    const tid = novoTeste(c, { sessionId: SID, characterId: charVinculado, userId: c.jogadores.jogador1.id,
+      skillRef: { campoId: "poder_vinculado", rotulo: "Poder Vinculado", tipo: "inteiro", semantico: "atributo" } });
+    await sono(700);
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("roll ok", r?.ok === true, JSON.stringify(r).slice(0, 200));
+    t("saldo 10→8 (custo do poder vinculado)", saldoSangue(charVinculado) === 8, `saldo=${saldoSangue(charVinculado)}`);
+    t("usoId d10:<testId> registrado", usosSangue(charVinculado).includes(`d10:${tid}`), JSON.stringify(usosSangue(charVinculado)));
+  }
+
+  sec("13. P2-1 — Sangue desabilitado → D10 legado sem débito");
+  {
+    definirSangue(c, "off"); // habilitado:false, poderes/custos preservados
+    const tid = novoTeste(c, { sessionId: SID, characterId: charSemCusto, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
+    const dadosAntes = JSON.stringify(dadosChar(charSemCusto));
+    await sono(700);
+    const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
+    t("roll ok (legado)", r?.ok === true, JSON.stringify(r).slice(0, 200));
+    t("saldo inalterado (7)", saldoSangue(charSemCusto) === 7, `saldo=${saldoSangue(charSemCusto)}`);
+    t("characters.data byte-a-byte intacto (sem escrita no ledger)", JSON.stringify(dadosChar(charSemCusto)) === dadosAntes);
+    t("sem usoId", usosSangue(charSemCusto).length === 0);
+    // config.sangue ausente por completo → mesmo comportamento
+    definirSangue(c, "ausente");
+    const tid2 = novoTeste(c, { sessionId: SID, characterId: charZero, userId: c.jogadores.jogador1.id, skillRef: SKILL_PODER });
+    const dadosAntes2 = JSON.stringify(dadosChar(charZero));
+    await sono(700);
+    const r2 = await emitir(sockJ, "mesa:teste:rolar", { testId: tid2, requestId: crypto.randomUUID() });
+    t("config ausente → roll ok (legado)", r2?.ok === true, JSON.stringify(r2).slice(0, 150));
+    t("saldo inalterado (4)", saldoSangue(charZero) === 4, `saldo=${saldoSangue(charZero)}`);
+    t("characters.data intacto", JSON.stringify(dadosChar(charZero)) === dadosAntes2);
+    reabilitarSangue(c); // restaura habilitado+custo para seções futuras
   }
 } finally {
   try { sockJ?.close(); } catch {}
