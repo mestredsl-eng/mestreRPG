@@ -580,7 +580,7 @@ try {
     await p.waitForTimeout(900);
     await p.locator(".cartao-campanha", { hasText: "Campanha Teste" }).first().click();
     await p.waitForTimeout(1200);
-    await p.getByRole("button", { name: /Mesa/ }).click();
+    await p.getByRole("tab", { name: /Mesa/ }).click();
     await p.waitForTimeout(1000);
     await p.locator("tr", { hasText: "Mesa Ficha" }).first().click();
     await p.waitForTimeout(1800);
