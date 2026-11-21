@@ -60,8 +60,11 @@ try {
       ev("ajuste", -5, "Ajuste manual", 15, 3),
       ev("concessao", 85, "Sessão 4", 100, 4),
     ]);
-    setXp(charLongo, 450, Array.from({ length: 45 }, (_, i) =>
-      ev("concessao", 10, `Evento ${i + 1}`, (i + 1) * 10, i + 1)));
+    // 45 eventos com um negativo no índice 2: 10+10−10+42×10 = 430
+    setXp(charLongo, 430, Array.from({ length: 45 }, (_, i) =>
+      i === 2
+        ? ev("remocao", -10, "Correção de lançamento", 10, i + 1)
+        : ev("concessao", 10, `Evento ${i + 1}`, i === 0 ? 10 : i === 1 ? 20 : i * 10 - 10, i + 1)));
     w.close();
   }
 
@@ -259,16 +262,21 @@ try {
     const qtdPos = await estilo(".extrato-xp-qtd.positivo", "color");
     const qtdNeg = await estilo(".extrato-xp-qtd.negativo", "color");
     ok("CSS. quantidade positiva/negativa com tons distintos", qtdPos !== qtdNeg && qtdPos !== "" && qtdNeg !== "", `pos=${qtdPos} neg=${qtdNeg}`);
-    // botão Mostrar mais existe e tem foco visível (regra global)
-    const btn = page.getByRole("button", { name: /Mostrar mais/ });
-    if (await btn.count()) {
-      await btn.focus();
-      const outline = await btn.evaluate((el) => getComputedStyle(el).outlineStyle);
-      ok("CSS. botão Mostrar mais com foco visível", outline !== "none", outline);
-    } else {
-      ok("CSS. botão Mostrar mais com foco visível", true, "sem botão (poucos eventos)");
-    }
+    // botão Mostrar mais: fixture precisa ter >20 eventos — Herói Ledger
+    // tem 4, então o foco é assertado em "Histórico Longo" (45 eventos,
+    // membro do mestre). Assert incondicional: falha se o botão não existir.
     await ctx.close();
+    const { ctx: ctx2, page: page2 } = await novaPagina(cookieMestre);
+    await abrirPersonagem(page2, "Campanha Extrato XP", "Histórico Longo");
+    await page2.waitForSelector(".extrato-xp", { timeout: 15000 });
+    await page2.waitForSelector("text=XP disponíveis", { timeout: 15000 });
+    const btn = page2.getByRole("button", { name: /Mostrar mais/ });
+    ok("CSS. botão Mostrar mais presente na fixture longa", (await btn.count()) === 1, `count=${await btn.count()}`);
+    // focusVisible:true força :focus-visible (foco de teclado) de forma determinística
+    await btn.evaluate((el) => el.focus({ focusVisible: true }));
+    const outline = await btn.evaluate((el) => getComputedStyle(el).outlineStyle);
+    ok("CSS. botão Mostrar mais com foco visível", outline !== "none", outline);
+    await ctx2.close();
   }
 
   // ---------- 8. Mobile ----------
