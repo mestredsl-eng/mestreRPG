@@ -31,6 +31,8 @@ export interface Usuario {
     visibilidade?: { aparencia?: boolean; bandeja?: boolean; rolagens?: boolean };
     /** Preferências visuais da conta (Issue #132) — objeto completo das seis dimensões. */
     visual?: PreferenciasVisuais;
+    /** Aprendizado visual (Issue #132): opt-in explícito + histórico das combinações aplicadas (máx. 8). */
+    visualAprendizado?: { optIn?: boolean; historico?: PreferenciasVisuais[] };
   } & Record<string, unknown>;
 }
 
@@ -186,6 +188,13 @@ export const api = {
     requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
       method: "PATCH",
       body: JSON.stringify({ visual }),
+    }),
+
+  /** Aprendizado visual (Issue #132) — PATCH parcial de `visualAprendizado`; o servidor mescla por chave. */
+  atualizarPreferenciasAprendizado: (aprendizado: { optIn?: boolean; historico?: PreferenciasVisuais[] }) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ visualAprendizado: aprendizado }),
     }),
 
   // Administração (somente admin)
