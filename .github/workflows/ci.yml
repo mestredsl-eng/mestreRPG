@@ -329,7 +329,10 @@ jobs:
         with:
           node-version: 22
       - name: Testes do auto-update e execução real de npm.cmd
-        run: node teste-auto-update.mjs
+        shell: bash
+        run: |
+          if [ ! -f teste-auto-update.mjs ]; then echo "teste-auto-update.mjs ausente nesta ref — pulado"; exit 0; fi
+          node teste-auto-update.mjs
       - name: Boot lock — Node 22
         shell: bash
         run: |
