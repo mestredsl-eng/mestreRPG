@@ -422,4 +422,6 @@ jobs:
             node "$s"
           done
       - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
-        run: node teste-xp-historico-ui.mjs
+        run: |
+          echo "===== teste-xp-historico-ui.mjs ====="
+          node teste-xp-historico-ui.mjs
