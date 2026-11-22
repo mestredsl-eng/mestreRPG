@@ -105,7 +105,6 @@ try {
   }
 
   const pacTemplateCampanha = pacoteClone(pacote);
-  const templateCampanha = pacTemplateCampanha.estado.sheetTemplates.find((t) => t.id === "tpl-" + "nao-usado");
   const templateReal = pacTemplateCampanha.estado.sheetTemplates[0];
   check(!!templateReal, "fixture: template presente para testar vínculo de campanha");
   if (templateReal) {
