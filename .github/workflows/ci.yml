@@ -151,41 +151,45 @@ jobs:
         run: npm run test:guildas-guarda --workspace servidor
       - name: Testes de formatação das rolagens do histórico
         run: npx tsx teste-historico-rolagens.mjs
+      - name: Verificar e materializar unitários obrigatórios Sangue/C7
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PWD: $PWD"
+          echo "HEAD: $(git rev-parse HEAD)"
+          arquivos=(
+            servidor/testes/assinatura-v2.test.ts
+            servidor/testes/sangue.test.ts
+            servidor/testes/revinculacao-ficha.test.ts
+            servidor/testes/sangue-acoes.test.ts
+            servidor/testes/sangue-invariantes.test.ts
+          )
+          for arquivo in "${arquivos[@]}"; do
+            esperado="$(git rev-parse "HEAD:$arquivo")"
+            git ls-files --error-unmatch "$arquivo" >/dev/null
+            atual=""
+            if [ -f "$arquivo" ]; then atual="$(git hash-object "$arquivo")"; fi
+            if [ "$atual" != "$esperado" ]; then
+              echo "::warning::Materializando $arquivo do HEAD ($esperado); workspace tinha '${atual:-ausente}'"
+              git checkout HEAD -- "$arquivo"
+            fi
+            atual="$(git hash-object "$arquivo")"
+            if [ "$atual" != "$esperado" ]; then
+              echo "::error::Arquivo obrigatório não corresponde ao blob do HEAD: $arquivo"
+              exit 1
+            fi
+            ls -l "$arquivo"
+          done
       - name: Testes unitários HMAC v2 XP+Sangue (Issue #186 C3)
-        run: |
-          if [ -f servidor/testes/assinatura-v2.test.ts ]; then
-            npx tsx --test servidor/testes/assinatura-v2.test.ts
-          else
-            echo "assinatura-v2.test.ts ausente nesta ref (pré-C3) — pulado"
-          fi
+        run: npx tsx --test servidor/testes/assinatura-v2.test.ts
       - name: Testes unitários do ledger de Sangue (Issue #186 C2/C4)
-        run: |
-          if [ -f servidor/testes/sangue.test.ts ]; then
-            npx tsx --test servidor/testes/sangue.test.ts
-          else
-            echo "sangue.test.ts ausente nesta ref (pré-C2) — pulado"
-          fi
+        run: npx tsx --test servidor/testes/sangue.test.ts
       - name: Testes unitários da revinculação de ficha (Issue #186 C7)
-        run: |
-          if [ -f servidor/testes/revinculacao-ficha.test.ts ]; then
-            npx tsx --test servidor/testes/revinculacao-ficha.test.ts
-          else
-            echo "revinculacao-ficha.test.ts ausente nesta ref (pré-C7) — pulado"
-          fi
+        run: npx tsx --test servidor/testes/revinculacao-ficha.test.ts
       - name: Testes unitários das ações de Sangue (Issue #186 #224)
-        run: |
-          if [ -f servidor/testes/sangue-acoes.test.ts ]; then
-            npx tsx --test servidor/testes/sangue-acoes.test.ts
-          else
-            echo "sangue-acoes.test.ts ausente nesta ref (pré-#224) — pulado"
-          fi
+        run: npx tsx --test servidor/testes/sangue-acoes.test.ts
       - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
-        run: |
-          if [ -f servidor/testes/sangue-invariantes.test.ts ]; then
-            npx tsx --test servidor/testes/sangue-invariantes.test.ts
-          else
-            echo "sangue-invariantes.test.ts ausente nesta ref (pré-#225) — pulado"
-          fi
+        run: npx tsx --test servidor/testes/sangue-invariantes.test.ts
       - name: Suítes residuais Acervo + dados 3D (sem navegador)
         run: |
           set -e
