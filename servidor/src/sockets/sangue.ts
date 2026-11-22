@@ -17,7 +17,7 @@ import type { Server as SocketIOServer, Socket } from "socket.io";
 import { and, eq } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import { characters, memberships, sheetVersions } from "../db/schema.js";
-import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
+import { campoVisivelPara, estruturaFichaSchema, mapaCampos, type EstruturaFicha } from "../lib/ficha.js";
 import {
   barreiraRestauracaoAtiva,
   emitirCampanha,
@@ -82,6 +82,52 @@ type AckOk = {
 };
 type AckErro = { ok: false; codigo: string; erro: string; saldo?: number };
 type Ack = AckOk | AckErro;
+
+/** Confere a visibilidade efetiva do campo na ficha vinculada.
+ *  A verificação é reexecutada dentro da transação e usa os overrides
+ *  persistidos do personagem, não dados enviados pelo cliente. */
+type OverrideVisibilidadeSangue = {
+  visibilidade?: "todos" | "dono_mestre" | "mestre" | "selecionados";
+  destinatarios?: string[];
+};
+
+function campoVisivelNaAcao(
+  ctx: PersonagemCtx,
+  papelTx: Papel,
+  ehDonoTx: boolean,
+  campoId: string | undefined,
+): boolean {
+  if (papelTx === "mestre") return true;
+  if (!campoId) return false;
+  const campo = mapaCampos(ctx.estrutura).get(campoId);
+  if (!campo) return false;
+  const overrides = (ctx.personagem.overrides ?? {}) as Record<string, OverrideVisibilidadeSangue>;
+  return campoVisivelPara(
+    campo,
+    overrides[campoId],
+    false,
+    ehDonoTx,
+    ctx.usuario.id,
+    ctx.personagem.membershipId,
+  );
+}
+
+/** O ACK de ativar/recuperar contém saldo. Só liberamos essas ações
+ *  quando todas as fontes configuradas da capacidade também são
+ *  visíveis ao dono; caso contrário o ACK contornaria o GET mascarado. */
+function capacidadeSangueVisivelNaAcao(
+  ctx: PersonagemCtx,
+  papelTx: Papel,
+  ehDonoTx: boolean,
+  config: ConfigSangueAcoes | null | undefined,
+): boolean {
+  if (papelTx === "mestre") return true;
+  const fontes = [
+    config?.campoCapacidadeId,
+    config?.capacidade?.bonusQualidade?.campoId,
+  ].filter((id): id is string => typeof id === "string" && id.length > 0);
+  return fontes.length > 0 && fontes.every((id) => campoVisivelNaAcao(ctx, papelTx, ehDonoTx, id));
+}
 
 const MENSAGENS: Record<string, string> = {
   recurso_desabilitado: "Pontos de Sangue desabilitados nesta campanha",
@@ -361,6 +407,11 @@ function socketSangue(io: SocketIOServer) {
         if (config?.habilitado !== true) {
           return { ok: false as const, codigo: "recurso_desabilitado" };
         }
+        // O ACK inclui saldo. Não permitir que o socket revele o mesmo
+        // valor que o GET da ficha ocultou por capacidade privada/ausente.
+        if (!capacidadeSangueVisivelNaAcao(c2, papelTx, ehDonoTx, config)) {
+          return { ok: false as const, codigo: "capacidade_indisponivel" };
+        }
         const poderesValidos = new Set((regras.porKind.get("poder") ?? []).map((e) => e.key));
         if (!poderesValidos.has(poderKey)) {
           return { ok: false as const, codigo: "poder_desconhecido" };
@@ -397,6 +448,12 @@ function socketSangue(io: SocketIOServer) {
       return executarAcao("recuperar", payload, cb, ({ dados, ctx: c2, config, autor, papelTx, ehDonoTx, donoAtivoTx }) => {
         const neg = exigirDonoTx(papelTx, ehDonoTx, donoAtivoTx);
         if (neg) return { ok: false as const, codigo: neg };
+        if (!capacidadeSangueVisivelNaAcao(c2, papelTx, ehDonoTx, config)) {
+          return { ok: false as const, codigo: "capacidade_indisponivel" };
+        }
+        if (!campoVisivelNaAcao(c2, papelTx, ehDonoTx, config?.campoNaturezaId)) {
+          return { ok: false as const, codigo: "natureza_indisponivel" };
+        }
         const cap = resolverCapacidadeSangue(c2.estrutura, dados, config ?? undefined);
         return recuperarSangue(dados, {
           personagemId: c2.personagem.id,
