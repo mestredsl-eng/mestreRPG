@@ -99,7 +99,8 @@ sangueRouter.get(
       config.capacidade?.bonusQualidade?.campoId,
     ].filter((id): id is string => typeof id === "string" && id.length > 0);
     const capacidadePrivada =
-      !acesso.ehMestre && fontesCapacidade.some((campoId) => !campoVisivel(campoId));
+      !acesso.ehMestre &&
+      fontesCapacidade.some((campoId) => campos.has(campoId) && !campoVisivel(campoId));
     if (capacidadePrivada) {
       res.json({
         estado: "capacidade_indisponivel",
@@ -116,7 +117,7 @@ sangueRouter.get(
     const naturezaPrivada =
       !acesso.ehMestre &&
       typeof config.campoNaturezaId === "string" &&
-      config.campoNaturezaId.length > 0 &&
+      campos.has(config.campoNaturezaId) &&
       !campoVisivel(config.campoNaturezaId);
 
     const resolucao = resolverSanguePersonagem(estrutura, dados, config);
