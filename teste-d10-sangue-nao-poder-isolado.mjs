@@ -92,11 +92,12 @@ function inserirTeste(c, sessionId, characterId, skillRef) {
   return id;
 }
 
-const BASE_PORT = await portaLivre();
-const BASE = "http://localhost:" + BASE_PORT;
+let BASE = null;
 
 try {
   await prepararBanco(BANCO);
+  const BASE_PORT = await portaLivre();
+  BASE = "http://localhost:" + BASE_PORT;
   proc = subirServidor(BASE_PORT, {
     banco: BANCO,
     arquivos: join(DIR, "arq"),
@@ -177,8 +178,9 @@ try {
   check("roll_id do teste referencia a rolagem persistida", !!roll && roll.id === teste?.roll_id);
   check("saldo de Sangue permanece inalterado", depoisData.__sangue?.saldo === saldoAntes && saldoAntes === 10,
     "saldo " + saldoAntes + "→" + depoisData.__sangue?.saldo);
-  check("usoId d10:<testId> ausente", !Object.keys(depoisData.__sangue?.usos ?? {}).includes("d10:" + testeId),
-    JSON.stringify(Object.keys(depoisData.__sangue?.usos ?? {})));
+  const usosDepois = Object.keys(depoisData.__sangue?.usos ?? {});
+  check("usoId d10:<testId> ausente", !usosDepois.includes("d10:" + testeId), JSON.stringify(usosDepois));
+  check("lista inteira de usoIds do ledger inalterada", JSON.stringify(usosDepois) === JSON.stringify(usosAntes));
   check("characters.data byte-a-byte idêntico", depoisRaw === antesRaw);
   check("ledger __sangue inteiro idêntico",
     JSON.stringify(depoisData.__sangue) === JSON.stringify(antesData.__sangue));
