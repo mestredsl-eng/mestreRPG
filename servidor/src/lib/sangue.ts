@@ -37,6 +37,97 @@ export const LIMITE_USOS_AVISO = 5000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAVE_USO_RE = /^(d10|ativar|recuperar|ajustar):(.+)$/;
 
+/**
+ * Aritmética decimal exata para os valores de Sangue.
+ *
+ * Converte a representação decimal canônica dos Numbers (incluindo
+ * expoentes) para coeficiente BigInt + escala. Isso evita resíduos como
+ * 0.3 - 0.2 = 0.09999999999999998 sem impor uma quantidade arbitrária
+ * de casas decimais à regra da campanha.
+ */
+interface DecimalSangue {
+  coeficiente: bigint;
+  escala: number;
+}
+
+function decomporDecimalSangue(valor: number): DecimalSangue | null {
+  if (!Number.isFinite(valor)) return null;
+  const [mantissaOriginal, expoenteRaw] = valor.toString().toLowerCase().split("e");
+  const expoente = expoenteRaw === undefined ? 0 : Number(expoenteRaw);
+  const negativo = mantissaOriginal.startsWith("-");
+  const mantissa = negativo ? mantissaOriginal.slice(1) : mantissaOriginal;
+  const [inteiro = "0", fracao = ""] = mantissa.split(".");
+  let coeficiente = BigInt(`${inteiro}${fracao}` || "0") * (negativo ? -1n : 1n);
+  let escala = fracao.length - expoente;
+  if (escala < 0) {
+    coeficiente *= 10n ** BigInt(-escala);
+    escala = 0;
+  }
+  while (escala > 0 && coeficiente % 10n === 0n) {
+    coeficiente /= 10n;
+    escala--;
+  }
+  return { coeficiente, escala };
+}
+
+function comporDecimalSangue(valor: DecimalSangue): number {
+  if (valor.coeficiente === 0n) return 0;
+  const negativo = valor.coeficiente < 0n;
+  const digitos = (negativo ? -valor.coeficiente : valor.coeficiente).toString();
+  const sinal = negativo ? "-" : "";
+  if (valor.escala === 0) return Number(`${sinal}${digitos}`);
+  const preenchido = digitos.padStart(valor.escala + 1, "0");
+  const corte = preenchido.length - valor.escala;
+  return Number(`${sinal}${preenchido.slice(0, corte)}.${preenchido.slice(corte)}`);
+}
+
+function alinharDecimaisSangue(a: DecimalSangue, b: DecimalSangue): [bigint, bigint, number] {
+  const escala = Math.max(a.escala, b.escala);
+  return [
+    a.coeficiente * 10n ** BigInt(escala - a.escala),
+    b.coeficiente * 10n ** BigInt(escala - b.escala),
+    escala,
+  ];
+}
+
+/** Soma decimal sem resíduos binários. */
+export function somarDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a + b;
+  const [ia, ib, escala] = alinharDecimaisSangue(da, db);
+  return comporDecimalSangue({ coeficiente: ia + ib, escala });
+}
+
+/** Subtração decimal sem resíduos binários. */
+export function subtrairDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a - b;
+  const [ia, ib, escala] = alinharDecimaisSangue(da, db);
+  return comporDecimalSangue({ coeficiente: ia - ib, escala });
+}
+
+/** Multiplicação decimal sem resíduos binários intermediários. */
+export function multiplicarDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a * b;
+  return comporDecimalSangue({
+    coeficiente: da.coeficiente * db.coeficiente,
+    escala: da.escala + db.escala,
+  });
+}
+
+/** Comparação decimal exata; retorna -1, 0 ou 1. */
+export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a < b ? -1 : a > b ? 1 : 0;
+  const [ia, ib] = alinharDecimaisSangue(da, db);
+  return ia < ib ? -1 : ia > ib ? 1 : 0;
+}
+
 // ---------- Tipos ----------
 
 export type TipoEventoSangue = "inicial" | "uso" | "recuperacao" | "ajuste";
@@ -248,7 +339,9 @@ function truncarHistorico(historico: EventoSangue[]): {
   const lista = truncado ? historico.slice(-MAX_HISTORICO_SANGUE) : historico;
   // Mesma regra da âncora de __xp: saldo anterior ao primeiro evento
   // retido = saldoResultante - quantidade do primeiro evento da janela.
-  const ancora = truncado ? lista[0].saldoResultante - lista[0].quantidade : undefined;
+  const ancora = truncado
+    ? subtrairDecimalSangue(lista[0].saldoResultante, lista[0].quantidade)
+    : undefined;
   return { historico: lista, ancora };
 }
 
@@ -338,10 +431,11 @@ function registrarOperacao(
   // de histórico deve registrar quantidade neutra, não negativa-zero.
   let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
-    const espaco = Math.max(0, params.capacidadeMax - estado.saldo);
-    if (delta > espaco) delta = espaco;
+    const espacoBruto = subtrairDecimalSangue(params.capacidadeMax, estado.saldo);
+    const espaco = compararDecimalSangue(espacoBruto, 0) > 0 ? espacoBruto : 0;
+    if (compararDecimalSangue(delta, espaco) > 0) delta = espaco;
   }
-  if (delta < 0 && -delta > estado.saldo) {
+  if (delta < 0 && compararDecimalSangue(-delta, estado.saldo) > 0) {
     return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   }
 
@@ -377,8 +471,9 @@ function aplicarDeltaComEstado(
   tipoEvento: TipoEventoSangue,
   ctx: ContextoEvento & { usoId?: string },
 ): ResultadoSangue {
-  const saldo = estado.saldo + delta;
-  if (saldo < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
+  const saldo = somarDecimalSangue(estado.saldo, delta);
+  if (!Number.isFinite(saldo)) return { ok: false, codigo: "quantidade_invalida", saldo: estado.saldo };
+  if (compararDecimalSangue(saldo, 0) < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   const historicoNovo: EventoSangue[] = [
     ...estado.historico,
     {
@@ -627,7 +722,7 @@ export function reconciliarCapacidadeSangue(
     return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
   }
   const estado = lido.estado;
-  if (estado.saldo <= cap) {
+  if (compararDecimalSangue(estado.saldo, cap) <= 0) {
     return { ok: true, dados, estado, ajustado: false };
   }
   const ajuste = registrarAjusteSangue(dados, {
@@ -635,7 +730,7 @@ export function reconciliarCapacidadeSangue(
     autorId: params.autorId,
     autorNome: params.autorNome,
     motivo: params.motivo,
-    delta: cap - estado.saldo,
+    delta: subtrairDecimalSangue(cap, estado.saldo),
   });
   if (!ajuste.ok) return ajuste;
   // Atualiza o cache de capacidade junto — a leitura seguinte já
@@ -902,13 +997,13 @@ export function resolverCapacidadeSangue(
           detalhe: { campoId: bq.campoId, bruto: dados[bq.campoId], modo: modoBonus },
         };
       }
-      bonus = nBonus * bq.coeficiente;
+      bonus = multiplicarDecimalSangue(nBonus, bq.coeficiente);
     }
     // nBonus === null → personagem sem a qualidade selecionada:
     // bônus zero, não é erro.
   }
 
-  const capacidade = base + bonus;
+  const capacidade = somarDecimalSangue(base, bonus);
   // R3/P2: a capacidade final precisa ser finita e não negativa —
   // defesa final mesmo que base ou bônus cheguem corrompidos.
   if (!Number.isFinite(capacidade) || capacidade < 0) {

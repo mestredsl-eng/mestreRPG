@@ -28,7 +28,12 @@ import {
 } from "../lib/io.js";
 import { carregarRegrasSincrono, extrairEscolhas } from "../lib/regras.js";
 import { agendarAutosave } from "../lib/autosave.js";
-import { resolverCapacidadeSangue, lerSangue } from "../lib/sangue.js";
+import {
+  resolverCapacidadeSangue,
+  lerSangue,
+  somarDecimalSangue,
+  compararDecimalSangue,
+} from "../lib/sangue.js";
 import {
   ativarPoderNarrativo,
   recuperarSangue,
@@ -436,7 +441,11 @@ function socketSangue(io: SocketIOServer) {
         if (delta > 0) {
           const cap = resolverCapacidadeSangue(c2.estrutura, dados, config ?? undefined);
           const saldo = lerSangue(dados).estado.saldo;
-          if (!cap.disponivel || cap.capacidade === null || saldo + delta > cap.capacidade) {
+          if (
+            !cap.disponivel ||
+            cap.capacidade === null ||
+            compararDecimalSangue(somarDecimalSangue(saldo, delta), cap.capacidade) > 0
+          ) {
             return { ok: false as const, codigo: "capacidade_excedida", saldo };
           }
         }

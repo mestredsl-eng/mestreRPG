@@ -785,6 +785,39 @@ describe("regressão R3 — bônus de qualidade fail-closed", () => {
 });
 
 describe("robustez numérica — entradas não finitas e listas parciais", () => {
+  it("débitos decimais sucessivos chegam exatamente a zero", () => {
+    let dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.3, usos: {}, historico: [] },
+    };
+    const primeiro = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -0.2, motivo: "gasto decimal 1",
+    });
+    assert.equal(primeiro.ok, true);
+    if (!primeiro.ok) return;
+    assert.equal(primeiro.estado.saldo, 0.1);
+    dados = primeiro.dados;
+
+    const segundo = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -0.1, motivo: "gasto decimal 2",
+    });
+    assert.equal(segundo.ok, true, "0,1 restante deve cobrir custo 0,1");
+    if (segundo.ok) {
+      assert.equal(segundo.estado.saldo, 0);
+      assert.equal(segundo.estado.historico.at(-1)?.saldoResultante, 0);
+    }
+  });
+
+  it("crédito decimal respeita o teto sem ultrapassá-lo", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },
+    };
+    const r = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.estado.saldo, 0.3);
+  });
+
   it("quantidade NaN/Infinity/negativa/zero recusada nas três operações", () => {
     const dados = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
     for (const q of [NaN, Infinity, -1, 0]) {
