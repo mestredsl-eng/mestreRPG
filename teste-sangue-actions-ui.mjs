@@ -58,6 +58,19 @@ function setVisibilidadeCampo(versionId, campoId, visibilidade) {
     w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
   } finally { w.close(); }
 }
+function setOverrideCampo(charId, campoId, override) {
+  const w = db();
+  try {
+    const row = w.prepare("select overrides from characters where id=?").get(charId);
+    if (!row) throw new Error("Personagem não encontrado: " + charId);
+    const overrides = typeof row.overrides === "string"
+      ? JSON.parse(row.overrides || "{}")
+      : { ...(row.overrides ?? {}) };
+    if (override === null) delete overrides[campoId];
+    else overrides[campoId] = override;
+    w.prepare("update characters set overrides=? where id=?").run(JSON.stringify(overrides), charId);
+  } finally { w.close(); }
+}
 function setPoderesLimite(campId, limite) {
   const w = db();
   try {
@@ -308,7 +321,8 @@ try {
   sec("Socket.IO — privacidade da projeção de Sangue");
   {
     setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
-    setVisibilidadeCampo(vid, "cap", "mestre");
+    setVisibilidadeCampo(vid, "cap", "todos");
+    setOverrideCampo(CHAR, "cap", { visibilidade: "mestre" });
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Herói Ações");
 
@@ -316,7 +330,7 @@ try {
       characterId: CHAR, poderKey: "poder_fogo", requestId: crypto.randomUUID(),
     });
     t(
-      "Socket.IO. ativar recusa capacidade privada sem devolver saldo",
+      "Socket.IO. ativar respeita override privado sem devolver saldo",
       ackAtivar?.ok === false && ackAtivar?.codigo === "capacidade_indisponivel"
         && !("estado" in ackAtivar) && !("saldo" in ackAtivar) && saldoDe(CHAR) === 5,
       JSON.stringify({ ack: ackAtivar, saldo: saldoDe(CHAR) }),
@@ -326,24 +340,24 @@ try {
       characterId: CHAR, requestId: crypto.randomUUID(),
     });
     t(
-      "Socket.IO. recuperar recusa capacidade privada sem mutar ledger",
+      "Socket.IO. recuperar respeita override de capacidade sem mutar ledger",
       ackRecuperarCap?.ok === false && ackRecuperarCap?.codigo === "capacidade_indisponivel"
         && !("estado" in ackRecuperarCap) && !("saldo" in ackRecuperarCap) && saldoDe(CHAR) === 5,
       JSON.stringify({ ack: ackRecuperarCap, saldo: saldoDe(CHAR) }),
     );
 
-    setVisibilidadeCampo(vid, "cap", "todos");
-    setVisibilidadeCampo(vid, "nat", "mestre");
+    setOverrideCampo(CHAR, "cap", null);
+    setOverrideCampo(CHAR, "nat", { visibilidade: "selecionados", destinatarios: [] });
     const ackRecuperarNat = await emitirAckSangue(page, "sangue:recuperar", {
       characterId: CHAR, requestId: crypto.randomUUID(),
     });
     t(
-      "Socket.IO. recuperar recusa natureza privada sem revelar ação nem saldo",
+      "Socket.IO. recuperar recusa natureza para não destinatário selecionado",
       ackRecuperarNat?.ok === false && ackRecuperarNat?.codigo === "natureza_indisponivel"
         && !("estado" in ackRecuperarNat) && !("saldo" in ackRecuperarNat) && saldoDe(CHAR) === 5,
       JSON.stringify({ ack: ackRecuperarNat, saldo: saldoDe(CHAR) }),
     );
-    setVisibilidadeCampo(vid, "nat", "todos");
+    setOverrideCampo(CHAR, "nat", null);
     await ctx.close();
   }
 
