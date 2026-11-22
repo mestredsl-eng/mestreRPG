@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
-import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
+import { api, ApiError, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
 import { ModalConfirmar } from "../Modal";
@@ -52,12 +52,37 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   formRef.current = form;
   const conviteFormRef = useRef(conviteForm);
   conviteFormRef.current = conviteForm;
+  const convitesRef = useRef(convites);
+  convitesRef.current = convites;
   // Edição em andamento não pode ser sobrescrita por recargas
   // (socket, retry de leitura, aoAtualizar): o GET traz o estado do
   // servidor, não o rascunho local. Ref para o carregar() enxergar o
   // valor mais recente sem recriar o callback.
   const editandoRef = useRef(editando);
   editandoRef.current = editando;
+  // F30 — POST /invitations não é idempotente: se a resposta se perde
+  // depois do commit, reenviar o mesmo POST criaria um SEGUNDO convite.
+  // Resultado ambíguo (rede/5xx/timeout) fica fail-closed: nenhum retry
+  // do POST enquanto a operação anterior estiver indeterminada; a
+  // reconciliação é um GET na lista antes de liberar nova tentativa.
+  // O bloqueio persiste em sessionStorage para sobreviver a reload e
+  // reentrada na tela dentro da mesma aba.
+  const convitePendenteKey = `mestre-rpg:convite-indefinido:${id}`;
+  const [convitePendente, setConvitePendente] = useState<{ idsAntes: string[] } | null>(null);
+  const [verificandoConvite, setVerificandoConvite] = useState(false);
+  const convitePendenteRef = useRef(convitePendente);
+  convitePendenteRef.current = convitePendente;
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(convitePendenteKey);
+      if (raw) {
+        const p = JSON.parse(raw) as { idsAntes?: unknown };
+        if (p && Array.isArray(p.idsAntes)) {
+          setConvitePendente({ idsAntes: p.idsAntes.filter((x): x is string => typeof x === "string") });
+        }
+      }
+    } catch { /* storage indisponível — bloqueio vale só para a montagem atual */ }
+  }, [convitePendenteKey]);
 
   const souMestre = campanha?.meuPapel === "mestre";
   // Personagens exige mestre/jogador no backend (GET /characters → 403
@@ -200,8 +225,20 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     }
   };
 
+  const limparConvitePendente = () => {
+    convitePendenteRef.current = null;
+    setConvitePendente(null);
+    try { sessionStorage.removeItem(convitePendenteKey); } catch { /* ignore */ }
+  };
+
   const enviarConvite = async () => {
+    // Fail-closed: com operação anterior indeterminada, NENHUM novo
+    // POST sai — nem por retry, nem por reenvio manual do formulário.
+    if (convitePendenteRef.current) return;
     const f = conviteFormRef.current;
+    // Snapshot dos convites conhecidos ANTES do POST: a reconciliação
+    // compara a lista fresca do servidor com este conjunto.
+    const idsAntes = convitesRef.current.map((cv) => cv.id);
     try {
       const { convite } = await api.criarConvite(id, {
         role: f.role,
@@ -211,12 +248,56 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       });
       setConviteCriado({ code: convite.code });
       setErroAcao(null);
+      limparConvitePendente();
       await carregar();
     } catch (err) {
+      // 4xx definitivo: o servidor rejeitou sem inserir linha — retry
+      // da mesma mutação é seguro e preserva o rascunho do formulário.
+      const definitivo = err instanceof ApiError && err.status >= 400 && err.status < 500;
+      if (definitivo) {
+        setErroAcao({
+          texto: err instanceof Error ? err.message : "Erro ao criar convite",
+          retry: () => void enviarConvite(),
+        });
+        return;
+      }
+      // Ambíguo (rede, timeout, 5xx): a linha PODE ter sido gravada.
+      // Bloqueia novo POST e exige reconciliação via GET.
+      const pend = { idsAntes };
+      convitePendenteRef.current = pend;
+      setConvitePendente(pend);
+      try { sessionStorage.setItem(convitePendenteKey, JSON.stringify(pend)); } catch { /* ignore */ }
       setErroAcao({
-        texto: err instanceof Error ? err.message : "Erro ao criar convite",
-        retry: () => void enviarConvite(),
+        texto: "Não foi possível confirmar se o convite foi criado. Verifique a lista antes de tentar novamente — reenviar agora poderia duplicar o convite.",
       });
+    }
+  };
+
+  // Reconciliação: GET autoritativo na lista. Se surgiu convite novo
+  // desde o snapshot, o POST commitou (o código one-time se perdeu —
+  // orientar revogação); se não surgiu, nada foi gravado e a nova
+  // tentativa volta a ser permitida. GET falho mantém o bloqueio.
+  const verificarConviteAmbiguo = async () => {
+    const pend = convitePendenteRef.current;
+    if (!pend || verificandoConvite) return;
+    setVerificandoConvite(true);
+    try {
+      const { convites: atuais } = await api.listarConvites(id);
+      const idsAntes = new Set(pend.idsAntes);
+      const apareceu = atuais.some((cv) => !idsAntes.has(cv.id));
+      if (apareceu) {
+        setErroAcao({
+          texto: "O convite anterior FOI criado, mas o código não pôde ser recuperado por segurança. Revogue-o na lista abaixo e gere um novo se necessário.",
+        });
+      } else {
+        setErroAcao({ texto: "Nenhum convite novo foi encontrado — a tentativa anterior não foi concluída. Você já pode gerar o convite novamente." });
+      }
+      limparConvitePendente();
+      await carregar();
+    } catch {
+      setErroAcao({ texto: "Não foi possível verificar a lista de convites. O bloqueio permanece até a verificação concluir." });
+    } finally {
+      setVerificandoConvite(false);
     }
   };
 
@@ -523,6 +604,18 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             </div>
           )}
 
+          {convitePendente && (
+            <div className="estado-feedback estado-feedback-erro" role="alert">
+              <p className="estado-feedback-texto">
+                Existe uma criação de convite com resultado indeterminado. Ela precisa ser verificada na lista antes de um novo envio.
+              </p>
+              <button type="button" className="secundario estado-feedback-retry" disabled={verificandoConvite}
+                onClick={() => void verificarConviteAmbiguo()}>
+                {verificandoConvite ? "Verificando…" : "Verificar convites"}
+              </button>
+            </div>
+          )}
+
           <form className="formulario" onSubmit={criarConvite}>
             <div className="grade-2">
               <label>Papel inicial
@@ -538,7 +631,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                 Exigir aprovação do mestre
               </label>
             </div>
-            <button type="submit">Gerar convite</button>
+            <button type="submit" disabled={!!convitePendente}>Gerar convite</button>
           </form>
 
           {!extrasCarregados ? (

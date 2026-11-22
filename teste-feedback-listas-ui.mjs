@@ -7,7 +7,7 @@
 import { chromium } from "playwright";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, req, encerrarServidor, limparDir,
+  criarCenario, req, encerrarServidor, limparDir, comDb,
 } from "./teste-base.mjs";
 
 const DIR = dirTeste("feedback-listas");
@@ -189,6 +189,69 @@ try {
   // restaura o nome original — seções seguintes localizam "Campanha Teste"
   await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { name: "Campanha Teste" } });
   await pm.unroute(`**/api/campaigns/${c.campId}`);
+
+  // ---------- 3c) F30: POST convite ambíguo — commit real + resposta perdida ----------
+  await abrirAba(pm, "Convites");
+  const contarConvites = () => comDb(BANCO, (db) =>
+    db.prepare("select count(*) n from invitations where campaign_id=?").get(c.campId).n);
+  const convAntes = contarConvites();
+  let postsConvite = 0;
+  let perderProx = true;
+  const urlConvPost = `**/api/campaigns/${c.campId}/invitations`;
+  await pm.route(urlConvPost, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    postsConvite++;
+    if (perderProx) {
+      perderProx = false;
+      await route.fetch();   // commit real no servidor
+      await route.abort();   // resposta perdida para o cliente
+      return;
+    }
+    return route.continue();
+  });
+  await pm.getByRole("button", { name: "Gerar convite" }).click();
+  await pm.waitForSelector(".estado-feedback-erro", { timeout: 8000 });
+  ok("convite. ambíguo: aviso fail-closed visível", (await pm.locator(".estado-feedback-erro").count()) >= 1);
+  ok("convite. submit desabilitado enquanto indeterminado",
+    await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
+  ok("convite. ambíguo não oferece reenvio do POST",
+    (await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).count()) === 0);
+  await pm.waitForTimeout(600);
+  const convDepois = contarConvites();
+  ok("convite. exatamente 1 linha commitada no SQLite", convDepois === convAntes + 1, `${convAntes}→${convDepois}`);
+  ok("convite. nenhum segundo POST na recuperação", postsConvite === 1, `posts=${postsConvite}`);
+  // reload: o bloqueio persiste via sessionStorage e segue sem POST
+  await pm.reload({ waitUntil: "domcontentloaded" });
+  await abrirCampanha(pm);
+  await abrirAba(pm, "Convites");
+  ok("convite. bloqueio sobrevive a reload", await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
+  ok("convite. reload não gerou POST extra", postsConvite === 1, `posts=${postsConvite}`);
+  // reconciliação: GET autoritativo detecta o convite commitado
+  await pm.getByRole("button", { name: "Verificar convites" }).click();
+  await pm.waitForTimeout(1500);
+  ok("convite. verificação libera bloqueio após detectar commit",
+    !(await pm.getByRole("button", { name: "Gerar convite" }).isDisabled()));
+  ok("convite. verificação não gerou POST", postsConvite === 1, `posts=${postsConvite}`);
+  ok("convite. mensagem orienta revogação do código perdido",
+    /não pôde ser recuperado|Revogue/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+  // erro definitivo 4xx → retry da mutação é seguro; rascunho preservado
+  await pm.route(urlConvPost, async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    postsConvite++;
+    await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ erro: "papel inválido" }) });
+  });
+  const maxUsesInput = pm.locator("label", { hasText: "Máx. de usos" }).locator("input");
+  await maxUsesInput.fill("3");
+  await pm.getByRole("button", { name: "Gerar convite" }).click();
+  await pm.waitForTimeout(1000);
+  ok("convite. 4xx definitivo oferece retry da mutação",
+    (await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).count()) >= 1);
+  ok("convite. rascunho preservado após 4xx", (await maxUsesInput.inputValue()) === "3");
+  await pm.unroute(urlConvPost);
+  // retry real agora passa (201) — limpa o erro de ação para não
+  // vazar um segundo .estado-feedback-texto nas seções seguintes
+  await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).click();
+  await pm.waitForTimeout(1500);
 
   // ---------- 4) Reduced motion: texto permanece, animação desligada ----------
   await pm.emulateMedia({ reducedMotion: "reduce" });
