@@ -103,7 +103,8 @@ export interface EstadoXp {
    *  truncado pelo teto MAX_HISTORICO (Issue #162/B1): sem ele, o
    *  primeiro saldoResultante retido não tem âncora verificável e um
    *  pacote importado poderia declarar um saldo inicial arbitrário.
-   *  0/ausente = histórico completo desde o zero. */
+   *  0 é uma âncora válida: o primeiro evento retido começou do zero.
+   *  Ausente significa que não há metadado conhecido de truncamento. */
   ancora?: number;
   /** Níveis financiados por XP por campo da ficha (BUG_0001): impede
    *  que o orçamento de pontos de criação cobre de novo esses níveis
@@ -194,7 +195,7 @@ export function aplicarXp(
   const novo: EstadoXp = {
     saldo,
     historico,
-    ...(ancora !== undefined && ancora > 0 ? { ancora } : {}),
+    ...(ancora !== undefined && ancora >= 0 ? { ancora } : {}),
     financiado: estado.financiado,
   };
   return { dados: { ...dados, [CHAVE_XP]: novo }, estado: novo };
