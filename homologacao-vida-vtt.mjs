@@ -478,6 +478,44 @@ try {
         await hpBar(pgM, "OR").getAttribute("title").catch(() => "ausente"));
     }
 
+    // F19-B: edição inválida → erro visível + campos preservados (sem emit)
+    await ed.locator('input[aria-label="HP atual do token selecionado"]').fill("99");
+    await ed.locator('input[aria-label="HP máximo do token selecionado"]').fill("1");
+    await ed.getByRole("button", { name: "Salvar HP" }).click();
+    const erroHp = pgM.locator("p.erro", { hasText: "HP manual" });
+    t("UI: HP inválido mostra erro compreensível",
+      await erroHp.count() === 1 && /inválido|exige/.test(await erroHp.first().textContent() ?? ""),
+      await erroHp.first().textContent().catch(() => "sem erro"));
+    t("UI: campos de HP preservados após erro",
+      (await ed.locator('input[aria-label="HP atual do token selecionado"]').inputValue()) === "99"
+      && (await ed.locator('input[aria-label="HP máximo do token selecionado"]').inputValue()) === "1");
+    t("UI: HP continua 12/40 (edição inválida não emitida)",
+      (await hpBar(pgM, "OR").getAttribute("title")) === "HP 12/40",
+      await hpBar(pgM, "OR").getAttribute("title").catch(() => "ausente"));
+    // ambos vazios → orienta usar Limpar HP
+    await ed.locator('input[aria-label="HP atual do token selecionado"]').fill("");
+    await ed.locator('input[aria-label="HP máximo do token selecionado"]').fill("");
+    await ed.getByRole("button", { name: "Salvar HP" }).click();
+    t("UI: HP vazio orienta Limpar HP",
+      /Limpar HP/.test(await pgM.locator("p.erro").last().textContent().catch(() => "")));
+
+    // F19-B: criação com HP parcial → erro + nada criado + form preservado
+    await formTok.locator('input[placeholder="Nome do token"]').fill("Parcial UI");
+    await formTok.locator('input[aria-label="HP atual do token"]').fill("5");
+    await formTok.getByRole("button", { name: "Adicionar token" }).click();
+    await pgM.waitForTimeout(400);
+    t("UI: HP parcial na criação é rejeitado com feedback",
+      /exige valor atual e máximo/.test(await pgM.locator("p.erro").last().textContent().catch(() => "")));
+    t("UI: token parcial NÃO foi criado",
+      (await pgM.locator(".vtt-token", { hasText: "PA" }).count()) === 0);
+    t("UI: formulário preservado após erro (nome+HP)",
+      (await formTok.locator('input[placeholder="Nome do token"]').inputValue()) === "Parcial UI"
+      && (await formTok.locator('input[aria-label="HP atual do token"]').inputValue()) === "5");
+    // limpa o form para não interferir nos passos seguintes
+    await formTok.locator('input[placeholder="Nome do token"]').fill("");
+    await formTok.locator('input[aria-label="HP atual do token"]').fill("");
+    await formTok.locator('input[aria-label="HP máximo do token"]').fill("");
+
     // token COM ficha não expõe controles de HP manual
     // (dispatchEvent: tokens se sobrepõem em x=0.5,y=0.5 — click real
     // atingiria o token de cima; o handler React é o mesmo)
@@ -539,6 +577,11 @@ try {
   } catch {
     t("mobile mestre: HP bar no token manual", false);
   }
+  // F19-B: painel de edição de HP manual utilizável a 390px
+  await pgMobM.locator(".vtt-token", { hasText: "OR" }).first().dispatchEvent("click");
+  await pgMobM.waitForTimeout(400);
+  t("mobile mestre: painel HP manual visível no token sem ficha",
+    await pgMobM.locator(".vtt-hp-manual").count() === 1);
   t("mobile mestre: sem overflow horizontal", await semOverflowX(pgMobM));
   await pgMobM.screenshot({ path: join(SHOTS, "vida-05-mobile-mestre-manual.png") });
   await ctxMobM.close();

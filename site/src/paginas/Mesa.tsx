@@ -117,6 +117,22 @@ function percentualVida(atual: number, maximo: number): number {
   return Math.max(0, Math.min(100, (atual / maximo) * 100));
 }
 
+/**
+ * Validação local do HP manual (F19-B): exige ambos os campos preenchidos,
+ * finitos, 0 <= atual <= máximo e máximo > 0 — decimais válidos aceitos.
+ * Retorna {atual,maximo}, null quando ambos vazios, ou mensagem de erro.
+ * O servidor continua sendo a autoridade final.
+ */
+function validarHpManual(atualTxt: string, maxTxt: string): { atual: number; maximo: number } | null | string {
+  const a = atualTxt.trim(), m = maxTxt.trim();
+  if (a === "" && m === "") return null;
+  if (a === "" || m === "") return "HP manual exige valor atual e máximo (ou deixe ambos vazios).";
+  const atual = Number(a), maximo = Number(m);
+  if (!Number.isFinite(atual) || !Number.isFinite(maximo)) return "HP manual inválido: use números.";
+  if (maximo <= 0 || atual < 0 || atual > maximo) return "HP manual inválido: use 0 ≤ atual ≤ máximo e máximo > 0.";
+  return { atual, maximo };
+}
+
 function fmtTempo(ms: number) {
   const s = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(s / 60);
@@ -2789,12 +2805,14 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
               if (!novoNome.trim()) return;
               const npc = npcs.find((p) => p.id === novoNpcId);
               const personagemId = npc?.id ?? (novoFichaId || null);
-              // HP manual só existe sem ficha; campos vazios = sem HP.
-              const hpAtual = novoHpAtual.trim() === "" ? null : Number(novoHpAtual);
-              const hpMax = novoHpMaximo.trim() === "" ? null : Number(novoHpMaximo);
-              const hpManual = !personagemId && hpAtual !== null && hpMax !== null
-                ? { atual: hpAtual, maximo: hpMax }
-                : undefined;
+              // HP manual só existe sem ficha; exige ambos os campos ou
+              // nenhum — valor parcial nunca é descartado em silêncio.
+              let hpManual: { atual: number; maximo: number } | undefined;
+              if (!personagemId && (novoHpAtual.trim() !== "" || novoHpMaximo.trim() !== "")) {
+                const hpValido = validarHpManual(novoHpAtual, novoHpMaximo);
+                if (typeof hpValido === "string") { setErroVtt(hpValido); return; }
+                hpManual = hpValido ?? undefined;
+              }
               emitir({
                 acao: "criar",
                 token: {
@@ -2803,7 +2821,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                   personagemId,
                   ...(hpManual ? { hpManual } : {}),
                 },
-              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); setNovoHpAtual(""); setNovoHpMaximo(""); });
+              }, (r) => {
+                if (r?.ok === false) return;
+                setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); setNovoHpAtual(""); setNovoHpMaximo("");
+              });
             }}
           >Adicionar token</button>
           {selVtt && (() => {
@@ -2829,11 +2850,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                     <button
                       className="secundario"
                       onClick={() => {
-                        const atual = Number(edHpAtual);
-                        const maximo = Number(edHpMaximo);
-                        if (!Number.isFinite(atual) || !Number.isFinite(maximo)) return;
-                        emitir({ acao: "atualizar", token: { id: tk.id, hpManual: { atual, maximo } } },
-                          () => { setEdHpAtual(""); setEdHpMaximo(""); });
+                        const hpValido = validarHpManual(edHpAtual, edHpMaximo);
+                        if (typeof hpValido === "string") { setErroVtt(hpValido); return; }
+                        if (hpValido === null) { setErroVtt("HP manual vazio: preencha atual e máximo, ou use \"Limpar HP\"."); return; }
+                        emitir({ acao: "atualizar", token: { id: tk.id, hpManual: hpValido } },
+                          (r) => { if (r?.ok === false) return; setEdHpAtual(""); setEdHpMaximo(""); });
                       }}
                     >Salvar HP</button>
                     {tk.vida?.hp && (
