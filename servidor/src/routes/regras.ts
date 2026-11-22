@@ -203,9 +203,23 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
       .all();
     if (!rulesetTx) throw new Error("Ruleset não encontrado durante exclusão de elemento");
 
-    const configAtualTx = configRegrasSchema.parse(rulesetTx.config);
-    const sangueAtualTx = configAtualTx.sangue;
-    const poderesAtuaisTx = { ...(sangueAtualTx?.poderes ?? {}) };
+    const configBrutaTx = rulesetTx.config as Record<string, unknown>;
+    const configValidadaTx = configRegrasSchema.safeParse(configBrutaTx);
+    if (!configValidadaTx.success) {
+      throw new Error("Configuração inválida durante exclusão de elemento");
+    }
+    // Validamos o shape conhecido, mas preservamos o JSON bruto para não
+    // descartar chaves de extensões futuras/desconhecidas ao salvar.
+    const sangueBruto = configBrutaTx.sangue;
+    const sangueAtualTx =
+      sangueBruto && typeof sangueBruto === "object" && !Array.isArray(sangueBruto)
+        ? sangueBruto as Record<string, unknown>
+        : {};
+    const poderesBrutos = sangueAtualTx.poderes;
+    const poderesAtuaisTx =
+      poderesBrutos && typeof poderesBrutos === "object" && !Array.isArray(poderesBrutos)
+        ? { ...(poderesBrutos as Record<string, unknown>) }
+        : {};
     const removeCusto =
       el.kind === "poder" && Object.prototype.hasOwnProperty.call(poderesAtuaisTx, el.key);
 
@@ -214,8 +228,8 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
       tx.update(ruleSets)
         .set({
           config: {
-            ...configAtualTx,
-            sangue: { ...sangueAtualTx!, poderes: poderesAtuaisTx },
+            ...configBrutaTx,
+            sangue: { ...sangueAtualTx, poderes: poderesAtuaisTx },
           },
           updatedAt: new Date(),
         })
