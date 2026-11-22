@@ -145,7 +145,13 @@ function abrirDbVivoWal(raiz) {
  *  enquanto esta transação existir. */
 function fixarLeituraWAL(db) {
   db.exec("begin");
-  db.prepare("select name from sqlite_master order by name").all();
+  // Não basta ler sqlite_master: ele pode estar no arquivo principal e
+  // não fixar um snapshot de páginas que vivem no WAL. A sentinela é
+  // escrita nesta própria fixture antes do baseline, então esta leitura
+  // obriga o SQLite a manter o read-mark sobre os frames do WAL durante
+  // a abertura/fechamento concorrente do restaurador.
+  const sentinela = db.prepare("select value from marcador order by rowid").all();
+  if (sentinela.length === 0) throw new Error("fixture sem sentinela de banco para fixar snapshot WAL");
 }
 /** Impede prova vacuosa: cada cenário deve começar com WAL não vazio e
  *  SHM existente, ambos criados pelo SQLite em journal_mode=WAL. */
