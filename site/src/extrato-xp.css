@@ -48,3 +48,9 @@
     font-size: 1.2rem;
   }
 }
+
+.extrato-xp .extrato-xp-ancora {
+  border-left: 3px solid #8a6d3b;
+  padding-left: 10px;
+  font-style: italic;
+}

@@ -6,10 +6,11 @@ import "./extrato-xp.css";
 /**
  * Extrato de XP somente-leitura (Issue #185 — Mission 2).
  *
- * Mostra saldo atual e o histórico completo de movimentações do
- * personagem, mais recentes primeiro, com paginação progressiva
- * (nunca descarta dados persistidos — o histórico do servidor é
- * append-only, limitado a 500 eventos por política de retenção).
+ * Mostra saldo atual e o histórico de movimentações do personagem,
+ * mais recentes primeiro, com paginação progressiva (nunca descarta
+ * dados persistidos — o histórico do servidor é append-only, limitado
+ * a 500 eventos por política de retenção; quando truncado, o saldo
+ * anterior ao período é exibido como âncora).
  *
  * Visível apenas para mestre e dono do personagem — o mesmo recorte
  * de acesso do backend (GET /characters/:id/progressao). Não exibe
@@ -84,6 +85,12 @@ export default function ExtratoXp({ characterId }: { characterId: string }) {
       {prog && (
         <>
           <p className="progresso-saldo"><strong>{prog.xp.saldo}</strong> XP disponíveis</p>
+          {prog.xp.ancora !== undefined && (
+            <p className="meta extrato-xp-ancora">
+              Exibindo as movimentações mais recentes (retenção de até 500) —
+              saldo anterior ao primeiro evento exibido: <strong>{prog.xp.ancora} XP</strong>.
+            </p>
+          )}
           {eventos.length === 0 ? (
             <p className="meta">Nenhuma movimentação de XP registrada.</p>
           ) : (

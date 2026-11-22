@@ -45,6 +45,8 @@ try {
   const charVazio = novoPersonagem(jogadores.j2.membershipId, "Sem Movimentos");
   // charLongo (mestre): 45 eventos → paginação
   const charLongo = novoPersonagem(membMestre, "Histórico Longo");
+  // charAncora (j1): 501 eventos → ledger trunca em 500 + âncora
+  const charAncora = novoPersonagem(jogadores.j1.membershipId, "Extrato Truncado");
 
   {
     const w = abrirDb(BANCO);
@@ -65,6 +67,19 @@ try {
       i === 2
         ? ev("remocao", -10, "Correção de lançamento", 10, i + 1)
         : ev("concessao", 10, `Evento ${i + 1}`, i === 0 ? 10 : i === 1 ? 20 : i * 10 - 10, i + 1)));
+    // 501 eventos de +1 XP: saldo final 501; o evento #1 (descartado na
+    // retenção) tinha saldoResultante 1 → âncora = 1 − 1 = 0? Não:
+    // âncora = saldoResultante do 1º retido (evento #2 = 2) − qtd (1) = 1.
+    setXp(charAncora, 501, Array.from({ length: 501 }, (_, i) =>
+      ev("concessao", 1, `Mov ${i + 1}`, i + 1, i + 1)));
+    // ancora explícita no formato do ledger: saldo anterior ao 1º
+    // evento retido (o servidor só grava ancora quando > 0).
+    {
+      const p = w.prepare("select data from characters where id=?").get(charAncora);
+      const d = JSON.parse(p.data);
+      d.__xp = { ...d.__xp, historico: d.__xp.historico.slice(1), ancora: 1 };
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(d), charAncora);
+    }
     w.close();
   }
 
@@ -188,6 +203,38 @@ try {
     // mais recente primeiro: Evento 45 antes de Evento 1
     const txt = await page.locator(".extrato-xp-lista").textContent();
     ok("UI. ordenação recente-primeiro", txt.indexOf("Evento 45") < txt.indexOf("Evento 1"));
+    await ctx.close();
+  }
+
+  // ---------- 6b. Âncora de truncamento (>500 eventos) ----------
+  // API: mestre e dono recebem xp.ancora; personagem sem truncamento
+  // NÃO recebe o campo. UI: aviso visível só no truncado e some na
+  // troca de personagem.
+  {
+    const rMestre = await req(BASE, "GET", `/characters/${charAncora}/progressao`, { cookie: cookieMestre });
+    ok("API. mestre recebe ancora=1 no truncado", rMestre.status === 200 && rMestre.json?.xp?.ancora === 1, `status=${rMestre.status} ancora=${rMestre.json?.xp?.ancora}`);
+    ok("API. histórico retido tem 500 eventos", rMestre.json?.xp?.historico?.length === 500, `n=${rMestre.json?.xp?.historico?.length}`);
+    const rDono = await req(BASE, "GET", `/characters/${charAncora}/progressao`, {
+      cookie: `mestre_rpg_session=${jogadores.j1.cookie.split("=").pop()}`,
+    });
+    ok("API. dono recebe ancora=1", rDono.status === 200 && rDono.json?.xp?.ancora === 1, `status=${rDono.status} ancora=${rDono.json?.xp?.ancora}`);
+    const rSem = await req(BASE, "GET", `/characters/${charA}/progressao`, { cookie: cookieMestre });
+    ok("API. sem truncamento → ancora ausente", rSem.status === 200 && !("ancora" in (rSem.json?.xp ?? {})), `ancora=${rSem.json?.xp?.ancora}`);
+
+    const { ctx, page } = await novaPagina(jogadores.j1.cookie);
+    await abrirPersonagem(page, "Campanha Extrato XP", "Extrato Truncado");
+    await page.waitForSelector(".extrato-xp .extrato-xp-ancora", { timeout: 15000 });
+    const aviso = await page.locator(".extrato-xp-ancora").textContent();
+    ok("UI. aviso de truncamento visível", aviso.includes("500") && aviso.includes("1 XP"), aviso.slice(0, 120));
+    // troca de personagem: aviso some no histórico íntegro
+    await page.goto(BASE, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "Campanhas" }).first().click();
+    await page.locator(".cartao-campanha", { hasText: "Campanha Extrato XP" }).click();
+    await page.getByRole("button", { name: "Personagens", exact: true }).click();
+    await page.locator("tr.clicavel", { hasText: "Herói Ledger" }).click();
+    await page.waitForSelector(".extrato-xp", { timeout: 15000 });
+    await page.waitForSelector("text=XP disponíveis", { timeout: 15000 });
+    ok("UI. aviso ausente em histórico íntegro", (await page.locator(".extrato-xp-ancora").count()) === 0);
     await ctx.close();
   }
 

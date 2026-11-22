@@ -121,7 +121,18 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
         const { compra: _compraOculta, ...resto } = ev;
         return { ...resto, motivo: "Compra de nível" };
       });
-  res.json({ xp: { saldo: resumo.xp.saldo, historico }, disponiveis });
+  // `ancora` (Issue #185 P3): saldo anterior ao primeiro evento retido
+  // quando o ledger truncou no teto de 500 — sem ela a UI apresentaria
+  // o recorte como histórico completo. É só um número de saldo, sem
+  // identificadores nem detalhes privados; ausente = histórico íntegro.
+  res.json({
+    xp: {
+      saldo: resumo.xp.saldo,
+      historico,
+      ...(resumo.xp.ancora !== undefined ? { ancora: resumo.xp.ancora } : {}),
+    },
+    disponiveis,
+  });
 });
 
 // ---------- POST /api/characters/:characterId/xp ----------
