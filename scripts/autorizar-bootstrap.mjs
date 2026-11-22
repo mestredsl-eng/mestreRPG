@@ -23,7 +23,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   autorizarPrimeiroBootstrap, gravarProvisionamento, lerProvisionamento,
-  removerProvisionamento,
+  removerProvisionamento, validarPrecondicoesBootstrap,
 } from "./estado-externo.mjs";
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,17 +34,25 @@ if (!process.argv.slice(2).includes("--confirmar-provisionamento")) {
   process.exit(2);
 }
 
-// Ação explícita de provisionamento: grava o marcador SOMENTE se ainda
-// não existir — marcador inválido/divergente/corrompido NUNCA é
-// sobrescrito; o produtor abaixo bloqueia com o motivo exato.
-// Rollback atômico: se o marcador foi criado NESTA execução e o
-// bootstrap é bloqueado (ex.: banco-existente), ele é removido — sem
-// isso o marcador persistiria como "prova antiga" e, numa perda
-// posterior do banco, legitimaria um bootstrap sobre instalação que
-// nunca foi provisionada de fato. Marcador preexistente NUNCA é
-// removido.
+// Ação explícita de provisionamento — CRASH-SAFE: quando o marcador
+// está ausente, TODAS as demais precondições são validadas ANTES de
+// gravar provisionamento.json. Assim, um caminho bloqueado não
+// escreve nada (nem marcador para reverter) e um kill/crash/queda de
+// energia em QUALQUER ponto anterior à escrita não deixa prova
+// residual — não existe janela entre "marcador visível" e
+// "validação concluída". O marcador só passa a existir depois que o
+// estado já foi confirmado limpo, logo persistir após crash é
+// verdadeiro (a prova é legítima). Marcador inválido/divergente/
+// corrompido NUNCA é sobrescrito — o produtor bloqueia com o motivo.
+// O try/rollback abaixo cobre apenas TOCTOU (estado mudou entre a
+// pré-validação e a validação final do produtor).
 const criadoAgora = lerProvisionamento(repoDir).status === "ausente";
 if (criadoAgora) {
+  const pre = validarPrecondicoesBootstrap(repoDir);
+  if (!pre.pronto) {
+    console.log(`[bootstrap] BLOQUEADO (${pre.motivo}): não é um primeiro bootstrap limpo — nada foi gravado.`);
+    process.exit(1);
+  }
   gravarProvisionamento(repoDir);
 }
 

@@ -277,6 +277,13 @@ sec("17. Marcador NÃO persiste após bootstrap bloqueado (rollback atômico)");
   writeFileSync(env.MESTRE_BANCO, "sqlite");
   const c1 = spawnSync(process.execPath, [script, "--confirmar-provisionamento"], { env, encoding: "utf8" });
   t("banco existente → exit 1", c1.status === 1, `status=${c1.status} ${c1.stdout}`);
+  // Crash-safe: a escrita do marcador agora é POSTERIOR à
+  // pré-validação — caminho bloqueado não grava NADA, então não
+  // existe janela kill/crash que deixe prova residual.
+  const dirState = dirEstado(repoRaiz, env);
+  const marcadorExiste = existsSync(dirState)
+    && readdirSync(dirState).some((n) => n.startsWith(ARQUIVO_PROVISIONAMENTO));
+  t("nenhum arquivo de provisionamento no disco", !marcadorExiste);
   t("marcador revertido (ausente)", lerProvisionamento(repoRaiz, env).status === "ausente",
     lerProvisionamento(repoRaiz, env).status);
   t("nenhuma autorização emitida", authsEm(repoRaiz, env).every((n) => !n.startsWith("bootstrap-autorizacao")));
@@ -284,7 +291,11 @@ sec("17. Marcador NÃO persiste após bootstrap bloqueado (rollback atômico)");
   // marcador algum — prova de que nada ficou como "prova antiga".
   rmSync(env.MESTRE_BANCO, { force: true });
   const direto = autorizarPrimeiroBootstrap(repoRaiz, env);
-  t("produtor sem entrypoint → provisionamento-ausente", direto.autorizado === false && direto.motivo === "provisionamento-ausente", direto.motivo);
+  // Nada foi escrito no caminho bloqueado: nem state dir, nem
+  // marcador — o produtor direto bloqueia em state-ausente (ainda
+  // mais cedo que provisionamento-ausente). Nenhuma prova antiga.
+  t("produtor sem entrypoint → bloqueado sem prova", direto.autorizado === false
+    && ["state-ausente", "provisionamento-ausente"].includes(direto.motivo), direto.motivo);
   // Nova chamada explícita COM a flag = provisionamento novo, no
   // momento em que o banco está de fato ausente — equivalente ao
   // controle de instalação limpa (seção 15): autoriza uma vez.

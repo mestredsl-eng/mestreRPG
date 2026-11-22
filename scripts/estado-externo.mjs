@@ -518,35 +518,69 @@ function restosDeInstalacao(repoDir, env) {
  *      a instalação existiu; reemitir sobre eles seria reset
  *      destrutivo implícito.
  */
-export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
+/** Núcleo de pré-condições do primeiro bootstrap — TODAS as provas
+ *  exceto o marcador de provisionamento e a emissão da autorização.
+ *  Retorno: { status:"limpo" } | { status:"ja-autorizado", dados } |
+ *  { status:"bloqueado", motivo }. Não escreve nada. */
+function checarNucleoBootstrap(repoDir, env) {
   const dir = dirEstado(repoDir, env);
-  if (!existsSync(dir)) return { autorizado: false, motivo: "state-ausente" };
-  let nomes;
-  try { nomes = readdirSync(dir); }
-  catch { return { autorizado: false, motivo: "state-ilegivel" }; }
-  const prov = lerProvisionamento(repoDir, env);
-  if (prov.status !== "ok") return { autorizado: false, motivo: `provisionamento-${prov.status}` };
+  // Dir ausente = todos os artefatos de estado ausentes (journals,
+  // recibo, autorização, consumidas vivem DENTRO do dir) — o
+  // entrypoint cria o dir ao gravar o marcador. O produtor completo
+  // continua exigindo dir existente (state-ausente bloqueia chamadas
+  // diretas sem provisionamento). Banco e restos são checados sempre.
+  let nomes = [];
+  if (existsSync(dir)) {
+    try { nomes = readdirSync(dir); }
+    catch { return { status: "bloqueado", motivo: "state-ilegivel" }; }
+  }
   for (const j of [JOURNAL_UPDATE, JOURNAL_RESTAURACAO]) {
     const r = lerJournal(repoDir, j, env);
-    if (r.status !== "ausente") return { autorizado: false, motivo: `journal-${j}-${r.status}` };
+    if (r.status !== "ausente") return { status: "bloqueado", motivo: `journal-${j}-${r.status}` };
   }
   const recibo = lerReciboInstalacao(repoDir, env);
-  if (recibo.status === "ok") return { autorizado: false, motivo: "instalacao-ja-concluida" };
-  if (recibo.status !== "ausente") return { autorizado: false, motivo: `recibo-${recibo.status}` };
+  if (recibo.status === "ok") return { status: "bloqueado", motivo: "instalacao-ja-concluida" };
+  if (recibo.status !== "ausente") return { status: "bloqueado", motivo: `recibo-${recibo.status}` };
   const auth = lerAutorizacaoBootstrap(repoDir, env);
-  if (auth.status === "ok") return { autorizado: true, motivo: "ja-autorizado", dados: auth.dados };
-  if (auth.status !== "ausente") return { autorizado: false, motivo: `autorizacao-${auth.status}` };
+  if (auth.status === "ok") return { status: "ja-autorizado", dados: auth.dados };
+  if (auth.status !== "ausente") return { status: "bloqueado", motivo: `autorizacao-${auth.status}` };
   if (nomes.some((n) => n.startsWith(PREFIXO_AUTORIZACAO_CONSUMIDA))) {
-    return { autorizado: false, motivo: "bootstrap-interrompido" };
+    return { status: "bloqueado", motivo: "bootstrap-interrompido" };
   }
   const banco = caminhoBancoConfigurado(repoDir, env);
   if (existsSync(banco)) {
     // Qualquer arquivo presente — mesmo 0 bytes — é ambíguo: pode ser
     // resto de crash, dump parcial ou adulteração. Fail-closed.
-    return { autorizado: false, motivo: "banco-existente" };
+    return { status: "bloqueado", motivo: "banco-existente" };
   }
   const restos = restosDeInstalacao(repoDir, env);
-  if (restos.length) return { autorizado: false, motivo: `restos-${restos.join("+")}` };
+  if (restos.length) return { status: "bloqueado", motivo: `restos-${restos.join("+")}` };
+  return { status: "limpo" };
+}
+
+/** Pré-validação do primeiro bootstrap SEM exigir o marcador de
+ *  provisionamento e SEM escrever nada — usada pelo entrypoint para
+ *  crash-safety: o marcador só vira visível depois que TODAS as
+ *  demais precondições já foram confirmadas, então um kill/crash
+ *  antes da escrita não deixa prova residual alguma. Retorno:
+ *  { pronto:true, motivo:"limpo"|"ja-autorizado" } |
+ *  { pronto:false, motivo }. */
+export function validarPrecondicoesBootstrap(repoDir, env = process.env) {
+  const c = checarNucleoBootstrap(repoDir, env);
+  if (c.status === "bloqueado") return { pronto: false, motivo: c.motivo };
+  return { pronto: true, motivo: c.status === "ja-autorizado" ? "ja-autorizado" : "limpo" };
+}
+
+export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  if (!existsSync(dir)) return { autorizado: false, motivo: "state-ausente" };
+  try { readdirSync(dir); }
+  catch { return { autorizado: false, motivo: "state-ilegivel" }; }
+  const prov = lerProvisionamento(repoDir, env);
+  if (prov.status !== "ok") return { autorizado: false, motivo: `provisionamento-${prov.status}` };
+  const c = checarNucleoBootstrap(repoDir, env);
+  if (c.status === "bloqueado") return { autorizado: false, motivo: c.motivo };
+  if (c.status === "ja-autorizado") return { autorizado: true, motivo: "ja-autorizado", dados: c.dados };
   const dados = gravarAutorizacaoBootstrap(repoDir, env);
   return { autorizado: true, motivo: "emitida", dados };
 }
