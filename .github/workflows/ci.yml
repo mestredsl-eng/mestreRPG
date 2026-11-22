@@ -170,6 +170,7 @@ jobs:
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
             teste-importacao-integridade.mjs \
+            teste-p10c-gates.mjs \
             teste-regras.mjs \
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
