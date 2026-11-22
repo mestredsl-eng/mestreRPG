@@ -399,6 +399,54 @@ try {
   await pj.waitForTimeout(1200);
   ok("jogador. retry recupera a lista", (await pj.locator(".estado-feedback-erro").count()) === 0);
 
+  // ---------- 7) Live region: duas atualizações sucessivas no mesmo nó ----------
+  // Jornada real: POST /api/admin/novidades publica → socket
+  // `novidade:publicada` → toast "Nova publicação: …" no viewport
+  // aria-live=polite montado na raiz do App (nunca desmonta). Duas
+  // publicações sucessivas devem atualizar o MESMO nó de live region.
+  // (EstadoCarregando não tem jornada real de texto mutável — seus
+  // `children` são literais estáticos em todos os usos.)
+  await pm.setViewportSize({ width: 1280, height: 800 });
+  await pm.waitForTimeout(300);
+  const viewport = pm.locator(".notificacoes-viewport");
+  await viewport.waitFor({ state: "attached", timeout: 8000 });
+  const noViewport = await viewport.elementHandle();
+  const pub1 = await req(BASE, "POST", "/admin/novidades", {
+    cookie: c.cookieMestre,
+    body: { titulo: "F37 Publicação Um", estado: "publicada" },
+  });
+  const pub2 = await req(BASE, "POST", "/admin/novidades", {
+    cookie: c.cookieMestre,
+    body: { titulo: "F37 Publicação Dois", estado: "publicada" },
+  });
+  ok("notificações. publicações sucessivas aceitas", pub1.status === 201 && pub2.status === 201, `status=${pub1.status}/${pub2.status}`);
+  await pm.locator(".notificacao", { hasText: "F37 Publicação Um" }).waitFor({ timeout: 8000 });
+  await pm.locator(".notificacao", { hasText: "F37 Publicação Dois" }).waitFor({ timeout: 8000 });
+  const estadoViewport = noViewport
+    ? await noViewport.evaluate((el) => ({
+        conectado: el.isConnected,
+        ariaLive: el.getAttribute("aria-live"),
+        mesmoNo: el === document.querySelector(".notificacoes-viewport"),
+        texto: el.textContent ?? "",
+        total: el.querySelectorAll(".notificacao").length,
+      }))
+    : { conectado: false, ariaLive: null, mesmoNo: false, texto: "", total: -1 };
+  ok(
+    "live region. duas atualizações sucessivas no mesmo nó conectado",
+    estadoViewport.conectado && estadoViewport.mesmoNo &&
+      estadoViewport.ariaLive === "polite" &&
+      estadoViewport.texto.includes("F37 Publicação Um") &&
+      estadoViewport.texto.includes("F37 Publicação Dois") &&
+      estadoViewport.total >= 2,
+    JSON.stringify(estadoViewport),
+  );
+  ok(
+    "live region. cada notificação é role=status anunciável",
+    (await pm.locator(".notificacao", { hasText: "F37 Publicação" }).evaluateAll(
+      (els) => els.every((e) => e.getAttribute("role") === "status"),
+    )),
+  );
+
   await browser.close();
 } finally {
   encerrarServidor(proc);
