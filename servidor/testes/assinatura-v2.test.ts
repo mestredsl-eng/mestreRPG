@@ -137,6 +137,17 @@ describe("assinatura v2 conjunta XP+Sangue (Issue #186/C3)", () => {
     // rejeição precisa vir da impressão digital das regras, que inclui
     // o campaignId persistido no ruleset e está coberta pela v2.
     const ctxAdulterado = ctxSan(CHAVE, campanhaAdulterada, dadosAdulterados);
+    assert.ok(ctxAdulterado.assinatura, "cadeia coerente deve produzir contexto HMAC completo");
+    assert.notEqual(
+      ctxAdulterado.assinatura.regrasFp,
+      assinaturaOriginal.regrasFp,
+      "campaignId persistido no ruleset integra o fingerprint de regras",
+    );
+    assert.equal(
+      ctxAdulterado.assinatura.fichaFp,
+      assinaturaOriginal.fichaFp,
+      "a ficha permanece a mesma; o único vínculo assinado alterado é o das regras",
+    );
     const { data, rep } = sanear({
       __xp: structuredClone(XP_OK),
       __sangue: structuredClone(SANGUE),
