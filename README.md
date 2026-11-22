@@ -54,14 +54,24 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Biblioteca de regras inicial:** sementes de talentos, habilidades, conhecimentos, profissões, vantagens, defeitos, poderes, disciplinas, perícias, itens, veículos e dinheiro — semeadas por campanha sem duplicar.
 
 
+## Destaques da versão 1.0.8
+
+A versão 1.0.8 reúne as melhorias de Pontos de Sangue e os avanços de vida/condição no VTT:
+
+- **Pontos de Sangue por campanha:** o mestre configura capacidade, natureza, custos de Poderes e recuperação. O saldo e o histórico ficam disponíveis na ficha e na Mesa conforme as permissões efetivas dos campos.
+- **Ativação de Poderes e D10 integrados:** ações elegíveis debitam o custo no mesmo fluxo transacional do resultado; custo zero também é registrado para garantir idempotência.
+- **Evolução por XP:** a capacidade de Sangue pode ser financiada pela progressão de experiência, respeitando o vínculo da característica configurada pela campanha.
+- **Vida e condição no VTT:** tokens exibem indicadores de HP, vitalidade e condição de acordo com a visibilidade autorizada para cada participante.
+- **Integridade de exportações:** os ledgers de XP e Sangue são protegidos em conjunto por assinatura HMAC v2; a importação valida as evidências de progressão antes de preservar financiamentos.
+
+A versão também inclui uma pré-validação fail-closed para futuras operações de revinculação de fichas. A revinculação efetiva não faz parte da 1.0.8.
+
 ## Destaques da versão 1.0.7
 
-A versão 1.0.7 reúne duas melhorias já integradas à linha principal do projeto:
+A versão 1.0.7 reuniu duas melhorias anteriores:
 
 - **Patrimônio mais configurável:** o mestre decide quais ações cada jogador pode executar, com controles separados para itens, equipamentos, veículos, contas, compra/venda e PIX fictício. As permissões são atualizadas ao vivo quando as regras da campanha mudam.
 - **Medição na Mesa Virtual:** a régua permite medir distâncias no mapa com mouse ou toque, usar tokens como pontos de referência e calibrar a escala para as unidades da campanha. A geometria acompanha a proporção original do mapa, e a medição não é compartilhada como dado persistente.
-
-As funcionalidades de Pontos de Sangue da Issue #186 ainda estão em desenvolvimento em pull requests separadas e, por isso, não são apresentadas aqui como recursos publicados nesta versão.
 
 ## Operação no Windows
 
