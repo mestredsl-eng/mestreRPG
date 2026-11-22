@@ -43,7 +43,16 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
   const [conviteCriado, setConviteCriado] = useState<{ code: string } | null>(null);
-  const [conviteForm, setConviteForm] = useState({ role: "jogador", maxUses: "", expiresInHours: "", requiresApproval: false });
+  const convitePendenteKey = "mestre-rpg:convite-indefinido:" + id;
+  type FormularioConvite = { role: string; maxUses: string; expiresInHours: string; requiresApproval: boolean };
+  const [conviteForm, setConviteForm] = useState<FormularioConvite>(() => {
+    const padrao: FormularioConvite = { role: "jogador", maxUses: "", expiresInHours: "", requiresApproval: false };
+    try {
+      const raw = sessionStorage.getItem(convitePendenteKey);
+      const p = raw ? JSON.parse(raw) as { form?: Partial<FormularioConvite> } : null;
+      return p?.form ? { ...padrao, ...p.form } : padrao;
+    } catch { return padrao; }
+  });
   const [confirmando, setConfirmando] = useState<{ m: Membro; acao: "remover" | "transferir" } | null>(null);
   const [ocupado, setOcupado] = useState(false);
   // Refs espelham os formulários para que o retry de uma ação rejeitada
@@ -67,8 +76,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   // reconciliação é um GET na lista antes de liberar nova tentativa.
   // O bloqueio persiste em sessionStorage para sobreviver a reload e
   // reentrada na tela dentro da mesma aba.
-  const convitePendenteKey = `mestre-rpg:convite-indefinido:${id}`;
-  type PendenciaConvite = { idsAntes: string[]; idsNovosAtivos?: string[] };
+  type PendenciaConvite = { idsAntes: string[]; idsNovosAtivos?: string[]; form?: FormularioConvite };
   // Carrega o bloqueio de forma síncrona no primeiro render. Ler somente
   // em useEffect deixaria uma janela após reload na qual o submit poderia
   // disparar antes de o efeito restaurar a pendência.
@@ -266,6 +274,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       // Snapshot dos convites conhecidos ANTES do POST; a reconciliação
       // compara a lista fresca do servidor com este conjunto.
       idsAntes: convitesRef.current.map((cv) => cv.id),
+      form: { ...f },
     };
     if (!salvarConvitePendente(pend)) {
       setErroAcao({
