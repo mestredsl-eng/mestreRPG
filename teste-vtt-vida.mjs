@@ -260,35 +260,33 @@ try {
     await pronto(sA2);
     const rEntra = await emitirCb(sA2, "mesa:entrar", { sessionId: sid });
     t("segundo socket do j1 entra", rEntra?.ok === true);
-    // drena a cota do usuário j1 em lotes até a primeira rejeição —
-    // sincronizações aceitas são pesadas (comLockVtt + consultas) e a
-    // reposição de 16/s não acompanha uma rajada; a rejeição prova o
-    // bucket vazio NO MOMENTO, sem depender de sleeps frágeis.
-    let primeiroLimitado = null;
-    for (let lote = 0; lote < 12 && !primeiroLimitado; lote++) {
-      const rs = await Promise.all(Array.from({ length: 10 }, () => sincronizar(sA)));
-      primeiroLimitado = rs.find((r) => r?.codigo === "RATE_LIMITED") ?? null;
-    }
-    t("rajada acima do burst gera RATE_LIMITED com retryAfterMs > 0",
-      !!primeiroLimitado && typeof primeiroLimitado.retryAfterMs === "number" && primeiroLimitado.retryAfterMs > 0,
-      primeiroLimitado ? `retryAfterMs=${primeiroLimitado.retryAfterMs}` : "sem rejeição");
-    // o segundo socket do MESMO usuário divide a mesma cota — com o
-    // bucket acabado de esvaziar, a próxima sync dele é rejeitada
-    const rA2 = await sincronizar(sA2);
-    t("segundo socket do mesmo usuário também recebe RATE_LIMITED",
-      rA2?.codigo === "RATE_LIMITED" && typeof rA2?.retryAfterMs === "number" && rA2.retryAfterMs > 0,
-      JSON.stringify(rA2).slice(0, 140));
-    // sync de névoa divide o MESMO balde vttSync: com o bucket acabado
-    // de esvaziar pela rajada acima, ela também é rejeitada — em
-    // qualquer socket do mesmo usuário
-    const rNevA = await sincronizarNevoa(sA);
-    t("sync de névoa compartilha o balde vttSync (RATE_LIMITED)",
-      rNevA?.codigo === "RATE_LIMITED" && typeof rNevA?.retryAfterMs === "number" && rNevA.retryAfterMs > 0,
-      JSON.stringify(rNevA).slice(0, 140));
-    const rNevA2 = await sincronizarNevoa(sA2);
-    t("sync de névoa no 2º socket do mesmo usuário também RATE_LIMITED",
-      rNevA2?.codigo === "RATE_LIMITED" && typeof rNevA2?.retryAfterMs === "number" && rNevA2.retryAfterMs > 0,
-      JSON.stringify(rNevA2).slice(0, 140));
+    // Uma única rajada síncrona, intercalando os dois sockets e os dois
+    // eventos. Assim todos competem pelo MESMO bucket antes de aguardarmos
+    // ACKs/consultas do VTT: não existe janela de refill entre a primeira
+    // rejeição e a prova do segundo socket (nem entre sync completa e névoa).
+    const tentativas = Array.from({ length: 18 }, () => ([
+      sincronizar(sA),
+      sincronizar(sA2),
+      sincronizarNevoa(sA),
+      sincronizarNevoa(sA2),
+    ])).flat();
+    const respostas = await Promise.all(tentativas);
+    const grupo = (indice) => respostas.filter((_, i) => i % 4 === indice);
+    const syncA = grupo(0), syncA2 = grupo(1), nevoaA = grupo(2), nevoaA2 = grupo(3);
+    const rejeicoes = respostas.filter((r) => r?.codigo === "RATE_LIMITED");
+    const retryValido = (r) => typeof r?.retryAfterMs === "number" && r.retryAfterMs > 0;
+    t("rajada combinada acima do burst gera RATE_LIMITED",
+      rejeicoes.length >= 8 && rejeicoes.every(retryValido),
+      `limitados=${rejeicoes.length}/${respostas.length}`);
+    t("segundo socket do mesmo usuário compartilha a cota",
+      syncA2.some((r) => r?.codigo === "RATE_LIMITED" && retryValido(r)),
+      JSON.stringify(syncA2.filter((r) => r?.codigo === "RATE_LIMITED").slice(0, 2)));
+    t("sync de névoa compartilha o balde vttSync",
+      nevoaA.some((r) => r?.codigo === "RATE_LIMITED" && retryValido(r)),
+      JSON.stringify(nevoaA.filter((r) => r?.codigo === "RATE_LIMITED").slice(0, 2)));
+    t("sync de névoa no 2º socket também compartilha o balde",
+      nevoaA2.some((r) => r?.codigo === "RATE_LIMITED" && retryValido(r)),
+      JSON.stringify(nevoaA2.filter((r) => r?.codigo === "RATE_LIMITED").slice(0, 2)));
     // cota reposta → sincronizações legítimas voltam e HP segue correto
     await dormir(1600);
     const rOk = await sincronizar(sA);
