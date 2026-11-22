@@ -518,6 +518,91 @@ try {
       { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
     t("restaura compartilhamento OFF ao final", rMasterOnlyOff.status === 200);
   }
+
+  // ---------- J. HP manual × oculto/névoa (F19/#259) ----------
+  sec("J. HP manual — oculto e névoa não podem vazar vida");
+  {
+    // vidaCompartilhada ON prova que nem o compartilhamento total
+    // contorna o filtro canônico — oculto/névoa precedem a projeção.
+    const cfgJOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("J. ativa vidaCompartilhada para vetores oculto/névoa", cfgJOn.status === 200);
+
+    // 1) Token manual OCULTO: não-mestres não recebem o token — e
+    // hpManual jamais sai bruto em nenhum destinatário.
+    const rOc = await emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: "tkman-oc", nome: "Manual Oculto", cor: "#334455", x: 0.6, y: 0.6,
+        oculto: true, hpManual: { atual: 7, maximo: 9 } },
+    });
+    t("J. mestre cria token manual oculto", rOc?.ok === true, JSON.stringify(rOc).slice(0, 140));
+    const vMoc = await sincronizar(sM);
+    const tmOcM = tok(vMoc?.vtt, "tkman-oc");
+    t("J. mestre vê token oculto com vida.hp manual",
+      tmOcM?.vida?.hp?.atual === 7 && tmOcM?.vida?.hp?.maximo === 9 && !("hpManual" in tmOcM), JSON.stringify(tmOcM?.vida));
+    const [vJoc, vJoc2, vEoc] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("J. oculto: jogador1 não recebe o token manual",
+      tok(vJoc?.vtt, "tkman-oc") === undefined);
+    t("J. oculto: jogador2 não recebe o token manual",
+      tok(vJoc2?.vtt, "tkman-oc") === undefined);
+    t("J. oculto: espectador não recebe o token manual",
+      tok(vEoc?.vtt, "tkman-oc") === undefined);
+    const httpOc = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOcVtt = typeof httpOc.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOc.json.sessao.vttState) : httpOc.json?.sessao?.vttState;
+    t("J. HTTP oculto: jogador não recebe token nem vida",
+      tok(httpOcVtt, "tkman-oc") === undefined);
+    const httpOcM = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: ids.cookieMestre });
+    const httpOcMVtt = typeof httpOcM.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOcM.json.sessao.vttState) : httpOcM.json?.sessao?.vttState;
+    const tmOcHttpM = tok(httpOcMVtt, "tkman-oc");
+    t("J. HTTP mestre recebe vida.hp, nunca hpManual",
+      tmOcHttpM?.vida?.hp?.maximo === 9 && !("hpManual" in (tmOcHttpM ?? {})));
+
+    // 2) Névoa ativa sem regiões: token manual fora da área visível
+    // some para não-mestres; tornar visível não contorna OFF/ON.
+    const rNv = await emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "ocultarTudo" });
+    t("J. mestre ativa névoa sem regiões", rNv?.ok === true, JSON.stringify(rNv).slice(0, 120));
+    const rNvTok = await emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: "tkman-nv", nome: "Manual Nevoa", cor: "#556677", x: 0.5, y: 0.5,
+        hpManual: { atual: 5, maximo: 8 } },
+    });
+    t("J. mestre cria token manual sob névoa", rNvTok?.ok === true);
+    const [vNvA, vNvB, vNvE] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("J. névoa: jogador1 não recebe token manual fora da área",
+      tok(vNvA?.vtt, "tkman-nv") === undefined, `tokens=${(vNvA?.vtt?.tokens ?? []).map((x) => x.id).join(",")}`);
+    t("J. névoa: jogador2 não recebe token manual fora da área",
+      tok(vNvB?.vtt, "tkman-nv") === undefined);
+    t("J. névoa: espectador não recebe token manual fora da área",
+      tok(vNvE?.vtt, "tkman-nv") === undefined);
+    const vNvM = await sincronizar(sM);
+    const tmNvM = tok(vNvM?.vtt, "tkman-nv");
+    t("J. névoa: mestre segue vendo com vida.hp",
+      tmNvM?.vida?.hp?.atual === 5 && tmNvM?.vida?.hp?.maximo === 8 && !("hpManual" in tmNvM));
+
+    // O token manual do PRÓPRIO jogador permanece visível sob névoa
+    // (exceção do dono) — e a política ON decide se a vida aparece.
+    const tkUserNv = tok(vNvA?.vtt, "tkman-002");
+    t("J. névoa: jogador mantém o próprio token manual com vida",
+      !!tkUserNv && tkUserNv.vida?.hp?.maximo === 20, JSON.stringify(tkUserNv?.vida));
+
+    // revelarTudo: visível de novo — ON entrega vida.hp; OFF remove.
+    const rRv = await emitirCb(sM, "mesa:vtt:nevoa", { sessionId: sid, acao: "revelarTudo" });
+    t("J. mestre desativa névoa", rRv?.ok === true);
+    const vRvA = await sincronizar(sA);
+    t("J. visível com ON: jogador recebe vida.hp do token manual",
+      tok(vRvA?.vtt, "tkman-nv")?.vida?.hp?.maximo === 8);
+    const cfgJOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("J. volta vidaCompartilhada OFF", cfgJOff.status === 200);
+    const vRvOff = await sincronizar(sA);
+    const tkRvOff = tok(vRvOff?.vtt, "tkman-nv");
+    t("J. visível com OFF: token entregue sem vida (visibilidade ≠ compartilhamento)",
+      !!tkRvOff && tkRvOff.vida == null && !("hpManual" in tkRvOff));
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 800));
