@@ -454,6 +454,7 @@ jobs:
             teste-vtt-nevoa.mjs \
             teste-vtt-regua.mjs \
             homologacao-vida-vtt.mjs \
+            homologacao-vida-regua.mjs \
             teste-permissao-tempo-real.mjs \
             homologacao-temporizador.mjs \
             homologacao-desafio-ficha.mjs \
