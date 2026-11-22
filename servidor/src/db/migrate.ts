@@ -3,7 +3,7 @@ import Database from "better-sqlite3";
 import { existsSync, statSync, readFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { criarBanco, CAMINHOS, RAIZ } from "./index.js";
+import { getDb, CAMINHOS, RAIZ } from "./index.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 // Override existe para testes isolarem fixtures de journal sem tocar
@@ -126,6 +126,11 @@ if (precisaBackup) {
   }
 }
 
-const db = criarBanco(CAMINHOS.banco);
+// Instância ÚNICA: getDb() reutiliza a conexão que o backup
+// pré-migration abriu via lib/backup.ts (getDb no topo do módulo)
+// — sem isso, o caminho com backup abria DUAS conexões SQLite para
+// o mesmo arquivo, com a primeira segurando a trava de instância.
+// Sem backup, getDb() simplesmente abre a primeira e única conexão.
+const db = getDb();
 migrate(db, { migrationsFolder });
 console.log(`[db] Migrações aplicadas em ${CAMINHOS.banco}`);

@@ -69,6 +69,9 @@ const pastaMigrations = (c, k = null) => {
 const migrar = (env) => spawnSync(process.execPath, [TSX, "servidor/src/db/migrate.ts"], {
   cwd: ROOT, env: { ...process.env, ...env }, encoding: "utf8", timeout: 120000,
 });
+// Conta "[db] conexao aberta" no stderr — com MESTRE_DEBUG_CONEXOES=1
+// cada criarBanco() loga uma linha; 2 linhas = 2 conexões SQLite.
+const conexoesAbertas = (r) => (String(r.stderr).match(/conexao aberta/g) || []).length;
 const aplicadas = (banco) => {
   if (!existsSync(banco)) return -1;
   const s = new Database(banco, { readonly: true });
@@ -97,10 +100,12 @@ try {
     const c = cenario();
     bootstrapar(c);
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    c.env.MESTRE_DEBUG_CONEXOES = "1";
     const r = migrar(c.env);
     t("exit 0", r.status === 0, `status=${r.status} stderr=${String(r.stderr).slice(-300)}`);
     t("todas as migrations aplicadas", aplicadas(c.env.MESTRE_BANCO) === totalJournal, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)} total=${totalJournal}`);
     t("nenhum backup criado", backupsPreUpdate(c.dir).length === 0);
+    t("conexão SQLite única", conexoesAbertas(r) === 1, `conexoes=${conexoesAbertas(r)}`);
   }
 
   sec("2. Migrations pendentes — backup antes de migrate");
@@ -114,10 +119,12 @@ try {
     t("fase 1 aplicou só K", aplicadas(c.env.MESTRE_BANCO) === K, `aplicadas=${aplicadas(c.env.MESTRE_BANCO)}`);
     // Troca para pasta com journal cheio — banco segue em K ⇒ pendência real
     c.env.MESTRE_MIGRATIONS_FOLDER = pastaMigrations(c);
+    c.env.MESTRE_DEBUG_CONEXOES = "1";
     const antes = backupsPreUpdate(c.dir).length;
     const r2 = migrar(c.env);
     t("fase 2 (journal cheio) exit 0", r2.status === 0, `status=${r2.status} stderr=${String(r2.stderr).slice(-300)}`);
     t("backup pré-migration criado", backupsPreUpdate(c.dir).length === antes + 1, `backups=${backupsPreUpdate(c.dir).length}`);
+    t("caminho backup usa conexão única", conexoesAbertas(r2) === 1, `conexoes=${conexoesAbertas(r2)}`);
     const man = backupsPreUpdate(c.dir).at(-1);
     t("manifesto presente no backup", !!man && existsSync(join(man, "manifesto.json")));
     t("todas as migrations aplicadas após", aplicadas(c.env.MESTRE_BANCO) === totalJournal);
