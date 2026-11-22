@@ -7,6 +7,7 @@
 //   teste-convite-cadastro.mjs   → isAdmin forjado no cadastro
 //   teste-sessoes-conta.mjs      → hardening do ADMIN principal
 // Banco temporário + migrations reais + servidor spawnado (teardown seguro).
+import { connect, createServer } from "node:net";
 import { io as ioClient } from "socket.io-client";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -20,6 +21,18 @@ let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Sonda TCP precisa: só ECONNREFUSED prova porta liberada. Timeout ou
+// qualquer outro erro é ambíguo → retorna false (NÃO prova ausência).
+function portaLiberada(portaAlvo, timeoutMs = 2000) {
+  return new Promise((res) => {
+    const s = connect({ host: "127.0.0.1", port: portaAlvo });
+    const fim = (livre) => { try { s.destroy(); } catch { } res(livre); };
+    s.setTimeout(timeoutMs, () => fim(false));
+    s.once("connect", () => fim(false));
+    s.once("error", (e) => fim(e?.code === "ECONNREFUSED"));
+  });
+}
 
 // Pipes do servidor consumidos continuamente com buffers limitados:
 // sem drenar stdout/stderr o filho pode bloquear com o pipe cheio;
@@ -208,6 +221,50 @@ try {
   t("memberships inalterados após PATCH de papel negado",
     integridade.membros === baseIntegridade.membros,
     `antes=${baseIntegridade.membros} depois=${integridade.membros}`);
+
+  sec("Fault injection — falha de setup/boot não deixa recurso órfão");
+  {
+    const DIR2 = dirTeste("escopo-cruzado-fail");
+    const BANCO2 = `${DIR2}/mestre-rpg-teste.db`;
+    let porta2 = null, proc2 = null, bloqueador = null;
+    try {
+      await prepararBanco(BANCO2);
+      porta2 = await portaLivre();
+      // Porta ocupada por um servidor oco ANTES do spawn: o app falha
+      // no bind de forma determinística — injeção real de falha de boot.
+      bloqueador = createServer();
+      await new Promise((res, rej) => {
+        bloqueador.once("error", rej);
+        bloqueador.listen(porta2, "0.0.0.0", res);
+      });
+      proc2 = subirServidor(porta2, { banco: BANCO2, arquivos: `${DIR2}/arq`, backups: `${DIR2}/bks` });
+      const morreu = await Promise.race([
+        new Promise((r) => proc2.once("exit", () => r(true))),
+        dormir(10000).then(() => false),
+      ]);
+      t("falha injetada: app morre ao não conseguir bind", morreu === true);
+    } catch (e) {
+      fail++;
+      console.log("FALHOU fault injection (exceção):", String(e?.message ?? e).slice(0, 160));
+    } finally {
+      // Mesmo padrão do finally principal: teardown independente por
+      // etapa — bloqueador, processo e fixture são limpos mesmo com
+      // o setup ter falhado no meio.
+      try { if (bloqueador) await new Promise((r) => bloqueador.close(() => r())); } catch { }
+      try { await encerrarServidor(proc2); } catch { }
+      if (porta2 !== null) {
+        const livre = await portaLiberada(porta2);
+        t("fault injection: porta liberada (ECONNREFUSED, sem órfão)", livre === true);
+      }
+      try {
+        const limpo = limparDir(DIR2);
+        t("fault injection: fixture removida mesmo após falha", limpo === true);
+      } catch {
+        fail++;
+        console.log("FALHOU fault injection: limpeza lançou exceção");
+      }
+    }
+  }
 } catch (e) {
   // Exceção no corpo do teste vira falha registrada — o resumo final
   // continua sendo impresso e o erro original não é perdido.
@@ -229,15 +286,19 @@ try {
     teardownFalhou = true;
     console.error("[teardown] servidor:", e?.message ?? e);
   }
-  // Prova de ausência de recurso órfão: depois do encerramento
-  // confirmado (encerrarServidor aguarda o exit real), a porta não
-  // pode continuar respondendo /api/health.
-  if (base) {
-    try {
-      const r = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+  // Prova de ausência de recurso órfão: o processo precisa ter exit
+  // real e a porta precisa recusar conexão (ECONNREFUSED) — timeout
+  // ou erro ambíguo NÃO conta como prova.
+  if (proc && proc.exitCode === null && proc.signalCode === null) {
+    teardownFalhou = true;
+    console.error("[teardown] processo do servidor sem exit após encerrarServidor");
+  }
+  if (porta !== null) {
+    const livre = await portaLiberada(porta);
+    if (!livre) {
       teardownFalhou = true;
-      console.error(`[teardown] servidor órfão: /api/health respondeu ${r.status} após encerramento`);
-    } catch { /* conexão recusada = porta liberada */ }
+      console.error(`[teardown] porta ${porta} não comprovadamente liberada (sem ECONNREFUSED)`);
+    }
   }
   try {
     if (!limparDir(DIR)) teardownFalhou = true;
