@@ -179,6 +179,20 @@ try {
     });
     t("custos dos dois Poderes aceitos", cfgAntes.status === 200, `status=${cfgAntes.status}`);
 
+    // Campanhas legadas importadas podem persistir pontos:null. O carregador
+    // normaliza esse valor em memória; a exclusão deve validar da mesma forma
+    // sem reescrever o JSON bruto nem perder a forma importada.
+    const dbPontosNulos = abrirDb(BANCO);
+    try {
+      const rs = dbPontosNulos.prepare(
+        "select id, config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId);
+      const config = JSON.parse(rs.config || "{}");
+      config.pontos = null;
+      dbPontosNulos.prepare("update rule_sets set config=? where id=?")
+        .run(JSON.stringify(config), rs.id);
+    } finally { dbPontosNulos.close(); }
+
     // Simula uma escrita concorrente após a leitura inicial da rota, mas
     // antes da limpeza do custo. A rota deve reler o JSON dentro da tx
     // depois do DELETE e preservar a alteração de moeda.
@@ -203,7 +217,16 @@ try {
     try { dbTriggerCleanup.exec("DROP TRIGGER IF EXISTS teste_config_concorrente_antes_delete"); }
     finally { dbTriggerCleanup.close(); }
 
-    t("Poder removido", removido.status === 200, `status=${removido.status}`);
+    t("Poder removido com pontos:null legado", removido.status === 200, `status=${removido.status}`);
+    const dbRawDepois = abrirDb(BANCO);
+    let configRawDepois;
+    try {
+      configRawDepois = JSON.parse(dbRawDepois.prepare(
+        "select config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId)?.config || "{}");
+    } finally { dbRawDepois.close(); }
+    t("normalização de validação preserva pontos:null no JSON bruto", configRawDepois.pontos === null,
+      JSON.stringify({ pontos: configRawDepois.pontos }));
     const cfgDepois = await getCfg(c.campId, c.cookieMestre);
     t("custo órfão removido e custo do outro Poder preservado",
       cfgDepois?.sangue?.poderes?.poder_teste_remover === undefined &&
