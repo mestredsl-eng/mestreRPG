@@ -89,6 +89,11 @@ try {
   check(d?.__xp?.ancora === undefined && d.__xp.saldo === 15 && d.__xp.historico.length === 3,
     `v1 válida sem âncora: semântica antiga mantida, nenhum ancora:0 fabricado (ancora=${d?.__xp?.ancora})`);
 
+  const leituraApi = await req(base, "GET", `/characters/${idAncora}/progressao`, { cookie: cookieMestre });
+  check(leituraApi.status === 200 && leituraApi.json?.xp?.ancora === 0 &&
+    leituraApi.json?.xp?.saldo === 15 && leituraApi.json?.xp?.historico?.length === 3,
+    `GET de progressão lê ancora=0 e ledger íntegro após importação (status=${leituraApi.status}; ancora=${leituraApi.json?.xp?.ancora})`);
+
   // re-exportar: o marcador zero continua explícito e reassinado
   const exp2 = await req(base, "GET", `/campaigns/${campId}/exportar`, { cookie: cookieMestre });
   const xpA2 = linhaPacote(exp2.json, "Legado Âncora Zero")?.data?.__xp;
@@ -108,6 +113,11 @@ try {
   d = personagem("Legado Âncora Zero");
   check(d?.__xp?.saldo === 0 && d.__xp.historico.length === 0 && d.__xp.ancora === undefined,
     `tampering: fail-closed — zero XP parcial, sem âncora forjada (saldo=${d?.__xp?.saldo}, hist=${d?.__xp?.historico?.length}, ancora=${d?.__xp?.ancora})`);
+  const leituraFailClosed = await req(BASE, "GET", `/characters/${idAncora}/progressao`, { cookie: c.cookieMestre });
+  check(leituraFailClosed.status === 200 && leituraFailClosed.json?.xp?.saldo === 0 &&
+    leituraFailClosed.json?.xp?.historico?.length === 0 &&
+    !Object.prototype.hasOwnProperty.call(leituraFailClosed.json?.xp ?? {}, "ancora"),
+    "GET confirma fail-closed após adulteração de ancora");
   check(d?.for === 5, "tampering: dados normais da ficha preservados");
   d = personagem("Legado Sem Âncora");
   check(d?.__xp?.saldo === 15 && d.__xp.historico.length === 3,
@@ -143,7 +153,7 @@ try {
   // sanity do id criado (evita falso positivo por personagem errado)
   check(!!idAncora, "personagem âncora-zero inserido no cenário");
 } finally {
-  if (proc) encerrarServidor(proc);
+  await encerrarServidor(proc);
   limparDir(dir);
 }
 
