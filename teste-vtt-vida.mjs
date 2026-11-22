@@ -354,11 +354,46 @@ try {
     t("mestre recebe vida.hp manual 30/50.5", tm?.vida?.hp?.atual === 30 && tm?.vida?.hp?.maximo === 50.5, JSON.stringify(tm?.vida));
     t("hpManual NUNCA sai bruto no payload", tm && !("hpManual" in tm), JSON.stringify(Object.keys(tm ?? {})));
 
-    // demais destinatários que veem o token recebem a mesma vida.hp
+    // HP manual respeita a mesma política explícita de compartilhamento
+    // da vida derivada de ficha: OFF (padrão) = só mestre; ON = tokens visíveis.
+    const [rSAoff, rSBoff, rSEoff] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("vidaCompartilhada OFF: jogador vê token, mas não HP manual",
+      tok(rSAoff?.vtt, "tkman-001") !== undefined && tok(rSAoff?.vtt, "tkman-001")?.vida == null);
+    t("vidaCompartilhada OFF: outro jogador não recebe HP manual",
+      tok(rSBoff?.vtt, "tkman-001")?.vida == null);
+    t("vidaCompartilhada OFF: espectador não recebe HP manual",
+      tok(rSEoff?.vtt, "tkman-001")?.vida == null);
+    const httpOff = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOffState = httpOff.json?.sessao?.vttState;
+    const httpOffVtt = typeof httpOffState === "string" ? JSON.parse(httpOffState) : httpOffState;
+    t("HTTP com vidaCompartilhada OFF não entrega HP manual",
+      tok(httpOffVtt, "tkman-001")?.vida == null && !("hpManual" in (tok(httpOffVtt, "tkman-001") ?? {})));
+
+    const cfgManualOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("ativa vidaCompartilhada para HP manual", cfgManualOn.status === 200, `status=${cfgManualOn.status}`);
+    const [rSAon, rSBon, rSEon] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("vidaCompartilhada ON: jogador recebe HP manual do token visível",
+      tok(rSAon?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    t("vidaCompartilhada ON: outro jogador recebe HP manual",
+      tok(rSBon?.vtt, "tkman-001")?.vida?.hp?.atual === 30);
+    t("vidaCompartilhada ON: espectador recebe HP manual visível",
+      tok(rSEon?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    const httpOn = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnState = httpOn.json?.sessao?.vttState;
+    const httpOnVtt = typeof httpOnState === "string" ? JSON.parse(httpOnState) : httpOnState;
+    t("HTTP com vidaCompartilhada ON entrega vida.hp, nunca hpManual",
+      tok(httpOnVtt, "tkman-001")?.vida?.hp?.maximo === 50.5
+        && !("hpManual" in (tok(httpOnVtt, "tkman-001") ?? {})));
+
+    const cfgManualOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("desliga novamente vidaCompartilhada após a prova ON", cfgManualOff.status === 200);
     const [rSA, rSB, rSE] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
-    t("jogador vê vida.hp do token manual visível", tok(rSA?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
-    t("outro jogador vê vida.hp do token manual", tok(rSB?.vtt, "tkman-001")?.vida?.hp?.atual === 30);
-    t("espectador vê vida.hp do token manual visível", tok(rSE?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    t("vidaCompartilhada OFF: HP manual some após novo sync",
+      [rSA, rSB, rSE].every((r) => tok(r?.vtt, "tkman-001")?.vida == null));
     t("nenhum destinatário recebe hpManual bruto",
       [rSA, rSB, rSE, rCriar].every((r) => { const tk = tok(r?.vtt, "tkman-001"); return tk && !("hpManual" in tk); }));
 
@@ -376,9 +411,12 @@ try {
     t("mestre define HP manual no token do jogador", rHpM2?.ok === true);
     const rHpJ1 = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 99, maximo: 99 } } });
     const vDepoisJ1 = await sincronizar(sA);
-    t("jogador não define HP manual (permanece 10/20 do mestre)",
-      tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.atual === 10 && tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.maximo === 20,
-      JSON.stringify(tok(vDepoisJ1?.vtt, "tkman-002")?.vida));
+    const vDepoisMestre = await syncM();
+    t("vidaCompartilhada OFF: dono do token sem ficha também não recebe HP",
+      tok(vDepoisJ1?.vtt, "tkman-002")?.vida == null);
+    t("mestre mantém autoridade e vê HP manual 10/20",
+      tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.atual === 10
+        && tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.maximo === 20);
     void rHpJ1;
 
     // espectador read-only
