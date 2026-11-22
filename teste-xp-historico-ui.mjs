@@ -47,7 +47,7 @@ try {
   const charLongo = novoPersonagem(membMestre, "Histórico Longo");
   // charAncora (j1): 501 eventos → ledger trunca em 500 + âncora
   const charAncora = novoPersonagem(jogadores.j1.membershipId, "Extrato Truncado");
-  const charAncoraZero = novoPersonagem(jogadores.j1.membershipId, "Extrato Truncado Zero");
+  const charAncoraZero = novoPersonagem(jogadores.j1.membershipId, "Âncora Zero");
 
   {
     const w = abrirDb(BANCO);
@@ -266,7 +266,7 @@ try {
     ok("âncora zero. GET preserva o marcador numérico zero", depois.status === 200 && depois.json?.xp?.ancora === 0, `ancora=${depois.json?.xp?.ancora}`);
     ok("âncora zero. histórico continua limitado a 500", depois.json?.xp?.historico?.length === 500);
     const { ctx, page } = await novaPagina(jogadores.j1.cookie);
-    await abrirPersonagem(page, "Campanha Extrato XP", "Extrato Truncado Zero");
+    await abrirPersonagem(page, "Campanha Extrato XP", "Âncora Zero");
     await page.waitForSelector(".extrato-xp-ancora", { timeout: 15000 });
     const avisoZero = await page.locator(".extrato-xp-ancora").textContent();
     ok("âncora zero. UI avisa retenção com saldo anterior 0 XP", avisoZero.includes("500") && avisoZero.includes("0 XP"), avisoZero.slice(0, 120));
