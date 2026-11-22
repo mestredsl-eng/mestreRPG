@@ -614,6 +614,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             poderesCfg={ficha?.poderes ?? null}
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
+            podeLerSangue={souMestre || personagem.ehEu === true}
             camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
         )}
@@ -624,6 +625,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
       {(souMestre || personagem.ehEu === true) && (
         <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
       )}
+
       {/* Extrato de XP: somente mestre/dono — mesmo recorte do backend
           (GET /progressao). Leitor de NPC revelado não é dono e não vê. */}
       {(souMestre || personagem.ehEu === true) && (

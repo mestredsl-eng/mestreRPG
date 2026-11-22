@@ -1295,7 +1295,14 @@ try {
   const rLivreA = await emitirCb(sA, "mesa:rolar", { sessionId: sid, dados: [{ sides: 20, count: 1 }], visibilidade: "privada", motivo: "AE-livre-A", requestId: "ae-livre-a" });
   t("AE: roll privada de B e rolagem livre de A criadas", rPrivB?.ok === true && rLivreA?.ok === true, JSON.stringify([rPrivB, rLivreA]).slice(0, 160));
   await dormir(300);
-  const idsRolls = { a: "ad-roll-1", b: "ae-roll-b", livre: "ae-livre-a" };
+  // mesa:teste:rolar separa o UUID roll.id da chave de idempotência
+  // rolls.requestId = `teste:<testId>:<requestId>`. O ACK ok devolve
+  // o ID real da rolagem; rolagem livre continua usando requestId como ID.
+  const idsRolls = { a: rAD?.id, b: rPrivB?.id, livre: rLivreA?.id };
+  t("AE: ACKs devolvem IDs reais distintos das rolagens", 
+    typeof idsRolls.a === "string" && typeof idsRolls.b === "string" &&
+    typeof idsRolls.livre === "string" && idsRolls.a !== idsRolls.b,
+    JSON.stringify(idsRolls));
   const checarRolls = (json, quem, esperado) => {
     const lista = json?.rolagens ?? [];
     for (const [rotulo, id, deveVer] of esperado) {

@@ -171,6 +171,12 @@ export const LIMITES_SOCKET_MESA = {
   /** `mesa:vtt:nevoa` — traços/gestos de névoa (um emit por traço;
    *  desenhar rápido fica na casa de 1-3 traços/s) */
   vttNevoa: { nome: "mesa-vtt-nevoa", capacidade: 30, porSegundo: 6 },
+  /** `mesa:vtt:sincronizar` — releitura autoritativa do VTT por
+   *  destinatário; roda consultas caras dentro de comLockVtt, então
+   *  precisa de cota própria (independente das mutações de token,
+   *  névoa e mapa) contra flood que contenha a fila. Calibrada para o
+   *  uso legítimo agregado: ~4 abas × debounce de 250 ms ≈ 16 sync/s. */
+  vttSync: { nome: "mesa-vtt-sync", capacidade: 48, porSegundo: 16 },
 } as const;
 
 export type AcaoMesaLimitada = keyof typeof LIMITES_SOCKET_MESA;

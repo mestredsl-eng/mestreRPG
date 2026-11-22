@@ -84,6 +84,9 @@ export interface EventoXp {
   autorId: string | null;
   autorNome: string | null;
   saldoResultante: number;
+  /** requestId do lote que originou o evento (Issue #185) — ausente em
+   *  concessões individuais. Opcional: pacotes antigos não têm o campo. */
+  loteRequestId?: string;
   /** Preenchido quando tipo === "compra". */
   compra?: {
     kind: string;
@@ -168,7 +171,7 @@ export function saldoXp(dados: Record<string, unknown>): number {
 export function aplicarXp(
   dados: Record<string, unknown>,
   delta: number,
-  evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null },
+  evento: { tipo: TipoEventoXp; motivo?: string | null; autorId: string | null; autorNome: string | null; loteRequestId?: string | null },
 ): { dados: Record<string, unknown>; estado: EstadoXp } {
   const estado = lerXp(dados);
   const saldo = xpNum(estado.saldo + delta);
@@ -182,6 +185,7 @@ export function aplicarXp(
       autorId: evento.autorId,
       autorNome: evento.autorNome,
       saldoResultante: saldo,
+      ...(evento.loteRequestId ? { loteRequestId: evento.loteRequestId } : {}),
     },
   ];
   const truncado = historicoNovo.length > MAX_HISTORICO;
@@ -481,6 +485,65 @@ export interface PrecoNivel {
   motivo?: string;
 }
 
+// ---------- Exceção estreita: capacidade de Sangue (Issue #186 adendo) ----------
+
+/** Contexto explícito de elegibilidade: a compra de nível por XP só é
+ *  liberada para o elemento `kind:key` quando o campo que recebe a
+ *  escrita é EXATAMENTE `campoId` (o `config.sangue.campoCapacidadeId`
+ *  da campanha). Derivado no servidor a partir da estrutura da versão
+ *  vinculada — nunca aceito do cliente. */
+export interface ExcecaoCapacidadeSangue {
+  campoId: string;
+  kind: string;
+  key: string;
+}
+
+/** Tipos de campo que expressam nível por valor escalar — a exceção
+ *  exige evolução por nível; campos de seleção (mapa/somaNiveis)
+ *  não são compráveis por XP nesta regra (fail-closed, lacuna
+ *  documentada). */
+const TIPOS_CAMPO_NIVEL = new Set(["inteiro", "decimal", "moeda"]);
+
+/**
+ * Deriva a exceção de compra de capacidade de Sangue a partir da
+ * config `sangue` do ruleset e da estrutura da ficha.
+ * Retorna null (fail-closed) quando:
+ *  - `habilitado !== true` ou `campoCapacidadeId` ausente/inválido;
+ *  - o campo não existe NA VERSÃO da ficha avaliada;
+ *  - o campo não é numérico (não suporta evolução por nível);
+ *  - o vínculo do campo não aponta para uma Característica
+ *    (`regra.kind !== "caracteristica"`).
+ * Nunca inventa campo, kind ou key — tudo vem da config + estrutura.
+ */
+export function excecaoCapacidadeSangueDe(
+  estrutura: EstruturaFicha,
+  configSangue: { habilitado?: boolean; campoCapacidadeId?: string } | null | undefined,
+): ExcecaoCapacidadeSangue | null {
+  if (!configSangue || configSangue.habilitado !== true) return null;
+  const campoId = configSangue.campoCapacidadeId;
+  if (typeof campoId !== "string" || !campoId) return null;
+  const campo = todosCampos(estrutura).find((c) => c.id === campoId);
+  if (!campo || !TIPOS_CAMPO_NIVEL.has(campo.tipo)) return null;
+  if (campo.regra?.kind !== "caracteristica" || !campo.regra.key) return null;
+  return { campoId, kind: campo.regra.kind, key: campo.regra.key };
+}
+
+/** Verdadeiro quando o elemento é o designado pela exceção E o
+ *  vínculo escolhido escreve no campo autorizado em modo "nivel". */
+function ehExcecaoCapacidadeSangue(
+  elementoKind: string,
+  elementoKey: string,
+  vinculo: VinculoElemento | null,
+  exc: ExcecaoCapacidadeSangue | null | undefined,
+): boolean {
+  return !!exc
+    && elementoKind === exc.kind
+    && elementoKey === exc.key
+    && vinculo !== null
+    && vinculo.modo === "nivel"
+    && vinculo.campo.id === exc.campoId;
+}
+
 /**
  * Preço do próximo nível do elemento para ESTE personagem, calculado
  * pela configuração vigente (mesmas tabelas do motor de pontos).
@@ -557,6 +620,11 @@ export interface ElementoDisponivel {
   precoProximo: number | null;
   compravel: boolean;
   motivo?: string;
+  /** Marcador positivo e autoritativo (Issue #186 adendo): true
+   *  SOMENTE quando o vínculo efetivo deste elemento escreve no
+   *  `config.sangue.campoCapacidadeId` — a UI nunca deve deduzir a
+   *  identidade por texto de `motivo`. */
+  capacidadeSangue?: boolean;
 }
 
 export interface OpcoesProgressao {
@@ -566,6 +634,11 @@ export interface OpcoesProgressao {
    *  política — fail-closed. Elementos sem nenhum vínculo
    *  autorizado não aparecem na lista. */
   filtroVinculos?: (campo: CampoDef) => boolean;
+  /** Exceção estreita Issue #186: elemento caracteristica vinculado
+   *  ao campoCapacidadeId do Sangue pode evoluir por XP (inclusive
+   *  0→1) SOMENTE quando o vínculo efetivo escreve nesse campo.
+   *  Ausente/null → comportamento anterior integral. */
+  excecaoCapacidadeSangue?: ExcecaoCapacidadeSangue | null;
 }
 
 /**
@@ -580,6 +653,7 @@ export function resumoProgressao(
   opcoes: OpcoesProgressao = {},
 ): { xp: EstadoXp; disponiveis: ElementoDisponivel[] } {
   const filtro = opcoes.filtroVinculos;
+  const exc = opcoes.excecaoCapacidadeSangue ?? null;
   const xp = lerXp(dados);
   const disponiveis: ElementoDisponivel[] = [];
 
@@ -604,16 +678,26 @@ export function resumoProgressao(
     // Com filtro de visibilidade, elemento que só existe em campos
     // fora da política do requisitante não entra na lista — nome,
     // nível e qualquer metadado econômico ficam ocultos.
-    if (filtro && !vinculosElemento(estrutura, el.kind, el.key).some((v) => filtro(v.campo))) continue;
-    const nivelAtual = nivelAtualElemento(estrutura, dados, regras, el.kind, el.key, filtro);
+    // Exceção #186: para o elemento designado, TODOS os cálculos de
+    // vínculo ficam restritos ao campoCapacidadeId — um vínculo
+    // alternativo (outro campo, visível ou oculto) nunca autoriza a
+    // compra. Para os demais elementos nada muda.
+    const ehCandidatoExc = !!exc && el.kind === exc.kind && el.key === exc.key;
+    const filtroEfetivo = ehCandidatoExc
+      ? (c: CampoDef) => (!filtro || filtro(c)) && c.id === exc!.campoId
+      : filtro;
+    if (filtroEfetivo && !vinculosElemento(estrutura, el.kind, el.key).some((v) => filtroEfetivo(v.campo))) continue;
+    const nivelAtual = nivelAtualElemento(estrutura, dados, regras, el.kind, el.key, filtroEfetivo);
     const nivelAlvo = nivelAtual + 1;
-    const vinculo = escolherVinculo(estrutura, dados, el.kind, el.key, nivelAlvo, filtro);
+    const vinculo = escolherVinculo(estrutura, dados, el.kind, el.key, nivelAlvo, filtroEfetivo);
+    const excecao = ehExcecaoCapacidadeSangue(el.kind, el.key, vinculo, exc);
     let precoProximo: number | null = null;
     let compravel = false;
     let motivo: string | undefined;
-    if (!KINDS_COMPRAVEIS_XP.has(el.kind)) {
+    if (!KINDS_COMPRAVEIS_XP.has(el.kind) && !excecao) {
       // Issue #152: kind proibido nunca calcula preco nem aparece
-      // compravel, mesmo que tenha vinculo e custo configurado.
+      // compravel, mesmo que tenha vinculo e custo configurado —
+      // exceto a exceção auditada da capacidade de Sangue (#186).
       motivo = `"${el.name}" nao pode evoluir por XP (tipo ${el.kind})`;
     } else if (el.definition.disponivel === false) {
       // Espelha simularCompraNivel: indisponível tem precedência
@@ -621,7 +705,7 @@ export function resumoProgressao(
       motivo = "Elemento desativado nesta campanha";
     } else if (!vinculo) {
       motivo = "Elemento sem campo de nível disponível na ficha";
-    } else if (el.kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+    } else if (el.kind !== KIND_AQUISICAO_ZERO_XP && !excecao && nivelAtual === 0) {
       // Issue #152 M1: espelha simularCompraNivel — fora de "poder",
       // o elemento precisa de nível atual; o motivo vem antes do
       // cálculo de preço para GET nunca divergir do POST.
@@ -645,6 +729,7 @@ export function resumoProgressao(
       precoProximo,
       compravel,
       motivo,
+      ...(excecao ? { capacidadeSangue: true } : {}),
     });
   }
   disponiveis.sort((a, b) => a.kind.localeCompare(b.kind) || a.nome.localeCompare(b.nome));
@@ -680,6 +765,8 @@ export function simularCompraNivel(
   opcoes: OpcoesProgressao = {},
 ): ResultadoCompra {
   const filtro = opcoes.filtroVinculos;
+  const exc = opcoes.excecaoCapacidadeSangue ?? null;
+  const ehCandidatoExc = !!exc && kind === exc.kind && key === exc.key;
   const elemento = regras.elementos.get(`${kind}:${key}`);
   if (!elemento) {
     return { ok: false, erro: `Elemento ${kind}:${key} não existe nas regras da campanha`, codigo: "elemento_inexistente" };
@@ -687,7 +774,7 @@ export function simularCompraNivel(
   if (elemento.definition.disponivel === false) {
     return { ok: false, erro: `"${elemento.name}" está desativado nesta campanha`, codigo: "indisponivel" };
   }
-  if (!KINDS_COMPRAVEIS_XP.has(kind)) {
+  if (!KINDS_COMPRAVEIS_XP.has(kind) && !ehCandidatoExc) {
     return {
       ok: false,
       erro: `"${elemento.name}" não pode evoluir por XP (tipo ${kind})`,
@@ -695,10 +782,23 @@ export function simularCompraNivel(
     };
   }
 
-  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtro);
+  // Exceção #186: para o elemento designado, vínculos/nível ficam
+  // restritos ao campoCapacidadeId — outro campo nunca autoriza.
+  const filtroEfetivo = ehCandidatoExc
+    ? (c: CampoDef) => (!filtro || filtro(c)) && c.id === exc!.campoId
+    : filtro;
+  const nivelAtual = nivelAtualElemento(estrutura, dados, regras, kind, key, filtroEfetivo);
 
-  const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtro || filtro(v.campo));
-  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtro);
+  const vinculosAutorizados = vinculosElemento(estrutura, kind, key).filter((v) => !filtroEfetivo || filtroEfetivo(v.campo));
+  const vinculo = escolherVinculo(estrutura, dados, kind, key, nivelAlvo, filtroEfetivo);
+  const excecao = ehExcecaoCapacidadeSangue(kind, key, vinculo, exc);
+  if (!KINDS_COMPRAVEIS_XP.has(kind) && !excecao) {
+    return {
+      ok: false,
+      erro: `"${elemento.name}" não pode evoluir por XP (tipo ${kind})`,
+      codigo: "kind_nao_elegivel",
+    };
+  }
   const semVinculo = vinculosAutorizados.length === 0;
   if (!vinculo) {
     return {
@@ -709,7 +809,7 @@ export function simularCompraNivel(
       codigo: "sem_vinculo",
     };
   }
-  if (kind !== KIND_AQUISICAO_ZERO_XP && nivelAtual === 0) {
+  if (kind !== KIND_AQUISICAO_ZERO_XP && !excecao && nivelAtual === 0) {
     return {
       ok: false,
       erro: `"${elemento.name}" precisa de nível atual para evoluir por XP — somente poderes podem ser adquiridos do zero`,

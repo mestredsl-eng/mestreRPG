@@ -2,6 +2,26 @@
 
 ## [Unreleased]
 
+## [1.0.0.8] - 2026-11-22
+
+### Novidades
+
+- **Pontos de Sangue por campanha:** o mestre configura o recurso, os custos associados a Poderes e as ações de ativação e recuperação. A ficha e a Mesa exibem a leitura do saldo, e os controles do mestre permitem ajustes e reconciliação auditável.
+- **Cobrança integrada ao D10:** testes que usam um Poder elegível debitam o custo na mesma transação do resultado. Custos zero permanecem válidos e tentativas repetidas não duplicam a cobrança.
+- **Evolução da capacidade por XP:** a capacidade de Sangue pode evoluir pela progressão de experiência, respeitando os limites configurados pela campanha.
+- **Vida e condição no VTT:** tokens podem exibir indicadores de vida e condição quando a política de visibilidade da sessão permite; dados restritos não são enviados a participantes sem permissão.
+
+### Integridade e segurança
+
+- **Assinatura conjunta XP + Sangue:** exportações de campanha protegem os dois ledgers em conjunto com HMAC v2, mantendo a compatibilidade de leitura prevista para pacotes assinados na versão anterior.
+- **Pré-validação de migração de ficha:** adicionada uma base fail-closed para validar compatibilidade antes de futuras operações. A revinculação efetiva de fichas não faz parte desta versão.
+
+### Validação
+
+- Cobertura de ledger, ações, invariantes, cobrança D10, capacidade, permissões, VTT e integridade de importação executada na candidata de release.
+- Homologação de atualização/restauração a partir de instalação legada com banco temporário, sem tocar nos dados reais do usuário.
+
+
 ## [1.0.0.7] - 2026-11-20
 
 ### Novidades

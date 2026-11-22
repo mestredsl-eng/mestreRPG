@@ -178,3 +178,141 @@ export function resumoVitalidade(cfg: ConfigRegras["vitalidade"], dados: Record<
     historico: (estado.historico ?? []).slice(-100),
   };
 }
+
+// ---------- vida por leitor (ficha e tokens da mesa virtual) ----------
+
+export interface VidaFicha {
+  hp: ReturnType<typeof resumoHp>;
+  vitalidade: ReturnType<typeof resumoVitalidade>;
+  podeEditarHp: boolean;
+  podeEditarVitalidade: boolean;
+}
+
+/**
+ * Vida (HP + Vitalidade) calculada para UM leitor — fonte única usada
+ * pela ficha (personagens.ts) e pelos tokens da Mesa Virtual.
+ *
+ * - ehMestre/ehDono → resumo sobre a estrutura e os dados completos.
+ * - visaoFiltrada (ou NPC lido por não-mestre/não-dono) → HP calculado
+ *   sobre a MESMA visão filtrada dos campos: atributo privado não vaza
+ *   pelo máximo, pelo atual nem pelo histórico; a Vitalidade passa pelo
+ *   piso narrativo e pelo snapshot de limiares do evento de conversão.
+ * Sem `regras` → null (recurso desligado na campanha).
+ */
+export function vidaParaFicha(opts: {
+  isNpc: boolean;
+  ehMestre: boolean;
+  ehDono: boolean;
+  /** Força o caminho filtrado mesmo para não-NPC (ex.: token de outro
+   *  jogador na mesa quando a campanha compartilha vida). */
+  visaoFiltrada?: boolean;
+  dados: Record<string, unknown>;
+  /** Valores dos campos já filtrados para o leitor (usado no caminho filtrado). */
+  campos?: Record<string, unknown>;
+  estrutura: EstruturaFicha;
+  estruturaFiltrada?: EstruturaFicha;
+  regras?: { config: ConfigRegras };
+}): VidaFicha | null {
+  const { isNpc, ehMestre, ehDono, dados, estrutura, regras } = opts;
+  if (!regras) return null;
+  const filtrada = opts.visaoFiltrada ?? (isNpc && !ehMestre && !ehDono);
+  if (!filtrada) {
+    return {
+      hp: resumoHp(regras.config.hp, estrutura, dados),
+      vitalidade: resumoVitalidade(regras.config.vitalidade, dados),
+      podeEditarHp: ehMestre || (!ehMestre && ehDono && regras.config.hp.edicaoPor !== "mestre"),
+      podeEditarVitalidade: ehMestre || (!ehMestre && ehDono && regras.config.vitalidade.edicaoPor !== "mestre"),
+    };
+  }
+  const estruturaFiltrada = opts.estruturaFiltrada ?? { ...estrutura, secoes: [] };
+  const campos = (opts.campos ?? {}) as Record<string, unknown>;
+  const dadosVida = {
+    ...campos,
+    [CHAVE_HP]: dados[CHAVE_HP],
+    [CHAVE_VITALIDADE]: dados[CHAVE_VITALIDADE],
+  };
+
+  // O HP atual persistido foi produzido sob o máximo REAL. Se o campo que
+  // define esse máximo for mestre-only, nem o atual nem o máximo calculado
+  // sobre a ficha filtrada podem ser publicados: 80/100 versus 100/100
+  // permite inferir o valor secreto mesmo depois do clamp. Comparar o ID
+  // do campo escolhido na estrutura completa evita aceitar outro campo
+  // público com o mesmo semântico como substituto.
+  const campoQueDefineHp = regras.config.hp?.habilitado
+    ? campoHp(estrutura, regras.config.hp)
+    : null;
+  const hpDependeDeCampoOculto = !!campoQueDefineHp &&
+    !estruturaFiltrada.secoes.some((secao) =>
+      secao.campos.some((campo) => campo.id === campoQueDefineHp.id)
+    );
+  const hp = hpDependeDeCampoOculto
+    ? null
+    : resumoHp(regras.config.hp, estruturaFiltrada, dadosVida);
+  if (hp) hp.historico = [];
+
+  const vit = resumoVitalidade(regras.config.vitalidade, dadosVida);
+  if (vit) {
+    vit.historico = [];
+    const cfgVit = regras.config.vitalidade;
+    const estadoVit = lerVitalidade(dados);
+    const histVit = estadoVit.historico ?? [];
+    let pisoManual = typeof estadoVit.nivelManual === "number" ? estadoVit.nivelManual : 0;
+    if (typeof estadoVit.nivelManual !== "number") {
+      for (const ev of histVit) {
+        if (ev.origem !== "conversao-ferimento" && typeof ev.nivelNovo === "number") {
+          pisoManual = ev.nivelNovo;
+        }
+      }
+    }
+
+    if (hpDependeDeCampoOculto) {
+      // A vitalidade automática também deriva da razão HP atual/máximo.
+      // Quando o atributo do máximo é privado, só o piso narrativo
+      // definido manualmente é seguro para não-mestre; timestamps e autoria
+      // poderiam denunciar uma conversão causada pelo HP secreto.
+      if (cfgVit?.niveis?.length) {
+        const nivelSeguro = Math.min(
+          Math.max(0, Math.floor(pisoManual)),
+          cfgVit.niveis.length - 1
+        );
+        const definicao = cfgVit.niveis[nivelSeguro];
+        vit.nivel = nivelSeguro;
+        vit.nome = definicao.nome;
+        vit.penalidadeDados = definicao.penalidadeDados;
+        vit.bloqueiaAcoes = definicao.bloqueiaAcoes;
+      }
+      vit.alteradoEm = null;
+      vit.alteradoPor = null;
+    } else {
+      // Com o campo que define o máximo visível, a vitalidade automática
+      // pode ser limitada pelo snapshot histórico sem expor atributo oculto.
+      const ultimoVit = histVit.length ? histVit[histVit.length - 1] : null;
+      const veioDeConversao = ultimoVit?.origem === "conversao-ferimento" && ultimoVit.nivelNovo === estadoVit.nivel;
+      if (veioDeConversao && cfgVit?.niveis?.length) {
+        const pctPublico = hp && hp.maximo > 0 ? (hp.atual / hp.maximo) * 100 : 100;
+        const limiaresEv = Array.isArray(ultimoVit?.limiares) ? ultimoVit.limiares : null;
+        const tetoPublico = limiaresEv
+          ? Math.min(
+              nivelExigidoPorHp({ habilitada: true, limiares: limiaresEv }, pctPublico) ?? 0,
+              cfgVit.niveis.length - 1
+            )
+          : 0;
+        const pisoNaEscala = Math.min(Math.max(0, Math.floor(pisoManual)), cfgVit.niveis.length - 1);
+        const nivelExibido = Math.max(pisoNaEscala, Math.min(vit.nivel, tetoPublico));
+        if (nivelExibido !== vit.nivel) {
+          const niv = cfgVit.niveis[nivelExibido];
+          vit.nivel = nivelExibido;
+          vit.nome = niv.nome;
+          vit.penalidadeDados = niv.penalidadeDados;
+          vit.bloqueiaAcoes = niv.bloqueiaAcoes;
+        }
+      }
+    }
+  }
+  return {
+    hp,
+    vitalidade: vit,
+    podeEditarHp: false,
+    podeEditarVitalidade: false,
+  };
+}
