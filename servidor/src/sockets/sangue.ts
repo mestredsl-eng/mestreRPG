@@ -95,6 +95,7 @@ const MENSAGENS: Record<string, string> = {
   poder_nao_adquirido: "Personagem não possui este Poder na ficha",
   custo_invalido: "Custo de Sangue inválido na configuração",
   natureza_indisponivel: "Natureza do personagem indisponível",
+  capacidade_indisponivel: "Capacidade de Sangue indisponível; recuperação recusada",
   natureza_sem_acao: "Natureza sem ação de recuperação mapeada",
   acao_desabilitada: "Ação de recuperação desabilitada",
   capacidade_excedida: "Ajuste ultrapassaria a capacidade de Sangue",

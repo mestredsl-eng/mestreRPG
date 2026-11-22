@@ -54,6 +54,17 @@ function setStatus(charId, status) {
   try { w.prepare("update characters set status=? where id=?").run(status, charId); }
   finally { w.close(); }
 }
+function setVisibilidadeCampo(versionId, campoId, visibilidade) {
+  const w = db();
+  try {
+    const row = w.prepare("select structure from sheet_versions where id=?").get(versionId);
+    const estrutura = typeof row.structure === "string" ? JSON.parse(row.structure) : row.structure;
+    const campo = estrutura.secoes.flatMap((s) => s.campos).find((c) => c.id === campoId);
+    if (!campo) throw new Error("Campo não encontrado: " + campoId);
+    campo.visibilidade = visibilidade;
+    w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
+  } finally { w.close(); }
+}
 function setSangueConfig(campId, sangue) {
   const w = db();
   try {
@@ -159,6 +170,40 @@ try {
 
     const rm = await getSangue(CHAR, M);
     t("mestre → 200 mesmo conteúdo", rm.status === 200 && rm.json?.saldo === 5 && rm.json?.capacidadeMax === 8);
+
+    // Campo de capacidade restrito ao mestre: o dono não pode inferir
+    // o valor por meio do resumo derivado de Pontos de Sangue.
+    setVisibilidadeCampo(vid, "f-cap", "mestre");
+    const capOculta = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe saldo/capacidade quando a fonte da capacidade é privada",
+      capOculta.json?.estado === "capacidade_indisponivel" &&
+        capOculta.json?.motivo === "campo_privado" &&
+        capOculta.json?.saldo === null &&
+        capOculta.json?.capacidadeMax === null &&
+        capOculta.json?.natureza === null &&
+        capOculta.json?.acaoRecuperacao === null,
+      JSON.stringify(capOculta.json),
+    );
+    const mestreCapOculta = await getSangue(CHAR, M);
+    t("mestre continua vendo capacidade privada", mestreCapOculta.json?.estado === "ok" && mestreCapOculta.json?.capacidadeMax === 8);
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+
+    // Natureza privada não pode ser inferida pelo rótulo nem pela ação
+    // contextual de recuperação; capacidade independente continua legível.
+    setVisibilidadeCampo(vid, "f-nat", "mestre");
+    const natOculta = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe natureza nem ação derivada de campo privado",
+      natOculta.json?.estado === "ok" &&
+        natOculta.json?.capacidadeMax === 8 &&
+        natOculta.json?.natureza === null &&
+        natOculta.json?.acaoRecuperacao === null,
+      JSON.stringify(natOculta.json),
+    );
+    const mestreNatOculta = await getSangue(CHAR, M);
+    t("mestre continua vendo natureza privada", mestreNatOculta.json?.natureza?.rotulo === "humano");
+    setVisibilidadeCampo(vid, "f-nat", "todos");
   }
 
   sec("Autorização — não-dono e espectador");

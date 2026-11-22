@@ -5,7 +5,7 @@ import { sheetVersions } from "../db/schema.js";
 import { requireAuth } from "../middleware/auth.js";
 import { carregarPersonagemComAcesso } from "./personagens.js";
 import { carregarRegras } from "../lib/regras.js";
-import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
+import { campoVisivelPara, estruturaFichaSchema, mapaCampos, type EstruturaFicha } from "../lib/ficha.js";
 import { lerSangue, resolverSanguePersonagem } from "../lib/sangue.js";
 import type { ConfigSangueAcoes } from "../lib/sangue-acoes.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
@@ -73,6 +73,52 @@ sangueRouter.get(
       return;
     }
 
+    // A projeção de Sangue não pode transformar campos privados da ficha
+    // em valores derivados visíveis ao dono. Aplicamos a mesma política
+    // efetiva (template + overrides da ficha) usada pela rota da ficha.
+    const campos = mapaCampos(estrutura);
+    const overrides = (p.overrides ?? {}) as Record<string, {
+      visibilidade?: "todos" | "dono_mestre" | "mestre" | "selecionados";
+      destinatarios?: string[];
+    }>;
+    const campoVisivel = (campoId: string | undefined): boolean => {
+      if (!campoId) return false;
+      const campo = campos.get(campoId);
+      if (!campo) return false;
+      return campoVisivelPara(
+        campo,
+        overrides[campoId],
+        acesso.ehMestre,
+        acesso.ehDono,
+        req.usuario!.id,
+        acesso.membership.id,
+      );
+    };
+    const fontesCapacidade = [
+      config.campoCapacidadeId,
+      config.capacidade?.bonusQualidade?.campoId,
+    ].filter((id): id is string => typeof id === "string" && id.length > 0);
+    const capacidadePrivada =
+      !acesso.ehMestre && fontesCapacidade.some((campoId) => !campoVisivel(campoId));
+    if (capacidadePrivada) {
+      res.json({
+        estado: "capacidade_indisponivel",
+        motivo: "campo_privado",
+        habilitado: true,
+        utilizavel: false,
+        saldo: null,
+        capacidadeMax: null,
+        natureza: null,
+        acaoRecuperacao: null,
+      });
+      return;
+    }
+    const naturezaPrivada =
+      !acesso.ehMestre &&
+      typeof config.campoNaturezaId === "string" &&
+      config.campoNaturezaId.length > 0 &&
+      !campoVisivel(config.campoNaturezaId);
+
     const resolucao = resolverSanguePersonagem(estrutura, dados, config);
     const lido = lerSangue(dados);
     const capacidadeMax = resolucao.capacidade.disponivel ? resolucao.capacidade.capacidade : null;
@@ -124,14 +170,14 @@ sangueRouter.get(
       utilizavel: true,
       saldo,
       capacidadeMax: resolucao.capacidade.capacidade,
-      natureza: resolucao.natureza.disponivel
+      natureza: !naturezaPrivada && resolucao.natureza.disponivel
         ? {
             rotulo: resolucao.natureza.rotulo,
             conhecida: resolucao.natureza.natureza !== null,
             metaHumanoComPoder: resolucao.natureza.metaHumanoComPoder,
           }
         : null,
-      acaoRecuperacao,
+      acaoRecuperacao: naturezaPrivada ? null : acaoRecuperacao,
     });
   },
 );

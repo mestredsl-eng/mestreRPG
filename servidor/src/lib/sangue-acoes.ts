@@ -63,6 +63,7 @@ export type CodigoErroAcaoSangue =
   | "custo_invalido"
   | "recurso_desabilitado"
   | "natureza_indisponivel"
+  | "capacidade_indisponivel"
   | "natureza_sem_acao"
   | "acao_desabilitada";
 
@@ -204,6 +205,17 @@ export function recuperarSangue(
   if (!config || config.habilitado !== true) {
     return erro("recurso_desabilitado");
   }
+  // Recalcula a capacidade a partir da versão real da ficha e da
+  // configuração autoritativa. Nunca trate capacidade desconhecida como
+  // "sem teto": recuperação é uma entrada de saldo e deve falhar fechada.
+  const capacidade = resolverCapacidadeSangue(params.estrutura, params.dadosFicha, config);
+  if (
+    !capacidade.disponivel ||
+    typeof capacidade.capacidade !== "number" ||
+    !Number.isFinite(capacidade.capacidade)
+  ) {
+    return erro("capacidade_indisponivel", { motivo: capacidade.motivo });
+  }
   const nat = resolverNaturezaSangue(params.estrutura, params.dadosFicha, config);
   if (!nat.disponivel) {
     return erro("natureza_indisponivel", { motivo: nat.motivo });
@@ -232,7 +244,7 @@ export function recuperarSangue(
     requestId: params.requestId,
     quantidade,
     habilitada: true,
-    capacidadeMax: params.capacidadeMax ?? null,
+    capacidadeMax: capacidade.capacidade,
   });
   return r.ok ? deResultadoSangue(r) : deErro(r);
 }
