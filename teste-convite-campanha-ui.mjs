@@ -12,10 +12,8 @@ import {
 
 const DIR = dirTeste("convite-campanha-ui");
 const BANCO = `${DIR}/mestre-rpg-teste.db`;
-prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://127.0.0.1:${porta}`;
-const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
 
 const resultados = [];
 const ok = (nome, cond, extra = "") => {
@@ -24,11 +22,16 @@ const ok = (nome, cond, extra = "") => {
 };
 
 const FORMATO_CODIGO = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
-const browser = await chromium.launch();
+let browser = null;
+let proc = null;
 let code = null;
 
 try {
+  // A preparação aplica migrations em subprocesso: aguardar antes do servidor.
+  await prepararBanco(BANCO);
+  proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
   await esperarSaudavel(BASE, proc);
+  browser = await chromium.launch();
   const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Convite UI" });
   const cid = cenario.campId;
   ok("cenário criado (admin + campanha)", !!cenario.cookieMestre && !!cid);
@@ -78,33 +81,56 @@ try {
   const btnAceitar = pageNovo.getByRole("button", { name: "Aceitar convite" });
   await btnAceitar.waitFor({ timeout: 15000 });
   await btnAceitar.click();
-  await pageNovo.getByText(/entra|participa|convite/i).first().waitFor({ timeout: 15000 }).catch(() => {});
-  // Após aceite o app navega ao painel (aoEntrar ~1.5s).
-  await pageNovo.waitForTimeout(2500);
+  await pageNovo.getByText("Você entrou na campanha!", { exact: true }).waitFor({ timeout: 15000 });
   ok("convidada autenticada conclui aceite pela UI", true);
+  // Após a mensagem explícita, o Shell navega ao painel.
+  await pageNovo.waitForURL((url) => url.pathname === "/", { timeout: 10000 });
 
   // --- Mestre: Participantes mostra o novo membro com papel jogador ---
   await pageMestre.getByRole("tab", { name: "Participantes" }).click();
   const secao = pageMestre.locator("#campanha-panel-participantes");
   await secao.getByText("convidada_ui", { exact: false }).first().waitFor({ timeout: 10000 });
-  const painelTexto = await secao.innerText();
-  ok("novo membro visível em Participantes", painelTexto.includes("convidada_ui"));
-  ok("papel efetivo = jogador na lista", /convidada_ui[\s\S]{0,200}Jogador|Jogador[\s\S]{0,200}convidada_ui/.test(painelTexto));
+  const membroLinha = secao.locator("tbody tr").filter({ hasText: "convidada_ui" }).first();
+  await membroLinha.waitFor({ timeout: 10000 });
+  const membroTexto = await membroLinha.innerText();
+  ok("novo membro visível em Participantes", membroTexto.includes("convidada_ui"));
+  ok("papel efetivo = jogador na linha do novo membro", membroTexto.includes("Jogador"));
 
-  // --- Regressão: aba Convites ainda íntegra (lista mostra uso=1) ---
+  // --- Regressão: lista reflete o uso na coluna própria ---
   await pageMestre.getByRole("tab", { name: "Convites" }).click();
   const linha = pageMestre.locator(".tabela tbody tr", { hasText: "Jogador" }).first();
   await linha.waitFor({ timeout: 10000 });
-  ok("lista de convites reflete uso após aceite", /\b1\b/.test(await linha.innerText()));
+  const usos = (await linha.locator("td").nth(2).innerText()).trim();
+  ok("lista de convites reflete uso após aceite", usos === "1", "usos=" + usos);
+
+  // --- Reload completo: código e link não são revelados novamente ---
+  await pageMestre.reload();
+  await pageMestre.getByRole("button", { name: "Campanhas" }).first().click();
+  await pageMestre.locator(".cartao-campanha", { hasText: "Campanha Convite UI" }).first().click();
+  await pageMestre.locator(".abas").waitFor({ timeout: 15000 });
+  await pageMestre.getByRole("tab", { name: "Convites" }).click();
+  await pageMestre.locator(".tabela").waitFor({ timeout: 10000 });
+  ok("bloco de código único não reaparece após reload", await pageMestre.locator(".convite-criado").count() === 0);
+  const textosDaLista = [
+    ...(await pageMestre.locator(".tabela tbody tr").allInnerTexts()),
+    ...(await pageMestre.locator(".cartoes-registro .registro-cartao").allInnerTexts()),
+  ].join(" ");
+  ok("código secreto não aparece na listagem após reload", !textosDaLista.includes(code));
 
   await ctxNovo.close();
   await ctxMestre.close();
 } catch (e) {
-  ok("execução sem exceção", false, String(e?.message ?? e).slice(0, 200));
+  const mensagemErro = String(e?.message ?? e);
+  const semCodigo = code ? mensagemErro.replaceAll(code, "[redacted]") : mensagemErro;
+  const erroSeguro = semCodigo.replace(/\/convite\?code=[^\s"]+/g, "/convite?code=[redacted]");
+  ok("execução sem exceção", false, erroSeguro.slice(0, 200));
 } finally {
-  await browser.close();
-  await encerrarServidor(proc);
-  limparDir(DIR);
+  if (browser) await browser.close().catch(() => {});
+  try {
+    if (proc) await encerrarServidor(proc);
+  } finally {
+    limparDir(DIR);
+  }
 }
 
 const falhas = resultados.filter((r) => !r.ok).length;
