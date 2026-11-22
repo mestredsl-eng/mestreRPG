@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Teste E2E da UI de XP em lote (Issue #185 item 3) — Playwright real.
 // Cobre: visibilidade mestre/jogador/espectador, cancelamento, lote válido,
-// arquivado ausente, ficha não selada (403 backend), retry de rede com o
-// MESMO requestId após fechar/reabrir, payload alterado com UUID novo, duplo clique e
-// layout mobile. Servidor + SQLite + site/dist descartáveis.
+// arquivado ausente, ficha não selada (403 backend), retries idempotentes,
+// sequência A→B→A entre campanhas/abas, payload alterado, duplo clique e mobile.
+// Servidor + SQLite + site/dist descartáveis.
 import { chromium } from "playwright";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -33,7 +33,7 @@ try {
     campanha: "Campanha XP Lote UI",
     jogadores: { j1: "jogador_lote1", j2: "jogador_lote2" },
   });
-  const { campId, cookieMestre, jogadores, novoPersonagem, membMestre } = c;
+  const { campId, cookieMestre, jogadores, novoPersonagem, membMestre, adminId } = c;
 
   // Fixture de personagens:
   //  - 2 ativos selados (j1), 1 ativo selado (mestre) → lote válido
@@ -53,6 +53,49 @@ try {
   const charArq = novoPersonagem(jogadores.j1.membershipId, "Arquivado X"); selar(charArq);
   { const w = abrirDb(BANCO); w.prepare("update characters set status='arquivado' where id=?").run(charArq); w.close(); }
   const charSemSelo = novoPersonagem(jogadores.j2.membershipId, "Sem Selo"); // sem __pontos.selo
+
+  // Segunda campanha do MESMO mestre para provar isolamento do cache por campaignId.
+  const criacaoCampanhaB = await req(BASE, "POST", "/campaigns", {
+    cookie: cookieMestre,
+    body: { name: "Campanha B Independente" },
+  });
+  if (criacaoCampanhaB.status !== 201 && criacaoCampanhaB.status !== 200) {
+    throw new Error("criar segunda campanha falhou: " + JSON.stringify(criacaoCampanhaB.json));
+  }
+  const campBId = criacaoCampanhaB.json?.campanha?.id;
+  if (!campBId || campBId === campId) throw new Error("segunda campanha sem ID próprio");
+  let charCampB;
+  {
+    const w = abrirDb(BANCO);
+    const agora = Date.now();
+    const membroMestreB = w.prepare("select id from memberships where campaign_id=? and user_id=?").get(campBId, adminId)?.id;
+    if (!membroMestreB) throw new Error("membership mestre da segunda campanha ausente");
+    const rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campBId);
+    if (!rs) {
+      const id = crypto.randomUUID();
+      w.prepare("insert into rule_sets (id,campaign_id,name,version,is_active,config,created_at,updated_at) values (?,?,?,?,1,?,?,?)")
+        .run(id, campBId, "Regras da campanha", 1, "{}", agora, agora);
+    }
+    const tplId = crypto.randomUUID(), verId = crypto.randomUUID();
+    const estrutura = {
+      versao: 1,
+      secoes: [{ id: "s1", titulo: "Atributos", ordem: 0, campos: [{ id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" }] }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    w.prepare("insert into sheet_templates (id,campaign_id,name,description,owner_id,is_active,is_default,created_at,updated_at) values (?,?,?,?,?,1,1,?,?)")
+      .run(tplId, campBId, "Ficha Teste B", null, adminId, agora, agora);
+    w.prepare("insert into sheet_versions (id,template_id,version,structure,published_at,created_at) values (?,?,1,?,?,?)")
+      .run(verId, tplId, JSON.stringify(estrutura), agora, agora);
+    w.prepare("update sheet_templates set current_version_id=? where id=?").run(verId, tplId);
+    charCampB = crypto.randomUUID();
+    const data = {
+      for: 5,
+      __pontos: { bonus: 0, historico: [], selo: { em: new Date().toISOString(), autorId: "teste", autorNome: "Teste" } },
+    };
+    w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(charCampB, campBId, membroMestreB, verId, "Personagem B", JSON.stringify(data), "{}", "aprovada", 0, agora, agora);
+    w.close();
+  }
 
   // Espectador: membership role='espectador'
   const espUid = crypto.randomUUID();
@@ -316,6 +359,115 @@ try {
     const n = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
     w.close();
     ok("API. payload alterado gera lote independente", n === 5, "n=" + n);
+    await cM.close();
+  }
+
+
+  // ---------- 4c. F29 A → B → A, troca de aba e isolamento entre campanhas ----------
+  {
+    const cM = await ctx(cookieMestre.split("=").slice(1).join("="));
+    const p = await cM.newPage();
+    const requestBodies = [];
+    await p.route("**/xp-lote", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      let body = {};
+      try { body = JSON.parse(route.request().postData() || "{}"); } catch {}
+      requestBodies.push(body);
+      if (requestBodies.length === 1) {
+        // A comita no servidor; só a resposta ao navegador é descartada.
+        await route.fetch();
+        await route.abort();
+      } else {
+        await route.continue();
+      }
+    });
+
+    const preencherLote = async (nomePersonagem, quantidade, motivo) => {
+      await p.getByRole("button", { name: "XP em lote" }).click();
+      await p.waitForSelector(".modal-fundo");
+      await p.locator(".xp-lote-item", { hasText: nomePersonagem }).locator('input[type="checkbox"]').check();
+      await p.locator(`input[aria-label="Quantidade de XP para ${nomePersonagem}"]`).fill(String(quantidade));
+      await p.locator('input[aria-label="Motivo da concessão"]').fill(motivo);
+      await p.getByRole("button", { name: "Revisar e confirmar" }).click();
+    };
+    const enviar = async () => p.getByRole("button", { name: "Confirmar concessão" }).click();
+    const entrarEmOutraCampanha = async (nomeCampanha, nomePersonagem) => {
+      await p.getByRole("button", { name: "Voltar", exact: true }).click();
+      await p.locator(".cartao-campanha", { hasText: nomeCampanha }).click();
+      await p.getByRole("button", { name: "Personagens", exact: true }).click();
+      await p.waitForSelector(`text=${nomePersonagem}`, { timeout: 15000 });
+    };
+
+    // A: primeira campanha, resposta perdida após commit.
+    await abrirPersonagens(p);
+    await preencherLote("Mestre Personagem", 5, "F29 A pendente");
+    await enviar();
+    await p.waitForSelector(".modal-fundo .erro", { timeout: 15000 });
+    const requestIdA = requestBodies[0]?.requestId;
+    ok("F29. A inicial envia UUID", /^[0-9a-f-]{36}$/i.test(requestIdA ?? ""), String(requestIdA));
+    await p.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForSelector(".modal-fundo", { state: "detached", timeout: 5000 });
+
+    // Personagens desmonta ao trocar para Diário; o cache do módulo permanece.
+    await p.getByRole("button", { name: "Diário", exact: true }).click();
+    await p.getByRole("button", { name: "Personagens", exact: true }).click();
+    await p.waitForSelector("text=Mestre Personagem", { timeout: 15000 });
+
+    // B: outra campanha do mesmo mestre, payload independente e ACK positivo.
+    await entrarEmOutraCampanha("Campanha B Independente", "Personagem B");
+    await preencherLote("Personagem B", 9, "F29 B outra campanha");
+    await enviar();
+    await p.waitForSelector("text=XP concedido", { timeout: 15000 });
+    const requestIdB = requestBodies[1]?.requestId;
+    ok("F29. B em outra campanha recebe UUID próprio",
+      /^[0-9a-f-]{36}$/i.test(requestIdB ?? "") && requestIdB !== requestIdA,
+      String(requestIdA) + " / " + String(requestIdB));
+    await p.getByRole("button", { name: "Fechar" }).click();
+
+    // Retorna à campanha A: sua intenção pendente ainda conserva o UUID original.
+    await entrarEmOutraCampanha("Campanha XP Lote UI", "Mestre Personagem");
+    await preencherLote("Mestre Personagem", 5, "F29 A pendente");
+    await enviar();
+    await p.waitForSelector("text=já havia sido registrada", { timeout: 15000 });
+    const requestIdAReplay = requestBodies[2]?.requestId;
+    ok("F29. sequência A→B→A reutiliza UUID de A",
+      requestIdAReplay === requestIdA && requestIdAReplay !== requestIdB,
+      String(requestIdA) + " / " + String(requestIdB) + " / " + String(requestIdAReplay));
+    ok("F29. replay de A não concede XP duplicado",
+      (await p.locator(".modal-fundo").textContent()).includes("já havia sido registrada"));
+
+    let saldoA = await req(BASE, "GET", `/characters/${charM}/progressao`, { cookie: cookieMestre });
+    ok("F29. A foi registrada uma única vez (saldo inicial 7 + 5)",
+      saldoA.json?.xp?.saldo === 12, "saldo=" + saldoA.json?.xp?.saldo);
+    let saldoB = await req(BASE, "GET", `/characters/${charCampB}/progressao`, { cookie: cookieMestre });
+    ok("F29. B foi registrada somente na segunda campanha (+9)",
+      saldoB.json?.xp?.saldo === 9, "saldo=" + saldoB.json?.xp?.saldo);
+    let w = abrirDb(BANCO);
+    let nA = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
+    let nB = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campBId).n;
+    w.close();
+    ok("F29. campanha A tem só o lote original A (sem duplicação)", nA === 6, "nA=" + nA);
+    ok("F29. campanha B tem exatamente um lote B", nB === 1, "nB=" + nB);
+
+    // Após ACK positivo da replay A, nova concessão intencional precisa de UUID novo.
+    await p.getByRole("button", { name: "Fechar" }).click();
+    await preencherLote("Mestre Personagem", 5, "F29 A pendente");
+    await enviar();
+    await p.waitForSelector("text=XP concedido", { timeout: 15000 });
+    const requestIdANovo = requestBodies[3]?.requestId;
+    ok("F29. nova intenção A após ACK gera UUID novo",
+      /^[0-9a-f-]{36}$/i.test(requestIdANovo ?? "") && requestIdANovo !== requestIdA,
+      String(requestIdA) + " / " + String(requestIdANovo));
+    saldoA = await req(BASE, "GET", `/characters/${charM}/progressao`, { cookie: cookieMestre });
+    ok("F29. nova intenção A credita uma segunda vez, intencionalmente",
+      saldoA.json?.xp?.saldo === 17, "saldo=" + saldoA.json?.xp?.saldo);
+    w = abrirDb(BANCO);
+    nA = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campId).n;
+    nB = w.prepare("select count(*) n from xp_lotes where campaign_id=?").get(campBId).n;
+    w.close();
+    ok("F29. campanha A totaliza dois lotes A (original + nova intenção)", nA === 7, "nA=" + nA);
+    ok("F29. campanha B continua isolada com um lote", nB === 1, "nB=" + nB);
+    await p.getByRole("button", { name: "Fechar" }).click();
     await cM.close();
   }
 

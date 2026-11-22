@@ -6,23 +6,30 @@ import "./xp-lote.css";
 
 interface ResultadoItem { characterId: string; quantidade: number; saldoResultante: number }
 
-export interface OperacaoXpLote { hash: string; requestId: string }
+/**
+ * Guarda IDs de operações cujo resultado ainda pode ser ambíguo.
+ * O cache sobrevive à desmontagem de Personagens/modal e à troca de campanha
+ * enquanto este módulo permanecer carregado. Só o ACK positivo remove a
+ * respectiva chave. Reload/fechamento do navegador limpa o cache; não há
+ * persistência durável nem garantia de recuperação do requestId após reload.
+ */
+const operacoesXpLotePendentes = new Map<string, string>();
 
 /**
  * Concessão de XP em lote (Issue #185 item 3) — somente mestre.
  *
  * Fluxo: seleção de personagens ativos → XP individual + motivo →
  * revisão com totais → confirmação → POST /campaigns/:id/xp-lote.
- * O requestId é estável para a MESMA operação: gerado na primeira
- * tentativa e preservado em retries de rede; qualquer edição do
- * payload gera um novo ID (nova operação). Duplo clique é bloqueado
- * por `enviando` + `ocupado` no Modal.
+ * O requestId é estável para cada payload canônico enquanto a resposta
+ * puder ser ambígua. O mapa em escopo de módulo preserva intenções pendentes
+ * entre modais, abas e campanhas na mesma página; um ACK positivo remove
+ * apenas a intenção confirmada. Duplo clique segue bloqueado por
+ * `enviando` + `ocupado` no Modal.
  */
-export default function XpLote({ campaignId, personagens, nomes, operacaoRef, aoFechar }: {
+export default function XpLote({ campaignId, personagens, nomes, aoFechar }: {
   campaignId: string;
   personagens: PersonagemResumo[];
   nomes: Map<string, string>;
-  operacaoRef: { current: OperacaoXpLote | null };
   aoFechar: () => void;
 }) {
   // Apenas personagens NÃO arquivados são elegíveis — arquivado é
@@ -36,9 +43,6 @@ export default function XpLote({ campaignId, personagens, nomes, operacaoRef, ao
   const [erro, setErro] = useState<string | null>(null);
   const [erroCampo, setErroCampo] = useState<string | null>(null);
   const [enviando, setEnviando] = useState(false);
-  // A intenção vive no componente pai, que não desmonta quando o modal
-  // fecha. Assim um ACK perdido não apaga o requestId da operação.
-  const operacao = operacaoRef;
 
   const qtdDe = (id: string) => {
     const n = Number.parseInt(itens[id] ?? "", 10);
@@ -70,12 +74,12 @@ export default function XpLote({ campaignId, personagens, nomes, operacaoRef, ao
     motivo: motivo.trim(),
     itens: itensValidos.map((i) => [i.characterId, i.quantidade]).sort(),
   });
-  const requestIdPara = () => {
-    const hash = payloadHash();
-    if (!operacao.current || operacao.current.hash !== hash) {
-      operacao.current = { hash, requestId: crypto.randomUUID() };
-    }
-    return operacao.current.requestId;
+  const requestIdPara = (hash: string) => {
+    const existente = operacoesXpLotePendentes.get(hash);
+    if (existente) return existente;
+    const requestId = crypto.randomUUID();
+    operacoesXpLotePendentes.set(hash, requestId);
+    return requestId;
   };
 
   const submeter = async () => {
@@ -83,15 +87,17 @@ export default function XpLote({ campaignId, personagens, nomes, operacaoRef, ao
     setEnviando(true);
     setErro(null);
     setErroCampo(null);
+    const hashOperacao = payloadHash();
     try {
+      const requestId = requestIdPara(hashOperacao);
       const r = await apiProgressao.concederXpLote(campaignId, {
-        requestId: requestIdPara(),
+        requestId,
         motivo: motivo.trim(),
         itens: itensValidos.map((i) => ({ characterId: i.characterId, quantidade: i.quantidade! })),
       });
       setResultado({ itens: r.itens, totalXp: r.lote.totalXp, repetido: r.repetido });
       setEtapa("resultado");
-      operacao.current = null; // operação concluída — próxima é nova
+      operacoesXpLotePendentes.delete(hashOperacao); // só resolve esta intenção confirmada
     } catch (e) {
       const api = e instanceof ApiErrorProgresso ? e : null;
       const msg = api?.message ?? (e instanceof Error ? e.message : "Falha ao conceder XP");

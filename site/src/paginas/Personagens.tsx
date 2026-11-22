@@ -7,7 +7,7 @@ import Patrimonio from "./Patrimonio";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
-import XpLote, { type OperacaoXpLote } from "../XpLote";
+import XpLote from "../XpLote";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -36,8 +36,6 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const [verArquivados, setVerArquivados] = useState(false);
   const [xpLoteAberto, setXpLoteAberto] = useState(false);
-  // Sobrevive ao unmount do modal XP em lote dentro desta campanha/view.
-  const operacaoXpLote = useRef<OperacaoXpLote | null>(null);
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
@@ -209,7 +207,6 @@ export default function Personagens({ campaignId, campanha }: Props) {
           campaignId={campaignId}
           personagens={personagens}
           nomes={new Map(personagens.map((p) => [p.id, p.name]))}
-          operacaoRef={operacaoXpLote}
           aoFechar={() => setXpLoteAberto(false)}
         />
       )}
