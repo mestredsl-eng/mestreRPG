@@ -14,6 +14,7 @@ import {
   somarDecimalSangue,
   subtrairDecimalSangue,
   multiplicarDecimalSangue,
+  compararDecimalSangue,
   resolverCapacidadeSangue,
   resolverNaturezaSangue,
   resolverSanguePersonagem,
