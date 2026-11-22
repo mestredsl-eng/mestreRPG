@@ -184,6 +184,25 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 }
 {
   const raiz = novoRaiz();
+  // W14 — erro de CONSULTA após a detecção do schema: a tabela
+  // server_settings EXISTE (passa na checagem de sqlite_master), mas o
+  // SELECT da flag falha porque as colunas key/value não existem.
+  // Não é fixture vacuosa: o fluxo de fato chega à consulta e ela quebra.
+  const db = abrirDb(dbVivo(raiz));
+  db.exec("create table server_settings (id integer)");
+  db.exec("create table marcador (value text)");
+  db.prepare("insert into marcador values ('intocado')").run();
+  db.close();
+  const antes = sha256(dbVivo(raiz));
+  const r = rodar(raiz);
+  t("SELECT da flag falha após schema ok → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+  t("motivo: falha ao ler flag de restauração", /falha ao ler flag/i.test(r.saida), r.saida.slice(0, 250));
+  t("banco não foi alterado pela falha", sha256(dbVivo(raiz)) === antes);
+  t("nenhum journal/estado externo criado", !existsSync(journalPath(raiz)));
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
   criarDbComSettings(raiz); // sem flag
   const r = rodar(raiz);
   t("banco válido sem flag → exit 0", r.code === 0, `code=${r.code} ${r.saida.slice(0, 150)}`);
@@ -471,6 +490,55 @@ sec("T1b — autorização de bootstrap: consumo, replay e inválidas");
   t("recibo + autorização + DB ausente → BLOQUEIA (banco perdido)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
   t("autorização NÃO consumida quando recibo existe",
     lerAutorizacaoBootstrap(RAIZ_REPO, env).status === "ok");
+  rmSync(raiz, { recursive: true, force: true });
+}
+
+// ================= W16 — manifesto obrigatório no restaurador =================
+// O validador (backup-contrato.test.ts) já prova ok:false; aqui provamos o
+// efeito no fluxo real: o restaurador RECUSA antes de tocar no estado vivo.
+sec("W16 — backup sem manifesto/inválido é recusado antes de tocar o vivo");
+{
+  const raiz = novoRaiz();
+  const bk = criarBackupDir(raiz, "sem manifesto");
+  rmSync(join(bk, "manifesto.json"));
+  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
+  const dv = abrirDb(dbVivo(raiz));
+  dv.exec("create table marcador (value text)");
+  dv.prepare("insert into marcador values ('vivo-intocado')").run();
+  dv.close();
+  const cfgPath = join(raiz, "configuracao", "servidor.json");
+  writeFileSync(cfgPath, "{\"porta\":4999}");
+  const cfgAntes = readFileSync(cfgPath, "utf8");
+  const r = rodar(raiz);
+  t("backup sem manifesto → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+  t("motivo: backup inválido/manifesto", /inválido|manifesto/i.test(r.saida), r.saida.slice(0, 250));
+  t("banco vivo preserva marcador", valorBanco(raiz) === "vivo-intocado", `valor=${valorBanco(raiz)}`);
+  t("configuração viva inalterada", readFileSync(join(raiz, "configuracao", "servidor.json"), "utf8") === cfgAntes);
+  t("nenhuma fase de substituição gravada", !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
+  t("backup permanece intacto (não foi consumido)", existsSync(join(bk, "mestre-rpg.db")));
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const bk = criarBackupDir(raiz, "manv1");
+  // manifesto íntegro em estrutura mas versão incompatível (v1)
+  const man = JSON.parse(readFileSync(join(bk, "manifesto.json"), "utf8"));
+  man.manifestoVersao = 1;
+  writeFileSync(join(bk, "manifesto.json"), JSON.stringify(man));
+  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
+  const r = rodar(raiz);
+  t("manifestoVersao=1 → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+  t("motivo: versão incompatível", /manifestoVersao|inválido/i.test(r.saida), r.saida.slice(0, 250));
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
+  const bk = criarBackupDir(raiz, "manjson");
+  writeFileSync(join(bk, "manifesto.json"), "{ json quebrado");
+  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
+  const r = rodar(raiz);
+  t("manifesto corrompido → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+  t("motivo: manifesto ilegível/inválido", /manifesto|inválido/i.test(r.saida), r.saida.slice(0, 250));
   rmSync(raiz, { recursive: true, force: true });
 }
 
