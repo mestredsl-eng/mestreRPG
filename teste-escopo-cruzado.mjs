@@ -15,7 +15,6 @@ import {
 
 const DIR = dirTeste("escopo-cruzado");
 const BANCO = `${DIR}/mestre-rpg-teste.db`;
-await prepararBanco(BANCO);
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -62,15 +61,24 @@ const emitirCb = (s, ev, p) => new Promise((r) => {
   s.emit(ev, p, (x) => { clearTimeout(to); r(x); });
 });
 
-const porta = await portaLivre();
-const base = `http://127.0.0.1:${porta}`;
-const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
-consumirStream(proc.stdout, logsServidor.out);
-consumirStream(proc.stderr, logsServidor.err);
+// Handles nullable: qualquer etapa de setup pode falhar antes de
+// produzir porta/processo — o finally cobre todos os casos.
+let porta = null;
+let base = null;
+let proc = null;
 
 try {
-  // Boot protegido: falha aqui ainda passa pelo finally — processo e
-  // diretório temporário nunca ficam abandonados.
+  // Todo o setup (banco, porta, processo) acontece DENTRO do try:
+  // uma falha em qualquer ponto ainda passa pelo finally — fixture,
+  // porta e processo nunca ficam órfãos.
+  await prepararBanco(BANCO);
+  porta = await portaLivre();
+  base = `http://127.0.0.1:${porta}`;
+  proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+  consumirStream(proc.stdout, logsServidor.out);
+  consumirStream(proc.stderr, logsServidor.err);
+
+  // Boot protegido: falha aqui ainda passa pelo finally.
   await esperarSaudavel(base, proc);
   sec("Cenário — campanha, sessão, ADMIN secundário e GM de guilda");
   const C = await criarCenario(base, BANCO, { jogadores: { jogador1: "esc_j1" } });
@@ -220,6 +228,16 @@ try {
   } catch (e) {
     teardownFalhou = true;
     console.error("[teardown] servidor:", e?.message ?? e);
+  }
+  // Prova de ausência de recurso órfão: depois do encerramento
+  // confirmado (encerrarServidor aguarda o exit real), a porta não
+  // pode continuar respondendo /api/health.
+  if (base) {
+    try {
+      const r = await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(2000) });
+      teardownFalhou = true;
+      console.error(`[teardown] servidor órfão: /api/health respondeu ${r.status} após encerramento`);
+    } catch { /* conexão recusada = porta liberada */ }
   }
   try {
     if (!limparDir(DIR)) teardownFalhou = true;
