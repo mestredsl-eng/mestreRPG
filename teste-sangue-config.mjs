@@ -178,15 +178,39 @@ try {
       },
     });
     t("custos dos dois Poderes aceitos", cfgAntes.status === 200, `status=${cfgAntes.status}`);
+
+    // Simula uma escrita concorrente após a leitura inicial da rota, mas
+    // antes da limpeza do custo. A rota deve reler o JSON dentro da tx
+    // depois do DELETE e preservar a alteração de moeda.
+    const dbTrigger = abrirDb(BANCO);
+    try {
+      dbTrigger.exec(`
+        CREATE TRIGGER teste_config_concorrente_antes_delete
+        BEFORE DELETE ON rule_definitions
+        WHEN OLD.kind='poder' AND OLD.key='poder_teste_remover'
+        BEGIN
+          UPDATE rule_sets
+          SET config=json_set(config, '$.financeiro.moedaPrincipal', 'EUR')
+          WHERE id=OLD.rule_set_id;
+        END;
+      `);
+    } finally { dbTrigger.close(); }
+
     const removido = await req(BASE, "DELETE", `/campaigns/${c.campId}/regras/elementos/${p1.json.id}`, {
       cookie: c.cookieMestre,
     });
+    const dbTriggerCleanup = abrirDb(BANCO);
+    try { dbTriggerCleanup.exec("DROP TRIGGER IF EXISTS teste_config_concorrente_antes_delete"); }
+    finally { dbTriggerCleanup.close(); }
+
     t("Poder removido", removido.status === 200, `status=${removido.status}`);
     const cfgDepois = await getCfg(c.campId, c.cookieMestre);
     t("custo órfão removido e custo do outro Poder preservado",
       cfgDepois?.sangue?.poderes?.poder_teste_remover === undefined &&
         cfgDepois?.sangue?.poderes?.poder_teste_preservar?.custo === 3,
       JSON.stringify(cfgDepois?.sangue?.poderes));
+    t("config concorrente de moeda preservada", cfgDepois?.financeiro?.moedaPrincipal === "EUR",
+      JSON.stringify(cfgDepois?.financeiro));
     const putPosterior = await putCfg(c.campId, c.cookieMestre, { mesa: { acaoForaDeTurno: false } });
     t("PUT posterior não fica bloqueado por custo órfão", putPosterior.status === 200, `status=${putPosterior.status}`);
   }

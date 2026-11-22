@@ -195,6 +195,11 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
   // uma atualização concorrente (ex.: moeda/mesa/outro Poder) seja
   // sobrescrita por um snapshot carregado antes do DELETE.
   const custoSangueRemovido = db.transaction((tx) => {
+    // Primeiro remove a definição dentro da transação. Um trigger/alteração
+    // concorrente que ajuste o ruleset antes da remoção já fica visível
+    // na releitura abaixo; qualquer falha ainda reverte as duas mudanças.
+    tx.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id)).run();
+
     const [rulesetTx] = tx
       .select({ config: ruleSets.config })
       .from(ruleSets)
@@ -237,7 +242,6 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
         .run();
     }
 
-    tx.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id)).run();
     return removeCusto;
   });
   await audit(req, "regra.elemento.removido", {
