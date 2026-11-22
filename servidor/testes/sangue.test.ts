@@ -807,6 +807,17 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     }
   });
 
+  it("débito corrige saldo legado contaminado pela aritmética binária", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.09999999999999998, usos: {}, historico: [] },
+    };
+    const r = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -0.1, motivo: "corrigir resíduo legado",
+    });
+    assert.equal(r.ok, true, "saldo legado deve ser normalizado para 0,1 antes da comparação");
+    if (r.ok) assert.equal(r.estado.saldo, 0);
+  });
+
   it("crédito decimal respeita o teto sem ultrapassá-lo", () => {
     const dados: Record<string, unknown> = {
       [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },

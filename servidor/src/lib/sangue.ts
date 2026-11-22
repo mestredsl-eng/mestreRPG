@@ -52,7 +52,12 @@ interface DecimalSangue {
 
 function decomporDecimalSangue(valor: number): DecimalSangue | null {
   if (!Number.isFinite(valor)) return null;
-  const [mantissaOriginal, expoenteRaw] = valor.toString().toLowerCase().split("e");
+  // Também corrige ledgers já gravados pela implementação binária
+  // anterior (ex.: 0.3 - 0.2 persistido como 0.09999999999999998).
+  // 15 algarismos significativos preservam a precisão decimal segura
+  // para valores Number do jogo e descartam apenas ruído de representação.
+  const canonico = Number(valor.toPrecision(15));
+  const [mantissaOriginal, expoenteRaw] = canonico.toString().toLowerCase().split("e");
   const expoente = expoenteRaw === undefined ? 0 : Number(expoenteRaw);
   const negativo = mantissaOriginal.startsWith("-");
   const mantissa = negativo ? mantissaOriginal.slice(1) : mantissaOriginal;
