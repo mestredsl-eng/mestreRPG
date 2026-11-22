@@ -608,17 +608,21 @@ try {
   p = personagemOrig("ATQ XP âncora zero runtime");
   check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 499 && p.data.__xp.ancora === 1,
     "substituir: âncora 1 preservada antes de avanço da janela");
-  const remocaoAncoraZero = await req(base, "POST", `/characters/${p.id}/xp`, {
-    cookie: cookieMestre,
-    body: { acao: "remover", quantidade: 1, motivo: "Regressão âncora zero" },
-  });
-  check(remocaoAncoraZero.status === 200, "XP HTTP: remoção desloca janela de 500 eventos");
-  const leituraAncoraZero = await req(base, "GET", `/characters/${p.id}/progressao`, { cookie: cookieMestre });
-  check(leituraAncoraZero.status === 200 && leituraAncoraZero.json?.xp?.ancora === 0,
-    "XP HTTP: GET mantém âncora zero após truncamento");
-  p = personagemOrig("ATQ XP âncora zero runtime");
-  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 498 && p.data.__xp.ancora === 0,
-    "XP HTTP: âncora zero persistida no banco");
+  const idAncoraZeroRuntime = p?.id;
+  check(!!idAncoraZeroRuntime, "XP HTTP: personagem de regressão localizado");
+  if (idAncoraZeroRuntime) {
+    const remocaoAncoraZero = await req(base, "POST", `/characters/${idAncoraZeroRuntime}/xp`, {
+      cookie: cookieMestre,
+      body: { acao: "remover", quantidade: 1, motivo: "Regressão âncora zero" },
+    });
+    check(remocaoAncoraZero.status === 200, "XP HTTP: remoção desloca janela de 500 eventos");
+    const leituraAncoraZero = await req(base, "GET", `/characters/${idAncoraZeroRuntime}/progressao`, { cookie: cookieMestre });
+    check(leituraAncoraZero.status === 200 && leituraAncoraZero.json?.xp?.ancora === 0,
+      "XP HTTP: GET mantém âncora zero após truncamento");
+    p = personagemOrig("ATQ XP âncora zero runtime");
+    check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 498 && p.data.__xp.ancora === 0,
+      "XP HTTP: âncora zero persistida no banco");
+  }
   p = personagemOrig("ATQ xp trunc forjado");
   check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: 501 sem âncora zero → rejeitado");
   p = personagemOrig("ATQ xp âncora falsa");
