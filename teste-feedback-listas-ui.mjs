@@ -280,7 +280,9 @@ try {
   ok("convite. pendência persiste após snapshot vazio",
     await pm.evaluate((key) => !!sessionStorage.getItem(key), chavePendente));
   ok("convite. mensagem não presume que POST não comitou",
-    /não prova|bloqueio continua/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+    /não prova|bloqueio continua/i.test(await pm.locator(".estado-feedback-erro").filter({
+      hasText: /não prova|bloqueio continua/i,
+    }).innerText()));
   ok("convite. snapshot vazio não gerou POST", postsConvite === 1, "posts=" + postsConvite);
   await pm.unroute(urlConvites);
 
@@ -291,7 +293,9 @@ try {
   ok("convite. commit detectado mantém submit bloqueado até revogação",
     await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
   ok("convite. instrução orienta revogar o código órfão",
-    /Revogue todos|Revogue-o/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+    /Revogue todos|Revogue-o/i.test(await pm.locator(".estado-feedback-erro").filter({
+      hasText: /Revogue todos|Revogue-o/i,
+    }).innerText()));
   ok("convite. reconciliação não gerou POST", postsConvite === 1, "posts=" + postsConvite);
 
   const linhaOrfa = pm.locator(".tabela tbody tr").first();
