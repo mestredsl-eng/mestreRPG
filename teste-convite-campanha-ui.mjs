@@ -10,10 +10,9 @@ import {
   criarCenario, encerrarServidor, limparDir,
 } from "./teste-base.mjs";
 
-const DIR = dirTeste("convite-campanha-ui");
-const BANCO = `${DIR}/mestre-rpg-teste.db`;
-const porta = await portaLivre();
-const BASE = `http://127.0.0.1:${porta}`;
+let DIR;
+let BANCO;
+let BASE;
 
 const resultados = [];
 const ok = (nome, cond, extra = "") => {
@@ -27,6 +26,13 @@ let proc = null;
 let code = null;
 
 try {
+  // Toda aquisição de recursos começa dentro do try/finally, inclusive a fixture
+  // temporária e a porta: uma falha de setup também precisa limpar o diretório.
+  DIR = dirTeste("convite-campanha-ui");
+  BANCO = `${DIR}/mestre-rpg-teste.db`;
+  const porta = await portaLivre();
+  BASE = `http://127.0.0.1:${porta}`;
+
   // A preparação aplica migrations em subprocesso: aguardar antes do servidor.
   await prepararBanco(BANCO);
   proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
@@ -73,12 +79,18 @@ try {
   await pageNovo.locator('label:has-text("Nome de exibição") input').fill("Convidada UI");
   await pageNovo.locator('label:has-text("Senha") input').fill("senha-forte-456");
   await pageNovo.getByRole("button", { name: "Criar conta e entrar" }).click();
-  // Registro abre sessão; aguarda app refletir usuário autenticado.
-  await pageNovo.waitForTimeout(1500);
 
-  // 3) Autenticado, abre o convite e aceita.
-  await pageNovo.goto(`${BASE}/convite?code=${code}`);
+  // O cadastro abre a sessão e mantém a URL /convite?code=...;
+  // espera a UI autenticada, sem atraso fixo nem navegação artificial.
   const btnAceitar = pageNovo.getByRole("button", { name: "Aceitar convite" });
+  await btnAceitar.waitFor({ timeout: 15000 });
+  const urlAposCadastro = new URL(pageNovo.url());
+  ok(
+    "cadastro autenticou e preservou o convite atual",
+    urlAposCadastro.pathname === "/convite" && urlAposCadastro.searchParams.get("code") === code,
+  );
+
+  // 3) Autenticado, aceita explicitamente o mesmo convite.
   await btnAceitar.waitFor({ timeout: 15000 });
   await btnAceitar.click();
   await pageNovo.getByText("Você entrou na campanha!", { exact: true }).waitFor({ timeout: 15000 });
@@ -129,7 +141,7 @@ try {
   try {
     if (proc) await encerrarServidor(proc);
   } finally {
-    limparDir(DIR);
+    if (DIR) limparDir(DIR);
   }
 }
 
