@@ -818,6 +818,18 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (r.ok) assert.equal(r.estado.saldo, 0);
   });
 
+  it("preserva valores seguros com 16 algarismos significativos", () => {
+    const saldo = 1234567890123456;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo, usos: {}, historico: [] },
+    };
+    const r = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -1, motivo: "preservar precisão válida",
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.estado.saldo, 1234567890123455);
+  });
+
   it("crédito decimal respeita o teto sem ultrapassá-lo", () => {
     const dados: Record<string, unknown> = {
       [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },
