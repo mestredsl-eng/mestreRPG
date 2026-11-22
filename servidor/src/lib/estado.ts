@@ -3,7 +3,8 @@ import { resolve, sep } from "node:path";
 import { eq, inArray, getTableColumns } from "drizzle-orm";
 import { getDb, CAMINHOS } from "../db/index.js";
 import {
-  assinarLedgerXp, obterChaveAssinatura, impressaoDigitalRegras, type ContextoAssinatura,
+  assinarLedgerXp, assinarPacoteV2, obterChaveAssinatura, impressaoDigitalFicha,
+  impressaoDigitalRegras, xpSemAssinaturaRaiz, type ContextoAssinatura,
 } from "./assinatura-xp.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
@@ -123,10 +124,83 @@ export async function exportarPacote(campaignId: string): Promise<PacoteExportac
   const ctxAss: ContextoAssinatura = {
     chave,
     regrasFp: impressaoDigitalRegras(estado.ruleSets, estado.ruleDefinitions),
+    // Issue #186/C3: a campanha de origem é o envelope do pacote —
+    // contexto de proveniência validado na importação (NÃO entra no
+    // payload canônico assinado). Em "nova" o id é preservado; em
+    // "substituir" pacote.campanhaId === campaignId (validado na rota).
+    campanhaIdOrigem: campaignId,
+  };
+  // C3 (bloqueio 2 — fail-closed): a v2 só é emitida quando TODOS os
+  // elos do fingerprint existem de verdade. Regras do pacote:
+  //   - exatamente UM ruleset ativo, sem IDs duplicados;
+  //   - `config.sangue` do ruleset ativo presente e objeto;
+  //   - personagem com templateVersionId → sheetVersion PUBLICADA
+  //     (publishedAt) com structure → sheetTemplate da MESMA campanha.
+  // Qualquer elo ausente → o personagem NÃO recebe v2 (seu __xp segue
+  // com sig v1 e seu __sangue fica sem prova — a importação descarta).
+  const idsRulesVistos = new Set<string>();
+  let rulesIdsDuplicados = false;
+  for (const r of estado.ruleSets ?? []) {
+    const id = String((r as { id?: unknown }).id ?? "");
+    if (idsRulesVistos.has(id)) rulesIdsDuplicados = true;
+    idsRulesVistos.add(id);
+  }
+  const rsAtivosExp = (estado.ruleSets ?? []).filter((r) => r.isActive === true || (r as { isActive?: unknown }).isActive === 1);
+  const rsUnicoExp = !rulesIdsDuplicados && rsAtivosExp.length === 1 ? rsAtivosExp[0] : null;
+  const configSangueExport = rsUnicoExp
+    ? ((rsUnicoExp.config as Record<string, unknown> | undefined)?.sangue ?? null)
+    : null;
+  const pacoteSangueElegivel =
+    !!rsUnicoExp &&
+    !!configSangueExport && typeof configSangueExport === "object" && !Array.isArray(configSangueExport);
+  const versaoPorIdExp = new Map(
+    (estado.sheetVersions ?? []).map((v) => [String(v.id), v]),
+  );
+  const templatePorIdExp = new Map(
+    (estado.sheetTemplates ?? []).map((t) => [String(t.id), t]),
+  );
+  const fichaFpExport = (row: (typeof estado.characters)[number]): string | null => {
+    if (!pacoteSangueElegivel) return null;
+    const tvId = (row as { templateVersionId?: unknown }).templateVersionId;
+    if (typeof tvId !== "string" || !tvId) return null;
+    const ver = versaoPorIdExp.get(tvId);
+    if (!ver || ver.publishedAt == null || ver.structure == null) return null;
+    const tpl = templatePorIdExp.get(String(ver.templateId ?? ""));
+    if (!tpl || tpl.campaignId !== campaignId) return null;
+    return impressaoDigitalFicha({
+      templateVersionId: tvId,
+      estrutura: ver.structure,
+      configSangue: configSangueExport,
+    });
   };
   for (const row of estado.characters ?? []) {
     const data = row.data as Record<string, unknown> | null;
-    const xp = data && typeof data === "object" ? data.__xp : null;
+    if (!data || typeof data !== "object") continue;
+    const xp = data.__xp;
+    const sangue = data.__sangue;
+    // C3: personagem com ledger Sangue recebe assinatura CONJUNTA v2
+    // (`__sangue_sig`, propriedade irmã do ledger) cobrindo XP+Sangue+
+    // regrasFp+fichaFp — a cadeia até a campanha de origem é validada
+    // como proveniência, não assinada. O `sig` v1 residual de
+    // `__xp` é removido — nunca coexistem credenciais de transporte.
+    if (sangue !== undefined && sangue !== null) {
+      const fichaFp = fichaFpExport(row);
+      if (fichaFp !== null) {
+        const xpSem = xpSemAssinaturaRaiz(xp);
+        data.__sangue_sig = assinarPacoteV2(ctxAss, {
+          personagemId: String(row.id),
+          xp: xpSem,
+          sangue,
+          fichaFp,
+        });
+        if (xp && typeof xp === "object" && !Array.isArray(xp)) {
+          delete (xp as Record<string, unknown>).sig;
+        }
+        continue;
+      }
+      // cadeia incompleta → sem v2: __xp cai no fluxo v1 abaixo e
+      // __sangue viaja sem prova (importação descarta + reporta)
+    }
     if (!xp || typeof xp !== "object" || Array.isArray(xp)) continue;
     const xpObj = xp as Record<string, unknown>;
     const { sig: _antiga, ...xpSem } = xpObj;

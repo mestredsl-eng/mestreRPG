@@ -67,6 +67,10 @@ export interface ElementoDisponivel {
   precoProximo: number | null;
   compravel: boolean;
   motivo?: string;
+  /** Marcador autoritativo do servidor (#231): true somente no elemento
+   *  cuja compra eleva a capacidade de Sangue — presente em todos os
+   *  estados do designado; ausente em todo o resto. */
+  capacidadeSangue?: boolean;
 }
 
 export interface Progressao {

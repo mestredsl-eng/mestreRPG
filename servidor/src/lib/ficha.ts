@@ -148,6 +148,7 @@ export const SEMANTICOS_TESTAVEIS_FALLBACK = new Set<TipoSemantico>([
   "habilidade",
   "conhecimento",
   "talento",
+  "poder",
 ]);
 
 /**
@@ -157,7 +158,7 @@ export const SEMANTICOS_TESTAVEIS_FALLBACK = new Set<TipoSemantico>([
  *   não excluída — moeda/item nunca são stats de teste).
  * - `usadoEmTestes: false` → não elegível.
  * - ausente → fallback: numérico + semântica de atributo/habilidade/
- *   conhecimento/talento. Campos numéricos "livres" (idade, crônica,
+ *   conhecimento/talento/poder. Campos numéricos "livres" (idade, crônica,
  *   contadores) não entram só por serem números.
  */
 function regraElegibilidadeTeste(campo: Pick<CampoDef, "semantico" | "usadoEmTestes">): boolean {

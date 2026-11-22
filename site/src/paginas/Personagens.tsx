@@ -626,6 +626,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             poderesCfg={ficha?.poderes ?? null}
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
+            podeLerSangue={souMestre || personagem.ehEu === true}
             camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
         )}

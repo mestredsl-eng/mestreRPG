@@ -232,6 +232,13 @@
       "when": 1795223232737,
       "tag": "0032_release_1009_xp_lote",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795374175383,
+      "tag": "0033_release_1008_pontos_sangue_vtt_news",
+      "breakpoints": true
     }
   ]
 }
