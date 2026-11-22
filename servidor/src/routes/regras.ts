@@ -208,8 +208,15 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
       .all();
     if (!rulesetTx) throw new Error("Ruleset não encontrado durante exclusão de elemento");
 
-    const configBrutaTx = rulesetTx.config as Record<string, unknown>;
-    const configValidadaTx = configRegrasSchema.safeParse(configBrutaTx);
+    const configBrutaTx = (rulesetTx.config ?? {}) as Record<string, unknown>;
+    // Igual ao carregador: configurações importadas antigas podem trazer
+    // pontos:null. Validamos a representação normalizada, mas a gravação
+    // abaixo continua partindo do JSON bruto para preservar o formato legado
+    // e as chaves de extensões desconhecidas.
+    const configValidadaTx = configRegrasSchema.safeParse({
+      ...configBrutaTx,
+      pontos: configBrutaTx.pontos ?? {},
+    });
     if (!configValidadaTx.success) {
       throw new Error("Configuração inválida durante exclusão de elemento");
     }
