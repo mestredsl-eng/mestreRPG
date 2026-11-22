@@ -113,9 +113,9 @@ async function medirPagina(page, tela, vp, { registrar = true } = {}) {
     // O valor de aria-labelledby é uma lista de IDREFs, não o nome.
     // Só conta se ao menos um ID resolver para um elemento com texto útil.
     // Referências inexistentes/vazias não podem mascarar controles sem nome.
-    const textoUtil = (valor) => typeof valor === "string" && valor.replace(/\\s+/g, " ").trim().length > 0;
+    const textoUtil = (valor) => typeof valor === "string" && valor.replace(/\s+/g, " ").trim().length > 0;
     const temTextoIdRef = (el) => {
-      const ids = (el.getAttribute("aria-labelledby") || "").trim().split(/\\s+/).filter(Boolean);
+      const ids = (el.getAttribute("aria-labelledby") || "").trim().split(/\s+/).filter(Boolean);
       return ids.some((id) => {
         const alvo = document.getElementById(id);
         return !!alvo && textoUtil(alvo.innerText || alvo.textContent || "");
