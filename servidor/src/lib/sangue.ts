@@ -52,15 +52,10 @@ interface DecimalSangue {
 
 function decomporDecimalSangue(valor: number): DecimalSangue | null {
   if (!Number.isFinite(valor)) return null;
-  // Corrige apenas resíduos herdados de operações binárias antigas
-  // quando a representação com 15 algarismos fica a no máximo 1,3 EPS
-  // relativo do valor. Não arredonda indiscriminadamente: inteiros seguros
-  // ou custos com precisão significativa maior continuam intactos.
-  const candidato = Number(valor.toPrecision(15));
-  const tolerancia = 1.3 * Number.EPSILON * Math.abs(valor);
-  const canonico =
-    Math.abs(candidato - valor) <= tolerancia ? candidato : valor;
-  const [mantissaOriginal, expoenteRaw] = canonico.toString().toLowerCase().split("e");
+  // Preserva a representação decimal mais curta que round-tripa para
+  // Number. Não aplica snap para 15 dígitos: isso poderia apagar valores
+  // IEEE válidos como 1.0000000000000002.
+  const [mantissaOriginal, expoenteRaw] = valor.toString().toLowerCase().split("e");
   const expoente = expoenteRaw === undefined ? 0 : Number(expoenteRaw);
   const negativo = mantissaOriginal.startsWith("-");
   const mantissa = negativo ? mantissaOriginal.slice(1) : mantissaOriginal;
@@ -78,17 +73,6 @@ function decomporDecimalSangue(valor: number): DecimalSangue | null {
   return { coeficiente, escala };
 }
 
-function comporDecimalSangue(valor: DecimalSangue): number {
-  if (valor.coeficiente === 0n) return 0;
-  const negativo = valor.coeficiente < 0n;
-  const digitos = (negativo ? -valor.coeficiente : valor.coeficiente).toString();
-  const sinal = negativo ? "-" : "";
-  if (valor.escala === 0) return Number(`${sinal}${digitos}`);
-  const preenchido = digitos.padStart(valor.escala + 1, "0");
-  const corte = preenchido.length - valor.escala;
-  return Number(`${sinal}${preenchido.slice(0, corte)}.${preenchido.slice(corte)}`);
-}
-
 function alinharDecimaisSangue(a: DecimalSangue, b: DecimalSangue): [bigint, bigint, number] {
   const escala = Math.max(a.escala, b.escala);
   return [
@@ -96,6 +80,29 @@ function alinharDecimaisSangue(a: DecimalSangue, b: DecimalSangue): [bigint, big
     b.coeficiente * 10n ** BigInt(escala - b.escala),
     escala,
   ];
+}
+
+function comporDecimalSangue(valor: DecimalSangue): number {
+  if (valor.coeficiente === 0n) return 0;
+  const negativo = valor.coeficiente < 0n;
+  const digitos = (negativo ? -valor.coeficiente : valor.coeficiente).toString();
+  const sinal = negativo ? "-" : "";
+  const preenchido = valor.escala === 0
+    ? `${sinal}${digitos}`
+    : (() => {
+        const zeros = digitos.padStart(valor.escala + 1, "0");
+        const corte = zeros.length - valor.escala;
+        return `${sinal}${zeros.slice(0, corte)}.${zeros.slice(corte)}`;
+      })();
+  const resultado = Number(preenchido);
+  if (!Number.isFinite(resultado)) return NaN;
+
+  // A composição precisa round-trip sem perda. Isso detecta tanto
+  // overflow quanto underflow/subnormal arredondado (ex.: 1e-400 → 0).
+  const refeito = decomporDecimalSangue(resultado);
+  if (!refeito) return NaN;
+  const [originalAlinhado, refeitoAlinhado] = alinharDecimaisSangue(valor, refeito);
+  return originalAlinhado === refeitoAlinhado ? resultado : NaN;
 }
 
 /** Soma decimal sem resíduos binários. */
@@ -262,6 +269,34 @@ function eventoSangueValido(e: unknown): boolean {
 }
 
 /**
+ * Corrige somente ledgers cuja cadeia inteira comprova que o saldo foi
+ * produzido pelo algoritmo binário anterior (Number + delta). Recalcula
+ * a mesma cadeia em decimal exato. Se qualquer saldo de evento divergir,
+ * mantém o saldo armazenado: não adivinha valores nem arredonda Number
+ * legítimo. Para histórico truncado, começa pela âncora persistida.
+ */
+function saldoDecimalComprovadoPeloHistorico(
+  saldoArmazenado: number,
+  historico: EventoSangue[],
+  ancora: number | undefined,
+): number | null {
+  if (historico.length === 0) return null;
+  let saldoLegado = ancora ?? 0;
+  let saldoDecimal = ancora ?? 0;
+  for (const evento of historico) {
+    const proximoLegado = saldoLegado + evento.quantidade;
+    if (!Number.isFinite(proximoLegado) || proximoLegado !== evento.saldoResultante) {
+      return null;
+    }
+    const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
+    if (!Number.isFinite(proximoDecimal)) return null;
+    saldoLegado = proximoLegado;
+    saldoDecimal = proximoDecimal;
+  }
+  return saldoLegado === saldoArmazenado ? saldoDecimal : null;
+}
+
+/**
  * Lê `__sangue` de `characters.data`.
  *
  * Fail-closed: ledger malformado NÃO é silenciosamente zerado na
@@ -302,9 +337,14 @@ export function lerSangue(dados: Record<string, unknown>): {
   const historico = ((b.historico ?? []) as unknown[]).filter(eventoSangueValido) as EventoSangue[];
   const usos = (b.usos ?? {}) as Record<string, UsoSangue>;
   const ancora = num(b.ancora);
+  const saldoReconstruido = saldoDecimalComprovadoPeloHistorico(
+    saldo,
+    historico,
+    ancora !== null && ancora !== undefined && ancora >= 0 ? ancora : undefined,
+  );
   return {
     estado: {
-      saldo,
+      saldo: saldoReconstruido ?? saldo,
       ...(capacidade !== null && capacidade !== undefined ? { capacidade } : {}),
       usos,
       historico,
@@ -901,7 +941,11 @@ function numeroDoCampo(
     for (const item of valor) {
       if (!item || typeof item !== "object") continue;
       const nivel = num((item as Record<string, unknown>).nivel);
-      if (nivel !== null) { soma += nivel; algum = true; }
+      if (nivel !== null) {
+        soma = somarDecimalSangue(soma, nivel);
+        if (!Number.isFinite(soma)) return null;
+        algum = true;
+      }
     }
     return algum ? soma : null;
   }

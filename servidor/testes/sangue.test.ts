@@ -11,6 +11,9 @@ import {
   registrarRecuperacaoSangue,
   registrarUsoD10,
   reconciliarCapacidadeSangue,
+  somarDecimalSangue,
+  subtrairDecimalSangue,
+  multiplicarDecimalSangue,
   resolverCapacidadeSangue,
   resolverNaturezaSangue,
   resolverSanguePersonagem,
@@ -807,15 +810,41 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     }
   });
 
-  it("débito corrige saldo legado contaminado pela aritmética binária", () => {
+  it("corrige resíduo legado somente quando toda a cadeia comprova a aritmética binária anterior", () => {
+    const em = new Date().toISOString();
     const dados: Record<string, unknown> = {
-      [CHAVE_SANGUE]: { saldo: 0.09999999999999998, usos: {}, historico: [] },
+      [CHAVE_SANGUE]: {
+        saldo: 0.09999999999999998,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste", quantidade: 0.3, motivo: "crédito", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.3 },
+          { em, tipo: "ajuste", quantidade: -0.2, motivo: "débito", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.09999999999999998 },
+        ],
+      },
     };
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.1, "a cadeia legada reproduz o saldo decimal esperado");
+
     const r = registrarAjusteSangue(dados, {
-      ...AUTOR, delta: -0.1, motivo: "corrigir resíduo legado",
+      ...AUTOR, delta: -0.1, motivo: "último débito",
     });
-    assert.equal(r.ok, true, "saldo legado deve ser normalizado para 0,1 antes da comparação");
+    assert.equal(r.ok, true, "saldo reconstituído cobre o débito decimal de 0,1");
     if (r.ok) assert.equal(r.estado.saldo, 0);
+  });
+
+  it("preserva valores IEEE vizinhos de 1 sem snap de 15 dígitos", () => {
+    assert.equal(somarDecimalSangue(1.0000000000000002, 0), 1.0000000000000002);
+    assert.equal(somarDecimalSangue(0.9999999999999999, 0), 0.9999999999999999);
+  });
+
+  it("detecta underflow, overflow e preserva extremos representáveis", () => {
+    assert.ok(Number.isNaN(multiplicarDecimalSangue(1e-200, 1e-200)), "1e-400 não pode virar zero");
+    assert.ok(Number.isNaN(somarDecimalSangue(Number.MAX_VALUE, Number.MAX_VALUE)), "overflow deve falhar");
+    assert.equal(somarDecimalSangue(Number.MAX_VALUE, 0), Number.MAX_VALUE);
+    assert.equal(somarDecimalSangue(Number.MIN_VALUE, Number.MIN_VALUE), Number.MIN_VALUE * 2);
+    assert.equal(multiplicarDecimalSangue(1e200, 1e-200), 1);
+    assert.equal(somarDecimalSangue(-0, 0), 0);
   });
 
   it("preserva valores seguros com 16 algarismos significativos", () => {
@@ -839,6 +868,67 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     });
     assert.equal(r.ok, true);
     if (r.ok) assert.equal(r.estado.saldo, 0.3);
+  });
+
+  it("soma decimal dos níveis da Qualidade é exata e underflow indisponibiliza capacidade", () => {
+    const e = estruturaBase();
+    const config: ConfigSangue = {
+      ...configBase(),
+      capacidade: {
+        bonusQualidade: {
+          campoId: "qual",
+          coeficiente: 1,
+          modo: "somaNiveis",
+        },
+      },
+    };
+    const niveis = resolverCapacidadeSangue(
+      e,
+      { cap: 1, nat: "Humano", qual: [{ nivel: 0.1 }, { nivel: 0.2 }] },
+      config,
+    );
+    assert.equal(niveis.disponivel, true);
+    assert.equal(niveis.capacidade, 1.3);
+
+    const underflow = resolverCapacidadeSangue(
+      e,
+      { cap: 1, nat: "Humano", qual: [{ nivel: 1e-200 }] },
+      {
+        ...config,
+        capacidade: {
+          bonusQualidade: {
+            campoId: "qual",
+            coeficiente: 1e-200,
+            modo: "somaNiveis",
+          },
+        },
+      },
+    );
+    assert.equal(underflow.disponivel, false);
+  });
+
+  it("replay de crédito truncado pelo teto não credita novamente", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },
+    };
+    const r1 = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.equal(r1.estado.saldo, 0.3);
+    assert.equal(r1.estado.historico.at(-1)?.quantidade, 0.1);
+    const historico = r1.estado.historico.length;
+
+    const r2 = registrarRecuperacaoSangue(r1.dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.8,
+    });
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 0.3);
+      assert.equal(r2.estado.historico.length, historico);
+    }
   });
 
   it("quantidade NaN/Infinity/negativa/zero recusada nas três operações", () => {
