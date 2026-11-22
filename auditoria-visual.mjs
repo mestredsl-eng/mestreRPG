@@ -110,27 +110,42 @@ async function medirPagina(page, tela, vp, { registrar = true } = {}) {
     const areasRolaveisLista = [...areasRolaveis.values()].map((x) =>
       `${x.seletor} clientWidth=${x.clientW}px scrollWidth=${x.scrollW}px (conteúdo até ${x.maiorConteudo}px; ${x.descendentesLargos} nós)`,
     );
-    // botões sem nome acessível — texto, aria-label, aria-labelledby ou title
+    // O valor de aria-labelledby é uma lista de IDREFs, não o nome.
+    // Só conta se ao menos um ID resolver para um elemento com texto útil.
+    // Referências inexistentes/vazias não podem mascarar controles sem nome.
+    const textoUtil = (valor) => typeof valor === "string" && valor.replace(/\\s+/g, " ").trim().length > 0;
+    const temTextoIdRef = (el) => {
+      const ids = (el.getAttribute("aria-labelledby") || "").trim().split(/\\s+/).filter(Boolean);
+      return ids.some((id) => {
+        const alvo = document.getElementById(id);
+        return !!alvo && textoUtil(alvo.innerText || alvo.textContent || "");
+      });
+    };
+    const temAtributoComTexto = (el, atributo) => textoUtil(el.getAttribute(atributo) || "");
+
+    // botões sem nome acessível — texto, aria-label, IDREF resolvido ou title
     const botoesSemNome = [];
     for (const b of document.querySelectorAll("button")) {
-      const nome = (b.textContent || "").trim()
-        || b.getAttribute("aria-label") || b.getAttribute("aria-labelledby") || b.getAttribute("title") || "";
+      const nome = textoUtil(b.innerText || b.textContent || "")
+        || temAtributoComTexto(b, "aria-label")
+        || temTextoIdRef(b)
+        || temAtributoComTexto(b, "title");
       const r = b.getBoundingClientRect();
       if (!nome && r.width > 0 && r.height > 0) botoesSemNome.push(b.outerHTML.slice(0, 120));
     }
-    // inputs sem label/aria. Decisão explícita (F22/#251): placeholder
-    // isolado NÃO é label — vai para lista própria `inputsPlaceholder`,
-    // nunca para `inputsSemLabel`. label[for], label envolvendo e
-    // aria-labelledby/aria-label válidos contam como associação.
+    // inputs sem label/aria. Placeholder isolado continua sendo aviso
+    // próprio; não é um rótulo acessível. Labels explícitos/envolventes
+    // só contam quando têm texto útil.
     const inputsSemLabel = [];
     const inputsPlaceholder = [];
     for (const i of document.querySelectorAll("input, select, textarea")) {
       const r = i.getBoundingClientRect();
       if (r.width === 0) continue;
-      const id = i.id;
-      const temLabel = (id && document.querySelector(`label[for="${id}"]`))
-        || i.closest("label")
-        || i.getAttribute("aria-label") || i.getAttribute("aria-labelledby");
+      const labels = Array.from(i.labels || []);
+      const temLabelAssociado = labels.some((label) => textoUtil(label.innerText || label.textContent || ""));
+      const temLabel = temLabelAssociado
+        || temAtributoComTexto(i, "aria-label")
+        || temTextoIdRef(i);
       const detalhe = `${i.tagName.toLowerCase()} type=${i.type || ""} :: ${i.outerHTML.slice(0, 140)}`;
       if (!temLabel) {
         if (i.getAttribute("placeholder")) inputsPlaceholder.push(detalhe);
@@ -229,9 +244,18 @@ const FIXTURES = [
       <button id="b2" aria-label="Fechar janela"></button>
       <button id="b3" aria-labelledby="rot-b3"></button><span id="rot-b3">Rotulo assoc</span>
       <button id="b4" title="Dica"></button>
-      <button id="b5"></button>`,
+      <button id="b5"></button>
+      <button id="b6" aria-labelledby="id-inexistente"></button>
+      <button id="b7" aria-labelledby="rot-vazio"></button><span id="rot-vazio">   </span>
+      <button id="b8" aria-labelledby="rot-b3 id-inexistente"></button>
+      <button id="b9" aria-labelledby="rot-vazio outro-inexistente"></button>
+      <button id="b10" aria-label="   "></button>`,
     verificar: (m) => {
-      fixT("fx6 somente botao vazio falha", m.botoesSemNome.length === 1 && /b5/.test(m.botoesSemNome[0]), JSON.stringify(m.botoesSemNome));
+      const semNome = m.botoesSemNome.join(" ");
+      fixT("fx6 IDs ausentes/vazios e aria-label vazio continuam sem nome",
+        m.botoesSemNome.length === 5 && ["b5", "b6", "b7", "b9", "b10"].every((id) => semNome.includes(`id="${id}"`)),
+        JSON.stringify(m.botoesSemNome));
+      fixT("fx6 IDREF múltiplo com texto resolvido é válido", !semNome.includes('id="b8"'), semNome);
     },
   },
   {
@@ -244,11 +268,21 @@ const FIXTURES = [
       <input id="i4" aria-label="Busca">
       <input id="i5" placeholder="Digite aqui">
       <input id="i6">
-      <select id="i7"><option>a</option></select>`,
+      <select id="i7"><option>a</option></select>
+      <input id="i8" aria-labelledby="id-inexistente">
+      <input id="i9" aria-labelledby="rotulo-vazio"><span id="rotulo-vazio">   </span>
+      <input id="i10" aria-labelledby="lb3 outro-inexistente">
+      <input id="i11" aria-labelledby="rotulo-vazio sem-alvo">
+      <input id="i12" aria-label="   ">`,
     verificar: (m) => {
-      fixT("fx7 inputs nus viram sem-label", m.inputsSemLabel.length === 2, JSON.stringify(m.inputsSemLabel));
+      const semLabel = m.inputsSemLabel.join(" ");
+      fixT("fx7 controles nus/IDREF inválido/aria-label vazio sem rótulo",
+        m.inputsSemLabel.length === 6 && ["i6", "i7", "i8", "i9", "i11", "i12"].every((id) => semLabel.includes(`id="${id}"`)),
+        JSON.stringify(m.inputsSemLabel));
       fixT("fx7 placeholder NAO e label (lista propria)", m.inputsPlaceholder.length === 1 && /i5/.test(m.inputsPlaceholder[0]), JSON.stringify(m.inputsPlaceholder));
-      fixT("fx7 label[for]/envolver/aria-labelledby/aria-label aceitos", !/i1|i2|i3|i4/.test(m.inputsSemLabel.join(" ")) && !/i1|i2|i3|i4/.test(m.inputsPlaceholder.join(" ")));
+      fixT("fx7 IDREF múltiplo com texto resolvido e labels explícitos válidos",
+        !["i1", "i2", "i3", "i4", "i10"].some((id) => semLabel.includes(`id="${id}"`)),
+        semLabel);
     },
   },
 ];
