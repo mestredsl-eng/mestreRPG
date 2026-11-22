@@ -123,7 +123,6 @@ export function vidaNoEstado(
   ctx: CtxVida | null, vtt: VttState, papel: PapelVtt, userId: string,
   membershipId: string | undefined, donos: Map<string, string | null>
 ): VttState {
-  if (!ctx) return vtt;
   // ehDono por token: `donos` (dono efetivo resolvido no servidor via
   // membership ativa do personagem) — equivale à regra da ficha.
   // efetivo do token) — equivale à membership do personagem, pois
@@ -131,12 +130,21 @@ export function vidaNoEstado(
   return {
     ...vtt,
     tokens: vtt.tokens.map((tk) => {
-      if (!tk.personagemId) return { ...tk, vida: null };
+      // hpManual é interno: NUNCA sai no payload — só vira vida.hp quando
+      // o token sobreviveu ao filtro canônico e não tem ficha vinculada.
+      const { hpManual, ...resto } = tk;
+      if (!tk.personagemId) {
+        return {
+          ...resto,
+          vida: hpManual ? { hp: { atual: hpManual.atual, maximo: hpManual.maximo }, vitalidade: null } : null,
+        };
+      }
+      if (!ctx) return { ...resto, vida: null };
       const p = ctx.chars.get(tk.personagemId);
-      if (!p) return { ...tk, vida: null };
+      if (!p) return { ...resto, vida: null };
       const ehDono = donos.get(tk.id) === userId;
       const vida = vidaParaPersonagem(ctx, p, papel, userId, membershipId, ehDono);
-      return { ...tk, vida };
+      return { ...resto, vida };
     }),
   };
 }

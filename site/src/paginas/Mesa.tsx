@@ -1757,6 +1757,11 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // automaticamente (o usuário pode ter várias fichas).
   const [novoFichaId, setNovoFichaId] = useState("");
   const [selVtt, setSelVtt] = useState<string | null>(null);
+  // HP manual de token sem ficha (F14/#127) — opcional, só mestre.
+  const [novoHpAtual, setNovoHpAtual] = useState("");
+  const [novoHpMaximo, setNovoHpMaximo] = useState("");
+  const [edHpAtual, setEdHpAtual] = useState("");
+  const [edHpMaximo, setEdHpMaximo] = useState("");
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
   const confRef = useRef<Map<string, PosicaoConfirmada>>(new Map());
@@ -2630,7 +2635,13 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 style={{ left: `${tk.x * 100}%`, top: `${tk.y * 100}%`, background: tk.cor, borderColor: tk.cor }}
                 title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
-                onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
+                onClick={() => {
+                  if (souMestre && !encerrada) {
+                    setSelVtt(tk.id);
+                    setEdHpAtual(tk.vida?.hp ? String(tk.vida.hp.atual) : "");
+                    setEdHpMaximo(tk.vida?.hp ? String(tk.vida.hp.maximo) : "");
+                  }
+                }}
               >
                 {tk.nome.slice(0, 2).toUpperCase()}
                 {tk.vida?.hp && (
@@ -2747,7 +2758,7 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
               p.status !== "arquivado" && p.membershipId === membroSel?.membershipId);
             return (
               <select value={novoFichaId} onChange={(e) => setNovoFichaId(e.target.value)} aria-label="Vincular ficha do jogador">
-                <option value="">Sem ficha (sem vida no token)</option>
+                <option value="">Sem ficha (HP manual opcional)</option>
                 {fichasDoMembro.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
             );
@@ -2758,19 +2769,41 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
               {npcs.map((p) => <option key={p.id} value={p.id}>{p.name} (NPC)</option>)}
             </select>
           )}
+          {!novoNpcId && !novoFichaId && (
+            <>
+              <input
+                type="number" min="0" step="any" placeholder="HP atual (opcional)"
+                aria-label="HP atual do token"
+                value={novoHpAtual} onChange={(e) => setNovoHpAtual(e.target.value)}
+              />
+              <input
+                type="number" min="0" step="any" placeholder="HP máximo (opcional)"
+                aria-label="HP máximo do token"
+                value={novoHpMaximo} onChange={(e) => setNovoHpMaximo(e.target.value)}
+              />
+            </>
+          )}
           <button
             className="primario"
             onClick={() => {
               if (!novoNome.trim()) return;
               const npc = npcs.find((p) => p.id === novoNpcId);
+              const personagemId = npc?.id ?? (novoFichaId || null);
+              // HP manual só existe sem ficha; campos vazios = sem HP.
+              const hpAtual = novoHpAtual.trim() === "" ? null : Number(novoHpAtual);
+              const hpMax = novoHpMaximo.trim() === "" ? null : Number(novoHpMaximo);
+              const hpManual = !personagemId && hpAtual !== null && hpMax !== null
+                ? { atual: hpAtual, maximo: hpMax }
+                : undefined;
               emitir({
                 acao: "criar",
                 token: {
                   nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5,
                   userId: novoUserId || null,
-                  personagemId: npc?.id ?? (novoFichaId || null),
+                  personagemId,
+                  ...(hpManual ? { hpManual } : {}),
                 },
-              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); });
+              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); setNovoHpAtual(""); setNovoHpMaximo(""); });
             }}
           >Adicionar token</button>
           {selVtt && (() => {
@@ -2781,6 +2814,36 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                   className="secundario"
                   onClick={() => emitir({ acao: "atualizar", token: { id: tk.id, oculto: !tk.oculto } })}
                 >{tk.oculto ? "Exibir" : "Ocultar"}</button>
+                {!tk.personagemId && (
+                  <span className="vtt-hp-manual">
+                    <input
+                      type="number" min="0" step="any" placeholder="HP atual"
+                      aria-label="HP atual do token selecionado"
+                      value={edHpAtual} onChange={(e) => setEdHpAtual(e.target.value)}
+                    />
+                    <input
+                      type="number" min="0" step="any" placeholder="HP máximo"
+                      aria-label="HP máximo do token selecionado"
+                      value={edHpMaximo} onChange={(e) => setEdHpMaximo(e.target.value)}
+                    />
+                    <button
+                      className="secundario"
+                      onClick={() => {
+                        const atual = Number(edHpAtual);
+                        const maximo = Number(edHpMaximo);
+                        if (!Number.isFinite(atual) || !Number.isFinite(maximo)) return;
+                        emitir({ acao: "atualizar", token: { id: tk.id, hpManual: { atual, maximo } } },
+                          () => { setEdHpAtual(""); setEdHpMaximo(""); });
+                      }}
+                    >Salvar HP</button>
+                    {tk.vida?.hp && (
+                      <button
+                        className="perigo"
+                        onClick={() => emitir({ acao: "atualizar", token: { id: tk.id, hpManual: null } })}
+                      >Limpar HP</button>
+                    )}
+                  </span>
+                )}
                 <button className="perigo" onClick={() => { emitir({ acao: "remover", token: { id: selVtt } }); setSelVtt(null); }}>Remover selecionado</button>
               </>
             ) : null;

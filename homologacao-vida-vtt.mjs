@@ -446,6 +446,61 @@ try {
       await pgM.locator(".vtt-token", { hasText: "FR" }).locator(".vtt-token-hp").getAttribute("title"));
   }
 
+  // ---------- I. HP manual em token sem ficha (F14/#127) ----------
+  sec("I. HP manual — criação/edição pela UI + controles só sem ficha");
+  {
+    const formTok = pgM.locator(".vtt-controles", { has: pgM.locator('input[placeholder="Nome do token"]') });
+    await formTok.locator('input[placeholder="Nome do token"]').fill("Orc Bruto");
+    await formTok.locator('input[aria-label="HP atual do token"]').fill("30");
+    await formTok.locator('input[aria-label="HP máximo do token"]').fill("50.5");
+    await formTok.getByRole("button", { name: "Adicionar token" }).click();
+    await pgM.locator(".vtt-token", { hasText: "OR" }).waitFor({ timeout: 10000 });
+    t("UI: token manual criado — HP bar visível", (await hpBar(pgM, "OR").count()) === 1);
+    t("UI: title HP manual = 30/50.5",
+      (await hpBar(pgM, "OR").getAttribute("title")) === "HP 30/50.5",
+      await hpBar(pgM, "OR").getAttribute("title").catch(() => "ausente"));
+
+    // edição pelo painel do token selecionado (campos pré-preenchidos da vida projetada)
+    await pgM.locator(".vtt-token", { hasText: "OR" }).first().click();
+    const ed = pgM.locator(".vtt-hp-manual");
+    t("UI: painel HP manual aparece no token sem ficha", await ed.count() === 1);
+    await ed.locator('input[aria-label="HP atual do token selecionado"]').fill("12");
+    await ed.locator('input[aria-label="HP máximo do token selecionado"]').fill("40");
+    await ed.getByRole("button", { name: "Salvar HP" }).click();
+    try {
+      await pgM.waitForFunction(() => {
+        const el = [...document.querySelectorAll(".vtt-token")].find((x) => x.textContent?.includes("OR"));
+        return el?.querySelector(".vtt-token-hp")?.getAttribute("title") === "HP 12/40";
+      }, null, { timeout: 10000 });
+      t("UI: HP manual editado → 12/40", true);
+    } catch {
+      t("UI: HP manual editado → 12/40", false,
+        await hpBar(pgM, "OR").getAttribute("title").catch(() => "ausente"));
+    }
+
+    // token COM ficha não expõe controles de HP manual
+    // (dispatchEvent: tokens se sobrepõem em x=0.5,y=0.5 — click real
+    // atingiria o token de cima; o handler React é o mesmo)
+    await pgM.locator(".vtt-token", { hasText: "FR" }).first().dispatchEvent("click");
+    await pgM.waitForTimeout(300);
+    t("UI: token com ficha NÃO mostra painel HP manual", await pgM.locator(".vtt-hp-manual").count() === 0);
+
+    // formulário de criação esconde campos HP quando ficha/NPC selecionado
+    // (o select de ficha só existe com dono selecionado)
+    const selMembroB = formTok.locator("select").nth(0);
+    await selMembroB.selectOption(ids.j1);
+    const selFichaB = formTok.locator('select[aria-label="Vincular ficha do jogador"]');
+    const primeiroPJ = await selFichaB.locator("option").nth(1).getAttribute("value");
+    if (primeiroPJ) {
+      await selFichaB.selectOption(primeiroPJ);
+      t("UI: campos HP manual somem com ficha selecionada",
+        (await formTok.locator('input[aria-label="HP atual do token"]').count()) === 0);
+    }
+    await selMembroB.selectOption("");
+    t("UI: campos HP manual voltam sem ficha",
+      (await formTok.locator('input[aria-label="HP atual do token"]').count()) === 1);
+  }
+
   await ctxM.close(); await ctxA.close(); await ctxB.close(); await ctxE.close();
   sM.close();
 
@@ -468,6 +523,25 @@ try {
   t("mobile: sem overflow horizontal", await semOverflowX(pgMob));
   await pgMob.screenshot({ path: join(SHOTS, "vida-04-mobile-j1.png") });
   await ctxMob.close();
+
+  // ---------- mobile 390px — mestre + HP manual ----------
+  sec("Mobile 390×844 — mestre vê HP manual do token");
+  const ctxMobM = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  const pgMobM = await ctxMobM.newPage();
+  vigiar(pgMobM, "mobile-mestre");
+  await login(pgMobM, "mestre_teste", "senha-forte-123");
+  await irMesa(pgMobM);
+  await abrirSessao(pgMobM, "Mesa Vida B");
+  await pgMobM.locator(".vtt-tabuleiro").waitFor({ timeout: 15000 });
+  try {
+    await hpBar(pgMobM, "OR").waitFor({ timeout: 10000 });
+    t("mobile mestre: HP bar no token manual", true);
+  } catch {
+    t("mobile mestre: HP bar no token manual", false);
+  }
+  t("mobile mestre: sem overflow horizontal", await semOverflowX(pgMobM));
+  await pgMobM.screenshot({ path: join(SHOTS, "vida-05-mobile-mestre-manual.png") });
+  await ctxMobM.close();
 
   t("sem erros de console/pageerror", errosConsole.length === 0, errosConsole.slice(0, 5).join(" | "));
 } catch (e) {

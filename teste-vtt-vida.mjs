@@ -336,6 +336,117 @@ try {
     await Promise.all(loops);
     t("30s K=4 sem RATE_LIMITED", limitados === 0, `limitados=${limitados} oks=${oks} outros=${outros}`);
   }
+
+  // ---------- I. HP manual em token SEM ficha (F14/#127) ----------
+  sec("I. HP manual — token sem personagemId");
+  {
+    const criarManual = (extra) => emitirCb(sM, "mesa:vtt:token", {
+      sessionId: sid, acao: "criar",
+      token: { id: extra.id, nome: extra.id, cor: "#445566", x: 0.3, y: 0.3, ...extra },
+    });
+    const syncM = () => sincronizar(sM);
+
+    // criação com HP manual válido (fração inclusa)
+    const rCriar = await criarManual({ id: "tkman-001", hpManual: { atual: 30, maximo: 50.5 } });
+    t("mestre cria token manual com HP", rCriar?.ok === true, JSON.stringify(rCriar).slice(0, 160));
+    let vM = await syncM();
+    const tm = tok(rCriar?.vtt ?? vM?.vtt, "tkman-001");
+    t("mestre recebe vida.hp manual 30/50.5", tm?.vida?.hp?.atual === 30 && tm?.vida?.hp?.maximo === 50.5, JSON.stringify(tm?.vida));
+    t("hpManual NUNCA sai bruto no payload", tm && !("hpManual" in tm), JSON.stringify(Object.keys(tm ?? {})));
+
+    // demais destinatários que veem o token recebem a mesma vida.hp
+    const [rSA, rSB, rSE] = await Promise.all([sincronizar(sA), sincronizar(sB), sincronizar(sE)]);
+    t("jogador vê vida.hp do token manual visível", tok(rSA?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    t("outro jogador vê vida.hp do token manual", tok(rSB?.vtt, "tkman-001")?.vida?.hp?.atual === 30);
+    t("espectador vê vida.hp do token manual visível", tok(rSE?.vtt, "tkman-001")?.vida?.hp?.maximo === 50.5);
+    t("nenhum destinatário recebe hpManual bruto",
+      [rSA, rSB, rSE, rCriar].every((r) => { const tk = tok(r?.vtt, "tkman-001"); return tk && !("hpManual" in tk); }));
+
+    // edição e limpeza pelo mestre
+    const rUpd = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 12.5, maximo: 40 } } });
+    t("mestre edita HP manual", rUpd?.ok === true);
+    t("vida.hp reflete edição 12.5/40", tok(rUpd?.vtt, "tkman-001")?.vida?.hp?.atual === 12.5 && tok(rUpd?.vtt, "tkman-001")?.vida?.hp?.maximo === 40);
+    const rClear = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: null } });
+    t("mestre limpa HP manual", rClear?.ok === true && tok(rClear?.vtt, "tkman-001")?.vida == null, JSON.stringify(tok(rClear?.vtt, "tkman-001")?.vida));
+
+    // token do jogador sem ficha: mestre define HP; jogador NÃO consegue
+    const rTkUser = await criarManual({ id: "tkman-002", userId: ids.j1 });
+    t("token manual do j1 criado", rTkUser?.ok === true);
+    const rHpM2 = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 10, maximo: 20 } } });
+    t("mestre define HP manual no token do jogador", rHpM2?.ok === true);
+    const rHpJ1 = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 99, maximo: 99 } } });
+    const vDepoisJ1 = await sincronizar(sA);
+    t("jogador não define HP manual (permanece 10/20 do mestre)",
+      tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.atual === 10 && tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.maximo === 20,
+      JSON.stringify(tok(vDepoisJ1?.vtt, "tkman-002")?.vida));
+    void rHpJ1;
+
+    // espectador read-only
+    const rHpE = await emitirCb(sE, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 1, maximo: 2 } } });
+    t("espectador não altera HP manual", rHpE?.ok === false, JSON.stringify(rHpE).slice(0, 120));
+
+    // HP inválido — fail-closed, sem persistência
+    for (const [nome, hp] of [
+      ["máximo zero", { atual: 0, maximo: 0 }],
+      ["atual > máximo", { atual: 60, maximo: 50 }],
+      ["atual negativo", { atual: -1, maximo: 50 }],
+      ["NaN", { atual: NaN, maximo: 50 }],
+      ["texto", { atual: "30", maximo: 50 }],
+    ]) {
+      const r = await criarManual({ id: `tkbad-${nome.length}`, hpManual: hp });
+      t(`HP inválido rejeitado: ${nome}`, r?.ok === false, JSON.stringify(r).slice(0, 100));
+    }
+
+    // vincular ficha limpa hpManual na mesma mutação
+    await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 20, maximo: 30 } } });
+    const rVinc = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", personagemId: PJ1 } });
+    t("vincular ficha aceito", rVinc?.ok === true, JSON.stringify(rVinc).slice(0, 140));
+    // PJ1 tem vida de ficha (110/150 com cfg — seção C já debitou 10) — não o manual 20/30
+    const vAposVinc = tok(rVinc?.vtt, "tkman-001")?.vida;
+    t("vida passa a vir da ficha (não do manual)", vAposVinc?.hp?.atual === 110, JSON.stringify(vAposVinc));
+
+    // criar já vinculado + hpManual → rejeitado
+    const rAmbos = await criarManual({ id: "tkamb-01", personagemId: PJ2, hpManual: { atual: 1, maximo: 2 } });
+    t("token com ficha + hpManual rejeitado", rAmbos?.ok === false, JSON.stringify(rAmbos).slice(0, 120));
+
+    // persistência: hpManual fica em vtt_state; vida NUNCA é persistida
+    {
+      const db = abrirDb(BANCO);
+      const row = db.prepare("select vtt_state from sessions where id=?").get(sid);
+      db.close();
+      const bruto = JSON.parse(row.vtt_state);
+      const tks = bruto.tokens ?? [];
+      const tk002 = tks.find((x) => x.id === "tkman-002");
+      t("vtt_state persiste hpManual do token sem ficha", tk002?.hpManual?.atual === 10 && tk002?.hpManual?.maximo === 20, JSON.stringify(tk002?.hpManual));
+      const tk001 = tks.find((x) => x.id === "tkman-001");
+      t("hpManual removido do token que ganhou ficha", !("hpManual" in (tk001 ?? {})));
+      t("nenhum token persistido tem campo vida", tks.every((x) => !("vida" in x)));
+    }
+
+    // reconexão: novo socket recebe vida manual/hp correto
+    const sM2 = conectar(ids.cookieMestre);
+    await pronto(sM2);
+    const rEntrar2 = await emitirCb(sM2, "mesa:entrar", { sessionId: sid });
+    t("reconexão do mestre ok", rEntrar2?.ok === true);
+    const vRecon = rEntrar2?.sessao?.vttState ? JSON.parse(typeof rEntrar2.sessao.vttState === "string" ? rEntrar2.sessao.vttState : JSON.stringify(rEntrar2.sessao.vttState)) : null;
+    t("reconexão entrega vida da ficha no token revinculado", tok(vRecon, "tkman-001")?.vida?.hp?.atual === 110, JSON.stringify(tok(vRecon, "tkman-001")?.vida));
+
+    // HTTP: GET sessão entrega vttState filtrado com vida, sem hpManual
+    const det = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid}`, { cookie: c.jogadores.jogador1.cookie });
+    const vttHttp = det.json?.sessao?.vttState;
+    const parsed = typeof vttHttp === "string" ? JSON.parse(vttHttp) : vttHttp;
+    const tkHttp = tok(parsed, "tkman-001");
+    t("HTTP entrega vida filtrada sem hpManual", !!tkHttp && !("hpManual" in tkHttp) && tkHttp.vida?.hp?.atual === 110, JSON.stringify(tkHttp?.vida));
+
+    // segunda sessão sem o token: nada vaza
+    const sess3 = await req(BASE, "POST", `/campaigns/${ids.camp}/sessoes`, { cookie: ids.cookieMestre, body: { name: "Mesa Sem Token" } });
+    const sid3 = sess3.json?.sessao?.id ?? sess3.json?.id;
+    const sA3 = conectar(c.jogadores.jogador1.cookie);
+    await pronto(sA3);
+    await emitirCb(sA3, "mesa:entrar", { sessionId: sid3 });
+    const rSync3 = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    t("sessão sem o token não recebe vida alguma dele", !tok(rSync3?.vtt, "tkman-001"), JSON.stringify((rSync3?.vtt?.tokens ?? []).length));
+  }
 } catch (e) {
   fail++;
   console.log("  FALHOU exceção:", String(e?.stack ?? e).slice(0, 800));

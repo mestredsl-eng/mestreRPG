@@ -17,6 +17,10 @@ export interface TokenVtt {
   // Vida (HP/condição) derivada por destinatário — NUNCA persistida em
   // vtt_state; anexada somente nas cópias filtradas entregues ao cliente.
   vida?: import("./vtt-vida.js").VidaToken | null;
+  // HP manual de token SEM ficha vinculada (F14/#127): único dado de vida
+  // persistido em vtt_state. Interno — nunca entregue bruto ao cliente;
+  // projetado como vida.hp somente após o filtro canônico de visibilidade.
+  hpManual?: { atual: number; maximo: number } | null;
 }
 export interface MapaVtt { fileId: string; nome: string; largura?: number; altura?: number }
 export interface PontoNevoa { x: number; y: number }
@@ -111,6 +115,21 @@ export function tracoRevelarValido(raw: unknown): { ok: true; traco: Omit<TracoN
   return { ok: true, traco: { raioX, raioY, pontos: limpos } };
 }
 
+/**
+ * HP manual de token sem ficha (F14): valida {atual,maximo} — frações
+ * aceitas; máximo finito > 0; atual finito entre 0 e máximo.
+ * Retorna o valor sanitizado ou null quando ausente/inválido.
+ */
+export function hpManualValido(raw: unknown): { atual: number; maximo: number } | null {
+  const o = raw as { atual?: unknown; maximo?: unknown } | null;
+  if (!o || typeof o !== "object") return null;
+  const { atual, maximo } = o;
+  if (typeof atual !== "number" || !Number.isFinite(atual) || atual < 0) return null;
+  if (typeof maximo !== "number" || !Number.isFinite(maximo) || maximo <= 0) return null;
+  if (atual > maximo) return null;
+  return { atual, maximo };
+}
+
 /** Leitura defensiva do JSON persistido: nunca lança; inválido → vazio + log. */
 export function vttDeTexto(raw: unknown, sessionId: string): VttState {
   if (raw == null || raw === "") return vttVazio();
@@ -134,13 +153,20 @@ export function vttDeTexto(raw: unknown, sessionId: string): VttState {
     && typeof (tk as TokenVtt).cor === "string"
     && ((tk as TokenVtt).oculto === undefined || typeof (tk as TokenVtt).oculto === "boolean"))
     // reconstrução campo a campo: `vida` e quaisquer campos extras nunca
-    // sobrevivem à leitura do estado persistido.
-    .map((tk) => ({
-      id: tk.id, nome: tk.nome, cor: tk.cor, x: tk.x, y: tk.y, ativo: tk.ativo !== false,
-      personagemId: typeof tk.personagemId === "string" ? tk.personagemId : null,
-      userId: typeof tk.userId === "string" ? tk.userId : null,
-      oculto: tk.oculto === true ? true : undefined,
-    }));
+    // sobrevivem à leitura do estado persistido. `hpManual` é o único dado
+    // de vida persistido — validado e descartado quando o token tem ficha
+    // (a ficha é a única autoridade de vida nesse caso).
+    .map((tk) => {
+      const personagemId = typeof tk.personagemId === "string" ? tk.personagemId : null;
+      const hm = hpManualValido(tk.hpManual);
+      return {
+        id: tk.id, nome: tk.nome, cor: tk.cor, x: tk.x, y: tk.y, ativo: tk.ativo !== false,
+        personagemId,
+        userId: typeof tk.userId === "string" ? tk.userId : null,
+        oculto: tk.oculto === true ? true : undefined,
+        ...(personagemId ? {} : hm ? { hpManual: hm } : {}),
+      };
+    });
   const mp = o?.mapa as { fileId?: unknown; nome?: unknown; largura?: unknown; altura?: unknown } | null | undefined;
   const mapa = mp && typeof mp === "object" && typeof mp.fileId === "string"
     ? {
