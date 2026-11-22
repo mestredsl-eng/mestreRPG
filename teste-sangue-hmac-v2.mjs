@@ -89,6 +89,35 @@ try {
   check(r3.__xp?.saldo === 50 && r3.__xp.historico?.length === 1, "p3: XP v1 preservado");
   check(!r3.__xp || !("sig" in r3.__xp), "p3: __xp.sig removida antes de persistir");
 
+  // ---------- campanha de origem: vínculos cruzados ----------
+  // Cada coleção precisa continuar vinculada à campanha do envelope.
+  // A rota deve rejeitar antes de snapshot/restauração e preservar os dados.
+  const pacRuleSetCampanha = pacoteClone(pacote);
+  const ruleSetCampanha = pacRuleSetCampanha.estado.ruleSets.find((r) => r.isActive);
+  check(!!ruleSetCampanha, "fixture: ruleset ativo presente para testar vínculo de campanha");
+  if (ruleSetCampanha) {
+    ruleSetCampanha.campaignId = randomUUID();
+    const impRuleSetCampanha = await importar(pacRuleSetCampanha);
+    check(impRuleSetCampanha.status === 400 && impRuleSetCampanha.json?.erro === "O pacote não pertence a esta campanha",
+      "ruleset de outra campanha bloqueado pela guarda de coerência antes do snapshot");
+    const preservado = dadosPersonagem(pAmbos);
+    check(preservado.__sangue?.saldo === 3 && preservado.__xp?.saldo === 50,
+      "ruleset incoerente: campanha permanece intacta");
+  }
+
+  const pacTemplateCampanha = pacoteClone(pacote);
+  const templateReal = pacTemplateCampanha.estado.sheetTemplates[0];
+  check(!!templateReal, "fixture: template presente para testar vínculo de campanha");
+  if (templateReal) {
+    templateReal.campaignId = randomUUID();
+    const impTemplateCampanha = await importar(pacTemplateCampanha);
+    check(impTemplateCampanha.status === 400 && impTemplateCampanha.json?.erro === "O pacote não pertence a esta campanha",
+      "template de outra campanha bloqueado pela guarda de coerência antes do snapshot");
+    const preservado = dadosPersonagem(pAmbos);
+    check(preservado.__sangue?.saldo === 3 && preservado.__xp?.saldo === 50,
+      "template incoerente: campanha permanece intacta");
+  }
+
   // ---------- adulteração: só Sangue ----------
   const pacSangue = pacoteClone(pacote);
   personagemDoPacote(pacSangue, pAmbos).data.__sangue.saldo = 99;
