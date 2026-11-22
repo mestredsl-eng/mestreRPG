@@ -231,6 +231,9 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+
+      - name: E2E obrigatório — concessão de XP em lote (#185)
+        run: node teste-xp-lote-ui.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
