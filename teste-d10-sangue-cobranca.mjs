@@ -274,6 +274,7 @@ try {
     db.exec(`CREATE TRIGGER trg_fail_sangue_test BEFORE UPDATE ON tests
       WHEN NEW.status='rolado' BEGIN SELECT RAISE(ABORT,'falha simulada tx'); END`);
     db.close();
+    await sono(700); // rate limit do socket — rajada das seções anteriores
     const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     const dbq = abrirDb(BANCO);
     dbq.exec("DROP TRIGGER IF EXISTS trg_fail_sangue_test");
@@ -291,6 +292,7 @@ try {
     const tid = novoTeste(c, { sessionId: SID, characterId: charNormal, userId: c.jogadores.jogador1.id,
       skillRef: { campoId: "for", rotulo: "FOR", tipo: "inteiro", semantico: "atributo", elementoKey: "poder_fogo" } });
     const dadosAntes = JSON.stringify(dadosChar(charNormal));
+    await sono(700); // rate limit do socket — seção 9 acabou de rolar
     const r = await emitir(sockJ, "mesa:teste:rolar", { testId: tid, requestId: crypto.randomUUID() });
     // Campo conhecido NÃO-Poder é autoritativo: elementoKey homônimo a
     // um Poder do ruleset NÃO promove o teste a cobrança de Sangue —
