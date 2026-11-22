@@ -282,7 +282,9 @@ try {
     }
   }
 } finally {
-  if (proc) encerrarServidor(proc);
+  // encerrarServidor é assíncrono: sem await o limparDir corre antes da
+  // saída real do servidor/SQLite → EPERM/artefato residual no Windows.
+  if (proc) await encerrarServidor(proc);
   limparDir(dir);
 }
 
