@@ -253,6 +253,7 @@ jobs:
             teste-sangue-config.mjs \
             teste-d10-transacao.mjs \
             teste-d10-sangue-cobranca.mjs \
+            teste-d10-sangue-nao-poder-isolado.mjs \
             teste-sangue-xp-capacidade.mjs \
             teste-sangue-read-api.mjs \
             teste-sangue-runtime.mjs \
