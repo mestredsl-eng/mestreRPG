@@ -111,7 +111,7 @@ try {
   // autorização em um escopo de campanha não atravessa para a campanha-alvo.
   const outra = await req(base, "POST", "/campaigns", {
     cookie: cookieGm,
-    body: { nome: "Campanha do GM — outra" },
+    body: { name: "Campanha do GM — outra" },
   });
   const outraCampId = outra.json?.campanha?.id ?? outra.json?.campaign?.id;
   t("GM cria outra campanha e recebe membership mestre",
