@@ -190,8 +190,36 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
     res.status(404).json({ erro: "Elemento não encontrado" });
     return;
   }
-  await db.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id));
-  await audit(req, "regra.elemento.removido", { elementId: el.id, kind: el.kind, key: el.key });
+  // A configuração de custo pertence ao mesmo ruleset e usa a key do
+  // Poder. Remover a definição sem sua entrada deixa um vínculo órfão
+  // que bloqueia qualquer PUT posterior de regras. Excluir ambos na
+  // mesma transação; custos de outros Poderes permanecem intactos.
+  const sangueAtual = regras.config.sangue;
+  const poderesAtuais = { ...(sangueAtual?.poderes ?? {}) };
+  const tinhaCustoPoder =
+    el.kind === "poder" && Object.prototype.hasOwnProperty.call(poderesAtuais, el.key);
+  if (tinhaCustoPoder) delete poderesAtuais[el.key];
+  const configAtualizada = tinhaCustoPoder
+    ? {
+        ...regras.config,
+        sangue: { ...sangueAtual!, poderes: poderesAtuais },
+      }
+    : null;
+  db.transaction((tx) => {
+    tx.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id)).run();
+    if (configAtualizada) {
+      tx.update(ruleSets)
+        .set({ config: configAtualizada, updatedAt: new Date() })
+        .where(eq(ruleSets.id, el.ruleSetId))
+        .run();
+    }
+  });
+  await audit(req, "regra.elemento.removido", {
+    elementId: el.id,
+    kind: el.kind,
+    key: el.key,
+    custoSangueRemovido: tinhaCustoPoder,
+  });
   emitirCampanha(req.params.campaignId, "regras:atualizadas", { elementId: el.id });
   res.json({ ok: true });
 });

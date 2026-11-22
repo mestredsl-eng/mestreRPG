@@ -158,6 +158,39 @@ try {
     t("rótulo não mapeado não ganha semântica", cfg?.sangue?.naturezas?.["Sem-Mapeamento"] === undefined);
   }
 
+  sec("7A. Excluir Poder remove seu custo de Sangue sem afetar os demais");
+  {
+    const p1 = await req(BASE, "POST", `/campaigns/${c.campId}/regras/elementos`, {
+      cookie: c.cookieMestre,
+      body: { kind: "poder", key: "poder_teste_remover", name: "Poder Teste Remover", definition: {} },
+    });
+    const p2 = await req(BASE, "POST", `/campaigns/${c.campId}/regras/elementos`, {
+      cookie: c.cookieMestre,
+      body: { kind: "poder", key: "poder_teste_preservar", name: "Poder Teste Preservar", definition: {} },
+    });
+    t("dois Poderes de teste criados", p1.status === 201 && p2.status === 201);
+    const cfgAntes = await putCfg(c.campId, c.cookieMestre, {
+      sangue: {
+        poderes: {
+          poder_teste_remover: { custo: 2 },
+          poder_teste_preservar: { custo: 3 },
+        },
+      },
+    });
+    t("custos dos dois Poderes aceitos", cfgAntes.status === 200, `status=${cfgAntes.status}`);
+    const removido = await req(BASE, "DELETE", `/campaigns/${c.campId}/regras/elementos/${p1.json.id}`, {
+      cookie: c.cookieMestre,
+    });
+    t("Poder removido", removido.status === 200, `status=${removido.status}`);
+    const cfgDepois = await getCfg(c.campId, c.cookieMestre);
+    t("custo órfão removido e custo do outro Poder preservado",
+      cfgDepois?.sangue?.poderes?.poder_teste_remover === undefined &&
+        cfgDepois?.sangue?.poderes?.poder_teste_preservar?.custo === 3,
+      JSON.stringify(cfgDepois?.sangue?.poderes));
+    const putPosterior = await putCfg(c.campId, c.cookieMestre, { mesa: { acaoForaDeTurno: false } });
+    t("PUT posterior não fica bloqueado por custo órfão", putPosterior.status === 200, `status=${putPosterior.status}`);
+  }
+
   sec("8. PUT parcial preserva campos não enviados");
   {
     const antes = await getCfg(c.campId, c.cookieMestre);
