@@ -164,6 +164,7 @@ jobs:
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
             teste-importacao-integridade.mjs \
+            teste-xp-ancora-integridade-pilha.mjs \
             teste-regras.mjs \
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
