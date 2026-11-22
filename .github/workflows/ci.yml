@@ -9,6 +9,7 @@ on:
       - feat/mesa-virtual-nevoa-frontend
       - feat/convites-internos-guilda-api
       - feat/guilda-responsavel-backend
+      - feat/issue-185-xp-historico-ui
     types:
       - opened
       - synchronize
@@ -294,3 +295,5 @@ jobs:
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
           done
+      - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
+        run: node teste-xp-historico-ui.mjs
