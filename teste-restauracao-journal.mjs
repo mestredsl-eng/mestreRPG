@@ -123,6 +123,113 @@ function lerJournal(raiz) {
   try { return JSON.parse(readFileSync(journalPath(raiz), "utf8")); } catch { return null; }
 }
 
+// ---------- matriz de preservação (W14/W16) ----------
+// Sentinelas explícitas em arquivos (MESTRE_ARQUIVOS) e configuração.
+// Sidecars REAIS: as fixtures de recusa usam journal_mode=WAL (como a
+// produção, db/index.ts) e a conexão de teste permanece ABERTA durante
+// rodar() — assim -wal/-shm são sidecars verdadeiros e não são
+// removidos pelo checkpoint de último-connection-close. Sem conexão
+// aberta, o SQLite faria checkpoint e apagaria os sidecars legitimamente.
+function plantarSentinelasVivas(raiz) {
+  writeFileSync(join(raiz, "arquivos", "campanhas", "sentinela-viva.txt"), "arquivo-vivo-intocado");
+  writeFileSync(join(raiz, "configuracao", "servidor.json"), "{\"porta\":4999,\"sentinela\":\"cfg-viva\"}");
+}
+/** Abre o banco vivo em WAL e devolve a conexão SEM fechar. */
+function abrirDbVivoWal(raiz) {
+  const db = abrirDb(dbVivo(raiz));
+  db.pragma("journal_mode = WAL");
+  return db;
+}
+/** Dump lógico: todas as tabelas/linhas, EXCETO a flag restauracao_pendente
+ *  (cuja remoção é comportamento intencional do restaurador ao recusar). */
+function dumpLogicoBanco(raiz) {
+  const db = abrirDb(dbVivo(raiz));
+  try {
+    const tabs = db.prepare(
+      "select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name",
+    ).all().map((r) => r.name);
+    const out = {};
+    for (const tb of tabs) {
+      out[tb] = tb === "server_settings"
+        ? db.prepare("select key, value from server_settings where key != 'restauracao_pendente' order by key").all()
+        : db.prepare(`select * from "${tb}" order by rowid`).all();
+    }
+    return out;
+  } finally { db.close(); }
+}
+function snapshotPreservacao(raiz) {
+  const snap = { bancoBytes: null, bancoLogico: null, sidecars: {}, arquivos: {}, configuracao: null };
+  if (existsSync(dbVivo(raiz))) snap.bancoBytes = sha256(dbVivo(raiz));
+  try { snap.bancoLogico = dumpLogicoBanco(raiz); } catch { snap.bancoLogico = "ILEGIVEL"; }
+  for (const suf of ["-wal", "-shm"]) {
+    const p = dbVivo(raiz) + suf;
+    snap.sidecars[suf] = existsSync(p) ? { existe: true, tamanho: statSync(p).size, sha: sha256(p) } : { existe: false };
+  }
+  const arqDir = join(raiz, "arquivos", "campanhas");
+  if (existsSync(arqDir)) {
+    for (const f of readdirSync(arqDir).sort()) {
+      const p = join(arqDir, f);
+      if (statSync(p).isFile()) snap.arquivos[f] = sha256(p);
+    }
+  }
+  const cfg = join(raiz, "configuracao", "servidor.json");
+  if (existsSync(cfg)) snap.configuracao = sha256(cfg);
+  return snap;
+}
+/** Compara o snapshot pós-falha; cada assert nomeia o componente.
+ *  `walBytes`: true só quando nenhuma escrita é esperada (W14) — no W16 a
+ *  limpeza intencional da flag grava frames legítimos no -wal. */
+function assertPreservacao(rotulo, raiz, antes, { walBytes = false } = {}) {
+  const depois = snapshotPreservacao(raiz);
+  t(`${rotulo}: banco (bytes) inalterado`, depois.bancoBytes === antes.bancoBytes && antes.bancoBytes !== null,
+    `antes=${antes.bancoBytes} depois=${depois.bancoBytes}`);
+  t(`${rotulo}: banco lógico preservado (tabelas/dados; flag à parte)`,
+    JSON.stringify(depois.bancoLogico) === JSON.stringify(antes.bancoLogico),
+    `antes=${JSON.stringify(antes.bancoLogico)?.slice(0, 200)} depois=${JSON.stringify(depois.bancoLogico)?.slice(0, 200)}`);
+  for (const suf of ["-wal", "-shm"]) {
+    const a = antes.sidecars[suf], d = depois.sidecars[suf];
+    if (suf === "-wal" && walBytes) {
+      t(`${rotulo}: sidecar -wal byte-idêntico`, d.existe && a.existe && d.sha === a.sha,
+        `antes=${a.sha} depois=${d.sha}`);
+    } else {
+      // -shm carrega locks/read-marks voláteis e -wal pode crescer com a
+      // escrita legítima da flag — o contrato é: sidecar REAL do banco vivo
+      // continua existindo (não removido/substituído pelo do backup).
+      t(`${rotulo}: sidecar ${suf} do banco vivo preservado`, d.existe === true,
+        `existe=${d.existe} tamanho=${d.tamanho ?? "-"}`);
+    }
+  }
+  const nomesAntes = Object.keys(antes.arquivos).sort();
+  const nomesDepois = Object.keys(depois.arquivos).sort();
+  t(`${rotulo}: conjunto de arquivos idêntico`, JSON.stringify(nomesAntes) === JSON.stringify(nomesDepois),
+    `antes=${nomesAntes} depois=${nomesDepois}`);
+  for (const f of nomesAntes) {
+    t(`${rotulo}: arquivo ${f} inalterado`, depois.arquivos[f] === antes.arquivos[f]);
+  }
+  t(`${rotulo}: configuração inalterada`, depois.configuracao === antes.configuracao && antes.configuracao !== null,
+    `antes=${antes.configuracao} depois=${depois.configuracao}`);
+}
+/** Snapshot do backup: prova "não consumido" = mesmos arquivos/bytes. */
+function snapshotBackup(bk) {
+  const snap = {};
+  const walk = (dir, prefix) => {
+    for (const f of readdirSync(dir).sort()) {
+      const p = join(dir, f);
+      if (statSync(p).isDirectory()) walk(p, prefix + f + "/");
+      else snap[prefix + f] = sha256(p);
+    }
+  };
+  walk(bk, "");
+  return snap;
+}
+function assertBackupIntacto(rotulo, bk, antes) {
+  const depois = snapshotBackup(bk);
+  t(`${rotulo}: backup íntegro e não consumido`,
+    JSON.stringify(Object.keys(antes).sort()) === JSON.stringify(Object.keys(depois).sort()) &&
+    Object.keys(antes).every((k) => depois[k] === antes[k]),
+    `arquivos antes=${Object.keys(antes).length} depois=${Object.keys(depois).length}`);
+}
+
 // ================= W14 — fail-closed =================
 sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 
@@ -184,22 +291,28 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 }
 {
   const raiz = novoRaiz();
-  // W14 — erro de CONSULTA após a detecção do schema: a tabela
-  // server_settings EXISTE (passa na checagem de sqlite_master), mas o
-  // SELECT da flag falha porque as colunas key/value não existem.
-  // Não é fixture vacuosa: o fluxo de fato chega à consulta e ela quebra.
-  const db = abrirDb(dbVivo(raiz));
-  db.exec("create table server_settings (id integer)");
-  db.exec("create table marcador (value text)");
-  db.prepare("insert into marcador values ('intocado')").run();
-  db.close();
-  const antes = sha256(dbVivo(raiz));
-  const r = rodar(raiz);
-  t("SELECT da flag falha após schema ok → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
-  t("motivo: falha ao ler flag de restauração", /falha ao ler flag/i.test(r.saida), r.saida.slice(0, 250));
-  t("banco não foi alterado pela falha", sha256(dbVivo(raiz)) === antes);
-  t("nenhum journal/estado externo criado", !existsSync(journalPath(raiz)));
-  rmSync(raiz, { recursive: true, force: true });
+  let dbVivoAberto = null;
+  try {
+    // W14 — erro de CONSULTA após a detecção do schema: a tabela
+    // server_settings EXISTE (passa na checagem de sqlite_master), mas o
+    // SELECT da flag falha porque as colunas key/value não existem.
+    // Não é fixture vacuosa: o fluxo de fato chega à consulta e ela quebra.
+    // WAL + conexão aberta: sidecars -wal/-shm são reais e persistem.
+    dbVivoAberto = abrirDbVivoWal(raiz);
+    dbVivoAberto.exec("create table server_settings (id integer)");
+    dbVivoAberto.exec("create table marcador (value text)");
+    dbVivoAberto.prepare("insert into marcador values ('intocado')").run();
+    plantarSentinelasVivas(raiz);
+    const antes = snapshotPreservacao(raiz);
+    const r = rodar(raiz);
+    t("SELECT da flag falha após schema ok → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+    t("motivo: falha ao ler flag de restauração", /falha ao ler flag/i.test(r.saida), r.saida.slice(0, 250));
+    assertPreservacao("W14-select", raiz, antes, { walBytes: true });
+    t("W14-select: nenhum journal/estado externo criado", !existsSync(journalPath(raiz)));
+  } finally {
+    try { dbVivoAberto?.close(); } catch { /* ignora */ }
+    rmSync(raiz, { recursive: true, force: true });
+  }
 }
 {
   const raiz = novoRaiz();
@@ -497,49 +610,98 @@ sec("T1b — autorização de bootstrap: consumo, replay e inválidas");
 // O validador (backup-contrato.test.ts) já prova ok:false; aqui provamos o
 // efeito no fluxo real: o restaurador RECUSA antes de tocar no estado vivo.
 sec("W16 — backup sem manifesto/inválido é recusado antes de tocar o vivo");
-{
-  const raiz = novoRaiz();
-  const bk = criarBackupDir(raiz, "sem manifesto");
-  rmSync(join(bk, "manifesto.json"));
-  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
-  const dv = abrirDb(dbVivo(raiz));
-  dv.exec("create table marcador (value text)");
-  dv.prepare("insert into marcador values ('vivo-intocado')").run();
-  dv.close();
-  const cfgPath = join(raiz, "configuracao", "servidor.json");
-  writeFileSync(cfgPath, "{\"porta\":4999}");
-  const cfgAntes = readFileSync(cfgPath, "utf8");
-  const r = rodar(raiz);
-  t("backup sem manifesto → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
-  t("motivo: backup inválido/manifesto", /inválido|manifesto/i.test(r.saida), r.saida.slice(0, 250));
-  t("banco vivo preserva marcador", valorBanco(raiz) === "vivo-intocado", `valor=${valorBanco(raiz)}`);
-  t("configuração viva inalterada", readFileSync(join(raiz, "configuracao", "servidor.json"), "utf8") === cfgAntes);
-  t("nenhuma fase de substituição gravada", !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
-  t("backup permanece intacto (não foi consumido)", existsSync(join(bk, "mestre-rpg.db")));
-  rmSync(raiz, { recursive: true, force: true });
+/** Banco vivo W16: WAL + conexão aberta (sidecars reais), schema com
+ *  server_settings/outra/marcador e a flag apontando para `bk`. */
+function prepararVivoW16(raiz, bk) {
+  const db = abrirDbVivoWal(raiz);
+  db.exec("create table server_settings (key text primary key, value text, updated_at integer)");
+  db.exec("create table outra (id integer)");
+  db.exec("create table marcador (value text)");
+  db.prepare("insert into marcador values ('vivo-intocado')").run();
+  db.prepare("insert into server_settings (key,value) values ('restauracao_pendente',?)")
+    .run(JSON.stringify({ filePath: bk }));
+  return db;
+}
+function assertFlagRemovidaIntencionalmente(rotulo, raiz) {
+  // Comportamento documentado do restaurador: backup inválido → a flag é
+  // limpa (o pedido não pode ficar pendente) e o processo sai com erro.
+  const db = abrirDb(dbVivo(raiz));
+  try {
+    const resto = db.prepare("select value from server_settings where key='restauracao_pendente'").get();
+    t(`${rotulo}: flag restauracao_pendente removida (limpeza intencional)`, resto === undefined, `resto=${JSON.stringify(resto)}`);
+  } finally { db.close(); }
 }
 {
   const raiz = novoRaiz();
-  const bk = criarBackupDir(raiz, "manv1");
-  // manifesto íntegro em estrutura mas versão incompatível (v1)
-  const man = JSON.parse(readFileSync(join(bk, "manifesto.json"), "utf8"));
-  man.manifestoVersao = 1;
-  writeFileSync(join(bk, "manifesto.json"), JSON.stringify(man));
-  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
-  const r = rodar(raiz);
-  t("manifestoVersao=1 → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
-  t("motivo: versão incompatível", /manifestoVersao|inválido/i.test(r.saida), r.saida.slice(0, 250));
-  rmSync(raiz, { recursive: true, force: true });
+  let dbVivoAberto = null;
+  try {
+    const bk = criarBackupDir(raiz, "sem manifesto");
+    rmSync(join(bk, "manifesto.json"));
+    dbVivoAberto = prepararVivoW16(raiz, bk);
+    plantarSentinelasVivas(raiz);
+    const antes = snapshotPreservacao(raiz);
+    const bkAntes = snapshotBackup(bk);
+    const r = rodar(raiz);
+    t("backup sem manifesto → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
+    t("motivo: backup inválido/manifesto", /inválido|manifesto/i.test(r.saida), r.saida.slice(0, 250));
+    assertPreservacao("W16-sem-manifesto", raiz, antes);
+    assertFlagRemovidaIntencionalmente("W16-sem-manifesto", raiz);
+    t("W16-sem-manifesto: nenhuma fase de substituição gravada",
+      !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
+    assertBackupIntacto("W16-sem-manifesto", bk, bkAntes);
+  } finally {
+    try { dbVivoAberto?.close(); } catch { /* ignora */ }
+    rmSync(raiz, { recursive: true, force: true });
+  }
 }
 {
   const raiz = novoRaiz();
-  const bk = criarBackupDir(raiz, "manjson");
-  writeFileSync(join(bk, "manifesto.json"), "{ json quebrado");
-  criarDbComSettings(raiz, { flag: JSON.stringify({ filePath: bk }) });
-  const r = rodar(raiz);
-  t("manifesto corrompido → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
-  t("motivo: manifesto ilegível/inválido", /manifesto|inválido/i.test(r.saida), r.saida.slice(0, 250));
-  rmSync(raiz, { recursive: true, force: true });
+  let dbVivoAberto = null;
+  try {
+    const bk = criarBackupDir(raiz, "manv1");
+    // manifesto íntegro em estrutura mas versão incompatível (v1)
+    const man = JSON.parse(readFileSync(join(bk, "manifesto.json"), "utf8"));
+    man.manifestoVersao = 1;
+    writeFileSync(join(bk, "manifesto.json"), JSON.stringify(man));
+    dbVivoAberto = prepararVivoW16(raiz, bk);
+    plantarSentinelasVivas(raiz);
+    const antes = snapshotPreservacao(raiz);
+    const bkAntes = snapshotBackup(bk);
+    const r = rodar(raiz);
+    t("manifestoVersao=1 → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+    t("motivo: versão incompatível", /manifestoVersao|inválido/i.test(r.saida), r.saida.slice(0, 250));
+    assertPreservacao("W16-manv1", raiz, antes);
+    assertFlagRemovidaIntencionalmente("W16-manv1", raiz);
+    t("W16-manv1: nenhuma fase de substituição gravada",
+      !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
+    assertBackupIntacto("W16-manv1", bk, bkAntes);
+  } finally {
+    try { dbVivoAberto?.close(); } catch { /* ignora */ }
+    rmSync(raiz, { recursive: true, force: true });
+  }
+}
+{
+  const raiz = novoRaiz();
+  let dbVivoAberto = null;
+  try {
+    const bk = criarBackupDir(raiz, "manjson");
+    writeFileSync(join(bk, "manifesto.json"), "{ json quebrado");
+    dbVivoAberto = prepararVivoW16(raiz, bk);
+    plantarSentinelasVivas(raiz);
+    const antes = snapshotPreservacao(raiz);
+    const bkAntes = snapshotBackup(bk);
+    const r = rodar(raiz);
+    t("manifesto corrompido → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
+    t("motivo: manifesto ilegível/inválido", /manifesto|inválido/i.test(r.saida), r.saida.slice(0, 250));
+    assertPreservacao("W16-manjson", raiz, antes);
+    assertFlagRemovidaIntencionalmente("W16-manjson", raiz);
+    t("W16-manjson: nenhuma fase de substituição gravada",
+      !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
+    assertBackupIntacto("W16-manjson", bk, bkAntes);
+  } finally {
+    try { dbVivoAberto?.close(); } catch { /* ignora */ }
+    rmSync(raiz, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${pass} ok, ${fail} falhas`);
