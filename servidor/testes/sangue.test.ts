@@ -836,6 +836,8 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
   it("preserva valores IEEE vizinhos de 1 sem snap de 15 dígitos", () => {
     assert.equal(somarDecimalSangue(1.0000000000000002, 0), 1.0000000000000002);
     assert.equal(somarDecimalSangue(0.9999999999999999, 0), 0.9999999999999999);
+    assert.equal(subtrairDecimalSangue(0.3, 0.2), 0.1);
+    assert.equal(somarDecimalSangue(-0.3, 0.2), -0.1);
   });
 
   it("detecta underflow, overflow e preserva extremos representáveis", () => {
