@@ -340,6 +340,11 @@ try {
   // ---------- I. HP manual em token SEM ficha (F14/#127) ----------
   sec("I. HP manual — token sem personagemId");
   {
+    // A seção F liga a flag para isolar névoa; força OFF novamente para
+    // que os vetores F14 comecem de forma determinística.
+    const cfgInicioManual = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("vidaCompartilhada OFF antes dos vetores HP manual", cfgInicioManual.status === 200);
     const criarManual = (extra) => emitirCb(sM, "mesa:vtt:token", {
       sessionId: sid, acao: "criar",
       token: { id: extra.id, nome: extra.id, cor: "#445566", x: 0.3, y: 0.3, ...extra },
@@ -484,6 +489,34 @@ try {
     await emitirCb(sA3, "mesa:entrar", { sessionId: sid3 });
     const rSync3 = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
     t("sessão sem o token não recebe vida alguma dele", !tok(rSync3?.vtt, "tkman-001"), JSON.stringify((rSync3?.vtt?.tokens ?? []).length));
+
+    // Exercita o ramo em que a sessão contém APENAS token manual, sem
+    // qualquer personagemId. prepararVidaVtt ainda precisa carregar regras.
+    const sM3 = conectar(ids.cookieMestre);
+    await pronto(sM3);
+    const rEntrarM3 = await emitirCb(sM3, "mesa:entrar", { sessionId: sid3 });
+    t("mestre entra na sessão manual-only", rEntrarM3?.ok === true);
+    const rManualOnly = await emitirCb(sM3, "mesa:vtt:token", {
+      sessionId: sid3, acao: "criar",
+      token: { id: "tk-manual-only", nome: "Manual Only", cor: "#445566", x: 0.4, y: 0.4,
+        userId: ids.j1, hpManual: { atual: 9, maximo: 12 } },
+    });
+    t("cria token manual-only sem ficha", rManualOnly?.ok === true);
+    const rManualOnlyOff = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    const tkManualOnlyOff = tok(rManualOnlyOff?.vtt, "tk-manual-only");
+    t("manual-only OFF: jogador vê token, mas não seu HP",
+      !!tkManualOnlyOff && tkManualOnlyOff.vida == null && !("hpManual" in tkManualOnlyOff));
+    const cfgOnlyOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
+    t("ativa compartilhamento para sessão manual-only", cfgOnlyOn.status === 200);
+    const rManualOnlyOn = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
+    const tkManualOnlyOn = tok(rManualOnlyOn?.vtt, "tk-manual-only");
+    t("manual-only ON: jogador recebe HP projetado, sem dado bruto",
+      tkManualOnlyOn?.vida?.hp?.atual === 9 && tkManualOnlyOn?.vida?.hp?.maximo === 12
+        && !("hpManual" in tkManualOnlyOn));
+    const rMasterOnlyOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
+      { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
+    t("restaura compartilhamento OFF ao final", rMasterOnlyOff.status === 200);
   }
 } catch (e) {
   fail++;
