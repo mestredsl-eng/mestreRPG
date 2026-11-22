@@ -47,6 +47,7 @@ try {
   const charLongo = novoPersonagem(membMestre, "Histórico Longo");
   // charAncora (j1): 501 eventos → ledger trunca em 500 + âncora
   const charAncora = novoPersonagem(jogadores.j1.membershipId, "Extrato Truncado");
+  const charAncoraZero = novoPersonagem(jogadores.j1.membershipId, "Extrato Truncado Zero");
 
   {
     const w = abrirDb(BANCO);
@@ -79,6 +80,20 @@ try {
       const d = JSON.parse(p.data);
       d.__xp = { ...d.__xp, historico: d.__xp.historico.slice(1), ancora: 1 };
       w.prepare("update characters set data=? where id=?").run(JSON.stringify(d), charAncora);
+    }
+    // Caso alcançável: âncora anterior 1 + evento removido -1 = saldo anterior 0.
+    // Quando a janela cheia avança, esse evento sai e o novo primeiro
+    // evento retido passa a ter âncora zero.
+    {
+      const histZero = [
+        ev("remocao", -1, "Retirada no início da janela", 0, 1),
+        ...Array.from({ length: 499 }, (_, i) =>
+          ev("concessao", 1, `Mov ${i + 2}`, i + 1, i + 2)),
+      ];
+      const pZero = w.prepare("select data from characters where id=?").get(charAncoraZero);
+      const dZero = JSON.parse(pZero.data);
+      dZero.__xp = { saldo: 499, historico: histZero, ancora: 1 };
+      w.prepare("update characters set data=? where id=?").run(JSON.stringify(dZero), charAncoraZero);
     }
     w.close();
   }
@@ -235,6 +250,26 @@ try {
     await page.waitForSelector(".extrato-xp", { timeout: 15000 });
     await page.waitForSelector("text=XP disponíveis", { timeout: 15000 });
     ok("UI. aviso ausente em histórico íntegro", (await page.locator(".extrato-xp-ancora").count()) === 0);
+    await ctx.close();
+  }
+
+  // ---------- 6c. Âncora zero após a primeira remoção da janela ----------
+  {
+    const antes = await req(BASE, "GET", `/characters/${charAncoraZero}/progressao`, { cookie: cookieMestre });
+    ok("âncora zero. fixture inicial tem ancora=1", antes.status === 200 && antes.json?.xp?.ancora === 1);
+    const remocao = await req(BASE, "POST", `/characters/${charAncoraZero}/xp`, {
+      cookie: cookieMestre,
+      body: { acao: "remover", quantidade: 1, motivo: "Avançar a janela de retenção" },
+    });
+    ok("âncora zero. POST real desloca a janela", remocao.status === 200, `status=${remocao.status}`);
+    const depois = await req(BASE, "GET", `/characters/${charAncoraZero}/progressao`, { cookie: cookieMestre });
+    ok("âncora zero. GET preserva o marcador numérico zero", depois.status === 200 && depois.json?.xp?.ancora === 0, `ancora=${depois.json?.xp?.ancora}`);
+    ok("âncora zero. histórico continua limitado a 500", depois.json?.xp?.historico?.length === 500);
+    const { ctx, page } = await novaPagina(jogadores.j1.cookie);
+    await abrirPersonagem(page, "Campanha Extrato XP", "Extrato Truncado Zero");
+    await page.waitForSelector(".extrato-xp-ancora", { timeout: 15000 });
+    const avisoZero = await page.locator(".extrato-xp-ancora").textContent();
+    ok("âncora zero. UI avisa retenção com saldo anterior 0 XP", avisoZero.includes("500") && avisoZero.includes("0 XP"), avisoZero.slice(0, 120));
     await ctx.close();
   }
 
