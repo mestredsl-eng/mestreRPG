@@ -422,4 +422,6 @@ jobs:
           done
 
       - name: E2E obrigatório — concessão de XP em lote (#185)
-        run: node teste-xp-lote-ui.mjs
+        run: |
+          echo "===== teste-xp-lote-ui.mjs ====="
+          node teste-xp-lote-ui.mjs
