@@ -13,10 +13,8 @@ import {
 
 const DIR = dirTeste("xp-historico-ui");
 const BANCO = `${DIR}/mestre-rpg-teste.db`;
-prepararBanco(BANCO);
-const porta = await portaLivre();
-const BASE = `http://127.0.0.1:${porta}`;
-const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+let proc;
+let browser;
 
 const resultados = [];
 const ok = (nome, cond, extra = "") => {
@@ -32,6 +30,12 @@ const ev = (tipo, quantidade, motivo, saldo, i, extra = {}) => ({
 });
 
 try {
+  // O helper é assíncrono: aguardar migrations antes de iniciar o servidor.
+  // Toda aquisição fica dentro do try para que o finally sempre limpe os recursos.
+  await prepararBanco(BANCO);
+  const porta = await portaLivre();
+  const BASE = `http://127.0.0.1:${porta}`;
+  proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
   await esperarSaudavel(BASE, proc);
   const c = await criarCenario(BASE, BANCO, {
     campanha: "Campanha Extrato XP",
@@ -117,7 +121,7 @@ try {
   }
   ok("setup. segunda campanha criada", !!camp2Id);
 
-  const browser = await chromium.launch();
+  browser = await chromium.launch();
   const novaPagina = async (cookiePar) => {
     const ctx = await browser.newContext();
     const token = cookiePar.includes("=") ? cookiePar.split("=").slice(1).join("=") : cookiePar;
@@ -375,11 +379,13 @@ try {
   }
 
   await browser.close();
+  browser = undefined;
 } finally {
-  await encerrarServidor(proc).catch(() => {});
+  if (browser) await browser.close().catch(() => {});
+  if (proc) await encerrarServidor(proc).catch(() => {});
+  limparDir(DIR);
 }
 
 const falhas = resultados.filter((r) => !r.ok);
 console.log(`\n${resultados.length - falhas.length} passaram, ${falhas.length} falharam`);
-limparDir(DIR);
 process.exit(falhas.length ? 1 : 0);
