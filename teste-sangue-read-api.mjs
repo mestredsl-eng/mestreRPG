@@ -65,6 +65,19 @@ function setVisibilidadeCampo(versionId, campoId, visibilidade) {
     w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
   } finally { w.close(); }
 }
+function setOverrideCampo(charId, campoId, override) {
+  const w = db();
+  try {
+    const row = w.prepare("select overrides from characters where id=?").get(charId);
+    if (!row) throw new Error("Personagem não encontrado: " + charId);
+    const overrides = typeof row.overrides === "string"
+      ? JSON.parse(row.overrides || "{}")
+      : { ...(row.overrides ?? {}) };
+    if (override === null) delete overrides[campoId];
+    else overrides[campoId] = override;
+    w.prepare("update characters set overrides=? where id=?").run(JSON.stringify(overrides), charId);
+  } finally { w.close(); }
+}
 function setSangueConfig(campId, sangue) {
   const w = db();
   try {
@@ -187,6 +200,62 @@ try {
     );
     const mestreCapOculta = await getSangue(CHAR, M);
     t("mestre continua vendo capacidade privada", mestreCapOculta.json?.estado === "ok" && mestreCapOculta.json?.capacidadeMax === 8);
+
+    // Overrides individuais têm precedência sobre a visibilidade do template.
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+    setOverrideCampo(CHAR, "f-cap", { visibilidade: "mestre" });
+    const capOverrideOculta = await getSangue(CHAR, J1);
+    t(
+      "override individual mestre oculta a projeção de capacidade do dono",
+      capOverrideOculta.json?.estado === "capacidade_indisponivel" &&
+        capOverrideOculta.json?.saldo === null &&
+        capOverrideOculta.json?.capacidadeMax === null,
+      JSON.stringify(capOverrideOculta.json),
+    );
+    const mestreCapOverride = await getSangue(CHAR, M);
+    t("mestre continua vendo capacidade sob override individual", mestreCapOverride.json?.estado === "ok" && mestreCapOverride.json?.capacidadeMax === 8);
+    setOverrideCampo(CHAR, "f-cap", null);
+
+    // Visibilidade selecionados reconhece userId e membershipId; quem não
+    // está na lista não recebe saldo nem capacidade, mesmo sendo membro.
+    setVisibilidadeCampo(vid, "f-cap", "selecionados");
+    const capSelecionadoOutro = await getSangue(CHAR, J1);
+    t(
+      "selecionados sem o dono na lista não revela capacidade",
+      capSelecionadoOutro.json?.estado === "capacidade_indisponivel" &&
+        capSelecionadoOutro.json?.saldo === null &&
+        capSelecionadoOutro.json?.capacidadeMax === null,
+      JSON.stringify(capSelecionadoOutro.json),
+    );
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+    setOverrideCampo(CHAR, "f-cap", {
+      visibilidade: "selecionados",
+      destinatarios: [c.jogadores.jogador1.id],
+    });
+    const capSelecionadoUser = await getSangue(CHAR, J1);
+    t(
+      "selecionados por userId permitem projeção ao destinatário",
+      capSelecionadoUser.json?.estado === "ok" && capSelecionadoUser.json?.capacidadeMax === 8,
+      JSON.stringify(capSelecionadoUser.json),
+    );
+    setOverrideCampo(CHAR, "f-cap", {
+      visibilidade: "selecionados",
+      destinatarios: [c.jogadores.jogador1.membershipId],
+    });
+    const capSelecionadoMembership = await getSangue(CHAR, J1);
+    t(
+      "selecionados por membershipId permitem projeção ao destinatário",
+      capSelecionadoMembership.json?.estado === "ok" && capSelecionadoMembership.json?.capacidadeMax === 8,
+      JSON.stringify(capSelecionadoMembership.json),
+    );
+    setOverrideCampo(CHAR, "f-cap", null);
+    setVisibilidadeCampo(vid, "f-cap", "dono_mestre");
+    const capDonoMestre = await getSangue(CHAR, J1);
+    t(
+      "dono_mestre mantém a projeção ao dono",
+      capDonoMestre.json?.estado === "ok" && capDonoMestre.json?.capacidadeMax === 8,
+      JSON.stringify(capDonoMestre.json),
+    );
     setVisibilidadeCampo(vid, "f-cap", "todos");
 
     // Natureza privada não pode ser inferida pelo rótulo nem pela ação
