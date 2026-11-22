@@ -140,6 +140,28 @@ function abrirDbVivoWal(raiz) {
   db.pragma("journal_mode = WAL");
   return db;
 }
+/** Mantém snapshot de leitura ativo: em WAL, o escritor concorrente pode
+ *  limpar a flag, mas não pode checkpointar/apagar os frames anteriores
+ *  enquanto esta transação existir. */
+function fixarLeituraWAL(db) {
+  db.exec("begin");
+  db.prepare("select name from sqlite_master order by name").all();
+}
+/** Impede prova vacuosa: cada cenário deve começar com WAL não vazio e
+ *  SHM existente, ambos criados pelo SQLite em journal_mode=WAL. */
+function exigirSidecarsReais(rotulo, raiz) {
+  const wal = dbVivo(raiz) + "-wal";
+  const shm = dbVivo(raiz) + "-shm";
+  t(`${rotulo}: fixture tem WAL real não vazio`, existsSync(wal) && statSync(wal).size > 0,
+    `existe=${existsSync(wal)} tamanho=${existsSync(wal) ? statSync(wal).size : "-"}`);
+  t(`${rotulo}: fixture tem SHM real`, existsSync(shm),
+    `existe=${existsSync(shm)}`);
+}
+function sha256Prefixo(caminho, tamanho) {
+  const bytes = readFileSync(caminho);
+  if (bytes.length < tamanho) return null;
+  return createHash("sha256").update(bytes.subarray(0, tamanho)).digest("hex");
+}
 /** Dump lógico: todas as tabelas/linhas, EXCETO a flag restauracao_pendente
  *  (cuja remoção é comportamento intencional do restaurador ao recusar). */
 function dumpLogicoBanco(raiz, conexaoExistente = null) {
@@ -179,7 +201,7 @@ function snapshotPreservacao(raiz, conexaoExistente = null) {
 /** Compara o snapshot pós-falha; cada assert nomeia o componente.
  *  `walBytes`: true só quando nenhuma escrita é esperada (W14) — no W16 a
  *  limpeza intencional da flag grava frames legítimos no -wal. */
-function assertPreservacao(rotulo, raiz, antes, { walBytes = false, bancoBytes = true, conexaoExistente = null } = {}) {
+function assertPreservacao(rotulo, raiz, antes, { walBytes = false, walPrefixo = false, bancoBytes = true, conexaoExistente = null } = {}) {
   const depois = snapshotPreservacao(raiz, conexaoExistente);
   if (bancoBytes) {
     t(`${rotulo}: banco (bytes) inalterado`, depois.bancoBytes === antes.bancoBytes && antes.bancoBytes !== null,
@@ -193,10 +215,16 @@ function assertPreservacao(rotulo, raiz, antes, { walBytes = false, bancoBytes =
     if (suf === "-wal" && walBytes) {
       t(`${rotulo}: sidecar -wal byte-idêntico`, d.existe && a.existe && d.sha === a.sha,
         `antes=${a.sha} depois=${d.sha}`);
+    } else if (suf === "-wal" && walPrefixo) {
+      const prefixoPreservado = d.existe && a.existe && d.tamanho >= a.tamanho
+        && sha256Prefixo(dbVivo(raiz) + "-wal", a.tamanho) === a.sha;
+      t(`${rotulo}: WAL original preservado como prefixo (novos frames permitidos)`,
+        prefixoPreservado,
+        `antes=${a.tamanho}B depois=${d.tamanho ?? "-"}B`);
     } else {
-      // -shm carrega locks/read-marks voláteis e -wal pode crescer com a
-      // escrita legítima da flag — o contrato é: sidecar REAL do banco vivo
-      // continua existindo (não removido/substituído pelo do backup).
+      // -shm carrega locks/read-marks voláteis e o WAL pode crescer
+      // legitimamente durante a limpeza da flag; ambos precisam continuar
+      // existindo enquanto a leitura concorrente mantiver o snapshot aberto.
       t(`${rotulo}: sidecar ${suf} do banco vivo preservado`, d.existe === true,
         `existe=${d.existe} tamanho=${d.tamanho ?? "-"}`);
     }
@@ -305,10 +333,8 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
     dbVivoAberto.exec("create table marcador (value text)");
     dbVivoAberto.prepare("insert into marcador values ('intocado')").run();
     plantarSentinelasVivas(raiz);
-    // Consolida os frames iniciais antes do baseline. Assim, qualquer
-    // diferença posterior no DB/WAL aponta para escrita durante a recusa,
-    // não para checkpoint automático de frames que a própria fixture criou.
-    dbVivoAberto.pragma("wal_checkpoint(TRUNCATE)");
+    fixarLeituraWAL(dbVivoAberto);
+    exigirSidecarsReais("W14-select", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const r = rodar(raiz);
     t("SELECT da flag falha após schema ok → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
@@ -645,13 +671,15 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     rmSync(join(bk, "manifesto.json"));
     dbVivoAberto = prepararVivoW16(raiz, bk);
     plantarSentinelasVivas(raiz);
+    fixarLeituraWAL(dbVivoAberto);
+    exigirSidecarsReais("W16-sem-manifesto", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
     const r = rodar(raiz);
     t("backup sem manifesto → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
     t("motivo: backup inválido/manifesto", /inválido|manifesto/i.test(r.saida), r.saida.slice(0, 250));
-    assertPreservacao("W16-sem-manifesto", raiz, antes, { bancoBytes: false, conexaoExistente: dbVivoAberto });
-    assertFlagRemovidaIntencionalmente("W16-sem-manifesto", raiz, dbVivoAberto);
+    assertPreservacao("W16-sem-manifesto", raiz, antes, { bancoBytes: false, walPrefixo: true, conexaoExistente: dbVivoAberto });
+    assertFlagRemovidaIntencionalmente("W16-sem-manifesto", raiz);
     t("W16-sem-manifesto: nenhuma fase de substituição gravada",
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-sem-manifesto", bk, bkAntes);
@@ -671,13 +699,15 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     writeFileSync(join(bk, "manifesto.json"), JSON.stringify(man));
     dbVivoAberto = prepararVivoW16(raiz, bk);
     plantarSentinelasVivas(raiz);
+    fixarLeituraWAL(dbVivoAberto);
+    exigirSidecarsReais("W16-manv1", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
     const r = rodar(raiz);
     t("manifestoVersao=1 → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
     t("motivo: versão incompatível", /manifestoVersao|inválido/i.test(r.saida), r.saida.slice(0, 250));
-    assertPreservacao("W16-manv1", raiz, antes, { bancoBytes: false, conexaoExistente: dbVivoAberto });
-    assertFlagRemovidaIntencionalmente("W16-manv1", raiz, dbVivoAberto);
+    assertPreservacao("W16-manv1", raiz, antes, { bancoBytes: false, walPrefixo: true, conexaoExistente: dbVivoAberto });
+    assertFlagRemovidaIntencionalmente("W16-manv1", raiz);
     t("W16-manv1: nenhuma fase de substituição gravada",
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-manv1", bk, bkAntes);
@@ -694,13 +724,15 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     writeFileSync(join(bk, "manifesto.json"), "{ json quebrado");
     dbVivoAberto = prepararVivoW16(raiz, bk);
     plantarSentinelasVivas(raiz);
+    fixarLeituraWAL(dbVivoAberto);
+    exigirSidecarsReais("W16-manjson", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
     const r = rodar(raiz);
     t("manifesto corrompido → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
     t("motivo: manifesto ilegível/inválido", /manifesto|inválido/i.test(r.saida), r.saida.slice(0, 250));
-    assertPreservacao("W16-manjson", raiz, antes, { bancoBytes: false, conexaoExistente: dbVivoAberto });
-    assertFlagRemovidaIntencionalmente("W16-manjson", raiz, dbVivoAberto);
+    assertPreservacao("W16-manjson", raiz, antes, { bancoBytes: false, walPrefixo: true, conexaoExistente: dbVivoAberto });
+    assertFlagRemovidaIntencionalmente("W16-manjson", raiz);
     t("W16-manjson: nenhuma fase de substituição gravada",
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-manjson", bk, bkAntes);
