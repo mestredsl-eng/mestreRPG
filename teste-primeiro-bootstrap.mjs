@@ -262,6 +262,37 @@ sec("16. Instalação concluída + wipe DB+state + restos → NUNCA re-emite");
   t("wipe total → emitida (indistinguível de fresh)", c.autorizado === true, c.motivo);
 }
 
+sec("17. Marcador NÃO persiste após bootstrap bloqueado (rollback atômico)");
+{
+  const script = join(process.cwd(), "scripts", "autorizar-bootstrap.mjs");
+  const repoRaiz = process.cwd();
+  const env = {
+    ...process.env,
+    MESTRE_STATE_DIR: join(BASE, "state-rb"),
+    MESTRE_BANCO: join(BASE, "banco-rb", "mestre-rpg.db"),
+    MESTRE_BACKUPS: join(BASE, "backups-rb"), // vazio — sem restos
+  };
+  // Instalação antiga SEM recibo/restos, mas COM banco presente.
+  mkdirSync(join(BASE, "banco-rb"), { recursive: true });
+  writeFileSync(env.MESTRE_BANCO, "sqlite");
+  const c1 = spawnSync(process.execPath, [script, "--confirmar-provisionamento"], { env, encoding: "utf8" });
+  t("banco existente → exit 1", c1.status === 1, `status=${c1.status} ${c1.stdout}`);
+  t("marcador revertido (ausente)", lerProvisionamento(repoRaiz, env).status === "ausente",
+    lerProvisionamento(repoRaiz, env).status);
+  t("nenhuma autorização emitida", authsEm(repoRaiz, env).every((n) => !n.startsWith("bootstrap-autorizacao")));
+  // Perda posterior do banco: o produtor SOZINHO não pode usar
+  // marcador algum — prova de que nada ficou como "prova antiga".
+  rmSync(env.MESTRE_BANCO, { force: true });
+  const direto = autorizarPrimeiroBootstrap(repoRaiz, env);
+  t("produtor sem entrypoint → provisionamento-ausente", direto.autorizado === false && direto.motivo === "provisionamento-ausente", direto.motivo);
+  // Nova chamada explícita COM a flag = provisionamento novo, no
+  // momento em que o banco está de fato ausente — equivalente ao
+  // controle de instalação limpa (seção 15): autoriza uma vez.
+  const c2 = spawnSync(process.execPath, [script, "--confirmar-provisionamento"], { env, encoding: "utf8" });
+  t("flag após perda real → exit 0 (provisionamento novo)", c2.status === 0, `status=${c2.status} ${c2.stdout}`);
+  t("marcador novo gravado", lerProvisionamento(repoRaiz, env).status === "ok");
+}
+
 console.log(`\n${pass} ok / ${fail} falhas`);
 rmSync(BASE, { recursive: true, force: true });
 process.exit(fail ? 1 : 0);

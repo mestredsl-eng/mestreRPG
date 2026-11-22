@@ -327,6 +327,17 @@ export function lerProvisionamento(repoDir, env = process.env) {
   return { status: "ok", dados };
 }
 
+/** Remove SOMENTE o marcador de provisionamento — uso exclusivo do
+ *  rollback atômico do entrypoint: quando o marcador foi criado
+ *  NESTA execução e o bootstrap foi bloqueado, ele não pode persistir
+ *  como prova de um provisionamento que não se concretizou (senão uma
+ *  perda posterior do banco o transformaria em "prova antiga").
+ *  NUNCA chamar sobre marcador preexistente — chamadores garantem
+ *  que só removem o que acabaram de gravar. */
+export function removerProvisionamento(repoDir, env = process.env) {
+  rmSync(join(dirEstado(repoDir, env), ARQUIVO_PROVISIONAMENTO), { force: true });
+}
+
 /** Diagnóstico NÃO destrutivo do estado de instalação — usado para
  *  mensagens fail-closed e pela avaliação de boot. Retorno:
  *  "primeiro-bootstrap"      → autorização válida ainda não consumida;

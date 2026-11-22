@@ -23,6 +23,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   autorizarPrimeiroBootstrap, gravarProvisionamento, lerProvisionamento,
+  removerProvisionamento,
 } from "./estado-externo.mjs";
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,11 +37,27 @@ if (!process.argv.slice(2).includes("--confirmar-provisionamento")) {
 // Ação explícita de provisionamento: grava o marcador SOMENTE se ainda
 // não existir — marcador inválido/divergente/corrompido NUNCA é
 // sobrescrito; o produtor abaixo bloqueia com o motivo exato.
-if (lerProvisionamento(repoDir).status === "ausente") {
+// Rollback atômico: se o marcador foi criado NESTA execução e o
+// bootstrap é bloqueado (ex.: banco-existente), ele é removido — sem
+// isso o marcador persistiria como "prova antiga" e, numa perda
+// posterior do banco, legitimaria um bootstrap sobre instalação que
+// nunca foi provisionada de fato. Marcador preexistente NUNCA é
+// removido.
+const criadoAgora = lerProvisionamento(repoDir).status === "ausente";
+if (criadoAgora) {
   gravarProvisionamento(repoDir);
 }
 
-const r = autorizarPrimeiroBootstrap(repoDir);
+let r;
+try {
+  r = autorizarPrimeiroBootstrap(repoDir);
+} catch (e) {
+  if (criadoAgora) removerProvisionamento(repoDir);
+  throw e;
+}
+if (!r.autorizado && criadoAgora) {
+  removerProvisionamento(repoDir);
+}
 if (r.autorizado) {
   console.log(`[bootstrap] ${r.motivo}: autorização de primeiro bootstrap ${r.motivo === "emitida" ? "emitida" : "já existente"} (${repoDir})`);
   process.exit(0);
