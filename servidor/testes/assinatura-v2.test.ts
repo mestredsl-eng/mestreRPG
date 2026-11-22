@@ -5,6 +5,7 @@ import {
   assinarLedgerXp,
   assinarPacoteV2,
   impressaoDigitalFicha,
+  verificarAssinaturaV2,
   xpSemAssinaturaRaiz,
 } from "../src/lib/assinatura-xp.js";
 import {
@@ -37,11 +38,11 @@ function dadosPacote(opts: {
   estrutura?: unknown; configSangue?: unknown;
   sheetTemplates?: { id?: string; campaignId?: unknown }[];
   sheetVersions?: { id?: string; templateId?: unknown; structure?: unknown; publishedAt?: unknown }[];
-  ruleSets?: { id?: string; config?: unknown; isActive?: boolean }[];
+  ruleSets?: { id?: string; campaignId?: unknown; config?: unknown; isActive?: boolean }[];
 } = {}) {
   return {
     ruleSets: opts.ruleSets ?? [{
-      id: "rs1", isActive: true,
+      id: "rs1", campaignId: CAMPANHA, isActive: true,
       config: { sangue: opts.configSangue === undefined ? CONFIG_SANGUE : opts.configSangue },
     }],
     ruleDefinitions: [],
@@ -123,6 +124,33 @@ function sanear(
 }
 
 describe("assinatura v2 conjunta XP+Sangue (Issue #186/C3)", () => {
+  it("reescrita coerente de campanha no envelope, template e ruleset invalida a HMAC v2", () => {
+    const assinaturaOriginal = assV2();
+    const campanhaAdulterada = "camp-origem-forjada";
+    const dadosAdulterados = dadosPacote({
+      ruleSets: [{
+        id: "rs1", campaignId: campanhaAdulterada, isActive: true,
+        config: { sangue: CONFIG_SANGUE },
+      }],
+      sheetTemplates: [{ id: "tpl-1", campaignId: campanhaAdulterada }],
+    });
+    // A cadeia local continua coerente com o envelope adulterado. A
+    // rejeição precisa vir da impressão digital das regras, que inclui
+    // o campaignId persistido no ruleset e está coberta pela v2.
+    const ctxAdulterado = ctxSan(CHAVE, campanhaAdulterada, dadosAdulterados);
+    const { data, rep } = sanear({
+      __xp: structuredClone(XP_OK),
+      __sangue: structuredClone(SANGUE),
+      __sangue_sig: assinaturaOriginal,
+    }, ctxAdulterado);
+
+    assert.equal(rep.sangueInvalido, true);
+    assert.equal(rep.motivoSangue, "assinatura_invalida");
+    assert.equal(rep.ledgerXpInvalidado, true);
+    assert.deepEqual(data.__xp, { saldo: 0, historico: [] });
+    assert.equal("__sangue" in data, false);
+  });
+
   it("roundtrip: v2 válida preserva __sangue e __xp, remove a credencial", () => {
     const data: Record<string, unknown> = {
       __xp: { ...XP_OK },
