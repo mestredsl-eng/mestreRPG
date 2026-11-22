@@ -5,12 +5,32 @@
 // checkpoints por componente (banco, sidecars, arquivos, config, flag).
 // Estado simulado injetando restauracao-externa.json como ficaria após
 // uma queda real; o restaurador deve completar apenas o pendente.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync, readFileSync, copyFileSync, rmSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { dirTeste, abrirDb } from "./teste-base.mjs";
+
+// Modo auxiliar: processo INDEPENDENTE mantém um read transaction no WAL
+// enquanto o restaurador roda. Isso modela outro processo usando o banco;
+// não basta deixar um handle no próprio processo que chama spawnSync.
+if (process.env.MESTRE_TESTE_WAL_GUARD === "1") {
+  const banco = process.env.MESTRE_BANCO;
+  if (!banco) throw new Error("MESTRE_BANCO ausente no guard WAL");
+  const db = new Database(banco);
+  try {
+    db.exec("begin");
+    const sentinela = db.prepare("select value from marcador order by rowid").all();
+    if (sentinela.length === 0) throw new Error("guard WAL sem sentinela");
+    process.stdout.write("WAL_GUARD_READY\\n");
+    await new Promise((resolve) => process.stdin.once("data", resolve));
+    db.exec("rollback");
+  } finally {
+    try { db.close(); } catch { /* já fechado */ }
+  }
+  process.exit(0);
+}
 
 const RAIZ_REPO = process.cwd();
 const RESTAURADOR = join(RAIZ_REPO, "servidor/dist/db/aplicar-restauracao.js");
@@ -46,6 +66,39 @@ function envRaiz(raiz, extra = {}) {
 function rodar(raiz, env) {
   const r = spawnSync("node", [RESTAURADOR], { env: envRaiz(raiz, env), encoding: "utf8" });
   return { code: r.status, saida: (r.stdout ?? "") + (r.stderr ?? "") };
+}
+async function segurarSnapshotWAL(raiz) {
+  const filho = spawn(process.execPath, [process.argv[1]], {
+    env: envRaiz(raiz, { MESTRE_TESTE_WAL_GUARD: "1" }),
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  let saida = "";
+  await new Promise((resolve, reject) => {
+    const limite = setTimeout(() => reject(new Error("timeout aguardando guard WAL")), 10000);
+    filho.stdout.setEncoding("utf8");
+    filho.stdout.on("data", (chunk) => {
+      saida += chunk;
+      if (saida.includes("WAL_GUARD_READY\\n")) {
+        clearTimeout(limite);
+        resolve();
+      }
+    });
+    filho.once("error", (erro) => {
+      clearTimeout(limite);
+      reject(erro);
+    });
+    filho.once("exit", (codigo) => {
+      if (!saida.includes("WAL_GUARD_READY\\n")) {
+        clearTimeout(limite);
+        reject(new Error(`guard WAL encerrou antes de fixar o snapshot (exit=${codigo}): ${saida}`));
+      }
+    });
+  });
+  return () => new Promise((resolve, reject) => {
+    filho.once("error", reject);
+    filho.once("exit", resolve);
+    filho.stdin.end("release\\n");
+  });
 }
 const dbVivo = (raiz) => join(raiz, "banco", "mestre-rpg.db");
 const stateDir = (raiz) => join(raiz, "state", ID);
@@ -328,6 +381,7 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 {
   const raiz = novoRaiz();
   let dbVivoAberto = null;
+  let liberarGuardaWAL = null;
   try {
     // W14 — erro de CONSULTA após a detecção do schema: a tabela
     // server_settings EXISTE (passa na checagem de sqlite_master), mas o
@@ -342,12 +396,14 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
     fixarLeituraWAL(dbVivoAberto);
     exigirSidecarsReais("W14-select", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
+    liberarGuardaWAL = await segurarSnapshotWAL(raiz);
     const r = rodar(raiz);
     t("SELECT da flag falha após schema ok → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
     t("motivo: falha ao ler flag de restauração", /falha ao ler flag/i.test(r.saida), r.saida.slice(0, 250));
     assertPreservacao("W14-select", raiz, antes, { walBytes: true, conexaoExistente: dbVivoAberto });
     t("W14-select: nenhum journal/estado externo criado", !existsSync(journalPath(raiz)));
   } finally {
+    try { await liberarGuardaWAL?.(); } catch { /* encerra guard antes de limpar */ }
     try { dbVivoAberto?.close(); } catch { /* ignora */ }
     rmSync(raiz, { recursive: true, force: true });
   }
@@ -672,6 +728,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
 {
   const raiz = novoRaiz();
   let dbVivoAberto = null;
+  let liberarGuardaWAL = null;
   try {
     const bk = criarBackupDir(raiz, "sem manifesto");
     rmSync(join(bk, "manifesto.json"));
@@ -681,6 +738,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     exigirSidecarsReais("W16-sem-manifesto", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
+    liberarGuardaWAL = await segurarSnapshotWAL(raiz);
     const r = rodar(raiz);
     t("backup sem manifesto → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 250)}`);
     t("motivo: backup inválido/manifesto", /inválido|manifesto/i.test(r.saida), r.saida.slice(0, 250));
@@ -690,6 +748,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-sem-manifesto", bk, bkAntes);
   } finally {
+    try { await liberarGuardaWAL?.(); } catch { /* encerra guard antes de limpar */ }
     try { dbVivoAberto?.close(); } catch { /* ignora */ }
     rmSync(raiz, { recursive: true, force: true });
   }
@@ -697,6 +756,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
 {
   const raiz = novoRaiz();
   let dbVivoAberto = null;
+  let liberarGuardaWAL = null;
   try {
     const bk = criarBackupDir(raiz, "manv1");
     // manifesto íntegro em estrutura mas versão incompatível (v1)
@@ -709,6 +769,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     exigirSidecarsReais("W16-manv1", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
+    liberarGuardaWAL = await segurarSnapshotWAL(raiz);
     const r = rodar(raiz);
     t("manifestoVersao=1 → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
     t("motivo: versão incompatível", /manifestoVersao|inválido/i.test(r.saida), r.saida.slice(0, 250));
@@ -718,6 +779,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-manv1", bk, bkAntes);
   } finally {
+    try { await liberarGuardaWAL?.(); } catch { /* encerra guard antes de limpar */ }
     try { dbVivoAberto?.close(); } catch { /* ignora */ }
     rmSync(raiz, { recursive: true, force: true });
   }
@@ -725,6 +787,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
 {
   const raiz = novoRaiz();
   let dbVivoAberto = null;
+  let liberarGuardaWAL = null;
   try {
     const bk = criarBackupDir(raiz, "manjson");
     writeFileSync(join(bk, "manifesto.json"), "{ json quebrado");
@@ -734,6 +797,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
     exigirSidecarsReais("W16-manjson", raiz);
     const antes = snapshotPreservacao(raiz, dbVivoAberto);
     const bkAntes = snapshotBackup(bk);
+    liberarGuardaWAL = await segurarSnapshotWAL(raiz);
     const r = rodar(raiz);
     t("manifesto corrompido → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code}`);
     t("motivo: manifesto ilegível/inválido", /manifesto|inválido/i.test(r.saida), r.saida.slice(0, 250));
@@ -743,6 +807,7 @@ function assertFlagRemovidaIntencionalmente(rotulo, raiz, conexaoExistente = nul
       !existsSync(journalPath(raiz)) || !/substituicao|rollback/.test(lerJournal(raiz)?.fase ?? ""));
     assertBackupIntacto("W16-manjson", bk, bkAntes);
   } finally {
+    try { await liberarGuardaWAL?.(); } catch { /* encerra guard antes de limpar */ }
     try { dbVivoAberto?.close(); } catch { /* ignora */ }
     rmSync(raiz, { recursive: true, force: true });
   }
