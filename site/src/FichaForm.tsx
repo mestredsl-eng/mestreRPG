@@ -27,6 +27,10 @@ interface Props {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   /** Papel do usuário — controla se o saldo inicial da carteira é editável. */
   ehMestre?: boolean;
+  /** Pode ler Pontos de Sangue (mestre ou dono da ficha). Fail-closed:
+   *  sem true explícito o painel nem é montado — evita GET /sangue que
+   *  o servidor negaria com 403 (ex.: jogador lendo NPC público). */
+  podeLerSangue?: boolean;
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
@@ -42,7 +46,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
@@ -244,9 +248,10 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
         <ProgressaoXp characterId={personagemId} ehMestre={!!ehMestre} />
       )}
       {/* Pontos de Sangue (Issue #186, C8-C1): painel somente leitura
-          via GET /characters/:id/sangue — sem controles de mutação;
-          some sozinho para quem não tem acesso (403). */}
-      {personagemId && !simulacao && (
+          via GET /characters/:id/sangue — sem controles de mutação.
+          Só monta quando o chamador declara podeLerSangue (mestre/dono);
+          sem isso nem a requisição é emitida (403 evitado). */}
+      {personagemId && !simulacao && podeLerSangue && (
         <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
       )}
     </div>
