@@ -113,7 +113,7 @@ try {
   d = personagem("Legado Âncora Zero");
   check(d?.__xp?.saldo === 0 && d.__xp.historico.length === 0 && d.__xp.ancora === undefined,
     `tampering: fail-closed — zero XP parcial, sem âncora forjada (saldo=${d?.__xp?.saldo}, hist=${d?.__xp?.historico?.length}, ancora=${d?.__xp?.ancora})`);
-  const leituraFailClosed = await req(BASE, "GET", `/characters/${idAncora}/progressao`, { cookie: c.cookieMestre });
+  const leituraFailClosed = await req(base, "GET", `/characters/${idAncora}/progressao`, { cookie: c.cookieMestre });
   check(leituraFailClosed.status === 200 && leituraFailClosed.json?.xp?.saldo === 0 &&
     leituraFailClosed.json?.xp?.historico?.length === 0 &&
     !Object.prototype.hasOwnProperty.call(leituraFailClosed.json?.xp ?? {}, "ancora"),
