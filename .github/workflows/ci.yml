@@ -190,92 +190,47 @@ jobs:
         run: npx tsx --test servidor/testes/sangue-acoes.test.ts
       - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
         run: npx tsx --test servidor/testes/sangue-invariantes.test.ts
-      - name: Suítes residuais Acervo + dados 3D (sem navegador)
+      - name: Suítes obrigatórias v1.0.8 — Servidor sem navegador
+        shell: bash
         run: |
-          set -e
-          for s in \
-            homologacao-acervo.mjs \
-            teste-acervo-campanha.mjs \
-            teste-acervo-sync.mjs \
-            teste-acervo-diff.mjs \
-            teste-fisica-dados.mjs \
-            teste-fisica-mesa.mjs \
-            teste-d10-minimo-servidor.mjs \
-            teste-restauracao-boot.mjs \
-            teste-estado-externo.mjs \
-            teste-restauracao-journal.mjs \
-            teste-trava-instancia.mjs \
-            teste-atualizacao-instalacao.mjs \
-            teste-auto-update.mjs \
-            teste-boot-lock.mjs \
-            teste-docs-operacao.mjs \
-            homologacao-etapa2.mjs \
-            homologacao-final-v1.mjs \
-            homologacao-mesa.mjs \
-            teste-mesa-seguranca.mjs \
-            teste-mesa-virtual.mjs \
-            teste-npc-visibilidade.mjs \
-            teste-vtt-vida-p1-privacidade.mjs \
-            teste-vtt-vida.mjs \
-            teste-temporizador.mjs \
-            teste-convite-cadastro.mjs \
-            homologacao-equipamentos.mjs \
-            teste-equipamentos.mjs \
-            teste-financeiro-atomico.mjs \
-            teste-moedas-regressao.mjs \
-            teste-vitalidade-historico.mjs \
-            teste-vida-conversao.mjs \
-            teste-venda-estoque.mjs \
-            teste-financeiro-compras.mjs \
-            teste-financeiro-integracao.mjs \
-            teste-regressao-revisao.mjs \
-            teste-pontos-concorrencia.mjs \
-            teste-pool-principal-http.mjs \
-            teste-novidades.mjs \
-            teste-novidades-realtime.mjs \
-            teste-sessoes-socket.mjs \
-            teste-sessao-numero.mjs \
-            teste-rate-limit-socket.mjs \
-            teste-validacao-personagem.mjs \
-            teste-exclusao-personagem.mjs \
-            teste-guildas-admin.mjs \
-            teste-convites-guilda.mjs \
-            teste-responsavel-guilda.mjs \
-            teste-sessoes-conta.mjs \
-            teste-prerequisitos-patrimonio.mjs \
-            teste-patrimonio-permissoes.mjs \
-            teste-patrimonio-ui-permissoes.mjs \
-            teste-escopo-cruzado.mjs \
-            teste-ponte-economica-acervo.mjs \
-            teste-diario.mjs \
-            teste-importacao-integridade.mjs \
-            teste-progressao-xp.mjs \
-            teste-xp-ancora-hmac-v1.mjs \
-            teste-xp-ancora-hmac-v2.mjs \
-            teste-regras.mjs \
-            teste-retratos.mjs \
-            teste-biblioteca-conteudo.mjs \
-            teste-defeitos-mesa.mjs \
-            teste-sangue-hmac-v2.mjs \
-            teste-sangue-config.mjs \
-            teste-d10-transacao.mjs \
-            teste-d10-sangue-cobranca.mjs \
-            teste-d10-sangue-nao-poder-isolado.mjs \
-            teste-sangue-xp-capacidade.mjs \
-            teste-sangue-read-api.mjs \
-            teste-sangue-runtime.mjs \
-            teste-sangue-poderes-acoes.mjs \
-            teste-autorizacao-negativa.mjs \
-            teste-autorizacao-eventos-passivos.mjs \
-            teste-autorizacao-concorrencia.mjs \
-            teste-guilda-responsavel-concorrencia.mjs \
-            teste-xp-lote.mjs \
-            teste-aprendizado-visual.mjs
-          do
-            if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
-            echo "===== $s ====="; node "$s"
+          set -euo pipefail
+          arquivos=(
+            teste-novidades.mjs
+            teste-novidades-realtime.mjs
+            teste-importacao-integridade.mjs
+            teste-progressao-xp.mjs
+            teste-regras.mjs
+            teste-d10-minimo-servidor.mjs
+            teste-sangue-hmac-v2.mjs
+            teste-sangue-config.mjs
+            teste-d10-transacao.mjs
+            teste-d10-sangue-cobranca.mjs
+            teste-d10-sangue-nao-poder-isolado.mjs
+            teste-sangue-xp-capacidade.mjs
+            teste-sangue-read-api.mjs
+            teste-sangue-runtime.mjs
+            teste-sangue-poderes-acoes.mjs
+            teste-vtt-vida-p1-privacidade.mjs
+            teste-vtt-vida.mjs
+            teste-vitalidade-historico.mjs
+            teste-vida-conversao.mjs
+            teste-npc-visibilidade.mjs
+            teste-mesa-seguranca.mjs
+            teste-mesa-virtual.mjs
+            teste-autorizacao-negativa.mjs
+            teste-autorizacao-eventos-passivos.mjs
+            teste-autorizacao-concorrencia.mjs
+            teste-rate-limit-socket.mjs
+            teste-sessoes-socket.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
           done
-
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -431,65 +386,37 @@ jobs:
         run: npx playwright install chromium
       - name: Verificar inicialização do Chromium
         run: node -e "import('playwright').then(async ({ chromium }) => { const b = await chromium.launch(); await b.close(); console.log('chromium launch ok'); })"
-      - name: Suítes de navegador
+      - name: Suítes obrigatórias v1.0.8 — Navegador
+        shell: bash
         run: |
-          set -e
-          for s in \
-            homologacao-dados3d.mjs \
-            teste-acervo-corridas.mjs \
-            teste-acessibilidade.mjs \
-            homologacao-hp-historico.mjs \
-            homologacao-patrimonio.mjs \
-            homologacao-npc-patrimonio.mjs \
-            homologacao-compras-vendas.mjs \
-            homologacao-patrimonio-permissoes.mjs \
-            homologacao-fin-integracao.mjs \
-            homologacao-conversao.mjs \
-            homologacao-novidades.mjs \
-            homologacao-acervo-sync.mjs \
-            homologacao-v1-cobertura.mjs \
-            homologacao-primeira-partida.mjs \
-            homologacao-visual.mjs \
-            homologacao-validacao-ficha.mjs \
-            homologacao-exclusao-personagem.mjs \
-            homologacao-busca-filtros.mjs \
-            teste-realtime-paginas.mjs \
-            homologacao-mesa-virtual.mjs \
-            homologacao-regua.mjs \
-            homologacao-nevoa.mjs \
-            homologacao-guildas.mjs \
-            homologacao-sessoes.mjs \
-            homologacao-pacotes-forjados.mjs \
-            homologacao-split-pages.mjs \
-            homologacao-convites-guilda.mjs \
-            homologacao-responsavel-guilda.mjs \
-            teste-vtt-rollback-p6.mjs \
-            teste-vtt-nevoa.mjs \
-            teste-vtt-regua.mjs \
-            homologacao-vida-vtt.mjs \
-            homologacao-vida-regua.mjs \
-            teste-permissao-tempo-real.mjs \
-            homologacao-temporizador.mjs \
-            homologacao-desafio-ficha.mjs \
-            homologacao-limitacoes.mjs \
-            homologacao-ajuda-contextual.mjs \
-            homologacao-retratos.mjs \
-            homologacao-defeitos-mesa.mjs \
-            homologacao-preferencias-visuais.mjs \
-            homologacao-aprendizado-visual.mjs \
-            homologacao-papeis-ui.mjs \
-            auditoria-visual.mjs \
-            teste-sangue-config-ui.mjs \
-            teste-sangue-xp-capacidade-ui.mjs \
-            teste-sangue-player-read-ui.mjs \
-            teste-sangue-actions-ui.mjs \
-            teste-reduced-motion.mjs \
-            teste-icones-abas-campanha.mjs \
-            teste-estados-vazios-ui.mjs \
-            teste-feedback-listas-ui.mjs \
-            teste-xp-historico-ui.mjs \
-            teste-xp-lote-ui.mjs
-          do
-            if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
-            echo "===== $s ====="; node "$s"
+          set -euo pipefail
+          arquivos=(
+            homologacao-npc-patrimonio.mjs
+            homologacao-vida-vtt.mjs
+            homologacao-vida-regua.mjs
+            teste-permissao-tempo-real.mjs
+            homologacao-mesa-virtual.mjs
+            homologacao-regua.mjs
+            homologacao-nevoa.mjs
+            teste-vtt-rollback-p6.mjs
+            teste-vtt-nevoa.mjs
+            teste-vtt-regua.mjs
+            homologacao-papeis-ui.mjs
+            teste-sangue-config-ui.mjs
+            teste-sangue-xp-capacidade-ui.mjs
+            teste-sangue-player-read-ui.mjs
+            teste-sangue-actions-ui.mjs
+            homologacao-patrimonio.mjs
+            homologacao-patrimonio-permissoes.mjs
+            homologacao-sessoes.mjs
+            teste-realtime-paginas.mjs
+            homologacao-pacotes-forjados.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
           done
