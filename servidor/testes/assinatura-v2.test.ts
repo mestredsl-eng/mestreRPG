@@ -5,7 +5,6 @@ import {
   assinarLedgerXp,
   assinarPacoteV2,
   impressaoDigitalFicha,
-  verificarAssinaturaV2,
   xpSemAssinaturaRaiz,
 } from "../src/lib/assinatura-xp.js";
 import {
