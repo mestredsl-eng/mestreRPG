@@ -441,10 +441,14 @@ function socketSangue(io: SocketIOServer) {
         if (delta > 0) {
           const cap = resolverCapacidadeSangue(c2.estrutura, dados, config ?? undefined);
           const saldo = lerSangue(dados).estado.saldo;
+          const saldoProjetado = somarDecimalSangue(saldo, delta);
+          const comparacaoTeto = compararDecimalSangue(saldoProjetado, cap.capacidade ?? NaN);
           if (
             !cap.disponivel ||
             cap.capacidade === null ||
-            compararDecimalSangue(somarDecimalSangue(saldo, delta), cap.capacidade) > 0
+            !Number.isFinite(saldoProjetado) ||
+            comparacaoTeto === null ||
+            comparacaoTeto > 0
           ) {
             return { ok: false as const, codigo: "capacidade_excedida", saldo };
           }

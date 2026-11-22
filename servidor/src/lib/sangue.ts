@@ -134,11 +134,12 @@ export function multiplicarDecimalSangue(a: number, b: number): number {
   });
 }
 
-/** Comparação decimal exata; retorna -1, 0 ou 1. */
-export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 {
+/** Comparação decimal; null indica que algum resultado não é representável. */
+export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 | null {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   const da = decomporDecimalSangue(a);
   const db = decomporDecimalSangue(b);
-  if (!da || !db) return a < b ? -1 : a > b ? 1 : 0;
+  if (!da || !db) return null;
   const [ia, ib] = alinharDecimaisSangue(da, db);
   return ia < ib ? -1 : ia > ib ? 1 : 0;
 }
@@ -480,11 +481,23 @@ function registrarOperacao(
   let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
     const espacoBruto = subtrairDecimalSangue(params.capacidadeMax, estado.saldo);
-    const espaco = compararDecimalSangue(espacoBruto, 0) > 0 ? espacoBruto : 0;
-    if (compararDecimalSangue(delta, espaco) > 0) delta = espaco;
+    const sinalEspaco = compararDecimalSangue(espacoBruto, 0);
+    if (sinalEspaco === null) {
+      return { ok: false, codigo: "quantidade_invalida", motivo: "espaço de capacidade não representável" };
+    }
+    const espaco = sinalEspaco > 0 ? espacoBruto : 0;
+    const excedeEspaco = compararDecimalSangue(delta, espaco);
+    if (excedeEspaco === null) {
+      return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de capacidade não representável" };
+    }
+    if (excedeEspaco > 0) delta = espaco;
   }
-  if (delta < 0 && compararDecimalSangue(-delta, estado.saldo) > 0) {
-    return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
+  if (delta < 0) {
+    const excedeSaldo = compararDecimalSangue(-delta, estado.saldo);
+    if (excedeSaldo === null) {
+      return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de saldo não representável" };
+    }
+    if (excedeSaldo > 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   }
 
   const uso: UsoSangue = {
@@ -521,7 +534,9 @@ function aplicarDeltaComEstado(
 ): ResultadoSangue {
   const saldo = somarDecimalSangue(estado.saldo, delta);
   if (!Number.isFinite(saldo)) return { ok: false, codigo: "quantidade_invalida", saldo: estado.saldo };
-  if (compararDecimalSangue(saldo, 0) < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
+  const saldoNegativo = compararDecimalSangue(saldo, 0);
+  if (saldoNegativo === null) return { ok: false, codigo: "quantidade_invalida", saldo: estado.saldo };
+  if (saldoNegativo < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   const historicoNovo: EventoSangue[] = [
     ...estado.historico,
     {
@@ -770,9 +785,11 @@ export function reconciliarCapacidadeSangue(
     return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
   }
   const estado = lido.estado;
-  if (compararDecimalSangue(estado.saldo, cap) <= 0) {
-    return { ok: true, dados, estado, ajustado: false };
+  const saldoVsCapacidade = compararDecimalSangue(estado.saldo, cap);
+  if (saldoVsCapacidade === null) {
+    return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de capacidade não representável" };
   }
+  if (saldoVsCapacidade <= 0) return { ok: true, dados, estado, ajustado: false };
   const ajuste = registrarAjusteSangue(dados, {
     personagemId: params.personagemId,
     autorId: params.autorId,

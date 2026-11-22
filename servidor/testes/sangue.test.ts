@@ -847,6 +847,8 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     assert.equal(somarDecimalSangue(Number.MIN_VALUE, Number.MIN_VALUE), Number.MIN_VALUE * 2);
     assert.equal(multiplicarDecimalSangue(1e200, 1e-200), 1);
     assert.equal(somarDecimalSangue(-0, 0), 0);
+    assert.equal(compararDecimalSangue(Number.NaN, 0), null, "NaN não pode ser interpretado como igualdade");
+    assert.equal(compararDecimalSangue(Infinity, Number.MAX_VALUE), null, "Infinity não pode passar pelo comparador");
   });
 
   it("preserva valores seguros com 16 algarismos significativos", () => {
