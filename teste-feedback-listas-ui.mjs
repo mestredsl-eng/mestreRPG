@@ -196,62 +196,113 @@ try {
     db.prepare("select count(*) n from invitations where campaign_id=?").get(c.campId).n);
   const convAntes = contarConvites();
   let postsConvite = 0;
-  let perderProx = true;
-  const urlConvPost = `**/api/campaigns/${c.campId}/invitations`;
+  let anunciarCommit;
+  const commitConcluido = new Promise((resolve) => { anunciarCommit = resolve; });
+  let liberarResposta;
+  const aguardarResposta = new Promise((resolve) => { liberarResposta = resolve; });
+  const urlConvPost = "**/api/campaigns/" + c.campId + "/invitations";
+  const chavePendente = "mestre-rpg:convite-indefinido:" + c.campId;
+
+  // Valores não-default: provar que rascunho persiste após resposta perdida,
+  // reload e reentrada na tela.
+  await pm.getByLabel("Papel do convite").selectOption("espectador");
+  const maxUsesInput = pm.locator("label", { hasText: "Máx. de usos" }).locator("input");
+  const expiraInput = pm.locator("label", { hasText: "Expira em (horas)" }).locator("input");
+  await maxUsesInput.fill("3");
+  await expiraInput.fill("48");
+  await pm.getByRole("checkbox", { name: "Exigir aprovação do mestre" }).check();
+
   await pm.route(urlConvPost, async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     postsConvite++;
-    if (perderProx) {
-      perderProx = false;
-      await route.fetch();   // commit real no servidor
-      await route.abort();   // resposta perdida para o cliente
-      return;
-    }
-    return route.continue();
+    const resposta = await route.fetch(); // commit real no servidor
+    anunciarCommit(resposta.status());
+    await aguardarResposta;                // mantém o cliente sem resposta
+    try { await route.abort(); } catch { /* página pode já ter sido recarregada */ }
   });
+
   await pm.getByRole("button", { name: "Gerar convite" }).click();
+  const statusCommit = await commitConcluido;
+  const marcadorAntesDaResposta = await pm.evaluate((key) => {
+    const raw = sessionStorage.getItem(key);
+    if (!raw) return false;
+    const pend = JSON.parse(raw);
+    return Array.isArray(pend.idsAntes) && pend.form?.maxUses === "3" &&
+      pend.form?.expiresInHours === "48" && pend.form?.role === "espectador";
+  }, chavePendente);
+  ok("convite. bloqueio persistido ANTES de receber resposta do POST",
+    statusCommit === 201 && marcadorAntesDaResposta, "HTTP real=" + statusCommit);
+  liberarResposta();
+
   await pm.waitForSelector(".estado-feedback-erro", { timeout: 8000 });
   ok("convite. ambíguo: aviso fail-closed visível", (await pm.locator(".estado-feedback-erro").count()) >= 1);
   ok("convite. submit desabilitado enquanto indeterminado",
     await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
   ok("convite. ambíguo não oferece reenvio do POST",
     (await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).count()) === 0);
-  await pm.waitForTimeout(600);
+  ok("convite. rascunho permanece após perda de resposta",
+    await pm.getByLabel("Papel do convite").inputValue() === "espectador" &&
+      await maxUsesInput.inputValue() === "3" && await expiraInput.inputValue() === "48" &&
+      await pm.getByRole("checkbox", { name: "Exigir aprovação do mestre" }).isChecked());
+  await pm.waitForTimeout(400);
   const convDepois = contarConvites();
-  ok("convite. exatamente 1 linha commitada no SQLite", convDepois === convAntes + 1, `${convAntes}→${convDepois}`);
-  ok("convite. nenhum segundo POST na recuperação", postsConvite === 1, `posts=${postsConvite}`);
-  // reload: o bloqueio persiste via sessionStorage e segue sem POST
+  ok("convite. exatamente 1 linha commitada no SQLite", convDepois === convAntes + 1, convAntes + "→" + convDepois);
+  ok("convite. nenhum segundo POST na recuperação", postsConvite === 1, "posts=" + postsConvite);
+
+  // reload + reentrada: o marcador e o formulário são restaurados antes
+  // de liberar o submit; o GET da lista não pode emitir novo POST.
   await pm.reload({ waitUntil: "domcontentloaded" });
   await abrirCampanha(pm);
   await abrirAba(pm, "Convites");
   ok("convite. bloqueio sobrevive a reload", await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
-  ok("convite. reload não gerou POST extra", postsConvite === 1, `posts=${postsConvite}`);
-  // reconciliação: GET autoritativo detecta o convite commitado
+  ok("convite. rascunho sobrevive a reload",
+    await pm.getByLabel("Papel do convite").inputValue() === "espectador" &&
+      await pm.locator("label", { hasText: "Máx. de usos" }).locator("input").inputValue() === "3" &&
+      await pm.locator("label", { hasText: "Expira em (horas)" }).locator("input").inputValue() === "48");
+  ok("convite. reload não gerou POST extra", postsConvite === 1, "posts=" + postsConvite);
+
+  // Primeira reconciliação detecta o commit, mas NÃO libera enquanto o
+  // convite órfão estiver ativo: o segredo de uso único já foi perdido.
   await pm.getByRole("button", { name: "Verificar convites" }).click();
-  await pm.waitForTimeout(1500);
-  ok("convite. verificação libera bloqueio após detectar commit",
+  await pm.waitForTimeout(800);
+  ok("convite. commit detectado mantém submit bloqueado até revogação",
+    await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
+  ok("convite. instrução orienta revogar o código órfão",
+    /Revogue todos|Revogue-o/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+  ok("convite. reconciliação não gerou POST", postsConvite === 1, "posts=" + postsConvite);
+
+  const linhaOrfa = pm.locator(".tabela tbody tr").first();
+  await linhaOrfa.getByRole("button", { name: "Revogar" }).click();
+  await pm.waitForFunction(() => {
+    const row = document.querySelector(".tabela tbody tr");
+    return !!row && /revogado/i.test(row.textContent || "");
+  }, null, { timeout: 8000 });
+
+  // Segunda reconciliação confirma que todos os convites novos estão
+  // inativos/revogados e só então libera nova criação.
+  await pm.getByRole("button", { name: "Verificar convites" }).click();
+  await pm.waitForTimeout(800);
+  ok("convite. bloqueio só libera após detectar revogação",
     !(await pm.getByRole("button", { name: "Gerar convite" }).isDisabled()));
-  ok("convite. verificação não gerou POST", postsConvite === 1, `posts=${postsConvite}`);
-  ok("convite. mensagem orienta revogação do código perdido",
-    /não pôde ser recuperado|Revogue/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+  ok("convite. verificação pós-revogação não gerou POST", postsConvite === 1, "posts=" + postsConvite);
+
   // erro definitivo 4xx → retry da mutação é seguro; rascunho preservado
   await pm.route(urlConvPost, async (route) => {
     if (route.request().method() !== "POST") return route.continue();
     postsConvite++;
     await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ erro: "papel inválido" }) });
   });
-  const maxUsesInput = pm.locator("label", { hasText: "Máx. de usos" }).locator("input");
-  await maxUsesInput.fill("3");
+  await maxUsesInput.fill("4");
   await pm.getByRole("button", { name: "Gerar convite" }).click();
-  await pm.waitForTimeout(1000);
+  await pm.waitForTimeout(800);
   ok("convite. 4xx definitivo oferece retry da mutação",
     (await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).count()) >= 1);
-  ok("convite. rascunho preservado após 4xx", (await maxUsesInput.inputValue()) === "3");
+  ok("convite. rascunho preservado após 4xx", (await maxUsesInput.inputValue()) === "4");
   await pm.unroute(urlConvPost);
   // retry real agora passa (201) — limpa o erro de ação para não
   // vazar um segundo .estado-feedback-texto nas seções seguintes
   await pm.locator(".estado-feedback-erro").getByRole("button", { name: "Tentar novamente" }).click();
-  await pm.waitForTimeout(1500);
+  await pm.waitForTimeout(1200);
 
   // ---------- 4) Reduced motion: texto permanece, animação desligada ----------
   await pm.emulateMedia({ reducedMotion: "reduce" });
