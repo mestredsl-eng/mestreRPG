@@ -98,7 +98,8 @@ try {
   if (ruleSetCampanha) {
     ruleSetCampanha.campaignId = randomUUID();
     const impRuleSetCampanha = await importar(pacRuleSetCampanha);
-    check(impRuleSetCampanha.status === 400, `ruleset de outra campanha rejeitado: status ${impRuleSetCampanha.status}`);
+    check(impRuleSetCampanha.status === 400 && impRuleSetCampanha.json?.erro === "O pacote não pertence a esta campanha",
+      "ruleset de outra campanha bloqueado pela guarda de coerência antes do snapshot");
     const preservado = dadosPersonagem(pAmbos);
     check(preservado.__sangue?.saldo === 3 && preservado.__xp?.saldo === 50,
       "ruleset incoerente: campanha permanece intacta");
@@ -110,7 +111,8 @@ try {
   if (templateReal) {
     templateReal.campaignId = randomUUID();
     const impTemplateCampanha = await importar(pacTemplateCampanha);
-    check(impTemplateCampanha.status === 400, `template de outra campanha rejeitado: status ${impTemplateCampanha.status}`);
+    check(impTemplateCampanha.status === 400 && impTemplateCampanha.json?.erro === "O pacote não pertence a esta campanha",
+      "template de outra campanha bloqueado pela guarda de coerência antes do snapshot");
     const preservado = dadosPersonagem(pAmbos);
     check(preservado.__sangue?.saldo === 3 && preservado.__xp?.saldo === 50,
       "template incoerente: campanha permanece intacta");
