@@ -245,6 +245,9 @@ jobs:
             teste-ponte-economica-acervo.mjs \
             teste-diario.mjs \
             teste-importacao-integridade.mjs \
+            teste-progressao-xp.mjs \
+            teste-xp-ancora-hmac-v1.mjs \
+            teste-xp-ancora-hmac-v2.mjs \
             teste-regras.mjs \
             teste-retratos.mjs \
             teste-biblioteca-conteudo.mjs \
