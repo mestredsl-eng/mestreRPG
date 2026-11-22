@@ -45,6 +45,19 @@ function setSangueConfig(campId, sangue) {
     w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
   } finally { w.close(); }
 }
+
+function setVisibilidadeCampo(versionId, campoId, visibilidade) {
+  const w = db();
+  try {
+    const row = w.prepare("select structure from sheet_versions where id=?").get(versionId);
+    if (!row) throw new Error("Versão de ficha não encontrada: " + versionId);
+    const estrutura = typeof row.structure === "string" ? JSON.parse(row.structure) : row.structure;
+    const campo = estrutura.secoes.flatMap((s) => s.campos).find((c) => c.id === campoId);
+    if (!campo) throw new Error("Campo não encontrado: " + campoId);
+    campo.visibilidade = visibilidade;
+    w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
+  } finally { w.close(); }
+}
 function setPoderesLimite(campId, limite) {
   const w = db();
   try {
@@ -252,6 +265,15 @@ try {
     return m ? Number(m[1]) : null;
   };
 
+  const emitirAckSangue = async (page, evento, payload) => page.evaluate(
+    ({ evento, payload }) => new Promise((resolve) => {
+      const socket = window.__mesaSocket;
+      if (!socket?.connected) return resolve({ ok: false, codigo: "socket_indisponivel" });
+      socket.emit(evento, payload, (ack) => resolve(ack ?? { ok: false, codigo: "ack_ausente" }));
+    }),
+    { evento, payload },
+  );
+
   // ---------- 1. Dono: recuperar + ativar ----------
   sec("UI. dono — recuperar e ativar");
   {
@@ -279,6 +301,49 @@ try {
     await page.waitForTimeout(500);
     t("UI. após Ativar saldo=5 (custo 2)", (await saldoNaTela(page)) === 5, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
     t("UI. 'Poder ativado' exibido", /ativado/i.test(await painel.innerText()));
+    await ctx.close();
+  }
+
+  // ---------- 1b. Socket.IO não contorna campos privados ----------
+  sec("Socket.IO — privacidade da projeção de Sangue");
+  {
+    setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+    setVisibilidadeCampo(vid, "cap", "mestre");
+    const { ctx, page } = await novaPagina(J1);
+    await abrirFicha(page, "Herói Ações");
+
+    const ackAtivar = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_fogo", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. ativar recusa capacidade privada sem devolver saldo",
+      ackAtivar?.ok === false && ackAtivar?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackAtivar) && !("saldo" in ackAtivar) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackAtivar, saldo: saldoDe(CHAR) }),
+    );
+
+    const ackRecuperarCap = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar recusa capacidade privada sem mutar ledger",
+      ackRecuperarCap?.ok === false && ackRecuperarCap?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackRecuperarCap) && !("saldo" in ackRecuperarCap) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarCap, saldo: saldoDe(CHAR) }),
+    );
+
+    setVisibilidadeCampo(vid, "cap", "todos");
+    setVisibilidadeCampo(vid, "nat", "mestre");
+    const ackRecuperarNat = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar recusa natureza privada sem revelar ação nem saldo",
+      ackRecuperarNat?.ok === false && ackRecuperarNat?.codigo === "natureza_indisponivel"
+        && !("estado" in ackRecuperarNat) && !("saldo" in ackRecuperarNat) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarNat, saldo: saldoDe(CHAR) }),
+    );
+    setVisibilidadeCampo(vid, "nat", "todos");
     await ctx.close();
   }
 
