@@ -261,8 +261,31 @@ try {
       await pm.locator("label", { hasText: "Expira em (horas)" }).locator("input").inputValue() === "48");
   ok("convite. reload não gerou POST extra", postsConvite === 1, "posts=" + postsConvite);
 
-  // Primeira reconciliação detecta o commit, mas NÃO libera enquanto o
-  // convite órfão estiver ativo: o segredo de uso único já foi perdido.
+  // Uma leitura momentaneamente vazia NÃO pode liberar o bloqueio:
+  // o POST pode ainda concluir depois do GET. Simula resposta vazia da
+  // primeira consulta autoritativa; a recarga seguinte já vê o commit.
+  let esconderConviteUmaVez = true;
+  await pm.route(urlConvites, async (route) => {
+    if (route.request().method() === "GET" && esconderConviteUmaVez) {
+      esconderConviteUmaVez = false;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ convites: [] }) });
+    } else {
+      await route.continue();
+    }
+  });
+  await pm.getByRole("button", { name: "Verificar convites" }).click();
+  await pm.waitForTimeout(800);
+  ok("convite. lista vazia em primeira reconciliação NÃO libera submit",
+    await pm.getByRole("button", { name: "Gerar convite" }).isDisabled());
+  ok("convite. pendência persiste após snapshot vazio",
+    await pm.evaluate((key) => !!sessionStorage.getItem(key), chavePendente));
+  ok("convite. mensagem não presume que POST não comitou",
+    /não prova|bloqueio continua/i.test(await pm.locator(".estado-feedback-erro").last().innerText()));
+  ok("convite. snapshot vazio não gerou POST", postsConvite === 1, "posts=" + postsConvite);
+  await pm.unroute(urlConvites);
+
+  // A consulta seguinte encontra o convite ativo órfão: continua bloqueado
+  // até o mestre revogá-lo, pois o código secreto one-time foi perdido.
   await pm.getByRole("button", { name: "Verificar convites" }).click();
   await pm.waitForTimeout(800);
   ok("convite. commit detectado mantém submit bloqueado até revogação",
