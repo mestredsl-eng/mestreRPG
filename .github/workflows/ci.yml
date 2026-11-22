@@ -336,6 +336,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci
+      - name: Build workspaces no Windows
+        run: npm run build
+      - name: Homologação de atualização e restauração no Windows (Issue #33)
+        run: node teste-atualizacao-instalacao.mjs
       - name: Testes do auto-update e execução real de npm.cmd
         shell: bash
         run: |
