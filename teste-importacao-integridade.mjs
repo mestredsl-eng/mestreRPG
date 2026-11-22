@@ -644,7 +644,7 @@ try {
   // consequência econômica no caminho confiável
   check(calcNa("ATQ fin ok", campId).pools[0]?.gastos === 1, "substituir: financiado [0,1] → só 2→3 custa");
   check(calcNa("ATQ fin legado", campId).pools[0]?.gastos === 1, "substituir: legado [1,2] → só 0→1 custa");
-  check(calcNa("ATQ fin capacidade de Sangue", campId).pools[0]?.gastos === 3, "substituir: capacidade financiada por XP não é cobrada novamente em pontos");
+  check(calcNa("ATQ XP capacidade de Sangue", campId).pools[0]?.gastos === 3, "substituir: capacidade financiada por XP não é cobrada novamente em pontos");
   check(calcNa("ATQ fin sem prova", campId).pools[0]?.gastos === 3, "substituir: sem prova → custo integral");
   check(calcNa("ATQ fin custo inventado", campId).pools[0]?.gastos === 3, "substituir: custo inventado → custo integral");
 
