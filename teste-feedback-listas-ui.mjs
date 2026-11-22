@@ -147,8 +147,11 @@ try {
   await abrirAba(pm, "Informações");
   let falharPatchCamp = true;
   let patchesCamp = 0;
+  let getsCamp = 0;
   await pm.route(`**/api/campaigns/${c.campId}`, async (route) => {
-    if (route.request().method() !== "PATCH") return route.continue();
+    const metodo = route.request().method();
+    if (metodo === "GET") { getsCamp++; return route.continue(); }
+    if (metodo !== "PATCH") return route.continue();
     patchesCamp++;
     if (falharPatchCamp) {
       return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ erro: "falha simulada" }) });
@@ -166,6 +169,17 @@ try {
   ok("campanha. rascunho preservado após PATCH rejeitado",
     (await nomeInput.inputValue()) === "Rascunho Secreto 123" && (await descInput.inputValue()).includes("não pode sumir"),
     `nome="${await nomeInput.inputValue()}"`);
+  // F25B-5/6 — GET disparado por evento de socket DURANTE a edição não
+  // pode sobrescrever o rascunho: carregar() sincroniza o form só fora
+  // de edição. PATCH idempotente no servidor emite campanha:atualizada
+  // → aoMudar → carregar() → GET /campaigns/:id.
+  const getsAntesSocket = getsCamp;
+  await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { name: "Campanha Teste" } });
+  for (let i = 0; i < 50 && getsCamp === getsAntesSocket; i++) await pm.waitForTimeout(100);
+  ok("campanha. GET por socket durante edição ocorreu", getsCamp > getsAntesSocket, `gets ${getsAntesSocket}→${getsCamp}`);
+  ok("campanha. rascunho preservado após GET de sincronização",
+    (await nomeInput.inputValue()) === "Rascunho Secreto 123" && (await descInput.inputValue()).includes("não pode sumir"),
+    `nome="${await nomeInput.inputValue()}" desc="${await descInput.inputValue()}"`);
   falharPatchCamp = false;
   const patchesAntesRetry = patchesCamp;
   await pm.locator(".estado-feedback-erro").first().getByRole("button", { name: "Tentar novamente" }).click();

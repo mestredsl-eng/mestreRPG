@@ -52,6 +52,12 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   formRef.current = form;
   const conviteFormRef = useRef(conviteForm);
   conviteFormRef.current = conviteForm;
+  // Edição em andamento não pode ser sobrescrita por recargas
+  // (socket, retry de leitura, aoAtualizar): o GET traz o estado do
+  // servidor, não o rascunho local. Ref para o carregar() enxergar o
+  // valor mais recente sem recriar o callback.
+  const editandoRef = useRef(editando);
+  editandoRef.current = editando;
 
   const souMestre = campanha?.meuPapel === "mestre";
   // Personagens exige mestre/jogador no backend (GET /characters → 403
@@ -73,12 +79,17 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     try {
       const { campanha } = await api.obterCampanha(id);
       setCampanha(campanha);
-      setForm({
-        name: campanha.name,
-        description: campanha.description ?? "",
-        system: campanha.system ?? "",
-        status: campanha.status,
-      });
+      // Não sobrescreve o rascunho enquanto o formulário está em edição:
+      // PATCH rejeitado + retry reenviam o estado local; um GET disparado
+      // por socket/refresh apagaria campos não salvos.
+      if (!editandoRef.current) {
+        setForm({
+          name: campanha.name,
+          description: campanha.description ?? "",
+          system: campanha.system ?? "",
+          status: campanha.status,
+        });
+      }
       if (campanha.meuPapel === "mestre") {
         const [{ membros }, { convites }] = await Promise.all([api.listarMembros(id), api.listarConvites(id)]);
         setMembros(membros);
@@ -139,6 +150,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       });
       setErroAcao(null);
       setEditando(false);
+      editandoRef.current = false;
       await carregar();
     } catch (err) {
       // PATCH rejeitado: form/rascunho permanecem intactos; o retry
