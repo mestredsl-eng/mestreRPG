@@ -68,21 +68,30 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   // O bloqueio persiste em sessionStorage para sobreviver a reload e
   // reentrada na tela dentro da mesma aba.
   const convitePendenteKey = `mestre-rpg:convite-indefinido:${id}`;
-  const [convitePendente, setConvitePendente] = useState<{ idsAntes: string[] } | null>(null);
+  type PendenciaConvite = { idsAntes: string[]; idsNovosAtivos?: string[] };
+  // Carrega o bloqueio de forma síncrona no primeiro render. Ler somente
+  // em useEffect deixaria uma janela após reload na qual o submit poderia
+  // disparar antes de o efeito restaurar a pendência.
+  const [convitePendente, setConvitePendente] = useState<PendenciaConvite | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(convitePendenteKey);
+      if (!raw) return null;
+      const p = JSON.parse(raw) as { idsAntes?: unknown; idsNovosAtivos?: unknown };
+      if (!p || !Array.isArray(p.idsAntes)) return { idsAntes: [] };
+      return {
+        idsAntes: p.idsAntes.filter((x): x is string => typeof x === "string"),
+        idsNovosAtivos: Array.isArray(p.idsNovosAtivos)
+          ? p.idsNovosAtivos.filter((x): x is string => typeof x === "string")
+          : undefined,
+      };
+    } catch {
+      // Dados locais ilegíveis: não permitir outro POST às cegas.
+      return { idsAntes: [] };
+    }
+  });
   const [verificandoConvite, setVerificandoConvite] = useState(false);
   const convitePendenteRef = useRef(convitePendente);
   convitePendenteRef.current = convitePendente;
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(convitePendenteKey);
-      if (raw) {
-        const p = JSON.parse(raw) as { idsAntes?: unknown };
-        if (p && Array.isArray(p.idsAntes)) {
-          setConvitePendente({ idsAntes: p.idsAntes.filter((x): x is string => typeof x === "string") });
-        }
-      }
-    } catch { /* storage indisponível — bloqueio vale só para a montagem atual */ }
-  }, [convitePendenteKey]);
 
   const souMestre = campanha?.meuPapel === "mestre";
   // Personagens exige mestre/jogador no backend (GET /characters → 403
@@ -226,9 +235,26 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   };
 
   const limparConvitePendente = () => {
+    // Primeiro remove o marcador durável. Se storage falhar, mantém o
+    // bloqueio em memória — nunca libera POST sem conseguir persistir.
+    try { sessionStorage.removeItem(convitePendenteKey); }
+    catch { return false; }
     convitePendenteRef.current = null;
     setConvitePendente(null);
-    try { sessionStorage.removeItem(convitePendenteKey); } catch { /* ignore */ }
+    return true;
+  };
+
+  const salvarConvitePendente = (pend: PendenciaConvite) => {
+    // Persistir ANTES do POST fecha a janela de reload/fechamento durante
+    // a requisição. Sem persistência, não enviar a mutação.
+    try {
+      sessionStorage.setItem(convitePendenteKey, JSON.stringify(pend));
+    } catch {
+      return false;
+    }
+    convitePendenteRef.current = pend;
+    setConvitePendente(pend);
+    return true;
   };
 
   const enviarConvite = async () => {
@@ -236,9 +262,18 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     // POST sai — nem por retry, nem por reenvio manual do formulário.
     if (convitePendenteRef.current) return;
     const f = conviteFormRef.current;
-    // Snapshot dos convites conhecidos ANTES do POST: a reconciliação
-    // compara a lista fresca do servidor com este conjunto.
-    const idsAntes = convitesRef.current.map((cv) => cv.id);
+    const pend: PendenciaConvite = {
+      // Snapshot dos convites conhecidos ANTES do POST; a reconciliação
+      // compara a lista fresca do servidor com este conjunto.
+      idsAntes: convitesRef.current.map((cv) => cv.id),
+    };
+    if (!salvarConvitePendente(pend)) {
+      setErroAcao({
+        texto: "Não foi possível registrar a proteção local desta criação. Nenhum pedido foi enviado; verifique o armazenamento do navegador antes de tentar novamente.",
+      });
+      return;
+    }
+    setErroAcao(null);
     try {
       const { convite } = await api.criarConvite(id, {
         role: f.role,
@@ -246,37 +281,43 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         expiresInHours: f.expiresInHours ? Number(f.expiresInHours) : undefined,
         requiresApproval: f.requiresApproval,
       });
+      if (!convite || typeof convite.code !== "string" || !convite.code) {
+        // HTTP 2xx sem o segredo one-time utilizável é resultado ambíguo:
+        // pode ter havido commit, então conserva o marcador.
+        throw new Error("Resposta de criação sem código de convite recuperável.");
+      }
       setConviteCriado({ code: convite.code });
-      setErroAcao(null);
-      limparConvitePendente();
+      if (!limparConvitePendente()) {
+        setErroAcao({ texto: "O convite foi criado, mas o bloqueio local não pôde ser removido. Confira a lista antes de criar outro." });
+      } else {
+        setErroAcao(null);
+      }
       await carregar();
     } catch (err) {
-      // 4xx definitivo: o servidor rejeitou sem inserir linha — retry
-      // da mesma mutação é seguro e preserva o rascunho do formulário.
+      // 4xx definitivo: o servidor rejeita antes do INSERT. Só libera um
+      // novo envio se conseguir remover o marcador persistido.
       const definitivo = err instanceof ApiError && err.status >= 400 && err.status < 500;
-      if (definitivo) {
+      if (definitivo && limparConvitePendente()) {
         setErroAcao({
           texto: err instanceof Error ? err.message : "Erro ao criar convite",
           retry: () => void enviarConvite(),
         });
         return;
       }
-      // Ambíguo (rede, timeout, 5xx): a linha PODE ter sido gravada.
-      // Bloqueia novo POST e exige reconciliação via GET.
-      const pend = { idsAntes };
-      convitePendenteRef.current = pend;
-      setConvitePendente(pend);
-      try { sessionStorage.setItem(convitePendenteKey, JSON.stringify(pend)); } catch { /* ignore */ }
+      // Ambíguo (rede, timeout, 5xx ou storage que não pôde ser limpo):
+      // a linha PODE ter sido gravada; conserva o bloqueio fail-closed.
       setErroAcao({
-        texto: "Não foi possível confirmar se o convite foi criado. Verifique a lista antes de tentar novamente — reenviar agora poderia duplicar o convite.",
+        texto: definitivo
+          ? "O servidor rejeitou a criação, mas o bloqueio local não pôde ser removido. Verifique o armazenamento do navegador."
+          : "Não foi possível confirmar se o convite foi criado. Verifique a lista antes de tentar novamente — reenviar agora poderia duplicar o convite.",
       });
     }
   };
 
-  // Reconciliação: GET autoritativo na lista. Se surgiu convite novo
-  // desde o snapshot, o POST commitou (o código one-time se perdeu —
-  // orientar revogação); se não surgiu, nada foi gravado e a nova
-  // tentativa volta a ser permitida. GET falho mantém o bloqueio.
+  // GET autoritativo. Se aparecer convite novo ATIVO, a operação anterior
+  // commitou e o segredo one-time se perdeu: mantém o bloqueio até todos
+  // esses registros serem revogados. Sem linha nova, ou com todas as
+  // linhas novas já inativas/revogadas, libera. Falha no GET nunca libera.
   const verificarConviteAmbiguo = async () => {
     const pend = convitePendenteRef.current;
     if (!pend || verificandoConvite) return;
@@ -284,15 +325,26 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     try {
       const { convites: atuais } = await api.listarConvites(id);
       const idsAntes = new Set(pend.idsAntes);
-      const apareceu = atuais.some((cv) => !idsAntes.has(cv.id));
-      if (apareceu) {
+      const novos = atuais.filter((cv) => !idsAntes.has(cv.id));
+      const novosAtivos = novos.filter((cv) => cv.status === "ativo").map((cv) => cv.id);
+      if (novosAtivos.length) {
+        const pendAtualizada: PendenciaConvite = { ...pend, idsNovosAtivos: novosAtivos };
+        if (salvarConvitePendente(pendAtualizada)) {
+          setErroAcao({
+            texto: "A tentativa anterior criou convite(s), mas o código de uso único foi perdido. Revogue todos os convites novos e ativos na lista abaixo; depois clique em Verificar convites novamente. A criação continuará bloqueada até essa confirmação.",
+          });
+        } else {
+          setErroAcao({ texto: "Convite novo ativo detectado, mas não foi possível persistir o bloqueio. Não gere outro convite nesta aba; verifique o armazenamento do navegador." });
+        }
+      } else if (limparConvitePendente()) {
         setErroAcao({
-          texto: "O convite anterior FOI criado, mas o código não pôde ser recuperado por segurança. Revogue-o na lista abaixo e gere um novo se necessário.",
+          texto: novos.length
+            ? "Os convites novos da tentativa anterior já estão inativos/revogados. Uma nova criação está liberada."
+            : "Nenhum convite novo foi encontrado — a tentativa anterior não foi concluída. Uma nova criação está liberada.",
         });
       } else {
-        setErroAcao({ texto: "Nenhum convite novo foi encontrado — a tentativa anterior não foi concluída. Você já pode gerar o convite novamente." });
+        setErroAcao({ texto: "A lista foi verificada, mas o bloqueio local não pôde ser removido. Não tente criar outro convite até corrigir o armazenamento do navegador." });
       }
-      limparConvitePendente();
       await carregar();
     } catch {
       setErroAcao({ texto: "Não foi possível verificar a lista de convites. O bloqueio permanece até a verificação concluir." });
@@ -607,7 +659,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
           {convitePendente && (
             <div className="estado-feedback estado-feedback-erro" role="alert">
               <p className="estado-feedback-texto">
-                Existe uma criação de convite com resultado indeterminado. Ela precisa ser verificada na lista antes de um novo envio.
+                {convitePendente.idsNovosAtivos?.length
+                  ? "A tentativa anterior criou convite(s) cujo código não pôde ser recuperado. Revogue os convites novos e ativos na lista abaixo; a criação continuará bloqueada até confirmar a revogação."
+                  : "Existe uma criação de convite com resultado indeterminado. Verifique a lista antes de qualquer novo envio."}
               </p>
               <button type="button" className="secundario estado-feedback-retry" disabled={verificandoConvite}
                 onClick={() => void verificarConviteAmbiguo()}>
