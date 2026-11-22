@@ -874,6 +874,42 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (r.ok) assert.equal(r.estado.saldo, 0.3);
   });
 
+  it("espaço de capacidade não representável recusa sem consumir requestId", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 1e-100, usos: {}, historico: [] },
+    };
+    const antes = JSON.stringify(dados);
+
+    const invalida = registrarRecuperacaoSangue(dados, {
+      ...AUTOR,
+      requestId: REQ1,
+      quantidade: 0.5,
+      habilitada: true,
+      capacidadeMax: 1.2345678901234567,
+    });
+    assert.equal(invalida.ok, false);
+    if (!invalida.ok) assert.equal(invalida.codigo, "quantidade_invalida");
+    assert.equal(JSON.stringify(dados), antes, "saldo, usos e histórico não podem mudar");
+    assert.equal(lerSangue(dados).estado.usos[`recuperar:${REQ1}`], undefined);
+
+    // Mesmo requestId continua livre: com uma capacidade cuja diferença
+    // é representável, o retry deve executar e creditar normalmente.
+    const valida = registrarRecuperacaoSangue(dados, {
+      ...AUTOR,
+      requestId: REQ1,
+      quantidade: 2e-100,
+      habilitada: true,
+      capacidadeMax: 2e-100,
+    });
+    assert.equal(valida.ok, true, "requestId não foi consumido pela falha anterior");
+    if (valida.ok) {
+      assert.equal(valida.jaRegistrado, undefined);
+      assert.equal(valida.estado.saldo, 2e-100);
+      assert.equal(valida.estado.usos[`recuperar:${REQ1}`]?.quantidade, 2e-100);
+      assert.equal(valida.estado.historico.at(-1)?.quantidade, 1e-100);
+    }
+  });
+
   it("soma decimal dos níveis da Qualidade é exata e underflow indisponibiliza capacidade", () => {
     const e = estruturaBase();
     const config: ConfigSangue = {
