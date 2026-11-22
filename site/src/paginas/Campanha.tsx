@@ -345,14 +345,22 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         } else {
           setErroAcao({ texto: "Convite novo ativo detectado, mas não foi possível persistir o bloqueio. Não gere outro convite nesta aba; verifique o armazenamento do navegador." });
         }
-      } else if (limparConvitePendente()) {
-        setErroAcao({
-          texto: novos.length
-            ? "Os convites novos da tentativa anterior já estão inativos/revogados. Uma nova criação está liberada."
-            : "Nenhum convite novo foi encontrado — a tentativa anterior não foi concluída. Uma nova criação está liberada.",
-        });
+      } else if (novos.length > 0) {
+        // Encontrar ao menos uma linha nova prova que o POST comitou.
+        // Se todas já estiverem inativas/revogadas, é seguro limpar.
+        if (limparConvitePendente()) {
+          setErroAcao({ texto: "Os convites novos da tentativa anterior já estão inativos/revogados. Uma nova criação está liberada." });
+        } else {
+          setErroAcao({ texto: "A lista foi verificada, mas o bloqueio local não pôde ser removido. Não tente criar outro convite até corrigir o armazenamento do navegador." });
+        }
       } else {
-        setErroAcao({ texto: "A lista foi verificada, mas o bloqueio local não pôde ser removido. Não tente criar outro convite até corrigir o armazenamento do navegador." });
+        // Uma leitura vazia NÃO prova que um POST ambíguo não esteja
+        // atrasado/in-flight e ainda possa fazer INSERT depois deste GET.
+        // Sem chave idempotente no servidor, só um resultado definitivo
+        // pode liberar: mantém o bloqueio e permite consultar novamente.
+        setErroAcao({
+          texto: "Nenhum convite novo apareceu nesta leitura. Isso ainda não prova que a criação anterior não possa concluir depois; o bloqueio continua. Verifique novamente mais tarde e não envie outro POST.",
+        });
       }
       await carregar();
     } catch {
