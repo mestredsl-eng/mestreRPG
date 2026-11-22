@@ -1,0 +1,112 @@
+#!/usr/bin/env node
+// Teste E2E — ciclo completo do convite de campanha pela UI (Issue #254).
+// Jornada: mestre gera convite na aba Convites → código/link exibidos →
+// usuário novo cadastra-se pelo fluxo /convite?code= → aceita → membro
+// aparece na aba Participantes com o papel esperado.
+// O código do convite NUNCA é impresso (stdout/screenshots).
+import { chromium } from "playwright";
+import {
+  dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
+  criarCenario, encerrarServidor, limparDir,
+} from "./teste-base.mjs";
+
+const DIR = dirTeste("convite-campanha-ui");
+const BANCO = `${DIR}/mestre-rpg-teste.db`;
+prepararBanco(BANCO);
+const porta = await portaLivre();
+const BASE = `http://127.0.0.1:${porta}`;
+const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+
+const resultados = [];
+const ok = (nome, cond, extra = "") => {
+  resultados.push({ nome, ok: !!cond });
+  console.log(`${cond ? "ok" : "FALHOU"} ${nome}${extra ? " — " + extra : ""}`);
+};
+
+const FORMATO_CODIGO = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+const browser = await chromium.launch();
+let code = null;
+
+try {
+  await esperarSaudavel(BASE, proc);
+  const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Convite UI" });
+  const cid = cenario.campId;
+  ok("cenário criado (admin + campanha)", !!cenario.cookieMestre && !!cid);
+
+  // --- Mestre: aba Convites → gerar convite ---
+  const ctxMestre = await browser.newContext();
+  await ctxMestre.addCookies([{ name: "mestre_rpg_session", value: cenario.cookieMestre.split("=").pop(), url: BASE }]);
+  const pageMestre = await ctxMestre.newPage();
+  await pageMestre.goto(BASE);
+  await pageMestre.getByRole("button", { name: "Campanhas" }).first().click();
+  await pageMestre.locator(".cartao-campanha", { hasText: "Campanha Convite UI" }).first().click();
+  await pageMestre.locator(".abas").waitFor({ timeout: 15000 });
+  await pageMestre.getByRole("tab", { name: "Convites" }).click();
+
+  // Papel inicial já é "jogador"; gera convite sem aprovação.
+  await pageMestre.getByRole("button", { name: "Gerar convite" }).click();
+  const codigoEl = pageMestre.locator(".convite-criado code").first();
+  await codigoEl.waitFor({ timeout: 10000 });
+  code = (await codigoEl.textContent())?.trim() ?? "";
+  ok("convite exibido com código no formato esperado", FORMATO_CODIGO.test(code));
+
+  // Link exibido aponta para /convite?code=... (mesmo código, sem logar).
+  const linkTexto = await pageMestre.locator(".convite-criado code").nth(1).textContent();
+  ok("link /convite exibido corresponde ao código", !!linkTexto && linkTexto.includes(`/convite?code=${code}`));
+
+  // --- Convidado: contexto novo, SEM sessão — fluxo anônimo ---
+  const ctxNovo = await browser.newContext();
+  const pageNovo = await ctxNovo.newPage();
+
+  // 1) Anônimo abre o link: deve ver cadastro/login (não aceite direto).
+  await pageNovo.goto(`${BASE}/convite?code=${code}`);
+  await pageNovo.getByText("Crie sua conta de jogador").waitFor({ timeout: 15000 });
+  ok("anônimo vê fluxo de cadastro (sem aceite direto)", true);
+  const temAceiteAnonimo = await pageNovo.getByRole("button", { name: "Aceitar convite" }).count();
+  ok("botão Aceitar ausente para anônimo", temAceiteAnonimo === 0);
+
+  // 2) Registra nova conta de jogador pela UI.
+  await pageNovo.locator('label:has-text("Usuário") input').fill("convidada_ui");
+  await pageNovo.locator('label:has-text("Nome de exibição") input').fill("Convidada UI");
+  await pageNovo.locator('label:has-text("Senha") input').fill("senha-forte-456");
+  await pageNovo.getByRole("button", { name: "Criar conta e entrar" }).click();
+  // Registro abre sessão; aguarda app refletir usuário autenticado.
+  await pageNovo.waitForTimeout(1500);
+
+  // 3) Autenticado, abre o convite e aceita.
+  await pageNovo.goto(`${BASE}/convite?code=${code}`);
+  const btnAceitar = pageNovo.getByRole("button", { name: "Aceitar convite" });
+  await btnAceitar.waitFor({ timeout: 15000 });
+  await btnAceitar.click();
+  await pageNovo.getByText(/entra|participa|convite/i).first().waitFor({ timeout: 15000 }).catch(() => {});
+  // Após aceite o app navega ao painel (aoEntrar ~1.5s).
+  await pageNovo.waitForTimeout(2500);
+  ok("convidada autenticada conclui aceite pela UI", true);
+
+  // --- Mestre: Participantes mostra o novo membro com papel jogador ---
+  await pageMestre.getByRole("tab", { name: "Participantes" }).click();
+  const secao = pageMestre.locator("#campanha-panel-participantes");
+  await secao.getByText("convidada_ui", { exact: false }).first().waitFor({ timeout: 10000 });
+  const painelTexto = await secao.innerText();
+  ok("novo membro visível em Participantes", painelTexto.includes("convidada_ui"));
+  ok("papel efetivo = jogador na lista", /convidada_ui[\s\S]{0,200}Jogador|Jogador[\s\S]{0,200}convidada_ui/.test(painelTexto));
+
+  // --- Regressão: aba Convites ainda íntegra (lista mostra uso=1) ---
+  await pageMestre.getByRole("tab", { name: "Convites" }).click();
+  const linha = pageMestre.locator(".tabela tbody tr", { hasText: "Jogador" }).first();
+  await linha.waitFor({ timeout: 10000 });
+  ok("lista de convites reflete uso após aceite", /\b1\b/.test(await linha.innerText()));
+
+  await ctxNovo.close();
+  await ctxMestre.close();
+} catch (e) {
+  ok("execução sem exceção", false, String(e?.message ?? e).slice(0, 200));
+} finally {
+  await browser.close();
+  await encerrarServidor(proc);
+  limparDir(DIR);
+}
+
+const falhas = resultados.filter((r) => !r.ok).length;
+console.log(`\n==== RESULTADO: ${resultados.length - falhas} ok, ${falhas} falhas ====`);
+process.exit(falhas ? 1 : 0);

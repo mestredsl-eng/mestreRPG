@@ -296,7 +296,8 @@ jobs:
             auditoria-visual.mjs \
             teste-reduced-motion.mjs \
             teste-icones-abas-campanha.mjs \
-            teste-estados-vazios-ui.mjs
+            teste-estados-vazios-ui.mjs \
+            teste-convite-campanha-ui.mjs
           do
             if [ ! -f "$s" ]; then echo "===== $s ===== (ausente nesta ref — pulado)"; continue; fi
             echo "===== $s ====="; node "$s"
