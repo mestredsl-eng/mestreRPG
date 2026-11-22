@@ -124,6 +124,8 @@ function sanear(
 
 describe("assinatura v2 conjunta XP+Sangue (Issue #186/C3)", () => {
   it("reescrita coerente de campanha no envelope, template e ruleset invalida a HMAC v2", () => {
+    const contextoOriginal = ctxSan();
+    assert.ok(contextoOriginal.assinatura, "fixture original deve ter contexto HMAC completo");
     const assinaturaOriginal = assV2();
     const campanhaAdulterada = "camp-origem-forjada";
     const dadosAdulterados = dadosPacote({
@@ -140,12 +142,12 @@ describe("assinatura v2 conjunta XP+Sangue (Issue #186/C3)", () => {
     assert.ok(ctxAdulterado.assinatura, "cadeia coerente deve produzir contexto HMAC completo");
     assert.notEqual(
       ctxAdulterado.assinatura.regrasFp,
-      assinaturaOriginal.regrasFp,
+      contextoOriginal.assinatura.regrasFp,
       "campaignId persistido no ruleset integra o fingerprint de regras",
     );
     assert.equal(
       ctxAdulterado.assinatura.fichaFp,
-      assinaturaOriginal.fichaFp,
+      contextoOriginal.assinatura.fichaFp,
       "a ficha permanece a mesma; o único vínculo assinado alterado é o das regras",
     );
     const { data, rep } = sanear({
