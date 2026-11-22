@@ -62,11 +62,29 @@ try {
   ok("loading. role=status presente no nó de texto", (await live.getAttribute("role")) === "status");
   // Live region estável (P3 #238): o nó role=status monta vazio e é
   // preenchido no MESMO nó — leitores de tela anunciam a atualização.
+  // Guarde a referência real antes do efeito preencher o texto. A espera
+  // precisa acontecer NESTE ElementHandle; consultar o locator novamente
+  // poderia resolver um nó substituto e tornar o teste tautológico.
   const noStatus = await live.elementHandle();
-  await pm.waitForFunction((el) => !!el && (el.textContent ?? "").includes("Carregando"), noStatus, { timeout: 8000 }).catch(() => {});
+  const textoAtualizouNoOriginal = await pm.waitForFunction(
+    (el) => !!el && el.isConnected && (el.textContent ?? "").includes("Carregando"),
+    noStatus,
+    { timeout: 8000 },
+  ).then(() => true).catch(() => false);
   ok("loading. texto sempre visível", (await live.innerText()).includes("Carregando"));
-  const mesmoNoStatus = await live.evaluate((el) => el === document.querySelector(".estado-feedback-carregando .estado-feedback-texto[role='status']"));
-  ok("live region. identidade do nó estável antes/depois do preenchimento", mesmoNoStatus === true);
+  const estadoNoOriginal = noStatus
+    ? await noStatus.evaluate((el) => ({
+        conectado: el.isConnected,
+        mesmoNo: el === document.querySelector(".estado-feedback-carregando .estado-feedback-texto[role='status']"),
+        texto: el.textContent ?? "",
+      }))
+    : { conectado: false, mesmoNo: false, texto: "" };
+  ok(
+    "live region. a referência original permanece conectada e recebe a mensagem",
+    textoAtualizouNoOriginal && estadoNoOriginal.conectado && estadoNoOriginal.mesmoNo &&
+      estadoNoOriginal.texto.includes("Carregando"),
+    JSON.stringify({ textoAtualizouNoOriginal, ...estadoNoOriginal }),
+  );
   ok("loading. indicador visual discreto presente", (await st.locator(".estado-feedback-icone").count()) === 1);
   // ---- asserts de CSS da folha dedicada estado-feedback.css ----
   const css = await st.evaluate((el) => {
