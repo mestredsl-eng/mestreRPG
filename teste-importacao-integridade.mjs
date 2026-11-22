@@ -147,6 +147,19 @@ try {
       ],
     },
   });
+  // 500 eventos já retidos: avançar a janela por uma operação real deve
+  // transformar a âncora 1 em 0 (o evento mais antigo é remocao -1).
+  ids.xpAncoraZeroRuntime = inserirPersonagem("ATQ XP âncora zero runtime", {
+    for: 5,
+    __xp: {
+      saldo: 499,
+      ancora: 1,
+      historico: [
+        evXp(-1, 0, { tipo: "remocao" }),
+        ...Array.from({ length: 499 }, (_, i) => evXp(1, i + 1)),
+      ],
+    },
+  });
   ids.eventosInvalidos = inserirPersonagem("ATQ eventos inválidos", {
     for: 5,
     __xp: {
@@ -592,6 +605,20 @@ try {
   p = personagemOrig("ATQ XP âncora zero após corte");
   check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 500 && p.data.__xp.ancora === 0,
     "substituir: corte de evento negativo preserva âncora zero");
+  p = personagemOrig("ATQ XP âncora zero runtime");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 499 && p.data.__xp.ancora === 1,
+    "substituir: âncora 1 preservada antes de avanço da janela");
+  const remocaoAncoraZero = await req(base, "POST", `/characters/${p.id}/xp`, {
+    cookie: cookieMestre,
+    body: { acao: "remover", quantidade: 1, motivo: "Regressão âncora zero" },
+  });
+  check(remocaoAncoraZero.status === 200, "XP HTTP: remoção desloca janela de 500 eventos");
+  const leituraAncoraZero = await req(base, "GET", `/characters/${p.id}/progressao`, { cookie: cookieMestre });
+  check(leituraAncoraZero.status === 200 && leituraAncoraZero.json?.xp?.ancora === 0,
+    "XP HTTP: GET mantém âncora zero após truncamento");
+  p = personagemOrig("ATQ XP âncora zero runtime");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 498 && p.data.__xp.ancora === 0,
+    "XP HTTP: âncora zero persistida no banco");
   p = personagemOrig("ATQ xp trunc forjado");
   check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: 501 sem âncora zero → rejeitado");
   p = personagemOrig("ATQ xp âncora falsa");
