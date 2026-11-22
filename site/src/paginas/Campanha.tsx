@@ -694,7 +694,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
                 Exigir aprovação do mestre
               </label>
             </div>
-            <button type="submit" disabled={!!convitePendente}>Gerar convite</button>
+            <button type="submit" disabled={!!convitePendente || !extrasCarregados}>Gerar convite</button>
           </form>
 
           {!extrasCarregados ? (
