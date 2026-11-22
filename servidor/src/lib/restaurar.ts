@@ -61,6 +61,21 @@ function sanitizarArquivamento(row: Record<string, unknown>) {
   row.data = data;
 }
 
+// Issue #186/C3 (§13): `__sangue_sig` e `__xp.sig` são credenciais de
+// TRANSPORTE — válidas só durante a verificação de uma importação
+// externa. Nunca persistem em `characters.data`. Na origem interna não
+// há verificação, então resíduos são removidos antes de inserir.
+function removerCredenciaisTransporte(row: Record<string, unknown>) {
+  const data = row.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  const d = data as Record<string, unknown>;
+  delete d.__sangue_sig;
+  const xp = d.__xp;
+  if (xp && typeof xp === "object" && !Array.isArray(xp)) {
+    delete (xp as Record<string, unknown>).sig;
+  }
+}
+
 // Snapshots e pacotes exportados antes da migration 0023 podem conter
 // (campaign_id, number) duplicados em sessions — a constraint única
 // rejeitaria a restauração/importação. Mesma regra da migration: a
@@ -104,6 +119,7 @@ const repVazio = (): SaneamentoPersonagem => ({
   pontosHistoricoDescartados: 0, hpHistoricoDescartados: 0, hpCorrigido: false, hpRemovido: false,
   vitalidadeHistoricoDescartados: 0, vitalidadeCorrigida: false, vitalidadeRemovida: false,
   retratoRemovido: false, npcVisivelRemovido: false,
+  sangueRemovido: false, sangueAutenticado: false, sangueInvalido: false, motivoSangue: null,
 });
 
 function acumulou(r: SaneamentoPersonagem): boolean {
@@ -111,7 +127,8 @@ function acumulou(r: SaneamentoPersonagem): boolean {
     r.seloRemovido || r.bonusAjustado || r.pontosHistoricoDescartados > 0 ||
     r.hpHistoricoDescartados > 0 || r.hpCorrigido || r.hpRemovido ||
     r.vitalidadeHistoricoDescartados > 0 || r.vitalidadeCorrigida || r.vitalidadeRemovida ||
-    r.retratoRemovido || r.npcVisivelRemovido;
+    r.retratoRemovido || r.npcVisivelRemovido ||
+    r.sangueRemovido || r.sangueAutenticado || r.sangueInvalido || r.motivoSangue !== null;
 }
 
 /**
@@ -122,11 +139,17 @@ function acumulou(r: SaneamentoPersonagem): boolean {
  * passam "interna" e preservam os metadados reservados integralmente.
  * Retorna o RelatorioSaneamento (vazio quando origem="interna").
  */
-export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado; chaveAssinatura?: Buffer | null } = {}): RelatorioSaneamento {
+export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: OrigemEstado; chaveAssinatura?: Buffer | null; campanhaIdOrigem?: string | null } = {}): RelatorioSaneamento {
   const origem: OrigemEstado = opts.origem ?? "externa";
   const rel = relatorioSaneamentoVazio(origem);
   const chars = (dados.characters ?? []) as Record<string, unknown>[];
   for (const r of chars) sanitizarArquivamento(r);
+  if (origem === "interna") {
+    // C3/§13: credenciais de transporte (`__sangue_sig` e `__xp.sig`)
+    // nunca sobrevivem à persistência — snapshots internos não passam
+    // por verificação, então resíduos são removidos defensivamente.
+    for (const r of chars) removerCredenciaisTransporte(r);
+  }
 
   if (origem === "externa" && chars.length) {
     // autoria: autorId precisa existir nesta instalação para manter o nome
@@ -134,7 +157,12 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
     for (const u of tx.select({ id: users.id, displayName: users.displayName, username: users.username }).from(users).all()) {
       autores.set(u.id, u.displayName ?? u.username ?? null);
     }
-    const ctx = montarContextoSaneamento(dados, autores, { chaveAssinatura: opts.chaveAssinatura ?? null });
+    const ctx = montarContextoSaneamento(dados, autores, {
+      chaveAssinatura: opts.chaveAssinatura ?? null,
+      // C3: envelope do pacote — contexto de proveniência da cadeia
+      // (NÃO assinado); validado contra sheetTemplates.campaignId
+      campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
+    });
     for (const row of chars) {
       const rep = repVazio();
       rep.personagemId = String(row.id ?? "");
@@ -158,6 +186,9 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
       if (rep.vitalidadeRemovida) t.vitalidadeRemovidas++;
       if (rep.retratoRemovido) t.retratosRemovidos++;
       if (rep.npcVisivelRemovido) t.npcVisivelRemovidos++;
+      if (rep.sangueRemovido) t.sanguesRemovidos++;
+      if (rep.sangueAutenticado) t.sanguesAutenticados++;
+      if (rep.sangueInvalido) t.sanguesInvalidos++;
     }
   }
   inserir(tx, memberships, dados.memberships);
@@ -191,7 +222,7 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
  * Transacional no banco; arquivos físicos movidos para a lixeira e recuperados
  * em seguida (best-effort, nunca deixa registros apontando para caminho inválido).
  */
-export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }>; origem?: OrigemEstado } = {}): Promise<ResultadoRestauracao> {
+export async function restaurarEstado(campaignId: string, dados: EstadoCampanha, opts: { gravarArquivos?: Record<string, { conteudo: string }>; origem?: OrigemEstado; campanhaIdOrigem?: string | null } = {}): Promise<ResultadoRestauracao> {
   // ids necessários para deletes com FK indireta (calculados antes da transação)
   const charIds = (await db.select({ id: characters.id }).from(characters).where(eq(characters.campaignId, campaignId))).map((r) => r.id);
   const tplIds = (await db.select({ id: sheetTemplates.id }).from(sheetTemplates).where(eq(sheetTemplates.campaignId, campaignId))).map((r) => r.id);
@@ -256,7 +287,11 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     tx.update(campaigns).set(upd).where(eq(campaigns.id, campaignId)).run();
 
     // reinsere na ordem de dependência (datas voltam de ISO string para Date)
-    saneamento = inserirEstado(tx, dados, { origem: opts.origem, chaveAssinatura });
+    saneamento = inserirEstado(tx, dados, {
+      origem: opts.origem,
+      chaveAssinatura,
+      campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
+    });
   });
 
   // ---- arquivos físicos: lixeira dos substituídos + gravação dos importados ----

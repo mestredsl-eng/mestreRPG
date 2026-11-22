@@ -134,10 +134,11 @@ try {
   const hpJ = fJ.json?.ficha?.vida?.hp;
   t("mestre vê HP máximo com FOR (100+5×10=150)", hpM?.maximo === 150, JSON.stringify(hpM));
   t("mestre vê HP atual real persistido (145)", hpM?.atual === 145, JSON.stringify(hpM));
-  t("jogador vê HP máximo SEM o atributo privado (base 100)", hpJ?.maximo === 100, JSON.stringify(hpJ));
-  t("jogador nunca vê 'atual' acima do máximo visível (≤100)", typeof hpJ?.atual === "number" && hpJ.atual <= 100, JSON.stringify(hpJ));
+  t("jogador não recebe objeto HP quando o atributo que define o máximo é privado", hpJ == null, JSON.stringify(hpJ));
+  t("jogador não recebe HP atual nem máximo derivados do atributo privado",
+    hpJ?.atual === undefined && hpJ?.maximo === undefined, JSON.stringify(hpJ));
   t("histórico de HP do mestre preservado", (hpM?.historico ?? []).length > 0, JSON.stringify(hpM?.historico));
-  t("histórico de HP oculto do jogador (sem vazamento indireto)", Array.isArray(hpJ?.historico) && hpJ.historico.length === 0, JSON.stringify(hpJ?.historico));
+  t("histórico de HP privado não é enviado ao jogador", hpJ?.historico === undefined, JSON.stringify(hpJ));
   t("campo privado ausente dos campos do jogador", !("for" in (fJ.json?.ficha?.campos ?? {})));
   t("jogador não pode editar HP do NPC", (await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.j1.cookie, body: { acao: "dano", quantidade: 10 } })).status === 403);
 
@@ -152,8 +153,8 @@ try {
   });
   t("mestre habilita conversão de ferimentos", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
   // atual 145 − 20 = 125 → pct real 83,3% ≤ 90 → vitalidade sobe p/ nível 1.
-  // Para o jogador: HP exibido grampeia em 100/100 → pct público 100% →
-  // o nível 1 seria inexplicável sem conhecer o máximo real.
+  // Para o jogador: o objeto HP é omitido porque o máximo depende de FOR
+  // mestre-only; a vitalidade automática também fica restrita ao piso manual.
   r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 20, motivo: "Golpe pesado" } });
   t("mestre aplica dano que cruza o limiar real", r.status === 200 && r.json?.ferimento?.para === 1, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
 
@@ -182,7 +183,7 @@ try {
   });
   t("mestre ajusta limiar p/ nível 4", r.status === 200, `status=${r.status} ${JSON.stringify(r.json?.erro ?? "")}`);
   // atual 125 − 40 = 85 → pct real 56,7% ≤ 60 → sobe p/ nível 4.
-  // Público: HP exibido 85/100 → pct 85% → nenhum limiar → teto 0.
+  // Público: HP omitido; somente o piso manual é compartilhado, sem expor a razão real.
   r = await req(BASE, "POST", `/characters/${idNpc}/hp`, { cookie: ids.cookieMestre, body: { acao: "dano", quantidade: 40, motivo: "Surra completa" } });
   t("conversão eleva vitalidade real p/ nível 4", r.status === 200 && r.json?.ferimento?.para === 4, `status=${r.status} ${JSON.stringify(r.json?.ferimento ?? r.json?.erro ?? "")}`);
 
@@ -207,7 +208,7 @@ try {
   sec("Privacidade — snapshot de limiares da conversão");
   // HP real para 125 (recuperar não dispara conversão); depois dano 5 →
   // atual 120 → pct real 80% ≤ 90 → conversão eleva p/ nível 4.
-  // Jogador vê HP grampeado 100/100 → pct público 100% > 90 → oculto.
+  // O jogador não recebe HP nem o incremento de vitalidade que dele deriva.
   r = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`, {
     cookie: ids.cookieMestre,
     body: { conversaoFerimento: { habilitada: true, limiares: [{ ate: 90, nivel: 4 }] } },

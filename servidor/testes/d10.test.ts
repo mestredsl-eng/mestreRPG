@@ -66,3 +66,52 @@ describe("avaliarD10 — fixtures determinísticas", () => {
     assert.equal(av.falhas, 2);
   });
 });
+
+// ---------- R1.2: elegibilidade de Poderes (selecao_nivel) em testes D10 ----------
+// Mesmo critério do socket mesa:teste:pedir — usadoEmTestes explícito
+// manda; sem flag, fallback semântico (agora inclui "poder"). O desafio de
+// Poder é SEMPRE por elemento: cada item da lista entra como opção própria
+// com seu nível individual — nunca soma dos poderes nem custo de aquisição.
+import { campoElegivelParaTeste, campoElegivelParaTesteNivel } from "../src/lib/ficha.js";
+
+describe("elegibilidade D10 — Poderes (R1.2)", () => {
+  const poder = { tipo: "selecao_nivel" as const, semantico: "poder" as const };
+
+  it("selecao_nivel + semantico poder + flag ausente → elegível (fallback)", () => {
+    assert.equal(campoElegivelParaTesteNivel({ ...poder }), true);
+  });
+
+  it("selecao_nivel + poder + usadoEmTestes:true → elegível", () => {
+    assert.equal(campoElegivelParaTesteNivel({ ...poder, usadoEmTestes: true }), true);
+  });
+
+  it("selecao_nivel + poder + usadoEmTestes:false → inelegível (flag vence)", () => {
+    assert.equal(campoElegivelParaTesteNivel({ ...poder, usadoEmTestes: false }), false);
+  });
+
+  it("selecao_nivel + semântico livre/idade + flag ausente → inelegível", () => {
+    assert.equal(campoElegivelParaTesteNivel({ tipo: "selecao_nivel", semantico: "livre" }), false);
+    assert.equal(campoElegivelParaTesteNivel({ tipo: "selecao_nivel", semantico: "defeito" }), false);
+    assert.equal(campoElegivelParaTesteNivel({ tipo: "selecao_nivel", semantico: "vantagem" }), false);
+  });
+
+  it("moeda/item seguem inelegíveis mesmo com usadoEmTestes:true", () => {
+    for (const semantico of ["moeda", "item"] as const) {
+      assert.equal(campoElegivelParaTesteNivel({ tipo: "selecao_nivel", semantico, usadoEmTestes: true }), false);
+      assert.equal(campoElegivelParaTeste({ tipo: "inteiro", semantico, usadoEmTestes: true }), false);
+    }
+  });
+
+  it("tipos incompatíveis seguem inelegíveis", () => {
+    // o helper de elemento só aceita selecao_nivel; o escalar só numérico
+    for (const tipo of ["texto", "calculado", "moeda", "data"] as const) {
+      assert.equal(campoElegivelParaTesteNivel({ tipo, semantico: "poder", usadoEmTestes: true }), false);
+    }
+    for (const tipo of ["texto", "selecao_nivel", "lista"] as const) {
+      assert.equal(campoElegivelParaTeste({ tipo: tipo as never, semantico: "poder", usadoEmTestes: true }), false);
+    }
+    // distinção explícita: selecao_nivel NÃO é campo escalar — o nível de
+    // cada elemento é resolvido por elementoKey no socket, nunca somado.
+    assert.equal(campoElegivelParaTeste({ tipo: "selecao_nivel", semantico: "poder", usadoEmTestes: true }), false);
+  });
+});
