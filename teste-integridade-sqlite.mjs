@@ -9,6 +9,7 @@ import {
 import { readdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hashSenha } from "./servidor/dist/lib/password.js";
+import { estruturaFichaSchema } from "./servidor/dist/lib/ficha.js";
 import { sessao } from "./teste-base.mjs";
 import { io as ioClient } from "socket.io-client";
 
@@ -480,9 +481,14 @@ try {
         body: { versionId: verF5 },
       });
     };
-    const [putF5, publishF5] = ordemInicial === "put-primeiro"
-      ? await Promise.all([enviarPutF5(), enviarPublishF5()])
-      : await Promise.all([enviarPublishF5(), enviarPutF5()]);
+    let putF5, publishF5;
+    if (ordemInicial === "put-primeiro") {
+      [putF5, publishF5] = await Promise.all([enviarPutF5(), enviarPublishF5()]);
+    } else {
+      // A ordem de Promise.all é publish, PUT; manter a associação nominal
+      // evita trocar os resultados e validar status/evento da operação errada.
+      [publishF5, putF5] = await Promise.all([enviarPublishF5(), enviarPutF5()]);
+    }
 
     const depoisF5 = comDb(banco, (db) => ({
       versao: db.prepare("select structure,published_at from sheet_versions where id=?").get(verF5),
@@ -492,9 +498,14 @@ try {
       ).all(auditAntesF5, campId).filter((a) => a.action === "ficha.modelo_publicado"),
     }));
     const parseEstruturaF5 = (valor) => typeof valor === "string" ? JSON.parse(valor) : valor;
-    const estruturaEsperadaF5 = putF5.status === 200
-      ? estruturaPutF5
-      : parseEstruturaF5(antesF5.structure);
+    // O Zod aplica defaults (versao, propriedades de campo e pontos).
+    // Comparar a estrutura persistida com a forma canônica evita falso
+    // negativo por campos default que o servidor materializa no PUT.
+    const estruturaEsperadaF5 = estruturaFichaSchema.parse(
+      putF5.status === 200
+        ? estruturaPutF5
+        : parseEstruturaF5(antesF5.structure)
+    );
     const eventosEsperadosF5 = 1 + (putF5.status === 200 ? 1 : 0);
     const eventosNovosDoTemplateF5 = () =>
       eventosF5.slice(eventosAntesF5).filter((e) => e?.templateId === tplF5);
