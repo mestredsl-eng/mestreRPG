@@ -414,6 +414,7 @@ jobs:
             homologacao-sessoes.mjs
             teste-realtime-paginas.mjs
             homologacao-pacotes-forjados.mjs
+            teste-a11y-fluxos-297.mjs
           )
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
