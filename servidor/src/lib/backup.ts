@@ -345,7 +345,11 @@ export async function listarBackups(): Promise<BackupInfo[]> {
     .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
     .map((b) => ({
       id: b.id, kind: b.kind, filePath: b.filePath, sizeBytes: b.sizeBytes,
-      note: b.note, createdAt: String(b.createdAt),
+      note: b.note,
+      // Preserva milissegundos do timestamp SQLite. String(Date) descarta
+      // essa precisão e empata backups criados no mesmo segundo; a retenção
+      // poderia então tratar um backup antigo como se fosse o mais recente.
+      createdAt: b.createdAt.toISOString(),
       sucesso: b.note?.startsWith("Falha") ? false : existsSync(b.filePath),
     }));
 }
