@@ -3,6 +3,7 @@ import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type E
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
 import PainelSangue from "./PainelSangue";
+import { getSocket } from "./socket";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -31,6 +32,8 @@ interface Props {
    *  sem true explícito o painel nem é montado — evita GET /sangue que
    *  o servidor negaria com 403 (ex.: jogador lendo NPC público). */
   podeLerSangue?: boolean;
+  /** Dono ativo da ficha: pode ativar um Poder sem rolagem. O D10 continua cobrando no fluxo de teste. */
+  podeAtivarPoder?: boolean;
   /** Campanha do personagem — usada só para resolver o vínculo de
    *  Sangue (config.sangue.campoCapacidadeId) sem fetch extra de
    *  personagem. */
@@ -50,7 +53,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, campaignId, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
@@ -168,6 +171,31 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
 
   const faltaDefeito = !!poderesCfg?.exigirDefeito && poderesSelecionados.size > 0 && defeitosSelecionados.size === 0;
 
+  // Ativação narrativa: reutiliza os Poderes que já estão selecionados
+  // nesta ficha. Não cria seletor paralelo e não interfere no D10.
+  const acoesPoderCampo = (campo: CampoDef) => {
+    if (!personagemId || !podeAtivarPoder || simulacao || !ehPoder(campo)) return null;
+    const regra = campo.regra;
+    let chaves = chavesSelecionadas(campo);
+    // Campos numéricos vinculados a um Poder representam posse por nível.
+    // Só oferece ação quando o nível existente na ficha é > 0.
+    if (regra?.kind === "poder" && regra.key) {
+      const bruto = valores[campo.id];
+      const nivel = typeof bruto === "number" ? bruto : typeof bruto === "string" ? Number(bruto) : 0;
+      chaves = Number.isFinite(nivel) && nivel > 0 ? [regra.key] : [];
+    }
+    if (chaves.length === 0) return null;
+    return (
+      <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
+        {chaves.map((key) => {
+          const nome = (biblioteca?.poder ?? []).find((e) => e.key === key)?.name ?? key;
+          return <AtivacaoPoderNarrativa key={key} characterId={personagemId} poderKey={key} nome={nome} />;
+        })}
+        <span className="meta">Ativação sem rolagem. Quando o Poder exigir teste, use o D10 na Mesa — o custo será cobrado por lá.</span>
+      </div>
+    );
+  };
+
   /**
    * Alterna um poder respeitando o limite configurado.
    * limite=1 → selecionar outro substitui o anterior; limite=N → bloqueia
@@ -255,6 +283,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               {secao.campos.map((campo, ci) => (
                 <Fragment key={campo.id}>
                   <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                  {acoesPoderCampo(campo)}
                   {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
                     <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
                   )}
@@ -268,6 +297,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                       {sub.campos.map((campo) => (
                         <Fragment key={campo.id}>
                           <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                          {acoesPoderCampo(campo)}
                           {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
                             <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
                           )}
@@ -299,6 +329,77 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
         <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
       )}
     </div>
+  );
+}
+
+/** Ativa um Poder já escolhido na ficha, sem abrir um segundo seletor.
+ * O requestId permanece durante timeout para que o retry seja idempotente.
+ * O uso com teste continua passando exclusivamente pelo D10 da Mesa. */
+function AtivacaoPoderNarrativa({ characterId, poderKey, nome }: {
+  characterId: string;
+  poderKey: string;
+  nome: string;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const requestId = useRef<string | null>(null);
+  const emAndamento = useRef(false);
+
+  const ativar = () => {
+    if (emAndamento.current) return;
+    emAndamento.current = true;
+    setOcupado(true);
+    setMensagem(null);
+    requestId.current ??= crypto.randomUUID();
+    let resolvido = false;
+    const finalizarTimeout = window.setTimeout(() => {
+      if (resolvido) return;
+      resolvido = true;
+      emAndamento.current = false;
+      setOcupado(false);
+      setMensagem({ tipo: "erro", texto: "Sem resposta do servidor. Tente novamente; a repetição usa o mesmo identificador e não cobra duas vezes." });
+    }, 15000);
+
+    try {
+      getSocket().emit("sangue:ativar", {
+        characterId,
+        poderKey,
+        requestId: requestId.current,
+      }, (ack: { ok?: boolean; erro?: string; estado?: { saldo?: number } } | undefined) => {
+        if (resolvido) return;
+        resolvido = true;
+        window.clearTimeout(finalizarTimeout);
+        emAndamento.current = false;
+        setOcupado(false);
+        if (ack?.ok) {
+          requestId.current = null;
+          const saldo = ack.estado?.saldo;
+          setMensagem({ tipo: "ok", texto: saldo === undefined ? `${nome} ativado.` : `${nome} ativado · ${saldo} Pontos de Sangue restantes.` });
+        } else {
+          // Um ACK negativo representa recusa/rollback no servidor. A
+          // próxima tentativa é uma nova intenção e recebe outro UUID.
+          requestId.current = null;
+          setMensagem({ tipo: "erro", texto: ack?.erro ?? "Não foi possível ativar este Poder." });
+        }
+      });
+    } catch {
+      emAndamento.current = false;
+      setOcupado(false);
+      setMensagem({ tipo: "erro", texto: "Falha de conexão. Tente novamente." });
+    }
+  };
+
+  return (
+    <span className="ficha-poder-acao">
+      <button type="button" className="mini" disabled={ocupado} onClick={ativar} aria-label={`Usar ${nome} sem rolagem`}>
+        {ocupado ? `Usando ${nome}…` : `Usar ${nome}`}
+      </button>
+      {mensagem && (
+        <small className={mensagem.tipo === "ok" ? "meta" : "ficha-aviso"} role={mensagem.tipo === "ok" ? "status" : "alert"}>
+          {mensagem.texto}
+        </small>
+      )}
+    </span>
   );
 }
 
