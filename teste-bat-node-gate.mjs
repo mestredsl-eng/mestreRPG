@@ -62,7 +62,7 @@ function executarCaso(nome, versao, aceita, esperado) {
     MESTRE_FAKE_NODE_ACCEPT: aceita ? "1" : "0",
   };
   const comspec = process.env.ComSpec || "cmd.exe";
-  const run = spawnSync(comspec, ["/d", "/c", '"' + join(app, "iniciar-mestre-rpg.bat") + '"'], {
+  const run = spawnSync(comspec, ["/d", "/c", "iniciar-mestre-rpg.bat"], {
     cwd: app, env, input: "\r\n", encoding: "utf8", timeout: 15000, windowsHide: true,
   });
   const saida = (run.stdout || "") + "\n" + (run.stderr || "");
