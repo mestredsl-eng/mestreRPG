@@ -459,7 +459,7 @@ try {
         if (ev === "sangue:ativar" && payload && typeof payload === "object" && typeof cb === "function") {
           // O servidor confirma o débito imediatamente; apenas atrasamos
           // a resposta do ACK para o navegador.
-          return original(ev, payload, (ack) => setTimeout(() => cb(ack), 1800));
+          return original(ev, payload, (ack) => setTimeout(() => cb(ack), 3500));
         }
         return original(ev, payload, cb);
       };
@@ -470,7 +470,9 @@ try {
     }
     t("UI. corrida de ficha: primeiro débito gravado no personagem de origem", saldoDe(CHARM) === 3);
     await page.getByRole("button", { name: "Voltar", exact: true }).click();
-    await abrirFicha(page, "Herói Ações");
+    const outraFicha = page.locator("tr.clicavel", { hasText: "Herói Ações" }).first();
+    await outraFicha.waitFor({ state: "visible", timeout: 15000 });
+    await outraFicha.click();
     await page.getByRole("button", { name: "Editar ficha" }).click();
     const nomeInput = page.locator("label").filter({ hasText: "Nome do personagem" }).locator("input");
     t("UI. corrida de ficha: outro personagem segue em edição", await nomeInput.count() === 1);
