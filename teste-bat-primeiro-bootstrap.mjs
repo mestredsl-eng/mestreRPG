@@ -77,13 +77,30 @@ function fixture(nome, recibo = false) {
 }
 function executar(f, input) {
   const comspec = process.env.ComSpec || "cmd.exe";
+  const comandoSmoke = ["where node && node -p \"process.versions.node\""];
+  const smoke = (env) => spawnSync(comspec, ["/d", "/c", ...comandoSmoke], {
+    cwd: f.app, env, encoding: "utf8", timeout: 10000, windowsHide: true,
+  });
+  // Separa falha de resolução do node.exe de falha ao carregar NODE_OPTIONS.
+  const smokeSemPreload = smoke({ ...f.env, NODE_OPTIONS: "" });
+  const smokeComPreload = smoke(f.env);
+  const diagnostico = [
+    `process.execPath=${process.execPath}`,
+    `nodeDir=${dirname(process.execPath)}`,
+    `PATH[0]=${String(f.env.PATH ?? "").split(";")[0]}`,
+    `smoke sem NODE_OPTIONS: status=${smokeSemPreload.status} error=${smokeSemPreload.error?.message ?? ""} stdout=${String(smokeSemPreload.stdout ?? "").trim()} stderr=${String(smokeSemPreload.stderr ?? "").trim()}`,
+    `smoke com NODE_OPTIONS: status=${smokeComPreload.status} error=${smokeComPreload.error?.message ?? ""} stdout=${String(smokeComPreload.stdout ?? "").trim()} stderr=${String(smokeComPreload.stderr ?? "").trim()}`,
+  ].join("\\n");
+  // As invocações de diagnóstico usam o preload para provar o segundo caso;
+  // limpar o log antes do BAT mantém a medição da ordem sem ruído.
+  writeFileSync(f.log, "");
   const run = spawnSync(comspec, ["/d", "/c", "iniciar-mestre-rpg.bat"], {
     cwd: f.app, env: f.env, input, encoding: "utf8", timeout: 30000, windowsHide: true,
   });
   let out = "";
   try { out = readFileSync(f.log, "utf8"); } catch {}
-  const saida = String(run.stdout ?? "") + "\n" + String(run.stderr ?? "");
-  return { run, out, saida };
+  const saida = diagnostico + "\\n" + String(run.stdout ?? "") + "\\n" + String(run.stderr ?? "");
+  return { run, out, saida, diagnostico, smokeSemPreload, smokeComPreload };
 }
 const pos = (s, re) => { const m = re.exec(s); return m ? m.index : -1; };
 const tem = (s, re) => re.test(s);
