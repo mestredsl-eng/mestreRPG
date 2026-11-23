@@ -799,6 +799,8 @@ export interface DefinicaoElemento {
   exclusivos?: string[];
   obrigatorios?: string[];
   reservaPontos?: string;
+  /** Uso deste Poder só deve ser registrado no fluxo de teste D10. */
+  exigeTeste?: boolean;
   disponivel?: boolean;
   ordem?: number;
   formulas?: Record<string, string>;
@@ -938,6 +940,8 @@ export interface ElementoVinculavel {
   niveis?: { descricao?: string; custo?: number }[];
   custoPontos?: number;
   maximo?: number;
+  /** true = uso exige D10; ausente/false = preserva ativação narrativa. */
+  exigeTeste?: boolean;
 }
 
 export interface ResultadoValidacaoRegras {
