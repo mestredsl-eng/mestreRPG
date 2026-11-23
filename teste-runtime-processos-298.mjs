@@ -7,7 +7,6 @@
 // instância duplicada com causa específica nos logs; EADDRINUSE com
 // causa específica; ausência de processo/porta órfã.
 // Executar: node teste-runtime-processos-298.mjs  (requer servidor/dist buildado)
-import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
@@ -57,10 +56,19 @@ function subir(...args) {
 const logsDe = (p) => p.__log ?? "";
 
 async function esperarSaida(proc, timeoutMs = 20000) {
-  if (proc.exitCode !== null || proc.signalCode !== null) return { exitCode: proc.exitCode, signalCode: proc.signalCode };
+  const fim = () => ({ exitCode: proc.exitCode, signalCode: proc.signalCode });
+  if (proc.exitCode !== null || proc.signalCode !== null) {
+    // já terminou: margem para o flush dos pipes/'close' assentar
+    await new Promise((r) => setTimeout(r, 300));
+    return fim();
+  }
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve(null), timeoutMs);
-    proc.once("exit", (code, signal) => { clearTimeout(t); resolve({ exitCode: code, signalCode: signal }); });
+    const concluir = () => { clearTimeout(t); resolve(fim()); };
+    // 'close' garante stdio drenado; 'exit'+margem cobre o caso raro
+    // de 'close' não disparar — resolve() é idempotente
+    proc.once("close", concluir);
+    proc.once("exit", () => setTimeout(concluir, 400));
   });
 }
 
@@ -102,7 +110,8 @@ async function main() {
     ok("C1 graceful: processo sai com exitCode 0 e sem sinal",
       saida !== null && saida.exitCode === 0 && saida.signalCode === null,
       `saida=${JSON.stringify(saida)}`);
-    ok("C1 graceful: sem fallback de kill (encerrarServidor não usado)", true);
+    // (sem assert tautológico: a prova de "sem fallback" é o próprio
+    // exitCode===0 + signalCode===null observados acima)
 
     // restart na mesma porta/banco
     const proc2 = subir(porta, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
@@ -134,8 +143,12 @@ async function main() {
     // Ler tamanho não interfere no banco (não é checkpoint).
     await new Promise((r) => setTimeout(r, 300)); // commit assenta no WAL
     const walTamanho = existsSync(WAL) ? statSync(WAL).size : 0;
-    ok("C2 WAL continha frames pendentes antes do kill", walTamanho > 32,
-      `wal=${walTamanho}B`);
+    // Frame WAL completo = header 32B + frame header 24B + página inteira.
+    // 32B sozinhos não provam frame; o mínimo real depende do page_size.
+    const pageSize = comDb(BANCO, (db) => db.pragma("page_size", { simple: true }));
+    const walMinimo = 32 + 24 + pageSize;
+    ok("C2 WAL continha frames pendentes antes do kill", walTamanho >= walMinimo,
+      `wal=${walTamanho}B min=${walMinimo}B (page=${pageSize})`);
 
     proc.kill("SIGKILL");
     await esperarSaida(proc, 10000);
