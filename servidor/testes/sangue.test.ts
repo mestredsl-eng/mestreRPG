@@ -982,6 +982,83 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (poder.ok) assert.equal(poder.estado.saldo, 0);
   });
 
+  it("recuperação limitada no teto 0.84 estabelece saldo exato e libera D10 integral", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const usoD10Anterior = "d10:" + TEST1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // Cenário da revisão: saldo legado 0.71, teto 0.84. A recuperação
+        // pede 0.5 mas o espaço era 0.13 — clamp comprovado pelo uso
+        // durável. O snapshot 0.84 é decimalmente limpo e vira fronteira.
+        saldo: 0.84,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.5,
+          },
+          [usoD10Anterior]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.9, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.9 },
+          { em, tipo: "uso" as const, quantidade: -0.19, motivo: "Poder anterior", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.71, usoId: usoD10Anterior },
+          { em, tipo: "recuperacao" as const, quantidade: 0.13, motivo: "recuperação limitada ao teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.84, usoId: usoRecuperacao },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.84,
+      "recuperação comprovada no teto 0.84 estabelece saldo exato");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.84 });
+    assert.equal(poder.ok, true, "D10 de custo 0.84 consome o saldo integral do teto");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("recuperação limitada com snapshot de teto com resíduo preserva saldo armazenado", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // O evento legado não prova que o saldo chegou ao teto exato:
+        // 0.8399999999999999 carrega resíduo binário (o cálculo
+        // saldo + (teto - saldo) pode gravar teto - 1 ULP). A
+        // reconstrução NÃO pode tratá-lo como fronteira exata — o
+        // saldo armazenado é preservado.
+        saldo: 0.8399999999999999,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.5,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.71, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.71 },
+          { em, tipo: "recuperacao" as const, quantidade: 0.1299999999999999, motivo: "recuperação limitada com resíduo", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.8399999999999999, usoId: usoRecuperacao },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.8399999999999999,
+      "snapshot de teto com resíduo não prova fronteira exata — saldo armazenado preservado");
+  });
+
   it("preserva saldo persistido ao reconstruir histórico truncado com âncora legada", () => {
     const em = new Date().toISOString();
     const dados: Record<string, unknown> = {

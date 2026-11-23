@@ -134,6 +134,19 @@ export function multiplicarDecimalSangue(a: number, b: number): number {
   });
 }
 
+/**
+ * Um snapshot só pode inaugurar saldo decimal exato quando sua
+ * representação não carrega resíduo de arredondamento binário. Valores
+ * que exigem 16+ algarismos significativos (artefato típico de soma/
+ * subtração binária legada) são tratados como ambíguos: a prova de
+ * teto exato não se sustenta e o saldo armazenado é preservado.
+ * Não altera o valor — é somente um teste de limpeza decimal.
+ */
+function decimalSangueExato(valor: number): boolean {
+  if (!Number.isFinite(valor)) return false;
+  return Number(valor.toPrecision(15)) === valor;
+}
+
 /** Comparação decimal; null indica que algum resultado não é representável. */
 export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 | null {
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
@@ -311,7 +324,11 @@ function saldoDecimalComprovadoPeloHistorico(
       return null;
     }
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
-    if (!Number.isFinite(proximoDecimal)) return null;
+    // Não rejeitar aqui: a soma decimal pode ser não representável em
+    // Number (ex.: dois resíduos binários cuja soma exata cai entre dois
+    // doubles). Os ramos que consomem proximoDecimal exigem finitude;
+    // a recuperação limitada comprovada ancora no snapshot do evento,
+    // que é fronteira exata independente dessa soma.
     const usoRecuperacao =
       evento.tipo === "recuperacao" && evento.usoId
         ? usos[evento.usoId]
@@ -357,6 +374,15 @@ function saldoDecimalComprovadoPeloHistorico(
       if (solicitadoVsAplicado > 0) {
         const saldoResultanteValido = compararDecimalSangue(evento.saldoResultante, saldoLegado);
         if (saldoResultanteValido === null || saldoResultanteValido < 0) return null;
+        // O evento legado não registra o teto histórico: pedido > aplicado
+        // prova a limitação, mas NÃO prova que saldoResultante chegou ao
+        // teto exato — o cálculo binário `saldo + (teto - saldo)` pode
+        // gravar o teto ±1 ULP. Só tratamos o snapshot como fronteira
+        // exata quando ele tem representação decimal limpa (≤15
+        // algarismos significativos, sem resíduo de arredondamento
+        // binário). Snapshot com resíduo mantém a reconstrução
+        // ambígua e o saldo armazenado é preservado.
+        if (!decimalSangueExato(evento.saldoResultante)) return null;
         saldoDecimal = evento.saldoResultante;
         // A recuperação limitada, com uso durável e snapshot no teto,
         // estabelece um novo ponto de partida comprovado. A ambiguidade
@@ -365,9 +391,11 @@ function saldoDecimalComprovadoPeloHistorico(
       } else {
         // Crédito integral comprovado: a quantidade pedida coincide com o
         // delta durável, então a correção decimal normal continua segura.
+        if (!Number.isFinite(proximoDecimal)) return null;
         saldoDecimal = proximoDecimal;
       }
     } else {
+      if (!Number.isFinite(proximoDecimal)) return null;
       saldoDecimal = proximoDecimal;
     }
     saldoLegado = proximoLegado;
