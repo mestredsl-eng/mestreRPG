@@ -691,14 +691,30 @@ export async function executarBoot(opts = {}) {
   // pull aplicado mas pos-pull falhou dentro do verificar (ou estado
   // incerto): tentar rollback controlado; nunca sair 0 sem integridade.
   if (v.rollback) {
+    const gravarRollback = persistirDuravel
+      ? (dados) => persistir(dados)
+      : undefined;
+    if (persistirDuravel && !persistir({ ...v.rollback, fase: "rollback-iniciado" })) {
+      instrucaoRecuperacao(log, v.rollback.branch);
+      return { codigo: 1, atualizou: true, revertido: false, motivo: "falha-journal-rollback" };
+    }
     let rb;
     try {
-      rb = await executarRollback(v.rollback, { ...opts, cwd: v.repoDir ?? cwd, executar, log });
+      rb = await executarRollback(v.rollback, {
+        ...opts, cwd: v.repoDir ?? cwd, executar, log,
+        gravarJournal: gravarRollback,
+      });
     } catch (e) {
       log(`[auto-update] Excecao durante o rollback: ${String(e?.message ?? e).slice(0, 200)}`);
       rb = { ok: false, motivo: "excecao-rollback" };
     }
     if (rb.ok) {
+      if (persistirDuravel) {
+        if (!persistir({ ...v.rollback, fase: "concluido", concluidoEm: new Date().toISOString() })) {
+          return { codigo: 1, atualizou: true, revertido: false, motivo: "falha-finalizar-journal-rollback" };
+        }
+        limparJournal(v.repoDir ?? cwd);
+      }
       log(`[auto-update] Rollback concluido — boot segue com a versao local (${v.rollback.shaAnterior.slice(0, 12)}).`);
       return { codigo: 0, atualizou: false, revertido: true, motivo: v.motivo };
     }
