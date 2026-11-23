@@ -149,7 +149,7 @@ try {
     publicar(c);
     const shaAnt = head(c.local);
     const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: execReal, log: silencioso });
-    t("pull --ff-only aplicado", r.atualizou === true && r.shaAnterior === shaAnt && r.shaNovo !== shaAnt, JSON.stringify(r));
+    t("merge --ff-only do SHA remoto aplicado", r.atualizou === true && r.shaAnterior === shaAnt && r.shaNovo !== shaAnt, JSON.stringify(r));
     t("HEAD agora e o commit remoto", head(c.local) === r.shaNovo);
     t("commits contados = 1", r.commits === 1, `commits=${r.commits}`);
   }
@@ -766,8 +766,7 @@ try {
     t("excecao persistente → codigo 1 (sem sucesso falso)", b.codigo === 1, JSON.stringify(b));
   }
   {
-    // excecao DENTRO do verificar, apos o pull (git diff lanca) →
-    // verificar devolve rollback → boot reverte → codigo 0
+    // Exceção ao calcular o diff antes do merge: nenhuma atualização é aplicada.
     const c = criarRepo("b2-pospull");
     publicar(c);
     const shaAnt = head(c.local);
@@ -777,12 +776,11 @@ try {
       return executarReal(cmd, args, opcoes);
     };
     const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
-    t("excecao pos-pull no verificar → rollback → codigo 0", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
-    t("HEAD voltou ao SHA anterior", head(c.local) === shaAnt);
+    t("falha no diagnóstico pré-merge → segue sem atualizar", b.codigo === 0 && b.atualizou !== true, JSON.stringify(b));
+    t("HEAD permanece no SHA anterior, sem rollback", head(c.local) === shaAnt);
   }
   {
-    // código de saída não-zero ao identificar mudanças nas dependências
-    // é estado desconhecido pós-pull: rollback, nunca assumir deps inalteradas.
+    // Código não-zero no diff pré-merge: falha fechada antes de mover HEAD.
     const c = criarRepo("b2-diff-code");
     publicar(c);
     const shaAnt = head(c.local);
@@ -792,8 +790,8 @@ try {
       return executarReal(cmd, args, opcoes);
     };
     const b = await executarBoot({ ...opcoesRepo(c), executar: exec, log: silencioso, stateFile: estado(c.base) });
-    t("git diff não-zero pós-pull → rollback seguro", b.codigo === 0 && b.revertido === true, JSON.stringify(b));
-    t("HEAD retorna ao SHA anterior após diff falho", head(c.local) === shaAnt);
+    t("git diff não-zero pré-merge → atualização recusada", b.codigo === 0 && b.atualizou !== true, JSON.stringify(b));
+    t("HEAD permanece no SHA anterior após diff falho", head(c.local) === shaAnt);
   }
   {
     // falha de PERSISTENCIA do estado (stateFile e um diretorio) →
@@ -901,7 +899,7 @@ try {
       const regOn = [];
       const bOn = await executarBoot({ ...opcoesRepo(c2), executar: executarHibrido({ registro: regOn }), log: silencioso, stateFile: estado(c2.base) });
       t("variavel ausente → atualizacao aplicada", bOn.codigo === 0 && bOn.atualizou === true, JSON.stringify(bOn));
-      t("pull executado sem a variavel", regOn.some((x) => x.includes(" pull")), regOn.join(" | "));
+      t("fast-forward por SHA executado sem a variável", regOn.some((x) => x.includes(" merge --ff-only ")), regOn.join(" | "));
 
       // env=1 → comportamento inalterado (atualiza)
       process.env.MESTRE_AUTO_UPDATE = "1";
@@ -909,7 +907,7 @@ try {
       publicar(c3);
       const regUm = [];
       const bUm = await executarBoot({ ...opcoesRepo(c3), executar: executarHibrido({ registro: regUm }), log: silencioso, stateFile: estado(c3.base) });
-      t("MESTRE_AUTO_UPDATE=1 → atualizacao normal", bUm.codigo === 0 && bUm.atualizou === true && regUm.some((x) => x.includes(" pull")), JSON.stringify(bUm));
+      t("MESTRE_AUTO_UPDATE=1 → atualizacao normal", bUm.codigo === 0 && bUm.atualizou === true && regUm.some((x) => x.includes(" merge --ff-only ")), JSON.stringify(bUm));
     } finally {
       if (envAnterior === undefined) delete process.env.MESTRE_AUTO_UPDATE;
       else process.env.MESTRE_AUTO_UPDATE = envAnterior;
