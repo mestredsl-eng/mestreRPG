@@ -2404,3 +2404,18 @@ textarea:focus-visible,
   .chat-falar-como { align-items: stretch; flex-direction: column; }
   .chat-falar-como select { width: 100%; }
 }
+
+/* Indicadores de vida nos tokens da mesa virtual (Issue #127) — sem
+   position:relative aqui: a regra base já declara position:absolute e
+   um override posterior no mesmo seletor quebraria left/top percentuais. */
+.vtt-token { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.vtt-token-hp {
+  position: absolute; left: 8%; right: 8%; bottom: 6%;
+  height: 4px; border-radius: 2px; background: rgba(0,0,0,.55); overflow: hidden;
+}
+.vtt-token-hp-fill { display: block; height: 100%; background: #58d68d; transition: width .25s ease; }
+.vtt-token-vit {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px;
+  border-radius: 8px; background: #b03a2e; color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; padding: 0 4px;
+}

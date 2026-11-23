@@ -31,11 +31,16 @@ import { CHAVE_PONTOS } from "./pontos.js";
 import { CHAVE_NPC_VISIVEL } from "./npc-visibility.js";
 import { retratoGaleriaPorId } from "./retratos.js";
 import {
-  impressaoDigitalRegras, verificarLedgerXp, type ContextoAssinatura,
+  impressaoDigitalFicha, impressaoDigitalRegras, verificarAssinaturaV2, verificarLedgerXp,
+  xpSemAssinaturaRaiz, type ContextoAssinatura,
 } from "./assinatura-xp.js";
+import { CHAVE_SANGUE } from "./sangue.js";
 
 // mesma chave usada pelas rotas de retrato (personagens.ts)
 const CHAVE_RETRATO = "__retrato";
+// Issue #186/C3: credencial de transporte da assinatura conjunta v2 —
+// propriedade irmã de `__sangue`, nunca persistida.
+const CHAVE_SANGUE_SIG = "__sangue_sig";
 
 export type OrigemEstado = "interna" | "externa";
 
@@ -56,6 +61,14 @@ export interface SaneamentoPersonagem {
   vitalidadeRemovida: boolean;
   retratoRemovido: boolean;
   npcVisivelRemovido: boolean;
+  // Issue #186/C3: ledger Sangue
+  sangueRemovido: boolean;
+  sangueAutenticado: boolean;
+  /** C3: Sangue existia mas sua prova falhou (v2 inválida/prefixo
+   *  desconhecido) — distinto de "removido por falta de assinatura". */
+  sangueInvalido: boolean;
+  /** motivo legível do descarte (sem segredos) */
+  motivoSangue: string | null;
 }
 
 export interface TotaisSaneamento {
@@ -74,6 +87,9 @@ export interface TotaisSaneamento {
   vitalidadeRemovidas: number;
   retratosRemovidos: number;
   npcVisivelRemovidos: number;
+  sanguesRemovidos: number;
+  sanguesAutenticados: number;
+  sanguesInvalidos: number;
 }
 
 export interface RelatorioSaneamento {
@@ -91,6 +107,7 @@ export function relatorioSaneamentoVazio(origem: OrigemEstado): RelatorioSaneame
       pontosHistoricoDescartados: 0, hpHistoricoDescartados: 0, hpCorrigidos: 0, hpRemovidos: 0,
       vitalidadeHistoricoDescartados: 0, vitalidadeCorrigidas: 0, vitalidadeRemovidas: 0,
       retratosRemovidos: 0, npcVisivelRemovidos: 0,
+      sanguesRemovidos: 0, sanguesAutenticados: 0, sanguesInvalidos: 0,
     },
     personagens: [],
   };
@@ -107,6 +124,19 @@ export interface ContextoSaneamento {
   estruturas: Map<string, EstruturaFicha | null>;
   /** ids de files do pacote (retrato precisa apontar para um deles) */
   arquivosIds: Set<string>;
+  /** C3: `config.sangue` BRUTO do ÚNICO ruleset ativo do pacote —
+   *  insumo do fichaFp (mesma serialização usada na exportação). */
+  configSanguePacote: unknown;
+  /** C3: templateVersionId → dados BRUTOS da sheetVersion do pacote —
+   *  a estrutura publicada exata que entra no fichaFp (não a versão
+   *  parseada) mais os elos da cadeia de proveniência. */
+  versoesPacote: Map<string, { structure: unknown; templateId: unknown; publishedAt: unknown }>;
+  /** C3: sheetTemplate.id → campaignId — último elo da cadeia
+   *  personagem→versão→template→campanha de origem. */
+  templatesPorId: Map<string, unknown>;
+  /** C3: pacote elegível para v2 — exatamente um ruleset ativo (sem
+   *  IDs duplicados) com `config.sangue` objeto. */
+  regrasSangueElegivel: boolean;
   /** userId → nome de exibição (autoria forjada é limpa) */
   autores: Map<string, string | null>;
   /** B1: contexto de verificação HMAC do ledger — null quando a
@@ -201,7 +231,14 @@ function eventoXpValido(e: unknown): e is Record<string, unknown> {
   return true;
 }
 
-function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: SaneamentoPersonagem, estrutura: EstruturaFicha | null, personagemId: string) {
+function sanearXp(
+  data: Record<string, unknown>,
+  ctx: ContextoSaneamento,
+  rep: SaneamentoPersonagem,
+  estrutura: EstruturaFicha | null,
+  personagemId: string,
+  opts: { forcarSemConfianca?: boolean; xpJaConfiavel?: boolean } = {},
+) {
   const bruto = obj(data[CHAVE_XP]);
   if (bruto === null) {
     if (data[CHAVE_XP] !== undefined) {
@@ -218,8 +255,14 @@ function sanearXp(data: Record<string, unknown>, ctx: ContextoSaneamento, rep: S
   // server_settings, nunca exportada) distingue legítimo de forjado.
   // Sem assinatura válida: fail-closed — saldo zerado, histórico e
   // financiamentos descartados. Dados normais da ficha não são tocados.
-  const confiavel = ctx.assinatura !== null &&
-    verificarLedgerXp(ctx.assinatura, personagemId, bruto);
+  // C3: `xpJaConfiavel` = a assinatura conjunta v2 já provou este
+  // ledger no snapshot original (não há fallback v1 nesse caso);
+  // `forcarSemConfianca` = v2 presente e INVÁLIDA — rejeição conjunta,
+  // mesmo que exista `__xp.sig` v1 residual (sem fallback).
+  const confiavel = !opts.forcarSemConfianca && (
+    opts.xpJaConfiavel === true ||
+    (ctx.assinatura !== null && verificarLedgerXp(ctx.assinatura, personagemId, bruto))
+  );
   if (!confiavel) {
     rep.ledgerXpInvalidado = true;
     const finSemProva = obj(bruto.financiado);
@@ -625,8 +668,109 @@ export function sanearPersonagemImportado(
   // backend, preservada sem abreviar aqui.
   const templateVersionId = (row as Record<string, unknown>).templateVersionId;
   const estrutura = estruturaDoPersonagem(ctx, templateVersionId);
+  const personagemId = String(row.id ?? "");
 
-  sanearXp(data, ctx, rep, estrutura, String(row.id ?? ""));
+  // Issue #186/C3 — assinatura conjunta v2 verificada sobre o JSON
+  // ORIGINAL, antes de qualquer saneador mutar os ledgers. O marcador
+  // `__sangue_sig` é propriedade irmã de `__sangue` e nunca entra no
+  // payload. Ordem obrigatória:
+  //   1. snapshot implícito: os valores atuais de __xp/__sangue são a
+  //      prova — nenhum saneador rodou ainda neste personagem;
+  //   2. v2 presente:
+  //      a) prefixo "v2." + __sangue presente → verifica HMAC;
+  //         válida ⇒ XP e Sangue confiáveis; inválida ⇒ rejeição
+  //         CONJUNTA (XP fail-closed sem fallback v1 + Sangue fora);
+  //      b) prefixo desconhecido com __sangue ⇒ marcador inválido ⇒
+  //         mesma rejeição conjunta;
+  //      c) sem __sangue ⇒ marcador órfão: some do relatório, XP intacto;
+  //   3. sem marcador: __sangue nunca entra sem prova própria (v1 não
+  //      cobre Sangue) — descartado e registrado.
+  const temSangue = data[CHAVE_SANGUE] !== undefined && data[CHAVE_SANGUE] !== null;
+  const marcador = data[CHAVE_SANGUE_SIG];
+  // C3 (bloqueio 3): a cadeia de proveniência precisa estar ÍNTEGRA no
+  // pacote — personagem → sheetVersion PUBLICADA → sheetTemplate da
+  // campanha de origem (envelope), com ruleset ativo único e
+  // config.sangue presente. Qualquer elo quebrado → contexto incompleto
+  // e nenhuma v2 pode ser aceita (fail-closed).
+  const cadeiaFichaValida = ((): boolean => {
+    if (!ctx.regrasSangueElegivel) return false;
+    if (!ctx.assinatura?.campanhaIdOrigem) return false;
+    if (typeof templateVersionId !== "string" || !templateVersionId) return false;
+    const ver = ctx.versoesPacote.get(templateVersionId);
+    if (!ver) return false;
+    if (ver.publishedAt === null || ver.publishedAt === undefined) return false;
+    if (ver.structure === null || ver.structure === undefined) return false;
+    const tplCampanha = ctx.templatesPorId.get(String(ver.templateId ?? ""));
+    return tplCampanha !== undefined && tplCampanha === ctx.assinatura.campanhaIdOrigem;
+  })();
+  // fichaFp reproduzido do pacote: templateVersionId da linha +
+  // estrutura publicada BRUTA daquela versão + config.sangue do ruleset
+  // ativo — mesma cadeia usada na exportação.
+  const fichaFp = impressaoDigitalFicha({
+    templateVersionId: templateVersionId ?? null,
+    estrutura: typeof templateVersionId === "string"
+      ? ctx.versoesPacote.get(templateVersionId)?.structure ?? null
+      : null,
+    configSangue: ctx.configSanguePacote ?? null,
+  });
+  let v2Ok = false;
+  let v2Invalido = false;
+  let motivoInvalido: string | null = null;
+  if (typeof marcador === "string" && marcador.length > 0) {
+    if (temSangue) {
+      if (marcador.startsWith("v2.")) {
+        if (!cadeiaFichaValida) {
+          // marcador v2 em pacote sem cadeia comprovável = inválido
+          v2Invalido = true;
+          motivoInvalido = "contexto_incompleto";
+        } else {
+          const xpBruto = obj(data[CHAVE_XP]);
+          const { sig: _sx, ...xpSem } = xpBruto ?? {};
+          v2Ok = ctx.assinatura !== null && verificarAssinaturaV2(
+            ctx.assinatura, personagemId, marcador,
+            xpBruto ? xpSem : null, data[CHAVE_SANGUE], fichaFp,
+          );
+          if (!v2Ok) { v2Invalido = true; motivoInvalido = "assinatura_invalida"; }
+        }
+      } else {
+        v2Invalido = true;
+        motivoInvalido = "prefixo_desconhecido";
+      }
+    } else {
+      // órfão: credencial sem ledger — descartada, XP segue o fluxo v1
+      rep.sangueRemovido = true;
+      rep.motivoSangue = "marcador_orfao";
+    }
+  }
+
+  if (v2Invalido) {
+    rep.sangueInvalido = true;
+    rep.sangueRemovido = true;
+    rep.motivoSangue = motivoInvalido;
+    delete data[CHAVE_SANGUE];
+    // rejeição conjunta: XP perde a confiança MESMO com __xp.sig v1
+    // residual — forcarSemConfianca bloqueia qualquer fallback.
+    sanearXp(data, ctx, rep, estrutura, personagemId, { forcarSemConfianca: true });
+  } else if (v2Ok) {
+    rep.sangueAutenticado = true;
+    // v2 já provou integridade do XP neste snapshot — sanearXp pula a
+    // verificação v1 (que não existe mais no pacote) mas mantém toda a
+    // validação estrutural da cadeia.
+    sanearXp(data, ctx, rep, estrutura, personagemId, { xpJaConfiavel: true });
+    // __sangue autenticado permanece; saneamento estrutural do ledger
+    // é responsabilidade do resolvedor (C2/C4), fora do HMAC.
+  } else {
+    if (temSangue) {
+      // v1 (ou ausência de assinatura) não cobre Sangue: descarte + registro
+      delete data[CHAVE_SANGUE];
+      rep.sangueRemovido = true;
+      rep.motivoSangue = "sem_assinatura_v2";
+    }
+    sanearXp(data, ctx, rep, estrutura, personagemId);
+  }
+  // credencial de transporte nunca persiste — removida em TODOS os
+  // desfechos (válida, inválida, órfã), depois da verificação.
+  delete data[CHAVE_SANGUE_SIG];
   sanearPontos(data, ctx, rep);
   sanearHp(data, ctx, rep, estrutura);
   sanearVitalidade(data, ctx, rep);
@@ -639,12 +783,13 @@ export function montarContextoSaneamento(
   dados: {
     ruleSets?: ({ id?: string; config?: unknown; isActive?: boolean })[];
     ruleDefinitions?: ({ ruleSetId?: string } & Record<string, unknown>)[];
-    sheetVersions?: { id?: string; structure?: unknown }[];
+    sheetVersions?: { id?: string; templateId?: unknown; structure?: unknown; publishedAt?: unknown }[];
+    sheetTemplates?: { id?: string; campaignId?: unknown }[];
     files?: { id?: string }[];
     campanha?: Record<string, unknown>;
   },
   autores: Map<string, string | null>,
-  opts: { chaveAssinatura?: Buffer | null } = {},
+  opts: { chaveAssinatura?: Buffer | null; campanhaIdOrigem?: string | null } = {},
 ): ContextoSaneamento {
   const rsAtivo = (dados.ruleSets ?? []).find((r) => r.isActive);
   let config: ConfigRegras;
@@ -671,8 +816,12 @@ export function montarContextoSaneamento(
     regras = { ruleSetId: rsAtivo?.id ?? null, config, elementos: new Map(), porKind: new Map() };
   }
   const estruturas = new Map<string, EstruturaFicha | null>();
+  const versoesPacote = new Map<string, { structure: unknown; templateId: unknown; publishedAt: unknown }>();
   for (const v of dados.sheetVersions ?? []) {
     if (typeof v.id !== "string") continue;
+    // C3: guarda a versão BRUTA para o fichaFp e os elos da cadeia de
+    // proveniência — a versão parseada pode divergir do pacote.
+    versoesPacote.set(v.id, { structure: v.structure, templateId: v.templateId, publishedAt: v.publishedAt });
     try {
       const parsed = typeof v.structure === "string" ? JSON.parse(v.structure) : v.structure;
       estruturas.set(v.id, estruturaFichaSchema.parse(parsed ?? {}));
@@ -680,6 +829,27 @@ export function montarContextoSaneamento(
       estruturas.set(v.id, null);
     }
   }
+  const templatesPorId = new Map<string, unknown>();
+  for (const t of dados.sheetTemplates ?? []) {
+    if (typeof t.id === "string") templatesPorId.set(t.id, t.campaignId ?? null);
+  }
+  // C3 (bloqueio 3): elegibilidade do pacote para v2 — exatamente UM
+  // ruleset ativo e IDs de ruleset sem duplicatas; config.sangue do
+  // ruleset ativo precisa existir como objeto.
+  const idsRulesVistos = new Set<string>();
+  let rulesIdsDuplicados = false;
+  for (const r of dados.ruleSets ?? []) {
+    const id = String(r?.id ?? "");
+    if (idsRulesVistos.has(id)) rulesIdsDuplicados = true;
+    idsRulesVistos.add(id);
+  }
+  const rsAtivosSangue = (dados.ruleSets ?? []).filter((r) => r.isActive === true || (r.isActive as unknown) === 1);
+  const rsUnicoSangue = !rulesIdsDuplicados && rsAtivosSangue.length === 1 ? rsAtivosSangue[0] : null;
+  const cfgSanguePac = rsUnicoSangue
+    ? ((rsUnicoSangue.config as Record<string, unknown> | undefined)?.sangue ?? null)
+    : null;
+  const regrasSangueElegivel =
+    !!rsUnicoSangue && !!cfgSanguePac && typeof cfgSanguePac === "object" && !Array.isArray(cfgSanguePac);
   // B1: proveniência do ledger — a assinatura HMAC cobre personagem,
   // ledger integral e a impressão digital das regras DO PACOTE. Sem
   // chave de instalação não há como distinguir pacote legítimo de
@@ -689,12 +859,18 @@ export function montarContextoSaneamento(
     ? {
         chave,
         regrasFp: impressaoDigitalRegras(dados.ruleSets, dados.ruleDefinitions),
+        // C3: envelope do pacote — sem ele nenhuma v2 verifica (fail-closed)
+        campanhaIdOrigem: opts.campanhaIdOrigem ?? null,
       }
     : null;
   return {
     config,
     regras,
     estruturas,
+    configSanguePacote: cfgSanguePac,
+    versoesPacote,
+    templatesPorId,
+    regrasSangueElegivel,
     arquivosIds: new Set((dados.files ?? []).map((f) => f.id).filter((x): x is string => typeof x === "string")),
     autores,
     assinatura,
