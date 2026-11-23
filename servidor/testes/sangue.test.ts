@@ -11,6 +11,10 @@ import {
   registrarRecuperacaoSangue,
   registrarUsoD10,
   reconciliarCapacidadeSangue,
+  somarDecimalSangue,
+  subtrairDecimalSangue,
+  multiplicarDecimalSangue,
+  compararDecimalSangue,
   resolverCapacidadeSangue,
   resolverNaturezaSangue,
   resolverSanguePersonagem,
@@ -785,6 +789,493 @@ describe("regressão R3 — bônus de qualidade fail-closed", () => {
 });
 
 describe("robustez numérica — entradas não finitas e listas parciais", () => {
+  it("débitos decimais sucessivos chegam exatamente a zero", () => {
+    let dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.3, usos: {}, historico: [] },
+    };
+    const primeiro = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -0.2, motivo: "gasto decimal 1",
+    });
+    assert.equal(primeiro.ok, true);
+    if (!primeiro.ok) return;
+    assert.equal(primeiro.estado.saldo, 0.1);
+    dados = primeiro.dados;
+
+    const segundo = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -0.1, motivo: "gasto decimal 2",
+    });
+    assert.equal(segundo.ok, true, "0,1 restante deve cobrir custo 0,1");
+    if (segundo.ok) {
+      assert.equal(segundo.estado.saldo, 0);
+      assert.equal(segundo.estado.historico.at(-1)?.saldoResultante, 0);
+    }
+  });
+
+  it("corrige resíduo legado quando o débito D10 durável comprova a cadeia binária anterior", () => {
+    const em = new Date().toISOString();
+    const usoId = "d10:" + TEST1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        saldo: 0.09999999999999998,
+        usos: {
+          [usoId]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste", quantidade: 0.3, motivo: "crédito", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.3 },
+          { em, tipo: "uso", quantidade: -0.2, motivo: "gasto D10", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.09999999999999998, usoId },
+        ],
+      },
+    };
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.1, "o uso D10 durável permite reconstruir o decimal exato");
+
+    const r = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.1 });
+    assert.equal(r.ok, true, "saldo corrigido cobre o próximo Poder de custo 0,1");
+    if (r.ok) assert.equal(r.estado.saldo, 0);
+  });
+
+  it("recuperação histórica sem crédito preserva correção decimal comprovada", () => {
+    const em = new Date().toISOString();
+    const usoCredito = "recuperar:" + REQ2;
+    const usoSemCredito = "recuperar:" + REQ1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // O saldo binário legado de 0.1 + 0.7 era persistido como
+        // 0.7999999999999999; a correção decimal comprovada é 0.8.
+        saldo: 0.7999999999999999,
+        usos: {
+          [usoCredito]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ2,
+            personagemId: PID,
+            quantidade: 0.7,
+          },
+          [usoSemCredito]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "capacidade base", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
+          { em, tipo: "recuperacao" as const, quantidade: 0.7, motivo: "crédito de recuperação", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId: usoCredito },
+          { em, tipo: "recuperacao" as const, quantidade: 0, motivo: "recuperação no teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId: usoSemCredito },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.8,
+      "evento zero não descarta a correção decimal dos eventos anteriores");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0.8 });
+    assert.equal(poder.ok, true, "Poder que custa o saldo corrigido completo continua disponível");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("reconstrói créditos manuais positivos legados antes de cobrar D10", () => {
+    const em = new Date().toISOString();
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // Antes de requestId, ajustes manuais positivos não tinham usoId.
+        // A soma binária antiga persistia 0.7999999999999999, mas o valor
+        // decimal comprovado pelos dois créditos é exatamente 0.8.
+        saldo: 0.7999999999999999,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "crédito manual legado 1", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
+          { em, tipo: "ajuste" as const, quantidade: 0.7, motivo: "crédito manual legado 2", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.7999999999999999 },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.8,
+      "créditos manuais positivos sem usoId preservam a soma decimal exata");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0.8 });
+    assert.equal(poder.ok, true, "Poder D10 de custo 0,8 pode consumir os créditos legados completos");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("preserva saldo persistido após ajuste negativo legado ambíguo e crédito posterior", () => {
+    const em = new Date().toISOString();
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A cadeia binária antiga arredondou 1.2 - 0.4 + 0.2 para 1,
+        // embora reconstruir o trecho intermediário como decimal produza
+        // 0.9999999999999999.
+        saldo: 1,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 1.2, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1.2 },
+          { em, tipo: "ajuste" as const, quantidade: -0.4, motivo: "débito legado sem identidade", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.7999999999999999 },
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito posterior legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1 },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 1,
+      "histórico ambíguo preserva o saldo gravado em vez de publicar 0.9999999999999999");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 1 });
+    assert.equal(poder.ok, true, "D10 de custo 1 consome o saldo persistido integral");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("recuperação limitada comprovada encerra ambiguidade e libera D10 integral posterior", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const usoD10Anterior = "d10:" + TEST1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // Reconciliação/ajuste negativo antigo deixa o saldo binário 0.04
+        // com snapshot 0.04000000000000001. A recuperação solicitada em
+        // 0.6 é limitada ao teto e grava novo saldo exato de 0.6.
+        saldo: 0.39999999999999997,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.6,
+          },
+          [usoD10Anterior]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.07, motivo: "saldo legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.07 },
+          { em, tipo: "ajuste" as const, quantidade: -0.03, motivo: "reconciliação legada", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.04000000000000001 },
+          { em, tipo: "recuperacao" as const, quantidade: 0.5599999999999999, motivo: "recuperação limitada ao teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.6, usoId: usoRecuperacao },
+          { em, tipo: "uso" as const, quantidade: -0.2, motivo: "Poder anterior", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.39999999999999997, usoId: usoD10Anterior },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.4,
+      "recuperação limitada estabelece ponto exato e corrige o débito posterior");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.4 });
+    assert.equal(poder.ok, true, "novo D10 consome o saldo decimal integral de 0,4");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("recuperação limitada no teto 0.84 estabelece saldo exato e libera D10 integral", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const usoD10Anterior = "d10:" + TEST1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // Cenário da revisão: saldo legado 0.71, teto 0.84. A recuperação
+        // pede 0.5 mas o espaço era 0.13 — clamp comprovado pelo uso
+        // durável. O snapshot 0.84 é decimalmente limpo e vira fronteira.
+        saldo: 0.84,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.5,
+          },
+          [usoD10Anterior]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.9, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.9 },
+          { em, tipo: "uso" as const, quantidade: -0.19, motivo: "Poder anterior", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.71, usoId: usoD10Anterior },
+          { em, tipo: "recuperacao" as const, quantidade: 0.13, motivo: "recuperação limitada ao teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.84, usoId: usoRecuperacao },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.84,
+      "recuperação comprovada no teto 0.84 estabelece saldo exato");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.84 });
+    assert.equal(poder.ok, true, "D10 de custo 0.84 consome o saldo integral do teto");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("recuperação limitada com snapshot de teto com resíduo preserva saldo armazenado", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // O evento legado não prova que o saldo chegou ao teto exato:
+        // 0.8399999999999999 carrega resíduo binário (o cálculo
+        // saldo + (teto - saldo) pode gravar teto - 1 ULP). A
+        // reconstrução NÃO pode tratá-lo como fronteira exata — o
+        // saldo armazenado é preservado.
+        saldo: 0.8399999999999999,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.5,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.71, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.71 },
+          { em, tipo: "recuperacao" as const, quantidade: 0.1299999999999999, motivo: "recuperação limitada com resíduo", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.8399999999999999, usoId: usoRecuperacao },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.8399999999999999,
+      "snapshot de teto com resíduo não prova fronteira exata — saldo armazenado preservado");
+  });
+
+  it("preserva saldo persistido ao reconstruir histórico truncado com âncora legada", () => {
+    const em = new Date().toISOString();
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A janela retida começa após um prefixo já truncado. A âncora
+        // antiga contém resíduo binário que o saldo atual já absorveu.
+        ancora: 0.7999999999999999,
+        saldo: 1,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito após truncamento", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1 },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 1,
+      "a presença de âncora impede reconstrução parcial que reduza o saldo persistido");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 1 });
+    assert.equal(poder.ok, true, "D10 de custo 1 pode consumir o saldo persistido integral");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("reconciliação antiga permanece ancorada após recuperação sem crédito", () => {
+    const em = new Date().toISOString();
+    let dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A soma binária antiga .1 + .2 fica em .30000000000000004.
+        saldo: 0.30000000000000004,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "crédito 1", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito 2", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.30000000000000004 },
+        ],
+      },
+    };
+
+    const reconciliacao = reconciliarCapacidadeSangue(dados, {
+      ...AUTOR,
+      capacidadeNova: 0.1,
+      motivo: "redução de capacidade para 0,1",
+    });
+    assert.equal(reconciliacao.ok, true);
+    if (!reconciliacao.ok) return;
+    dados = reconciliacao.dados;
+    assert.equal(reconciliacao.estado.saldo, 0.1, "reconciliação grava o teto exato");
+
+    const recuperacao = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.1, habilitada: true, capacidadeMax: 0.1,
+    });
+    assert.equal(recuperacao.ok, true, "recuperação no teto registra o evento sem crédito");
+    if (!recuperacao.ok) return;
+    assert.equal(recuperacao.estado.historico.at(-1)?.quantidade, 0);
+    assert.equal(lerSangue(recuperacao.dados).estado.saldo, 0.1,
+      "a recuperação zero não reaplica o ajuste de reconciliação");
+
+    const poder = registrarUsoD10(recuperacao.dados, { ...AUTOR, testId: TEST1, custo: 0.1 });
+    assert.equal(poder.ok, true, "D10 consome o saldo inteiro reconciliado");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("permite crédito integral quando a diferença até o teto não cabe em Number", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.09999999999999998, usos: {}, historico: [] },
+    };
+    const r = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.1, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r.ok, true, "o crédito de 0,1 cabe mesmo sem materializar cap - saldo");
+    if (r.ok) {
+      assert.equal(r.estado.saldo, 0.19999999999999998);
+      assert.equal(r.estado.usos[`recuperar:${REQ1}`]?.quantidade, 0.1);
+    }
+  });
+
+  it("preserva valores IEEE vizinhos de 1 sem snap de 15 dígitos", () => {
+    assert.equal(somarDecimalSangue(1.0000000000000002, 0), 1.0000000000000002);
+    assert.equal(somarDecimalSangue(0.9999999999999999, 0), 0.9999999999999999);
+    assert.equal(subtrairDecimalSangue(0.3, 0.2), 0.1);
+    assert.equal(somarDecimalSangue(-0.3, 0.2), -0.1);
+  });
+
+  it("detecta underflow, overflow e preserva extremos representáveis", () => {
+    assert.ok(Number.isNaN(multiplicarDecimalSangue(1e-200, 1e-200)), "1e-400 não pode virar zero");
+    assert.ok(Number.isNaN(somarDecimalSangue(Number.MAX_VALUE, Number.MAX_VALUE)), "overflow deve falhar");
+    assert.equal(somarDecimalSangue(Number.MAX_VALUE, 0), Number.MAX_VALUE);
+    assert.equal(somarDecimalSangue(Number.MIN_VALUE, Number.MIN_VALUE), Number.MIN_VALUE * 2);
+    assert.equal(multiplicarDecimalSangue(1e200, 1e-200), 1);
+    assert.equal(somarDecimalSangue(-0, 0), 0);
+    assert.equal(compararDecimalSangue(Number.NaN, 0), null, "NaN não pode ser interpretado como igualdade");
+    assert.equal(compararDecimalSangue(Infinity, Number.MAX_VALUE), null, "Infinity não pode passar pelo comparador");
+  });
+
+  it("preserva valores seguros com 16 algarismos significativos", () => {
+    const saldo = 1234567890123456;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo, usos: {}, historico: [] },
+    };
+    const r = registrarAjusteSangue(dados, {
+      ...AUTOR, delta: -1, motivo: "preservar precisão válida",
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.estado.saldo, 1234567890123455);
+  });
+
+  it("crédito decimal respeita o teto sem ultrapassá-lo", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },
+    };
+    const r = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.estado.saldo, 0.3);
+  });
+
+  it("espaço de capacidade não representável recusa sem consumir requestId", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 1e-100, usos: {}, historico: [] },
+    };
+    const antes = JSON.stringify(dados);
+
+    const invalida = registrarRecuperacaoSangue(dados, {
+      ...AUTOR,
+      requestId: REQ1,
+      // O crédito solicitado ultrapassa o teto; só o delta de clamp
+      // (capacidade - saldo) seria necessário e não é representável.
+      quantidade: 2,
+      habilitada: true,
+      capacidadeMax: 1.2345678901234567,
+    });
+    assert.equal(invalida.ok, false);
+    if (!invalida.ok) assert.equal(invalida.codigo, "quantidade_invalida");
+    assert.equal(JSON.stringify(dados), antes, "saldo, usos e histórico não podem mudar");
+    assert.equal(lerSangue(dados).estado.usos[`recuperar:${REQ1}`], undefined);
+
+    // Mesmo requestId continua livre: com uma capacidade cuja diferença
+    // é representável, o retry deve executar e creditar normalmente.
+    const valida = registrarRecuperacaoSangue(dados, {
+      ...AUTOR,
+      requestId: REQ1,
+      quantidade: 2e-100,
+      habilitada: true,
+      capacidadeMax: 2e-100,
+    });
+    assert.equal(valida.ok, true, "requestId não foi consumido pela falha anterior");
+    if (valida.ok) {
+      assert.equal(valida.jaRegistrado, undefined);
+      assert.equal(valida.estado.saldo, 2e-100);
+      assert.equal(valida.estado.usos[`recuperar:${REQ1}`]?.quantidade, 2e-100);
+      assert.equal(valida.estado.historico.at(-1)?.quantidade, 1e-100);
+    }
+  });
+
+  it("soma decimal dos níveis da Qualidade é exata e underflow indisponibiliza capacidade", () => {
+    const e = estruturaBase();
+    const config: ConfigSangue = {
+      ...configBase(),
+      capacidade: {
+        bonusQualidade: {
+          campoId: "qual",
+          coeficiente: 1,
+          modo: "somaNiveis",
+        },
+      },
+    };
+    const niveis = resolverCapacidadeSangue(
+      e,
+      { cap: 1, nat: "Humano", qual: [{ nivel: 0.1 }, { nivel: 0.2 }] },
+      config,
+    );
+    assert.equal(niveis.disponivel, true);
+    assert.equal(niveis.capacidade, 1.3);
+
+    const underflow = resolverCapacidadeSangue(
+      e,
+      { cap: 1, nat: "Humano", qual: [{ nivel: 1e-200 }] },
+      {
+        ...config,
+        capacidade: {
+          bonusQualidade: {
+            campoId: "qual",
+            coeficiente: 1e-200,
+            modo: "somaNiveis",
+          },
+        },
+      },
+    );
+    assert.equal(underflow.disponivel, false);
+  });
+
+  it("replay de crédito truncado pelo teto não credita novamente", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.2, usos: {}, historico: [] },
+    };
+    const r1 = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r1.ok, true);
+    if (!r1.ok) return;
+    assert.equal(r1.estado.saldo, 0.3);
+    assert.equal(r1.estado.historico.at(-1)?.quantidade, 0.1);
+    const historico = r1.estado.historico.length;
+
+    const r2 = registrarRecuperacaoSangue(r1.dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.2, habilitada: true, capacidadeMax: 0.8,
+    });
+    assert.equal(r2.ok, true);
+    if (r2.ok) {
+      assert.equal(r2.jaRegistrado, true);
+      assert.equal(r2.estado.saldo, 0.3);
+      assert.equal(r2.estado.historico.length, historico);
+    }
+  });
+
   it("quantidade NaN/Infinity/negativa/zero recusada nas três operações", () => {
     const dados = { [CHAVE_SANGUE]: { saldo: 5, usos: {}, historico: [] } };
     for (const q of [NaN, Infinity, -1, 0]) {

@@ -37,6 +37,141 @@ export const LIMITE_USOS_AVISO = 5000;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CHAVE_USO_RE = /^(d10|ativar|recuperar|ajustar):(.+)$/;
 
+/**
+ * Aritmética decimal exata para os valores de Sangue.
+ *
+ * Converte a representação decimal canônica dos Numbers (incluindo
+ * expoentes) para coeficiente BigInt + escala. Isso evita resíduos como
+ * 0.3 - 0.2 = 0.09999999999999998 sem impor uma quantidade arbitrária
+ * de casas decimais à regra da campanha.
+ */
+interface DecimalSangue {
+  coeficiente: bigint;
+  escala: number;
+}
+
+function decomporDecimalSangue(valor: number): DecimalSangue | null {
+  if (!Number.isFinite(valor)) return null;
+  // Preserva a representação decimal mais curta que round-tripa para
+  // Number. Não aplica snap para 15 dígitos: isso poderia apagar valores
+  // IEEE válidos como 1.0000000000000002.
+  const [mantissaOriginal, expoenteRaw] = valor.toString().toLowerCase().split("e");
+  const expoente = expoenteRaw === undefined ? 0 : Number(expoenteRaw);
+  const negativo = mantissaOriginal.startsWith("-");
+  const mantissa = negativo ? mantissaOriginal.slice(1) : mantissaOriginal;
+  const [inteiro = "0", fracao = ""] = mantissa.split(".");
+  let coeficiente = BigInt(`${inteiro}${fracao}` || "0") * (negativo ? -1n : 1n);
+  let escala = fracao.length - expoente;
+  if (escala < 0) {
+    coeficiente *= 10n ** BigInt(-escala);
+    escala = 0;
+  }
+  while (escala > 0 && coeficiente % 10n === 0n) {
+    coeficiente /= 10n;
+    escala--;
+  }
+  return { coeficiente, escala };
+}
+
+function alinharDecimaisSangue(a: DecimalSangue, b: DecimalSangue): [bigint, bigint, number] {
+  const escala = Math.max(a.escala, b.escala);
+  return [
+    a.coeficiente * 10n ** BigInt(escala - a.escala),
+    b.coeficiente * 10n ** BigInt(escala - b.escala),
+    escala,
+  ];
+}
+
+function comporDecimalSangue(valor: DecimalSangue): number {
+  if (valor.coeficiente === 0n) return 0;
+  const negativo = valor.coeficiente < 0n;
+  const digitos = (negativo ? -valor.coeficiente : valor.coeficiente).toString();
+  const sinal = negativo ? "-" : "";
+  const preenchido = valor.escala === 0
+    ? `${sinal}${digitos}`
+    : (() => {
+        const zeros = digitos.padStart(valor.escala + 1, "0");
+        const corte = zeros.length - valor.escala;
+        return `${sinal}${zeros.slice(0, corte)}.${zeros.slice(corte)}`;
+      })();
+  const resultado = Number(preenchido);
+  if (!Number.isFinite(resultado)) return NaN;
+
+  // A composição precisa round-trip sem perda. Isso detecta tanto
+  // overflow quanto underflow/subnormal arredondado (ex.: 1e-400 → 0).
+  const refeito = decomporDecimalSangue(resultado);
+  if (!refeito) return NaN;
+  const [originalAlinhado, refeitoAlinhado] = alinharDecimaisSangue(valor, refeito);
+  return originalAlinhado === refeitoAlinhado ? resultado : NaN;
+}
+
+/** Soma decimal sem resíduos binários. */
+export function somarDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a + b;
+  const [ia, ib, escala] = alinharDecimaisSangue(da, db);
+  return comporDecimalSangue({ coeficiente: ia + ib, escala });
+}
+
+/** Subtração decimal sem resíduos binários. */
+export function subtrairDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a - b;
+  const [ia, ib, escala] = alinharDecimaisSangue(da, db);
+  return comporDecimalSangue({ coeficiente: ia - ib, escala });
+}
+
+/** Multiplicação decimal sem resíduos binários intermediários. */
+export function multiplicarDecimalSangue(a: number, b: number): number {
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return a * b;
+  return comporDecimalSangue({
+    coeficiente: da.coeficiente * db.coeficiente,
+    escala: da.escala + db.escala,
+  });
+}
+
+/**
+ * Um snapshot só pode inaugurar saldo decimal exato quando sua
+ * representação não carrega resíduo de arredondamento binário. Valores
+ * que exigem 16+ algarismos significativos (artefato típico de soma/
+ * subtração binária legada) são tratados como ambíguos: a prova de
+ * teto exato não se sustenta e o saldo armazenado é preservado.
+ * Não altera o valor — é somente um teste de limpeza decimal.
+ */
+function decimalSangueExato(valor: number): boolean {
+  if (!Number.isFinite(valor)) return false;
+  return Number(valor.toPrecision(15)) === valor;
+}
+
+/** Comparação decimal; null indica que algum resultado não é representável. */
+export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 | null {
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  if (!da || !db) return null;
+  const [ia, ib] = alinharDecimaisSangue(da, db);
+  return ia < ib ? -1 : ia > ib ? 1 : 0;
+}
+
+/** Compara a+b com um limite sem converter a soma intermediária para Number. */
+function compararSomaDecimalSangue(a: number, b: number, limite: number): -1 | 0 | 1 | null {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(limite)) return null;
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  const dl = decomporDecimalSangue(limite);
+  if (!da || !db || !dl) return null;
+  const [ia, ib, escalaSoma] = alinharDecimaisSangue(da, db);
+  const [soma, teto] = alinharDecimaisSangue(
+    { coeficiente: ia + ib, escala: escalaSoma },
+    dl,
+  );
+  return soma < teto ? -1 : soma > teto ? 1 : 0;
+}
+
 // ---------- Tipos ----------
 
 export type TipoEventoSangue = "inicial" | "uso" | "recuperacao" | "ajuste";
@@ -163,6 +298,115 @@ function eventoSangueValido(e: unknown): boolean {
 }
 
 /**
+ * Corrige somente ledgers cuja cadeia inteira comprova que o saldo foi
+ * produzido pelo algoritmo binário anterior (Number + delta). Recalcula
+ * a mesma cadeia em decimal exato. Se qualquer saldo de evento divergir,
+ * mantém o saldo armazenado: não adivinha valores nem arredonda Number
+ * legítimo. Para histórico truncado, começa pela âncora persistida.
+ */
+function saldoDecimalComprovadoPeloHistorico(
+  saldoArmazenado: number,
+  historico: EventoSangue[],
+  ancora: number | undefined,
+  usos: Record<string, UsoSangue>,
+): number | null {
+  if (historico.length === 0) return null;
+  let saldoLegado = ancora ?? 0;
+  let saldoDecimal = ancora ?? 0;
+  // Uma âncora indica que o prefixo do histórico foi truncado. Em
+  // versões antigas ela pode conter arredondamento binário; sem o prefixo
+  // não há evidência para corrigir o saldo atual com segurança.
+  // O mesmo vale para reconciliações/ajustes negativos antigos sem usoId.
+  let reconstrucaoAmbigua = ancora !== undefined;
+  for (const evento of historico) {
+    const proximoLegado = saldoLegado + evento.quantidade;
+    if (!Number.isFinite(proximoLegado) || proximoLegado !== evento.saldoResultante) {
+      return null;
+    }
+    const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
+    // Não rejeitar aqui: a soma decimal pode ser não representável em
+    // Number (ex.: dois resíduos binários cuja soma exata cai entre dois
+    // doubles). Os ramos que consomem proximoDecimal exigem finitude;
+    // a recuperação limitada comprovada ancora no snapshot do evento,
+    // que é fronteira exata independente dessa soma.
+    const usoRecuperacao =
+      evento.tipo === "recuperacao" && evento.usoId
+        ? usos[evento.usoId]
+        : undefined;
+    const solicitadoVsAplicado =
+      usoRecuperacao?.tipo === "recuperacao" &&
+      typeof usoRecuperacao.quantidade === "number" &&
+      evento.quantidade > 0
+        ? compararDecimalSangue(usoRecuperacao.quantidade, evento.quantidade)
+        : null;
+    // O snapshot pode coincidir com a soma arredondada para Number. A
+    // diferença durável entre solicitado e aplicado ainda comprova que
+    // houve clamp ao teto e que esse evento inaugura novo saldo exato.
+    const recuperacaoLimitadaComprovada = solicitadoVsAplicado === 1;
+
+    if (evento.tipo === "ajuste" && evento.quantidade < 0 && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
+      // Reconciliações históricas e ajustes negativos manuais sem usoId
+      // podem carregar arredondamento binário que não é decimalmente
+      // reversível. O snapshot ancora a cadeia e marca o restante do
+      // histórico como ambíguo: no final preservamos saldoArmazenado.
+      saldoDecimal = evento.saldoResultante;
+      reconstrucaoAmbigua = true;
+    } else if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
+      // Uma recuperação no teto grava quantidade zero por idempotência e
+      // auditoria. Ela confirma o mesmo saldo legado, mas não desfaz uma
+      // correção decimal comprovada por eventos anteriores.
+      saldoLegado = proximoLegado;
+      continue;
+    } else if (
+      evento.tipo === "recuperacao" &&
+      (proximoDecimal !== evento.saldoResultante || recuperacaoLimitadaComprovada)
+    ) {
+      // Antes da aritmética decimal, créditos limitados pelo teto podiam
+      // gravar um delta binário menor que o solicitado, embora o saldo
+      // resultante fosse exatamente o teto. O uso durável guarda a
+      // quantidade pedida; quando ela excede o delta aplicado, o snapshot
+      // saldoResultante é a única fronteira inequívoca da cadeia antiga.
+      const uso = usoRecuperacao;
+      if (!uso || uso.tipo !== "recuperacao" || typeof uso.quantidade !== "number" || evento.quantidade <= 0) {
+        return null; // sem prova do delta limitado: preservar saldo armazenado
+      }
+      if (solicitadoVsAplicado === null || solicitadoVsAplicado < 0) return null;
+      if (solicitadoVsAplicado > 0) {
+        const saldoResultanteValido = compararDecimalSangue(evento.saldoResultante, saldoLegado);
+        if (saldoResultanteValido === null || saldoResultanteValido < 0) return null;
+        // O evento legado não registra o teto histórico: pedido > aplicado
+        // prova a limitação, mas NÃO prova que saldoResultante chegou ao
+        // teto exato — o cálculo binário `saldo + (teto - saldo)` pode
+        // gravar o teto ±1 ULP. Só tratamos o snapshot como fronteira
+        // exata quando ele tem representação decimal limpa (≤15
+        // algarismos significativos, sem resíduo de arredondamento
+        // binário). Snapshot com resíduo mantém a reconstrução
+        // ambígua e o saldo armazenado é preservado.
+        if (!decimalSangueExato(evento.saldoResultante)) return null;
+        saldoDecimal = evento.saldoResultante;
+        // A recuperação limitada, com uso durável e snapshot no teto,
+        // estabelece um novo ponto de partida comprovado. A ambiguidade
+        // anterior não deve contaminar débitos/créditos posteriores.
+        reconstrucaoAmbigua = false;
+      } else {
+        // Crédito integral comprovado: a quantidade pedida coincide com o
+        // delta durável, então a correção decimal normal continua segura.
+        if (!Number.isFinite(proximoDecimal)) return null;
+        saldoDecimal = proximoDecimal;
+      }
+    } else {
+      if (!Number.isFinite(proximoDecimal)) return null;
+      saldoDecimal = proximoDecimal;
+    }
+    saldoLegado = proximoLegado;
+  }
+  const saldoReconstruido = reconstrucaoAmbigua ? saldoArmazenado : saldoDecimal;
+  const saldoNaoNegativo = compararDecimalSangue(saldoReconstruido, 0);
+  if (saldoNaoNegativo === null || saldoNaoNegativo < 0) return null;
+  return saldoLegado === saldoArmazenado ? saldoReconstruido : null;
+}
+
+/**
  * Lê `__sangue` de `characters.data`.
  *
  * Fail-closed: ledger malformado NÃO é silenciosamente zerado na
@@ -203,9 +447,15 @@ export function lerSangue(dados: Record<string, unknown>): {
   const historico = ((b.historico ?? []) as unknown[]).filter(eventoSangueValido) as EventoSangue[];
   const usos = (b.usos ?? {}) as Record<string, UsoSangue>;
   const ancora = num(b.ancora);
+  const saldoReconstruido = saldoDecimalComprovadoPeloHistorico(
+    saldo,
+    historico,
+    ancora !== null && ancora !== undefined && ancora >= 0 ? ancora : undefined,
+    usos,
+  );
   return {
     estado: {
-      saldo,
+      saldo: saldoReconstruido ?? saldo,
       ...(capacidade !== null && capacidade !== undefined ? { capacidade } : {}),
       usos,
       historico,
@@ -248,7 +498,9 @@ function truncarHistorico(historico: EventoSangue[]): {
   const lista = truncado ? historico.slice(-MAX_HISTORICO_SANGUE) : historico;
   // Mesma regra da âncora de __xp: saldo anterior ao primeiro evento
   // retido = saldoResultante - quantidade do primeiro evento da janela.
-  const ancora = truncado ? lista[0].saldoResultante - lista[0].quantidade : undefined;
+  const ancora = truncado
+    ? subtrairDecimalSangue(lista[0].saldoResultante, lista[0].quantidade)
+    : undefined;
   return { historico: lista, ancora };
 }
 
@@ -338,11 +590,40 @@ function registrarOperacao(
   // de histórico deve registrar quantidade neutra, não negativa-zero.
   let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
-    const espaco = Math.max(0, params.capacidadeMax - estado.saldo);
-    if (delta > espaco) delta = espaco;
+    // Compare saldo + crédito com o teto em coeficiente/escala. Não
+    // converta o espaço restante para Number antes de saber que haverá
+    // clamp: um espaço não representável não invalida um crédito integral
+    // que produz saldo final válido abaixo do teto.
+    const acimaDoTeto = compararSomaDecimalSangue(estado.saldo, delta, params.capacidadeMax);
+    if (acimaDoTeto === null) {
+      return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de capacidade não representável" };
+    }
+    if (acimaDoTeto > 0) {
+      const saldoVsTeto = compararDecimalSangue(estado.saldo, params.capacidadeMax);
+      if (saldoVsTeto === null) {
+        return { ok: false, codigo: "quantidade_invalida", motivo: "comparação do saldo com a capacidade não representável" };
+      }
+      if (saldoVsTeto >= 0) {
+        delta = 0;
+      } else {
+        // Só materializa a diferença quando ela será o delta efetivamente
+        // creditado. Se essa quantidade não puder ser representada sem
+        // perda, falha sem consumir o requestId.
+        const espacoEfetivo = subtrairDecimalSangue(params.capacidadeMax, estado.saldo);
+        const espacoPositivo = compararDecimalSangue(espacoEfetivo, 0);
+        if (!Number.isFinite(espacoEfetivo) || espacoPositivo === null || espacoPositivo <= 0) {
+          return { ok: false, codigo: "quantidade_invalida", motivo: "espaço de clamp não representável" };
+        }
+        delta = espacoEfetivo;
+      }
+    }
   }
-  if (delta < 0 && -delta > estado.saldo) {
-    return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
+  if (delta < 0) {
+    const excedeSaldo = compararDecimalSangue(-delta, estado.saldo);
+    if (excedeSaldo === null) {
+      return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de saldo não representável" };
+    }
+    if (excedeSaldo > 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   }
 
   const uso: UsoSangue = {
@@ -377,8 +658,11 @@ function aplicarDeltaComEstado(
   tipoEvento: TipoEventoSangue,
   ctx: ContextoEvento & { usoId?: string },
 ): ResultadoSangue {
-  const saldo = estado.saldo + delta;
-  if (saldo < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
+  const saldo = somarDecimalSangue(estado.saldo, delta);
+  if (!Number.isFinite(saldo)) return { ok: false, codigo: "quantidade_invalida", saldo: estado.saldo };
+  const saldoNegativo = compararDecimalSangue(saldo, 0);
+  if (saldoNegativo === null) return { ok: false, codigo: "quantidade_invalida", saldo: estado.saldo };
+  if (saldoNegativo < 0) return { ok: false, codigo: "saldo_insuficiente", saldo: estado.saldo };
   const historicoNovo: EventoSangue[] = [
     ...estado.historico,
     {
@@ -627,15 +911,17 @@ export function reconciliarCapacidadeSangue(
     return { ok: false, codigo: "sangue_invalido", motivo: lido.motivo };
   }
   const estado = lido.estado;
-  if (estado.saldo <= cap) {
-    return { ok: true, dados, estado, ajustado: false };
+  const saldoVsCapacidade = compararDecimalSangue(estado.saldo, cap);
+  if (saldoVsCapacidade === null) {
+    return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de capacidade não representável" };
   }
+  if (saldoVsCapacidade <= 0) return { ok: true, dados, estado, ajustado: false };
   const ajuste = registrarAjusteSangue(dados, {
     personagemId: params.personagemId,
     autorId: params.autorId,
     autorNome: params.autorNome,
     motivo: params.motivo,
-    delta: cap - estado.saldo,
+    delta: subtrairDecimalSangue(cap, estado.saldo),
   });
   if (!ajuste.ok) return ajuste;
   // Atualiza o cache de capacidade junto — a leitura seguinte já
@@ -798,7 +1084,11 @@ function numeroDoCampo(
     for (const item of valor) {
       if (!item || typeof item !== "object") continue;
       const nivel = num((item as Record<string, unknown>).nivel);
-      if (nivel !== null) { soma += nivel; algum = true; }
+      if (nivel !== null) {
+        soma = somarDecimalSangue(soma, nivel);
+        if (!Number.isFinite(soma)) return null;
+        algum = true;
+      }
     }
     return algum ? soma : null;
   }
@@ -902,13 +1192,13 @@ export function resolverCapacidadeSangue(
           detalhe: { campoId: bq.campoId, bruto: dados[bq.campoId], modo: modoBonus },
         };
       }
-      bonus = nBonus * bq.coeficiente;
+      bonus = multiplicarDecimalSangue(nBonus, bq.coeficiente);
     }
     // nBonus === null → personagem sem a qualidade selecionada:
     // bônus zero, não é erro.
   }
 
-  const capacidade = base + bonus;
+  const capacidade = somarDecimalSangue(base, bonus);
   // R3/P2: a capacidade final precisa ser finita e não negativa —
   // defesa final mesmo que base ou bônus cheguem corrompidos.
   if (!Number.isFinite(capacidade) || capacidade < 0) {

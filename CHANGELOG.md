@@ -15,6 +15,9 @@
 
 - **Assinatura conjunta XP + Sangue:** exportações de campanha protegem os dois ledgers em conjunto com HMAC v2, mantendo a compatibilidade de leitura prevista para pacotes assinados na versão anterior.
 - **Pré-validação de migração de ficha:** adicionada uma base fail-closed para validar compatibilidade antes de futuras operações. A revinculação efetiva de fichas não faz parte desta versão.
+- **Privacidade dos Pontos de Sangue:** a projeção de saldo/capacidade respeita a visibilidade efetiva da capacidade-base, do bônus de Qualidade e da natureza, incluindo overrides individuais e destinatários selecionados. Ações por Socket.IO são recusadas sem revelar saldo quando uma fonte necessária está privada; recuperação não aceita capacidade desconhecida nem teto informado pelo cliente.
+- **Ledger decimal e compatibilidade histórica:** débitos, créditos, ajustes e limites usam aritmética decimal exata; históricos legados preservam o saldo persistido quando a evidência é ambígua e permitem reconstrução comprovada após recuperação limitada. A cobrança D10 não revela saldo em mensagens de erro.
+- **Integridade de XP e regras importadas:** a prova de financiamento por XP da capacidade de Sangue só é aceita para o campo configurado pela campanha, com custo/vínculo revalidados. Excluir um Poder também remove seu custo órfão de forma transacional, preservando demais configurações e campanhas importadas com `pontos:null`.
 
 ### Validação
 

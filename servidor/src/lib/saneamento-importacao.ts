@@ -300,9 +300,8 @@ function sanearXp(
   // quando trunca o histórico no teto de persistência; pacotes antigos
   // sem o campo são tratados como completos desde o zero. Um valor
   // presente mas inválido torna o ledger não demonstrável.
-  const ancoraBruta = bruto.ancora === undefined || bruto.ancora === null
-    ? 0
-    : num(bruto.ancora);
+  const ancoraDeclarada = bruto.ancora !== undefined && bruto.ancora !== null;
+  const ancoraBruta = !ancoraDeclarada ? 0 : num(bruto.ancora);
   if (ancoraBruta === null || ancoraBruta < 0) {
     rep.ledgerXpInvalidado = true;
     const finBrutoInv = obj(bruto.financiado);
@@ -318,6 +317,7 @@ function sanearXp(
   // sufixo não demonstrável; o prefixo válido é preservado.
   let eventosFinais = validos;
   let ancoraFinal = ancoraBruta;
+  let truncouNoSaneamento = false;
   if (validos.length) {
     let quebra = -1;
     const primeiro = xpNum(num(validos[0].saldoResultante)! - num(validos[0].quantidade)!);
@@ -340,6 +340,7 @@ function sanearXp(
   // legítimo com mais de 500 eventos é preservado; truncamento forjado
   // já foi rejeitado pela âncora acima.
   if (eventosFinais.length > MAX_XP_HISTORICO) {
+    truncouNoSaneamento = true;
     const retidos = eventosFinais.slice(-MAX_XP_HISTORICO);
     rep.eventosXpDescartados += eventosFinais.length - retidos.length;
     eventosFinais = retidos;
@@ -445,9 +446,12 @@ function sanearXp(
   }
 
   const novoXp: Record<string, unknown> = { saldo: saldoOk ? saldoComprovado : 0, historico: saldoOk ? eventosFinais : [] };
-  // âncora > 0 só existe quando o histórico foi truncado pelo teto —
-  // preserva a origem verificável do primeiro evento retido (B1).
-  if (saldoOk && eventosFinais.length && ancoraFinal > 0) novoXp.ancora = ancoraFinal;
+  // Presença é o marcador de truncamento; o saldo anterior pode ser zero.
+  // Também preserva uma âncora explícita recebida e uma recalculada ao
+  // aplicar o teto local, sem inventar marcador em históricos completos.
+  if (saldoOk && eventosFinais.length && (ancoraDeclarada || truncouNoSaneamento)) {
+    novoXp.ancora = ancoraFinal;
+  }
   if (saldoOk && Object.keys(finValido).length) novoXp.financiado = finValido;
   data[CHAVE_XP] = novoXp;
 }

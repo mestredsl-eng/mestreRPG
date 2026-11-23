@@ -48,6 +48,32 @@ function setSangueConfig(campId, sangue) {
     w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
   } finally { w.close(); }
 }
+
+function setVisibilidadeCampo(versionId, campoId, visibilidade) {
+  const w = db();
+  try {
+    const row = w.prepare("select structure from sheet_versions where id=?").get(versionId);
+    if (!row) throw new Error("Versão de ficha não encontrada: " + versionId);
+    const estrutura = typeof row.structure === "string" ? JSON.parse(row.structure) : row.structure;
+    const campo = estrutura.secoes.flatMap((s) => s.campos).find((c) => c.id === campoId);
+    if (!campo) throw new Error("Campo não encontrado: " + campoId);
+    campo.visibilidade = visibilidade;
+    w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
+  } finally { w.close(); }
+}
+function setOverrideCampo(charId, campoId, override) {
+  const w = db();
+  try {
+    const row = w.prepare("select overrides from characters where id=?").get(charId);
+    if (!row) throw new Error("Personagem não encontrado: " + charId);
+    const overrides = typeof row.overrides === "string"
+      ? JSON.parse(row.overrides || "{}")
+      : { ...(row.overrides ?? {}) };
+    if (override === null) delete overrides[campoId];
+    else overrides[campoId] = override;
+    w.prepare("update characters set overrides=? where id=?").run(JSON.stringify(overrides), charId);
+  } finally { w.close(); }
+}
 function setPoderesLimite(campId, limite) {
   const w = db();
   try {
@@ -150,6 +176,7 @@ try {
     secoes: [{
       id: "s1", titulo: "Sangue", ordem: 0, campos: [
         { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "atributo", minimo: 1, maximo: 30 },
+        { id: "qual", label: "Qualidade bônus", tipo: "inteiro", semantico: "atributo", minimo: 0, maximo: 10 },
         { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", opcoes: ["Humano", "Vampiro"] },
         { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder" },
         // Campos escalares vinculados a Poder via campo.regra — o
@@ -171,7 +198,7 @@ try {
   setPoderesLimite(CID, 10);
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
+    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
@@ -213,6 +240,15 @@ try {
     return m ? Number(m[1]) : null;
   };
 
+  const emitirAckSangue = async (page, evento, payload) => page.evaluate(
+    ({ evento, payload }) => new Promise((resolve) => {
+      const socket = window.__mesaSocket;
+      if (!socket?.connected) return resolve({ ok: false, codigo: "socket_indisponivel" });
+      socket.emit(evento, payload, (ack) => resolve(ack ?? { ok: false, codigo: "ack_ausente" }));
+    }),
+    { evento, payload },
+  );
+
   // ---------- 1. Dono: recuperar + ativar ----------
   sec("UI. dono — recuperar");
   {
@@ -237,6 +273,83 @@ try {
     await ctx.close();
   }
 
+  // ---------- 1b. Socket.IO não contorna campos privados ----------
+  sec("Socket.IO — privacidade da projeção de Sangue");
+  {
+    setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+    setVisibilidadeCampo(vid, "cap", "todos");
+    setOverrideCampo(CHAR, "cap", { visibilidade: "mestre" });
+    const { ctx, page } = await novaPagina(J1);
+    await abrirFicha(page, "Herói Ações");
+
+    const ackAtivar = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_fogo", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. ativar respeita override privado sem devolver saldo",
+      ackAtivar?.ok === false && ackAtivar?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackAtivar) && !("saldo" in ackAtivar) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackAtivar, saldo: saldoDe(CHAR) }),
+    );
+
+    const ackRecuperarCap = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar respeita override de capacidade sem mutar ledger",
+      ackRecuperarCap?.ok === false && ackRecuperarCap?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackRecuperarCap) && !("saldo" in ackRecuperarCap) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarCap, saldo: saldoDe(CHAR) }),
+    );
+
+    setOverrideCampo(CHAR, "cap", null);
+
+    // Mesmo com o campo-base visível, um bônus de Qualidade privado
+    // também compõe a capacidade e bloqueia ACKs que conteriam saldo.
+    setVisibilidadeCampo(vid, "cap", "todos");
+    setVisibilidadeCampo(vid, "qual", "mestre");
+    setSangueConfig(CID, {
+      ...CFG,
+      capacidade: {
+        ...CFG.capacidade,
+        bonusQualidade: { campoId: "qual", coeficiente: 1, modo: "valor" },
+      },
+    });
+    const ackAtivarBonus = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_fogo", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. ativar recusa bônus de Qualidade privado sem saldo",
+      ackAtivarBonus?.ok === false && ackAtivarBonus?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackAtivarBonus) && !("saldo" in ackAtivarBonus) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackAtivarBonus, saldo: saldoDe(CHAR) }),
+    );
+    const ackRecuperarBonus = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar recusa bônus de Qualidade privado sem mutar ledger",
+      ackRecuperarBonus?.ok === false && ackRecuperarBonus?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackRecuperarBonus) && !("saldo" in ackRecuperarBonus) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarBonus, saldo: saldoDe(CHAR) }),
+    );
+    setSangueConfig(CID, CFG);
+    setVisibilidadeCampo(vid, "qual", "todos");
+
+    setOverrideCampo(CHAR, "nat", { visibilidade: "selecionados", destinatarios: [] });
+    const ackRecuperarNat = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar recusa natureza para não destinatário selecionado",
+      ackRecuperarNat?.ok === false && ackRecuperarNat?.codigo === "natureza_indisponivel"
+        && !("estado" in ackRecuperarNat) && !("saldo" in ackRecuperarNat) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarNat, saldo: saldoDe(CHAR) }),
+    );
+    setOverrideCampo(CHAR, "nat", null);
+    await ctx.close();
+  }
+
   // ---------- 2. Sem fluxo paralelo de ativação na UI ----------
   sec("UI. ativação de Poder não é duplicada no widget");
   {
@@ -248,7 +361,7 @@ try {
     t("UI. widget sem nenhum controle de ativar",
       await painel.locator("select").count() === 0
       && await painel.getByRole("button", { name: /Ativar|ativar/ }).count() === 0);
-    t("UI. saldo permanece estável sem uso de Poder", saldoDe(CHAR) === 7, `db=${saldoDe(CHAR)}`);
+    t("UI. saldo permanece estável sem uso de Poder", saldoDe(CHAR) === 5, `db=${saldoDe(CHAR)}`);
     await ctx.close();
   }
 
@@ -267,7 +380,7 @@ try {
     const painelM = p2.locator(".painel-sangue-leitura");
     t("UI. mestre vê seção 'Ações do mestre'", await painelM.locator(".painel-sangue-mestre").count() === 1);
     t("UI. mestre NÃO vê botão Descansar (não é dono)", await painelM.getByRole("button", { name: /Descansar/ }).count() === 0);
-    // ajustar +3 com motivo → saldo 7→10
+    // ajustar +3 com motivo → saldo 5→8
     await painelM.locator(".painel-sangue-mestre").locator("summary").click();
     await painelM.locator("input[aria-label='Delta de Sangue (positivo ou negativo)']").fill("3");
     await painelM.locator("input[aria-label='Motivo do ajuste de Sangue']").fill("bônus de teste");
@@ -277,7 +390,7 @@ try {
       return p && /ajustado/i.test(p.innerText);
     }, { timeout: 15000 }).catch(() => null);
     await p2.waitForTimeout(500);
-    t("UI. mestre ajustou saldo para 10", saldoDe(CHAR) === 10, `db=${saldoDe(CHAR)}`);
+    t("UI. mestre ajustou saldo para 8", saldoDe(CHAR) === 8, `db=${saldoDe(CHAR)}`);
     // reconciliar com motivo — reabre o <details> se o reload fechou
     await painelM.locator(".painel-sangue-mestre").evaluate((d) => { if (!d.open) d.querySelector("summary").click(); });
     await painelM.locator("input[aria-label='Motivo da reconciliação de capacidade']").fill("reconciliação teste");
@@ -340,7 +453,7 @@ try {
       await page.waitForTimeout(3500);
       const painel = page.locator(".painel-sangue-leitura");
       const txt = await painel.innerText();
-      t("UI. corrida: painel de B carregado (saldo 10)", /10/.test(txt), txt.slice(0, 160));
+      t("UI. corrida: painel de B carregado (saldo 8)", /8/.test(txt), txt.slice(0, 160));
       t("UI. corrida: posse de A NÃO vazou para B (sem Descansar/Ativar)",
         await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0);
       t("UI. corrida: mestre segue vendo 'Ações do mestre' em B",

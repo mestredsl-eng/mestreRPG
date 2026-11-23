@@ -54,6 +54,30 @@ function setStatus(charId, status) {
   try { w.prepare("update characters set status=? where id=?").run(status, charId); }
   finally { w.close(); }
 }
+function setVisibilidadeCampo(versionId, campoId, visibilidade) {
+  const w = db();
+  try {
+    const row = w.prepare("select structure from sheet_versions where id=?").get(versionId);
+    const estrutura = typeof row.structure === "string" ? JSON.parse(row.structure) : row.structure;
+    const campo = estrutura.secoes.flatMap((s) => s.campos).find((c) => c.id === campoId);
+    if (!campo) throw new Error("Campo não encontrado: " + campoId);
+    campo.visibilidade = visibilidade;
+    w.prepare("update sheet_versions set structure=? where id=?").run(JSON.stringify(estrutura), versionId);
+  } finally { w.close(); }
+}
+function setOverrideCampo(charId, campoId, override) {
+  const w = db();
+  try {
+    const row = w.prepare("select overrides from characters where id=?").get(charId);
+    if (!row) throw new Error("Personagem não encontrado: " + charId);
+    const overrides = typeof row.overrides === "string"
+      ? JSON.parse(row.overrides || "{}")
+      : { ...(row.overrides ?? {}) };
+    if (override === null) delete overrides[campoId];
+    else overrides[campoId] = override;
+    w.prepare("update characters set overrides=? where id=?").run(JSON.stringify(overrides), charId);
+  } finally { w.close(); }
+}
 function setSangueConfig(campId, sangue) {
   const w = db();
   try {
@@ -120,6 +144,7 @@ try {
         { id: "f-cap", label: "Capacidade", tipo: "inteiro" },
         { id: "f-cap-soma", label: "Cap Soma", tipo: "selecao_nivel" },
         { id: "f-cap-mapa", label: "Cap Mapa", tipo: "selecao_unica" },
+        { id: "f-qual", label: "Qualidade bônus", tipo: "inteiro" },
         { id: "f-nat", label: "Natureza", tipo: "selecao_unica" },
       ],
     }],
@@ -131,7 +156,7 @@ try {
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
     cookie: J1,
-    body: { name: "Lobisomem", templateVersionId: vid, data: { "f-cap": 8, "f-nat": "humano", "f-cap-soma": [{ key: "a", nivel: 2 }, { key: "b", nivel: 3 }], "f-cap-mapa": "Medio" } },
+    body: { name: "Lobisomem", templateVersionId: vid, data: { "f-cap": 8, "f-qual": 2, "f-nat": "humano", "f-cap-soma": [{ key: "a", nivel: 2 }, { key: "b", nivel: 3 }], "f-cap-mapa": "Medio" } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   t("personagem criado", !!CHAR, JSON.stringify(pj.json).slice(0, 160));
@@ -159,6 +184,121 @@ try {
 
     const rm = await getSangue(CHAR, M);
     t("mestre → 200 mesmo conteúdo", rm.status === 200 && rm.json?.saldo === 5 && rm.json?.capacidadeMax === 8);
+
+    // Campo de capacidade restrito ao mestre: o dono não pode inferir
+    // o valor por meio do resumo derivado de Pontos de Sangue.
+    setVisibilidadeCampo(vid, "f-cap", "mestre");
+    const capOculta = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe saldo/capacidade quando a fonte da capacidade é privada",
+      capOculta.json?.estado === "capacidade_indisponivel" &&
+        capOculta.json?.motivo === "campo_privado" &&
+        capOculta.json?.saldo === null &&
+        capOculta.json?.capacidadeMax === null &&
+        capOculta.json?.natureza === null &&
+        capOculta.json?.acaoRecuperacao === null,
+      JSON.stringify(capOculta.json),
+    );
+    const mestreCapOculta = await getSangue(CHAR, M);
+    t("mestre continua vendo capacidade privada", mestreCapOculta.json?.estado === "ok" && mestreCapOculta.json?.capacidadeMax === 8);
+
+    // Overrides individuais têm precedência sobre a visibilidade do template.
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+    setOverrideCampo(CHAR, "f-cap", { visibilidade: "mestre" });
+    const capOverrideOculta = await getSangue(CHAR, J1);
+    t(
+      "override individual mestre oculta a projeção de capacidade do dono",
+      capOverrideOculta.json?.estado === "capacidade_indisponivel" &&
+        capOverrideOculta.json?.saldo === null &&
+        capOverrideOculta.json?.capacidadeMax === null,
+      JSON.stringify(capOverrideOculta.json),
+    );
+    const mestreCapOverride = await getSangue(CHAR, M);
+    t("mestre continua vendo capacidade sob override individual", mestreCapOverride.json?.estado === "ok" && mestreCapOverride.json?.capacidadeMax === 8);
+    setOverrideCampo(CHAR, "f-cap", null);
+
+    // Visibilidade selecionados reconhece userId e membershipId; quem não
+    // está na lista não recebe saldo nem capacidade, mesmo sendo membro.
+    setVisibilidadeCampo(vid, "f-cap", "selecionados");
+    const capSelecionadoOutro = await getSangue(CHAR, J1);
+    t(
+      "selecionados sem o dono na lista não revela capacidade",
+      capSelecionadoOutro.json?.estado === "capacidade_indisponivel" &&
+        capSelecionadoOutro.json?.saldo === null &&
+        capSelecionadoOutro.json?.capacidadeMax === null,
+      JSON.stringify(capSelecionadoOutro.json),
+    );
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+    setOverrideCampo(CHAR, "f-cap", {
+      visibilidade: "selecionados",
+      destinatarios: [c.jogadores.jogador1.id],
+    });
+    const capSelecionadoUser = await getSangue(CHAR, J1);
+    t(
+      "selecionados por userId permitem projeção ao destinatário",
+      capSelecionadoUser.json?.estado === "ok" && capSelecionadoUser.json?.capacidadeMax === 8,
+      JSON.stringify(capSelecionadoUser.json),
+    );
+    setOverrideCampo(CHAR, "f-cap", {
+      visibilidade: "selecionados",
+      destinatarios: [c.jogadores.jogador1.membershipId],
+    });
+    const capSelecionadoMembership = await getSangue(CHAR, J1);
+    t(
+      "selecionados por membershipId permitem projeção ao destinatário",
+      capSelecionadoMembership.json?.estado === "ok" && capSelecionadoMembership.json?.capacidadeMax === 8,
+      JSON.stringify(capSelecionadoMembership.json),
+    );
+    setOverrideCampo(CHAR, "f-cap", null);
+    setVisibilidadeCampo(vid, "f-cap", "dono_mestre");
+    const capDonoMestre = await getSangue(CHAR, J1);
+    t(
+      "dono_mestre mantém a projeção ao dono",
+      capDonoMestre.json?.estado === "ok" && capDonoMestre.json?.capacidadeMax === 8,
+      JSON.stringify(capDonoMestre.json),
+    );
+    setVisibilidadeCampo(vid, "f-cap", "todos");
+
+    // O bônus de Qualidade também é fonte da capacidade e precisa da
+    // mesma visibilidade efetiva do campo-base.
+    setVisibilidadeCampo(vid, "f-qual", "mestre");
+    setSangueConfig(CID, {
+      ...CFG_BASE,
+      capacidade: { bonusQualidade: { campoId: "f-qual", coeficiente: 1, modo: "valor" } },
+    });
+    const bonusPrivado = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe saldo/capacidade quando o bônus de Qualidade é privado",
+      bonusPrivado.json?.estado === "capacidade_indisponivel" &&
+        bonusPrivado.json?.saldo === null &&
+        bonusPrivado.json?.capacidadeMax === null &&
+        bonusPrivado.json?.utilizavel === false,
+      JSON.stringify(bonusPrivado.json),
+    );
+    const mestreBonusPrivado = await getSangue(CHAR, M);
+    t(
+      "mestre continua vendo capacidade com bônus de Qualidade privado",
+      mestreBonusPrivado.json?.estado === "ok" && mestreBonusPrivado.json?.capacidadeMax === 10,
+      JSON.stringify(mestreBonusPrivado.json),
+    );
+    setSangueConfig(CID, CFG_BASE);
+    setVisibilidadeCampo(vid, "f-qual", "todos");
+
+    // Natureza privada não pode ser inferida pelo rótulo nem pela ação
+    // contextual de recuperação; capacidade independente continua legível.
+    setVisibilidadeCampo(vid, "f-nat", "mestre");
+    const natOculta = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe natureza nem ação derivada de campo privado",
+      natOculta.json?.estado === "ok" &&
+        natOculta.json?.capacidadeMax === 8 &&
+        natOculta.json?.natureza === null &&
+        natOculta.json?.acaoRecuperacao === null,
+      JSON.stringify(natOculta.json),
+    );
+    const mestreNatOculta = await getSangue(CHAR, M);
+    t("mestre continua vendo natureza privada", mestreNatOculta.json?.natureza?.rotulo === "humano");
+    setVisibilidadeCampo(vid, "f-nat", "todos");
   }
 
   sec("Autorização — não-dono e espectador");
