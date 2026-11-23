@@ -234,6 +234,8 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Regressão E2E ciclo de campanha, convites e membros (Issue #291)
+        run: node teste-ciclo-campanha.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
