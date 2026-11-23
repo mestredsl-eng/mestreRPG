@@ -408,7 +408,7 @@ try {
         'if ((process.argv[2] ?? "preflight") !== "preflight") process.exit(1);',
         "process.exit(0);",
         "",
-      ].join("\\n"));
+      ].join("\n"));
       // auto-update stub: grava marcador e dorme (segura o lock p/ teste de corrida)
       writeFileSync(join(dir, "scripts", "auto-update.mjs"),
         `import { appendFileSync } from "node:fs";\n` +
