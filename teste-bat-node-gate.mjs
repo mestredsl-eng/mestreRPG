@@ -87,6 +87,7 @@ try {
     executarCaso("node-20.19-aceito", "20.19.0", true, "Node.js 20.19.0");
     executarCaso("node-22-aceito", "22.0.0", true, "Node.js 22.0.0");
     executarCaso("node-versao-ilegivel", null, false, "Nao foi possivel ler a versao");
+    executarCaso("node-versao-malformada", "20.x", false, "versao minima exigida");
     console.log("\n" + pass + " ok, " + fail + " falhas");
     if (fail) process.exitCode = 1;
   }
