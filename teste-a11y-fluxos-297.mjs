@@ -62,9 +62,9 @@ async function aba(page, nome) {
   await page.locator(".abas button", { hasText: nome }).first().click();
 }
 // Controles interativos sem nome acessível — auditor type-aware
-// (nomes-acessiveis-297.mjs, HTML-AAM #7107456243): value de input e
-// textContent de <option> NÃO são nome; texto interno só para
-// button/link/similares. Ocultos e desabilitados fora do escopo.
+// (nomes-acessiveis-297.mjs, HTML-AAM #7107456243/#7110968271):
+// retorna { semNome: [...], conflitos: [...] } — disabled é auditado,
+// aria-hidden visível/focável é conflito próprio, não falta de nome.
 async function semNome(page, seletor = null) {
   return page.evaluate(auditarNomes, seletor);
 }
@@ -111,8 +111,10 @@ async function semNomeEscopo(page, locator) {
 
 // Formulários de Dinheiro (#7107456243): inspeção de controles sem
 // nome ANTES e DEPOIS de selecionar opções reais — texto de <option>
-// e valor de input NÃO são nome acessível (HTML-AAM).
-async function checarFormulariosDinheiro(page) {
+// e valor de input NÃO são nome acessível (HTML-AAM). Endurecimento
+// #7110968271: criação de contas exige sucesso real; selectOption
+// assere valor anterior/novo antes da auditoria "após seleção".
+async function checarFormulariosDinheiro(page, contasCriadas) {
   const formCom = (btn) => page.locator("form.formulario", {
     has: page.getByRole("button", { name: btn, exact: true }),
   });
@@ -120,19 +122,36 @@ async function checarFormulariosDinheiro(page) {
     if (!(await formLocator.count())) { t(`Dinheiro ${rotuloF}: formulário presente`, false); return; }
     const f = formLocator.first();
     const sn1 = await semNomeEscopo(page, f);
-    t(`Dinheiro ${rotuloF}: controles nomeados (antes)`, sn1.length === 0, sn1.slice(0, 4).join(" | "));
+    t(`Dinheiro ${rotuloF}: controles nomeados (antes)`, sn1.semNome.length === 0, sn1.semNome.slice(0, 4).join(" | "));
+    // Seleção real com asserts: valor anterior → opção real → valor novo
     const sels = f.locator("select");
     const nSels = await sels.count();
     for (let i = 0; i < nSels; i++) {
-      const nOp = await sels.nth(i).locator("option").count();
-      if (nOp > 1) await sels.nth(i).selectOption({ index: 1 }).catch(() => {});
+      const sel = sels.nth(i);
+      const nOp = await sel.locator("option").count();
+      if (nOp <= 1) continue;
+      const antes = await sel.inputValue();
+      const opt = sel.locator("option").nth(1);
+      const esperado = (await opt.getAttribute("value")) ?? (await opt.textContent()) ?? "";
+      await sel.selectOption({ index: 1 });
+      const depois = await sel.inputValue();
+      t(`Dinheiro ${rotuloF}: select ${i} valor ${JSON.stringify(antes)}→${JSON.stringify(esperado)}`,
+        antes !== esperado && depois === esperado, `depois=${JSON.stringify(depois)}`);
     }
     await page.waitForTimeout(200);
     const sn2 = await semNomeEscopo(page, f);
-    t(`Dinheiro ${rotuloF}: controles nomeados (após seleção)`, sn2.length === 0, sn2.slice(0, 4).join(" | "));
+    t(`Dinheiro ${rotuloF}: controles nomeados (após seleção)`, sn2.semNome.length === 0, sn2.semNome.slice(0, 4).join(" | "));
   };
-  // Movimentar — montado sempre que há contas
-  await checarForm("Movimentar", formCom("Registrar"));
+  // Movimentar — montado sempre que há contas; pré-condição: as contas
+  // de fixture precisam estar presentes nas opções do seletor
+  const mov = formCom("Registrar");
+  if (await mov.count()) {
+    const opcoes = await mov.first().locator("select").first().locator("option").allTextContents();
+    t("Dinheiro Movimentar: contas de fixture nas opções",
+      contasCriadas.every((n) => opcoes.some((o) => o.includes(n))),
+      `opções=${opcoes.slice(0, 4).join(",")}`);
+  }
+  await checarForm("Movimentar", mov);
   // Nova conta — abre/fecha pelo toggle
   const btnNova = page.getByRole("button", { name: "Nova conta", exact: true });
   if (await btnNova.count()) {
@@ -157,7 +176,8 @@ async function checarTela(page, rotulo) {
   const ov = await overflowX(page);
   t(`${rotulo}: sem overflow horizontal`, !ov.overflow, `scrollWidth=${ov.sw} clientWidth=${ov.cw}`);
   const sn = await semNome(page);
-  t(`${rotulo}: controles com nome acessível`, sn.length === 0, sn.slice(0, 3).join(" | "));
+  t(`${rotulo}: controles com nome acessível`, sn.semNome.length === 0, sn.semNome.slice(0, 3).join(" | "));
+  t(`${rotulo}: sem conflito aria-hidden em controle visível`, sn.conflitos.length === 0, sn.conflitos.slice(0, 3).join(" | "));
   await checarWcag(page, rotulo).catch((e) => {
     tc(`${rotulo}: contraste AA`, "review", "avaliador falhou: " + String(e?.message ?? e).slice(0, 120));
     ta(`${rotulo}: alvos ≥24px`, "review", "avaliador falhou: " + String(e?.message ?? e).slice(0, 120));
@@ -172,14 +192,20 @@ try {
   const cenario = await criarCenario(BASE, BANCO);
   // Contas financeiras reais — exercitam os seletores de Dinheiro com
   // opções verdadeiras antes/depois da seleção (#7107456243).
+  // #7110968271: sem catch — resposta de sucesso + id são pré-condição;
+  // falha de fixture é FAIL explícito, nunca seguir como se houvesse contas.
+  const contasCriadas = [];
   if (cenario.personagemMestre) {
     for (const [type, name] of [["especie", "Carteira Teste"], ["banco", "Banco Teste"]]) {
-      await req(BASE, "POST", `/characters/${cenario.personagemMestre}/financeiro/contas`, {
+      const r = await req(BASE, "POST", `/characters/${cenario.personagemMestre}/financeiro/contas`, {
         cookie: cenario.cookieMestre,
         body: { type, name, balanceReais: 0 },
-      }).catch(() => {});
+      });
+      const ok = r.status >= 200 && r.status < 300 && !!r.json?.id;
+      t(`fixture: conta "${name}" criada (status ${r.status})`, ok, JSON.stringify(r.json).slice(0, 120));
+      if (ok) contasCriadas.push(name);
     }
-  }
+  } else t("fixture: personagemMestre presente p/ contas", false);
   browser = await chromium.launch();
 
   // ---------- Matriz viewport × fluxo (mestre) ----------
@@ -223,7 +249,7 @@ try {
           if (sub === "Dinheiro") viuDinheiro = true;
         }
       }
-      if (viuDinheiro) await checarFormulariosDinheiro(page);
+      if (viuDinheiro) await checarFormulariosDinheiro(page, contasCriadas);
       const voltar = page.getByRole("button", { name: "Voltar" }).last();
       if (await voltar.count()) await voltar.click().catch(() => {});
       await page.waitForSelector(".abas", { timeout: 10000 }).catch(() => {});

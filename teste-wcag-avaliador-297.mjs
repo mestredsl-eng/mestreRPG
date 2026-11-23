@@ -178,7 +178,7 @@ sec("Indicador de foco — alpha e geometrias");
   t("foco sem indicador mensurável ⇒ REVIEW", r.rev.length > 0 && r.viol.length === 0, JSON.stringify(r).slice(0, 240));
 }
 
-sec("Nomes acessíveis — type-aware HTML-AAM (#7107456243)");
+sec("Nomes acessíveis — type-aware HTML-AAM (#7107456243/#7110968271)");
 {
   const nomes = async (html) => {
     await page.setContent(`<!doctype html><html><body>${html}</body></html>`);
@@ -188,36 +188,72 @@ sec("Nomes acessíveis — type-aware HTML-AAM (#7107456243)");
   // select com texto de opções mas sem label/ARIA/title ⇒ SEM nome
   // (option text é valor corrente, não nome acessível)
   n = await nomes(`<main><select id="sel1"><option>Conta…</option><option>Entrada</option><option>Dinheiro em espécie</option></select></main>`);
-  t("select só com opções ⇒ sem nome", n.some((x) => x.includes("sel1")), JSON.stringify(n));
+  t("select só com opções ⇒ sem nome", n.semNome.some((x) => x.includes("sel1")), JSON.stringify(n));
 
   // select com aria-label ⇒ nome
   n = await nomes(`<main><select id="sel2" aria-label="Conta de origem"><option>Conta…</option></select></main>`);
-  t("select com aria-label ⇒ nome", !n.some((x) => x.includes("sel2")), JSON.stringify(n));
+  t("select com aria-label ⇒ nome", !n.semNome.some((x) => x.includes("sel2")), JSON.stringify(n));
 
   // select com <label for> ⇒ nome
   n = await nomes(`<main><label for="sel3">Tipo de conta</label><select id="sel3"><option>especie</option></select></main>`);
-  t("select com label associado ⇒ nome", !n.some((x) => x.includes("sel3")), JSON.stringify(n));
+  t("select com label associado ⇒ nome", !n.semNome.some((x) => x.includes("sel3")), JSON.stringify(n));
+
+  // select com atributo placeholder: HTML-AAM não prevê fallback de
+  // placeholder para select ⇒ não cria nome
+  n = await nomes(`<main><select id="sel4" placeholder="Escolha"><option>Conta…</option></select></main>`);
+  t("select com placeholder ⇒ sem nome (sem fallback)", n.semNome.some((x) => x.includes("sel4")), JSON.stringify(n));
 
   // input number preenchido sem nenhuma fonte ⇒ SEM nome
   // (value é conteúdo do campo, não nome)
   n = await nomes(`<main><input id="num1" type="number" value="1"></main>`);
-  t("input number com valor ⇒ sem nome", n.some((x) => x.includes("num1")), JSON.stringify(n));
+  t("input number com valor ⇒ sem nome", n.semNome.some((x) => x.includes("num1")), JSON.stringify(n));
 
-  // botão com texto interno ⇒ nome (texto interno é fonte válida)
+  // input type=checkbox com placeholder: tipo sem fallback ⇒ sem nome
+  n = await nomes(`<main><input id="chk1" type="checkbox" placeholder="marque"></main>`);
+  t("input checkbox com placeholder ⇒ sem nome (tipo sem fallback)", n.semNome.some((x) => x.includes("chk1")), JSON.stringify(n));
+
+  // input type=search com placeholder ⇒ fallback válido ⇒ nome
+  n = await nomes(`<main><input id="srch1" type="search" placeholder="Buscar"></main>`);
+  t("input search com placeholder ⇒ nome (fallback)", !n.semNome.some((x) => x.includes("srch1")), JSON.stringify(n));
+
+  // aria-placeholder em input suportado ⇒ fallback ⇒ nome
+  n = await nomes(`<main><input id="aph1" type="text" aria-placeholder="Digite aqui"></main>`);
+  t("input com aria-placeholder ⇒ nome (fallback)", !n.semNome.some((x) => x.includes("aph1")), JSON.stringify(n));
+
+  // botão com texto interno ⇒ nome
   n = await nomes(`<main><button id="bt9">Registrar</button></main>`);
-  t("button com texto ⇒ nome", !n.some((x) => x.includes("bt9")), JSON.stringify(n));
+  t("button com texto ⇒ nome", !n.semNome.some((x) => x.includes("bt9")), JSON.stringify(n));
 
-  // input texto com placeholder ⇒ fallback HTML-AAM ⇒ nome
+  // botão cujo único texto está em descendente display:none ⇒ SEM nome
+  // (innerText computável exclui ocultos — textContent bruto daria falso nome)
+  n = await nomes(`<main><button id="bt10"><span style="display:none">Oculto</span></button></main>`);
+  t("button com texto só em display:none ⇒ sem nome", n.semNome.some((x) => x.includes("bt10")), JSON.stringify(n));
+
+  // botão desabilitado sem nome ⇒ SEM nome (disabled não elimina
+  // a obrigação — SC 4.1.2 cobre todos os componentes)
+  n = await nomes(`<main><button id="bt11" disabled></button></main>`);
+  t("button disabled sem nome ⇒ sem nome (auditado)", n.semNome.some((x) => x.includes("bt11") && x.includes("disabled")), JSON.stringify(n));
+
+  // controle visível e focalizável dentro de aria-hidden ⇒ CONFLITO
+  // próprio (não é falta de nome — é quebra da árvore de acessibilidade)
+  n = await nomes(`<main><div aria-hidden="true"><button id="bt12">X</button></div></main>`);
+  t("controle visível em aria-hidden ⇒ conflito próprio", n.conflitos.some((x) => x.includes("bt12")) && !n.semNome.some((x) => x.includes("bt12")), JSON.stringify(n));
+
+  // input type=hidden ⇒ fora do escopo de nome
+  n = await nomes(`<main><input id="hid1" type="hidden" value="segredo"></main>`);
+  t("input type=hidden ⇒ fora do escopo", !n.semNome.some((x) => x.includes("hid1")) && !n.conflitos.some((x) => x.includes("hid1")), JSON.stringify(n));
+
+  // input texto com placeholder ⇒ fallback (HTML-AAM) ⇒ nome
   n = await nomes(`<main><input id="tx1" placeholder="Descrição"></main>`);
-  t("input com placeholder ⇒ nome (fallback)", !n.some((x) => x.includes("tx1")), JSON.stringify(n));
+  t("input com placeholder ⇒ nome (fallback)", !n.semNome.some((x) => x.includes("tx1")), JSON.stringify(n));
 
   // input type=submit com value ⇒ o value É o rótulo ⇒ nome
   n = await nomes(`<main><input id="sb1" type="submit" value="Enviar"></main>`);
-  t("input submit com value ⇒ nome", !n.some((x) => x.includes("sb1")), JSON.stringify(n));
+  t("input submit com value ⇒ nome", !n.semNome.some((x) => x.includes("sb1")), JSON.stringify(n));
 
   // link com texto ⇒ nome
   n = await nomes(`<main><a id="lk1" href="#">Detalhes</a></main>`);
-  t("link com texto ⇒ nome", !n.some((x) => x.includes("lk1")), JSON.stringify(n));
+  t("link com texto ⇒ nome", !n.semNome.some((x) => x.includes("lk1")), JSON.stringify(n));
 }
 
 await browser.close();
