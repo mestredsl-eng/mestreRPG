@@ -234,6 +234,11 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Round-trip e anti-injeção da ficha (Issue #292)
+        shell: bash
+        run: |
+          if [ ! -f teste-ficha-roundtrip-292.mjs ]; then echo "teste-ficha-roundtrip-292.mjs ausente nesta ref — pulado"; exit 0; fi
+          node teste-ficha-roundtrip-292.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
