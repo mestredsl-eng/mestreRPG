@@ -34,6 +34,10 @@ interface Props {
   podeLerSangue?: boolean;
   /** Dono ativo da ficha: pode ativar um Poder sem rolagem. O D10 continua cobrando no fluxo de teste. */
   podeAtivarPoder?: boolean;
+  /** Sincroniza a versão atual da ficha após a confirmação de uma ativação de Poder. */
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  /** Bloqueia a entrada no modo de edição enquanto a ativação sincroniza a versão da ficha. */
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
   /** Campanha do personagem — usada só para resolver o vínculo de
    *  Sangue (config.sangue.campoCapacidadeId) sem fetch extra de
    *  personagem. */
@@ -53,7 +57,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, campaignId, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
@@ -193,7 +197,14 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
         {chaves.map((key) => {
           const nome = (biblioteca?.poder ?? []).find((e) => e.key === key)?.name ?? key;
-          return <AtivacaoPoderNarrativa key={key} characterId={personagemId} poderKey={key} nome={nome} />;
+          return <AtivacaoPoderNarrativa
+            key={key}
+            characterId={personagemId}
+            poderKey={key}
+            nome={nome}
+            aoAtualizarPersonagem={aoAtualizarPersonagem}
+            aoMudarAtivacaoPoder={aoMudarAtivacaoPoder}
+          />;
         })}
         <span className="meta">Ativação sem rolagem. Quando o Poder exigir teste, use o D10 na Mesa — o custo será cobrado por lá.</span>
       </div>
@@ -336,60 +347,148 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   );
 }
 
+/** ID v4 também funciona em HTTP por IP: randomUUID pode faltar fora de contexto seguro,
+ * mas getRandomValues continua disponível nesses navegadores. */
+const UUID_SANGUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function criarRequestIdSangue(): string {
+  const fonte = window.crypto;
+  if (typeof fonte.randomUUID === "function") return fonte.randomUUID();
+  if (typeof fonte.getRandomValues !== "function") {
+    throw new Error("Este navegador não oferece geração segura de identificadores.");
+  }
+  const bytes = fonte.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
+}
+
+function chaveRequestIdSangue(characterId: string, poderKey: string): string {
+  return `mestre-rpg:sangue:ativacao-pendente:${encodeURIComponent(characterId)}:${encodeURIComponent(poderKey)}`;
+}
+
+/** Recupera a mesma intenção após desmontar/reabrir a ficha ou recarregar a página. */
+function obterRequestIdSangue(chave: string): string {
+  const salvo = window.localStorage.getItem(chave);
+  if (salvo && UUID_SANGUE_RE.test(salvo)) return salvo;
+  const novo = criarRequestIdSangue();
+  window.localStorage.setItem(chave, novo);
+  return novo;
+}
+
+function limparRequestIdSangue(chave: string, requestId: string): void {
+  if (window.localStorage.getItem(chave) === requestId) {
+    window.localStorage.removeItem(chave);
+  }
+}
+
 /** Ativa um Poder já escolhido na ficha, sem abrir um segundo seletor.
- * O requestId permanece durante timeout para que o retry seja idempotente.
+ * A intenção fica persistida até um ACK conclusivo; reabrir a ficha
+ * reenvia o mesmo requestId e o ledger impede o segundo débito.
  * O uso com teste continua passando exclusivamente pelo D10 da Mesa. */
-function AtivacaoPoderNarrativa({ characterId, poderKey, nome }: {
+function AtivacaoPoderNarrativa({ characterId, poderKey, nome, aoAtualizarPersonagem, aoMudarAtivacaoPoder }: {
   characterId: string;
   poderKey: string;
   nome: string;
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
 }) {
   const [ocupado, setOcupado] = useState(false);
   const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
   const requestId = useRef<string | null>(null);
   const emAndamento = useRef(false);
+  const storageKey = chaveRequestIdSangue(characterId, poderKey);
 
   const ativar = () => {
     if (emAndamento.current) return;
     emAndamento.current = true;
     setOcupado(true);
+    aoMudarAtivacaoPoder?.(true);
     setMensagem(null);
-    requestId.current ??= crypto.randomUUID();
+
+    let id: string;
+    try {
+      // Persistir ANTES de emitir: se o servidor confirmar o débito e a
+      // resposta se perder, o ID sobrevive ao fechamento/reabertura da ficha.
+      id = requestId.current ?? obterRequestIdSangue(storageKey);
+      requestId.current = id;
+    } catch {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+      setMensagem({ tipo: "erro", texto: "Não foi possível guardar a tentativa com segurança. O Poder não foi enviado; verifique o armazenamento do navegador." });
+      return;
+    }
+
     let resolvido = false;
+    const liberar = () => {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+    };
     const finalizarTimeout = window.setTimeout(() => {
       if (resolvido) return;
       resolvido = true;
-      emAndamento.current = false;
-      setOcupado(false);
-      setMensagem({ tipo: "erro", texto: "Sem resposta do servidor. Tente novamente; a repetição usa o mesmo identificador e não cobra duas vezes." });
+      liberar();
+      // Não limpar requestId: o servidor pode ter gravado o débito
+      // antes de a confirmação se perder. O próximo clique é replay.
+      setMensagem({ tipo: "erro", texto: "Sem confirmação do servidor. Clique novamente para reenviar a mesma tentativa, sem cobrar duas vezes." });
     }, 15000);
 
     try {
       getSocket().emit("sangue:ativar", {
         characterId,
         poderKey,
-        requestId: requestId.current,
-      }, (ack: { ok?: boolean; erro?: string; estado?: { saldo?: number } } | undefined) => {
+        requestId: id,
+      }, (ack: { ok?: boolean; erro?: string; codigo?: string; estado?: { saldo?: number } } | undefined) => {
         if (resolvido) return;
         resolvido = true;
         window.clearTimeout(finalizarTimeout);
-        emAndamento.current = false;
-        setOcupado(false);
-        if (ack?.ok) {
+
+        if (ack?.ok === true) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // O request continua idempotente no servidor; manter o valor
+            // salvo é mais seguro do que criar uma intenção nova por engano.
+          }
           requestId.current = null;
           const saldo = ack.estado?.saldo;
-          setMensagem({ tipo: "ok", texto: saldo === undefined ? `${nome} ativado.` : `${nome} ativado · ${saldo} Pontos de Sangue restantes.` });
-        } else {
-          // Um ACK negativo representa recusa/rollback no servidor. A
-          // próxima tentativa é uma nova intenção e recebe outro UUID.
-          requestId.current = null;
-          setMensagem({ tipo: "erro", texto: ack?.erro ?? "Não foi possível ativar este Poder." });
+          void (async () => {
+            try {
+              await aoAtualizarPersonagem?.();
+              setMensagem({ tipo: "ok", texto: saldo === undefined ? `${nome} ativado.` : `${nome} ativado · ${saldo} Pontos de Sangue restantes.` });
+            } catch {
+              setMensagem({ tipo: "erro", texto: `${nome} foi ativado, mas a ficha não pôde ser atualizada. Reabra a ficha antes de editar.` });
+            } finally {
+              liberar();
+            }
+          })();
+          return;
         }
+
+        if (ack?.ok === false) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // Sem ACK positivo, manter o mesmo ID continua sendo seguro.
+          }
+          requestId.current = null;
+          setMensagem({ tipo: "erro", texto: ack.erro ?? "Não foi possível ativar este Poder." });
+          liberar();
+          return;
+        }
+
+        // ACK ausente/indefinido é ambíguo: não descartar a intenção.
+        setMensagem({ tipo: "erro", texto: "O servidor não confirmou a tentativa. Clique novamente para consultar o mesmo uso sem novo débito." });
+        liberar();
       });
     } catch {
-      emAndamento.current = false;
-      setOcupado(false);
-      setMensagem({ tipo: "erro", texto: "Falha de conexão. Tente novamente." });
+      window.clearTimeout(finalizarTimeout);
+      resolvido = true;
+      liberar();
+      // Mantém requestId persistido; o emit pode ter chegado ao servidor.
+      setMensagem({ tipo: "erro", texto: "Falha de conexão. Tente novamente para reenviar a mesma tentativa." });
     }
   };
 
