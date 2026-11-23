@@ -32,6 +32,7 @@ let validarManifestoBackup: typeof import("../src/lib/backup.js").validarManifes
 let setConfigBackup: typeof import("../src/lib/backup.js").setConfigBackup;
 let verificarBackup: typeof import("../src/lib/backup.js").verificarBackup;
 let listarBackups: typeof import("../src/lib/backup.js").listarBackups;
+let prepararRestauracao: typeof import("../src/lib/backup.js").prepararRestauracao;
 let validarBackup: typeof import("../src/lib/validar-backup.js").validarBackup;
 let dirsProtegidosBackup: typeof import("../src/lib/protecao-backup.js").dirsProtegidosBackup;
 let protegerBackupContraRetencao: typeof import("../src/lib/protecao-backup.js").protegerBackupContraRetencao;
@@ -99,6 +100,7 @@ before(async () => {
   setConfigBackup = mod.setConfigBackup;
   verificarBackup = mod.verificarBackup;
   listarBackups = mod.listarBackups;
+  prepararRestauracao = mod.prepararRestauracao;
   const vb = await import("../src/lib/validar-backup.js");
   validarBackup = vb.validarBackup;
   const pb = await import("../src/lib/protecao-backup.js");
@@ -780,5 +782,78 @@ describe("T5 — backup legado v1 (formato v1.0.8)", () => {
     assert.equal(v.ok, false);
     assert.ok(v.problemas.some((p) => p.includes("manifestoVersao")), v.problemas.join("; "));
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+
+// =====================================================================
+// T6 — rejeição de restauração não altera nem remove o último backup válido
+// Issue #266: a validação deve ocorrer antes de proteção, backup de
+// segurança, flag pendente ou qualquer efeito colateral de restauração.
+// =====================================================================
+describe("T6 — backup rejeitado preserva o último backup válido", () => {
+  it("alvo adulterado → 400; backup válido, inventário, markers e flag permanecem intactos", async () => {
+    limparStateTeste();
+    await setConfigBackup({ agenda: "manual", retencaoDiarios: 20, retencaoSemanais: 20 });
+
+    const snapshotDir = (raiz: string) => {
+      const itens: { path: string; tipo: "dir" | "file"; size?: number; sha256?: string }[] = [];
+      const andar = (dir: string, prefixo = "") => {
+        for (const entrada of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+          const caminho = join(dir, entrada.name);
+          const relativo = prefixo ? `${prefixo}/${entrada.name}` : entrada.name;
+          if (entrada.isDirectory()) {
+            itens.push({ path: relativo, tipo: "dir" });
+            andar(caminho, relativo);
+          } else if (entrada.isFile()) {
+            itens.push({ path: relativo, tipo: "file", size: statSync(caminho).size, sha256: sha256Arquivo(caminho) });
+          }
+        }
+      };
+      andar(raiz);
+      return itens;
+    };
+
+    writeFileSync(join(ARQUIVOS, "sentinela-ultimo-backup.txt"), "não apagar nem alterar");
+    const ultimoValido = await criarBackup("manual", "último backup válido — sentinela W16");
+    assert.equal(ultimoValido.sucesso, true, `backup válido falhou: ${ultimoValido.erros.join("; ")}`);
+    const snapshotValido = snapshotDir(ultimoValido.dir);
+
+    const alvoInvalido = await criarBackup("manual", "alvo adulterado — teste W16");
+    assert.equal(alvoInvalido.sucesso, true, `fixture inicial falhou: ${alvoInvalido.erros.join("; ")}`);
+    const arquivoAlvo = join(alvoInvalido.dir, "arquivos", "sentinela-ultimo-backup.txt");
+    writeFileSync(arquivoAlvo, "conteúdo adulterado após o manifesto");
+    const snapshotAlvoInvalido = snapshotDir(alvoInvalido.dir);
+    assert.equal(validarBackup(alvoInvalido.dir).ok, false, "fixture adulterada deveria ser inválida");
+
+    const idsAntes = (await listarBackups()).map((b) => b.id).sort();
+    const markersAntes = await dirsProtegidosBackup();
+    assert.ok(markersAntes instanceof Set, "varredura de proteção deve ser conclusiva antes do teste");
+
+    const resultado = await prepararRestauracao(alvoInvalido.id, "teste-contrato-w16");
+    assert.equal(resultado.status, 400, `restauração do alvo inválido deveria retornar 400: ${JSON.stringify(resultado)}`);
+    assert.equal("ok" in resultado && resultado.ok === true, false, "alvo inválido não pode ser preparado");
+
+    // O último backup íntegro permanece byte a byte igual, no disco e no registro.
+    assert.ok(existsSync(ultimoValido.dir), "último backup válido foi removido");
+    assert.deepEqual(snapshotDir(ultimoValido.dir), snapshotValido, "conteúdo do último backup válido foi alterado");
+    assert.ok(validarBackup(ultimoValido.dir).ok, "último backup válido deixou de validar");
+
+    // A rejeição não apaga o alvo, não cria backup pre_restauracao e não muda o inventário.
+    assert.deepEqual(snapshotDir(alvoInvalido.dir), snapshotAlvoInvalido, "alvo rejeitado foi alterado durante a preparação");
+    assert.deepEqual((await listarBackups()).map((b) => b.id).sort(), idsAntes, "registro/lista de backups mudou após rejeição");
+
+    const markersDepois = await dirsProtegidosBackup();
+    assert.ok(markersDepois instanceof Set, "varredura de proteção posterior ficou inconclusiva");
+    assert.deepEqual([...markersDepois].sort(), [...markersAntes].sort(), "marcadores de proteção mudaram apesar da rejeição");
+
+    const dbCheck = new Database(BANCO, { readonly: true });
+    let flag: unknown;
+    try {
+      flag = dbCheck.prepare("select key from server_settings where key = ?").get("restauracao_pendente");
+    } finally {
+      dbCheck.close();
+    }
+    assert.equal(flag, undefined, "flag restauracao_pendente não deve ser criada para alvo inválido");
   });
 });
