@@ -191,12 +191,8 @@ try {
   });
   t("regra D10: PATCH persiste false ao desmarcar", definicaoPoder(CID, "poder_d10").exigeTeste === false);
   await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
-    cookie: M, body: { definition: { exigeTeste: true, disponivel: false } },
+    cookie: M, body: { definition: { exigeTeste: true } },
   });
-  const vinculaveis = await req(BASE, "GET", `/campaigns/${CID}/regras/vinculaveis`, { cookie: J1 });
-  const metaD10 = vinculaveis.json?.metadadosPoderes?.find((p) => p.key === "poder_d10");
-  t("vinculáveis: Poder D10 inativo não é opção de aquisição", !(vinculaveis.json?.elementos?.poder ?? []).some((p) => p.key === "poder_d10"));
-  t("vinculáveis: metadado D10 do Poder inativo permanece", metaD10?.exigeTeste === true);
   const mod = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Ações" } });
   const tid = mod.json.modelo.id, vid = mod.json.modelo.versionId;
   const estrutura = {
@@ -242,7 +238,8 @@ try {
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
-  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM));
+  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM),
+    JSON.stringify({ pj: pj.json, pj2: pj2.json, pjM: pjM.json }));
 
   // ---------- helpers UI ----------
   const browser = await chromium.launch();
@@ -500,7 +497,16 @@ try {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     t("UI. corrida de ficha: primeiro débito gravado no personagem de origem", saldoDe(CHARM) === 3);
-    await page.getByRole("button", { name: "Voltar", exact: true }).click();
+    // Dois "Voltar" coexistem na tela (cabeçalho da campanha + detalhe
+    // do personagem) — mirar o do detalhe da ficha aberta.
+    const secs = await page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) }).evaluateAll((els) => els.map((e) => ({
+      h2: [...e.querySelectorAll("h2")].map((h) => h.textContent).join("|"),
+      voltar: e.querySelectorAll('button').length,
+      html: e.outerHTML.slice(0, 300),
+    })));
+    console.log("DEBUG secs:", JSON.stringify(secs, null, 1));
+    await page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) })
+      .getByRole("button", { name: "Voltar", exact: true }).click();
     const outraFicha = page.locator("tr.clicavel", { hasText: "Herói Ações" }).first();
     await outraFicha.waitFor({ state: "visible", timeout: 15000 });
     await outraFicha.click();
@@ -517,6 +523,10 @@ try {
     t("UI. corrida de ficha: salvar altera só o personagem atualmente aberto",
       nomeDe(CHAR) === "Herói Renomeado" && nomeDe(CHARM) === "Ficha do Mestre",
       `CHAR=${nomeDe(CHAR)} CHARM=${nomeDe(CHARM)}`);
+    // Restaura o nome original — as seções seguintes localizam a ficha
+    // pelo nome "Herói Ações" na lista de personagens.
+    const w = db();
+    try { w.prepare("update characters set name=? where id=?").run("Herói Ações", CHAR); } finally { w.close(); }
     await ctx.close();
   }
 
@@ -535,7 +545,8 @@ try {
     const painelM = p2.locator(".painel-sangue-leitura");
     t("UI. mestre vê seção 'Ações do mestre'", await painelM.locator(".painel-sangue-mestre").count() === 1);
     t("UI. mestre NÃO vê botão Descansar (não é dono)", await painelM.getByRole("button", { name: /Descansar/ }).count() === 0);
-    // ajustar +3 com motivo → saldo 5→8
+    // ajustar +3 com motivo → saldo 3→6 (o saldo 5 foi consumido pela
+    // ativação narrativa do Poder de Fogo na seção anterior: 5−2=3)
     await painelM.locator(".painel-sangue-mestre").locator("summary").click();
     await painelM.locator("input[aria-label='Delta de Sangue (positivo ou negativo)']").fill("3");
     await painelM.locator("input[aria-label='Motivo do ajuste de Sangue']").fill("bônus de teste");
@@ -545,7 +556,7 @@ try {
       return p && /ajustado/i.test(p.innerText);
     }, { timeout: 15000 }).catch(() => null);
     await p2.waitForTimeout(500);
-    t("UI. mestre ajustou saldo para 8", saldoDe(CHAR) === 8, `db=${saldoDe(CHAR)}`);
+    t("UI. mestre ajustou saldo para 6", saldoDe(CHAR) === 6, `db=${saldoDe(CHAR)}`);
     // reconciliar com motivo — reabre o <details> se o reload fechou
     await painelM.locator(".painel-sangue-mestre").evaluate((d) => { if (!d.open) d.querySelector("summary").click(); });
     await painelM.locator("input[aria-label='Motivo da reconciliação de capacidade']").fill("reconciliação teste");
@@ -608,7 +619,7 @@ try {
       await page.waitForTimeout(3500);
       const painel = page.locator(".painel-sangue-leitura");
       const txt = await painel.innerText();
-      t("UI. corrida: painel de B carregado (saldo 8)", /8/.test(txt), txt.slice(0, 160));
+      t("UI. corrida: painel de B carregado (saldo 6)", /6 \/ 10/.test(txt), txt.slice(0, 160));
       t("UI. corrida: posse de A NÃO vazou para B (sem Descansar/Ativar)",
         await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0);
       t("UI. corrida: mestre segue vendo 'Ações do mestre' em B",
@@ -777,6 +788,19 @@ try {
     t("UI. sem overflow horizontal", !overflow);
     await ctx.close();
   }
+
+  // O Poder D10 só pode ser marcado indisponível NO FIM do teste:
+  // validarRegras rejeita elemento desativado já selecionado na ficha
+  // ("está desativado nesta campanha") — marcá-lo antes quebrava tanto o
+  // POST /characters da fixture (CHAR undefined → setSangue) quanto o
+  // "Salvar" da ficha na seção de ativação narrativa.
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { disponivel: false } },
+  });
+  const vinculaveis = await req(BASE, "GET", `/campaigns/${CID}/regras/vinculaveis`, { cookie: J1 });
+  const metaD10 = vinculaveis.json?.metadadosPoderes?.find((p) => p.key === "poder_d10");
+  t("vinculáveis: Poder D10 inativo não é opção de aquisição", !(vinculaveis.json?.elementos?.poder ?? []).some((p) => p.key === "poder_d10"));
+  t("vinculáveis: metadado D10 do Poder inativo permanece", metaD10?.exigeTeste === true);
 
   await browser.close();
 } catch (e) {
