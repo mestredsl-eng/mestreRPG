@@ -1,8 +1,8 @@
 // Homologação real do gate Node mínimo no iniciar-mestre-rpg.bat (Issue #155 / F43).
-// Executa o .bat pelo cmd.exe em fixtures isoladas e injeta um node.cmd controlado
-// no PATH para simular versões sem instalar/desinstalar Node na máquina do runner.
-// O helper de boot é sentinela: confirma que versões aceitas chegam ao lock;
-// versões rejeitadas não podem chegar ao lock nem invocar npm.
+// Executa o .bat pelo cmd.exe em fixtures isoladas. Usa o Node.exe real do runner
+// e NODE_OPTIONS para substituir process.versions.node apenas nos processos-filhos.
+// Isso preserva semântica de executável: ao contrário de node.cmd, o BAT retorna
+// corretamente ao chamador após node -e / node -p.
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -26,40 +26,33 @@ function executarCaso(nome, versao, aceita, esperado) {
   mkdirSync(bin, { recursive: true });
   mkdirSync(scripts, { recursive: true });
   writeFileSync(join(app, "iniciar-mestre-rpg.bat"), readFileSync(batSource));
-  // O sentinela registra a tentativa de lock; o node.cmd a intercepta.
-  writeFileSync(join(scripts, "boot-lock.mjs"), "// sentinela\n");
-  writeFileSync(join(scripts, "auto-update.mjs"), "// sentinela\n");
+  writeFileSync(join(scripts, "boot-lock.mjs"), "process.exit(1);\n");
+  writeFileSync(join(scripts, "auto-update.mjs"), "process.exit(1);\n");
   const log = join(dir, "chamadas.log");
-  const nodeShim = [
-    "@echo off",
-    '>>"%MESTRE_BAT_TEST_LOG%" echo node %*',
-    'if "%~1"=="-p" (',
-    '  if not defined MESTRE_FAKE_NODE_VERSION exit /b 1',
-    '  echo %MESTRE_FAKE_NODE_VERSION%',
-    "  exit /b 0",
-    ")",
-    'if "%~1"=="-e" (',
-    '  if "%MESTRE_FAKE_NODE_ACCEPT%"=="1" exit /b 0',
-    "  exit /b 1",
-    ")",
-    "exit /b 1",
+  const preload = join(dir, "node-preload.cjs");
+  writeFileSync(preload, [
+    'const fs = require("node:fs");',
+    'const log = process.env.MESTRE_BAT_TEST_LOG;',
+    'if (log) fs.appendFileSync(log, "node " + process.argv.slice(2).join(" ") + "\\n");',
+    'const version = process.env.MESTRE_FAKE_NODE_VERSION;',
+    "if (!version) process.exit(1);",
+    'Object.defineProperty(process.versions, "node", { value: version, configurable: true });',
     "",
-  ].join("\r\n");
+  ].join("\n"));
   const npmShim = [
     "@echo off",
     '>>"%MESTRE_BAT_TEST_LOG%" echo npm %*',
     "exit /b 0",
     "",
   ].join("\r\n");
-  writeFileSync(join(bin, "node.cmd"), nodeShim);
   writeFileSync(join(bin, "npm.cmd"), npmShim);
 
   const env = {
     ...process.env,
     PATH: bin + ";" + (process.env.PATH || ""),
+    NODE_OPTIONS: "--require=" + preload.replace(/\\/g, "/"),
     MESTRE_BAT_TEST_LOG: log,
     MESTRE_FAKE_NODE_VERSION: versao || "",
-    MESTRE_FAKE_NODE_ACCEPT: aceita ? "1" : "0",
   };
   const comspec = process.env.ComSpec || "cmd.exe";
   const run = spawnSync(comspec, ["/d", "/c", "iniciar-mestre-rpg.bat"], {
