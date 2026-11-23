@@ -324,12 +324,10 @@ jobs:
       - name: Testes do auto-update e execução real de npm.cmd
         shell: bash
         run: |
-          if [ ! -f teste-auto-update.mjs ]; then echo "teste-auto-update.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-auto-update.mjs
       - name: Boot lock — Node 22
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
       - uses: actions/setup-node@v4
         with:
@@ -337,13 +335,11 @@ jobs:
       - name: Boot lock — Node 20 (versão mínima declarada)
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
 
       - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
         shell: bash
         run: |
-          if [ ! -f teste-bat-node-gate.mjs ]; then echo "teste-bat-node-gate.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-bat-node-gate.mjs
 
       - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
