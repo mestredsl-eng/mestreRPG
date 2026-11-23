@@ -21,9 +21,14 @@ const migrationsFolder = resolve(
 // de observar. Com import preguiçoso, o preflight roda primeiro e o
 // backup.ts só é avaliado quando um backup é realmente necessário.
 
-function totalMigrations(): number {
+function temposMigrations(): number[] {
   const journal = JSON.parse(readFileSync(join(migrationsFolder, "meta", "_journal.json"), "utf8"));
-  return Array.isArray(journal?.entries) ? journal.entries.length : 0;
+  if (!Array.isArray(journal?.entries) || !journal.entries.every((e: unknown) =>
+    !!e && typeof e === "object" && Number.isFinite((e as { when?: unknown }).when)
+  )) {
+    throw new Error("journal de migrations inválido: timestamps ausentes ou não finitos");
+  }
+  return journal.entries.map((e: { when: number }) => e.when);
 }
 
 type ClasseBanco = "vazio" | "parcial" | "pendente" | "em-dia" | "indeterminado";
@@ -45,7 +50,7 @@ type ClasseBanco = "vazio" | "parcial" | "pendente" | "em-dia" | "indeterminado"
 function classificarBanco(caminho: string): ClasseBanco {
   try {
     if (!existsSync(caminho) || statSync(caminho).size === 0) return "vazio";
-    const total = totalMigrations();
+    const tempos = temposMigrations();
     const sqlite = new Database(caminho);
     try {
       const tabelas = sqlite.prepare("select name from sqlite_master where type='table'").all() as { name: string }[];
@@ -55,7 +60,18 @@ function classificarBanco(caminho: string): ClasseBanco {
         ? (sqlite.prepare("select count(*) as c from __drizzle_migrations").get() as { c: number }).c
         : 0;
       if (usuario.length === 0) return aplicadas > 0 ? "parcial" : "vazio";
-      return aplicadas < total ? "pendente" : "em-dia";
+
+      // Alinhar o preflight ao critério REAL do Drizzle ORM 0.45.4:
+      // ele lê a linha de maior created_at e executa cada migration cujo
+      // folderMillis é maior que esse watermark. COUNT(*) não é suficiente:
+      // duplicatas podem produzir uma contagem "completa" mesmo com uma
+      // migration pendente, levando a executar SQL sem backup prévio.
+      const ultima = temDrizzle
+        ? sqlite.prepare("select created_at from __drizzle_migrations order by created_at desc limit 1").get() as { created_at: unknown } | undefined
+        : undefined;
+      const ultimoQuando = ultima ? Number(ultima.created_at) : Number.NEGATIVE_INFINITY;
+      const temPendente = tempos.some((quando) => ultimoQuando < quando);
+      return temPendente ? "pendente" : "em-dia";
     } finally {
       sqlite.close();
     }
