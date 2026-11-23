@@ -21,6 +21,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { caminhoCanonicoRepo } from "./boot-lock.mjs";
 import {
   gravarEstado as gravarEstadoExterno,
   lerJournal as lerJournalExterno,
@@ -416,10 +417,7 @@ async function executarRollback(estado, opts = {}) {
   }
   const top = git(["rev-parse", "--show-toplevel"]);
   const repoDir = top.code === 0 ? String(top.stdout).trim() : cwd;
-  const caminhoCanonico = (p) => {
-    const valor = resolve(p);
-    return process.platform === "win32" ? valor.toLowerCase() : valor;
-  };
+  const caminhoCanonico = (p) => caminhoCanonicoRepo(p);
   if (estado.repoDir && caminhoCanonico(estado.repoDir) !== caminhoCanonico(repoDir)) {
     return { ok: false, motivo: "repositorio-divergente" };
   }
@@ -574,10 +572,7 @@ export async function recuperarAtualizacaoPendente(opts = {}) {
       || !estado.branch || !estado.repoDir || typeof estado.depsMudaram !== "boolean") {
     return { ok: false, motivo: "journal-incompleto" };
   }
-  const canon = (p) => {
-    const valor = resolve(p);
-    return process.platform === "win32" ? valor.toLowerCase() : valor;
-  };
+  const canon = (p) => caminhoCanonicoRepo(p);
   if (canon(estado.repoDir) !== canon(repoDir)) {
     return { ok: false, motivo: "repositorio-divergente" };
   }
