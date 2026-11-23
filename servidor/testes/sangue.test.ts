@@ -937,6 +937,31 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (poder.ok) assert.equal(poder.estado.saldo, 0);
   });
 
+  it("preserva saldo persistido ao reconstruir histórico truncado com âncora legada", () => {
+    const em = new Date().toISOString();
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A janela retida começa após um prefixo já truncado. A âncora
+        // antiga contém resíduo binário que o saldo atual já absorveu.
+        ancora: 0.7999999999999999,
+        saldo: 1,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito após truncamento", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1 },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 1,
+      "a presença de âncora impede reconstrução parcial que reduza o saldo persistido");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 1 });
+    assert.equal(poder.ok, true, "D10 de custo 1 pode consumir o saldo persistido integral");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
   it("reconciliação antiga permanece ancorada após recuperação sem crédito", () => {
     const em = new Date().toISOString();
     let dados: Record<string, unknown> = {
