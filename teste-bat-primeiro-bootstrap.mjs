@@ -3,7 +3,7 @@
 // Prova S/N, inválido, linha vazia, EOF, instalação já concluída e ordenação.
 // Nunca toca em banco/backup real.
 import {
-  copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync,
+  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
