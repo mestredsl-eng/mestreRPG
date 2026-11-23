@@ -128,6 +128,7 @@ echo O Mestre RPG precisara criar um banco de dados novo.
 echo Confirme somente se esta e realmente uma instalacao nova.
 :perguntar_primeiro_bootstrap_novamente
 set "MESTRE_BOOT_RESPOSTA="
+ver >nul
 set /p "MESTRE_BOOT_RESPOSTA=Autorizar primeiro bootstrap? [S/N]: "
 if errorlevel 1 goto :bootstrap_eof
 if /i "%MESTRE_BOOT_RESPOSTA%"=="S" goto :confirmar_primeiro_bootstrap
