@@ -2,17 +2,17 @@
 
 > **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Este documento prepara o corte da release. Ele não substitui a candidata única, os gates de CI, a homologação de upgrade nem a autorização final do proprietário.
+> Este documento prepara o corte da release. Não substitui a candidata única, os gates de CI, a homologação de upgrade nem a autorização final do proprietário.
 
 ## Identificação planejada
 
 - Versão: `1.0.9`
 - Tag planejada: `v1.0.9`
 - Release planejada: `Mestre RPG v1.0.9`
-- Base de preparação consultada: `main@a9585225ffb7b1a59d475d5f8a965692fe963fb7`
+- Base de preparação: `main@a9585225ffb7b1a59d475d5f8a965692fe963fb7`
 - Versão declarada nessa base: `1.0.8`
 - Tag anterior: `v1.0.8`
-- Link de comparação a usar na publicação: `https://github.com/mestredsl-eng/mestreRPG/compare/v1.0.8...v1.0.9`
+- Comparação a usar na publicação: `https://github.com/mestredsl-eng/mestreRPG/compare/v1.0.8...v1.0.9`
 
 A tag final deve apontar **exatamente para o commit final de `main` depois do merge da candidata 1.0.9**. Nunca apontar para uma branch de trabalho, HEAD de PR ou merge-ref temporário.
 
@@ -29,7 +29,7 @@ A integração não equivale, sozinha, a aceite de release: os testes dessas ent
 ## Itens condicionais — não anunciar até integrar e homologar
 
 - **Uso narrativo de Poderes na ficha** — PR #279 está aberta. Só incluir se for integrada e passar pela CI/revisão exigidas.
-- **Atualização/Boot Lock/recuperação** — PR #308 está aberta. A cobertura W14/W16 e BAT já tem regressões verdes, mas P10-C real no launcher e recuperação durável após crash do atualizador continuam bloqueadores conhecidos.
+- **Atualização/Boot Lock/recuperação** — PR #308 está aberta. A cobertura W14/W16 e BAT tem regressões verdes, mas P10-C real pelo launcher e recuperação durável após crash do atualizador continuam bloqueadores conhecidos.
 - **Homologação Linux** — Issue #271 / PR #311: harness preparado, mas ainda sem evidência de execução Linux real em runner versionado. Não chamar execução Windows ou build isolado de PASS Linux.
 - **Acessibilidade dos controles financeiros** — PR #312 está aberta/Draft; a CI 3/3 e a composição de validação #313 (161/161, sem falhas) não significam que a correção já está integrada. #313 é PR temporária de verificação e não deve ser incorporada.
 - **Integridade SQLite e isolamento entre campanhas** — PR #316 está aberta/Draft; precisa CI natural completa no SHA final, revisão independente e fechamento da lacuna declarada do teste determinístico PUT × publicação.
@@ -60,7 +60,7 @@ A integração não equivale, sozinha, a aceite de release: os testes dessas ent
 1. Congelar o HEAD final e registrar SHA, diff, migrations, manifests e logs.
 2. Confirmar que `main` aponta para o SHA aprovado e que não há commits de release pendentes.
 3. Confirmar ausência prévia da tag `v1.0.9`.
-4. Criar a tag anotada `v1.0.9) no SHA final de `main`.
+4. Criar a tag anotada `v1.0.9` no SHA final de `main`.
 5. Criar o GitHub Release como **Draft** com o título `Mestre RPG v1.0.9`, notas finais e comparação `v1.0.8...v1.0.9`.
 6. Conferir que a tag e a página da release apontam ao mesmo SHA.
 7. Publicar a GitHub Release somente após autorização final. Não inventar instalador/ZIP: a auditoria anterior não identificou empacotador oficial; declarar claramente se a distribuição é apenas código-fonte ou se um pacote foi produzido e homologado.
