@@ -209,20 +209,6 @@ try {
     await cx.close();
   }
 
-  // ---------- U7: campanha concluída — status exibido (política de escrita é achado pendente) ----------
-  {
-    const cx = await ctx(cookieMestre);
-    const p = await cx.newPage();
-    await abrirCampanha(p);
-    await p.getByRole("button", { name: "Editar campanha" }).click();
-    await p.locator('label:has-text("Status") select').selectOption("concluida");
-    await p.getByRole("button", { name: "Salvar" }).click();
-    await p.waitForTimeout(1000);
-    const corpo = await p.locator("body").textContent();
-    ok("U7. status Concluída refletido na UI", /Concluída/.test(corpo ?? ""));
-    await cx.close();
-  }
-
   // ---------- U8 (S1): mestre cria campanha pelo formulário real ----------
   let campBId = null;
   {
@@ -392,6 +378,22 @@ try {
     await p1.locator(".abas").waitFor({ timeout: 15000 });
     const metaB = await p1.locator(".meta").first().textContent();
     ok("U11. troca de campanha na mesma sessão funciona", /Mestre/.test(metaB ?? ""), (metaB ?? "").slice(0, 60));
+    await cx.close();
+  }
+
+  // ---------- U7 (S8): campanha concluída — isolada em Campanha UI B ----------
+  // Roda por último e em campanha própria: não suja campId usado por U8/U9
+  // (política de escrita em campanha concluída é decisão pendente — #307 S8).
+  {
+    const cx = await ctx(cookieMestre);
+    const p = await cx.newPage();
+    await abrirCampanha(p, "Campanha UI B");
+    await p.getByRole("button", { name: "Editar campanha" }).click();
+    await p.locator('label:has-text("Status") select').selectOption("concluida");
+    await p.getByRole("button", { name: "Salvar" }).click();
+    await p.waitForTimeout(1000);
+    const corpo = await p.locator("body").textContent();
+    ok("U7. status Concluída refletido na UI (campanha isolada)", /Concluída/.test(corpo ?? ""));
     await cx.close();
   }
 
