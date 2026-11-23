@@ -206,7 +206,7 @@ try {
     t("ACK erro sangue_insuficiente", r?.ok === false && r?.codigo === "sangue_insuficiente", JSON.stringify(r).slice(0, 200));
     t(
       "ACK de D10 não revela o saldo privado",
-      !("saldo" in (r ?? {})) && !/saldo\\s*[:=]?\\s*\\d/i.test(r?.erro ?? ""),
+      !("saldo" in (r ?? {})) && !/saldo\s*[:=]?\s*\d/i.test(r?.erro ?? ""),
       JSON.stringify(r).slice(0, 200),
     );
     t("zero roll novo", contarRolls(c.campId) === antes);
