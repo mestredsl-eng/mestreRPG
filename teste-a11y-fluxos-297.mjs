@@ -120,7 +120,7 @@ async function checarTabOrder(page, rotulo, paradas = 14) {
       const vis = r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none";
       const nome = (el.getAttribute("aria-label") || el.getAttribute("aria-labelledby")
         || el.getAttribute("placeholder") || el.getAttribute("title")
-        || (el.tagName === "SELECT" ? "" : el.textContent) || "").trim().slice(0, 50);
+        || (el.tagName === "SELECT" ? "" : el.innerText) || "").trim().slice(0, 50);
       return { tag: el.tagName.toLowerCase(), nome, vis };
     });
     if (!info) continue;
