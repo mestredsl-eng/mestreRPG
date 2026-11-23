@@ -87,3 +87,50 @@ Legenda: **A** = permitido; **C** = permitido com condição/guard; **N** = nega
 ## Próxima fatia segura
 
 A próxima PR de código deve ser independente e pequena: transformar os casos negativos acima em uma suíte de autorização contra banco temporário, sem migration e sem alterar contratos públicos. Só depois da cobertura verde deve-se iniciar qualquer mudança estrutural em guildas/ADMIN.
+
+## Contrato da suíte de regressão (próxima fatia)
+
+A suíte deve executar cada caso negativo contra uma base temporária criada por fixture, sem reutilizar a instalação do usuário nem depender de dados persistentes da máquina.
+
+### Dados mínimos da fixture
+
+- três usuários: comum, ADMIN não principal e ADMIN principal;
+- duas guildas, cada uma com pelo menos um membro comum e um GM;
+- três campanhas: uma por guilda e uma sem guilda;
+- memberships distintas por campanha, incluindo mestre, jogador e espectador;
+- pelo menos uma ficha/campo privado pertencente a cada campanha;
+- uma sessão HTTP e um socket autenticado para os cenários de revogação.
+
+### Resultado obrigatório por caso
+
+Cada teste deve registrar:
+
+1. endpoint/canal utilizado (REST ou Socket.IO);
+2. identidade e escopo esperado;
+3. identificadores usados na tentativa;
+4. status/evento observado;
+5. estado persistido antes/depois;
+6. auditoria emitida (ou ausência dela);
+7. eventos realtime emitidos (ou ausência deles).
+
+### Critérios de não-vazamento
+
+Uma negativa só é considerada PASS quando, além do erro esperado:
+
+- não devolve dados da entidade alvo;
+- não altera linhas, timestamps ou ponteiros da entidade protegida;
+- não cria entrada de auditoria de sucesso;
+- não emite evento de atualização para participantes da entidade protegida;
+- não revela se o identificador existe quando o contrato exige resposta indistinguível.
+
+### Ordem de implementação recomendada
+
+1. fixture e helpers de autenticação/escopo;
+2. testes de leitura cross-guild/cross-campaign;
+3. testes de mutação e payload forjado;
+4. último GM e ADMIN principal;
+5. revogação com sessão HTTP/socket;
+6. wiring da suíte na CI, sem permitir SKIP silencioso.
+
+A implementação deve começar pelos testes e helpers, não por migration. Qualquer falha que revele ausência de guard deve gerar uma PR de correção separada, preservando a suíte como regressão permanente.
+
