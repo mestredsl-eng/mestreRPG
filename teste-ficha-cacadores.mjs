@@ -9,6 +9,7 @@
 //      espectador sem acesso.
 // Banco descartável + servidor spawnado; nunca toca produção.
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   encerrarServidor, limparDir, req, sessao, criarCenario, comDb, abrirDb,
@@ -241,35 +242,40 @@ try {
     t(`seed NÃO contém atributo do dump '${k}'`, !chavesSeed.has(k));
   for (const k of ["atributo:vitalidade", "atributo:presenca"])
     t(`seed contém atributo ausente no dump '${k}'`, chavesSeed.has(k));
-  t("seed contém vantagem 'contatos_influentes' (Qualidade do dump)", chavesSeed.has("vantagem:contatos_influentes"));
+  t("seed contém chave 'contatos_influentes' mas com def divergente do dump (reservaPontos/custo2 vs custo3 sem reserva)",
+    chavesSeed.has("vantagem:contatos_influentes"));
 
   // Elementos fiéis ao dump, criados pela API real (mestre)
+  // Elementos fiéis ao dump — definitions literais do catálogo de referência
+  // (dump regras[].definition): disciplinas custam progressivo, defeitos
+  // devolvem pontos (custo negativo), vantagens custam no pool principal.
+  const DISC_DEF = { custoPontos: 10, custoProgressivo: [0, 10, 20, 30, 40], minimo: 1, maximo: 5 };
   const EL_DUMP = [
-    ["disciplina", "auto_controlhe", "Auto Controlhe", "Virtudes"],
-    ["disciplina", "coragem", "Coragem", "Virtudes"],
-    ["disciplina", "humanidade", "Humanidade", "Virtudes"],
-    ["caracteristica", "peso", "Peso Kg", "Características"],
-    ["caracteristica", "quantidade", "Quantidade", "Características"],
-    ["caracteristica", "valor", "Valor R$", "Características"],
-    ["atributo", "vigor", "Vigor", "Atributos De Força"],
-    ["atributo", "aparencia", "Aparência", "Atributos Social"],
-    ["atributo", "manipulacao", "Manipulação", "Atributos Social"],
-    ["atributo", "carisma", "Carisma", "Atributos Social"],
-    ["atributo", "raciocinio", "Raciocínio", "Atributos Mental"],
-    ["defeito", "agressivo", "Agressivo", "Defeitos"],
-    ["defeito", "cego", "Cego", "Defeitos"],
-    ["poder", "feitico", "Feitiço", "Poder"],
+    ["disciplina", "auto_controlhe", "Auto Controlhe", "Virtudes", DISC_DEF],
+    ["disciplina", "coragem", "Coragem", "Virtudes", DISC_DEF],
+    ["disciplina", "humanidade", "Humanidade", "Virtudes", DISC_DEF],
+    ["caracteristica", "peso", "Peso Kg", "Características", {}],
+    ["caracteristica", "quantidade", "Quantidade", "Características", {}],
+    ["caracteristica", "valor", "Valor R$", "Características", {}],
+    ["atributo", "vigor", "Vigor", "Atributos De Força", { custoPontos: 7, minimo: 0, maximo: 5 }],
+    ["atributo", "aparencia", "Aparência", "Atributos Social", { custoPontos: 7, minimo: 0, maximo: 5 }],
+    ["atributo", "manipulacao", "Manipulação", "Atributos Social", { custoPontos: 7, minimo: 0, maximo: 5 }],
+    ["atributo", "carisma", "Carisma", "Atributos Social", { custoPontos: 7, minimo: 0, maximo: 5 }],
+    ["atributo", "raciocinio", "Raciocínio", "Atributos Mental", { custoPontos: 7, minimo: 0, maximo: 5 }],
+    ["defeito", "agressivo", "Agressivo", "Defeitos", { custoPontos: -1, minimo: 0, maximo: 5 }],
+    ["defeito", "cego", "Cego", "Defeitos", { custoPontos: -1, minimo: 0, maximo: 5 }],
+    ["poder", "feitico", "Feitiço", "Poder", { custoPontos: 14, minimo: 0, maximo: 5 }],
+    ["vantagem", "chacra", "Chacra", "Qualidades", { custoPontos: 3, minimo: 0, maximo: 5 }],
   ];
   let criadosDump = 0;
-  for (const [kind, key, name, category] of EL_DUMP) {
-    const def = kind === "atributo" ? { custoPontos: 7, minimo: 0, maximo: 5 } : {};
+  for (const [kind, key, name, category, definition] of EL_DUMP) {
     const r = await req(BASE, "POST", `/campaigns/${CAMP_ID}/regras/elementos`, {
-      cookie: cookieMestre, body: { kind, key, name, category, definition: def },
+      cookie: cookieMestre, body: { kind, key, name, category, definition },
     });
     if (r.status === 201) criadosDump++;
     else console.log("   ! elemento", kind, key, "status", r.status, JSON.stringify(r.json)?.slice(0, 120));
   }
-  t("14 elementos fiéis ao dump criados via API", criadosDump === EL_DUMP.length, `${criadosDump}/${EL_DUMP.length}`);
+  t("15 elementos fiéis ao dump criados via API", criadosDump === EL_DUMP.length, `${criadosDump}/${EL_DUMP.length}`);
   const dup = await req(BASE, "POST", `/campaigns/${CAMP_ID}/regras/elementos`, {
     cookie: cookieMestre, body: { kind: "disciplina", key: "coragem", name: "Coragem" },
   });
@@ -279,32 +285,36 @@ try {
   });
   t("jogador não cria elemento de regra (403)", elJogador.status === 403, `status=${elJogador.status}`);
 
-  // Estrutura representativa do template do dump (ids de campo literais)
-  const ESTRUTURA_DUMP = {
-    versao: 1,
-    secoes: [
-      { id: "ec76b38f", titulo: "Identificação", ordem: 0, campos: [
-        { id: "24605000", label: "Raça", tipo: "selecao_unica", obrigatorio: true,
-          opcoes: ["Humano", "Meta humano", "Vampiro", "Lobisomem", "Animal"] },
-      ]},
-      { id: "s-attr", titulo: "Atributos", ordem: 1, campos: [
-        { id: "f805fff7", label: "Força", tipo: "inteiro", semantico: "atributo", regra: { kind: "atributo", key: "forca" } },
-        { id: "aba8bec6", label: "Vigor", tipo: "inteiro", semantico: "atributo", regra: { kind: "atributo", key: "vigor" } },
-        { id: "bfb8dbe2", label: "Aparência", tipo: "inteiro", semantico: "atributo", regra: { kind: "atributo", key: "aparencia" } },
-      ]},
-      { id: "s-hab", titulo: "Habilidades", ordem: 2, campos: [
-        { id: "630f86ae", label: "Perícias", tipo: "selecao_nivel", regraKind: "pericia" },
-      ]},
-      { id: "e756afe5", titulo: "Virtudes", ordem: 3, campos: [
-        { id: "d2fd135b", label: "Virtudes", tipo: "selecao_nivel", regraKind: "disciplina" },
-      ]},
-      { id: "s-qd", titulo: "Qualidades & Defeitos", ordem: 4, campos: [
-        { id: "11b55b5d", label: "Defeitos", tipo: "selecao_nivel", semantico: "defeito", regraKind: "defeito" },
-        { id: "bb1573df", label: "Qualidades", tipo: "selecao_nivel", regraKind: "vantagem" },
-      ]},
-    ],
-    pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
-  };
+  // Estrutura LITERAL do dump de referência (9 seções, 24 campos,
+  // ids/metadados/opções/defaults idênticos) — fixtures/estrutura-cacadores-dump.json
+  const ESTRUTURA_DUMP = JSON.parse(readFileSync(
+    new URL("./fixtures/estrutura-cacadores-dump.json", import.meta.url), "utf8"));
+  t("fixture literal: 9 seções / 24 campos do dump",
+    ESTRUTURA_DUMP.secoes.length === 9 &&
+    ESTRUTURA_DUMP.secoes.reduce((n, s) => n + (s.campos?.length ?? 0), 0) === 24);
+  const campoDump = (id) => ESTRUTURA_DUMP.secoes.flatMap((s) => s.campos ?? []).find((c) => c.id === id);
+  t("Raça literal: editavelPor=mestre, padrao=Humano, obrigatorio",
+    campoDump("24605000")?.editavelPor === "mestre" && campoDump("24605000")?.padrao === "Humano" &&
+    campoDump("24605000")?.obrigatorio === true);
+  t("Virtudes literal: regraKind=disciplina com padrao dos 3 elementos",
+    campoDump("d2fd135b")?.regraKind === "disciplina" &&
+    JSON.stringify(campoDump("d2fd135b")?.padrao) === JSON.stringify(
+      [{ key: "auto_controlhe", nivel: 1 }, { key: "coragem", nivel: 1 }, { key: "humanidade", nivel: 1 }]));
+  t("Qualidades literal: regraKind=vantagem na seção d2cb72d0",
+    campoDump("bb1573df")?.regraKind === "vantagem" &&
+    ESTRUTURA_DUMP.secoes.find((s) => s.id === "d2cb72d0")?.campos?.some((c) => c.id === "bb1573df"));
+  // Orçamento de pontos generoso para a fixture literal (o pontosIniciais:27
+  // da estrutura é o default do template; a campanha de teste precisa cobrir
+  // 9 atributos + talentos + vantagens — o ruleset do dump usa 140).
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const rs = w.prepare("select id,config from rule_sets where campaign_id=? and is_active=1").get(CAMP_ID);
+      const cfg = JSON.parse(rs.config);
+      cfg.pontos = { habilitado: true, pontosIniciais: 500, pools: cfg.pontos?.pools ?? [], custos: cfg.pontos?.custos ?? {} };
+      w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+    } finally { w.close(); }
+  }
   // publica template+versão direto no banco (mesmo padrão do criarCenario)
   const tplDumpId = randomUUID(), verDumpId = randomUUID();
   {
@@ -317,33 +327,65 @@ try {
       w.prepare("update sheet_templates set current_version_id=? where id=?").run(verDumpId, tplDumpId);
     } finally { w.close(); }
   }
+  // Dados fiéis cobrindo os 24 campos do dump
   const DADOS_DUMP = {
-    "24605000": "Vampiro",
-    "f805fff7": 3, "aba8bec6": 2, "bfb8dbe2": 4,
+    // Identificação (ec76b38f)
+    "8da47020": "policial", "107c7c6f": 34, "8e468977": "Feminino",
+    "f13e57cf": "Morena média", "24605000": "Vampiro",
+    // Atributos (9 campos regra→atributo)
+    "f805fff7": 3, "c5632957": 4, "aba8bec6": 2, "bfb8dbe2": 4,
+    "8a2043c2": 3, "6cf9ee14": 5, "712c5723": 3, "94b2ec01": 4, "db4cbb37": 3,
+    // Habilidades
     "630f86ae": [{ key: "armas_brancas", nivel: 3 }],
+    "0094021c": [{ key: "hacker", nivel: 2 }],
+    "46504ccd": [{ key: "computador", nivel: 2 }],
+    // Virtudes (disciplina) / Poder / Qualidades & Defeitos
     "d2fd135b": [{ key: "auto_controlhe", nivel: 2 }, { key: "coragem", nivel: 1 }, { key: "humanidade", nivel: 3 }],
+    "95c409e4": [{ key: "feitico", nivel: 1 }],
     "11b55b5d": [{ key: "agressivo", nivel: 2 }, { key: "cego", nivel: 1 }],
-    "bb1573df": [{ key: "contatos_influentes", nivel: 1 }],
+    "bb1573df": [{ key: "chacra", nivel: 1 }],
+    // Inventário (tabelas com colunas literais do dump)
+    "0cb84d3a": [{ item: "Faca", quantidade: 1, peso: 0.4, valor: 120, descricao: "de cozinha" }],
+    "704ab6e7": [{ veiculo: "Uno", marca: "Fiat", modelo: "Way", ano: 2019, placa: "ABC1D23", cor: "Prata", combustivel: "Flex" }],
   };
   const criacaoDump = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
     cookie: u.cookie, body: { name: "Dumper Fiel", templateVersionId: verDumpId, data: DADOS_DUMP },
   });
-  t("personagem com estrutura do dump criado", criacaoDump.status === 200 || criacaoDump.status === 201,
-    `status=${criacaoDump.status} ${JSON.stringify(criacaoDump.json)?.slice(0, 200)}`);
+  t("personagem com estrutura literal do dump criado", criacaoDump.status === 200 || criacaoDump.status === 201,
+    `status=${criacaoDump.status} ${JSON.stringify(criacaoDump.json)?.slice(0, 300)}`);
   const charDumpId = criacaoDump.json?.personagem?.id ?? criacaoDump.json?.id;
   const dadosDump = JSON.parse(comDb(BANCO, (db) =>
     db.prepare("select data from characters where id=?").get(charDumpId).data));
-  t("Raça 'Vampiro' persistida (campo obrigatório do dump)", dadosDump["24605000"] === "Vampiro", JSON.stringify(dadosDump["24605000"]));
+  t("Raça 'Vampiro' persistida", dadosDump["24605000"] === "Vampiro", JSON.stringify(dadosDump["24605000"]));
+  t("Identificação completa persistida (profissão/idade/gênero/cor)",
+    dadosDump["8da47020"] === "policial" && dadosDump["107c7c6f"] === 34 &&
+    dadosDump["8e468977"] === "Feminino" && dadosDump["f13e57cf"] === "Morena média");
+  t("9 atributos do dump persistidos", ["f805fff7","c5632957","aba8bec6","bfb8dbe2","8a2043c2","6cf9ee14","712c5723","94b2ec01","db4cbb37"]
+    .every((id) => typeof dadosDump[id] === "number"), JSON.stringify(dadosDump).slice(0, 200));
   t("Virtudes persistidas como disciplina", JSON.stringify(dadosDump["d2fd135b"]) === JSON.stringify(DADOS_DUMP["d2fd135b"]));
   t("Qualidades (vantagem) e Defeitos persistidos separados",
     JSON.stringify(dadosDump["bb1573df"]) === JSON.stringify(DADOS_DUMP["bb1573df"]) &&
     JSON.stringify(dadosDump["11b55b5d"]) === JSON.stringify(DADOS_DUMP["11b55b5d"]));
-  t("atributos do dump (vigor/aparência) persistidos", dadosDump["aba8bec6"] === 2 && dadosDump["bfb8dbe2"] === 4);
-  // PATCH parcial: troca Raça, resto preservado
-  const patchRaca = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${charDumpId}`, {
-    cookie: u.cookie, body: { data: { "24605000": "Lobisomem" } },
+  t("Poder e Habilidades persistidos",
+    JSON.stringify(dadosDump["95c409e4"]) === JSON.stringify(DADOS_DUMP["95c409e4"]) &&
+    JSON.stringify(dadosDump["630f86ae"]) === JSON.stringify(DADOS_DUMP["630f86ae"]));
+  t("tabelas Inventário e Veículo persistidas com colunas",
+    Array.isArray(dadosDump["0cb84d3a"]) && dadosDump["0cb84d3a"][0]?.item === "Faca" &&
+    Array.isArray(dadosDump["704ab6e7"]) && dadosDump["704ab6e7"][0]?.veiculo === "Uno");
+  // Raça é editavelPor=mestre no dump: o DONO da ficha (jogador) NÃO pode editá-la
+  const patchRacaJogador = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${charDumpId}`, {
+    cookie: u.cookie, body: { data: { "24605000": "Animal" } },
   });
-  t("PATCH Raça→Lobisomem aceito", patchRaca.status === 200, `status=${patchRaca.status}`);
+  const dadosAposRacaJogador = JSON.parse(comDb(BANCO, (db) =>
+    db.prepare("select data from characters where id=?").get(charDumpId).data));
+  t("jogador/dono NÃO edita Raça (editavelPor=mestre)",
+    patchRacaJogador.status === 400 && dadosAposRacaJogador["24605000"] === "Vampiro",
+    `status=${patchRacaJogador.status} raca=${dadosAposRacaJogador["24605000"]}`);
+  // PATCH parcial pelo mestre: troca Raça, resto preservado
+  const patchRaca = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${charDumpId}`, {
+    cookie: cookieMestre, body: { data: { "24605000": "Lobisomem" } },
+  });
+  t("PATCH mestre Raça→Lobisomem aceito", patchRaca.status === 200, `status=${patchRaca.status}`);
   const dadosDump2 = JSON.parse(comDb(BANCO, (db) =>
     db.prepare("select data from characters where id=?").get(charDumpId).data));
   t("edição parcial preserva Virtudes/Defeitos/Atributos",
@@ -352,7 +394,7 @@ try {
     dadosDump2["aba8bec6"] === 2);
   // opção inválida de Raça rejeitada
   const patchRacaInvalida = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${charDumpId}`, {
-    cookie: u.cookie, body: { data: { "24605000": "Dragão" } },
+    cookie: cookieMestre, body: { data: { "24605000": "Dragão" } },
   });
   t("Raça fora das opções do dump rejeitada", patchRacaInvalida.status === 400, `status=${patchRacaInvalida.status}`);
   // nível de selecao_nivel fora de 1..5 rejeitado
@@ -360,13 +402,32 @@ try {
     cookie: u.cookie, body: { data: { "d2fd135b": [{ key: "coragem", nivel: 9 }] } },
   });
   t("nível 9 em selecao_nivel rejeitado", patchNivelInvalido.status === 400, `status=${patchNivelInvalido.status}`);
-  // DIVERGÊNCIA documentada: campo.obrigatorio nunca é exigido —
-  // validarFicha só checa obrigatórios com estrito:true e nenhum caller usa.
-  const criacaoSemRaca = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
-    cookie: u.cookie, body: { name: "Sem Raça", templateVersionId: verDumpId, data: { "f805fff7": 2 } },
+  // padrão do dump: Virtudes tem padrao com os 3 elementos nível 1
+  const criacaoSemVirtudes = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: u.cookie, body: { name: "Sem Virtudes", templateVersionId: verDumpId,
+      data: { "24605000": "Humano", "8da47020": "policial", "107c7c6f": 30, "8e468977": "Masculino", "f13e57cf": "Clara" } },
   });
-  t("criação SEM Raça passa (obrigatório não enforceado server-side — divergência)",
-    criacaoSemRaca.status === 200 || criacaoSemRaca.status === 201, `status=${criacaoSemRaca.status}`);
+  const idSemVirt = criacaoSemVirtudes.json?.personagem?.id ?? criacaoSemVirtudes.json?.id;
+  const dadosSemVirt = JSON.parse(comDb(BANCO, (db) =>
+    db.prepare("select data from characters where id=?").get(idSemVirt).data));
+  t("padrão do dump aplicado: Virtudes default (3 elementos nível 1)",
+    JSON.stringify(dadosSemVirt["d2fd135b"]) === JSON.stringify(
+      [{ key: "auto_controlhe", nivel: 1 }, { key: "coragem", nivel: 1 }, { key: "humanidade", nivel: 1 }]),
+    JSON.stringify(dadosSemVirt["d2fd135b"]));
+  t("padrão do dump aplicado: atributos default nível 1 e idade 18 quando ausentes",
+    dadosSemVirt["f805fff7"] === 1 && dadosSemVirt["107c7c6f"] === 30); // idade enviada=30 prevalece
+  // DIVERGÊNCIA documentada (não mascarada): campo.obrigatorio nunca é
+  // exigido — validarFicha só checa obrigatórios com estrito:true e nenhum
+  // caller usa. Personagem sem Raça explícita recebe o PADRÃO "Humano".
+  const criacaoSemRaca = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: u.cookie, body: { name: "Sem Raça", templateVersionId: verDumpId, data: {} },
+  });
+  const idSemRaca = criacaoSemRaca.json?.personagem?.id ?? criacaoSemRaca.json?.id;
+  const dadosSemRaca = JSON.parse(comDb(BANCO, (db) =>
+    db.prepare("select data from characters where id=?").get(idSemRaca).data));
+  t("criação sem Raça passa e recebe padrão 'Humano' (obrigatório não enforceado — divergência)",
+    (criacaoSemRaca.status === 200 || criacaoSemRaca.status === 201) && dadosSemRaca["24605000"] === "Humano",
+    `status=${criacaoSemRaca.status} raca=${dadosSemRaca["24605000"]}`);
   // validação de regras do personagem fiel ao dump (mestre vê erros)
   const valDump = await req(BASE, "GET", `/campaigns/${CAMP_ID}/regras/validacao/${charDumpId}`, { cookie: cookieMestre });
   t("validação de regras do personagem dump responde", valDump.status === 200, `status=${valDump.status}`);

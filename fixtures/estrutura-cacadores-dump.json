@@ -1,0 +1,586 @@
+{
+ "versao": 1,
+ "secoes": [
+  {
+   "id": "ec76b38f",
+   "titulo": "Identificação",
+   "ordem": 0,
+   "campos": [
+    {
+     "id": "8da47020",
+     "label": "Profissão",
+     "tipo": "selecao_unica",
+     "semantico": "livre",
+     "obrigatorio": true,
+     "repetivel": false,
+     "visibilidade": "dono_mestre",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "profissao"
+    },
+    {
+     "id": "107c7c6f",
+     "label": "Idade",
+     "tipo": "decimal",
+     "semantico": "livre",
+     "categoria": "Informação",
+     "obrigatorio": true,
+     "padrao": 18,
+     "minimo": 18,
+     "maximo": 60,
+     "repetivel": false,
+     "visibilidade": "dono_mestre",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 0
+    },
+    {
+     "id": "8e468977",
+     "label": "Gênero",
+     "tipo": "selecao_unica",
+     "semantico": "livre",
+     "categoria": "Informação",
+     "obrigatorio": true,
+     "padrao": "Masculino",
+     "opcoes": [
+      "Masculino",
+      "Feminino"
+     ],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false
+    },
+    {
+     "id": "f13e57cf",
+     "label": "Cor de pele ",
+     "tipo": "selecao_unica",
+     "semantico": "livre",
+     "categoria": "Informaçoes",
+     "obrigatorio": true,
+     "opcoes": [
+      "Muito clara",
+      "Clara",
+      "Bege",
+      "Oliva Clara",
+      "Oliva média",
+      "Bronzeada",
+      "Morena Clara",
+      "Morena média",
+      "Morena escura",
+      "Escura",
+      "Muito escura"
+     ],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false
+    },
+    {
+     "id": "24605000",
+     "label": "Raça",
+     "tipo": "selecao_unica",
+     "semantico": "livre",
+     "obrigatorio": true,
+     "padrao": "Humano",
+     "opcoes": [
+      "Humano",
+      "Meta humano",
+      "Vampiro",
+      "Lobisomem",
+      "Animal"
+     ],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "mestre",
+     "usadoEmTestes": false
+    }
+   ]
+  },
+  {
+   "id": "491b6de3",
+   "titulo": "Atributos De Força",
+   "ordem": 1,
+   "campos": [
+    {
+     "id": "f805fff7",
+     "label": "Força",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "forca"
+     }
+    },
+    {
+     "id": "c5632957",
+     "label": "Destreza",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "destreza"
+     }
+    },
+    {
+     "id": "aba8bec6",
+     "label": "Vigor",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "vigor"
+     }
+    }
+   ]
+  },
+  {
+   "id": "fcde7c1a",
+   "titulo": "Atributos Social",
+   "ordem": 2,
+   "campos": [
+    {
+     "id": "bfb8dbe2",
+     "label": "Aparência",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "aparencia"
+     }
+    },
+    {
+     "id": "8a2043c2",
+     "label": "Manipulação",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "manipulacao"
+     }
+    },
+    {
+     "id": "6cf9ee14",
+     "label": "Carisma",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regra": {
+      "kind": "atributo",
+      "key": "carisma"
+     }
+    }
+   ]
+  },
+  {
+   "id": "7add25ff",
+   "titulo": "Atributos Mental",
+   "ordem": 3,
+   "campos": [
+    {
+     "id": "712c5723",
+     "label": "Percepção",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "percepcao"
+     }
+    },
+    {
+     "id": "94b2ec01",
+     "label": "Raciocínio",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "raciocinio"
+     }
+    },
+    {
+     "id": "db4cbb37",
+     "label": "Inteligência ",
+     "tipo": "inteiro",
+     "semantico": "atributo",
+     "categoria": "Atributos",
+     "obrigatorio": false,
+     "padrao": 1,
+     "minimo": 1,
+     "maximo": 5,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "custoPontos": 7,
+     "regra": {
+      "kind": "atributo",
+      "key": "inteligencia"
+     }
+    }
+   ]
+  },
+  {
+   "id": "8969b5ee",
+   "titulo": "Habilidades",
+   "ordem": 4,
+   "campos": [
+    {
+     "id": "630f86ae",
+     "label": "Pericias",
+     "tipo": "selecao_nivel",
+     "semantico": "especializacao",
+     "categoria": "Pericias",
+     "obrigatorio": false,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "pericia"
+    },
+    {
+     "id": "0094021c",
+     "label": "Talentos",
+     "tipo": "selecao_nivel",
+     "semantico": "talento",
+     "categoria": "Talentos",
+     "obrigatorio": false,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "talento"
+    },
+    {
+     "id": "46504ccd",
+     "label": " Conhecimento:",
+     "tipo": "selecao_nivel",
+     "semantico": "conhecimento",
+     "categoria": "Conhecimento",
+     "obrigatorio": false,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "conhecimento"
+    }
+   ]
+  },
+  {
+   "id": "e756afe5",
+   "titulo": "Virtudes:",
+   "ordem": 5,
+   "campos": [
+    {
+     "id": "d2fd135b",
+     "label": " ",
+     "tipo": "selecao_nivel",
+     "semantico": "livre",
+     "categoria": "Virtudes",
+     "obrigatorio": false,
+     "padrao": [
+      {
+       "key": "auto_controlhe",
+       "nivel": 1
+      },
+      {
+       "key": "coragem",
+       "nivel": 1
+      },
+      {
+       "key": "humanidade",
+       "nivel": 1
+      }
+     ],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "disciplina"
+    }
+   ]
+  },
+  {
+   "id": "618197f4",
+   "titulo": "Poder",
+   "ordem": 6,
+   "campos": [
+    {
+     "id": "95c409e4",
+     "label": "Poder",
+     "tipo": "selecao_nivel",
+     "semantico": "poder",
+     "categoria": "Poder",
+     "obrigatorio": false,
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "poder"
+    }
+   ]
+  },
+  {
+   "id": "d2cb72d0",
+   "titulo": "Qualidades & Defeitos",
+   "ordem": 7,
+   "campos": [
+    {
+     "id": "11b55b5d",
+     "label": "Defeitos",
+     "tipo": "selecao_nivel",
+     "semantico": "defeito",
+     "categoria": "Defeitos",
+     "obrigatorio": false,
+     "opcoes": [],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "defeito"
+    },
+    {
+     "id": "bb1573df",
+     "label": "Qualidades",
+     "tipo": "selecao_nivel",
+     "semantico": "livre",
+     "categoria": "Qualidades",
+     "obrigatorio": false,
+     "opcoes": [],
+     "repetivel": false,
+     "visibilidade": "todos",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "regraKind": "vantagem"
+    }
+   ]
+  },
+  {
+   "id": "0c8bb308",
+   "titulo": "Inventorio",
+   "ordem": 8,
+   "campos": [
+    {
+     "id": "34bdce42",
+     "label": "Dinheiro",
+     "tipo": "tabela",
+     "semantico": "moeda",
+     "categoria": "Dinheiro",
+     "obrigatorio": false,
+     "repetivel": false,
+     "colunas": [
+      {
+       "key": "dinheiro",
+       "label": "Dinheiro disponível",
+       "tipo": "moeda"
+      },
+      {
+       "key": "banco",
+       "label": "Saldo bancário",
+       "tipo": "moeda"
+      }
+     ],
+     "visibilidade": "dono_mestre",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false,
+     "carteira": {
+      "saldoEditavelPor": "mestre"
+     }
+    },
+    {
+     "id": "0cb84d3a",
+     "label": "Inventorio",
+     "tipo": "tabela",
+     "semantico": "item",
+     "categoria": "Inventorio",
+     "obrigatorio": false,
+     "repetivel": false,
+     "colunas": [
+      {
+       "key": "item",
+       "label": "Item",
+       "tipo": "texto"
+      },
+      {
+       "key": "quantidade",
+       "label": "Quantidade",
+       "tipo": "inteiro"
+      },
+      {
+       "key": "peso",
+       "label": "Peso (kg)",
+       "tipo": "decimal"
+      },
+      {
+       "key": "valor",
+       "label": "Valor unitário (R$)",
+       "tipo": "moeda"
+      },
+      {
+       "key": "descricao",
+       "label": "Descrição",
+       "tipo": "texto"
+      }
+     ],
+     "visibilidade": "dono_mestre",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false
+    },
+    {
+     "id": "704ab6e7",
+     "label": "Veiculo",
+     "tipo": "tabela",
+     "semantico": "item",
+     "categoria": "Veiculos",
+     "obrigatorio": false,
+     "repetivel": false,
+     "colunas": [
+      {
+       "key": "veiculo",
+       "label": "Veículo",
+       "tipo": "texto"
+      },
+      {
+       "key": "marca",
+       "label": "Marca",
+       "tipo": "texto"
+      },
+      {
+       "key": "modelo",
+       "label": "Modelo",
+       "tipo": "texto"
+      },
+      {
+       "key": "ano",
+       "label": "Ano",
+       "tipo": "inteiro"
+      },
+      {
+       "key": "placa",
+       "label": "Placa",
+       "tipo": "texto"
+      },
+      {
+       "key": "cor",
+       "label": "Cor",
+       "tipo": "texto"
+      },
+      {
+       "key": "combustivel",
+       "label": "Combustível",
+       "tipo": "selecao",
+       "opcoes": [
+        "Gasolina",
+        "Etanol",
+        "Diesel",
+        "Flex",
+        "Elétrico"
+       ]
+      },
+      {
+       "key": "condicao",
+       "label": "Condição",
+       "tipo": "selecao",
+       "opcoes": [
+        "Novo",
+        "Bom",
+        "Regular",
+        "Ruim"
+       ]
+      },
+      {
+       "key": "valor",
+       "label": "Valor (R$)",
+       "tipo": "moeda"
+      }
+     ],
+     "visibilidade": "dono_mestre",
+     "editavelPor": "ambos",
+     "usadoEmTestes": false
+    }
+   ]
+  }
+ ],
+ "pontos": {
+  "habilitado": true,
+  "pontosIniciais": 27,
+  "pools": [],
+  "custos": {}
+ }
+}
