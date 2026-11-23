@@ -300,11 +300,11 @@ function saldoDecimalComprovadoPeloHistorico(
   if (historico.length === 0) return null;
   let saldoLegado = ancora ?? 0;
   let saldoDecimal = ancora ?? 0;
-  // Uma reconciliação/ajuste negativo legado sem usoId pode ser um
-  // checkpoint binário cujo resíduo não é recuperável com segurança.
-  // Depois dele, o saldo persistido atual é a autoridade: não publique
-  // uma soma decimal que tente reconstruir esse trecho ambíguo.
-  let reconstrucaoAmbigua = false;
+  // Uma âncora indica que o prefixo do histórico foi truncado. Em
+  // versões antigas ela pode conter arredondamento binário; sem o prefixo
+  // não há evidência para corrigir o saldo atual com segurança.
+  // O mesmo vale para reconciliações/ajustes negativos antigos sem usoId.
+  let reconstrucaoAmbigua = ancora !== undefined;
   for (const evento of historico) {
     const proximoLegado = saldoLegado + evento.quantidade;
     if (!Number.isFinite(proximoLegado) || proximoLegado !== evento.saldoResultante) {
