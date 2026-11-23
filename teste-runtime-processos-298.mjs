@@ -54,25 +54,25 @@ function subir(...args) {
   };
   p.stdout?.on("data", acumular);
   p.stderr?.on("data", acumular);
+  // 'close' (não 'exit') prova stdio drenado — rastreado desde o spawn
+  // para esperarSaida aguardar o evento real em TODOS os caminhos.
+  p.__closed = false;
+  p.once("close", () => { p.__closed = true; });
   ativos.push(p);
   return p;
 }
 const logsDe = (p) => p.__log ?? "";
 
+/** Aguarda o evento 'close' REAL do processo (stdio drenado) em todos
+ *  os caminhos — inclusive quando 'exit' já ocorreu antes da chamada.
+ *  Sem sleeps fixos nem fallback silencioso: se 'close' não chegar,
+ *  resolve null por timeout e os asserts falham (nunca sucesso). */
 async function esperarSaida(proc, timeoutMs = 20000) {
   const fim = () => ({ exitCode: proc.exitCode, signalCode: proc.signalCode });
-  if (proc.exitCode !== null || proc.signalCode !== null) {
-    // já terminou: margem para o flush dos pipes/'close' assentar
-    await new Promise((r) => setTimeout(r, 300));
-    return fim();
-  }
+  if (proc.__closed) return fim();
   return new Promise((resolve) => {
     const t = setTimeout(() => resolve(null), timeoutMs);
-    const concluir = () => { clearTimeout(t); resolve(fim()); };
-    // 'close' garante stdio drenado; 'exit'+margem cobre o caso raro
-    // de 'close' não disparar — resolve() é idempotente
-    proc.once("close", concluir);
-    proc.once("exit", () => setTimeout(concluir, 400));
+    proc.once("close", () => { clearTimeout(t); resolve(fim()); });
   });
 }
 
@@ -299,11 +299,16 @@ async function main() {
       const s1 = await conectarSocket(base, cookieRevogada);
       sockets.push(s1.socket);
       ok("C6b socket conecta antes do logout", s1.conectado, String(s1.erro));
+      // espera o disconnect REAL do socket existente (evento, não sleep)
+      const desconectou = new Promise((res) => {
+        const to = setTimeout(() => res(false), 8000);
+        s1.socket.once("disconnect", () => { clearTimeout(to); res(true); });
+      });
 
       // revogação real via endpoint de logout
       const lo = await req(base, "POST", "/auth/logout", { cookie: cookieRevogada, body: {} });
       ok("C6b logout revoga sessão", lo.status === 200 || lo.status === 204, `status=${lo.status}`);
-      await new Promise((r) => setTimeout(r, 300)); // disconnect propaga
+      ok("C6b socket existente é desconectado pelo logout", await desconectou);
 
       // restart no mesmo banco/porta
       await encerrarServidor(proc);
