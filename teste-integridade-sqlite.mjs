@@ -6,6 +6,8 @@ import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   comDb, encerrarServidor, limparDir, abrirDb, req, criarCenario,
 } from "./teste-base.mjs";
+import { readdirSync, existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 
 let pass = 0, fail = 0;
 const falhas = [];
@@ -279,6 +281,119 @@ try {
   t("nenhum personagem aponta versão de ficha inexistente", inv.charVersaoOrfa === 0);
   t("nenhuma transação financeira com campanha divergente do personagem", inv.txCampErrada === 0);
   t("nenhuma membership duplicada ativa (mesma campanha+usuário)", inv.membDuplicada === 0);
+
+  console.log("\n== F — fault injection multi-tabela (triggers na fixture descartável) ==");
+  // Prova de atomicidade conforme matriz do Dono (7095005053): triggers
+  // BEFORE INSERT/UPDATE abortam a SEGUNDA escrita de cada caminho.
+  // Nenhuma alteração de produção — triggers vivem só neste banco de teste
+  // e são derrubadas ao fim de cada cenário. Os asserts registram o
+  // comportamento OBSERVADO (defeito documentado), não o ideal.
+  const wf = abrirDb(banco);
+  const dispara = (nome, sqlTrigger) => wf.exec(`DROP TRIGGER IF EXISTS ${nome};\n${sqlTrigger}`);
+  const derruba = (nome) => wf.exec(`DROP TRIGGER IF EXISTS ${nome}`);
+  const conta = (sqlQ, ...p) => wf.prepare(sqlQ).get(...p).n;
+
+  // ---- F1: POST /campaigns — campaigns + memberships sem transação ----
+  dispara("f1_memb", `CREATE TRIGGER f1_memb BEFORE INSERT ON memberships
+    WHEN NEW.campaign_id IN (SELECT id FROM campaigns WHERE name='F1-INJETADO')
+    BEGIN SELECT RAISE(ABORT,'F1_INJETADO'); END`);
+  const rF1 = await req(base, "POST", "/campaigns", { cookie: cookieMestre, body: { name: "F1-INJETADO" } });
+  derruba("f1_memb");
+  const orfF1 = {
+    camp: conta("select count(*) n from campaigns where name='F1-INJETADO'"),
+    memb: conta(`select count(*) n from memberships m join campaigns c on c.id=m.campaign_id where c.name='F1-INJETADO'`),
+  };
+  t("F1: falha no insert de membership → API responde erro controlado (não 2xx)",
+    rF1.status >= 400, `status=${rF1.status}`);
+  t("F1 observado: campanha persistiu SEM membership (órfão irrecuperável — defeito documentado)",
+    orfF1.camp === 1 && orfF1.memb === 0, JSON.stringify(orfF1));
+  wf.prepare("delete from campaigns where name='F1-INJETADO'").run(); // limpeza do órfão
+
+  // ---- F2a: criação de modelo — template + version + currentVersionId ----
+  dispara("f2a_ver", `CREATE TRIGGER f2a_ver BEFORE INSERT ON sheet_versions
+    WHEN NEW.template_id IN (SELECT id FROM sheet_templates WHERE name='F2A-TPL')
+    BEGIN SELECT RAISE(ABORT,'F2A'); END`);
+  const rF2a = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F2A-TPL" } });
+  derruba("f2a_ver");
+  const orfF2a = {
+    tpl: conta("select count(*) n from sheet_templates where name='F2A-TPL'"),
+    ver: conta(`select count(*) n from sheet_versions sv join sheet_templates st on st.id=sv.template_id where st.name='F2A-TPL'`),
+    cur: wf.prepare("select current_version_id from sheet_templates where name='F2A-TPL'").get()?.current_version_id ?? null,
+  };
+  t("F2a: falha no insert de versão → API responde erro", rF2a.status >= 400, `status=${rF2a.status}`);
+  t("F2a observado: template órfão sem versão/currentVersionId (defeito documentado)",
+    orfF2a.tpl === 1 && orfF2a.ver === 0 && orfF2a.cur === null, JSON.stringify(orfF2a));
+  wf.prepare("delete from sheet_templates where name='F2A-TPL'").run();
+
+  // ---- F2b: nova versão — version insert ok, currentVersionId update aborta ----
+  const tplB = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F2B-TPL" } });
+  const tplBId = tplB.json?.modelo?.id;
+  const curB0 = wf.prepare("select current_version_id from sheet_templates where id=?").get(tplBId)?.current_version_id;
+  dispara("f2b_cur", `CREATE TRIGGER f2b_cur BEFORE UPDATE OF current_version_id ON sheet_templates
+    WHEN NEW.id='${tplBId}' BEGIN SELECT RAISE(ABORT,'F2B'); END`);
+  const rF2b = await req(base, "POST", `/campaigns/${campId}/sheet-templates/${tplBId}/versions`, { cookie: cookieMestre, body: {} });
+  derruba("f2b_cur");
+  const orfF2b = {
+    vers: conta("select count(*) n from sheet_versions where template_id=?", tplBId),
+    cur: wf.prepare("select current_version_id from sheet_templates where id=?").get(tplBId)?.current_version_id,
+  };
+  t("F2b: falha no update de currentVersionId → API responde erro", rF2b.status >= 400, `status=${rF2b.status}`);
+  t("F2b observado: versão órfã criada e currentVersionId NÃO avançou (defeito documentado)",
+    orfF2b.vers === 2 && orfF2b.cur === curB0, JSON.stringify({ ...orfF2b, curB0 }));
+
+  // ---- F2c: publish — publishedAt grava, currentVersionId aborta ----
+  const tplC = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F2C-TPL" } });
+  const tplCId = tplC.json?.modelo?.id;
+  const v1C = tplC.json?.modelo?.versionId;
+  const v2C = (await req(base, "POST", `/campaigns/${campId}/sheet-templates/${tplCId}/versions`, { cookie: cookieMestre, body: {} })).json?.versionId;
+  dispara("f2c_cur", `CREATE TRIGGER f2c_cur BEFORE UPDATE ON sheet_templates
+    WHEN NEW.id='${tplCId}' AND NEW.current_version_id<>OLD.current_version_id
+    BEGIN SELECT RAISE(ABORT,'F2C'); END`);
+  const rF2c = await req(base, "POST", `/campaigns/${campId}/sheet-templates/${tplCId}/publish`, { cookie: cookieMestre, body: { versionId: v1C } });
+  derruba("f2c_cur");
+  const pubC = {
+    v1pub: wf.prepare("select published_at from sheet_versions where id=?").get(v1C)?.published_at ?? null,
+    cur: wf.prepare("select current_version_id from sheet_templates where id=?").get(tplCId)?.current_version_id,
+  };
+  t("F2c: falha no publish → API responde erro", rF2c.status >= 400, `status=${rF2c.status}`);
+  t("F2c observado: v1 ficou publishedAt mas currentVersionId seguiu v2 (inconsistência documentada)",
+    pubC.v1pub !== null && pubC.cur === v2C, JSON.stringify({ ...pubC, v1C, v2C }));
+
+  // ---- F3: upload + vínculo a anotação — files ok, note_attachments aborta ----
+  const notaF3 = await req(base, "POST", `/campaigns/${campId}/anotacoes`, {
+    cookie: cookieMestre, body: { title: "Nota F3", kind: "diario", visibility: "privada" },
+  });
+  const noteF3 = notaF3.json?.id;
+  dispara("f3_anx", `CREATE TRIGGER f3_anx BEFORE INSERT ON note_attachments
+    WHEN NEW.note_id='${noteF3}' BEGIN SELECT RAISE(ABORT,'F3'); END`);
+  const bufF3 = Buffer.from("conteudo fault-injection f3");
+  const upF3 = await fetch(`${base}/api/campaigns/${campId}/arquivos/upload`, {
+    method: "POST",
+    headers: { cookie: cookieMestre, "x-file-name": "f3.txt", "x-note-id": noteF3, "content-type": "application/octet-stream" },
+    body: bufF3,
+  });
+  const stF3 = upF3.status;
+  derruba("f3_anx");
+  const fileRowF3 = wf.prepare("select id, storage_name from files where campaign_id=? order by created_at desc limit 1").get(campId);
+  const anxF3 = conta("select count(*) n from note_attachments where note_id=?", noteF3);
+  const fisicoF3 = fileRowF3 ? existsSync(join(arquivos, campId, fileRowF3.storage_name)) : false;
+  t("F3: falha no vínculo à anotação → API responde erro (não 201)", stF3 !== 201, `status=${stF3}`);
+  t("F3 observado: files+arquivo físico órfãos sem note_attachments (defeito documentado)",
+    !!fileRowF3 && anxF3 === 0 && fisicoF3,
+    `file=${fileRowF3?.id} anx=${anxF3} fisico=${fisicoF3}`);
+  // caminho feliz após remover o trigger: novo upload vincula corretamente
+  const upOk = await fetch(`${base}/api/campaigns/${campId}/arquivos/upload`, {
+    method: "POST",
+    headers: { cookie: cookieMestre, "x-file-name": "f3-ok.txt", "x-note-id": noteF3, "content-type": "application/octet-stream" },
+    body: Buffer.from("conteudo feliz"),
+  });
+  t("F3 caminho feliz pós-trigger: upload vinculado → 201", upOk.status === 201, `status=${upOk.status}`);
+  // limpeza dos órfãos F3 (files row + físico)
+  if (fileRowF3) {
+    wf.prepare("delete from files where id=?").run(fileRowF3.id);
+    try { rmSync(join(arquivos, campId, fileRowF3.storage_name), { force: true }); } catch { }
+  }
+  wf.close();
 
   console.log("\n== E — reabertura do banco ==");
   const antes = comDb(banco, (db) => ({
