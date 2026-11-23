@@ -58,7 +58,7 @@ function fixture(nome, recibo = false) {
   const porta = String(36000 + (++sequencia));
   const env = {
     ...process.env,
-    NODE_OPTIONS: "--require=" + preload.replace(/\/g, "/"),
+    NODE_OPTIONS: "--require=" + preload.replace(/\\/g, "/"),
     MESTRE_BOOT_TEST_LOG: log,
     MESTRE_BOOT_TEST_UPDATE_MARKER: updateMarker,
     MESTRE_STATE_DIR: join(dir, "state"),
