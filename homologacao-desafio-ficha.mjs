@@ -3,6 +3,7 @@
 // do valor PERSISTIDO da ficha (servidor autoritativo), penalidade de dados
 // negativos, adulteração do cliente ignorada, recebimento/rolagem pelo jogador,
 // visibilidade pública/privada e formulário manual preservado como secundário.
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 import { io as ioClient } from "socket.io-client";
 import {
@@ -37,6 +38,82 @@ async function aguardarFechamento(obs, timeoutMs = 10000) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Cleanup compartilhado entre o fluxo principal e a prova de falha:
+// sockets → browser → shutdown + close real → remoção do diretório.
+// Retorna a lista de erros de limpeza; nunca lança — quem chama decide
+// como contabilizar, para não mascarar a exceção original.
+async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = null, browser: br = null, dir = null } = {}) {
+  const erros = [];
+  for (const s of sk) {
+    try { s.close(); } catch (e) { erros.push("socket: " + String(e?.message ?? e)); }
+  }
+  if (br) {
+    try { await br.close(); } catch (e) { erros.push("browser: " + String(e?.message ?? e)); }
+  }
+  try {
+    if (p) {
+      await encerrarServidor(p);
+      if (fechamento) await aguardarFechamento(fechamento);
+    }
+  } catch (e) {
+    erros.push("servidor: " + String(e?.message ?? e));
+  }
+  try {
+    if (dir) { if (!limparDir(dir)) erros.push("dir: limpeza falhou: " + dir); }
+  } catch (e) {
+    erros.push("dir: " + String(e?.message ?? e));
+  }
+  return erros;
+}
+
+// Prova determinística do caminho de exceção (ordem do Dono): adquire
+// dir+banco+porta+servidor+dois sockets e injeta erro. O MESMO
+// limparRecursos do finally deve fechar tudo; a falha original permanece
+// visível; a execução limpa posterior é o próprio fluxo principal abaixo.
+async function provaFalhaParcial() {
+  sec("Teardown — falha injetada após aquisição parcial");
+  const sk = [];
+  let d2, proc2 = null, fech2 = null, close2Ok = false;
+  let erroOriginal = null, erros2 = [];
+  try {
+    d2 = dirTeste("desafio-ficha-falha");
+    const banco2 = `${d2}/teste.db`;
+    await prepararBanco(banco2);
+    const porta2 = await portaLivre();
+    const base2 = `http://localhost:${porta2}`;
+    proc2 = subirServidor(porta2, { banco: banco2, arquivos: `${d2}/arq`, backups: `${d2}/bks` });
+    proc2.stderr.on("data", () => {});
+    proc2.stdout.resume();
+    fech2 = observarFechamento(proc2);
+    fech2.then(() => { close2Ok = true; });
+    await esperarSaudavel(base2, proc2);
+    const c2 = await criarCenario(base2, banco2, { jogadores: {} });
+    const token = decodeURIComponent(c2.cookieMestre.split("=")[1]);
+    for (let i = 0; i < 2; i++) {
+      const s = ioClient(base2, {
+        path: "/socket.io",
+        transports: ["websocket"],
+        extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(token)}` },
+        reconnection: false,
+      });
+      sk.push(s);
+    }
+    await pronto(sk[0]);
+    await pronto(sk[1]);
+    throw new Error("FALHA_INJETADA_pos_aquisicao_parcial");
+  } catch (e) {
+    erroOriginal = e;
+  } finally {
+    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, dir: d2 });
+  }
+  await new Promise((r) => setTimeout(r, 150)); // close do socket é assíncrono
+  t("falha injetada propaga sem ser mascarada pelo cleanup", String(erroOriginal?.message ?? "").includes("FALHA_INJETADA"), String(erroOriginal?.message ?? erroOriginal).slice(0, 90));
+  t("cleanup da prova sem erros", erros2.length === 0, erros2.join(" | "));
+  t("dois sockets da prova fechados", sk.length === 2 && sk.every((s) => s.connected === false), `conectados=${sk.filter((s) => s.connected).length}`);
+  t("processo da prova chegou a close (stdio encerrado)", close2Ok === true);
+  t("diretório da prova removido", !!d2 && !existsSync(d2), d2 || "sem dir");
 }
 
 // Template de ficha com seções reais: atributos, conhecimentos, habilidades,
@@ -88,6 +165,8 @@ const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) =
   const t = setTimeout(() => { s.off(ev, h); reject(new Error(`timeout ${ev}`)); }, timeout);
   s.on(ev, h);
 });
+
+await provaFalhaParcial();
 
 try {
   DIR = dirTeste("desafio-ficha");
@@ -755,26 +834,7 @@ try {
   // Ordem: sockets → browser → shutdown/close do servidor → remoção do DIR.
   // Erro de cleanup falha a suíte sem mascarar a exceção original (o catch
   // acima já a registrou antes deste bloco).
-  const errosLimpeza = [];
-  for (const s of sockets) {
-    try { s.close(); } catch (e) { errosLimpeza.push("socket: " + String(e?.message ?? e)); }
-  }
-  if (browser) {
-    try { await browser.close(); } catch (e) { errosLimpeza.push("browser: " + String(e?.message ?? e)); }
-  }
-  try {
-    if (proc) {
-      await encerrarServidor(proc);
-      if (fechamentoServidor) await aguardarFechamento(fechamentoServidor);
-    }
-  } catch (e) {
-    errosLimpeza.push("servidor: " + String(e?.message ?? e));
-  }
-  try {
-    if (DIR) limparDir(DIR);
-  } catch (e) {
-    errosLimpeza.push("dir: " + String(e?.message ?? e));
-  }
+  const errosLimpeza = await limparRecursos({ sockets, proc, fechamento: fechamentoServidor, browser, dir: DIR });
   for (const msg of errosLimpeza) {
     fail++;
     console.log("FALHOU teardown:", msg);

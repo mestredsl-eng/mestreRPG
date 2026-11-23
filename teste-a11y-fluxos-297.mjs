@@ -90,11 +90,11 @@ async function overflowX(page) {
   });
 }
 // ---------- WCAG 2.2 AA — avaliador in-page autocontido ----------
-// SC 1.4.3 (contraste texto 4.5:1 / grande 3:1), SC 1.4.11 (não-texto 3:1),
-// SC 2.5.8 (alvo mínimo 24×24 CSS px, exceção de espaçamento/inline).
-// Sem dependências; razões não arredondadas; fundo transparente compõe com
-// ancestrais até opaco (canvas branco é o fundo determinístico final);
-// gradiente/imagem/filtro ⇒ REVIEW, nunca PASS automático.
+// Revisão metodológica #7102492454: SC 1.4.3 (texto 4.5/3:1), SC 1.4.11
+// (não-texto 3:1 — só o indicador NECESSÁRIO, cor adjacente EXTERNA,
+// inativos excluídos, SVG por filhos gráficos), SC 2.5.8 (alvo ≥24px,
+// exceção inline real + círculo de espaçamento). Razões sem arredondar;
+// incalculável ⇒ REVIEW, nunca PASS.
 function avaliarWcag() {
   const parse = (c) => {
     const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)/.exec(c || "");
@@ -127,13 +127,17 @@ function avaliarWcag() {
     try { if (typeof el.checkVisibility === "function" && !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) return false; } catch { }
     return true;
   };
-  // Fundo efetivo: sobe a cadeia compilando backgroundColor; para no
-  // primeiro fundo opaco (o que estiver acima dele está ocluído). Imagem/
-  // gradiente ANTES do opaco ⇒ incalculável ⇒ REVIEW; depois ⇒ ignorado.
-  // Sem opaco até a raiz, o canvas branco é o fundo determinístico final.
-  const fundoDe = (el) => {
+  // SC 1.4.11 exclui componentes inativos — vale para texto e não-texto.
+  const desabilitado = (el) => !!(
+    el.disabled || el.getAttribute("aria-disabled") === "true" ||
+    el.closest("[disabled], [aria-disabled='true']")
+  );
+  // Fundo efetivo subindo a cadeia; `externo` parte do pai (adjacente fora
+  // do componente — exemplo normativo do input). Para no 1º opaco; imagem/
+  // gradiente ANTES do opaco ⇒ REVIEW; canvas branco = fundo final.
+  const fundoDe = (el, externo = false) => {
     const camadas = [];
-    let cur = el, img = null, achouOpaco = false;
+    let cur = externo ? el.parentElement : el, img = null, achouOpaco = false;
     while (cur && cur.nodeType === 1) {
       const cs = getComputedStyle(cur);
       if (!img && !achouOpaco && cs.backgroundImage && cs.backgroundImage !== "none") {
@@ -147,7 +151,6 @@ function avaliarWcag() {
       cur = cur.parentElement;
     }
     if (img) return { review: img };
-    // camadas coletadas de dentro→fora; compõe de fora→dentro sobre o canvas
     let acc = [255, 255, 255, 1];
     for (const c of camadas.slice().reverse()) acc = sobre(c, acc);
     return { rgb: acc.slice(0, 3) };
@@ -164,11 +167,13 @@ function avaliarWcag() {
   };
   const out = { textos: { viol: [], rev: [] }, naoTexto: { viol: [], rev: [] }, alvos: { viol: [], okEsp: 0 } };
   const todos = [...document.querySelectorAll("body *")].filter(visivel);
+  const textoDireto = (el) => [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
 
-  // --- SC 1.4.3: nós de texto visíveis ---
+  // --- SC 1.4.3: nós de texto visíveis (fora de svg e de inativos) ---
   for (const el of todos) {
-    const temTexto = [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim());
-    if (!temTexto) continue;
+    if (el.closest("svg")) continue;
+    if (desabilitado(el)) continue;
+    if (!textoDireto(el)) continue;
     const cs = getComputedStyle(el);
     const fg0 = parse(cs.color);
     if (!fg0) continue;
@@ -182,39 +187,96 @@ function avaliarWcag() {
     }
   }
 
-  // --- SC 1.4.11: bordas de controles + fill/stroke de svg ---
+  // --- SC 1.4.11: indicador visual necessário ao componente ---
+  // Borda/preenchimento só é exigido quando texto/ícone visível NÃO
+  // identifica o controle. Adjacente = fundo EXTERNO; o interior opaco do
+  // próprio controle é adjacente legítimo da borda (medido à parte).
+  const ehControle = (el) => {
+    const tag = el.tagName.toLowerCase();
+    if (/^(button|a|input|select|textarea|summary)$/.test(tag)) return true;
+    return ["button", "link", "checkbox", "radio", "switch", "tab", "menuitem", "option"].includes(el.getAttribute("role"));
+  };
+  const temIdentificador = (el) => {
+    if (textoDireto(el)) return true;
+    return [...el.querySelectorAll("svg, img")].some((g) =>
+      visivel(g) && !g.closest("[aria-hidden='true'], [role='presentation'], [role='none']"));
+  };
   for (const el of todos) {
-    if (!/^(button|a|input|select|textarea)$/.test(el.tagName.toLowerCase()) && el.getAttribute("role") !== "button" && el.getAttribute("role") !== "link") continue;
+    if (!ehControle(el) || desabilitado(el)) continue;
+    if (temIdentificador(el)) continue; // texto/ícone já identifica → borda dispensada
     const cs = getComputedStyle(el);
     const bw = parseFloat(cs.borderTopWidth) || 0;
     const bs = cs.borderTopStyle;
-    if (bw >= 1 && bs !== "none" && bs !== "hidden") {
+    const temBorda = bw >= 1 && bs !== "none" && bs !== "hidden";
+    const bgProprio = parse(cs.backgroundColor);
+    const temProprio = !!(bgProprio && bgProprio[3] > 0);
+    if (!temBorda && !temProprio) {
+      out.naoTexto.rev.push(`${sel(el)} controle sem indicador de fronteira mensurável`);
+      continue;
+    }
+    const ext = fundoDe(el, true);
+    const interno = fundoDe(el);
+    if (ext.review || interno.review) {
+      out.naoTexto.rev.push(`${sel(el)} adjacente incalculável (${ext.review || interno.review})`);
+      continue;
+    }
+    const extRgb = ext.rgb, intRgb = interno.rgb;
+    const medidas = [];
+    if (temBorda) {
       const bc = parse(cs.borderTopColor);
       if (bc && bc[3] > 0) {
-        const bg = fundoDe(el);
-        if (bg.review) { out.naoTexto.rev.push(`${sel(el)} borda (${bg.review})`); continue; }
-        const bgr = [...bg.rgb, 1];
-        const b = bc[3] < 1 ? sobre(bc, bgr) : bc.slice(0, 3);
-        const r = razao(b, bg.rgb);
-        if (r < 3) out.naoTexto.viol.push(`${sel(el)} borda ratio=${r.toFixed(4)} req=3 fg=rgb(${b.map(Math.round)}) bg=rgb(${bg.rgb.map(Math.round)})`);
+        const bExt = bc[3] < 1 ? sobre(bc, [...extRgb, 1]) : bc.slice(0, 3);
+        const bInt = bc[3] < 1 ? sobre(bc, [...intRgb, 1]) : bc.slice(0, 3);
+        medidas.push({ nome: "borda×externo", r: razao(bExt, extRgb), cor: bExt });
+        medidas.push({ nome: "borda×interno", r: razao(bInt, intRgb), cor: bInt });
       }
     }
-  }
-  for (const el of todos) {
-    if (el.tagName.toLowerCase() !== "svg") continue;
-    const cs = getComputedStyle(el);
-    for (const prop of ["fill", "stroke"]) {
-      const v = cs[prop];
-      if (!v || v === "none") continue;
-      const cor = parse(v);
-      if (!cor || cor[3] === 0) continue;
-      // currentColor não é parseável → resolve pela cor computada já vem rgb
-      const bg = fundoDe(el);
-      if (bg.review) { out.naoTexto.rev.push(`${sel(el)} svg ${prop} (${bg.review})`); continue; }
-      const c = cor[3] < 1 ? sobre(cor, [...bg.rgb, 1]) : cor.slice(0, 3);
-      const r = razao(c, bg.rgb);
-      if (r < 3) out.naoTexto.viol.push(`${sel(el)} svg ${prop} ratio=${r.toFixed(4)} req=3 fg=rgb(${c.map(Math.round)}) bg=rgb(${bg.rgb.map(Math.round)})`);
+    if (temProprio) {
+      const prop = bgProprio[3] < 1 ? sobre(bgProprio, [...extRgb, 1]) : bgProprio.slice(0, 3);
+      medidas.push({ nome: "preenchimento×externo", r: razao(prop, extRgb), cor: prop });
     }
+    if (!medidas.length) { out.naoTexto.rev.push(`${sel(el)} cor de indicador não parseável`); continue; }
+    const melhor = medidas.reduce((a, b) => (a.r >= b.r ? a : b));
+    if (melhor.r < 3) {
+      out.naoTexto.viol.push(`${sel(el)} indicador "${melhor.nome}" melhor=${melhor.r.toFixed(4)} req=3 fg=rgb(${melhor.cor.map(Math.round)}) ext=rgb(${extRgb.map(Math.round)}) int=rgb(${intRgb.map(Math.round)})`);
+    }
+  }
+
+  // --- SC 1.4.11: objetos gráficos — filhos do <svg>, não a raiz ---
+  for (const svg of todos.filter((e) => e.tagName.toLowerCase() === "svg")) {
+    if (svg.getAttribute("aria-hidden") === "true" || ["presentation", "none"].includes(svg.getAttribute("role"))) continue;
+    const controlePai = svg.closest("button, a[href], [role='button'], [role='link'], [role='tab']");
+    const svgTemNome = !!(svg.getAttribute("aria-label") || svg.querySelector("title"));
+    let informativo;
+    if (svgTemNome) informativo = true;
+    else if (controlePai) {
+      // controle só-ícone (sem texto próprio) → o svg É o identificador;
+      // svg acompanhando texto visível → decorativo
+      informativo = !textoDireto(controlePai) && ![...controlePai.querySelectorAll("img")].some(visivel);
+    } else {
+      out.naoTexto.rev.push(`${sel(svg)} svg sem nome acessível — decorativo×informativo incerto`);
+      continue;
+    }
+    if (!informativo) continue;
+    const bg = fundoDe(svg);
+    if (bg.review) { out.naoTexto.rev.push(`${sel(svg)} adjacente incalculável (${bg.review})`); continue; }
+    const graf = [...svg.querySelectorAll("path,circle,rect,ellipse,line,polyline,polygon,use,text")].filter(visivel);
+    let revSvg = false, violSvg = null;
+    for (const g of graf) {
+      const cs = getComputedStyle(g);
+      for (const prop of ["fill", "stroke"]) {
+        let v = cs[prop];
+        if (!v || v === "none") continue;
+        if (v === "currentColor") v = cs.color;
+        const cor = parse(v);
+        if (!cor || cor[3] === 0) { revSvg = true; continue; }
+        const c = cor[3] < 1 ? sobre(cor, [...bg.rgb, 1]) : cor.slice(0, 3);
+        const r = razao(c, bg.rgb);
+        if (r < 3 && !violSvg) violSvg = `grafico ${prop} ratio=${r.toFixed(4)} req=3 fg=rgb(${c.map(Math.round)}) bg=rgb(${bg.rgb.map(Math.round)})`;
+      }
+    }
+    if (violSvg) out.naoTexto.viol.push(`${sel(svg)} ${violSvg}`);
+    else if (revSvg) out.naoTexto.rev.push(`${sel(svg)} cor de gráfico não classificável`);
   }
 
   // --- SC 2.5.8: alvos de ponteiro ≥24×24 CSS px ---
@@ -238,15 +300,17 @@ function avaliarWcag() {
   for (const a of alvos) {
     const { width: w, height: h } = a.r;
     if (w >= 24 && h >= 24) continue;
-    // exceção inline: alvo dentro de frase/bloco de texto
-    if (a.el.closest("p, li, td, th, blockquote")) continue;
+    // exceção inline REAL: alvo fraseado dentro de sentença (link em texto);
+    // estar dentro de li/td não basta — botão em célula continua alvo.
+    const tagAlvo = a.el.tagName.toLowerCase();
+    const ehInline = (tagAlvo === "a" || a.el.getAttribute("role") === "link")
+      && !!a.el.closest("p, li, td, th, blockquote");
+    if (ehInline) { out.alvos.okEsp++; continue; }
     const c = circulo(a.r);
     let conflita = false;
     for (const b of alvos) {
       if (b === a) continue;
-      // círculo de 24px do alvo vs bounding box do outro alvo
       if (distPontoRect(c.x, c.y, b.r) < 12) { conflita = true; break; }
-      // círculo vs círculo (outro alvo também subdimensionado)
       const cb = circulo(b.r);
       const bw = b.r.width, bh = b.r.height;
       if ((bw < 24 || bh < 24) && Math.hypot(c.x - cb.x, c.y - cb.y) < 24) { conflita = true; break; }
@@ -258,22 +322,86 @@ function avaliarWcag() {
   return out;
 }
 
+// Indicador de foco/estado medido separadamente (SC 1.4.11 cobre
+// indicadores de foco visível): outline/box-shadow do elemento em foco
+// vs adjacente externo. Sem outline/sombra detectável ⇒ REVIEW.
+function avaliarFocoIndicador() {
+  const el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) {
+    return { viol: [], rev: ["nenhum elemento em foco para medir"] };
+  }
+  const parse = (c) => {
+    const m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+%?))?\s*\)/.exec(c || "");
+    if (!m) return null;
+    const a = m[4] === undefined ? 1 : (String(m[4]).endsWith("%") ? parseFloat(m[4]) / 100 : parseFloat(m[4]));
+    return [+m[1], +m[2], +m[3], a];
+  };
+  const lum = ([r, g, b]) => {
+    const f = (v) => { v /= 255; return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const sobre = (fg, bg) => [fg[0] * fg[3] + bg[0] * (1 - fg[3]), fg[1] * fg[3] + bg[1] * (1 - fg[3]), fg[2] * fg[3] + bg[2] * (1 - fg[3]), 1];
+  const razao = (c1, c2) => { const [hi, lo] = lum(c1) >= lum(c2) ? [lum(c1), lum(c2)] : [lum(c2), lum(c1)]; return (hi + 0.05) / (lo + 0.05); };
+  const fundoExterno = (el) => {
+    const camadas = [];
+    let cur = el.parentElement, img = null, opaco = false;
+    while (cur && cur.nodeType === 1) {
+      const cs = getComputedStyle(cur);
+      if (!img && !opaco && cs.backgroundImage && cs.backgroundImage !== "none") img = "bg-image";
+      const bg = parse(cs.backgroundColor);
+      if (bg) { camadas.push(bg); if (bg[3] === 1) { opaco = true; break; } }
+      cur = cur.parentElement;
+    }
+    if (img) return { review: img };
+    let acc = [255, 255, 255, 1];
+    for (const c of camadas.slice().reverse()) acc = sobre(c, acc);
+    return { rgb: acc.slice(0, 3) };
+  };
+  const cs = getComputedStyle(el);
+  let cor = null, tipo = null;
+  const ow = parseFloat(cs.outlineWidth) || 0;
+  if (cs.outlineStyle !== "none" && ow >= 1) {
+    const oc = parse(cs.outlineColor);
+    if (oc && oc[3] > 0) { cor = oc.slice(0, 3); tipo = `outline ${ow}px`; }
+  }
+  if (!cor) {
+    const bs = cs.boxShadow;
+    if (bs && bs !== "none") {
+      const m = /rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}\b/.exec(bs);
+      if (m) { const c = parse(m[0]); if (c && c[3] > 0) { cor = c.slice(0, 3); tipo = "box-shadow"; } }
+    }
+  }
+  const rotulo = (el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") + (typeof el.className === "string" && el.className.trim() ? "." + el.className.trim().split(/\s+/)[0] : "")).slice(0, 60);
+  if (!cor) return { viol: [], rev: [`${rotulo} foco sem outline/box-shadow mensurável (pode ser borda/fundo — inspeção visual)`] };
+  const bg = fundoExterno(el);
+  if (bg.review) return { viol: [], rev: [`${rotulo} indicador ${tipo} — adjacente incalculável (${bg.review})`] };
+  const r = razao(cor, bg.rgb);
+  if (r < 3) return { viol: [`${rotulo} indicador foco ${tipo} ratio=${r.toFixed(4)} req=3 fg=rgb(${cor.map(Math.round)}) bg=rgb(${bg.rgb.map(Math.round)})`], rev: [] };
+  return { viol: [], rev: [] };
+}
+
 async function checarWcag(page, rotulo) {
   const r = await page.evaluate(avaliarWcag);
   const violC = r.textos.viol.length + r.naoTexto.viol.length;
   const revCount = r.textos.rev.length + r.naoTexto.rev.length;
-  const det = [...r.textos.viol.slice(0, 2), ...r.naoTexto.viol.slice(0, 1)]
+  const det = [...r.textos.viol, ...r.naoTexto.viol].slice(0, 3)
     .map((v) => v.slice(0, 110)).join(" || ");
-  const extra = `${violC} violação(ões)${revCount ? ` + ${revCount} review` : ""}`;
-  if (violC > 0) tc(`${rotulo}: contraste AA`, false, det || extra);
-  else if (revCount > 0) tc(`${rotulo}: contraste AA`, "review", `${revCount} superfície(s) incalculável(is): ${r.textos.rev[0] || r.naoTexto.rev[0] || ""}`.slice(0, 160));
+  if (violC > 0) tc(`${rotulo}: contraste AA`, false, `${violC} violação(ões): ${det}`);
+  else if (revCount > 0) tc(`${rotulo}: contraste AA`, "review", `${revCount} superfície(s) incalculável(is): ${(r.textos.rev[0] || r.naoTexto.rev[0] || "").slice(0, 140)}`);
   else tc(`${rotulo}: contraste AA`, true);
 
   const violA = r.alvos.viol;
   const detA = violA.slice(0, 3).map((v) => v.slice(0, 110)).join(" || ");
-  const notaEsp = r.alvos.okEsp ? ` (${r.alvos.okEsp} subdimensões com exceção de espaçamento/inline)` : "";
+  const notaEsp = r.alvos.okEsp ? ` (${r.alvos.okEsp} com exceção inline/espaçamento)` : "";
   if (violA.length > 0) ta(`${rotulo}: alvos ≥24px`, false, `${violA.length} alvo(s): ${detA}${notaEsp}`);
   else ta(`${rotulo}: alvos ≥24px`, true, notaEsp.trim());
+}
+
+async function checarFoco(page, rotulo) {
+  const r = await page.evaluate(avaliarFocoIndicador);
+  if (r.viol.length) tc(`${rotulo}: indicador de foco AA`, false, r.viol[0].slice(0, 140));
+  else if (r.rev.length) tc(`${rotulo}: indicador de foco AA`, "review", r.rev[0].slice(0, 140));
+  else tc(`${rotulo}: indicador de foco AA`, true);
 }
 
 async function checarTela(page, rotulo) {
@@ -395,11 +523,16 @@ try {
     }
     t("Tab produz paradas de foco", paradas > 0, `paradas=${paradas}`);
     t("foco via teclado usa :focus-visible", fvOk === paradas, `${fvOk}/${paradas} fv; último='${ultimoRotulo}'`);
+    await checarFoco(page, "login");
 
     // Login → painel → campanha
     await login(page, "mestre_teste", "senha-forte-123");
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
+    // Indicador de foco medido separadamente também na campanha
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(150);
+    await checarFoco(page, "campanha");
 
     // Zoom 200%
     await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
