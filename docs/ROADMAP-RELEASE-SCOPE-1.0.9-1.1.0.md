@@ -92,6 +92,18 @@ Nenhuma implementação da 1.1.0 está autorizada por este documento. A #185 per
 
 A atribuição de uma responsabilidade não prova que uma sessão está ativa. Cada tarefa só deve ser reportada como iniciada quando houver sessão/execução identificável; concluída somente com SHA e evidências.
 
+### 5.1 Carga de trabalho registrada
+
+| Integrante | Frentes atribuídas | Estado/limite |
+|---|---|---|
+| **Devin — Gerente Operacional** | Auditoria de todas as PRs/Issues abertas por release; manter #204/#274 e este documento coerentes; preparar inventário da distribuição 1.0.9 | Organização e inventário; sem alterar manifests antes da candidata final |
+| **Devin — Gerente de Execução** | Abrir e acompanhar sessões reais de PAI/FILHO/INTERMEDIÁRIO; monitorar #279/#280; encadear #265–#273 sem colisão | Registrar sessão real, branch, SHA, CI e bloqueio; não declarar sessões sem prova |
+| **PAI** | Auditoria DAG #176→#188→#189; Boot Lock/recuperação; preparação Linux #271; desenho técnico XP futuro em #185 | Não duplicar a execução W14 #265 nem W16 #266/#280 |
+| **FILHO** | Regressão UI #279; confirmar XP/extrato já integrado sem recriar #215/#217/#257/#258; UX do estorno/XP por sessão em #185 | 1.1.0 somente documentação; sem código até autorização |
+| **INTERMEDIÁRIO** | Revisão final #279 e #280; preparação Windows #270; matriz de upgrade #272; auditoria técnica da especificação #185 | Homologações finais aguardam as dependências de #189/W14/W16 |
+
+**Checkpoint consultado:** #279@`951a345` com CI natural 3/3 SUCCESS (run `45108119458`); #280@`a4e0230` com Server/Windows SUCCESS e Browser pendente (run `45109255431`); #189 OPEN/Draft e não mergeable contra main. #265 já tem execução em andamento e não deve ser duplicada. XP lote/extrato está integrado na main.
+
 ## 6. Regras de controle de release
 
 1. Toda PR deve declarar no título ou corpo: **Release alvo: 1.0.9** ou **Release alvo: 1.1.0**.
