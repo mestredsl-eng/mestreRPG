@@ -300,6 +300,11 @@ function saldoDecimalComprovadoPeloHistorico(
   if (historico.length === 0) return null;
   let saldoLegado = ancora ?? 0;
   let saldoDecimal = ancora ?? 0;
+  // Uma reconciliação/ajuste negativo legado sem usoId pode ser um
+  // checkpoint binário cujo resíduo não é recuperável com segurança.
+  // Depois dele, o saldo persistido atual é a autoridade: não publique
+  // uma soma decimal que tente reconstruir esse trecho ambíguo.
+  let reconstrucaoAmbigua = false;
   for (const evento of historico) {
     const proximoLegado = saldoLegado + evento.quantidade;
     if (!Number.isFinite(proximoLegado) || proximoLegado !== evento.saldoResultante) {
@@ -309,11 +314,12 @@ function saldoDecimalComprovadoPeloHistorico(
     if (!Number.isFinite(proximoDecimal)) return null;
 
     if (evento.tipo === "ajuste" && evento.quantidade < 0 && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
-      // Reconciliações históricas reduzem o saldo e eram registradas como
-      // ajustes negativos sem usoId. O saldoResultante é o checkpoint durável
-      // que evita repetir uma redução antiga que já absorveu o resíduo binário.
-      // Créditos positivos sem usoId continuam reconstruídos pela soma decimal.
+      // Reconciliações históricas e ajustes negativos manuais sem usoId
+      // podem carregar arredondamento binário que não é decimalmente
+      // reversível. O snapshot ancora a cadeia e marca o restante do
+      // histórico como ambíguo: no final preservamos saldoArmazenado.
       saldoDecimal = evento.saldoResultante;
+      reconstrucaoAmbigua = true;
     } else if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
       // Uma recuperação no teto grava quantidade zero por idempotência e
       // auditoria. Ela confirma o mesmo saldo legado, mas não desfaz uma
@@ -346,9 +352,10 @@ function saldoDecimalComprovadoPeloHistorico(
     }
     saldoLegado = proximoLegado;
   }
-  const saldoNaoNegativo = compararDecimalSangue(saldoDecimal, 0);
+  const saldoReconstruido = reconstrucaoAmbigua ? saldoArmazenado : saldoDecimal;
+  const saldoNaoNegativo = compararDecimalSangue(saldoReconstruido, 0);
   if (saldoNaoNegativo === null || saldoNaoNegativo < 0) return null;
-  return saldoLegado === saldoArmazenado ? saldoDecimal : null;
+  return saldoLegado === saldoArmazenado ? saldoReconstruido : null;
 }
 
 /**
