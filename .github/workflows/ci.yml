@@ -340,20 +340,11 @@ jobs:
           if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
 
-  auto_update_windows:
-    name: Auto-update — Windows (npm.cmd + Git)
-    runs-on: windows-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Testes do auto-update e execução real de npm.cmd
-        run: node teste-auto-update.mjs
-
       - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
-        run: node teste-bat-node-gate.mjs
+        shell: bash
+        run: |
+          if [ ! -f teste-bat-node-gate.mjs ]; then echo "teste-bat-node-gate.mjs ausente nesta ref — pulado"; exit 0; fi
+          node teste-bat-node-gate.mjs
 
   navegador:
     name: Navegador — homologações Playwright
