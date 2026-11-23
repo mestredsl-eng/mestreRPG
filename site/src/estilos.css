@@ -502,6 +502,21 @@ textarea {
   color: #9aa0a6;
 }
 
+/* Pontos de Sangue integrado à ficha (Issue #186 .9): o widget de
+   saldo/recuperação ocupa a linha inteira abaixo do campo de
+   capacidade — sem cartão próprio nem painel paralelo. */
+.painel-sangue-leitura {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #262b36;
+  border-radius: 8px;
+  background: #12151b;
+}
+.painel-sangue-leitura .grade-2 {
+  margin-bottom: 0.15rem;
+}
+
 /* Campos de bolinhas em linha compacta: rótulo à esquerda, seletor à direita.
    flex: 1 1 215px — preenche a linha da seção sem deixar trilhas vazias
    (grid com span full-width impedia o colapso de trilhas do auto-fit). */

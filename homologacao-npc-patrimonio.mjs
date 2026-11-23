@@ -9,7 +9,7 @@ import { chromium } from "playwright";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepararBanco, portaLivre, subirServidor, esperarSaudavel, criarCenario, comDb, req, encerrarServidor } from "./teste-base.mjs";
+import { prepararBanco, portaLivre, subirServidor, esperarSaudavel, criarCenario, comDb, abrirDb, req, encerrarServidor } from "./teste-base.mjs";
 
 const DIR = mkdtempSync(join(tmpdir(), "mrpg-hom-npcpat-"));
 const BANCO = join(DIR, "mestre-rpg.db");
@@ -31,6 +31,20 @@ try {
   });
   const CID = c.campId, M = c.cookieMestre, J = c.jogadores.jogador1.cookie;
   const NOME = "Campanha NPC Patrimônio";
+
+  // .9: o widget de Sangue só monta com config.sangue habilitada —
+  // sem ela a ficha não mostra painel paralelo. Habilita um vínculo
+  // propositalmente ausente da estrutura para exercitar o fallback
+  // (widget visível com estado degradado, nunca silencioso).
+  {
+    const w = abrirDb(BANCO);
+    try {
+      const rs = w.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(CID);
+      const cfg = JSON.parse(rs.config || "{}");
+      cfg.sangue = { habilitado: true, campoCapacidadeId: "cap-npc", campoNaturezaId: "nat-npc" };
+      w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+    } finally { w.close(); }
+  }
 
   const verId = comDb(BANCO, (db) => db.prepare("select id from sheet_versions limit 1").get()?.id);
   const npc = await req(BASE, "POST", `/campaigns/${CID}/characters`, {

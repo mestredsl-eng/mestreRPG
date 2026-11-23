@@ -1,9 +1,12 @@
 #!/usr/bin/env node
-// Teste E2E das AÇÕES de Sangue na UI (Issue #186, C8-C2 — contrato
-// real R6.3 da PR #230: sangue:ativar/recuperar p/ dono,
-// sangue:ajustar/reconciliar-capacidade p/ mestre).
-// Cobre: recuperação pelo dono, ativação de Poder com custo, erro de
-// saldo insuficiente, ações do mestre, permissões (dono vs mestre vs
+// Teste E2E das AÇÕES de Sangue na UI (Issue #186 — correção .9:
+// widget integrado à ficha; contrato real R6.3 da PR #230:
+// sangue:recuperar p/ dono, sangue:ajustar/reconciliar-capacidade
+// p/ mestre). O fluxo paralelo de ativação (segundo seletor de
+// Poderes + botão "Ativar poder") foi REMOVIDO da UI — o consumo
+// ocorre no uso normal do Poder (D10), coberto por
+// teste-d10-sangue-cobranca.mjs e teste-sangue-runtime.mjs.
+// Cobre: recuperação pelo dono, erro/permissões (dono vs mestre vs
 // espectador), mobile 390px e ausência de controles indevidos.
 // Servidor+SQLite+site 100% descartáveis.
 import crypto from "node:crypto";
@@ -183,49 +186,7 @@ try {
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
-  // Ficha "Frações": prova dos DOIS caminhos canônicos de Poder —
-  //  a) selecao_nivel (contrato inteiro 1..5): nivel 2 válido via API;
-  //  b) campo escalar decimal vinculado (campo.regra.key): 0.5 via API
-  //     — fração é posse válida nesse caminho.
-  const pjF = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: J1, body: {
-      name: "Frações", templateVersionId: vid,
-      data: {
-        cap: 10, nat: "Humano",
-        poderes: [{ key: "poder_fogo", nivel: 2 }],
-        pdec_ok: 0.5,
-      },
-    },
-  });
-  const CHARF = pjF.json?.personagem?.id ?? pjF.json?.id;
-  // Veneno injetado direto no banco (defesa em profundidade — a
-  // validação de escrita já rejeitaria; o filtro da UI não pode
-  // confiar que o dado passou por ela):
-  //  - selecao_nivel: 0.5 (não inteiro), 0, -2, null, "NaN", ausente —
-  //    TODOS devem ser recusados (contrato do tipo é inteiro 1..5);
-  //  - escalar decimal: 0, -1, "NaN", null — recusados (>0 finito).
-  {
-    const w = db();
-    try {
-      const row = w.prepare("select data from characters where id=?").get(CHARF);
-      const data = JSON.parse(row.data || "{}");
-      data.poderes = [
-        { key: "poder_fogo", nivel: 2 },   // válido — prova o caminho a)
-        { key: "poder_zero", nivel: 0.5 }, // fração em selecao_nivel: inválida
-        { key: "poder_neg", nivel: 0 },
-        { key: "poder_sem", nivel: null },
-        { key: "poder_sem", nivel: "NaN" },
-        { key: "poder_sem" }, // nivel ausente por completo
-      ];
-      data.pdec_szero = 0;
-      data.pdec_sneg = -1;
-      data.pdec_stxt = "NaN";
-      data.pdec_saus = null;
-      w.prepare("update characters set data=? where id=?").run(JSON.stringify(data), CHARF);
-    } finally { w.close(); }
-  }
-  setSangue(CHARF, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
-  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM && CHARF));
+  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM));
 
   // ---------- helpers UI ----------
   const browser = await chromium.launch();
@@ -253,14 +214,17 @@ try {
   };
 
   // ---------- 1. Dono: recuperar + ativar ----------
-  sec("UI. dono — recuperar e ativar");
+  sec("UI. dono — recuperar");
   {
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Herói Ações");
     const painel = page.locator(".painel-sangue-leitura");
     t("UI. saldo inicial 5", (await saldoNaTela(page)) === 5);
     t("UI. botão Descansar visível", await painel.getByRole("button", { name: /Descansar \(\+2\)/ }).count() === 1);
-    t("UI. seletor de poder com 'Poder de Fogo'", await painel.locator("select[aria-label='Poder a ativar'] option", { hasText: "Poder de Fogo" }).count() === 1);
+    // .9: SEM segundo seletor de Poderes nem botão de ativação — o
+    // consumo acontece no fluxo normal do Poder (D10), uma única vez.
+    t("UI. sem seletor 'Poder a ativar'", await painel.locator("select[aria-label='Poder a ativar']").count() === 0);
+    t("UI. sem botão 'Ativar poder'", await painel.getByRole("button", { name: /Ativar/ }).count() === 0);
     // recuperar: 5 → 7
     await painel.getByRole("button", { name: /Descansar \(\+2\)/ }).click();
     await page.waitForFunction(() => {
@@ -270,38 +234,21 @@ try {
     await page.waitForTimeout(500);
     t("UI. após Descansar saldo=7", (await saldoNaTela(page)) === 7, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
     t("UI. confirmação 'Recuperação realizada'", /realizada/i.test(await painel.innerText()));
-    // ativar: custo 2 → 7-2=5
-    await painel.getByRole("button", { name: "Ativar poder" }).click();
-    await page.waitForFunction(() => {
-      const p = document.querySelector(".painel-sangue-leitura");
-      return p && /5/.test(p.innerText) && /ativado/i.test(p.innerText);
-    }, { timeout: 15000 }).catch(() => null);
-    await page.waitForTimeout(500);
-    t("UI. após Ativar saldo=5 (custo 2)", (await saldoNaTela(page)) === 5, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
-    t("UI. 'Poder ativado' exibido", /ativado/i.test(await painel.innerText()));
     await ctx.close();
   }
 
-  // ---------- 2. Saldo insuficiente → erro do servidor ----------
-  sec("UI. saldo insuficiente");
+  // ---------- 2. Sem fluxo paralelo de ativação na UI ----------
+  sec("UI. ativação de Poder não é duplicada no widget");
   {
-    setSangueConfig(CID, { ...CFG, poderes: { poder_fogo: { custo: 50 } } });
-    setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+    // "Herói Ações" possui poder_fogo na ficha — mesmo assim o widget
+    // não oferece seletor/botão de ativação: o débito ocorre no D10.
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Herói Ações");
     const painel = page.locator(".painel-sangue-leitura");
-    await painel.getByRole("button", { name: "Ativar poder" }).click();
-    // Espera o ACK de erro — "Saldo de Sangue" contém "saldo", então
-    // o wait precisa mirar "insuficiente" e o botão sair de "Ativando…".
-    await page.waitForFunction(() => {
-      const p = document.querySelector(".painel-sangue-leitura");
-      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ativar/.test(x.textContent));
-      return p && /insuficiente/i.test(p.innerText) && b && !/Ativando/.test(b.textContent);
-    }, { timeout: 20000 }).catch(() => null);
-    const txt = await painel.innerText();
-    t("UI. erro de saldo insuficiente exibido", /insuficiente/i.test(txt), txt.slice(0, 300));
-    t("UI. saldo inalterado após erro", (await saldoNaTela(page)) === 5 && saldoDe(CHAR) === 5);
-    setSangueConfig(CID, CFG);
+    t("UI. widget sem nenhum controle de ativar",
+      await painel.locator("select").count() === 0
+      && await painel.getByRole("button", { name: /Ativar|ativar/ }).count() === 0);
+    t("UI. saldo permanece estável sem uso de Poder", saldoDe(CHAR) === 7, `db=${saldoDe(CHAR)}`);
     await ctx.close();
   }
 
@@ -320,7 +267,7 @@ try {
     const painelM = p2.locator(".painel-sangue-leitura");
     t("UI. mestre vê seção 'Ações do mestre'", await painelM.locator(".painel-sangue-mestre").count() === 1);
     t("UI. mestre NÃO vê botão Descansar (não é dono)", await painelM.getByRole("button", { name: /Descansar/ }).count() === 0);
-    // ajustar +3 com motivo → saldo 5→8
+    // ajustar +3 com motivo → saldo 7→10
     await painelM.locator(".painel-sangue-mestre").locator("summary").click();
     await painelM.locator("input[aria-label='Delta de Sangue (positivo ou negativo)']").fill("3");
     await painelM.locator("input[aria-label='Motivo do ajuste de Sangue']").fill("bônus de teste");
@@ -330,7 +277,7 @@ try {
       return p && /ajustado/i.test(p.innerText);
     }, { timeout: 15000 }).catch(() => null);
     await p2.waitForTimeout(500);
-    t("UI. mestre ajustou saldo para 8", saldoDe(CHAR) === 8, `db=${saldoDe(CHAR)}`);
+    t("UI. mestre ajustou saldo para 10", saldoDe(CHAR) === 10, `db=${saldoDe(CHAR)}`);
     // reconciliar com motivo — reabre o <details> se o reload fechou
     await painelM.locator(".painel-sangue-mestre").evaluate((d) => { if (!d.open) d.querySelector("summary").click(); });
     await painelM.locator("input[aria-label='Motivo da reconciliação de capacidade']").fill("reconciliação teste");
@@ -393,7 +340,7 @@ try {
       await page.waitForTimeout(3500);
       const painel = page.locator(".painel-sangue-leitura");
       const txt = await painel.innerText();
-      t("UI. corrida: painel de B carregado (saldo 8)", /8/.test(txt), txt.slice(0, 160));
+      t("UI. corrida: painel de B carregado (saldo 10)", /10/.test(txt), txt.slice(0, 160));
       t("UI. corrida: posse de A NÃO vazou para B (sem Descansar/Ativar)",
         await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0);
       t("UI. corrida: mestre segue vendo 'Ações do mestre' em B",
@@ -548,82 +495,6 @@ try {
       cap4.length === 4 && uuidOk(cap4[3].requestId) && cap4[3].requestId !== cap1[0].requestId,
       JSON.stringify(cap4.map((c) => c.requestId)));
     t("UI. rid: ajuste final aplicado (1→0)", saldoDe(CHAR2) === 0, `db=${saldoDe(CHAR2)}`);
-    await ctx.close();
-  }
-
-  // ---------- 4e. Poder: selecao_nivel inteiro 1..5 + escalar >0 ----------
-  sec("UI. poder — selecao_nivel 1..5 inteiro e escalar decimal >0");
-  {
-    const { ctx, page } = await novaPagina(J1);
-    await abrirFicha(page, "Frações");
-    const painel = page.locator(".painel-sangue-leitura");
-    const selPoder = painel.locator("select[aria-label='Poder a ativar']");
-    await page.waitForTimeout(800); // lista de poderes assíncrona
-    const opcoes = () => selPoder.locator("option").allInnerTexts();
-    // Caminho a) selecao_nivel: só inteiro 1..5 — nivel 2 aparece.
-    t("UI. sel: 'Poder de Fogo' (selecao_nivel nivel 2) presente",
-      await selPoder.locator("option", { hasText: "Poder de Fogo" }).count() === 1);
-    t("UI. sel: 'Poder Zero' (selecao_nivel nivel 0.5 não inteiro) ausente",
-      await selPoder.locator("option", { hasText: "Poder Zero" }).count() === 0);
-    t("UI. sel: 'Poder Negativo' (selecao_nivel nivel 0) ausente",
-      await selPoder.locator("option", { hasText: "Poder Negativo" }).count() === 0);
-    t("UI. sel: 'Poder Sem Nivel' (null/texto/ausente) ausente",
-      await selPoder.locator("option", { hasText: "Poder Sem Nivel" }).count() === 0);
-    // Caminho b) escalar decimal vinculado: 0.5 é posse válida.
-    t("UI. esc: 'Poder Fracionado' (decimal 0.5 via API) presente",
-      await selPoder.locator("option", { hasText: "Poder Fracionado" }).count() === 1);
-    t("UI. esc: 'Poder Escalar Zero' (0) ausente",
-      await selPoder.locator("option", { hasText: "Poder Escalar Zero" }).count() === 0);
-    t("UI. esc: 'Poder Escalar Negativo' (-1) ausente",
-      await selPoder.locator("option", { hasText: "Poder Escalar Negativo" }).count() === 0);
-    t("UI. esc: 'Poder Escalar Texto' (\"NaN\") ausente",
-      await selPoder.locator("option", { hasText: "Poder Escalar Texto" }).count() === 0);
-    t("UI. esc: 'Poder Escalar Ausente' (null) ausente",
-      await selPoder.locator("option", { hasText: "Poder Escalar Ausente" }).count() === 0);
-    t("UI. total: exatamente 2 opções de Poder", (await opcoes()).length === 2, JSON.stringify(await opcoes()));
-    // captura o emit de sangue:ativar: a UI deve ENVIAR a key do poder
-    // Na árvore .8 integrada (#230 runtime presente), o servidor aceita
-    // o vínculo escalar `nivel > 0` e debita o custo configurado — o
-    // ACK de rejeição documentado na linhagem anterior não se aplica.
-    await page.evaluate(() => {
-      const s = window.__mesaSocket;
-      if (!s || s.__capAtivar) return;
-      s.__capAtivar = [];
-      const orig = s.emit.bind(s);
-      s.emit = (ev, p, cb) => {
-        if (ev === "sangue:ativar" && p && typeof p === "object") {
-          s.__capAtivar.push({ poderKey: p.poderKey, requestId: p.requestId, payload: { ...p } });
-        }
-        return orig(ev, p, cb);
-      };
-    });
-    await selPoder.selectOption({ label: "Poder Fracionado" });
-    await painel.getByRole("button", { name: "Ativar poder" }).click();
-    await page.waitForFunction(() => {
-      const p = document.querySelector(".painel-sangue-leitura");
-      const b = [...document.querySelectorAll(".painel-sangue-leitura button")].find((x) => /Ativar/.test(x.textContent));
-      return p && /não possui|ativado|Falha/i.test(p.innerText) && b && !/Ativando/.test(b.textContent);
-    }, { timeout: 15000 }).catch(() => null);
-    await page.waitForTimeout(400);
-    const capAtivar = await page.evaluate(() => window.__mesaSocket.__capAtivar);
-    t("UI. ativ: UI emite sangue:ativar com poderKey=poder_frac + requestId UUID",
-      capAtivar.length === 1 && capAtivar[0].poderKey === "poder_frac"
-      && /^[0-9a-f-]{36}$/i.test(capAtivar[0].requestId ?? ""),
-      JSON.stringify(capAtivar));
-    // servidor da árvore .8 (#230 integrado) ACEITA o escalar nivel>0:
-    // custo 1 debitado uma única vez — 5→4. Replay com o mesmo
-    // requestId não pode gerar segundo débito (dedupe do runtime).
-    t("UI. ativ: ACK do servidor credita escalar nivel>0 (5→4, débito único)",
-      saldoDe(CHARF) === 4, `db=${saldoDe(CHARF)}`);
-    // replay: reenvia o MESMO payload/requestId — o dedupe do runtime
-    // deve reconhecer a repetição e NÃO gerar segundo débito.
-    const ackReplay = await page.evaluate((pl) => new Promise((res) => {
-      const s = window.__mesaSocket;
-      s.emit("sangue:ativar", pl, (ack) => res(ack ?? { ok: false }));
-    }), capAtivar[0].payload);
-    await page.waitForTimeout(600);
-    t("UI. ativ: replay mesmo requestId não duplica débito (segue 4)",
-      saldoDe(CHARF) === 4, `db=${saldoDe(CHARF)} ack=${JSON.stringify(ackReplay)}`);
     await ctx.close();
   }
 
