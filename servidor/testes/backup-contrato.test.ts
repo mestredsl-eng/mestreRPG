@@ -831,8 +831,10 @@ describe("T6 — backup rejeitado preserva o último backup válido", () => {
     assert.ok(markersAntes instanceof Set, "varredura de proteção deve ser conclusiva antes do teste");
 
     const resultado = await prepararRestauracao(alvoInvalido.id, "teste-contrato-w16");
-    assert.equal(resultado.status, 400, `restauração do alvo inválido deveria retornar 400: ${JSON.stringify(resultado)}`);
-    assert.equal("ok" in resultado && resultado.ok === true, false, "alvo inválido não pode ser preparado");
+    if (!("status" in resultado)) {
+      assert.fail(`alvo inválido não deveria ser preparado: ${JSON.stringify(resultado)}`);
+    }
+    assert.equal(resultado.status, 400, "restauração do alvo inválido deveria retornar 400");
 
     // O último backup íntegro permanece byte a byte igual, no disco e no registro.
     assert.ok(existsSync(ultimoValido.dir), "último backup válido foi removido");
