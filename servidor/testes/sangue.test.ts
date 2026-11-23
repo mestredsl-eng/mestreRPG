@@ -888,6 +888,41 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     assert.equal(lerSangue(ambiguo).estado.saldo, 0.6);
   });
 
+  it("recuperação histórica sem crédito preserva correção decimal comprovada", () => {
+    const em = new Date().toISOString();
+    const usoId = `recuperar:${REQ1}`;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // O saldo binário legado de 0.1 + 0.7 era persistido como
+        // 0.7999999999999999; a correção decimal comprovada é 0.8.
+        saldo: 0.7999999999999999,
+        usos: {
+          [usoId]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "capacidade base", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
+          { em, tipo: "ajuste" as const, quantidade: 0.7, motivo: "bonus de capacidade", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.7999999999999999 },
+          { em, tipo: "recuperacao" as const, quantidade: 0, motivo: "recuperação no teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.8,
+      "evento zero não descarta a correção decimal dos eventos anteriores");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0.8 });
+    assert.equal(poder.ok, true, "Poder que custa o saldo corrigido completo continua disponível");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
   it("permite crédito integral quando a diferença até o teto não cabe em Number", () => {
     const dados: Record<string, unknown> = {
       [CHAVE_SANGUE]: { saldo: 0.09999999999999998, usos: {}, historico: [] },
