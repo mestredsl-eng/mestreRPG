@@ -105,6 +105,72 @@ if not %errorlevel%==0 (
     exit /b 1
 )
 
+rem ---------- Autorizacao explicita de primeiro bootstrap (P10-C) ----------
+rem Executa depois do Boot Lock e ANTES de qualquer atualizacao, npm,
+rem restore, migration ou start. Exit 10 = instalacao nova e limpa:
+rem perguntar ao operador. Exit 0 = instalacao conhecida/autorizada.
+rem Qualquer outro codigo = estado ambiguo/corrompido: abortar fail-closed.
+if not exist scripts\avaliar-boot.mjs (
+    echo [ERRO] scripts\avaliar-boot.mjs ausente — inicializacao abortada.
+    node scripts\boot-lock.mjs liberar >nul 2>nul
+    pause
+    exit /b 1
+)
+node scripts\avaliar-boot.mjs preflight
+if errorlevel 10 goto :perguntar_primeiro_bootstrap
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:perguntar_primeiro_bootstrap
+echo.
+echo [ATENCAO] Esta instalacao parece ser um primeiro uso limpo.
+echo O Mestre RPG precisara criar um banco de dados novo.
+echo Confirme somente se esta e realmente uma instalacao nova.
+:perguntar_primeiro_bootstrap_novamente
+set "MESTRE_BOOT_RESPOSTA="
+set /p "MESTRE_BOOT_RESPOSTA=Autorizar primeiro bootstrap? [S/N]: "
+if errorlevel 1 goto :bootstrap_eof
+if /i "%MESTRE_BOOT_RESPOSTA%"=="S" goto :confirmar_primeiro_bootstrap
+if /i "%MESTRE_BOOT_RESPOSTA%"=="N" goto :recusar_primeiro_bootstrap
+if not defined MESTRE_BOOT_RESPOSTA goto :perguntar_primeiro_bootstrap_novamente
+echo [AVISO] Resposta invalida. Digite S ou N.
+goto :perguntar_primeiro_bootstrap_novamente
+
+:confirmar_primeiro_bootstrap
+if not exist scripts\autorizar-bootstrap.mjs goto :falha_autorizacao_bootstrap
+node scripts\autorizar-bootstrap.mjs --confirmar-provisionamento
+if errorlevel 1 goto :falha_autorizacao_bootstrap
+node scripts\avaliar-boot.mjs validar
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:recusar_primeiro_bootstrap
+echo [AVISO] Primeiro bootstrap recusado. Nenhuma atualizacao, restauracao,
+echo         migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:bootstrap_eof
+echo [ERRO] Entrada terminou antes da confirmacao. Boot abortado por seguranca.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:falha_autorizacao_bootstrap
+echo [ERRO] Nao foi possivel emitir a autorizacao de primeiro bootstrap.
+echo        Nenhuma etapa de banco sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
+
+:falha_preflight_bootstrap
+echo [ERRO] Estado de instalacao desconhecido, corrompido ou com recuperacao pendente.
+echo        Nenhuma atualizacao, restauracao, migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
+
+:bootstrap_autorizado
+
 rem ---------- Atualizacao automatica via Git (Issue #155) ----------
 rem Executa SOMENTE depois da sonda de health do lock acima: se ja ha
 rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
