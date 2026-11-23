@@ -10,6 +10,7 @@ import { readdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import { sessao } from "./teste-base.mjs";
+import { io as ioClient } from "socket.io-client";
 
 let pass = 0, fail = 0;
 const falhas = [];
@@ -467,6 +468,22 @@ try {
   const curA6Antes = comDb(banco, (db) =>
     db.prepare("select current_version_id from sheet_templates where id=?").get(tplA6).current_version_id);
 
+  // socket real do mestre B (membro só de B) — captura fichas:atualizadas
+  // durante os ataques para provar o alvo do emitirCampanha
+  const eventosF6 = [];
+  const sockF6 = ioClient(base, {
+    path: "/socket.io", transports: ["websocket", "polling"], reconnection: false,
+    extraHeaders: { cookie: cookieMestreB },
+  });
+  sockF6.on("fichas:atualizadas", (d) => eventosF6.push(d));
+  await new Promise((r) => sockF6.on("connect", r));
+  // rooms de campanha exigem entrar-campanha explícito (valida membership)
+  await new Promise((r) => sockF6.emit("entrar-campanha", camp2Id, (okJoin) => r(okJoin === true)));
+  // marca d'água de auditoria: só contam linhas criadas DURANTE os ataques
+  // (o modelo_criado de tplA6 é da fixture F4, anterior ao ataque)
+  const auditRowidAntes = comDb(banco, (db) =>
+    db.prepare("select coalesce(max(rowid),0) m from audit_logs").get().m);
+
   // ATAQUE 1 — PUT de estrutura usando a rota da campanha B sobre recurso de A
   const atkPut = await req(base, "PUT", `/campaigns/${camp2Id}/sheet-templates/${tplA6}/versions/${verA6}`, {
     cookie: cookieMestreB,
@@ -487,6 +504,15 @@ try {
   const pubA6 = comDb(banco, (db) =>
     db.prepare("select published_at from sheet_versions where id=?").get(verA6).published_at ?? null);
 
+  await new Promise((r) => setTimeout(r, 400)); // emits de socket propagam
+  try { sockF6.disconnect(); } catch {}
+
+  // auditoria: linhas de audit_logs criadas DURANTE os ataques
+  const auditsAtaque = comDb(banco, (db) => db.prepare(
+    "select action, campaign_id, detail from audit_logs where rowid > ? order by rowid").all(auditRowidAntes));
+  const auditPublish = auditsAtaque.filter((a) => a.action === "ficha.modelo_publicado");
+  const auditPut = auditsAtaque.filter((a) => a.action !== "ficha.modelo_publicado");
+
   t("F6 PUT cross-campaign: API respondeu (status registrado)", [200, 201, 400, 403, 404].includes(atkPut.status), `status=${atkPut.status}`);
   t("F6 publish cross-campaign: API respondeu (status registrado)", [200, 201, 400, 403, 404].includes(atkPub.status), `status=${atkPub.status}`);
   t("F6 observado: mestre de B mutou estrutura de versão de A via rota de B (defeito documentado — contrato exige 404)",
@@ -494,7 +520,23 @@ try {
     `put=${atkPut.status} estruturaMudou=${estruturaA6Depois !== estruturaA6Antes}`);
   t("F6 observado: publish de A via rota de B gravou publishedAt/currentVersionId (defeito documentado)",
     atkPub.status === 200 && !!pubA6 && curA6Depois === verA6,
-    `pub=${atkPub.status} publishedAt=${pubA6} cur=${curA6Depois===verA6}`);
+    `pub=${atkPub.status} publishedAt=${pubA6} cur=${curA6Depois===verA6} rows=${JSON.stringify(auditsAtaque.map((a) => a.action))}`);
+  // trilha de auditoria/socket do ataque (Dono 7099469456 item 4):
+  // publish grava audit_logs com campaign_id do CAMINHO (B) — não do
+  // template (A); PUT não gera NENHUMA linha de auditoria para tplA6.
+  t("F6 observado: publish auditado com campaign_id da rota (B), não do template (A)",
+    auditPublish.length === 1 && auditPublish[0].campaign_id === camp2Id,
+    JSON.stringify(auditsAtaque.map((a) => ({ a: a.action, c: a.campaign_id }))));
+  t("F6 observado: PUT cross-campaign NÃO gerou audit_log (mutação sem rastro)",
+    auditPut.length === 0, `auditPut=${JSON.stringify(auditsAtaque.map((a) => ({ a: a.action, c: a.campaign_id, d: String(a.detail).slice(0, 120) })))}`);
+  // socket: publish emite fichas:atualizadas para a room da campanha do
+  // caminho (B) — mestre B recebe evento sobre templateId de A;
+  // PUT emite para a campanha do template (A) — mestre B NÃO recebe.
+  const evTplA6 = eventosF6.filter((e) => e?.templateId === tplA6);
+  // exatamente 1 evento = só o publish (emit p/ room de B); se o PUT
+  // também vazasse p/ B seriam 2 — a contagem distingue os dois emits
+  t("F6 observado: socket de B recebeu fichas:atualizadas do template de A só no publish (PUT emite p/ room de A)",
+    atkPub.status === 200 && evTplA6.length === 1, `eventos=${JSON.stringify(eventosF6).slice(0, 200)}`);
 
   // controle positivo: mestre B opera template da PRÓPRIA campanha B
   const tplB6 = (await req(base, "POST", `/campaigns/${camp2Id}/sheet-templates`, { cookie: cookieMestreB, body: { name: "F6-Own" } })).json?.modelo?.id;
