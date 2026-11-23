@@ -431,3 +431,7 @@ jobs:
           node teste-xp-historico-ui.mjs
       - name: E2E concessão XP em lote (#185)
         run: node teste-xp-lote-ui.mjs
+      - name: Suíte E2E UI do ciclo de campanha (#291 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-ciclo-campanha-ui.mjs ====="
+          node teste-ciclo-campanha-ui.mjs
