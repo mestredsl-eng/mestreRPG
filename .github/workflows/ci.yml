@@ -415,6 +415,7 @@ jobs:
             teste-realtime-paginas.mjs
             homologacao-pacotes-forjados.mjs
             teste-a11y-fluxos-297.mjs
+            homologacao-validacao-ficha.mjs
           )
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
