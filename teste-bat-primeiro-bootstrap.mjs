@@ -6,7 +6,7 @@ import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import {
   diagnosticarBootstrap, gravarReciboInstalacao,
@@ -58,6 +58,11 @@ function fixture(nome, recibo = false) {
   const porta = String(36000 + (++sequencia));
   const env = {
     ...process.env,
+    // O cmd.exe precisa resolver o mesmo node.exe que executa esta suíte.
+    // O processo pai pode vir de um shell MSYS/Git Bash com PATH convertido;
+    // prepend explícito da pasta de process.execPath torna a fixture fiel ao
+    // runtime Windows, sem shim de Node nem substituição de versão.
+    PATH: dirname(process.execPath) + ";" + (process.env.PATH || ""),
     NODE_OPTIONS: "--require=" + preload.replace(/\\/g, "/"),
     MESTRE_BOOT_TEST_LOG: log,
     MESTRE_BOOT_TEST_UPDATE_MARKER: updateMarker,
