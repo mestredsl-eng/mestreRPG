@@ -44,7 +44,7 @@ function fixture(nome, recibo = false) {
   writeFileSync(preload, [
     'const fs = require("node:fs");',
     'const p = process.env.MESTRE_BOOT_TEST_LOG;',
-    'if (p) fs.appendFileSync(p, "node " + process.argv.slice(1).join(" ") + "\\n");',
+    'if (p) fs.appendFileSync(p, "node " + process.argv.slice(1).join(" ") + "\n");',
     "",
   ].join("\n"));
   writeFileSync(join(scripts, "auto-update.mjs"), [
@@ -58,7 +58,7 @@ function fixture(nome, recibo = false) {
   const porta = String(36000 + (++sequencia));
   const env = {
     ...process.env,
-    NODE_OPTIONS: "--require=" + preload.replace(/\\/g, "/"),
+    NODE_OPTIONS: "--require=" + preload.replace(/\/g, "/"),
     MESTRE_BOOT_TEST_LOG: log,
     MESTRE_BOOT_TEST_UPDATE_MARKER: updateMarker,
     MESTRE_STATE_DIR: join(dir, "state"),
@@ -86,7 +86,7 @@ const semEfeitos = (f, out) =>
   lerProvisionamento(f.app, f.env).status === "ausente"
   && lerAutorizacaoBootstrap(f.app, f.env).status === "ausente"
   && !existsSync(f.updateMarker)
-  && !tem(out, /aplicar-restauracao\\.js|db:migrate|npm run start/i);
+  && !tem(out, /aplicar-restauracao\.js|db:migrate|npm run start/i);
 
 try {
   if (process.platform !== "win32") {
@@ -98,37 +98,37 @@ try {
     // S: deve persistir provisionamento + autorização ANTES de tocar updater.
     {
       const f = fixture("confirma-S");
-      const r = executar(f, "S\\r\\nx\\r\\n"); // x libera o pause do sentinela updater
+      const r = executar(f, "S\r\nx\r\n"); // x libera o pause do sentinela updater
       const prov = lerProvisionamento(f.app, f.env);
       const auth = lerAutorizacaoBootstrap(f.app, f.env);
-      const iLock = pos(r.out, /boot-lock\\.mjs adquirir/i);
-      const iAuth = pos(r.out, /autorizar-bootstrap\\.mjs --confirmar-provisionamento/i);
-      const iEval = pos(r.out, /avaliar-boot\\.mjs validar/i);
-      const iUpdate = pos(r.out, /auto-update\\.mjs/i);
+      const iLock = pos(r.out, /boot-lock\.mjs adquirir/i);
+      const iAuth = pos(r.out, /autorizar-bootstrap\.mjs --confirmar-provisionamento/i);
+      const iEval = pos(r.out, /avaliar-boot\.mjs validar/i);
+      const iUpdate = pos(r.out, /auto-update\.mjs/i);
       check("S: cmd.exe terminou sem timeout", !r.run.error || r.run.error.code !== "ETIMEDOUT", r.run.error?.message ?? "");
       check("S: autorização foi emitida", prov.status === "ok" && auth.status === "ok", `prov=${prov.status} auth=${auth.status}`);
-      check("S: prompt exibido e confirmação aceita", /Autorizar primeiro bootstrap\? \\[S\\/N\\]/i.test(r.saida) && /autorizar-bootstrap\\.mjs --confirmar-provisionamento/i.test(r.out));
+      check("S: prompt exibido e confirmação aceita", /Autorizar primeiro bootstrap\? \[S\/N\]/i.test(r.saida) && /autorizar-bootstrap\.mjs --confirmar-provisionamento/i.test(r.out));
       check("S: ordem lock → autorização → revalidação → updater", iLock >= 0 && iAuth > iLock && iEval > iAuth && iUpdate > iEval,
         `lock=${iLock} auth=${iAuth} validar=${iEval} update=${iUpdate}`);
       check("S: updater só foi invocado depois do consentimento", existsSync(f.updateMarker));
       check("S: falha sentinela do updater abortou antes de restore/migrate/start",
-        !tem(r.out, /aplicar-restauracao\\.js|db:migrate|npm run start/i));
-      check("S: lock liberado ao abortar depois do updater", tem(r.out, /boot-lock\\.mjs liberar/i));
+        !tem(r.out, /aplicar-restauracao\.js|db:migrate|npm run start/i));
+      check("S: lock liberado ao abortar depois do updater", tem(r.out, /boot-lock\.mjs liberar/i));
     }
 
     // N: recusa explícita não grava marker/autorização e não toca updater.
     {
       const f = fixture("recusa-N");
-      const r = executar(f, "N\\r\\n");
+      const r = executar(f, "N\r\n");
       check("N: recusou e terminou com erro", r.run.status !== 0 && r.run.status !== null, `status=${r.run.status}`);
       check("N: nenhum marker/autorização/atualizador/restore/migrate/start", semEfeitos(f, r.out), r.out.slice(-1000));
-      check("N: lock liberado", tem(r.out, /boot-lock\\.mjs liberar/i), r.out);
+      check("N: lock liberado", tem(r.out, /boot-lock\.mjs liberar/i), r.out);
     }
 
     // Inválido: repete a pergunta; N subsequente recusa sem efeito.
     {
       const f = fixture("invalida-depois-N");
-      const r = executar(f, "X\\r\\nN\\r\\n");
+      const r = executar(f, "X\r\nN\r\n");
       check("inválida: aviso e nova pergunta", /Resposta invalida/i.test(r.saida)
         && (r.saida.match(/Autorizar primeiro bootstrap\?/gi) ?? []).length >= 2, r.saida.slice(-1000));
       check("inválida→N: nada foi provisionado ou atualizado", semEfeitos(f, r.out), r.out);
@@ -137,7 +137,7 @@ try {
     // Linha vazia: deve repetir a pergunta sem criar qualquer estado.
     {
       const f = fixture("vazia-depois-N");
-      const r = executar(f, "\\r\\nN\\r\\n");
+      const r = executar(f, "\r\nN\r\n");
       check("vazia: repetiu a pergunta (não tratou ENTER como S)", (r.saida.match(/Autorizar primeiro bootstrap\?/gi) ?? []).length >= 2, r.saida.slice(-1000));
       check("vazia→N: nenhum efeito de bootstrap", semEfeitos(f, r.out), r.out);
     }
@@ -155,7 +155,7 @@ try {
     // Instalação concluída: não pergunta e não tenta autorizar de novo.
     {
       const f = fixture("instalacao-existente", true);
-      const r = executar(f, "x\\r\\n");
+      const r = executar(f, "x\r\n");
       check("existente: reconhecida como concluída", diagnosticarBootstrap(f.app, f.env) === "instalacao-concluida");
       check("existente: não exibe prompt de primeiro bootstrap", !/Autorizar primeiro bootstrap\?/i.test(r.saida), r.saida.slice(-600));
       check("existente: não emite provisionamento nem autorização novos",
@@ -163,7 +163,7 @@ try {
       check("existente: segue para updater após gate seguro", existsSync(f.updateMarker));
     }
 
-    console.log(`\\n${pass} ok, ${fail} falhas`);
+    console.log(`\n${pass} ok, ${fail} falhas`);
     if (fail) process.exitCode = 1;
   }
 } finally {
