@@ -910,6 +910,33 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (poder.ok) assert.equal(poder.estado.saldo, 0);
   });
 
+  it("preserva saldo persistido após ajuste negativo legado ambíguo e crédito posterior", () => {
+    const em = new Date().toISOString();
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A cadeia binária antiga arredondou 1.2 - 0.4 + 0.2 para 1,
+        // embora reconstruir o trecho intermediário como decimal produza
+        // 0.9999999999999999.
+        saldo: 1,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 1.2, motivo: "crédito legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1.2 },
+          { em, tipo: "ajuste" as const, quantidade: -0.4, motivo: "débito legado sem identidade", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.7999999999999999 },
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito posterior legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 1 },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 1,
+      "histórico ambíguo preserva o saldo gravado em vez de publicar 0.9999999999999999");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 1 });
+    assert.equal(poder.ok, true, "D10 de custo 1 consome o saldo persistido integral");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
   it("reconciliação antiga permanece ancorada após recuperação sem crédito", () => {
     const em = new Date().toISOString();
     let dados: Record<string, unknown> = {
