@@ -296,7 +296,7 @@ try {
   const derruba = (nome) => wf.exec(`DROP TRIGGER IF EXISTS ${nome}`);
   const conta = (sqlQ, ...p) => wf.prepare(sqlQ).get(...p).n;
 
-  // ---- F1: POST /campaigns — campaigns + memberships sem transação ----
+  // ---- F1: POST /campaigns — campaigns + memberships atômicos ----
   dispara("f1_memb", `CREATE TRIGGER f1_memb BEFORE INSERT ON memberships
     WHEN NEW.campaign_id IN (SELECT id FROM campaigns WHERE name='F1-INJETADO')
     BEGIN SELECT RAISE(ABORT,'F1_INJETADO'); END`);
@@ -308,11 +308,11 @@ try {
   };
   t("F1: falha no insert de membership → API responde erro controlado (não 2xx)",
     rF1.status >= 400, `status=${rF1.status}`);
-  t("F1 observado: campanha persistiu SEM membership (órfão irrecuperável — defeito documentado)",
-    orfF1.camp === 1 && orfF1.memb === 0, JSON.stringify(orfF1));
+  t("F1 corrigido: falha no insert de membership reverte campanha e membership",
+    orfF1.camp === 0 && orfF1.memb === 0, JSON.stringify(orfF1));
   wf.prepare("delete from campaigns where name='F1-INJETADO'").run(); // limpeza do órfão
 
-  // ---- F2a: criação de modelo — template + version + currentVersionId ----
+  // ---- F2a: criação de modelo — template + version + currentVersionId atômicos ----
   dispara("f2a_ver", `CREATE TRIGGER f2a_ver BEFORE INSERT ON sheet_versions
     WHEN NEW.template_id IN (SELECT id FROM sheet_templates WHERE name='F2A-TPL')
     BEGIN SELECT RAISE(ABORT,'F2A'); END`);
@@ -324,11 +324,11 @@ try {
     cur: wf.prepare("select current_version_id from sheet_templates where name='F2A-TPL'").get()?.current_version_id ?? null,
   };
   t("F2a: falha no insert de versão → API responde erro", rF2a.status >= 400, `status=${rF2a.status}`);
-  t("F2a observado: template órfão sem versão/currentVersionId (defeito documentado)",
-    orfF2a.tpl === 1 && orfF2a.ver === 0 && orfF2a.cur === null, JSON.stringify(orfF2a));
+  t("F2a corrigido: falha no insert de versão reverte template, versão e ponteiro",
+    orfF2a.tpl === 0 && orfF2a.ver === 0 && orfF2a.cur === null, JSON.stringify(orfF2a));
   wf.prepare("delete from sheet_templates where name='F2A-TPL'").run();
 
-  // ---- F2b: nova versão — version insert ok, currentVersionId update aborta ----
+  // ---- F2b: nova versão — insert + currentVersionId atômicos ----
   const tplB = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F2B-TPL" } });
   const tplBId = tplB.json?.modelo?.id;
   const curB0 = wf.prepare("select current_version_id from sheet_templates where id=?").get(tplBId)?.current_version_id;
@@ -341,10 +341,10 @@ try {
     cur: wf.prepare("select current_version_id from sheet_templates where id=?").get(tplBId)?.current_version_id,
   };
   t("F2b: falha no update de currentVersionId → API responde erro", rF2b.status >= 400, `status=${rF2b.status}`);
-  t("F2b observado: versão órfã criada e currentVersionId NÃO avançou (defeito documentado)",
-    orfF2b.vers === 2 && orfF2b.cur === curB0, JSON.stringify({ ...orfF2b, curB0 }));
+  t("F2b corrigido: falha ao atualizar currentVersionId reverte versão recém-criada",
+    orfF2b.vers === 1 && orfF2b.cur === curB0, JSON.stringify({ ...orfF2b, curB0 }));
 
-  // ---- F2c: publish — publishedAt grava, currentVersionId aborta ----
+  // ---- F2c: publish — publishedAt + currentVersionId atômicos ----
   const tplC = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F2C-TPL" } });
   const tplCId = tplC.json?.modelo?.id;
   const v1C = tplC.json?.modelo?.versionId;
@@ -359,10 +359,10 @@ try {
     cur: wf.prepare("select current_version_id from sheet_templates where id=?").get(tplCId)?.current_version_id,
   };
   t("F2c: falha no publish → API responde erro", rF2c.status >= 400, `status=${rF2c.status}`);
-  t("F2c observado: v1 ficou publishedAt mas currentVersionId seguiu v2 (inconsistência documentada)",
-    pubC.v1pub !== null && pubC.cur === v2C, JSON.stringify({ ...pubC, v1C, v2C }));
+  t("F2c corrigido: falha ao atualizar currentVersionId reverte publishedAt e mantém versão atual",
+    pubC.v1pub === null && pubC.cur === v2C, JSON.stringify({ ...pubC, v1C, v2C }));
 
-  // ---- F4a: troca de modelo padrão — limpar default + set default sem tx ----
+  // ---- F4a: troca de modelo padrão — limpar + promover dentro de transação ----
   // PATCH isDefault:true faz UPDATE is_default=0 nos demais e depois UPDATE
   // is_default=1 no alvo. Injetar falha no SEGUNDO update deve deixar o
   // default anterior intacto; sem tx, o primeiro update já commitou.
@@ -381,8 +381,9 @@ try {
     d2: wf.prepare("select is_default from sheet_templates where id=?").get(tplD2)?.is_default,
   };
   t("F4a: falha no 2º update de default → API responde erro", rF4a.status >= 400, `status=${rF4a.status}`);
-  t("F4a observado: ZERO defaults após falha (default anterior perdido — defeito documentado)",
-    defaultsDepois.total === 0, JSON.stringify({ antes: defaultsAntes, ...defaultsDepois }));
+  t("F4a corrigido: falha ao promover alvo preserva o default anterior",
+    defaultsDepois.total === 1 && defaultsDepois.d1 === 1 && defaultsDepois.d2 === 0,
+    JSON.stringify({ antes: defaultsAntes, ...defaultsDepois }));
   // restaura default de D1 para os próximos cenários
   wf.prepare("update sheet_templates set is_default=1 where id=?").run(tplD1);
 
@@ -398,11 +399,9 @@ try {
     defaultsF4b === 1, `e1=${e1.status} e2=${e2.status} defaults=${defaultsF4b}`);
 
   // ---- F5: PUT de estrutura vs publicação (TOCTOU) — SEM SEAM, documentado ----
-  // O handler faz SELECT+check de publishedAt e UPDATE em sequência síncrona;
-  // não há hook NODE_ENV=test para pausar entre eles. Prova determinística
-  // fica BLOCKED até seam de teste ou correção (UPDATE condicional
-  // publishedAt IS NULL). Registrado como pendente, não como cobertura.
-  console.log("  .. F5 BLOCKED: PUT×publish TOCTOU exige seam de pausa entre check e update — sem hook de teste em produção");
+  // O UPDATE da rota PUT agora é condicional a published_at IS NULL;
+  // a verificação continua sem harness determinístico de corrida PUT×publish.
+  console.log("  .. F5: escrita condicional published_at IS NULL aplicada; harness de corrida concorrente segue pendente.");
 
   // ---- F3: upload + vínculo a anotação — files ok, note_attachments aborta ----
   const notaF3 = await req(base, "POST", `/campaigns/${campId}/anotacoes`, {
