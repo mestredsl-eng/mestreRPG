@@ -33,7 +33,9 @@ function executarCaso(nome, versao, aceita, esperado) {
   writeFileSync(preload, [
     'const fs = require("node:fs");',
     'const log = process.env.MESTRE_BAT_TEST_LOG;',
-    'if (log) fs.appendFileSync(log, "node " + process.argv.slice(2).join(" ") + "\\n");',
+    // argv[1] é o caminho do script (argv[2+] são os argumentos) —
+    // slice(1) registra "node <script> <args>" para os sentinelas.
+    'if (log) fs.appendFileSync(log, "node " + process.argv.slice(1).join(" ") + "\\n");',
     'const version = process.env.MESTRE_FAKE_NODE_VERSION;',
     "if (!version) process.exit(1);",
     'Object.defineProperty(process.versions, "node", { value: version, configurable: true });',
@@ -65,8 +67,11 @@ function executarCaso(nome, versao, aceita, esperado) {
     run.error ? run.error.message : "");
   check(nome + ": " + esperado, run.status === 1 && saida.includes(esperado),
     "status=" + run.status + "; saída=" + saida.slice(-700));
-  const tentouLock = /node scripts\\boot-lock\.mjs adquirir/i.test(chamadas);
-  const tentouUpdater = /node scripts\\auto-update\.mjs/i.test(chamadas);
+  // O preload registra o caminho resolvido do script — casa por nome
+  // de arquivo, não pelo prefixo "node scripts\\" (argv[1] pode ser
+  // absoluto e usar separadores mistos).
+  const tentouLock = /boot-lock\.mjs\s+adquirir/i.test(chamadas);
+  const tentouUpdater = /auto-update\.mjs/i.test(chamadas);
   const chamouNpm = /^npm /im.test(chamadas);
   if (aceita) {
     check(nome + ": gate aceitou e chegou ao sentinela do boot-lock", tentouLock, chamadas);
