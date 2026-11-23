@@ -74,7 +74,12 @@ export interface ElementoDisponivel {
 }
 
 export interface Progressao {
-  xp: { saldo: number; historico: EventoXp[] };
+  xp: {
+    saldo: number;
+    historico: EventoXp[];
+    /** Saldo anterior ao primeiro evento retido (histórico truncado). */
+    ancora?: number;
+  };
   disponiveis: ElementoDisponivel[];
 }
 
