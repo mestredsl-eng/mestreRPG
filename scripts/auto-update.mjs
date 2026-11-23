@@ -542,10 +542,19 @@ export async function recuperarAtualizacaoPendente(opts = {}) {
   const log = opts.log ?? (() => {});
   const envGit = { ...GIT_ENV, ...(opts.envGit ?? {}) };
   const envEstado = opts.envEstado ?? process.env;
+  // Estado/journal é consultado primeiro: instalações ZIP sem .git são
+  // suportadas quando não há atualização pendente. Se houver journal,
+  // a ausência de Git impede rollback e permanece fail-closed.
+  const journalInicial = lerJournalDuravel(cwd, envEstado);
+  if (journalInicial.status === "ausente") {
+    return { ok: true, recuperado: false, motivo: "sem-journal" };
+  }
+  if (journalInicial.status !== "ok") {
+    return { ok: false, motivo: `journal-${journalInicial.status}`, detalhes: journalInicial };
+  }
   const git = (args, repoDir = cwd) => executar("git", args, { cwd: repoDir, env: envGit, timeoutMs: TIMEOUT_GIT_MS });
-
   const top = git(["rev-parse", "--show-toplevel"]);
-  if (top.code !== 0) return { ok: false, motivo: "sem-repositorio-git" };
+  if (top.code !== 0) return { ok: false, motivo: "sem-repositorio-git-com-journal" };
   const repoDir = String(top.stdout).trim();
   const journal = lerJournalDuravel(repoDir, envEstado);
   if (journal.status === "ausente") return { ok: true, recuperado: false, motivo: "sem-journal" };
