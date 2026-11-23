@@ -12,7 +12,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  encerrarServidor, limparDir, comDb,
+  limparDir, comDb,
 } from "./teste-base.mjs";
 import {
   dirEstado, diretorioBaseEstado, instalacaoId, gravarEstado, JOURNAL_UPDATE,
@@ -133,15 +133,28 @@ async function main() {
     // timeout nunca vira PASS.
     {
       const observar = (proc) => {
+        proc.__exited = false;
         proc.__closed = false;
+        proc.once("exit", () => { proc.__exited = true; });
         proc.once("close", () => { proc.__closed = true; });
         return proc;
       };
-      const esperarFechado = (proc, timeoutMs = 15000) => {
-        if (proc.__closed) return Promise.resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode });
+      /** Aguarda exit E close com timeout — resolve null se qualquer um
+       *  não chegar; nunca trata ausência de evento como sucesso. */
+      const esperarEventos = (proc, timeoutMs = 15000) => {
+        if (proc.__exited && proc.__closed) {
+          return Promise.resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode });
+        }
         return new Promise((resolve) => {
           const t = setTimeout(() => resolve(null), timeoutMs);
-          proc.once("close", () => { clearTimeout(t); resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode }); });
+          const concluir = () => {
+            if (proc.__exited && proc.__closed) {
+              clearTimeout(t);
+              resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode });
+            }
+          };
+          proc.once("exit", concluir);
+          proc.once("close", concluir);
         });
       };
 
@@ -158,9 +171,11 @@ async function main() {
 
         const killAceito = proc.kill("SIGKILL");
         ok("L4 kill SIGKILL aceito pelo SO", killAceito === true);
-        const saida1 = await esperarFechado(proc, 15000);
-        ok("L4 primeiro processo: exit+close reais", saida1 !== null,
-          "timeout aguardando close — stdio pode não ter drenado");
+        const saida1 = await esperarEventos(proc, 15000);
+        ok("L4 primeiro processo: exit real observado", proc.__exited === true);
+        ok("L4 primeiro processo: close real (stdio drenado)", proc.__closed === true,
+          "timeout aguardando close");
+        ok("L4 primeiro processo: exit+close dentro do timeout", saida1 !== null);
         if (process.platform === "win32") {
           // Windows: Node mapeia SIGKILL para TerminateProcess —
           // encerramento abrupto equivalente; signalCode POSIX não se aplica.
@@ -189,10 +204,10 @@ async function main() {
         }
         for (const [nome, p] of [["primeiro", proc], ["segundo", proc2]]) {
           if (!p) continue;
-          const s = await esperarFechado(p, 15000);
-          if (s === null) {
+          const s = await esperarEventos(p, 15000);
+          if (s === null || !p.__exited || !p.__closed) {
             falharam++;
-            console.log(`FALHOU L4 ${nome} processo: close não chegou pid=${p.pid}`);
+            console.log(`FALHOU L4 ${nome} processo: exit/close não confirmados pid=${p.pid}`);
           }
         }
       }
