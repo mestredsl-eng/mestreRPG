@@ -360,7 +360,7 @@ try {
     await p2.waitForFunction(() => {
       const s = document.querySelector('select[aria-label="Status de ui_jogador2"]');
       return s && s.value === "bloqueado";
-    }, { timeout: 15000 }).then(() => ok("U11. multi-aba reflete bloqueio sem reload", true))
+    }, undefined, { timeout: 15000 }).then(() => ok("U11. multi-aba reflete bloqueio sem reload", true))
       .catch(() => ok("U11. multi-aba reflete bloqueio sem reload", false));
 
     // p1 restaura; p2 acompanha
@@ -368,7 +368,7 @@ try {
     await p2.waitForFunction(() => {
       const s = document.querySelector('select[aria-label="Status de ui_jogador2"]');
       return s && s.value === "ativo";
-    }, { timeout: 15000 }).then(() => ok("U11. multi-aba reflete desbloqueio sem reload", true))
+    }, undefined, { timeout: 15000 }).then(() => ok("U11. multi-aba reflete desbloqueio sem reload", true))
       .catch(() => ok("U11. multi-aba reflete desbloqueio sem reload", false));
 
     // troca de campanha na mesma sessão: volta à home e abre B
