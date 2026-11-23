@@ -206,59 +206,78 @@ export async function verificarAtualizacao(opts = {}) {
     return pular("upstream-nao-reflete-remoto", { repoDir, branch });
   }
 
-  // 9. pull exclusivamente fast-forward; SHA anterior registrado antes.
-  //    A partir daqui qualquer excecao inesperada pode deixar o HEAD
-  //    atualizado sem deps/build — devolvemos `rollback` para o boot
-  //    tentar a reversao controlada em vez de propagar erro (B2).
+  // 9. Persistir intenção ANTES de qualquer mudança do HEAD.
+  // O alvo é shaRemoto, já verificado contra refs/remotes/origin/<branch>;
+  // usamos merge --ff-only <SHA> para não perseguir um remoto que avance
+  // entre a verificação e a aplicação.
   const shaAnterior = String(git(["rev-parse", "HEAD"]).stdout).trim();
+  const diffArquivos = git(["diff", "--name-only", shaAnterior, shaRemoto]);
+  if (diffArquivos.code !== 0) {
+    return pular("falha-diagnostico-pre-pull", {
+      repoDir, branch, shaAnterior, shaNovo: shaRemoto,
+      detalhe: String(diffArquivos.stderr).trim().slice(0, 300),
+    });
+  }
+  const arquivosMudados = String(diffArquivos.stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  const depsMudaram = arquivosMudados.some((p) =>
+    p === "package-lock.json" || p.endsWith("/package-lock.json") ||
+    p === "package.json" || p.endsWith("/package.json")
+  ) || !existsSync(join(repoDir, "node_modules"));
+  // Qualquer mudança do workspace site/ (inclui vite.config.ts/index.html)
+  // exige rebuild, mesmo quando site/src não tem timestamp mais recente.
+  const siteMudou = arquivosMudados.some((p) =>
+    p.startsWith("site/") || p === "package.json" || p === "package-lock.json"
+  );
+  const intencao = {
+    fase: "pull-iniciado",
+    etapa: "merge-fast-forward",
+    branch,
+    repoDir,
+    shaAnterior,
+    shaNovo: shaRemoto,
+    commits: nBehind,
+    depsMudaram,
+    siteMudou,
+    iniciadoEm: new Date().toISOString(),
+  };
+  if (typeof opts.registrarPullAntes === "function") {
+    try {
+      const gravado = opts.registrarPullAntes(intencao);
+      if (gravado !== true) {
+        return pular("falha-registro-journal", { repoDir, branch, shaAnterior, shaNovo: shaRemoto });
+      }
+    } catch (e) {
+      log(`[auto-update] Journal durável não pôde ser gravado antes do pull: ${String(e?.message ?? e).slice(0, 200)}`);
+      return pular("falha-registro-journal", { repoDir, branch, shaAnterior, shaNovo: shaRemoto });
+    }
+  }
+
   try {
-    log(`[auto-update] ${nBehind} commit(s) novo(s) em ${upstream} — aplicando fast-forward...`);
-    const pull = git(["pull", "--ff-only"], tPull);
-    if (pull.code !== 0) {
+    log(`[auto-update] ${nBehind} commit(s) novo(s) em ${upstream} — aplicando fast-forward para ${shaRemoto.slice(0, 12)}...`);
+    const merge = git(["merge", "--ff-only", shaRemoto], tPull);
+    if (merge.code !== 0) {
       const headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim();
       if (headAgora !== shaAnterior) {
         return pular("estado-incerto-pos-pull", {
           repoDir, branch, shaAnterior,
-          rollback: { shaAnterior, shaNovo: headAgora, repoDir, depsMudaram: true, branch },
-          detalhe: String(pull.stderr).trim().slice(0, 300),
+          rollback: { shaAnterior, shaNovo: headAgora, repoDir, depsMudaram, siteMudou, branch },
+          detalhe: String(merge.stderr).trim().slice(0, 300),
         });
       }
-      return pular("falha-pull", { repoDir, branch, shaAnterior, detalhe: String(pull.stderr).trim().slice(0, 300) });
+      try { opts.limparJournalSemPull?.(repoDir); } catch { /* journal pendente será limpo no próximo boot */ }
+      return pular("falha-pull", { repoDir, branch, shaAnterior, detalhe: String(merge.stderr).trim().slice(0, 300) });
     }
 
     const shaNovo = String(git(["rev-parse", "HEAD"]).stdout).trim();
     const anc = git(["merge-base", "--is-ancestor", shaAnterior, shaNovo]);
-    if (shaNovo === shaAnterior || anc.code !== 0) {
+    if (shaNovo !== shaRemoto || shaNovo === shaAnterior || anc.code !== 0) {
       return pular("pull-nao-foi-ff", {
         repoDir, branch, shaAnterior, shaNovo,
-        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true, branch },
+        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram, siteMudou, branch },
       });
     }
     const commits = git(["rev-list", "--count", `${shaAnterior}..${shaNovo}`]);
     const nCommits = commits.code === 0 ? Number(String(commits.stdout).trim()) : nBehind;
-
-    // Diagnóstico único de todos os caminhos alterados. Falha aqui é
-    // estado desconhecido pós-pull: rollback, nunca presumir que build/deps
-    // ficaram inalterados.
-    const diffArquivos = git(["diff", "--name-only", shaAnterior, shaNovo]);
-    if (diffArquivos.code !== 0) {
-      return pular("falha-diagnostico-dependencias", {
-        repoDir, branch, shaAnterior, shaNovo,
-        rollback: { shaAnterior, shaNovo, repoDir, depsMudaram: true, branch },
-        detalhe: String(diffArquivos.stderr).trim().slice(0, 300),
-      });
-    }
-    const arquivosMudados = String(diffArquivos.stdout).split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    const depsMudaram = arquivosMudados.some((p) =>
-      p === "package-lock.json" || p.endsWith("/package-lock.json") ||
-      p === "package.json" || p.endsWith("/package.json")
-    ) || !existsSync(join(repoDir, "node_modules"));
-    // O timestamp de site/src não detecta mudanças em vite.config.ts,
-    // index.html, tsconfig ou package.json. Qualquer mudança no workspace
-    // site/ (ou na configuração/lockfile da raiz) exige rebuild do bundle.
-    const siteMudou = arquivosMudados.some((p) =>
-      p.startsWith("site/") || p === "package.json" || p === "package-lock.json"
-    );
 
     return {
       atualizou: true, motivo: "atualizado", repoDir, branch,
@@ -266,13 +285,20 @@ export async function verificarAtualizacao(opts = {}) {
       depsMudaram, siteMudou,
     };
   } catch (e) {
-    // excecao apos (ou durante) o pull: HEAD pode estar atualizado.
-    // Rollback so e tentado pelo boot com as mesmas garantias de sempre.
+    // Exceção após registrar a intenção: o HEAD pode estar no SHA anterior
+    // ou no alvo. O journal persiste ambos para recuperação segura.
     let headAgora = "";
     try { headAgora = String(git(["rev-parse", "HEAD"]).stdout).trim(); } catch { /* ignora */ }
+    if (headAgora === shaAnterior) {
+      try { opts.limparJournalSemPull?.(repoDir); } catch { /* recupera no próximo boot */ }
+      return pular("erro-inesperado-antes-aplicar", {
+        repoDir, branch, shaAnterior,
+        detalhe: String(e?.message ?? e).slice(0, 300),
+      });
+    }
     return pular("erro-inesperado-pos-pull", {
       repoDir, branch, shaAnterior,
-      rollback: { shaAnterior, shaNovo: headAgora || shaAnterior, repoDir, depsMudaram: true, branch },
+      rollback: { shaAnterior, shaNovo: headAgora || shaRemoto, repoDir, depsMudaram, siteMudou, branch },
       detalhe: String(e?.message ?? e).slice(0, 300),
     });
   }
