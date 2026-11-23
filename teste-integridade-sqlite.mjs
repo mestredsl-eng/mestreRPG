@@ -575,6 +575,19 @@ try {
   const pubB6State = comDb(banco, (db) => db.prepare(
     "select published_at from sheet_versions where id=?").get(verB6).published_at);
   t("F6 controle: publicação legítima gravou published_at", !!pubB6State);
+  const estruturaB6Publicada = JSON.stringify(comDb(banco, (db) =>
+    db.prepare("select structure from sheet_versions where id=?").get(verB6).structure));
+  const editPublicadaB6 = await req(base, "PUT",
+    `/campaigns/${camp2Id}/sheet-templates/${tplB6}/versions/${verB6}`,
+    {
+      cookie: cookieMestreB,
+      body: { estrutura: { secoes: [{ id: "deve-ser-recusado", titulo: "Não editar", ordem: 0, campos: [] }], pontos: { habilitado: false } } },
+    });
+  const estruturaB6Depois = JSON.stringify(comDb(banco, (db) =>
+    db.prepare("select structure from sheet_versions where id=?").get(verB6).structure));
+  t("F5 controle: PUT em versão já publicada retorna 409", editPublicadaB6.status === 409, `status=${editPublicadaB6.status}`);
+  t("F5 controle: PUT recusado preserva estrutura publicada",
+    estruturaB6Depois === estruturaB6Publicada, `mudou=${estruturaB6Depois !== estruturaB6Publicada}`);
 
   // F3b (nota, sem teste executável): storage_name = `${uuid}.${ext}` é
   // gerado por upload — colisão com arquivo preexistente não é forçável
