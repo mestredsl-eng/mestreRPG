@@ -342,6 +342,11 @@ jobs:
         run: |
           node teste-bat-node-gate.mjs
 
+      - name: Homologar autorização P10-C no primeiro bootstrap (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-primeiro-bootstrap.mjs
+
       - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
         run: node teste-bat-restauracao-falha.mjs
 
