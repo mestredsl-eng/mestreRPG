@@ -402,7 +402,7 @@ try {
     t("sem mistura do backup", !st.cfgBackup && !st.arqDocBk);
   }
 
-  // ===== 9. falha na LIMPEZA DA FLAG (banco restaurado sem server_settings) =====
+  // ===== 9. falha na LIMPEZA DA FLAG (trigger aborta DELETE da flag) =====
   sec("Falha na limpeza da flag — rollback total");
   {
     const r9 = join(RAIZ, "falha_flag");
@@ -411,11 +411,18 @@ try {
     mkdirSync(arqPath(r9), { recursive: true });
     writeFileSync(join(arqPath(r9), "doc_vivo.txt"), "vivo");
     const bk = fazerBackup(r9, "bk_sem_tabela", {
-      // sabotagem no BACKUP ANTES do manifesto: remove server_settings →
-      // limparFlag lança "no such table" → deve reverter TUDO e sair != 0.
+      // sabotagem no BACKUP ANTES do manifesto: trigger aborta o DELETE
+      // da flag → deve reverter TUDO e sair != 0.
       sabotagem: (dbBk) => {
         const d = abrirDb(dbBk);
-        d.exec("drop table server_settings");
+        // Banco estruturalmente restaurável; a falha é injetada SOMENTE
+        // quando o restaurador tenta limpar a flag após a aplicação.
+        d.prepare("insert into server_settings (key,value,updated_at) values (?,?,?)")
+          .run("restauracao_pendente", "{}", Date.now());
+        d.exec(`CREATE TRIGGER falhar_limpeza_flag
+          BEFORE DELETE ON server_settings
+          WHEN OLD.key = 'restauracao_pendente'
+          BEGIN SELECT RAISE(ABORT, 'falha injetada na limpeza da flag'); END`);
         d.close();
       },
     });
@@ -500,7 +507,14 @@ try {
     const bk = fazerBackup(r13, "bk_falha_flag", {
       sabotagem: (dbBk) => {
         const d = abrirDb(dbBk);
-        d.exec("drop table server_settings");
+        // Banco estruturalmente restaurável; a falha é injetada SOMENTE
+        // quando o restaurador tenta limpar a flag após a aplicação.
+        d.prepare("insert into server_settings (key,value,updated_at) values (?,?,?)")
+          .run("restauracao_pendente", "{}", Date.now());
+        d.exec(`CREATE TRIGGER falhar_limpeza_flag
+          BEFORE DELETE ON server_settings
+          WHEN OLD.key = 'restauracao_pendente'
+          BEGIN SELECT RAISE(ABORT, 'falha injetada na limpeza da flag'); END`);
         d.close();
       },
     });
@@ -581,11 +595,18 @@ try {
     writeFileSync(cfgPath(r18), JSON.stringify({ atual: true }));
     const bk = fazerBackup(r18, "bk_vazio_falha", {
       semArq: true, semCfg: true,
-      // sabotagem: backup sem server_settings → apply remove arquivos+config,
-      // copia banco e falha na limpeza da flag → rollback deve restaurar TUDO.
+      // sabotagem: backup estruturalmente válido; trigger falha ao limpar a
+      // flag depois da aplicação → rollback deve restaurar TUDO.
       sabotagem: (dbBk) => {
         const d = abrirDb(dbBk);
-        d.exec("drop table server_settings");
+        // Banco estruturalmente restaurável; a falha é injetada SOMENTE
+        // quando o restaurador tenta limpar a flag após a aplicação.
+        d.prepare("insert into server_settings (key,value,updated_at) values (?,?,?)")
+          .run("restauracao_pendente", "{}", Date.now());
+        d.exec(`CREATE TRIGGER falhar_limpeza_flag
+          BEFORE DELETE ON server_settings
+          WHEN OLD.key = 'restauracao_pendente'
+          BEGIN SELECT RAISE(ABORT, 'falha injetada na limpeza da flag'); END`);
         d.close();
       },
     });
