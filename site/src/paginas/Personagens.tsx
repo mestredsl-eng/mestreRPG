@@ -137,9 +137,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
               <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
                 {verArquivados ? "Ver ativos" : "Ver arquivados"}
               </button>
-              {!verArquivados && souMestre && personagens.length > 0 && (
-                <button className="secundario" onClick={() => setXpLoteAberto(true)}>XP em lote</button>
-              )}
+            )}
+            {!verArquivados && souMestre && personagens.length > 0 && (
+              <button className="secundario" onClick={() => setXpLoteAberto(true)}>XP em lote</button>
             )}
             {!verArquivados && (
             <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
