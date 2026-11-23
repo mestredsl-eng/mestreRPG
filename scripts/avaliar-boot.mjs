@@ -10,12 +10,25 @@ import {
   diagnosticarBootstrap,
   validarPrecondicoesBootstrap,
 } from "./estado-externo.mjs";
+import { recuperarAtualizacaoPendente } from "./auto-update.mjs";
 
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const modo = process.argv[2] ?? "preflight";
 if (modo !== "preflight" && modo !== "validar") {
   console.error("[boot] uso: node scripts/avaliar-boot.mjs preflight|validar");
   process.exit(1);
+}
+
+// Journal de atualização pendente sempre é resolvido sob Boot Lock e
+// ANTES de auto-update, restore, migration ou start. Estado corrompido,
+// árvore suja, branch/SHA divergentes ou rollback incompleto bloqueiam.
+const recuperacao = await recuperarAtualizacaoPendente({ cwd: repoDir });
+if (!recuperacao.ok) {
+  console.error(`[boot] RECUPERAÇÃO BLOQUEADA (${recuperacao.motivo}) — nenhuma etapa mutável será executada.`);
+  process.exit(1);
+}
+if (recuperacao.recuperado) {
+  console.log(`[boot] journal de atualização resolvido (${recuperacao.motivo}).`);
 }
 
 const estado = diagnosticarBootstrap(repoDir);
