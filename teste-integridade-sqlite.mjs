@@ -8,6 +8,8 @@ import {
 } from "./teste-base.mjs";
 import { readdirSync, existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { hashSenha } from "./servidor/dist/lib/password.js";
+import { sessao } from "./teste-base.mjs";
 
 let pass = 0, fail = 0;
 const falhas = [];
@@ -436,6 +438,76 @@ try {
     try { rmSync(join(arquivos, campId, fileRowF3.storage_name), { force: true }); } catch { }
   }
   wf.close();
+
+  // ---- F6: autorização cross-campaign em sheet-templates (achado Dono 7099324006) ----
+  // requirePapel("mestre") prova mestria do campaignId do CAMINHO, não do
+  // templateId do recurso. PUT .../versions/:versionId e POST .../publish
+  // selecionam a versão só por versionId+templateId — sem escopo
+  // campaign_id no template pai (modelos.ts). Ataque: mestre da campanha B
+  // (membro SOMENTE de B) usa IDs de template/versão da campanha A na rota
+  // de B. Contrato exigido pós-correção: 404 + recurso de A intacto.
+  const wF6 = abrirDb(banco);
+  const uidB = uid(), agoraF6 = agora();
+  wF6.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+    .run(uidB, "mestre_b_f6", "Mestre B F6", await hashSenha("senha-jogador-123"), agoraF6, agoraF6);
+  const camp2 = await req(base, "POST", "/campaigns", { cookie: cookieMestre, body: { name: "Campanha F6 B" } });
+  const camp2Id = camp2.json?.campanha?.id;
+  wF6.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','ativo',?,?,?)")
+    .run(uid(), camp2Id, uidB, agoraF6, agoraF6, agoraF6);
+  wF6.close();
+  const cookieMestreB = sessao(banco, uidB);
+
+  // template + versão de RASCUNHO na campanha A (o default publicado não serve:
+  // PUT em versão publicada retorna 409 por imutabilidade, não por escopo)
+  const tplA6 = comDb(banco, (db) =>
+    db.prepare("select id from sheet_templates where campaign_id=? and is_default=1").get(campId).id);
+  const verA6 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates/${tplA6}/versions`, { cookie: cookieMestre, body: {} })).json?.versionId;
+  const estruturaA6Antes = JSON.stringify(comDb(banco, (db) =>
+    db.prepare("select structure from sheet_versions where id=?").get(verA6).structure));
+  const curA6Antes = comDb(banco, (db) =>
+    db.prepare("select current_version_id from sheet_templates where id=?").get(tplA6).current_version_id);
+
+  // ATAQUE 1 — PUT de estrutura usando a rota da campanha B sobre recurso de A
+  const atkPut = await req(base, "PUT", `/campaigns/${camp2Id}/sheet-templates/${tplA6}/versions/${verA6}`, {
+    cookie: cookieMestreB,
+    // estrutura DIFERENTE da atual (a versão draft herda a estrutura vazia
+    // do template default tplD1 — payload vazio seria idêntico e o assert
+    // de mutação não observaria nada)
+    body: { estrutura: { secoes: [{ id: "sF6", titulo: "SecaoF6", ordem: 0, campos: [{ id: "f6", label: "F6", tipo: "inteiro", semantico: "atributo" }] }], pontos: { habilitado: false } } },
+  });
+  // ATAQUE 2 — publish usando a rota da campanha B sobre recurso de A
+  const atkPub = await req(base, "POST", `/campaigns/${camp2Id}/sheet-templates/${tplA6}/publish`, {
+    cookie: cookieMestreB, body: { versionId: verA6 },
+  });
+
+  const estruturaA6Depois = JSON.stringify(comDb(banco, (db) =>
+    db.prepare("select structure from sheet_versions where id=?").get(verA6).structure));
+  const curA6Depois = comDb(banco, (db) =>
+    db.prepare("select current_version_id from sheet_templates where id=?").get(tplA6).current_version_id);
+  const pubA6 = comDb(banco, (db) =>
+    db.prepare("select published_at from sheet_versions where id=?").get(verA6).published_at ?? null);
+
+  t("F6 PUT cross-campaign: API respondeu (status registrado)", [200, 201, 400, 403, 404].includes(atkPut.status), `status=${atkPut.status}`);
+  t("F6 publish cross-campaign: API respondeu (status registrado)", [200, 201, 400, 403, 404].includes(atkPub.status), `status=${atkPub.status}`);
+  t("F6 observado: mestre de B mutou estrutura de versão de A via rota de B (defeito documentado — contrato exige 404)",
+    atkPut.status === 200 && estruturaA6Depois !== estruturaA6Antes,
+    `put=${atkPut.status} estruturaMudou=${estruturaA6Depois !== estruturaA6Antes}`);
+  t("F6 observado: publish de A via rota de B gravou publishedAt/currentVersionId (defeito documentado)",
+    atkPub.status === 200 && !!pubA6 && curA6Depois === verA6,
+    `pub=${atkPub.status} publishedAt=${pubA6} cur=${curA6Depois===verA6}`);
+
+  // controle positivo: mestre B opera template da PRÓPRIA campanha B
+  const tplB6 = (await req(base, "POST", `/campaigns/${camp2Id}/sheet-templates`, { cookie: cookieMestreB, body: { name: "F6-Own" } })).json?.modelo?.id;
+  const verB6 = (await req(base, "POST", `/campaigns/${camp2Id}/sheet-templates/${tplB6}/versions`, { cookie: cookieMestreB, body: {} })).json?.versionId;
+  const okB6 = await req(base, "PUT", `/campaigns/${camp2Id}/sheet-templates/${tplB6}/versions/${verB6}`, {
+    cookie: cookieMestreB, body: { estrutura: { secoes: [], pontos: { habilitado: false } } },
+  });
+  t("F6 controle: mestre B edita rascunho da própria campanha → 200", okB6.status === 200, `status=${okB6.status}`);
+
+  // F3b (nota, sem teste executável): storage_name = `${uuid}.${ext}` é
+  // gerado por upload — colisão com arquivo preexistente não é forçável
+  // via API. A exigência `wx`/prova de posse é contrato do patch futuro
+  // de compensação (Dono 7099324006), não defeito observável hoje.
 
   console.log("\n== E — reabertura do banco ==");
   const antes = comDb(banco, (db) => ({
