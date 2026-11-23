@@ -106,7 +106,19 @@ function tmpUnico(dir, nome) {
   return join(dir, `.${nome}.tmp-${process.pid}-${randomBytes(6).toString("hex")}`);
 }
 
-/** Escrita atômica: tmp exclusivo no mesmo diretório → flush/fsync → rename. */
+/** Flush do diretório pai após rename/unlink.
+ * POSIX permite fsync do diretório para persistir a entrada de diretório.
+ * No Windows o Node não expõe um handle de diretório com as flags
+ * necessárias; o arquivo ainda recebe fsync antes do rename atômico. */
+function fsyncDiretorio(dir) {
+  if (process.platform === "win32") return;
+  const fd = openSync(dir, "r");
+  try { fsyncSync(fd); }
+  finally { closeSync(fd); }
+}
+
+/** Escrita atômica: tmp exclusivo no mesmo diretório → flush/fsync → rename
+ * + fsync do diretório pai, persistindo também a troca de nome no POSIX. */
 export function gravarJsonAtomico(caminho, obj) {
   const dir = dirname(caminho);
   mkdirSync(dir, { recursive: true });
@@ -119,6 +131,7 @@ export function gravarJsonAtomico(caminho, obj) {
     closeSync(fd);
   }
   renameSync(tmp, caminho);
+  fsyncDiretorio(dir);
 }
 
 /** Move arquivo corrompido para quarentena datada; nunca apaga. */
@@ -180,6 +193,14 @@ export function gravarEstado(repoDir, nome, dados, env = process.env) {
   };
   gravarJsonAtomico(join(dirEstado(repoDir, env), nome), registro);
   return registro;
+}
+
+/** Remove um journal concluído e persiste a remoção da entrada no POSIX.
+ * Não chamar para journals pendentes ou corrompidos. */
+export function removerEstado(repoDir, nome, env = process.env) {
+  const dir = dirEstado(repoDir, env);
+  rmSync(join(dir, nome), { force: true });
+  if (existsSync(dir)) fsyncDiretorio(dir);
 }
 
 export function lerJournal(repoDir, nome, env = process.env) {
