@@ -750,29 +750,64 @@ export async function executarBoot(opts = {}) {
   log(`[auto-update] Atualizacao aplicada: ${v.commits} commit(s) (${v.shaAnterior.slice(0, 12)} → ${v.shaNovo.slice(0, 12)}, branch ${v.branch}).`);
   const repoDir = v.repoDir;
   const arquivo = caminhoEstado(opts, repoDir);
-  // SHA anterior e SHA do pull ficam registrados em memoria para o
-  // rollback; a persistencia em arquivo e best-effort (B2) — sua
-  // falha nao pode impedir a protecao dentro deste processo.
   const estadoMemoria = {
-    shaAnterior: v.shaAnterior, shaNovo: v.shaNovo, repoDir,
-    depsMudaram: v.depsMudaram, branch: v.branch,
+    shaAnterior: v.shaAnterior,
+    shaNovo: v.shaNovo,
+    repoDir,
+    branch: v.branch,
+    commits: v.commits,
+    depsMudaram: v.depsMudaram,
+    siteMudou: v.siteMudou,
   };
-  try {
-    gravarEstado(arquivo, { ...estadoMemoria, em: new Date().toISOString() });
-  } catch (e) {
-    log(`[auto-update] Aviso: nao foi possivel gravar o estado de rollback em disco (${String(e?.message ?? e).slice(0, 120)}) — a reversao continua protegida em memoria.`);
+  const gravarFase = (fase, extra = {}) => {
+    if (!persistirDuravel) return true;
+    return persistir({ ...estadoMemoria, fase, ...extra });
+  };
+  if (persistirDuravel) {
+    // A intenção pull-iniciado já está persistida desde ANTES do merge.
+    // Atualizamos agora com o SHA realmente aplicado antes de npm/build.
+    if (!gravarFase("pull-concluido")) {
+      log("[auto-update] Não foi possível confirmar o SHA aplicado no journal; boot bloqueado para recuperação.");
+      return { codigo: 1, atualizou: true, motivo: "falha-journal-pos-pull" };
+    }
+  } else {
+    // Compatibilidade com os testes/integradores que injetam stateFile:
+    // mantém o formato de rollback em arquivo fora do worktree.
+    try {
+      gravarEstado(arquivo, { ...estadoMemoria, em: new Date().toISOString() });
+    } catch (e) {
+      log(`[auto-update] Aviso: nao foi possivel gravar o estado de rollback em disco (${String(e?.message ?? e).slice(0, 120)}) — a reversao continua protegida em memoria.`);
+    }
   }
 
-  const tentarRollback = () => executarRollback(estadoMemoria, { ...opts, cwd: repoDir, executar, log, stateFile: arquivo });
+  const gravarJournalRollback = persistirDuravel
+    ? (dados) => persistir(dados)
+    : undefined;
+  const tentarRollback = async () => {
+    if (persistirDuravel && !gravarFase("rollback-iniciado")) {
+      return { ok: false, motivo: "falha-journal-rollback" };
+    }
+    return executarRollback(estadoMemoria, {
+      ...opts, cwd: repoDir, executar, log,
+      ...(persistirDuravel
+        ? { gravarJournal: gravarJournalRollback }
+        : { stateFile: arquivo }),
+    });
+  };
 
-  // deps → build servidor → build site; qualquer falha ou excecao
-  // tenta rollback — excecao pos-pull NUNCA retorna sucesso (B2).
+  // Cada etapa começa SOMENTE depois de seu checkpoint durável.
+  // Um SIGKILL em qualquer ponto deixa SHA anterior/alvo e fase suficiente
+  // para o próximo boot reverter sem adivinhar o que ficou pela metade.
   const etapas = [];
   if (v.depsMudaram) etapas.push(["dependencias", () => npmCi(opts, executar, repoDir, log)]);
   etapas.push(["build-servidor", () => buildServidor(opts, executar, repoDir, log)]);
   etapas.push(["build-site", () => buildSite(opts, executar, repoDir, log, v.siteMudou)]);
 
-  for (const [, fn] of etapas) {
+  for (const [etapa, fn] of etapas) {
+    if (!gravarFase(`${etapa}-iniciado`, { etapa })) {
+      log(`[auto-update] Não foi possível gravar checkpoint antes de ${etapa}; boot bloqueado.`);
+      return { codigo: 1, atualizou: true, motivo: `falha-journal-${etapa}-inicio` };
+    }
     let okEtapa;
     try {
       okEtapa = fn();
@@ -789,6 +824,12 @@ export async function executarBoot(opts = {}) {
         rb = { ok: false, motivo: "excecao-rollback" };
       }
       if (rb.ok) {
+        if (persistirDuravel) {
+          if (!gravarFase("concluido", { concluidoEm: new Date().toISOString() })) {
+            return { codigo: 1, atualizou: true, revertido: true, motivo: "falha-finalizar-journal-rollback" };
+          }
+          limparJournal(repoDir);
+        }
         log(`[auto-update] Rollback concluido — boot segue com a versao local (${v.shaAnterior.slice(0, 12)}).`);
         return { codigo: 0, atualizou: false, revertido: true, shaAnterior: v.shaAnterior };
       }
@@ -796,9 +837,23 @@ export async function executarBoot(opts = {}) {
       instrucaoRecuperacao(log, estadoMemoria.branch);
       return { codigo: 1, atualizou: true, revertido: false, motivo: rb.motivo };
     }
+    if (!gravarFase(`${etapa}-concluido`, { etapa })) {
+      log(`[auto-update] Etapa ${etapa} terminou, mas seu checkpoint não pôde ser persistido; boot bloqueado.`);
+      return { codigo: 1, atualizou: true, motivo: `falha-journal-${etapa}-conclusao` };
+    }
   }
 
-  try { rmSync(arquivo, { force: true }); } catch { /* ok */ }
+  if (persistirDuravel) {
+    if (!gravarFase("concluido", { concluidoEm: new Date().toISOString() })) {
+      log("[auto-update] Build concluído, mas o journal não pôde ser finalizado; boot bloqueado.");
+      return { codigo: 1, atualizou: true, motivo: "falha-finalizar-journal" };
+    }
+    // Se a remoção falhar, a fase concluido permanece válida e o preflight
+    // seguinte fará somente a limpeza segura do journal.
+    limparJournal(repoDir);
+  } else {
+    try { rmSync(arquivo, { force: true }); } catch { /* ok */ }
+  }
   return { codigo: 0, atualizou: true, shaNovo: v.shaNovo };
 }
 
