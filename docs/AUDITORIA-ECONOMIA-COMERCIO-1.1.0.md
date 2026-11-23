@@ -101,7 +101,12 @@ A separação entre espécie/raça e controlador (humano/IA/NPC) deve respeitar 
 
 ### Ficha principal
 - Mantém os campos e regras do personagem (atributos, talentos, perícias, conhecimentos, habilidades, poderes, virtudes, defeitos/qualidades, raça, profissão etc.).
-- Retira os atalhos/modais de compra e venda e o bloco embutido de Patrimônio quando os módulos independentes estiverem prontos e os testes de regressão passarem.
+- Retira os atalhos/modais de compra e venda e o bloco de Patrimônio da tela de detalhe do personagem quando os módulos independentes estiverem prontos e os testes de regressão passarem.
+
+### Ponto exato de integração encontrado no frontend atual
+- `site/src/paginas/Personagens.tsx` importa `Patrimonio` no início do arquivo e o monta em `PersonagemDetalheView` logo após a seção `<section className="cartao ficha-cartao">` (a busca na base `main` encontrou a montagem em torno da linha 637). Portanto, não está dentro do elemento JSX da seção visual Ficha, mas continua acoplado à mesma tela de detalhe do personagem. A extração deve substituir esse bloco por navegação/ações independentes **Internet** e **Equipamento/Armazém**, fora da ficha.
+- `site/src/paginas/Patrimonio.tsx` concentra hoje abas de Inventário, Equipamentos, Veículos, Dinheiro e Catálogo do mestre no mesmo componente. O fluxo de compra está dentro do painel Inventário; venda está associada a um item do inventário; contas e histórico estão na aba Dinheiro. A refatoração visual deve separar: Internet recebe compras/vendas e, se aprovado no UX, aplicações financeiras; Equipamento/Armazém recebe inventário/equipamentos/veículos/armazenamento. Não copiar o estado nem a lógica dos serviços para outro módulo.
+- `site/src/paginas/Personagens.tsx` também passa `carteiras` para `FichaForm`; verificar se esses campos do template são apenas dados de ficha ou duplicam a visualização de contas no Patrimônio antes de decidir removê-los. Não apagar campos oficiais do template durante esta extração.
 
 ## 5. Recomendação técnica para a 1.1.0
 
