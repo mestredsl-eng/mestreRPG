@@ -32,6 +32,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [modelos, setModelos] = useState<ModeloResumo[]>([]);
   const [selecionado, setSelecionado] = useState<PersonagemDetalhe | null>(null);
+  // Identifica a abertura atual; respostas de uma ficha anterior não podem
+  // sobrescrever outra seleção, mesmo se o usuário reabrir o mesmo personagem.
+  const selecaoEpochRef = useRef(0);
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
@@ -81,10 +84,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
   }, [carregar, campaignId]);
 
   const abrir = async (id: string) => {
+    const epoch = ++selecaoEpochRef.current;
     try {
-      setSelecionado(await api.obterPersonagem(id));
+      const detalhe = await api.obterPersonagem(id);
+      if (selecaoEpochRef.current === epoch) setSelecionado(detalhe);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao abrir personagem");
+      if (selecaoEpochRef.current === epoch) {
+        setErro(e instanceof Error ? e.message : "Erro ao abrir personagem");
+      }
     }
   };
 
@@ -101,26 +108,38 @@ export default function Personagens({ campaignId, campanha }: Props) {
   if (selecionado) {
     return (
       <PersonagemDetalheView
+        key={selecionado.personagem.id}
         detalhe={selecionado}
         souMestre={souMestre}
         biblioteca={biblioteca}
         campaignId={campaignId}
         aoVoltar={async () => {
+          // Invalida qualquer GET de atualização iniciado pela ficha que
+          // está sendo fechada antes de voltar à lista.
+          selecaoEpochRef.current += 1;
           setSelecionado(null);
           await carregar();
         }}
         aoSalvar={async (nome, data, status) => {
+          const epoch = selecaoEpochRef.current;
+          const characterId = selecionado.personagem.id;
           // BUG_0002: envia o updatedAt carregado — fichas com níveis
           // financiados por XP exigem base atual para aceitar escrita.
-          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, {
+          const atualizado = await api.atualizarPersonagem(characterId, {
             name: nome, data, status,
             baseUpdatedAt: selecionado.personagem.updatedAt,
           });
-          setSelecionado(atualizado);
+          if (selecaoEpochRef.current === epoch) setSelecionado(atualizado);
           await carregar();
         }}
         aoRecarregar={async () => {
-          setSelecionado(await api.obterPersonagem(selecionado.personagem.id));
+          const epoch = selecaoEpochRef.current;
+          const characterId = selecionado.personagem.id;
+          const atualizado = await api.obterPersonagem(characterId);
+          // Uma confirmação tardia só atualiza a ficha que iniciou a ação.
+          // Se houve saída e reabertura (inclusive do mesmo personagem),
+          // o novo detalhe permanece intacto.
+          if (selecaoEpochRef.current === epoch) setSelecionado(atualizado);
           await carregar();
         }}
       />
