@@ -44,7 +44,7 @@ function fixture(nome, recibo = false) {
   writeFileSync(preload, [
     'const fs = require("node:fs");',
     'const p = process.env.MESTRE_BOOT_TEST_LOG;',
-    'if (p) fs.appendFileSync(p, "node " + process.argv.slice(1).join(" ") + "\n");',
+    'if (p) fs.appendFileSync(p, "node " + process.argv.slice(1).join(" ") + "\\n");',
     "",
   ].join("\n"));
   writeFileSync(join(scripts, "auto-update.mjs"), [
