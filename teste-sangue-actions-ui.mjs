@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Teste E2E das AÇÕES de Sangue na UI (Issue #186 — correção .9:
 // widget integrado à ficha; contrato real R6.3 da PR #230:
-// sangue:recuperar p/ dono, sangue:ajustar/reconciliar-capacidade
-// p/ mestre). O fluxo paralelo de ativação (segundo seletor de
-// Poderes + botão "Ativar poder") foi REMOVIDO da UI — o consumo
-// ocorre no uso normal do Poder (D10), coberto por
-// teste-d10-sangue-cobranca.mjs e teste-sangue-runtime.mjs.
+// p/ mestre). A ativação sem rolagem é oferecida junto ao Poder já
+// selecionado na ficha, sem segundo seletor; o fluxo D10 continua
+// cobrando no próprio teste. Cobre também a ativação narrativa, retry
+// visual, permissões e ausência de controles para não-donos/espectadores.
 // Cobre: recuperação pelo dono, erro/permissões (dono vs mestre vs
 // espectador), mobile 390px e ausência de controles indevidos.
 // Servidor+SQLite+site 100% descartáveis.
@@ -90,6 +89,20 @@ function saldoDe(charId) {
     return JSON.parse(row.data || "{}").__sangue?.saldo ?? null;
   } finally { w.close(); }
 }
+function definicaoPoder(campId, key) {
+  const w = db();
+  try {
+    const rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const row = w.prepare("select definition from rule_definitions where rule_set_id=? and kind='poder' and key=?").get(rs.id, key);
+    return JSON.parse(row?.definition || "{}");
+  } finally { w.close(); }
+}
+function nomeDe(charId) {
+  const w = db();
+  try {
+    return w.prepare("select name from characters where id=?").get(charId)?.name ?? null;
+  } finally { w.close(); }
+}
 
 const CFG = {
   habilitado: true,
@@ -109,6 +122,7 @@ const CFG = {
   },
   poderes: {
     poder_fogo: { custo: 2 },
+    poder_d10: { custo: 2 },
     poder_frac: { custo: 1 },
     poder_zero: { custo: 1 },
     poder_neg: { custo: 1 },
@@ -153,6 +167,7 @@ try {
   });
   // Poderes para a prova de nível fracionário: todos existem na
   // biblioteca — só o filtro de nível (finito > 0) separa os válidos.
+  let idPoderD10 = null;
   for (const [key, name] of [
     ["poder_frac", "Poder Fracionado"],
     ["poder_zero", "Poder Zero"],
@@ -164,11 +179,20 @@ try {
     ["poder_sneg", "Poder Escalar Negativo"],
     ["poder_stxt", "Poder Escalar Texto"],
     ["poder_saus", "Poder Escalar Ausente"],
+    ["poder_d10", "Poder de Teste"],
   ]) {
-    await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
-      cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true } },
+    const criado = await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
+      cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true, ...(key === "poder_d10" ? { exigeTeste: true } : {}) } },
     });
+    if (key === "poder_d10") idPoderD10 = criado.json?.id;
   }
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { exigeTeste: false } },
+  });
+  t("regra D10: PATCH persiste false ao desmarcar", definicaoPoder(CID, "poder_d10").exigeTeste === false);
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { exigeTeste: true } },
+  });
   const mod = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Ações" } });
   const tid = mod.json.modelo.id, vid = mod.json.modelo.versionId;
   const estrutura = {
@@ -178,7 +202,8 @@ try {
         { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "atributo", minimo: 1, maximo: 30 },
         { id: "qual", label: "Qualidade bônus", tipo: "inteiro", semantico: "atributo", minimo: 0, maximo: 10 },
         { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", opcoes: ["Humano", "Vampiro"] },
-        { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder" },
+        // Um único campo guarda os dois Poderes; o requisito de D10 é por elemento.
+        { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder", usadoEmTestes: true },
         // Campos escalares vinculados a Poder via campo.regra — o
         // caminho canônico p/ nível fracionário (0.5 é posse válida).
         { id: "pdec_ok", label: "Poder Dec Ok", tipo: "decimal", regra: { kind: "poder", key: "poder_frac" } },
@@ -198,7 +223,7 @@ try {
   setPoderesLimite(CID, 10);
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
+    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }, { key: "poder_d10", nivel: 1 }] } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
@@ -209,11 +234,12 @@ try {
   setSangue(CHAR2, { saldo: 4, capacidade: 8, usos: {}, historico: [] });
   // Personagem do PRÓPRIO mestre — dono real para a corrida de posse
   const pjM = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: M, body: { name: "Ficha do Mestre", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [] } },
+    cookie: M, body: { name: "Ficha do Mestre", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 1 }] } },
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
-  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM));
+  t("fixture: personagens", !!(CHAR && CHAR2 && CHARM),
+    JSON.stringify({ pj: pj.json, pj2: pj2.json, pjM: pjM.json }));
 
   // ---------- helpers UI ----------
   const browser = await chromium.launch();
@@ -347,21 +373,161 @@ try {
       JSON.stringify({ ack: ackRecuperarNat, saldo: saldoDe(CHAR) }),
     );
     setOverrideCampo(CHAR, "nat", null);
+    const saldoAntesD10 = saldoDe(CHAR);
+    const ackD10Narrativo = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_d10", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO: Poder que exige D10 não aceita ativação narrativa direta",
+      ackD10Narrativo?.ok === false && ackD10Narrativo?.codigo === "poder_exige_teste"
+        && saldoDe(CHAR) === saldoAntesD10,
+      JSON.stringify({ ack: ackD10Narrativo, saldoAntes: saldoAntesD10, saldoDepois: saldoDe(CHAR) }),
+    );
     await ctx.close();
   }
 
-  // ---------- 2. Sem fluxo paralelo de ativação na UI ----------
-  sec("UI. ativação de Poder não é duplicada no widget");
+  // ---------- 2. Ativação narrativa no campo de Poder existente ----------
+  sec("UI. ativar Poder pela própria ficha");
   {
-    // "Herói Ações" possui poder_fogo na ficha — mesmo assim o widget
-    // não oferece seletor/botão de ativação: o débito ocorre no D10.
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Herói Ações");
     const painel = page.locator(".painel-sangue-leitura");
-    t("UI. widget sem nenhum controle de ativar",
+    t("UI. painel não cria segundo seletor",
       await painel.locator("select").count() === 0
       && await painel.getByRole("button", { name: /Ativar|ativar/ }).count() === 0);
-    t("UI. saldo permanece estável sem uso de Poder", saldoDe(CHAR) === 5, `db=${saldoDe(CHAR)}`);
+    const usar = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. ação aparece junto ao Poder narrativo já escolhido", await usar.count() === 1);
+    t("UI. lista elegível a D10 mantém ação narrativa do Poder não marcado",
+      await page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" }).count() === 1);
+    t("UI. somente o Poder marcado 'Exige teste D10' não recebe ação narrativa",
+      await page.getByRole("button", { name: "Usar Poder de Teste sem rolagem" }).count() === 0);
+
+    // Força a rota de fallback usada por browsers em HTTP via IP:
+    // randomUUID indisponível, getRandomValues continua funcional.
+    await page.evaluate(() => {
+      Object.defineProperty(window.crypto, "randomUUID", { configurable: true, value: undefined });
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.__narrativeAttempts = [];
+      s.__dropNextNarrativeAck = 1;
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object") {
+          s.__narrativeAttempts.push(payload.requestId);
+          if (s.__dropNextNarrativeAck > 0) {
+            s.__dropNextNarrativeAck--;
+            localStorage.setItem("__testeNarrativaRequestId", payload.requestId);
+            // Encaminha ao servidor e engole apenas o ACK: simula commit
+            // confirmado no DB com resposta perdida na rede.
+            return original(ev, payload, () => undefined);
+          }
+        }
+        return original(ev, payload, cb);
+      };
+    });
+
+    // 1ª tentativa: o servidor debita (5→3), mas o cliente não recebe ACK.
+    await usar.click();
+    for (let i = 0; i < 80 && saldoDe(CHAR) !== 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const primeiroId = await page.evaluate(() => localStorage.getItem("__testeNarrativaRequestId"));
+    t("UI. HTTP fallback: gera UUID v4 sem randomUUID", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(primeiroId ?? ""));
+    t("UI. ACK perdido após commit não impede o débito único", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
+
+    // Desmonta a ficha e reabre. O localStorage deve recuperar a mesma
+    // intenção, não criar um novo uso ao montar o botão novamente.
+    await page.goto("about:blank");
+    await abrirFicha(page, "Herói Ações");
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.__narrativeRetryIds = [];
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object") {
+          s.__narrativeRetryIds.push(payload.requestId);
+        }
+        return original(ev, payload, cb);
+      };
+    });
+    const usarNovamente = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. ação narrativa reaparece após reabrir ficha", await usarNovamente.count() === 1);
+    await usarNovamente.click();
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll(".ficha-poder-acao"))
+        .some((el) => /Poder de Fogo ativado/.test(el.textContent || "")),
+    { timeout: 15000 });
+    const segundoId = await page.evaluate(() => window.__mesaSocket.__narrativeRetryIds?.[0] ?? null);
+    t("UI. reabrir/repetir reutiliza o MESMO requestId", !!primeiroId && segundoId === primeiroId, `primeiro=${primeiroId} segundo=${segundoId}`);
+    t("UI. replay após ACK perdido não cobra pela segunda vez", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
+    t("UI. confirmação mostra saldo restante", /3 Pontos de Sangue restantes/.test(await page.locator(".ficha-poder-acoes").innerText()));
+    t("UI. painel atualiza saldo em tempo real", (await saldoNaTela(page)) === 3, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
+
+    // A confirmação também sincroniza updatedAt no detalhe: o jogador
+    // pode editar/salvar em seguida sem 409 nem descarte do formulário.
+    await page.getByRole("button", { name: "Editar ficha" }).click();
+    t("UI. ação de uso fica oculta durante edição", await page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" }).count() === 0);
+    await page.getByRole("button", { name: "Salvar", exact: true }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
+    t("UI. salvar após ativação usa versão atual da ficha", /Ficha salva\./.test(await page.locator("body").innerText()));
+    await ctx.close();
+  }
+
+  // ---------- 2b. ACK tardio após trocar de ficha não troca o alvo do editor ----------
+  sec("UI. ativação pendente — não sobrescrever personagem aberto depois");
+  {
+    setSangue(CHARM, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+    const { ctx, page } = await novaPagina(M);
+    await abrirFicha(page, "Ficha do Mestre");
+    const usarMestre = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. corrida de ficha: mestre tem Poder narrativo próprio", await usarMestre.count() === 1);
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object" && typeof cb === "function") {
+          // O servidor confirma o débito imediatamente; apenas atrasamos
+          // a resposta do ACK para o navegador.
+          return original(ev, payload, (ack) => setTimeout(() => cb(ack), 3500));
+        }
+        return original(ev, payload, cb);
+      };
+    });
+    await usarMestre.click();
+    for (let i = 0; i < 40 && saldoDe(CHARM) !== 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    t("UI. corrida de ficha: primeiro débito gravado no personagem de origem", saldoDe(CHARM) === 3);
+    // Dois "Voltar" coexistem na tela (cabeçalho da campanha + detalhe
+    // do personagem) — mirar o do detalhe da ficha aberta. Na janela do
+    // ACK tardio a ficha pode remontar e duplicar o cabeçalho por um
+    // instante; aguardar exatamente um "Voltar" do detalhe antes de
+    // clicar (falha continua ruidosa se a ambiguidade persistir).
+    const voltarDetalhe = page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) })
+      .getByRole("button", { name: "Voltar", exact: true });
+    for (let i = 0; i < 50 && (await voltarDetalhe.count()) !== 1; i++) {
+      await page.waitForTimeout(100);
+    }
+    await voltarDetalhe.click();
+    const outraFicha = page.locator("tr.clicavel", { hasText: "Herói Ações" }).first();
+    await outraFicha.waitFor({ state: "visible", timeout: 15000 });
+    await outraFicha.click();
+    await page.getByRole("button", { name: "Editar ficha" }).click();
+    const nomeInput = page.locator("label").filter({ hasText: "Nome do personagem" }).locator("input");
+    t("UI. corrida de ficha: outro personagem segue em edição", await nomeInput.count() === 1);
+    await nomeInput.fill("Herói Renomeado");
+    await page.waitForTimeout(2100); // deixa o ACK tardio da ficha anterior resolver
+    t("UI. corrida de ficha: ACK antigo não troca nem reutiliza o editor",
+      await page.locator("h2").filter({ hasText: "Herói Ações" }).count() === 1
+      && await page.locator("label").filter({ hasText: "Nome do personagem" }).locator("input").count() === 1);
+    await page.getByRole("button", { name: "Salvar", exact: true }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
+    t("UI. corrida de ficha: salvar altera só o personagem atualmente aberto",
+      nomeDe(CHAR) === "Herói Renomeado" && nomeDe(CHARM) === "Ficha do Mestre",
+      `CHAR=${nomeDe(CHAR)} CHARM=${nomeDe(CHARM)}`);
+    // Restaura o nome original — as seções seguintes localizam a ficha
+    // pelo nome "Herói Ações" na lista de personagens.
+    const w = db();
+    try { w.prepare("update characters set name=? where id=?").run("Herói Ações", CHAR); } finally { w.close(); }
     await ctx.close();
   }
 
@@ -380,7 +546,8 @@ try {
     const painelM = p2.locator(".painel-sangue-leitura");
     t("UI. mestre vê seção 'Ações do mestre'", await painelM.locator(".painel-sangue-mestre").count() === 1);
     t("UI. mestre NÃO vê botão Descansar (não é dono)", await painelM.getByRole("button", { name: /Descansar/ }).count() === 0);
-    // ajustar +3 com motivo → saldo 5→8
+    // ajustar +3 com motivo → saldo 3→6 (o saldo 5 foi consumido pela
+    // ativação narrativa do Poder de Fogo na seção anterior: 5−2=3)
     await painelM.locator(".painel-sangue-mestre").locator("summary").click();
     await painelM.locator("input[aria-label='Delta de Sangue (positivo ou negativo)']").fill("3");
     await painelM.locator("input[aria-label='Motivo do ajuste de Sangue']").fill("bônus de teste");
@@ -390,7 +557,7 @@ try {
       return p && /ajustado/i.test(p.innerText);
     }, { timeout: 15000 }).catch(() => null);
     await p2.waitForTimeout(500);
-    t("UI. mestre ajustou saldo para 8", saldoDe(CHAR) === 8, `db=${saldoDe(CHAR)}`);
+    t("UI. mestre ajustou saldo para 6", saldoDe(CHAR) === 6, `db=${saldoDe(CHAR)}`);
     // reconciliar com motivo — reabre o <details> se o reload fechou
     await painelM.locator(".painel-sangue-mestre").evaluate((d) => { if (!d.open) d.querySelector("summary").click(); });
     await painelM.locator("input[aria-label='Motivo da reconciliação de capacidade']").fill("reconciliação teste");
@@ -453,7 +620,7 @@ try {
       await page.waitForTimeout(3500);
       const painel = page.locator(".painel-sangue-leitura");
       const txt = await painel.innerText();
-      t("UI. corrida: painel de B carregado (saldo 8)", /8/.test(txt), txt.slice(0, 160));
+      t("UI. corrida: painel de B carregado (saldo 6)", /6 \/ 10/.test(txt), txt.slice(0, 160));
       t("UI. corrida: posse de A NÃO vazou para B (sem Descansar/Ativar)",
         await painel.getByRole("button", { name: /Descansar|Ativar/ }).count() === 0);
       t("UI. corrida: mestre segue vendo 'Ações do mestre' em B",
@@ -622,6 +789,19 @@ try {
     t("UI. sem overflow horizontal", !overflow);
     await ctx.close();
   }
+
+  // O Poder D10 só pode ser marcado indisponível NO FIM do teste:
+  // validarRegras rejeita elemento desativado já selecionado na ficha
+  // ("está desativado nesta campanha") — marcá-lo antes quebrava tanto o
+  // POST /characters da fixture (CHAR undefined → setSangue) quanto o
+  // "Salvar" da ficha na seção de ativação narrativa.
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { disponivel: false } },
+  });
+  const vinculaveis = await req(BASE, "GET", `/campaigns/${CID}/regras/vinculaveis`, { cookie: J1 });
+  const metaD10 = vinculaveis.json?.metadadosPoderes?.find((p) => p.key === "poder_d10");
+  t("vinculáveis: Poder D10 inativo não é opção de aquisição", !(vinculaveis.json?.elementos?.poder ?? []).some((p) => p.key === "poder_d10"));
+  t("vinculáveis: metadado D10 do Poder inativo permanece", metaD10?.exigeTeste === true);
 
   await browser.close();
 } catch (e) {
