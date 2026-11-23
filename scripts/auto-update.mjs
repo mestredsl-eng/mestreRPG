@@ -10,9 +10,10 @@
 // resulta em aviso + continuacao com o codigo local. A unica saida
 // com erro e quando nem o rollback seguro pode ser garantido.
 //
-// Nunca executa: stash, clean, reset --hard preventivo, merge,
-// rebase, force ou descarte de arquivos. O unico reset rollback
-// verificado (arvore limpa + HEAD exatamente no commit do pull).
+// Nunca executa: stash, clean, merge commit, rebase, force ou descarte
+// preventivo de arquivos. A única movimentação para frente é `merge --ff-only`
+// de um SHA remoto já verificado; reset --hard só ocorre no rollback controlado
+// com árvore limpa, branch conferida e HEAD exatamente no SHA registrado.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -860,7 +861,7 @@ export async function executarBoot(opts = {}) {
 // ---------- CLI ----------
 const ehCli = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (ehCli) {
-  executarBoot({ cwd: process.cwd() }).then((r) => process.exit(r.codigo)).catch((e) => {
+  executarBoot({ cwd: process.cwd(), persistirDuravel: true }).then((r) => process.exit(r.codigo)).catch((e) => {
     // excecao que escapou do fluxo: nao da para garantir integridade —
     // bloqueia o boot em vez de subir possivelmente sobre codigo
     // atualizado sem deps/build (B2).
