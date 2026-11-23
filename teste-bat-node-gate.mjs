@@ -28,6 +28,7 @@ function executarCaso(nome, versao, aceita, esperado) {
   writeFileSync(join(app, "iniciar-mestre-rpg.bat"), readFileSync(batSource));
   // O sentinela registra a tentativa de lock; o node.cmd a intercepta.
   writeFileSync(join(scripts, "boot-lock.mjs"), "// sentinela\n");
+  writeFileSync(join(scripts, "auto-update.mjs"), "// sentinela\n");
   const log = join(dir, "chamadas.log");
   const nodeShim = [
     "@echo off",
@@ -72,11 +73,13 @@ function executarCaso(nome, versao, aceita, esperado) {
   check(nome + ": " + esperado, run.status === 1 && saida.includes(esperado),
     "status=" + run.status + "; saída=" + saida.slice(-700));
   const tentouLock = /node scripts\\boot-lock\.mjs adquirir/i.test(chamadas);
+  const tentouUpdater = /node scripts\\auto-update\.mjs/i.test(chamadas);
   const chamouNpm = /^npm /im.test(chamadas);
   if (aceita) {
     check(nome + ": gate aceitou e chegou ao sentinela do boot-lock", tentouLock, chamadas);
   } else {
     check(nome + ": recusou antes de adquirir lock", !tentouLock, chamadas);
+    check(nome + ": recusou antes do atualizador Git", !tentouUpdater, chamadas);
     check(nome + ": recusou antes de invocar npm", !chamouNpm, chamadas);
   }
 }
