@@ -582,7 +582,7 @@ try {
       && (child.signal === "SIGABRT" || (Number.isInteger(child.status) && child.status !== 0 && child.status !== 91));
     t("processo-filho sofreu crash abrupto depois do fast-forward",
       marcadorCrash && terminoAbrupto,
-      `status=${child.status} signal=${child.signal} marcador=${marcadorCrash} error=${child.error?.message ?? ""} stderr=${String(child.stderr ?? "").slice(-500)}`);
+      `status=${child.status} signal=${child.signal} marcador=${marcadorCrash} error=${child.error?.message ?? ""} stdout=${String(child.stdout ?? "").slice(-1800)} stderr=${String(child.stderr ?? "").slice(-1000)}`);
     t("crash deixou journal pull-iniciado com SHA alvo igual ao HEAD",
       journal.status === "ok" && journal.dados.fase === "pull-iniciado"
         && journal.dados.shaNovo === shaNoCrash && shaNoCrash !== shaAnterior,
