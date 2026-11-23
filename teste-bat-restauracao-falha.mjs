@@ -52,7 +52,7 @@ function executarCaso(nome, { codigoRestaurador, falhaNpm }) {
   writeFileSync(join(app, "iniciar-mestre-rpg.bat"), readFileSync(batSource));
   writeFileSync(join(scripts, "boot-lock.mjs"), BOOT_LOCK_SENTINELA);
   // O teste isola restauração/migration: o novo gate de bootstrap fica aprovado.
-  writeFileSync(join(scripts, "avaliar-boot.mjs"), "process.exit(0);\\n");
+  writeFileSync(join(scripts, "avaliar-boot.mjs"), "process.exit(0);\n");
   writeFileSync(join(scripts, "auto-update.mjs"), AUTO_UPDATE_SENTINELA);
   writeFileSync(join(distDb, "aplicar-restauracao.js"), `process.exit(${codigoRestaurador});\n`);
   const log = join(dir, "chamadas.log");
