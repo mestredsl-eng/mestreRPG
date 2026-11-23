@@ -4,7 +4,7 @@
 // bare repo em disco. npm/build sao interceptados por executor falso.
 import { execFileSync, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, utimesSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -564,11 +564,28 @@ try {
       "package-lock.json": '{"lockfileVersion":3,"packages":{"x":{"version":"3"}}}\\n',
       "site/vite.config.ts": "export default { define: { __SIGKILL__: true } };\\n",
     });
+    // O Git pode devolver o caminho curto 8.3 (RUNNER~1) para o
+    // insteadOf no processo-filho Windows, enquanto c.origin está no
+    // formato longo. Use a URL efetiva observada pelo Git, mas prove via
+    // realpath que ela resolve para o bare origin que a fixture criou.
+    const remotoEfetivoFilho = String(git(["remote", "get-url", "--all", "origin"], c.local).stdout).trim();
+    let remotoFixtureConfere = false;
+    try {
+      const canon = (p) => {
+        const real = realpathSync.native(p);
+        return process.platform === "win32" ? real.toLowerCase() : real;
+      };
+      remotoFixtureConfere = !!remotoEfetivoFilho
+        && canon(remotoEfetivoFilho) === canon(c.origin);
+    } catch { /* falhar fechado se o caminho não puder ser resolvido */ }
+    t("fixture crash: URL efetiva do Git resolve para o bare origin esperado",
+      remotoFixtureConfere,
+      `efetivo=${remotoEfetivoFilho} esperado=${c.origin}`);
     const envEstado = {
       ...process.env,
       MESTRE_STATE_DIR: join(c.base, "state-sigkill"),
       MESTRE_TEST_REPO: c.local,
-      MESTRE_TEST_URL_OFICIAL: String(c.origin).replace(/\\/g, "/"),
+      MESTRE_TEST_URL_OFICIAL: remotoEfetivoFilho,
     };
     const child = spawnSync(process.execPath, [
       join(process.cwd(), "teste-auto-update-crash-child.mjs"),
