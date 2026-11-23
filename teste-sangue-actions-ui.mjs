@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Teste E2E das AÇÕES de Sangue na UI (Issue #186 — correção .9:
 // widget integrado à ficha; contrato real R6.3 da PR #230:
-// sangue:recuperar p/ dono, sangue:ajustar/reconciliar-capacidade
-// p/ mestre). O fluxo paralelo de ativação (segundo seletor de
-// Poderes + botão "Ativar poder") foi REMOVIDO da UI — o consumo
-// ocorre no uso normal do Poder (D10), coberto por
-// teste-d10-sangue-cobranca.mjs e teste-sangue-runtime.mjs.
+// p/ mestre). A ativação sem rolagem é oferecida junto ao Poder já
+// selecionado na ficha, sem segundo seletor; o fluxo D10 continua
+// cobrando no próprio teste. Cobre também a ativação narrativa, retry
+// visual, permissões e ausência de controles para não-donos/espectadores.
 // Cobre: recuperação pelo dono, erro/permissões (dono vs mestre vs
 // espectador), mobile 390px e ausência de controles indevidos.
 // Servidor+SQLite+site 100% descartáveis.
@@ -350,18 +349,26 @@ try {
     await ctx.close();
   }
 
-  // ---------- 2. Sem fluxo paralelo de ativação na UI ----------
-  sec("UI. ativação de Poder não é duplicada no widget");
+  // ---------- 2. Ativação narrativa no campo de Poder existente ----------
+  sec("UI. ativar Poder pela própria ficha");
   {
-    // "Herói Ações" possui poder_fogo na ficha — mesmo assim o widget
-    // não oferece seletor/botão de ativação: o débito ocorre no D10.
     const { ctx, page } = await novaPagina(J1);
     await abrirFicha(page, "Herói Ações");
     const painel = page.locator(".painel-sangue-leitura");
-    t("UI. widget sem nenhum controle de ativar",
+    t("UI. painel não cria segundo seletor",
       await painel.locator("select").count() === 0
       && await painel.getByRole("button", { name: /Ativar|ativar/ }).count() === 0);
-    t("UI. saldo permanece estável sem uso de Poder", saldoDe(CHAR) === 5, `db=${saldoDe(CHAR)}`);
+    const usar = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. ação aparece junto ao Poder já escolhido", await usar.count() === 1);
+    await usar.click();
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll(".ficha-poder-acao"))
+        .some((el) => /Poder de Fogo ativado/.test(el.textContent || "")),
+    { timeout: 15000 });
+    await page.waitForTimeout(300);
+    t("UI. ativação narrativa cobra 2 pontos uma única vez", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
+    t("UI. confirmação mostra saldo restante", /3 Pontos de Sangue restantes/.test(await page.locator(".ficha-poder-acoes").innerText()));
+    t("UI. painel atualiza saldo em tempo real", (await saldoNaTela(page)) === 3, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
     await ctx.close();
   }
 
