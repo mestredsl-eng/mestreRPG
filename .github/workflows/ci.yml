@@ -4,9 +4,6 @@ on:
   pull_request:
     branches:
       - main
-      # Bases empilhadas das correções #314–#316.
-      - fix/issue-294-cross-campaign-binding-20261123
-      - fix/issue-294-sqlite-atomicity-20261123
       - feat/mesa-virtual-mapas-tokens
       - feat/mesa-virtual-nevoa-backend
       - feat/mesa-virtual-nevoa-frontend
