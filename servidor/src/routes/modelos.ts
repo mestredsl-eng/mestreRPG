@@ -27,6 +27,32 @@ async function carregarVersao(versionId: string) {
   return { row: v, estrutura: parse.success ? (parse.data as EstruturaFicha) : null };
 }
 
+/**
+ * Carrega uma versão somente quando o template pai pertence à campanha da rota.
+ * A associação é verificada na mesma consulta que localiza a versão, evitando
+ * confiar apenas no papel do usuário na campaignId recebida pela URL.
+ */
+async function carregarVersaoDaCampanha(templateId: string, versionId: string, campaignId: string) {
+  const [versao] = await db
+    .select({
+      id: sheetVersions.id,
+      templateId: sheetVersions.templateId,
+      version: sheetVersions.version,
+      structure: sheetVersions.structure,
+      publishedAt: sheetVersions.publishedAt,
+      createdAt: sheetVersions.createdAt,
+    })
+    .from(sheetVersions)
+    .innerJoin(sheetTemplates, eq(sheetTemplates.id, sheetVersions.templateId))
+    .where(and(
+      eq(sheetVersions.id, versionId),
+      eq(sheetVersions.templateId, templateId),
+      eq(sheetTemplates.campaignId, campaignId),
+    ))
+    .limit(1);
+  return versao ?? null;
+}
+
 function templatePublico(t: typeof sheetTemplates.$inferSelect, versaoAtual?: { id: string; version: number; publishedAt: Date | null } | null) {
   return {
     id: t.id,
@@ -241,11 +267,11 @@ modelosRouter.put(
   "/:templateId/versions/:versionId",
   requirePapel("mestre"),
   async (req, res) => {
-    const [v] = await db
-      .select()
-      .from(sheetVersions)
-      .where(and(eq(sheetVersions.id, req.params.versionId), eq(sheetVersions.templateId, req.params.templateId)))
-      .limit(1);
+    const v = await carregarVersaoDaCampanha(
+      req.params.templateId,
+      req.params.versionId,
+      campaignIdDe(req),
+    );
     if (!v) {
       res.status(404).json({ erro: "Versão não encontrada" });
       return;
@@ -260,9 +286,7 @@ modelosRouter.put(
       return;
     }
     await db.update(sheetVersions).set({ structure: parse.data }).where(eq(sheetVersions.id, v.id));
-    const [tpl] = await db.select({ campaignId: sheetTemplates.campaignId }).from(sheetTemplates)
-      .where(eq(sheetTemplates.id, req.params.templateId)).limit(1);
-    if (tpl?.campaignId) emitirCampanha(tpl.campaignId, "fichas:atualizadas", { templateId: req.params.templateId });
+    emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: req.params.templateId });
     res.json({ ok: true });
   }
 );
@@ -305,11 +329,11 @@ modelosRouter.post("/:templateId/versions", requirePapel("mestre"), async (req, 
 /** POST .../sheet-templates/:templateId/publish — publica versão para os jogadores */
 modelosRouter.post("/:templateId/publish", requirePapel("mestre"), async (req, res) => {
   const versionId = z.string().min(1).parse(req.body?.versionId ?? req.params.versionId);
-  const [v] = await db
-    .select()
-    .from(sheetVersions)
-    .where(and(eq(sheetVersions.id, versionId), eq(sheetVersions.templateId, req.params.templateId)))
-    .limit(1);
+  const v = await carregarVersaoDaCampanha(
+    req.params.templateId,
+    versionId,
+    campaignIdDe(req),
+  );
   if (!v) {
     res.status(404).json({ erro: "Versão não encontrada" });
     return;
