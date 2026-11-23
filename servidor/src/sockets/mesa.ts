@@ -1401,7 +1401,7 @@ function socket_handlers(
         | { tipo: "bloqueado"; nomePersonagem: string; nomeVitalidade: string }
         | { tipo: "regrasMudaram" }
         | { tipo: "poderNaoAdquirido" }
-        | { tipo: "sangueInsuficiente"; saldo: number; custo: number }
+        | { tipo: "sangueInsuficiente"; custo: number }
         | { tipo: "cobrancaErro"; erro: string };
       type VitalidadeRoll = { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean };
       type D10Roll = { minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] };
@@ -1535,7 +1535,8 @@ function socket_handlers(
             });
             if (!resSangue.ok) {
               if (resSangue.codigo === "saldo_insuficiente") {
-                return { tipo: "sangueInsuficiente", saldo: resSangue.saldo ?? 0, custo: cobranca.custo };
+                // Não exponha o saldo calculado no ACK: a origem da capacidade pode ser um campo privado da ficha.
+                return { tipo: "sangueInsuficiente", custo: cobranca.custo };
               }
               return { tipo: "cobrancaErro", erro: resSangue.codigo };
             }
@@ -1614,7 +1615,7 @@ function socket_handlers(
         return;
       }
       if (txRes.tipo === "sangueInsuficiente") {
-        cb?.({ ok: false, erro: `Sangue insuficiente para o custo do Poder (saldo ${txRes.saldo}, custo ${txRes.custo})`, codigo: "sangue_insuficiente" });
+        cb?.({ ok: false, erro: `Sangue insuficiente para o custo do Poder (custo ${txRes.custo})`, codigo: "sangue_insuficiente" });
         return;
       }
       if (txRes.tipo === "cobrancaErro") {
