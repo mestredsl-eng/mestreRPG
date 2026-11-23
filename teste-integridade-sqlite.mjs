@@ -496,18 +496,21 @@ try {
       ? estruturaPutF5
       : parseEstruturaF5(antesF5.structure);
     const eventosEsperadosF5 = 1 + (putF5.status === 200 ? 1 : 0);
+    const eventosNovosDoTemplateF5 = () =>
+      eventosF5.slice(eventosAntesF5).filter((e) => e?.templateId === tplF5);
 
     // O publish deve produzir exatamente um evento; o PUT só produz o seu
-    // se venceu a corrida. Espera limitada apenas para entrega do Socket.IO,
-    // nunca usada para sincronizar as requisições concorrentes.
+    // se venceu a corrida. Excluímos o evento anterior de criação do template
+    // capturado durante a fixture. A espera limitada ocorre só após as
+    // requisições para observar a entrega do Socket.IO.
     const limiteEventosF5 = Date.now() + 2500;
-    while (eventosF5.filter((e) => e?.templateId === tplF5).length < eventosEsperadosF5
+    while (eventosNovosDoTemplateF5().length < eventosEsperadosF5
       && Date.now() < limiteEventosF5) {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    const eventosDoTemplateF5 = eventosF5.filter((e) => e?.templateId === tplF5);
+    const eventosDoTemplateF5 = eventosNovosDoTemplateF5();
     await new Promise((resolve) => setTimeout(resolve, 100));
-    const eventosFinaisF5 = eventosF5.filter((e) => e?.templateId === tplF5);
+    const eventosFinaisF5 = eventosNovosDoTemplateF5();
 
     t(`F5 ${rotulo}: PUT termina em 200 ou 409, sem 5xx`,
       putF5.status === 200 || putF5.status === 409, `status=${putF5.status}`);
