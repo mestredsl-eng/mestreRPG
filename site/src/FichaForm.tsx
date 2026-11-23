@@ -179,10 +179,10 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   // nesta ficha. Não cria seletor paralelo e não interfere no D10.
   const acoesPoderCampo = (campo: CampoDef) => {
     if (!personagemId || !podeAtivarPoder || simulacao || !ehPoder(campo)) return null;
-    // Se o campo participa do Desafio D10 (flag explícita ou fallback
-    // semântico), NÃO oferece ativação narrativa: o débito ocorre
-    // exclusivamente na transação da rolagem, evitando cobrança dupla.
-    if (campoElegivelParaD10(campo)) return null;
+    // "Usado em testes" pertence ao CAMPO e não distingue os Poderes
+    // dentro de uma lista. A distinção de uso é por elemento da biblioteca:
+    // somente o Poder marcado "Exige teste D10" fica sem ação narrativa.
+    // Metadado ausente em fichas/campanhas antigas preserva o uso narrativo.
     const regra = campo.regra;
     let chaves = chavesSelecionadas(campo);
     // Campos numéricos vinculados a um Poder representam posse por nível.
@@ -192,6 +192,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       const nivel = typeof bruto === "number" ? bruto : typeof bruto === "string" ? Number(bruto) : 0;
       chaves = Number.isFinite(nivel) && nivel > 0 ? [regra.key] : [];
     }
+    chaves = chaves.filter((key) => (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true);
     if (chaves.length === 0) return null;
     return (
       <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
@@ -511,18 +512,6 @@ const TIPOS_LARGOS = new Set(["texto_longo", "tabela", "selecao_nivel", "selecao
 
 /** Tipos de campo que listam elementos da biblioteca/opções — indicam seção densa. */
 const TIPOS_SELECAO = new Set(["selecao_nivel", "selecao_multipla", "lista"]);
-
-// Mantém o mesmo contrato de campoElegivelParaTeste* do servidor:
-// campos D10 ficam exclusivamente no fluxo Mesa; os demais Poderes
-// podem ser usados narrativamente pela ação ao lado do item da ficha.
-const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento", "poder"]);
-function campoElegivelParaD10(campo: CampoDef): boolean {
-  if (campo.semantico === "moeda" || campo.semantico === "item") return false;
-  const semanticaElegivel = campo.usadoEmTestes === true
-    || (campo.usadoEmTestes !== false && SEMANTICOS_TESTAVEIS_FALLBACK.has(campo.semantico));
-  if (!semanticaElegivel) return false;
-  return campo.tipo === "inteiro" || campo.tipo === "decimal" || campo.tipo === "selecao_nivel";
-}
 
 function CampoInput({ campo, valor, calculado, somenteLeitura, aoMudar, biblioteca, ctxPontos, aoAlternarPoder, carteiraResumo, saldoEnviado, ehMestre, comErro, destaque }: {
   campo: CampoDef;
