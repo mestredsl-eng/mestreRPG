@@ -2,56 +2,88 @@
 
 > **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Este documento prepara o corte da release. Não substitui a candidata única, os gates de CI, a homologação de upgrade nem a autorização final do proprietário.
+> Documento atualizado com a evidência observada em 23/11/2026. Não substitui a candidata única, os gates no SHA final, a homologação de upgrade nem a autorização final do proprietário.
 
 ## Identificação planejada
 
 - Versão: `1.0.9`
 - Tag planejada: `v1.0.9`
 - Release planejada: `Mestre RPG v1.0.9`
-- Base de preparação: `main@a9585225ffb7b1a59d475d5f8a965692fe963fb7`
-- Versão declarada nessa base: `1.0.8`
+- Base atual de reconciliação: `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`
+- Versão declarada na base atual: `1.0.8`
 - Tag anterior: `v1.0.8`
-- Comparação a usar na publicação: `https://github.com/mestredsl-eng/mestreRPG/compare/v1.0.8...v1.0.9`
+- Comparação correta: `https://github.com/mestredsl-eng/mestreRPG/compare/v1.0.8...v1.0.9`
 
-A tag final deve apontar **exatamente para o commit final de `main` depois do merge da candidata 1.0.9**. Nunca apontar para uma branch de trabalho, HEAD de PR ou merge-ref temporário.
+A tag final deve apontar **exatamente para o commit final de `main` depois da integração e homologação da candidata 1.0.9**. Nunca apontar para branch de trabalho, HEAD de PR ou merge-ref temporário.
 
-## Conteúdo confirmado na linha de desenvolvimento
+## Conteúdo já integrado à main
 
-Os itens abaixo foram encontrados integrados à `main` de preparação e podem entrar nas notas finais, desde que permaneçam no diff/tag final:
+Os itens abaixo já estão em `main@7e17c9b` e podem aparecer nas notas finais somente se continuarem presentes no diff/tag final:
 
-- **Pontos de Sangue na ficha configurável** — PR #275 integrada. O painel compacto é vinculado ao campo configurado da ficha; não cria uma segunda seleção de Poderes nem um fluxo paralelo de ativação.
-- **Concessão de XP em lote** — PR #277 integrada. A UI utiliza o backend de lote já existente; não duplica tabela, endpoint ou migration.
-- **Extrato de XP e âncora de histórico** — PRs #217, #257 e #258 integradas. O extrato é somente leitura e preserva a referência do saldo quando a janela de eventos é truncada.
+- **Pontos de Sangue na ficha configurável** — PR #275 integrada; painel vinculado à ficha configurada.
+- **Concessão de XP em lote** — PR #277 integrada; UI usa o backend de lote existente.
+- **Extrato de XP e âncora de histórico** — PRs #217, #257 e #258 integradas; extrato somente leitura preserva a âncora quando eventos são truncados.
+- **Nomes acessíveis dos seis controles financeiros de Dinheiro** — PR #312 integrada à main por merge commit `7e17c9b`; os nomes acessíveis foram exercitados na matriz #300.
 
-A integração não equivale, sozinha, a aceite de release: os testes dessas entregas ainda precisam ser identificados na CI natural da candidata final.
+A integração não equivale, sozinha, a aceite de release. O diff final e a CI da candidata única precisam confirmar esses itens.
+
+## Evidência atual das frentes de estabilização
+
+### Boot, atualização e recuperação — PR #308
+
+- HEAD atual consultado: `b96ec55821c5c7167c5b9321a74f471d42744e43`, base `main@7e17c9b`.
+- CI natural `45291491793`: job Windows **SUCCESS 19/19 etapas**, sem falhas e sem SKIPs.
+- Passaram no Windows: build, homologação de atualização/restauração, auto-update com `npm.cmd`, crash abrupto + journal/recovery, Boot Lock Node 22, Node 20 (mínimo), gate de versão do BAT, primeiro bootstrap P10-C via `cmd.exe` real e restauração fail-closed bloqueando migrate/start.
+- P10-C confirmou consentimento, prompt, ordem lock → autorização → revalidação → updater, entradas negativas/EOF e instalação existente.
+- **Ainda não declarar a CI da PR concluída:** Servidor e Navegador estavam `IN_PROGRESS` na última consulta do mesmo run. Exigir 3/3 no SHA exato e revisão formal elegível.
+- A correção final do P10-C foi test-only: o sentinela passou a exportar `recuperarAtualizacaoPendente()` para satisfazer o contrato importado pelo avaliador real; não foram removidos nem relaxados asserts.
+
+### Integridade SQLite e isolamento entre campanhas — PR #316
+
+- HEAD: `0d2a06c471b0e053f13635955dbb53665da5b551`, base `main@7e17c9b`.
+- CI natural `45288641632`: **3/3 SUCCESS** — Servidor 27 etapas, Windows 16 etapas, Navegador 15 etapas; sem falhas e sem SKIPs.
+- `teste-integridade-sqlite.mjs`: **89 passaram / 0 falharam**, incluindo F1–F6, as duas rodadas concorrentes PUT × publish (F5), rollback de upload/vínculo, isolamento cross-campaign, auditoria/eventos e reabertura/integrity_check.
+- A descrição da PR foi atualizada para retirar a afirmação obsoleta de que faltava teste concorrente F5.
+- **Revisão independente ainda pendente:** a única submissão GitHub registrada é `COMMENTED` pelo mesmo usuário do repositório; isso não constitui `APPROVE` independente. Manter Draft até revisão elegível real.
+- Limites declarados: ENOSPC global não coberto; sem outbox/reconciliação para falha extraordinária de auditoria pós-commit; compensação física que falhe por segundo erro do filesystem é registrada, mas sem reparação automática neste escopo.
+
+### Acessibilidade e matriz de fluxos — PR #300 / Issue #297
+
+- HEAD: `30b75e90687c707939229395491ab4b03781d83f`, base `main@7e17c9b`.
+- CI natural `45277830798` + Assistente `45277830712`: **4/4 verificações SUCCESS**.
+- Auditor WCAG: 46/46; matriz de fluxos: 204/204; homologação D10 da ficha executada; alvos de ponteiro 36/36; contraste 0 FAIL / 38 REVIEW.
+- Os seis nomes acessíveis financeiros corrigidos pela #312 passaram após a sincronização.
+- Lacunas restantes da Issue #297: E2E de convites/cadastro (#255) não incluída nesta matriz; estados vazios/loading/erro (#238) não integrados; 38 ocorrências REVIEW ainda exigem disposição humana. Não converter REVIEW em PASS.
+
+### Linux
+
+- Issue #271 / PR #311: harness de componentes Linux existe em branch própria, mas ainda não há evidência de execução em runner Linux versionado no SHA candidato.
+- **Gate em aberto:** executar a homologação Linux real na candidata integrada ou obter decisão explícita e registrada do proprietário para retirar/adiar esse gate antes do corte. Build Windows não substitui prova Linux.
 
 ## Itens condicionais — não anunciar até integrar e homologar
 
-- **Uso narrativo de Poderes na ficha** — PR #279 está aberta. Só incluir se for integrada e passar pela CI/revisão exigidas.
-- **Atualização/Boot Lock/recuperação** — PR #308 está aberta. A cobertura W14/W16 e BAT tem regressões verdes, mas P10-C real pelo launcher e recuperação durável após crash do atualizador continuam bloqueadores conhecidos.
-- **Homologação Linux** — Issue #271 / PR #311: harness preparado, mas ainda sem evidência de execução Linux real em runner versionado. Não chamar execução Windows ou build isolado de PASS Linux.
-- **Acessibilidade dos controles financeiros** — PR #312 está aberta/Draft; a CI 3/3 e a composição de validação #313 (161/161, sem falhas) não significam que a correção já está integrada. #313 é PR temporária de verificação e não deve ser incorporada.
-- **Integridade SQLite e isolamento entre campanhas** — PR #316 está aberta/Draft; precisa CI natural completa no SHA final, revisão independente e fechamento da lacuna declarada do teste determinístico PUT × publicação.
-- **Upgrade real 1.0.8 → 1.0.9** — Issue #272 tem evidência local positiva de banco/migration/restore, mas o cutover completo pelo launcher novo e a execução na árvore final permanecem pendentes.
+- **Uso narrativo de Poderes na ficha** — PR #279 permanece aberta. Incluir somente se integrada, revisada e testada na candidata.
+- **Qualquer entrega Draft/Issue aberta** — não anunciar como concluída sem integração efetiva e evidência no SHA final.
 
 ## Gate de publicação — checklist obrigatório
 
-- [ ] Uma única PR candidata 1.0.9 identificada, com base `main`, DAG de integração e diff cumulativo auditado.
-- [ ] Todas as funcionalidades anunciadas estão efetivamente no commit candidato; nenhuma Draft ou Issue aberta aparece como entregue.
-- [ ] Stack de update/recuperação aprovada: Boot Lock, P10-C pelo launcher real, journal durável e retomada após crash cobertos.
-- [ ] W14 e W16 executados como regressões, com preservação comprovada de banco, arquivos, configuração e backup.
+- [ ] Uma única candidata 1.0.9 identificada, base `main`, DAG/diff cumulativo auditado e sem branches empilhadas pendentes.
+- [ ] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
+- [ ] PR #308: CI natural 3/3 no SHA final, incluindo Windows 19/19, P10-C real e restauração fail-closed, mais revisão independente.
+- [ ] PR #316: CI natural 3/3 no SHA final, F1–F6 89/89, mais revisão independente formal.
+- [ ] PR #300: decisão explícita sobre as lacunas da Issue #297 e 38 REVIEW; só anunciar os fluxos efetivamente cobertos.
+- [ ] W14/W16 executados como regressões, preservando banco, arquivos, configuração e backup.
 - [ ] Homologação Windows real no SHA final.
-- [ ] Homologação Linux real em runner versionado, ou decisão explícita de escopo documentada pelo proprietário antes de considerar a release.
-- [ ] Upgrade/cutover de uma instalação 1.0.8 para a candidata final, com banco, arquivos, backups, campanhas, fichas e progressão preservados.
+- [ ] Homologação Linux real em runner versionado, ou decisão explícita de escopo documentada pelo proprietário.
+- [ ] Upgrade/cutover real de instalação 1.0.8 para a candidata final, com banco, arquivos, backups, campanhas, fichas e progressão preservados.
 - [ ] Instalação limpa e build reproduzível de servidor/site.
-- [ ] Testes de XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP.
+- [ ] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP.
 - [ ] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final.
 - [ ] `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`, todos no mesmo commit.
 - [ ] `CHANGELOG.md` atualizado somente com funcionalidades integradas e validadas.
-- [ ] Versão apresentada por API/UI e metadados de backup consistente com `1.0.9`.
+- [ ] Versão na API/UI e metadados de backup consistente com `1.0.9`.
 - [ ] Pacote/árvore de distribuição revisado para excluir banco, arquivos de usuários, backups, segredos, caches e temporários.
-- [ ] CI natural completa 3/3 (Servidor, Windows e Navegador) no SHA/merge-ref exato da candidata.
+- [ ] CI natural completa 3/3 (Servidor, Windows e Navegador) no SHA/merge-ref exato da candidata final.
 - [ ] Revisões independentes registradas e bloqueadores resolvidos.
 - [ ] Autorização final do proprietário para tag/publicação.
 
@@ -60,14 +92,15 @@ A integração não equivale, sozinha, a aceite de release: os testes dessas ent
 1. Congelar o HEAD final e registrar SHA, diff, migrations, manifests e logs.
 2. Confirmar que `main` aponta para o SHA aprovado e que não há commits de release pendentes.
 3. Confirmar ausência prévia da tag `v1.0.9`.
-4. Criar a tag anotada `v1.0.9` no SHA final de `main`.
-5. Criar o GitHub Release como **Draft** com o título `Mestre RPG v1.0.9`, notas finais e comparação `v1.0.8...v1.0.9`.
-6. Conferir que a tag e a página da release apontam ao mesmo SHA.
-7. Publicar a GitHub Release somente após autorização final. Não inventar instalador/ZIP: a auditoria anterior não identificou empacotador oficial; declarar claramente se a distribuição é apenas código-fonte ou se um pacote foi produzido e homologado.
+4. Atualizar manifests/lockfile/changelog e validar a versão `1.0.9` na mesma árvore candidata.
+5. Criar a tag anotada `v1.0.9` no SHA final de `main`.
+6. Criar o GitHub Release como **Draft**, título `Mestre RPG v1.0.9`, notas finais e comparação `v1.0.8...v1.0.9`.
+7. Conferir que tag e página da release apontam ao mesmo SHA.
+8. Publicar somente após autorização final. Não inventar instalador/ZIP: se não houver empacotador oficial homologado, declarar distribuição como código-fonte.
 
-## Histórico e correções de precisão
+## Histórico e precisão
 
-- A publicação `v1.0.8` já existe em GitHub Releases.
-- A tag `v1.0.8` aponta para `d1c3155ebbd0e952e1c4fb7119733ee0019db667`; a `main` de preparação está 43 commits à frente. Essa diferença deve ser interpretada junto ao escopo pós-.8, não como autorização para etiquetar o HEAD atual como .9.
-- A release anterior contém um link de comparação `v1.0.8...v1.0.8`, que não mostra o delta de .8. Não repetir esse erro: o link correto para .9 é `v1.0.8...v1.0.9`.
-- As notas finais devem ser conferidas contra o diff da tag; este arquivo é apenas uma preparação e não é texto aprovado para publicação.
+- A publicação `v1.0.8` existe no GitHub Releases.
+- A tag `v1.0.8` aponta para `d1c3155ebbd0e952e1c4fb7119733ee0019db667`; `main@7e17c9b` está além dessa tag e continua declarada como versão 1.0.8.
+- A release anterior continha comparação `v1.0.8...v1.0.8`, que não mostra o delta. Não repetir: o link correto para 1.0.9 é `v1.0.8...v1.0.9`.
+- Este arquivo continua sendo rascunho interno. Atualizar novamente contra o diff/tag final antes de publicação.
