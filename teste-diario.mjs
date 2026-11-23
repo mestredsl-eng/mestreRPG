@@ -376,6 +376,140 @@ try {
   t("164-13 flag restaurada: espectador volta a ver compartilhadas",
     tem(vE.ids, N_PUB) && tem(vE.ids, N_SEL_OK));
 
+
+  // ============ Issue #171 — bypasses de PATCH com compartilhamento off ============
+  {
+    const setFlagCompartilha = (v) => {
+      const w = abrirDb(BANCO);
+      const rs = w.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(CID);
+      const cfg = JSON.parse(rs?.config || "{}");
+      cfg.notas = { ...(cfg.notas ?? {}), jogadorCompartilha: v };
+      w.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+      w.close();
+    };
+    const notaDe = async (id, cookie) => {
+      const r = await req("GET", "/anotacoes?tipo=todas", { cookie });
+      return (r.json?.anotacoes ?? []).find((a) => a.id === id);
+    };
+
+    // Flag LIGADA: o jogador cria as notas da matriz de bypass.
+    setFlagCompartilha(true);
+    const mkJ = async (title, visibility, extra = {}) =>
+      (await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title, kind: "diario", visibility, ...extra } })).json?.id;
+    const J_PUB = await mkJ(`E171 pub ${RUN}`, "publica");
+    const J_SEL = await mkJ(`E171 sel ${RUN}`, "selecionada", { recipients: [uJ2] });
+    const J_PRIV = await mkJ(`E171 priv ${RUN}`, "privada");
+    const J_KIND = await mkJ(`E171 kind ${RUN}`, "privada");
+    const A_KIND = (await req("POST", "/anotacoes", { body: { title: `E171 mestre ${RUN}`, kind: "diario", visibility: "privada" } })).json?.id;
+    t("171-00 notas da matriz criadas", [J_PUB, J_SEL, J_PRIV, J_KIND, A_KIND].every(Boolean));
+    setFlagCompartilha(false);
+
+    // B1 — PATCH de conteúdo em nota pública própria → 403 (antes: 200).
+    const b1 = await req("PATCH", `/anotacoes/${J_PUB}`, { cookie: JOG5.cookie, body: { content: "editado" } });
+    t("171-01 B1: PATCH {content} em pública → 403", b1.status === 403, String(b1.status));
+    // Rebaixar para privada NO MESMO PATCH → 200; some para o outro jogador.
+    const b2 = await req("PATCH", `/anotacoes/${J_PUB}`, { cookie: JOG5.cookie, body: { content: "editado", visibility: "privada" } });
+    t("171-02 rebaixa pública p/ privada no mesmo PATCH → 200", b2.status === 200, String(b2.status));
+    const lstJ2 = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-03 nota rebaixada não aparece p/ outro jogador", !(lstJ2.json?.anotacoes ?? []).some((a) => a.id === J_PUB));
+    const nPub = await notaDe(J_PUB, JOG5.cookie);
+    t("171-04 visibilidade persistida = privada", nPub?.visibility === "privada", String(nPub?.visibility));
+
+    // B2 — recipients em nota selecionada → 403 em qualquer variação.
+    const b3 = await req("PATCH", `/anotacoes/${J_SEL}`, { cookie: JOG5.cookie, body: { recipients: [uJ2] } });
+    t("171-05 B2: PATCH {recipients} em selecionada → 403", b3.status === 403, String(b3.status));
+    const b4 = await req("PATCH", `/anotacoes/${J_SEL}`, { cookie: JOG5.cookie, body: { recipients: [] } });
+    t("171-06 zerar destinatários em selecionada → 403", b4.status === 403, String(b4.status));
+    const b5 = await req("PATCH", `/anotacoes/${J_SEL}`, { cookie: JOG5.cookie, body: { content: "só texto" } });
+    t("171-07 PATCH {content} em selecionada → 403", b5.status === 403, String(b5.status));
+    const b6 = await req("PATCH", `/anotacoes/${J_SEL}`, { cookie: JOG5.cookie, body: { visibility: "selecionada", recipients: [uJ2] } });
+    t("171-08 PATCH visibility selecionada + recipients → 403", b6.status === 403, String(b6.status));
+    // Rebaixar selecionada → privada limpa o compartilhamento.
+    const b7 = await req("PATCH", `/anotacoes/${J_SEL}`, { cookie: JOG5.cookie, body: { visibility: "privada" } });
+    t("171-09 rebaixa selecionada p/ privada → 200", b7.status === 200, String(b7.status));
+    const nSel = await notaDe(J_SEL, JOG5.cookie);
+    t("171-10 selecionada rebaixada fica privada", nSel?.visibility === "privada", String(nSel?.visibility));
+
+    // B3 — kind "mestre" via PATCH: jogador 403, mestre 200.
+    const b8 = await req("PATCH", `/anotacoes/${J_KIND}`, { cookie: JOG5.cookie, body: { kind: "mestre" } });
+    t("171-11 B3: jogador PATCH kind=mestre → 403", b8.status === 403, String(b8.status));
+    const lstMestreJ5 = await req("GET", "/anotacoes?tipo=mestre", { cookie: JOG5.cookie });
+    t("171-12 kind permanece diario (não aparece em tipo=mestre)", !(lstMestreJ5.json?.anotacoes ?? []).some((a) => a.id === J_KIND));
+    const b9 = await req("PATCH", `/anotacoes/${A_KIND}`, { body: { kind: "mestre" } });
+    t("171-13 mestre PATCH kind=mestre → 200", b9.status === 200, String(b9.status));
+
+    // Nota privada segue editável com a flag desligada.
+    const b10 = await req("PATCH", `/anotacoes/${J_PRIV}`, { cookie: JOG5.cookie, body: { content: "edit privado ok" } });
+    t("171-14 PATCH em nota privada → 200", b10.status === 200, String(b10.status));
+
+    // Flag LIGADA: fluxos compartilhados legítimos seguem funcionando.
+    setFlagCompartilha(true);
+    const b11 = await req("PATCH", `/anotacoes/${J_PRIV}`, { cookie: JOG5.cookie, body: { visibility: "publica" } });
+    t("171-15 flag on: privada → pública → 200", b11.status === 200, String(b11.status));
+    const b12 = await req("PATCH", `/anotacoes/${J_PRIV}`, { cookie: JOG5.cookie, body: { content: "segue pública" } });
+    t("171-16 flag on: PATCH conteúdo em pública → 200", b12.status === 200, String(b12.status));
+    // Mestre é isento mesmo com a flag desligada.
+    setFlagCompartilha(false);
+    const b13 = await req("PATCH", `/anotacoes/${A_KIND}`, { body: { content: "mestre edita compartilhada" } });
+    t("171-17 flag off: mestre edita normalmente → 200", b13.status === 200, String(b13.status));
+
+    // Tentativas alternativas com flag OFF — nenhuma pode contornar o gate.
+    const J5_PRIV2 = (await req("POST", "/anotacoes", { cookie: JOG5.cookie, body: { title: `J5 priv2 ${RUN}`, kind: "diario", visibility: "privada" } })).json?.id;
+    const J2_PRIV = (await req("POST", "/anotacoes", { cookie: JOG2.cookie, body: { title: `J2 priv ${RUN}`, kind: "diario", visibility: "privada" } })).json?.id;
+    const c1 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { visibility: "publica" } });
+    t("171-18 flag off: privada → pública direta → 403", c1.status === 403, String(c1.status));
+    const c2 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { visibility: "mestre" } });
+    t("171-19 flag off: privada → mestre → 403", c2.status === 403, String(c2.status));
+    const c3 = await req("PATCH", `/anotacoes/${J5_PRIV2}`, { cookie: JOG5.cookie, body: { kind: "mestre", visibility: "privada", content: "promoção combinada" } });
+    t("171-20 flag off: kind mestre + privada → 403", c3.status === 403, String(c3.status));
+    const c4 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG2.cookie, body: { recipients: [uJ2] } });
+    t("171-21 flag off: recipients em nota privada → 200 (ignorado)", c4.status === 200, String(c4.status));
+    const recJ2Priv = comDb(BANCO, (db) => db.prepare("select recipients from notes where id=?").get(J2_PRIV))?.recipients;
+    t("171-21b recipients de nota privada persistido como null", recJ2Priv === null, String(recJ2Priv));
+    lista = (await req("GET", "/anotacoes?tipo=diario", { cookie: JOG5.cookie })).json?.anotacoes ?? [];
+    const vazou = lista.some((x) => x.id === J2_PRIV);
+    t("171-22 nota privada c/ recipients não aparece p/ terceiros", !vazou, JSON.stringify(vazou));
+    const c5 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG5.cookie, body: { content: "intruso" } });
+    t("171-23 flag off: dono errado → 403", c5.status === 403, String(c5.status));
+    const c6 = await req("PATCH", `/anotacoes/${J2_PRIV}`, { cookie: JOG2.cookie, body: { status: "concluida", title: `J2 priv done ${RUN}` } });
+    t("171-24 flag off: status/título em privada → 200", c6.status === 200, String(c6.status));
+    const c7 = await req("PATCH", `/anotacoes/${J_PRIV}`, { cookie: JOG5.cookie, body: { kind: "diario", visibility: "privada", content: "downgrade combinado" } });
+    t("171-25 flag off: downgrade c/ kind explícito → 200", c7.status === 200, String(c7.status));
+    const c8 = await req("GET", "/anotacoes?tipo=diario", { cookie: JOG2.cookie });
+    const aindaPublica = (c8.json?.anotacoes ?? []).some((x) => x.id === J_PRIV);
+    t("171-26 nota rebaixada some p/ outros jogadores", !aindaPublica, JSON.stringify(aindaPublica));
+    setFlagCompartilha(true);
+
+    // P2-A — destinatários latentes: nota privada nunca retém recipients.
+    const recNota = (id) => comDb(BANCO, (db) => db.prepare("select recipients, visibility from notes where id=?").get(id));
+    const J5_LAT = await mkJ(`E171 latente ${RUN}`, "privada");
+    t("171-27 nota privada p/ teste de latência criada", Boolean(J5_LAT));
+    const d1 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { recipients: [uJ2] } });
+    t("171-28 PATCH recipients em privada (flag on) → 200", d1.status === 200, String(d1.status));
+    t("171-29 recipients persistido null", recNota(J5_LAT)?.recipients === null, String(recNota(J5_LAT)?.recipients));
+    let lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-30 destinatário latente não vê a nota", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d2 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "selecionada" } });
+    t("171-31 promover p/ selecionada sem recipients → 400", d2.status === 400, String(d2.status));
+    t("171-32 recipients continua null após 400", recNota(J5_LAT)?.recipients === null);
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-33 destinatário antigo não reativado", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d3 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "selecionada", recipients: [uJ2] } });
+    t("171-34 selecionada com recipients válidos → 200", d3.status === 200, String(d3.status));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-35 destinatário explícito passa a ver", (lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d4 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { content: "só conteúdo" } });
+    t("171-36 PATCH conteúdo em selecionada → 200", d4.status === 200, String(d4.status));
+    const recSel = recNota(J5_LAT);
+    t("171-37 recipients preservados sem reenvio", JSON.stringify(JSON.parse(recSel?.recipients ?? "null")) === JSON.stringify([uJ2]), String(recSel?.recipients));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-38 destinatário continua vendo após edição", (lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+    const d5 = await req("PATCH", `/anotacoes/${J5_LAT}`, { cookie: JOG5.cookie, body: { visibility: "privada" } });
+    t("171-39 downgrade p/ privada → 200", d5.status === 200, String(d5.status));
+    t("171-40 downgrade limpa recipients", recNota(J5_LAT)?.recipients === null, String(recNota(J5_LAT)?.recipients));
+    lstJ2Lat = await req("GET", "/anotacoes?tipo=todas", { cookie: JOG2.cookie });
+    t("171-41 nota rebaixada some p/ destinatário", !(lstJ2Lat.json?.anotacoes ?? []).some((a) => a.id === J5_LAT));
+  }
 } catch (e) {
   fail++; res.push("EXCEÇÃO " + (e?.stack ?? e));
 } finally {

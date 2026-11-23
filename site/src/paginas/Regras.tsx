@@ -15,6 +15,7 @@ import {
   type TipoRegra,
 } from "../api";
 import { ModalConfirmar } from "../Modal";
+import RegrasSangue from "./RegrasSangue";
 import { useSincronizacaoCampanha } from "../useSincronizacao";
 
 const ROTULO_KIND: Record<TipoRegra, string> = {
@@ -37,7 +38,7 @@ const ROTULO_KIND: Record<TipoRegra, string> = {
 
 const KINDS = Object.keys(ROTULO_KIND) as TipoRegra[];
 
-type Aba = "biblioteca" | "pontuacao" | "validacao" | "acervo";
+type Aba = "biblioteca" | "pontuacao" | "sangue" | "validacao" | "acervo";
 
 /** Extrai campo/mensagem dos issues de validação retornados pela API. */
 function mensagemApi(e: unknown, padrao: string): string {
@@ -288,6 +289,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       <div className="abas">
         <button className={aba === "biblioteca" ? "ativo" : "secundario"} onClick={() => setAba("biblioteca")}>Biblioteca</button>
         <button className={aba === "pontuacao" ? "ativo" : "secundario"} onClick={() => setAba("pontuacao")}>Pontuação</button>
+        <button className={aba === "sangue" ? "ativo" : "secundario"} onClick={() => setAba("sangue")}>Sangue</button>
         <button className={aba === "validacao" ? "ativo" : "secundario"} onClick={() => { setAba("validacao"); void carregarPersonagens(); }}>Validação de fichas</button>
         <button className={aba === "acervo" ? "ativo" : "secundario"} onClick={() => setAba("acervo")}>Acervo</button>
       </div>
@@ -394,6 +396,29 @@ export default function Regras({ campaignId }: { campaignId: string }) {
 
       {aba === "pontuacao" && regras && (
         <PainelPontuacao config={regras.config} onSalvar={salvarConfig} campaignId={campaignId} />
+      )}
+
+      {aba === "sangue" && regras && (
+        <RegrasSangue
+          config={regras.config.sangue}
+          poderes={regras.elementos.filter((el) => el.kind === "poder")}
+          campaignId={campaignId}
+          onSalvar={async (sangue) => {
+            // PUT /regras/config aceita merge parcial — enviamos APENAS a
+            // chave `sangue`; as demais configurações ficam intactas no
+            // servidor. A validação autoritativa é do backend (400 exibido
+            // pelo próprio painel).
+            try {
+              await api.atualizarConfigRegras(campaignId, { sangue });
+              setAviso("Configuração de Pontos de Sangue salva.");
+              await carregar();
+            } catch (e) {
+              // O painel exibe o erro do servidor (400/403) — não engolir
+              // aqui para não simular sucesso.
+              throw e;
+            }
+          }}
+        />
       )}
 
       {aba === "validacao" && (
@@ -1025,6 +1050,17 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
       </div>
       <p className="dica">Usado pelo lançador D10 da mesa: resultados iguais ou acima desse valor contam como sucesso.</p>
 
+      <h4>Mesa Virtual (VTT)</h4>
+      <label className="checkbox">
+        <input
+          type="checkbox"
+          checked={form.vtt?.vidaCompartilhada === true}
+          onChange={(e) => setForm((f) => ({ ...f, vtt: { vidaCompartilhada: e.target.checked } }))}
+        />
+        Compartilhar vida (HP e vitalidade) nos tokens para jogadores e espectadores
+      </label>
+      <p className="dica">Desligado (padrão): cada jogador vê a vida apenas do próprio personagem; o mestre vê todos os tokens. Ligado: a vida aparece em todo token revelado — para NPCs e fichas de terceiros o cálculo usa somente os campos visíveis ao leitor, sem vazar atributos privados. A vida nunca é gravada no estado do VTT: é derivada a cada envio.</p>
+
       <h4>Transferência entre reservas</h4>
       <label className="checkbox">
         <input type="checkbox" checked={form.transferivelEntreReservas} onChange={(e) => setForm((f) => ({ ...f, transferivelEntreReservas: e.target.checked }))} />
@@ -1068,15 +1104,8 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
 
       <h4>Patrimônio e permissões do jogador</h4>
       <p className="dica">Ações que os jogadores podem executar no patrimônio e no dinheiro. O mestre sempre mantém acesso administrativo. Campanhas antigas sem estas chaves usam os valores padrão indicados.</p>
+      <h5>Patrimônio</h5>
       <div className="grade-form">
-        <label className="checkbox">
-          <input type="checkbox" checked={finPerm.jogadorCompraVenda} onChange={(e) => setFinPerm("jogadorCompraVenda", e.target.checked)} />
-          Jogador registra compra e venda
-        </label>
-        <label className="checkbox">
-          <input type="checkbox" checked={finPerm.jogadorPix} onChange={(e) => setFinPerm("jogadorPix", e.target.checked)} />
-          Jogador faz PIX fictício entre personagens
-        </label>
         <label className="checkbox">
           <input type="checkbox" checked={patPerm.jogadorAdicionaItens} onChange={(e) => setPatPerm("jogadorAdicionaItens", e.target.checked)} />
           Jogador adiciona itens ao inventário
@@ -1096,6 +1125,17 @@ function PainelPontuacao({ config, onSalvar, campaignId }: { config: ConfigRegra
         <label className="checkbox">
           <input type="checkbox" checked={patPerm.jogadorCriaContas} onChange={(e) => setPatPerm("jogadorCriaContas", e.target.checked)} />
           Jogador cria contas financeiras
+        </label>
+      </div>
+      <h5>Financeiro</h5>
+      <div className="grade-form">
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorCompraVenda} onChange={(e) => setFinPerm("jogadorCompraVenda", e.target.checked)} />
+          Jogador registra compra e venda
+        </label>
+        <label className="checkbox">
+          <input type="checkbox" checked={finPerm.jogadorPix} onChange={(e) => setFinPerm("jogadorPix", e.target.checked)} />
+          Jogador faz PIX fictício entre personagens
         </label>
       </div>
 

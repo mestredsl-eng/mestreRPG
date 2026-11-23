@@ -86,7 +86,7 @@ function armarFlag(raiz, filePath) {
 // correspondentes no journal do Drizzle — a quantidade é derivada do
 // _journal.json (tudo com idx >= 17), não de um número mágico que
 // quebraria a cada migration nova.
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members", "guild_invites"];
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members", "guild_invites", "xp_lotes"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {

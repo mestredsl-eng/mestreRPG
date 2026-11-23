@@ -1,6 +1,6 @@
 # Mestre RPG
 
-Plataforma própria de RPG hospedada no PC do mestre: campanhas online, fichas 100% personalizáveis, regras do mestre, mesa sincronizada em tempo real e controle total do mestre. Os jogadores participam pelo navegador, sem instalação.
+Plataforma de RPG hospedada no PC do mestre para criar campanhas online, personalizar fichas e regras e conduzir uma mesa sincronizada em tempo real. Mestres, jogadores e espectadores acessam pelo navegador, sem precisar instalar um cliente.
 
 ## Stack
 
@@ -49,8 +49,29 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Inventário com cálculos:** campos `tabela` semânticos `item` calculam peso/espaço/valor por linha (`quantidade × unidade`) e resumo geral, com validação de munição (`atual ≤ máxima`), valores não-negativos e tolerância a registros antigos.
 - **Poderes × Defeitos:** elementos de regra com níveis graduados (`selecao_nivel`), custos por nível (inclusive negativos que concedem pontos), limites configuráveis de poderes/defeitos, exigência de defeito e validação no backend.
 - **Pontos de Vida (HP) e Vitalidade:** HP máximo configurável por campanha (`base + atributo × por nível`, ex.: 100 + Vigor×20), HP atual persistido com dano/recuperação/ajuste, limites (0–máximo) e histórico com motivo e autor. Vitalidade: escala de níveis configurável que reduz dados nas rolagens — penalidade aplicada no backend, Incapacitado bloqueia ações do jogador (mestre pode autorizar exceção). Conversão automática de ferimentos (dano de HP → subida de vitalidade) configurável por limiares de percentual na aba Regras.
-- **VTT (mesa virtual):** mapas táticos com tokens de personagem, movimento em tempo real, névoa de guerra com sincronização e reconciliação, tokens de NPC ocultos até exibição explícita do mestre e ficha de NPC com visibilidade decidida pelo mestre.
+- **Patrimônio — permissões granulares:** o mestre controla separadamente sete permissões dos jogadores: adicionar itens, remover itens, editar equipamentos, editar veículos, criar contas, realizar compra/venda e transferir valores por PIX fictício. As mudanças feitas em Regras são refletidas na tela de Patrimônio em tempo real, sem exigir recarregamento. O backend continua sendo a autoridade e bloqueia operações não autorizadas.
+- **VTT (mesa virtual):** mapas táticos com tokens de personagem, movimento em tempo real, névoa de guerra sincronizada, tokens de NPC ocultos até exibição explícita do mestre e ficha de NPC com visibilidade decidida pelo mestre. A régua mede de ponto livre a ponto livre, de token a ponto ou entre tokens, com encaixe (snap), suporte a mouse e toque e calibração exclusiva do mestre. O tabuleiro respeita as dimensões e a proporção real do mapa, sem distorcer a arte. A medição é local e temporária: não é transmitida nem gravada como traço. Jogadores só conseguem encaixar a régua em tokens que já podem visualizar; régua e pincel da névoa são ferramentas mutuamente exclusivas.
 - **Biblioteca de regras inicial:** sementes de talentos, habilidades, conhecimentos, profissões, vantagens, defeitos, poderes, disciplinas, perícias, itens, veículos e dinheiro — semeadas por campanha sem duplicar.
+
+
+## Destaques da versão 1.0.8
+
+A versão 1.0.8 reúne as melhorias de Pontos de Sangue e os avanços de vida/condição no VTT:
+
+- **Pontos de Sangue por campanha:** o mestre configura capacidade, natureza, custos de Poderes e recuperação. O saldo e o histórico ficam disponíveis na ficha e na Mesa conforme as permissões efetivas dos campos.
+- **Ativação de Poderes e D10 integrados:** ações elegíveis debitam o custo no mesmo fluxo transacional do resultado; custo zero também é registrado para garantir idempotência.
+- **Evolução por XP:** a capacidade de Sangue pode ser financiada pela progressão de experiência, respeitando o vínculo da característica configurada pela campanha.
+- **Vida e condição no VTT:** tokens exibem indicadores de HP, vitalidade e condição de acordo com a visibilidade autorizada para cada participante.
+- **Integridade de exportações:** os ledgers de XP e Sangue são protegidos em conjunto por assinatura HMAC v2; a importação valida as evidências de progressão antes de preservar financiamentos.
+
+A versão também inclui uma pré-validação fail-closed para futuras operações de revinculação de fichas. A revinculação efetiva não faz parte da 1.0.8.
+
+## Destaques da versão 1.0.7
+
+A versão 1.0.7 reuniu duas melhorias anteriores:
+
+- **Patrimônio mais configurável:** o mestre decide quais ações cada jogador pode executar, com controles separados para itens, equipamentos, veículos, contas, compra/venda e PIX fictício. As permissões são atualizadas ao vivo quando as regras da campanha mudam.
+- **Medição na Mesa Virtual:** a régua permite medir distâncias no mapa com mouse ou toque, usar tokens como pontos de referência e calibrar a escala para as unidades da campanha. A geometria acompanha a proporção original do mapa, e a medição não é compartilhada como dado persistente.
 
 ## Operação no Windows
 
@@ -150,4 +171,3 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 - Painel **Administração → Servidor** — uptime, versão, contagens, último backup, logs recentes e configurações globais.
 - Problemas comuns: porta 3001 ocupada (o `.bat` avisa e sugere `parar-mestre-rpg.bat`); "pouco espaço em disco" (o health sinaliza abaixo do limite); backup falhando (verifique permissão de escrita na pasta de destino).
 
-## Estado atual

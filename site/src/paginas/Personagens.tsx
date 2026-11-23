@@ -4,9 +4,11 @@ import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import ExtratoXp from "../ExtratoXp";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
+import XpLote from "../XpLote";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -34,6 +36,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const [verArquivados, setVerArquivados] = useState(false);
+  const [xpLoteAberto, setXpLoteAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
@@ -131,9 +134,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
           <h2>Personagens{verArquivados ? " arquivados" : ""}</h2>
           <div className="linha">
             {souMestre && (
-              <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
-                {verArquivados ? "Ver ativos" : "Ver arquivados"}
-              </button>
+              <>
+                <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
+                  {verArquivados ? "Ver ativos" : "Ver arquivados"}
+                </button>
+                {!verArquivados && personagens.length > 0 && (
+                  <button className="secundario" onClick={() => setXpLoteAberto(true)}>XP em lote</button>
+                )}
+              </>
             )}
             {!verArquivados && (
             <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
@@ -196,6 +204,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
           </table>
           )}
         </section>
+      )}
+      {xpLoteAberto && souMestre && (
+        <XpLote campaignId={campaignId} personagens={personagens} nomes={new Map(personagens.map((p) => [p.id, p.name]))} aoFechar={() => setXpLoteAberto(false)} />
       )}
     </>
   );
@@ -613,6 +624,8 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             poderesCfg={ficha?.poderes ?? null}
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
+            podeLerSangue={souMestre || personagem.ehEu === true}
+            campaignId={campaignId}
             camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
         )}
@@ -622,6 +635,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           dono — montar o componente dispararia consultas 403 desnecessárias. */}
       {(souMestre || personagem.ehEu === true) && (
         <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      )}
+
+      {/* Extrato de XP: somente mestre/dono — mesmo recorte do backend
+          (GET /progressao). Leitor de NPC revelado não é dono e não vê. */}
+      {(souMestre || personagem.ehEu === true) && (
+        <ExtratoXp characterId={personagem.id} />
       )}
     </>
   );

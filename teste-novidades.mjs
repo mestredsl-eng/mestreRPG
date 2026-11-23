@@ -25,7 +25,10 @@ const MIGRATIONS = join(RAIZ_REPO, "servidor/migrations");
 const ULTIMA_MIGRACAO_ANTIGA = "0017"; // instalação anterior: schema até 0017
 const ID_NOVIDADE_1005 = "00000000-0000-4000-8000-000000000105";
 const ID_NOVIDADE_XP_1005 = "00000000-0000-4000-8000-000000000106";
-const ID_NOVIDADE_AUTO_1006 = "00000000-0000-4000-8000-000000000107";
+const ID_NOVIDADE_DIARIO_1006 = "00000000-0000-4000-8000-000000000107"; // seed da v1.0.6 (Issue #171)
+const ID_NOVIDADE_1007 = "00000000-0000-4000-8000-000000000108"; // seed da v1.0.7 (PRs #177/#178)
+const ID_NOVIDADE_1008 = "00000000-0000-4000-8000-000000000109"; // seed da v1.0.8 (Pontos de Sangue + VTT)
+const ID_NOVIDADE_AUTO_1006 = "00000000-0000-4000-8000-000000000110"; // seed auto-update (stack #189)
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -50,12 +53,35 @@ const sec = (n) => console.log("\n== " + n + " ==");
     `prevId=${snapshotXp.prevId} anterior=${atual.id}`);
   t("snapshot 0029 preserva o mesmo esquema (migration só de dados)",
     JSON.stringify(semIdentidade(snapshotXp)) === JSON.stringify(semIdentidade(atual)));
-  const snapshotAuto = JSON.parse(readFileSync(join(meta, "0030_snapshot.json"), "utf8"));
+  const snapshotNews = JSON.parse(readFileSync(join(meta, "0030_snapshot.json"), "utf8"));
   t("snapshot 0030 encadeia em 0029 com UUID próprio",
-    snapshotAuto.prevId === snapshotXp.id && snapshotAuto.id !== snapshotXp.id && /^[0-9a-f-]{36}$/i.test(snapshotAuto.id),
-    `prevId=${snapshotAuto.prevId} anterior=${snapshotXp.id}`);
+    snapshotNews.prevId === snapshotXp.id && snapshotNews.id !== snapshotXp.id && /^[0-9a-f-]{36}$/i.test(snapshotNews.id),
+    `prevId=${snapshotNews.prevId} anterior=${snapshotXp.id}`);
   t("snapshot 0030 preserva o mesmo esquema (migration só de dados)",
-    JSON.stringify(semIdentidade(snapshotAuto)) === JSON.stringify(semIdentidade(snapshotXp)));
+    JSON.stringify(semIdentidade(snapshotNews)) === JSON.stringify(semIdentidade(snapshotXp)));
+  const snapshot1007 = JSON.parse(readFileSync(join(meta, "0031_snapshot.json"), "utf8"));
+  t("snapshot 0031 encadeia em 0030 com UUID próprio",
+    snapshot1007.prevId === snapshotNews.id && snapshot1007.id !== snapshotNews.id && /^[0-9a-f-]{36}$/i.test(snapshot1007.id),
+    `prevId=${snapshot1007.prevId} anterior=${snapshotNews.id}`);
+  t("snapshot 0031 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshot1007)) === JSON.stringify(semIdentidade(snapshotNews)));
+  const snapshotXpLote = JSON.parse(readFileSync(join(meta, "0032_snapshot.json"), "utf8"));
+  t("snapshot 0032 encadeia em 0031 com UUID próprio",
+    snapshotXpLote.prevId === snapshot1007.id && snapshotXpLote.id !== snapshot1007.id && /^[0-9a-f-]{36}$/i.test(snapshotXpLote.id),
+    `prevId=${snapshotXpLote.prevId} anterior=${snapshot1007.id}`);
+  t("snapshot 0032 registra a tabela xp_lotes da migration estrutural", !!snapshotXpLote.tables?.xp_lotes);
+  const snapshot1008 = JSON.parse(readFileSync(join(meta, "0033_snapshot.json"), "utf8"));
+  t("snapshot 0033 encadeia em 0032 com UUID próprio",
+    snapshot1008.prevId === snapshotXpLote.id && snapshot1008.id !== snapshotXpLote.id && /^[0-9a-f-]{36}$/i.test(snapshot1008.id),
+    `prevId=${snapshot1008.prevId} anterior=${snapshotXpLote.id}`);
+  t("snapshot 0033 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshot1008)) === JSON.stringify(semIdentidade(snapshotXpLote)));
+  const snapshotAuto = JSON.parse(readFileSync(join(meta, "0034_snapshot.json"), "utf8"));
+  t("snapshot 0034 encadeia em 0033 com UUID próprio",
+    snapshotAuto.prevId === snapshot1008.id && snapshotAuto.id !== snapshot1008.id && /^[0-9a-f-]{36}$/i.test(snapshotAuto.id),
+    `prevId=${snapshotAuto.prevId} anterior=${snapshot1008.id}`);
+  t("snapshot 0034 preserva o mesmo esquema (migration só de dados)",
+    JSON.stringify(semIdentidade(snapshotAuto)) === JSON.stringify(semIdentidade(snapshot1008)));
 }
 
 // ---------- banco limpo com todas as migrations (cenário principal) ----------
@@ -70,7 +96,7 @@ await prepararBanco(BANCO);
 // em um banco legado separado, sem remover os registros de instalações reais.
 {
   const db = abrirDb(BANCO);
-  db.prepare("delete from novidades where id in (?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_AUTO_1006);
+  db.prepare("delete from novidades where id in (?,?,?,?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006, ID_NOVIDADE_1007, ID_NOVIDADE_1008, ID_NOVIDADE_AUTO_1006);
   db.close();
 }
 
@@ -88,6 +114,14 @@ const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
 let proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
 await esperarSaudavel(BASE, proc);
+// Remove os seeds de release para que os contadores cubram apenas as
+// publicações criadas nesta suíte. As migrations são testadas adiante em um
+// banco legado separado, sem remover o registro de instalações reais.
+{
+  const db = abrirDb(BANCO);
+  db.prepare("delete from novidades where id in (?,?,?,?,?,?)").run(ID_NOVIDADE_1005, ID_NOVIDADE_XP_1005, ID_NOVIDADE_DIARIO_1006, ID_NOVIDADE_1007, ID_NOVIDADE_1008, ID_NOVIDADE_AUTO_1006);
+  db.close();
+}
 
 const cenario = await criarCenario(BASE, BANCO, { campanha: "Campanha Novidades", jogadores: { a: "usuario_a", b: "usuario_b" } });
 const M = cenario.cookieMestre;
@@ -545,20 +579,40 @@ sec("Migration em banco existente preserva dados");
       anuncioXp?.versao === "1.0.5" && anuncioXp?.categoria === "correcao" && anuncioXp?.estado === "publicada" && !!anuncioXp?.publicado_em,
       JSON.stringify(anuncioXp));
 
+    const anuncioDiario = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_DIARIO_1006);
+    t("migration 0030 publica a correção do Diário v1.0.6 na Central",
+      anuncioDiario?.versao === "1.0.6" && anuncioDiario?.categoria === "correcao" && anuncioDiario?.estado === "publicada" && !!anuncioDiario?.publicado_em,
+      JSON.stringify(anuncioDiario));
+
+    const anuncio1007 = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1007);
+    t("migration 0031 publica Patrimônio+Régua v1.0.7 na Central",
+      anuncio1007?.versao === "1.0.7" && anuncio1007?.categoria === "novidade" && anuncio1007?.estado === "publicada" && !!anuncio1007?.publicado_em,
+      JSON.stringify(anuncio1007));
+
+    const anuncio1008 = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_1008);
+    t("migration 0033 publica Pontos de Sangue + VTT v1.0.8 na Central",
+      anuncio1008?.versao === "1.0.8" && anuncio1008?.categoria === "novidade" && anuncio1008?.estado === "publicada" && !!anuncio1008?.publicado_em,
+      JSON.stringify(anuncio1008));
+
     const anuncioAuto = db2.prepare("select titulo, versao, categoria, estado, publicado_em from novidades where id=?").get(ID_NOVIDADE_AUTO_1006);
-    t("migration 0030 publica auto-update v1.0.6 na Central",
+    t("migration 0034 publica Atualização automática v1.0.6 na Central",
       anuncioAuto?.versao === "1.0.6" && anuncioAuto?.categoria === "novidade" && anuncioAuto?.estado === "publicada" && !!anuncioAuto?.publicado_em,
       JSON.stringify(anuncioAuto));
 
-    // A instrução de seed também é segura em reexecução: o ID estável e
-    // INSERT OR IGNORE impedem uma segunda publicação duplicada.
     db2.exec(readFileSync(join(MIGRATIONS, "0028_release_1005_campaign_substitution_news.sql"), "utf8"));
     db2.exec(readFileSync(join(MIGRATIONS, "0029_release_1005_xp_import_integrity_news.sql"), "utf8"));
-    db2.exec(readFileSync(join(MIGRATIONS, "0030_release_1006_auto_update_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0030_release_1006_diario_permissoes_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0031_release_1007_patrimonio_regua_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0033_release_1008_pontos_sangue_vtt_news.sql"), "utf8"));
+    db2.exec(readFileSync(join(MIGRATIONS, "0034_release_1006_auto_update_news.sql"), "utf8"));
     const quantidadeAnuncios = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1005).c;
     const quantidadeXp = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_XP_1005).c;
+    const quantidadeDiario = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_DIARIO_1006).c;
+    const quantidade1007 = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1007).c;
+    const quantidade1008 = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_1008).c;
     const quantidadeAuto = db2.prepare("select count(*) c from novidades where id=?").get(ID_NOVIDADE_AUTO_1006).c;
-    t("seeds da Central de Novidades são idempotentes", quantidadeAnuncios === 1 && quantidadeXp === 1 && quantidadeAuto === 1, `campanha=${quantidadeAnuncios} xp=${quantidadeXp} auto=${quantidadeAuto}`);
+    t("seeds da Central de Novidades são idempotentes", quantidadeAnuncios === 1 && quantidadeXp === 1 && quantidadeDiario === 1 && quantidade1007 === 1 && quantidade1008 === 1 && quantidadeAuto === 1,
+      `campanha=${quantidadeAnuncios} xp=${quantidadeXp} diario=${quantidadeDiario} v1007=${quantidade1007} v1008=${quantidade1008} auto=${quantidadeAuto}`);
     db2.close();
   } finally {
     limparDir(RAIZ2);

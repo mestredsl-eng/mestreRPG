@@ -502,6 +502,21 @@ textarea {
   color: #9aa0a6;
 }
 
+/* Pontos de Sangue integrado à ficha (Issue #186 .9): o widget de
+   saldo/recuperação ocupa a linha inteira abaixo do campo de
+   capacidade — sem cartão próprio nem painel paralelo. */
+.painel-sangue-leitura {
+  flex: 0 0 100%;
+  min-width: 0;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #262b36;
+  border-radius: 8px;
+  background: #12151b;
+}
+.painel-sangue-leitura .grade-2 {
+  margin-bottom: 0.15rem;
+}
+
 /* Campos de bolinhas em linha compacta: rótulo à esquerda, seletor à direita.
    flex: 1 1 215px — preenche a linha da seção sem deixar trilhas vazias
    (grid com span full-width impedia o colapso de trilhas do auto-fit). */
@@ -2275,6 +2290,34 @@ textarea:focus-visible,
 .vtt-nevoa-raio { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
 .vtt-nevoa-raio input[type="range"] { width: 110px; }
 .vtt-nevoa-controles .meta { margin-left: auto; }
+
+/* régua de distância (Issue #125) — medida local e efêmera */
+.vtt-tabuleiro-outer { width: 100%; }
+.vtt-tabuleiro-regua { cursor: crosshair; }
+.vtt-regua-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  z-index: 4; pointer-events: none; overflow: visible;
+}
+.vtt-regua-svg line {
+  stroke: #ffd166; stroke-width: 2; stroke-dasharray: 7 5;
+  stroke-linecap: round;
+}
+.vtt-regua-ponto {
+  position: absolute; width: 10px; height: 10px; border-radius: 50%;
+  background: #ffd166; border: 2px solid #0a0d14;
+  transform: translate(-50%, -50%); z-index: 4; pointer-events: none;
+}
+.vtt-regua-rotulo {
+  position: absolute; transform: translate(-50%, calc(-100% - 10px));
+  background: rgba(10, 13, 20, .92); color: #ffd166;
+  border: 1px solid rgba(255, 209, 102, .4); border-radius: 6px;
+  padding: 3px 9px; font-size: 12px; font-weight: 600; white-space: nowrap;
+  z-index: 5; pointer-events: none;
+}
+.vtt-regua-detalhe { display: block; font-size: 10px; font-weight: 400; color: #9fb3d1; }
+.vtt-regua-controles .meta { font-size: 12px; color: #9fb3d1; }
+.vtt-calibracao label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #9fb3d1; }
+.vtt-calibracao input { width: 110px; }
 @media (max-width: 700px) {
   .vtt-tabuleiro { aspect-ratio: 4 / 3; max-height: 50vh; }
   .vtt-token { width: 36px; height: 36px; font-size: 12px; }
@@ -2375,4 +2418,19 @@ textarea:focus-visible,
   .chat-voz-controles { width: 100%; }
   .chat-falar-como { align-items: stretch; flex-direction: column; }
   .chat-falar-como select { width: 100%; }
+}
+
+/* Indicadores de vida nos tokens da mesa virtual (Issue #127) — sem
+   position:relative aqui: a regra base já declara position:absolute e
+   um override posterior no mesmo seletor quebraria left/top percentuais. */
+.vtt-token { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.vtt-token-hp {
+  position: absolute; left: 8%; right: 8%; bottom: 6%;
+  height: 4px; border-radius: 2px; background: rgba(0,0,0,.55); overflow: hidden;
+}
+.vtt-token-hp-fill { display: block; height: 100%; background: #58d68d; transition: width .25s ease; }
+.vtt-token-vit {
+  position: absolute; top: -6px; right: -6px; min-width: 16px; height: 16px;
+  border-radius: 8px; background: #b03a2e; color: #fff; font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; padding: 0 4px;
 }

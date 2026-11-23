@@ -215,8 +215,36 @@
     {
       "idx": 30,
       "version": "6",
-      "when": 1795131371412,
-      "tag": "0030_release_1006_auto_update_news",
+      "when": 1795148331452,
+      "tag": "0030_release_1006_diario_permissoes_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1795212981626,
+      "tag": "0031_release_1007_patrimonio_regua_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795223232737,
+      "tag": "0032_release_1009_xp_lote",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795374175383,
+      "tag": "0033_release_1008_pontos_sangue_vtt_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1795419496335,
+      "tag": "0034_release_1006_auto_update_news",
       "breakpoints": true
     }
   ]

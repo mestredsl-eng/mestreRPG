@@ -15,7 +15,15 @@ import type { ItemDadoMesa } from "../MesaDados3D";
 import { efeitoDaClasse, classificarD10, rotuloClasseD10, faceExibida, type ClasseD10 } from "../convencaoD10";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
+import PainelSangue from "../PainelSangue";
 import { criarFilaMestreVoice } from "../lib/mestreVoice";
+// Núcleo matemático da régua (Issue #125): MESMO módulo do servidor —
+// distância euclidiana corrigida pela proporção real do mapa e
+// conversão pela calibração da sessão. Sem dependência de UI/viewport.
+import {
+  medirRegua, calibracaoValida, arredondarParaApresentacao,
+  type DimensoesMapa, type PontoNormalizado,
+} from "../../../servidor/src/lib/regua.ts";
 
 interface Props {
   campaignId: string;
@@ -102,6 +110,13 @@ function rotuloMotivoRolagem(r: RolagemMesa): string {
 }
 
 const LADOS = [4, 6, 8, 10, 20] as const;
+
+/** Percentual da barra de HP do token: divisor real quando maximo>0;
+ *  máximo/atual inválidos ou máximo <= 0 renderizam 0 (sem NaN); clamp 0–100. */
+function percentualVida(atual: number, maximo: number): number {
+  if (!Number.isFinite(atual) || !Number.isFinite(maximo) || maximo <= 0) return 0;
+  return Math.max(0, Math.min(100, (atual / maximo) * 100));
+}
 
 function fmtTempo(ms: number) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -1237,7 +1252,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} ehMestre={ehMestreAtual} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
@@ -1335,6 +1350,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         meuUserId={meuUserId}
         membros={membros}
         npcs={personagens.filter((p) => p.isNpc)}
+        fichas={personagens.filter((p) => !p.isNpc)}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
         atualizacaoPapel={permSeq}
@@ -1452,7 +1468,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // Mesmo critério do backend (campoElegivelParaTeste em lib/ficha.ts):
 // usadoEmTestes explícito manda; sem a flag (fichas antigas), cai no
 // fallback por semântica — números "livres" (idade, contadores) não entram.
-const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento", "poder"]);
 
 // Regra compartilhada com o backend (campoElegivelParaTeste* em
 // servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback
@@ -1485,8 +1501,8 @@ interface CampoTeste {
 }
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
-  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro, ehMestre = false }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void; ehMestre?: boolean;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
@@ -1639,6 +1655,12 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
       )}
+      {/* C8-C1 (Issue #186): leitura de Sangue do personagem escolhido
+          no desafio — somente leitura via GET /characters/:id/sangue;
+          some sozinho quando o usuário não tem acesso (403). */}
+      {aberto && characterId && (
+        <PainelSangue characterId={characterId} ehMestre={ehMestre} />
+      )}
     </section>
   );
 }
@@ -1719,9 +1741,9 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, fichas, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; npcs: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
+  membros: Membro[]; npcs: PersonagemResumo[]; fichas: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
   atualizacaoPapel: number;
   // geração autoritativa de permissões: referência do PAI, incrementada
   // sincronicamente no handler de mesa:permissao:atualizada — o filho
@@ -1737,6 +1759,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
   const [novoNpcId, setNovoNpcId] = useState("");
+  // Ficha ativa do membro selecionado (Issue #179-A): token de jogador
+  // precisa de personagemId concreto para carregar vida — nunca inferido
+  // automaticamente (o usuário pode ter várias fichas).
+  const [novoFichaId, setNovoFichaId] = useState("");
   const [selVtt, setSelVtt] = useState<string | null>(null);
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
@@ -1769,6 +1795,68 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     socket.on("mesa:vtt", aoVtt);
     return () => { socket.off("mesa:vtt", aoVtt); };
   }, [sessionId]);
+
+  // HP/vitalidade mudam sem emitir mesa:vtt (rotas de personagem emitem
+  // personagens:atualizados; regras emitem regras:atualizadas). Em vez
+  // de confiar em payload, o cliente pede releitura autoritativa —
+  // o servidor devolve o VTT já filtrado por papel com a vida correta.
+  // RATE_LIMITED é transitório: agenda UMA nova tentativa após
+  // retryAfterMs (limitada), coalescida com os gatilhos de evento —
+  // nunca loop nem tempestade de retries. Erros de autorização/sessão
+  // encerrada não são repetidos.
+  const sessaoVttRef = useRef<string | null>(null);
+  useEffect(() => { sessaoVttRef.current = sessionId ?? null; }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || encerrada) return;
+    const sessaoDestaVez = sessionId;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let tentativas = 0;
+    const MAX_TENTATIVAS = 3;
+    const aplicarSeAtual = (r: { ok?: boolean; papel?: string; vtt?: VttState; codigo?: string; retryAfterMs?: number } | undefined) => {
+      // callback atrasado não pode aplicar o estado de uma sessão já trocada
+      if (sessaoVttRef.current !== sessaoDestaVez) return;
+      if (r?.ok && r.vtt) {
+        tentativas = 0;
+        sincronizarAutoritativo(r.vtt);
+        setVtt(r.vtt);
+        return;
+      }
+      const espera = retryAfterDoAck(r);
+      if (espera !== null && tentativas < MAX_TENTATIVAS) {
+        tentativas += 1;
+        // no máximo UMA tentativa pendente: uma atualização nova
+        // substitui a espera anterior (mantém só a mais recente)
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          solicitar();
+        }, Math.max(espera, 50));
+      }
+    };
+    const solicitar = () => {
+      const sock = getSocket();
+      // nunca reenviar com o socket desconectado — o próximo evento
+      // de atualização agenda uma nova tentativa quando voltar
+      if (!sock.connected) return;
+      // uma nova solicitação substitui qualquer retry pendente
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      sock.volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
+    };
+    const sincronizar = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(solicitar, 250);
+    };
+    const socket = getSocket();
+    socket.on("personagens:atualizados", sincronizar);
+    socket.on("regras:atualizadas", sincronizar);
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
+      socket.off("personagens:atualizados", sincronizar);
+      socket.off("regras:atualizadas", sincronizar);
+    };
+  }, [sessionId, encerrada]);
 
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
@@ -1827,6 +1915,188 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const nevoa = vtt.nevoa ?? { ativa: false, revelados: [] };
   const souMestreCena = souMestre && !encerrada && !!vtt.mapa;
   const [tamTab, setTamTab] = useState({ w: 0, h: 0 });
+
+  // ---------- geometria do mapa (Issue #125, gate P2) ----------
+  // O tabuleiro renderiza a imagem SEM letterbox: o container assume
+  // exatamente a proporção intrínseca do mapa, então coordenadas
+  // normalizadas 0–1 coincidem com a arte em qualquer aspecto.
+  // Dimensões persistidas no upload têm prioridade; mapas legados sem
+  // dimensões são medidos no cliente via imagem (mesma origem).
+  const [dimsMapa, setDimsMapa] = useState<DimensoesMapa | null>(null);
+  const outerRef = useRef<HTMLDivElement | null>(null);
+  const [caixaMapa, setCaixaMapa] = useState<{ w: number; h: number } | null>(null);
+
+  useEffect(() => {
+    setDimsMapa(null);
+    setCaixaMapa(null);
+    const m = vtt.mapa;
+    if (!m) return;
+    const lw = m.largura, ht = m.altura;
+    if (typeof lw === "number" && lw > 0 && typeof ht === "number" && ht > 0) {
+      setDimsMapa({ largura: lw, altura: ht });
+      return;
+    }
+    let vivo = true;
+    const img = new Image();
+    img.onload = () => {
+      if (vivo && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setDimsMapa({ largura: img.naturalWidth, altura: img.naturalHeight });
+      }
+    };
+    img.src = arquivoUrl(campaignId, m.fileId);
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vtt.mapa?.fileId, vtt.mapa?.largura, vtt.mapa?.altura, campaignId]);
+
+  // Caixa do tabuleiro em px: largura disponível × proporção do mapa,
+  // limitada à altura máxima do CSS (62vh desktop / 50vh mobile ≤700px).
+  // Centralizada pelo wrapper — nunca distorce a imagem.
+  useEffect(() => {
+    const outer = outerRef.current;
+    if (!outer || !dimsMapa) { setCaixaMapa(null); return; }
+    const medir = () => {
+      const cw = outer.clientWidth;
+      if (!cw) return;
+      const maxH = window.innerHeight * (window.innerWidth <= 700 ? 0.5 : 0.62);
+      const razao = dimsMapa.altura / dimsMapa.largura;
+      let w = cw, h = w * razao;
+      if (h > maxH) { h = maxH; w = h / razao; }
+      setCaixaMapa({ w: Math.max(1, Math.floor(w)), h: Math.max(1, Math.floor(h)) });
+    };
+    medir();
+    const ro = new ResizeObserver(medir);
+    ro.observe(outer);
+    window.addEventListener("resize", medir);
+    return () => { ro.disconnect(); window.removeEventListener("resize", medir); };
+  }, [dimsMapa]);
+
+  // ---------- régua de distância (Issue #125) ----------
+  // Modo dedicado: pointerdown inicia a medida (snap em token quando o
+  // ponteiro começa/sobrepõe um), drag atualiza o ponto final e o
+  // resultado fica na tela até nova medida ou cancelamento. TUDO local
+  // e efêmero — nenhum evento socket, nenhuma persistência de traço.
+  const [reguaAtiva, setReguaAtiva] = useState(false);
+  const [medida, setMedida] = useState<{
+    a: PontoNormalizado; b: PontoNormalizado; ta: string | null; tb: string | null;
+  } | null>(null);
+  const reguaGestGesto = useRef<number | null>(null); // pointerId do gesto ativo
+  const reguaGestLimpar = useRef<(() => void) | null>(null); // remove listeners do gesto
+  const calibracao = vtt.regua ?? null;
+  const calibracaoOk = calibracaoValida(calibracao) ? calibracao : null;
+  // formulário de calibração do mestre (Issue #125)
+  const [calibrando, setCalibrando] = useState(false);
+  const [calUnidade, setCalUnidade] = useState("");
+  const [calRefDist, setCalRefDist] = useState("");
+  const [calRefValor, setCalRefValor] = useState("");
+  const [erroCal, setErroCal] = useState<string | null>(null);
+  const abrirCalibracao = () => {
+    setCalUnidade(calibracaoOk?.unidade ?? "");
+    setCalRefDist(calibracaoOk ? String(calibracaoOk.distanciaReferencia) : "");
+    setCalRefValor(calibracaoOk ? String(calibracaoOk.valorReferencia) : "");
+    setErroCal(null);
+    setCalibrando(true);
+  };
+  const salvarCalibracao = () => {
+    const candidata = {
+      unidade: calUnidade,
+      distanciaReferencia: Number(calRefDist),
+      valorReferencia: Number(calRefValor),
+    };
+    if (!calibracaoValida(candidata)) {
+      setErroCal("Calibração inválida — unidade obrigatória e números finitos positivos.");
+      return;
+    }
+    emitirMapa({
+      acao: "calibrar",
+      regua: { unidade: candidata.unidade.trim(), distanciaReferencia: candidata.distanciaReferencia, valorReferencia: candidata.valorReferencia },
+    });
+    setCalibrando(false);
+  };
+  const removerCalibracao = () => {
+    emitirMapa({ acao: "calibrar", regua: null });
+    setCalibrando(false);
+  };
+
+  const limparRegua = useCallback(() => {
+    reguaGestLimpar.current?.();
+    reguaGestGesto.current = null;
+    setMedida(null);
+  }, []);
+
+  // token sob o ponteiro: o elemento efetivamente sob as coordenadas
+  // atuais (elementFromPoint), senão o centro mais próximo dentro de
+  // 30px. NUNCA ev.target para o destino: em gestos de toque o Pointer
+  // Capture implícito retém o alvo de origem durante todo o movimento
+  // e o snap ficaria preso ao token inicial. Só tokens do estado já
+  // filtrado pelo servidor são candidatos — ocultos de não-mestres nem
+  // chegam ao cliente.
+  const snapTokenRegua = (ev: { clientX: number; clientY: number }) => {
+    const sobPonteiro = typeof document !== "undefined"
+      ? (document.elementFromPoint(ev.clientX, ev.clientY) as HTMLElement | null)
+      : null;
+    const porAlvo = sobPonteiro?.closest?.(".vtt-token");
+    const idAlvo = porAlvo?.getAttribute("data-token-id");
+    const porId = idAlvo ? vtt.tokens.find((t) => t.id === idAlvo && t.ativo) : undefined;
+    if (porId) return { ponto: { x: porId.x, y: porId.y }, token: porId };
+    const p = pontoNormalizado(ev);
+    if (!p) return null;
+    const el = tabRef.current;
+    if (!el) return { ponto: p, token: null };
+    const r = el.getBoundingClientRect();
+    const px = p.x * r.width, py = p.y * r.height;
+    let melhor: TokenVtt | null = null, dist = 30;
+    for (const tk of vtt.tokens) {
+      if (!tk.ativo) continue;
+      const d = Math.hypot(tk.x * r.width - px, tk.y * r.height - py);
+      if (d <= dist) { dist = d; melhor = tk; }
+    }
+    return { ponto: melhor ? { x: melhor.x, y: melhor.y } : p, token: melhor };
+  };
+
+  const iniciarRegua = (e: ReactPointerEvent) => {
+    if (!reguaAtiva || !dimsMapa || encerrada || visaoBloqueada || visaoPapelPendente || pincel || desenhoRef.current) return;
+    if (reguaGestGesto.current !== null) return;
+    const alvo = snapTokenRegua(e.nativeEvent);
+    if (!alvo) return;
+    e.preventDefault();
+    const pid = e.pointerId;
+    reguaGestGesto.current = pid;
+    setMedida({ a: alvo.ponto, b: alvo.ponto, ta: alvo.token?.id ?? null, tb: alvo.token?.id ?? null });
+    const mover = (ev: PointerEvent) => {
+      if (reguaGestGesto.current !== ev.pointerId) return;
+      const a2 = snapTokenRegua(ev);
+      if (!a2) return;
+      setMedida((m) => (m ? { ...m, b: a2.ponto, tb: a2.token?.id ?? null } : m));
+    };
+    const soltar = (ev: PointerEvent) => {
+      if (reguaGestGesto.current !== ev.pointerId) return;
+      reguaGestLimpar.current?.();
+      reguaGestGesto.current = null;
+    };
+    const cancelar = (ev?: Event) => {
+      const pid = (ev as PointerEvent | undefined)?.pointerId;
+      if (pid !== undefined && reguaGestGesto.current !== pid) return;
+      reguaGestLimpar.current?.();
+      reguaGestGesto.current = null;
+      setMedida(null); // gesto abortado: nenhuma medida parcial fica
+    };
+    const listeners = () => {
+      window.removeEventListener("pointermove", mover);
+      window.removeEventListener("pointerup", soltar);
+      window.removeEventListener("pointercancel", cancelar);
+      window.removeEventListener("lostpointercapture", cancelar);
+      window.removeEventListener("blur", cancelar);
+      document.removeEventListener("visibilitychange", aoVisibilidade);
+    };
+    const aoVisibilidade = () => { if (document.hidden) cancelar(); };
+    reguaGestLimpar.current = listeners;
+    window.addEventListener("pointermove", mover);
+    window.addEventListener("pointerup", soltar);
+    window.addEventListener("pointercancel", cancelar);
+    window.addEventListener("lostpointercapture", cancelar);
+    window.addEventListener("blur", cancelar);
+    document.addEventListener("visibilitychange", aoVisibilidade);
+  };
 
   // ResizeObserver: o canvas acompanha o tabuleiro (rotação, viewport,
   // redimensionamento) e o desenho é refeito sem distorcer os traços —
@@ -1900,6 +2170,37 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   }, [sessionId]);
   // idem ao desmontar o componente
   useEffect(() => () => { fimDesenhoRef.current?.(); }, []);
+
+  // Limpeza obrigatória da régua (Issue #125): ferramenta, pontos e
+  // traço são locais e nunca restaurados — troca de papel, troca de
+  // sessão/mapa, reconexão ou sessão encerrada zeram tudo.
+  useEffect(() => { setReguaAtiva(false); limparRegua(); }, [sessionId, limparRegua]);
+  useEffect(() => { setReguaAtiva(false); limparRegua(); }, [atualizacaoPapel, limparRegua]);
+  useEffect(() => { if (encerrada) { setReguaAtiva(false); limparRegua(); } }, [encerrada, limparRegua]);
+  useEffect(() => { setReguaAtiva(false); limparRegua(); }, [vtt.mapa?.fileId, limparRegua]);
+  // reconexão: nunca restaurar medição antiga — zera ao 'connect' do socket
+  useEffect(() => {
+    const socket = getSocket();
+    const aoConectar = () => { setReguaAtiva(false); limparRegua(); };
+    socket.on("connect", aoConectar);
+    return () => { socket.off("connect", aoConectar); };
+  }, [limparRegua]);
+  // token referenciado pela medida sumiu do estado recebido → limpa
+  useEffect(() => {
+    if (!medida) return;
+    const ids = [medida.ta, medida.tb].filter((x): x is string => !!x);
+    if (ids.some((id) => !vtt.tokens.some((t) => t.id === id && t.ativo))) limparRegua();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vtt.tokens]);
+  // Esc cancela a medida exibida/em andamento
+  useEffect(() => {
+    if (!reguaAtiva && !medida) return;
+    const aoTeclar = (ev: KeyboardEvent) => { if (ev.key === "Escape") limparRegua(); };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [reguaAtiva, medida, limparRegua]);
+  // desmontagem: remove listeners de gesto pendentes
+  useEffect(() => () => { reguaGestLimpar.current?.(); }, []);
 
   // retorna null fora do retângulo do tabuleiro — nunca gruda o traço
   // nas bordas quando o ponteiro sai da área do mapa
@@ -2098,7 +2399,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   // interfere: eventos de outro pointerId são ignorados e um novo
   // pointerdown é bloqueado enquanto há desenho ativo.
   const iniciarPincel = (e: ReactPointerEvent) => {
-    if (!pincel || !souMestreCena || pendenteNevoaRef.current || nevoaIncertaRef.current || desenhoRef.current) return;
+    if (!pincel || !souMestreCena || pendenteNevoaRef.current || nevoaIncertaRef.current || desenhoRef.current
+      || reguaAtiva || reguaGestGesto.current !== null) return;
     const p = pontoNormalizado(e);
     if (!p) return;
     e.preventDefault();
@@ -2192,6 +2494,8 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     souMestre || (!!meuUserId && (tk.userId === meuUserId || !!membros.find((m) => m.userId === meuUserId && tk.userId === m.userId)));
 
   const iniciarArraste = (tk: TokenVtt) => (e: ReactPointerEvent) => {
+    // modo régua ativo: o tabuleiro mede em vez de arrastar tokens
+    if (reguaAtiva) return;
     if (encerrada || ehEspectador || (!souMestre && !ehDono(tk))) return;
     e.preventDefault();
     try { (e.target as HTMLElement).setPointerCapture?.(e.pointerId); } catch { /* ponteiro sintético/inativo */ }
@@ -2255,8 +2559,25 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const enviarMapa = async (arquivo: File) => {
     setErroVtt(null);
     try {
+      // Gate de geometria (Issue #125): mede as dimensões intrínsecas do
+      // arquivo e persiste com o mapa — tokens e régua usam a mesma base.
+      // Falha na medição não bloqueia o upload (cliente mede de novo via URL).
+      let dims: DimensoesMapa | null = null;
+      try {
+        const url = URL.createObjectURL(arquivo);
+        const img = new Image();
+        await new Promise<void>((res, rej) => {
+          img.onload = () => res();
+          img.onerror = () => rej(new Error("decode"));
+          img.src = url;
+        });
+        URL.revokeObjectURL(url);
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          dims = { largura: img.naturalWidth, altura: img.naturalHeight };
+        }
+      } catch { /* mantém mapa sem dims — fallback mede no cliente */ }
       const up = await api.enviarArquivo(campaignId, arquivo, { category: "mapa", visibility: "publica" });
-      emitirMapa({ acao: "definir", mapa: { fileId: up.id, nome: arquivo.name } });
+      emitirMapa({ acao: "definir", mapa: { fileId: up.id, nome: arquivo.name, ...(dims ?? {}) } });
     } catch (e) {
       setErroVtt(e instanceof Error ? e.message : "Falha no upload do mapa");
     }
@@ -2283,10 +2604,22 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       ) : !vtt.mapa ? (
         <p className="dica">{souMestre ? "Nenhum mapa definido. Envie uma imagem para montar o tabuleiro." : "O mestre ainda não definiu um mapa para esta sessão."}</p>
       ) : (
+        <div className="vtt-tabuleiro-outer" ref={outerRef}>
         <div
           ref={tabRef}
-          className="vtt-tabuleiro"
-          style={{ backgroundImage: `url(${arquivoUrl(campaignId, vtt.mapa.fileId)})` }}
+          className={`vtt-tabuleiro ${reguaAtiva ? "vtt-tabuleiro-regua" : ""}`}
+          style={{
+            backgroundImage: `url(${arquivoUrl(campaignId, vtt.mapa.fileId)})`,
+            // Geometria exata (Issue #125): quando as dimensões intrínsecas
+            // são conhecidas, o container assume a proporção real do mapa
+            // em px — 100% 100% preenche sem distorcer nem letterbox, e as
+            // coordenadas normalizadas 0–1 coincidem com a arte.
+            ...(caixaMapa ? {
+              width: caixaMapa.w, height: caixaMapa.h, maxHeight: "none",
+              aspectRatio: "auto", backgroundSize: "100% 100%", margin: "0 auto",
+            } : {}),
+          }}
+          onPointerDown={iniciarRegua}
         >
           <canvas
             ref={nevoaCanvasRef}
@@ -2299,27 +2632,135 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
               <button
                 key={tk.id}
                 type="button"
+                data-token-id={tk.id}
                 className={`vtt-token ${meu ? "vtt-token-meu" : ""} ${tk.oculto ? "vtt-token-oculto" : ""}`}
                 style={{ left: `${tk.x * 100}%`, top: `${tk.y * 100}%`, background: tk.cor, borderColor: tk.cor }}
                 title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
                 onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
-              >{tk.nome.slice(0, 2).toUpperCase()}</button>
+              >
+                {tk.nome.slice(0, 2).toUpperCase()}
+                {tk.vida?.hp && (
+                  <span
+                    className="vtt-token-hp"
+                    title={`HP ${tk.vida.hp.atual}/${tk.vida.hp.maximo}`}
+                  >
+                    <span
+                      className="vtt-token-hp-fill"
+                      style={{ width: `${percentualVida(tk.vida.hp.atual, tk.vida.hp.maximo)}%` }}
+                    />
+                  </span>
+                )}
+                {tk.vida?.vitalidade && tk.vida.vitalidade.nivel > 0 && (
+                  <span
+                    className="vtt-token-vit"
+                    title={`Vitalidade: ${tk.vida.vitalidade.nome} (nível ${tk.vida.vitalidade.nivel})`}
+                  >{tk.vida.vitalidade.nivel}</span>
+                )}
+              </button>
             );
           })}
+          {medida && dimsMapa && (() => {
+            const calc = medirRegua(medida.a, medida.b, dimsMapa, calibracaoOk);
+            if (!calc.ok) return null;
+            const { distanciaMapa: dm, distanciaReal: dr, unidade } = calc.valor;
+            const mx = ((medida.a.x + medida.b.x) / 2) * 100;
+            const my = ((medida.a.y + medida.b.y) / 2) * 100;
+            const fmt = (v: number) => arredondarParaApresentacao(v, 2).toLocaleString("pt-BR", { maximumFractionDigits: 2 });
+            const rotulo = dr != null && unidade ? `${fmt(dr)} ${unidade}` : `${fmt(dm)} un. mapa`;
+            return (
+              <>
+                <svg className="vtt-regua-svg" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" focusable="false">
+                  <line
+                    x1={medida.a.x} y1={medida.a.y} x2={medida.b.x} y2={medida.b.y}
+                    vectorEffect="non-scaling-stroke"
+                  />
+                </svg>
+                <span className="vtt-regua-ponto" style={{ left: `${medida.a.x * 100}%`, top: `${medida.a.y * 100}%` }} />
+                <span className="vtt-regua-ponto" style={{ left: `${medida.b.x * 100}%`, top: `${medida.b.y * 100}%` }} />
+                <div className="vtt-regua-rotulo" style={{ left: `${mx}%`, top: `${my}%` }} role="status">
+                  {rotulo}
+                  {dr != null && <span className="vtt-regua-detalhe">{fmt(dm)} un. mapa</span>}
+                </div>
+              </>
+            );
+          })()}
+        </div>
+        </div>
+      )}
+      {vtt.mapa && (
+        <div className="linha vtt-controles vtt-regua-controles">
+          <button
+            className={reguaAtiva ? "primario" : "secundario"}
+            disabled={!dimsMapa || encerrada}
+            title={dimsMapa ? "Medir distâncias no tabuleiro" : "Aguardando as dimensões do mapa…"}
+            onClick={() => {
+              if (reguaAtiva) { setReguaAtiva(false); limparRegua(); return; }
+              // exclusividade régua × pincel: ativar a régua desliga o
+              // pincel e descarta rascunho, gesto e prévia de névoa
+              fimDesenhoRef.current?.();
+              setPincel(false); setPreviewNevoa(null); desenhoRef.current = null;
+              setReguaAtiva(true);
+            }}
+          >{reguaAtiva ? "Sair da régua" : "Régua"}</button>
+          {reguaAtiva && (
+            <>
+              <span className="meta">
+                {medida ? "Arraste para medir · Esc limpa" : "Clique e arraste entre dois pontos ou tokens"}
+              </span>
+              {medida && <button className="secundario" onClick={limparRegua}>Limpar medida</button>}
+            </>
+          )}
+          {souMestre && !encerrada && (
+            <button className="secundario" onClick={calibrando ? () => setCalibrando(false) : abrirCalibracao}>
+              {calibrando ? "Fechar calibração" : "Calibrar régua"}
+            </button>
+          )}
+          {calibracaoOk && !calibrando && (
+            <span className="meta">
+              Escala: {calibracaoOk.valorReferencia} {calibracaoOk.unidade} = {calibracaoOk.distanciaReferencia} un. mapa
+            </span>
+          )}
+        </div>
+      )}
+      {calibrando && souMestre && !encerrada && (
+        <div className="linha vtt-controles vtt-calibracao">
+          <label>Unidade
+            <input value={calUnidade} onChange={(e) => setCalUnidade(e.target.value)} placeholder="m, hex, casa…" maxLength={24} />
+          </label>
+          <label>Distância no mapa (un.)
+            <input type="number" min="0" step="any" value={calRefDist} onChange={(e) => setCalRefDist(e.target.value)} placeholder="100" />
+          </label>
+          <label>Equivale a
+            <input type="number" min="0" step="any" value={calRefValor} onChange={(e) => setCalRefValor(e.target.value)} placeholder="1,5" />
+          </label>
+          <button className="primario" onClick={salvarCalibracao}>Salvar escala</button>
+          {calibracaoOk && <button className="perigo" onClick={removerCalibracao}>Remover escala</button>}
+          {erroCal && <span className="erro">{erroCal}</span>}
         </div>
       )}
       {souMestre && !encerrada && vtt.mapa && (
         <div className="linha vtt-controles">
           <input placeholder="Nome do token" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
-          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); if (e.target.value) setNovoNpcId(""); }}>
+          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoNpcId(""); }}>
             <option value="">Sem dono</option>
             {membros.filter((m) => m.status !== "removido").map((m) => (
               <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>
             ))}
           </select>
+          {novoUserId && !novoNpcId && (() => {
+            const membroSel = membros.find((m) => m.userId === novoUserId);
+            const fichasDoMembro = fichas.filter((p) =>
+              p.status !== "arquivado" && p.membershipId === membroSel?.membershipId);
+            return (
+              <select value={novoFichaId} onChange={(e) => setNovoFichaId(e.target.value)} aria-label="Vincular ficha do jogador">
+                <option value="">Sem ficha (sem vida no token)</option>
+                {fichasDoMembro.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            );
+          })()}
           {npcs.length > 0 && (
-            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
+            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
               <option value="">Sem NPC</option>
               {npcs.map((p) => <option key={p.id} value={p.id}>{p.name} (NPC)</option>)}
             </select>
@@ -2334,9 +2775,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 token: {
                   nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5,
                   userId: novoUserId || null,
-                  personagemId: npc?.id ?? null,
+                  personagemId: npc?.id ?? (novoFichaId || null),
                 },
-              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); });
+              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); });
             }}
           >Adicionar token</button>
           {selVtt && (() => {
@@ -2358,7 +2799,15 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
           <button
             className={pincel ? "primario" : "secundario"}
             disabled={pendenteNevoa || nevoaIncerta}
-            onClick={() => { fimDesenhoRef.current?.(); setPincel((p) => !p); }}
+            onClick={() => {
+              fimDesenhoRef.current?.();
+              if (!pincel) {
+                // exclusividade régua × pincel: ativar o pincel desliga
+                // a régua e limpa medida/gesto de medição em andamento
+                setReguaAtiva(false); limparRegua();
+              }
+              setPincel(!pincel);
+            }}
           >{pincel ? "Sair do pincel" : "Pincel de névoa"}</button>
           {pincel && (
             <label className="vtt-nevoa-raio">

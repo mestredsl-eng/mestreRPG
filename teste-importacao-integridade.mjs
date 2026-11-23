@@ -56,6 +56,7 @@ try {
       campos: [
         { id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" },
         { id: "tal", label: "Talento", tipo: "inteiro", custoProgressivo: [1, 1, 1], semantico: "talento", regra: { kind: "talento", key: "talx" } },
+        { id: "cap", label: "Capacidade de Sangue", tipo: "inteiro", custoProgressivo: [1], semantico: "livre", regra: { kind: "caracteristica", key: "cap_sangue" } },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [], custos: {} },
@@ -64,9 +65,14 @@ try {
 
   // elemento real da biblioteca vinculado ao campo "tal" — a prova de
   // financiamento (B2) exige kind:key existente nas regras da campanha
-  const rsAtivo = dbw.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+  const rsAtivo = dbw.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+  const configRegras = JSON.parse(rsAtivo.config || "{}");
+  configRegras.sangue = { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor" } };
+  dbw.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(configRegras), rsAtivo.id);
   dbw.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
     .run(randomUUID(), rsAtivo.id, "talento", "talx", "Talento X", "{}", Date.now(), Date.now());
+  dbw.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+    .run(randomUUID(), rsAtivo.id, "caracteristica", "cap_sangue", "Capacidade de Sangue", "{}", Date.now(), Date.now());
 
   // arquivo da campanha (alvo legítimo de __retrato)
   const fileId = randomUUID();
@@ -133,6 +139,33 @@ try {
   ids.hist499 = inserirPersonagem("ATQ histórico 499", { for: 5, __xp: mkLedgerN(499) });
   ids.hist500 = inserirPersonagem("ATQ histórico 500", { for: 5, __xp: mkLedgerN(500) });
   ids.hist501 = inserirPersonagem("ATQ histórico 501", { for: 5, __xp: mkLedgerN(501) });
+  // 501 eventos assinados com âncora anterior 1: o primeiro é remoção
+  // -1 e deixa saldo 0. Ao importar e cortar esse evento, a nova âncora
+  // do primeiro retido é exatamente zero e precisa continuar presente.
+  ids.xpAncoraZeroCortada = inserirPersonagem("ATQ XP âncora zero após corte", {
+    for: 5,
+    __xp: {
+      saldo: 500,
+      ancora: 1,
+      historico: [
+        evXp(-1, 0, { tipo: "remocao" }),
+        ...Array.from({ length: 500 }, (_, i) => evXp(1, i + 1)),
+      ],
+    },
+  });
+  // 500 eventos já retidos: avançar a janela por uma operação real deve
+  // transformar a âncora 1 em 0 (o evento mais antigo é remocao -1).
+  ids.xpAncoraZeroRuntime = inserirPersonagem("ATQ XP âncora zero runtime", {
+    for: 5,
+    __xp: {
+      saldo: 499,
+      ancora: 1,
+      historico: [
+        evXp(-1, 0, { tipo: "remocao" }),
+        ...Array.from({ length: 499 }, (_, i) => evXp(1, i + 1)),
+      ],
+    },
+  });
   ids.eventosInvalidos = inserirPersonagem("ATQ eventos inválidos", {
     for: 5,
     __xp: {
@@ -232,6 +265,23 @@ try {
   });
   ids.xpCompraValida = inserirPersonagem("ATQ xp compra válida", {
     for: 5, tal: 3, __xp: { ...ledgerComprasTal },
+  });
+  // Exceção estreita #186: a compra de Característica financia apenas
+  // o campo configurado como capacidade de Sangue no mesmo ruleset.
+  ids.xpCompraCapacidadeSangue = inserirPersonagem("ATQ XP capacidade de Sangue", {
+    for: 5, tal: 3, cap: 1,
+    __xp: {
+      saldo: 9,
+      historico: [
+        evXp(10, 10),
+        evCompra("cap", 0, 1, 9, {
+          kind: "caracteristica",
+          key: "cap_sangue",
+          nome: "Capacidade de Sangue",
+        }),
+      ],
+      financiado: { cap: [0] },
+    },
   });
 
   // --- B1: âncora e cadeias longas ---
@@ -575,6 +625,27 @@ try {
   check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 500, "substituir: 500 preservados");
   p = personagemOrig("ATQ histórico 501");
   check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 501 && p.data.__xp.ancora === 1, "substituir: 501 → 500 + âncora=1");
+  p = personagemOrig("ATQ XP âncora zero após corte");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 500 && p.data.__xp.ancora === 0,
+    "substituir: corte de evento negativo preserva âncora zero");
+  p = personagemOrig("ATQ XP âncora zero runtime");
+  check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 499 && p.data.__xp.ancora === 1,
+    "substituir: âncora 1 preservada antes de avanço da janela");
+  const idAncoraZeroRuntime = p?.id;
+  check(!!idAncoraZeroRuntime, "XP HTTP: personagem de regressão localizado");
+  if (idAncoraZeroRuntime) {
+    const remocaoAncoraZero = await req(base, "POST", `/characters/${idAncoraZeroRuntime}/xp`, {
+      cookie: cookieMestre,
+      body: { acao: "remover", quantidade: 1, motivo: "Regressão âncora zero" },
+    });
+    check(remocaoAncoraZero.status === 200, "XP HTTP: remoção desloca janela de 500 eventos");
+    const leituraAncoraZero = await req(base, "GET", `/characters/${idAncoraZeroRuntime}/progressao`, { cookie: cookieMestre });
+    check(leituraAncoraZero.status === 200 && leituraAncoraZero.json?.xp?.ancora === 0,
+      "XP HTTP: GET mantém âncora zero após truncamento");
+    p = personagemOrig("ATQ XP âncora zero runtime");
+    check(p?.data.__xp?.historico.length === 500 && p.data.__xp.saldo === 498 && p.data.__xp.ancora === 0,
+      "XP HTTP: âncora zero persistida no banco");
+  }
   p = personagemOrig("ATQ xp trunc forjado");
   check(p?.data.__xp?.saldo === 0 && p.data.__xp.historico.length === 0, "substituir: 501 sem âncora zero → rejeitado");
   p = personagemOrig("ATQ xp âncora falsa");
@@ -593,6 +664,12 @@ try {
   check(p?.data.__xp?.saldo === 7 && p.data.__xp.historico.length === 4, "substituir: compra legítima preservada");
   p = personagemOrig("ATQ fin ok");
   check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[0,1]", "substituir: financiado comprovado preservado");
+  p = personagemOrig("ATQ XP capacidade de Sangue");
+  check(
+    p?.data.__xp?.saldo === 9 &&
+      JSON.stringify(p?.data.__xp?.financiado?.cap) === "[0]",
+    "substituir: prova da Característica vinculada à capacidade de Sangue preservada",
+  );
   p = personagemOrig("ATQ fin legado");
   check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[1,2]", "substituir: legado→índices comprovados");
   p = personagemOrig("ATQ fin sem prova");
@@ -615,6 +692,7 @@ try {
   // consequência econômica no caminho confiável
   check(calcNa("ATQ fin ok", campId).pools[0]?.gastos === 1, "substituir: financiado [0,1] → só 2→3 custa");
   check(calcNa("ATQ fin legado", campId).pools[0]?.gastos === 1, "substituir: legado [1,2] → só 0→1 custa");
+  check(calcNa("ATQ XP capacidade de Sangue", campId).pools[0]?.gastos === 3, "substituir: capacidade financiada por XP não é cobrada novamente em pontos");
   check(calcNa("ATQ fin sem prova", campId).pools[0]?.gastos === 3, "substituir: sem prova → custo integral");
   check(calcNa("ATQ fin custo inventado", campId).pools[0]?.gastos === 3, "substituir: custo inventado → custo integral");
 
