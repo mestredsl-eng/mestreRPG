@@ -308,6 +308,14 @@ function saldoDecimalComprovadoPeloHistorico(
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
     if (!Number.isFinite(proximoDecimal)) return null;
 
+    if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
+      // Uma recuperação no teto grava quantidade zero por idempotência e
+      // auditoria. Ela confirma o mesmo saldo legado, mas não desfaz uma
+      // correção decimal comprovada por eventos anteriores.
+      saldoLegado = proximoLegado;
+      continue;
+    }
+
     if (evento.tipo === "recuperacao" && proximoDecimal !== evento.saldoResultante) {
       // Antes da aritmética decimal, créditos limitados pelo teto podiam
       // gravar um delta binário menor que o solicitado, embora o saldo
