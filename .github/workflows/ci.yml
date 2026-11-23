@@ -4,6 +4,8 @@ on:
   pull_request:
     branches:
       - main
+      # Base de segurança da PR empilhada de atomicidade #315.
+      - fix/issue-294-cross-campaign-binding-20261123
       - feat/mesa-virtual-mapas-tokens
       - feat/mesa-virtual-nevoa-backend
       - feat/mesa-virtual-nevoa-frontend
