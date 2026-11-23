@@ -108,6 +108,7 @@ const CFG = {
   },
   poderes: {
     poder_fogo: { custo: 2 },
+    poder_d10: { custo: 2 },
     poder_frac: { custo: 1 },
     poder_zero: { custo: 1 },
     poder_neg: { custo: 1 },
@@ -163,6 +164,7 @@ try {
     ["poder_sneg", "Poder Escalar Negativo"],
     ["poder_stxt", "Poder Escalar Texto"],
     ["poder_saus", "Poder Escalar Ausente"],
+    ["poder_d10", "Poder de Teste"],
   ]) {
     await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
       cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true } },
@@ -177,7 +179,8 @@ try {
         { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "atributo", minimo: 1, maximo: 30 },
         { id: "qual", label: "Qualidade bônus", tipo: "inteiro", semantico: "atributo", minimo: 0, maximo: 10 },
         { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", opcoes: ["Humano", "Vampiro"] },
-        { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder" },
+        { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder", usadoEmTestes: false },
+        { id: "poderes_d10", label: "Poderes de Teste", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder", usadoEmTestes: true },
         // Campos escalares vinculados a Poder via campo.regra — o
         // caminho canônico p/ nível fracionário (0.5 é posse válida).
         { id: "pdec_ok", label: "Poder Dec Ok", tipo: "decimal", regra: { kind: "poder", key: "poder_frac" } },
@@ -197,7 +200,7 @@ try {
   setPoderesLimite(CID, 10);
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
+    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }], poderes_d10: [{ key: "poder_d10", nivel: 1 }] } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
@@ -359,7 +362,9 @@ try {
       await painel.locator("select").count() === 0
       && await painel.getByRole("button", { name: /Ativar|ativar/ }).count() === 0);
     const usar = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
-    t("UI. ação aparece junto ao Poder já escolhido", await usar.count() === 1);
+    t("UI. ação aparece junto ao Poder narrativo já escolhido", await usar.count() === 1);
+    t("UI. Poder marcado para D10 não recebe botão narrativo",
+      await page.getByRole("button", { name: "Usar Poder de Teste sem rolagem" }).count() === 0);
     await usar.click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll(".ficha-poder-acao"))
