@@ -5,13 +5,13 @@
 // Executar: npm run test:backup-contrato -w servidor
 import assert from "node:assert/strict";
 import { describe, it, before } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, symlinkSync, truncateSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, symlinkSync, truncateSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { gerarManifestoBackup } from "../../teste-fixture-backup.mjs";
+import { gerarManifestoBackup, sha256Arquivo } from "../../teste-fixture-backup.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ_REPO = resolve(__dirname, "..", "..");
@@ -32,6 +32,7 @@ let validarManifestoBackup: typeof import("../src/lib/backup.js").validarManifes
 let setConfigBackup: typeof import("../src/lib/backup.js").setConfigBackup;
 let verificarBackup: typeof import("../src/lib/backup.js").verificarBackup;
 let listarBackups: typeof import("../src/lib/backup.js").listarBackups;
+let prepararRestauracao: typeof import("../src/lib/backup.js").prepararRestauracao;
 let validarBackup: typeof import("../src/lib/validar-backup.js").validarBackup;
 let dirsProtegidosBackup: typeof import("../src/lib/protecao-backup.js").dirsProtegidosBackup;
 let protegerBackupContraRetencao: typeof import("../src/lib/protecao-backup.js").protegerBackupContraRetencao;
@@ -82,6 +83,12 @@ before(async () => {
   mkdirSync(dirname(BANCO), { recursive: true });
   mkdirSync(ARQUIVOS, { recursive: true });
   mkdirSync(BACKUPS, { recursive: true });
+  // provisionamento explícito de primeiro bootstrap — mesmo contrato
+  // do instalador real: sem a autorização, migrate falha fechado.
+  const auth = spawnSync("node", [join(RAIZ_REPO, "scripts", "autorizar-bootstrap.mjs"), "--confirmar-provisionamento"], {
+    env: { ...process.env }, encoding: "utf8",
+  });
+  assert.equal(auth.status, 0, `autorizar-bootstrap falhou: ${auth.stdout}${auth.stderr}`);
   // migrations reais no banco descartável
   const mig = spawnSync("node", [join(RAIZ_REPO, "servidor", "dist", "db", "migrate.js")], {
     env: { ...process.env }, encoding: "utf8",
@@ -93,6 +100,7 @@ before(async () => {
   setConfigBackup = mod.setConfigBackup;
   verificarBackup = mod.verificarBackup;
   listarBackups = mod.listarBackups;
+  prepararRestauracao = mod.prepararRestauracao;
   const vb = await import("../src/lib/validar-backup.js");
   validarBackup = vb.validarBackup;
   const pb = await import("../src/lib/protecao-backup.js");
@@ -455,6 +463,7 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     const dir = join(TMP, `bkval_${sufixo}`);
     mkdirSync(dir, { recursive: true });
     const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table server_settings (key text primary key, value text, updated_at integer)");
     db.exec("create table t (id integer)");
     db.close();
     if (comCfg) {
@@ -476,6 +485,45 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     const dir = fixtureBackup("ok");
     const v = validarBackup(dir);
     assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+  });
+
+  it("banco de 0 bytes com manifesto/hash coerentes → rejeita como truncado", () => {
+    const dir = fixtureBackup("dbzero");
+    const dbPath = join(dir, "mestre-rpg.db");
+    writeFileSync(dbPath, Buffer.alloc(0));
+    const man = lerMan(dir);
+    man.banco = { size: 0, sha256: sha256Arquivo(dbPath) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("vazio/truncado")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("banco íntegro sem server_settings → rejeita antes da restauração", () => {
+    const dir = fixtureBackup("dbsemsettings");
+    const dbPath = join(dir, "mestre-rpg.db");
+    const db = new Database(dbPath);
+    db.exec("drop table server_settings");
+    db.close();
+    const man = lerMan(dir);
+    man.banco = { size: statSync(dbPath).size, sha256: sha256Arquivo(dbPath) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("server_settings ausente")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifesto v2 sem manifestoVersao → não pode cair no legado", () => {
+    const dir = fixtureBackup("v2semversao");
+    const man = lerMan(dir);
+    delete man.manifestoVersao;
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("v2 sem 'manifestoVersao'")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("banco alterado após manifesto → sha256 diverge", () => {
@@ -679,5 +727,198 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     assert.equal(v.ok, false, "raiz symlink deveria ser rejeitada");
     assert.ok(v.problemas.some((p) => p.includes("symlink") || p.includes("raiz")), v.problemas.join("; "));
     rmSync(link, { force: true });
+  });
+});
+
+// =====================================================================
+// T5 — formato LEGADO v1 (backups da v1.0.8 e anteriores, Issue #266/W16)
+// manifesto.json sem 'manifestoVersao': { arquivos: {"arquivos/<rel>":
+// {size,sha256}}, criadoEm, versao }. Contrato = verificador v1.0.8:
+// integridade SQLite + size/sha256 declarados + inventário restrito.
+// =====================================================================
+describe("T5 — backup legado v1 (formato v1.0.8)", () => {
+  /** Monta um backup no formato legado v1. */
+  function fixtureLegado(sufixo: string) {
+    const dir = join(TMP, `bkleg_${sufixo}`);
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table server_settings (key text primary key, value text, updated_at integer)");
+    db.exec("create table t (id integer)");
+    db.close();
+    mkdirSync(join(dir, "arquivos", "campanha"), { recursive: true });
+    writeFileSync(join(dir, "arquivos", "campanha", "doc.txt"), "conteudo legado");
+    mkdirSync(join(dir, "configuracao"), { recursive: true });
+    writeFileSync(join(dir, "configuracao", "servidor.json"), JSON.stringify({ porta: 3001 }));
+    const arq: Record<string, { size: number; sha256: string }> = {};
+    for (const rel of ["arquivos/campanha/doc.txt"]) {
+      const p = join(dir, ...rel.split("/"));
+      arq[rel] = { size: statSync(p).size, sha256: sha256Arquivo(p) };
+    }
+    writeFileSync(join(dir, "manifesto.json"), JSON.stringify({
+      arquivos: arq, criadoEm: new Date().toISOString(), versao: "1.0.8",
+    }, null, 2));
+    return dir;
+  }
+  const manLeg = (dir: string) => JSON.parse(readFileSync(join(dir, "manifesto.json"), "utf8"));
+  const gravarLeg = (dir: string, man: unknown) => writeFileSync(join(dir, "manifesto.json"), JSON.stringify(man, null, 2));
+
+  it("backup legado válido → ok", () => {
+    const dir = fixtureLegado("ok");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com banco de 0 bytes → rejeita para não travar restauração", () => {
+    const dir = fixtureLegado("dbzero");
+    writeFileSync(join(dir, "mestre-rpg.db"), Buffer.alloc(0));
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("vazio/truncado")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado sem server_settings → rejeita antes de agendar restauração", () => {
+    const dir = fixtureLegado("semsettings");
+    const dbPath = join(dir, "mestre-rpg.db");
+    const db = new Database(dbPath);
+    db.exec("drop table server_settings");
+    db.close();
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("server_settings ausente")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado sem configuração → ok (config não existia como obrigatório no v1)", () => {
+    const dir = fixtureLegado("semcfg");
+    rmSync(join(dir, "configuracao"), { recursive: true, force: true });
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com arquivo adulterado → sha256 diverge → rejeita", () => {
+    const dir = fixtureLegado("adulterado");
+    writeFileSync(join(dir, "arquivos", "campanha", "doc.txt"), "conteudo adulterado!");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sha256") || p.includes("tamanho")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com arquivo extra não declarado → rejeita", () => {
+    const dir = fixtureLegado("extra");
+    writeFileSync(join(dir, "arquivos", "campanha", "extra.txt"), "intruso");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sem entrada no manifesto")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com traversal no caminho declarado → rejeita", () => {
+    const dir = fixtureLegado("traversal");
+    const man = manLeg(dir);
+    man.arquivos["arquivos/../escape.txt"] = { size: 1, sha256: "0".repeat(64) };
+    gravarLeg(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("caminho inválido")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifesto sem 'manifestoVersao' e sem 'arquivos' → formato desconhecido → rejeita", () => {
+    const dir = fixtureLegado("desconhecido");
+    gravarLeg(dir, { criadoEm: new Date().toISOString(), versao: "1.0.8" });
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("não reconhecido")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifestoVersao:1 explícito → NÃO é legado → rejeita por versão", () => {
+    const dir = fixtureLegado("v1explicito");
+    const man = { ...manLeg(dir), manifestoVersao: 1 };
+    gravarLeg(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("manifestoVersao")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+
+// =====================================================================
+// T6 — rejeição de restauração não altera nem remove o último backup válido
+// Issue #266: a validação deve ocorrer antes de proteção, backup de
+// segurança, flag pendente ou qualquer efeito colateral de restauração.
+// =====================================================================
+describe("T6 — backup rejeitado preserva o último backup válido", () => {
+  it("alvo adulterado → 400; backup válido, inventário, markers e flag permanecem intactos", async () => {
+    limparStateTeste();
+    mkdirSync(stateDirTeste(), { recursive: true });
+    await setConfigBackup({ agenda: "manual", retencaoDiarios: 20, retencaoSemanais: 20 });
+
+    const snapshotDir = (raiz: string) => {
+      const itens: { path: string; tipo: "dir" | "file"; size?: number; sha256?: string }[] = [];
+      const andar = (dir: string, prefixo = "") => {
+        for (const entrada of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+          const caminho = join(dir, entrada.name);
+          const relativo = prefixo ? `${prefixo}/${entrada.name}` : entrada.name;
+          if (entrada.isDirectory()) {
+            itens.push({ path: relativo, tipo: "dir" });
+            andar(caminho, relativo);
+          } else if (entrada.isFile()) {
+            itens.push({ path: relativo, tipo: "file", size: statSync(caminho).size, sha256: sha256Arquivo(caminho) });
+          }
+        }
+      };
+      andar(raiz);
+      return itens;
+    };
+
+    writeFileSync(join(ARQUIVOS, "sentinela-ultimo-backup.txt"), "não apagar nem alterar");
+    const ultimoValido = await criarBackup("manual", "último backup válido — sentinela W16");
+    assert.equal(ultimoValido.sucesso, true, `backup válido falhou: ${ultimoValido.erros.join("; ")}`);
+    const snapshotValido = snapshotDir(ultimoValido.dir);
+
+    const alvoInvalido = await criarBackup("manual", "alvo adulterado — teste W16");
+    assert.equal(alvoInvalido.sucesso, true, `fixture inicial falhou: ${alvoInvalido.erros.join("; ")}`);
+    const arquivoAlvo = join(alvoInvalido.dir, "arquivos", "sentinela-ultimo-backup.txt");
+    writeFileSync(arquivoAlvo, "conteúdo adulterado após o manifesto");
+    const snapshotAlvoInvalido = snapshotDir(alvoInvalido.dir);
+    assert.equal(validarBackup(alvoInvalido.dir).ok, false, "fixture adulterada deveria ser inválida");
+
+    const idsAntes = (await listarBackups()).map((b) => b.id).sort();
+    const markersAntes = await dirsProtegidosBackup();
+    assert.ok(markersAntes instanceof Set, "varredura de proteção deve ser conclusiva antes do teste");
+
+    const resultado = await prepararRestauracao(alvoInvalido.id, "teste-contrato-w16");
+    if (!("status" in resultado)) {
+      assert.fail(`alvo inválido não deveria ser preparado: ${JSON.stringify(resultado)}`);
+    }
+    assert.equal(resultado.status, 400, "restauração do alvo inválido deveria retornar 400");
+
+    // O último backup íntegro permanece byte a byte igual, no disco e no registro.
+    assert.ok(existsSync(ultimoValido.dir), "último backup válido foi removido");
+    assert.deepEqual(snapshotDir(ultimoValido.dir), snapshotValido, "conteúdo do último backup válido foi alterado");
+    assert.ok(validarBackup(ultimoValido.dir).ok, "último backup válido deixou de validar");
+
+    // A rejeição não apaga o alvo, não cria backup pre_restauracao e não muda o inventário.
+    assert.deepEqual(snapshotDir(alvoInvalido.dir), snapshotAlvoInvalido, "alvo rejeitado foi alterado durante a preparação");
+    assert.deepEqual((await listarBackups()).map((b) => b.id).sort(), idsAntes, "registro/lista de backups mudou após rejeição");
+
+    const markersDepois = await dirsProtegidosBackup();
+    assert.ok(markersDepois instanceof Set, "varredura de proteção posterior ficou inconclusiva");
+    assert.deepEqual([...markersDepois].sort(), [...markersAntes].sort(), "marcadores de proteção mudaram apesar da rejeição");
+
+    const dbCheck = new Database(BANCO, { readonly: true });
+    let flag: unknown;
+    try {
+      flag = dbCheck.prepare("select key from server_settings where key = ?").get("restauracao_pendente");
+    } finally {
+      dbCheck.close();
+    }
+    assert.equal(flag, undefined, "flag restauracao_pendente não deve ser criada para alvo inválido");
   });
 });
