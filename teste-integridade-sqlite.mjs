@@ -468,17 +468,37 @@ try {
   const curA6Antes = comDb(banco, (db) =>
     db.prepare("select current_version_id from sheet_templates where id=?").get(tplA6).current_version_id);
 
-  // socket real do mestre B (membro só de B) — captura fichas:atualizadas
-  // durante os ataques para provar o alvo do emitirCampanha
-  const eventosF6 = [];
-  const sockF6 = ioClient(base, {
-    path: "/socket.io", transports: ["websocket", "polling"], reconnection: false,
-    extraHeaders: { cookie: cookieMestreB },
-  });
-  sockF6.on("fichas:atualizadas", (d) => eventosF6.push(d));
-  await new Promise((r) => sockF6.on("connect", r));
-  // rooms de campanha exigem entrar-campanha explícito (valida membership)
-  await new Promise((r) => sockF6.emit("entrar-campanha", camp2Id, (okJoin) => r(okJoin === true)));
+  // baseline ANTES do ataque (Dono #7111604641): estrutura, published_at
+  // IS NULL e current_version_id relidos do banco — a versão de ataque
+  // é um rascunho recém-criado, logo published_at deve ser NULL.
+  const pubA6Antes = comDb(banco, (db) =>
+    db.prepare("select published_at from sheet_versions where id=?").get(verA6).published_at ?? null);
+
+  // sockets REAIS dos DOIS mestres — A (dono do recurso) e B (atacante,
+  // membro só de B). connect + entrar-campanha com ACK positivo e
+  // timeout; listeners registrados antes de qualquer close.
+  const eventosA6 = [], eventosB6 = [];
+  const conectarCampanha = async (cookie, camp, eventos) => {
+    const s = ioClient(base, {
+      path: "/socket.io", transports: ["websocket", "polling"], reconnection: false,
+      extraHeaders: { cookie },
+    });
+    s.on("fichas:atualizadas", (d) => eventos.push(d));
+    const conectado = await new Promise((res) => {
+      const to = setTimeout(() => res(false), 5000);
+      s.on("connect", () => { clearTimeout(to); res(true); });
+      s.on("connect_error", () => { clearTimeout(to); res(false); });
+    });
+    if (!conectado) return { s, ok: false };
+    const ok = await new Promise((res) => {
+      const to = setTimeout(() => res(false), 5000);
+      s.emit("entrar-campanha", camp, (v) => { clearTimeout(to); res(v === true); });
+    });
+    return { s, ok };
+  };
+  const sockA6 = await conectarCampanha(cookieMestre, campId, eventosA6);
+  const sockB6 = await conectarCampanha(cookieMestreB, camp2Id, eventosB6);
+
   // marca d'água de auditoria: só contam linhas criadas DURANTE os ataques
   // (o modelo_criado de tplA6 é da fixture F4, anterior ao ataque)
   const auditRowidAntes = comDb(banco, (db) =>
@@ -504,8 +524,33 @@ try {
   const pubA6 = comDb(banco, (db) =>
     db.prepare("select published_at from sheet_versions where id=?").get(verA6).published_at ?? null);
 
-  await new Promise((r) => setTimeout(r, 400)); // emits de socket propagam
-  try { sockF6.disconnect(); } catch {}
+  // Espera por EVENTO REAL (não sleep fixo): o PUT emite fichas:atualizadas
+  // para a room do TEMPLATE (campanha A) e o publish emite para a room do
+  // CAMINHO (campanha B). Cada socket deve receber exatamente o evento do
+  // seu emit; a janela negativa limitada prova que não houve vazamento
+  // cruzado em nenhuma direção.
+  const eventosTpl = (arr) => arr.filter((e) => e?.templateId === tplA6);
+  const esperarN = async (arr, n, timeoutMs) => {
+    const ini = Date.now();
+    while (Date.now() - ini < timeoutMs) {
+      if (eventosTpl(arr).length >= n) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return eventosTpl(arr).length >= n;
+  };
+  const evAOk = await esperarN(eventosA6, 1, 5000); // PUT → room do template (A)
+  const evBOk = await esperarN(eventosB6, 1, 5000); // publish → room do caminho (B)
+  await new Promise((r) => setTimeout(r, 500)); // janela negativa limitada
+  const nEvA = eventosTpl(eventosA6).length, nEvB = eventosTpl(eventosB6).length;
+
+  // teardown com disconnect REAL observado (listener antes do close)
+  const desconectarReal = (s) => new Promise((res) => {
+    const to = setTimeout(() => res(false), 5000);
+    s.once("disconnect", () => { clearTimeout(to); res(true); });
+    try { s.disconnect(); } catch { clearTimeout(to); res(false); }
+  });
+  const disA = await desconectarReal(sockA6.s);
+  const disB = await desconectarReal(sockB6.s);
 
   // auditoria: linhas de audit_logs criadas DURANTE os ataques
   const auditsAtaque = comDb(banco, (db) => db.prepare(
@@ -529,14 +574,25 @@ try {
     JSON.stringify(auditsAtaque.map((a) => ({ a: a.action, c: a.campaign_id }))));
   t("F6 observado: PUT cross-campaign NÃO gerou audit_log (mutação sem rastro)",
     auditPut.length === 0, `auditPut=${JSON.stringify(auditsAtaque.map((a) => ({ a: a.action, c: a.campaign_id, d: String(a.detail).slice(0, 120) })))}`);
-  // socket: publish emite fichas:atualizadas para a room da campanha do
-  // caminho (B) — mestre B recebe evento sobre templateId de A;
-  // PUT emite para a campanha do template (A) — mestre B NÃO recebe.
-  const evTplA6 = eventosF6.filter((e) => e?.templateId === tplA6);
-  // exatamente 1 evento = só o publish (emit p/ room de B); se o PUT
-  // também vazasse p/ B seriam 2 — a contagem distingue os dois emits
-  t("F6 observado: socket de B recebeu fichas:atualizadas do template de A só no publish (PUT emite p/ room de A)",
-    atkPub.status === 200 && evTplA6.length === 1, `eventos=${JSON.stringify(eventosF6).slice(0, 200)}`);
+  // socket bidirecional (Dono #7111604641): contagem por evento real
+  // nos DOIS lados. PUT emite p/ room do template (A) — socket de A
+  // recebe; publish emite p/ room do caminho (B) — socket de B recebe
+  // evento de um template que não é da sua campanha. A janela negativa
+  // limitada prova que nenhum dos lados recebeu o evento do outro emit.
+  t("F6 baseline: versão de ataque era rascunho (published_at IS NULL antes)",
+    pubA6Antes === null, `pubAntes=${pubA6Antes}`);
+  t("F6 socket A: entrou na room da campanha dona (ACK positivo)", sockA6.ok === true);
+  t("F6 socket B: entrou na room da campanha atacante (ACK positivo)", sockB6.ok === true);
+  t("F6 observado: socket de A recebeu fichas:atualizadas do PUT (emit p/ room do template)",
+    atkPut.status === 200 && evAOk && nEvA === 1,
+    `evA=${nEvA} put=${atkPut.status} eventos=${JSON.stringify(eventosA6).slice(0, 200)}`);
+  t("F6 observado: socket de B recebeu fichas:atualizadas do publish (emit p/ room do caminho)",
+    atkPub.status === 200 && evBOk && nEvB === 1,
+    `evB=${nEvB} pub=${atkPub.status} eventos=${JSON.stringify(eventosB6).slice(0, 200)}`);
+  t("F6 negativo: janela limitada — nenhum vazamento cruzado (A≠publish, B≠PUT)",
+    nEvA === 1 && nEvB === 1, `nA=${nEvA} nB=${nEvB}`);
+  t("F6 teardown: disconnect real observado nos sockets A e B",
+    disA === true && disB === true, `A=${disA} B=${disB}`);
 
   // controle positivo: mestre B opera template da PRÓPRIA campanha B
   const tplB6 = (await req(base, "POST", `/campaigns/${camp2Id}/sheet-templates`, { cookie: cookieMestreB, body: { name: "F6-Own" } })).json?.modelo?.id;
