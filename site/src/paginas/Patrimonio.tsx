@@ -1266,12 +1266,12 @@ function NovaConta({ characterId, cfg, podeDefinirValor, aoErro, aoOk }: {
           }
           catch (err) { aoErro(err); }
         }}>
-          <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as ContaInput["type"] })}>
+          <select aria-label="Tipo de conta" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value as ContaInput["type"] })}>
             {TIPOS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
           <input placeholder="Nome (ex.: Carteira, Banco X)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
           <input placeholder="Instituição" value={form.institution ?? ""} onChange={(e) => setForm({ ...form, institution: e.target.value })} />
-          <select value={form.currency ?? cfg.moedaPrincipal} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+          <select aria-label="Moeda da conta" value={form.currency ?? cfg.moedaPrincipal} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
             <option value={cfg.moedaPrincipal}>{cfg.moedaPrincipal} (principal)</option>
             {cfg.moedas.map((m) => <option key={m.codigo} value={m.codigo}>{m.codigo} — {m.nome}</option>)}
           </select>
@@ -1303,11 +1303,11 @@ function Movimentar({ characterId, contas, souMestre, aoErro, aoOk }: {
         await aoOk();
       } catch (err) { aoErro(err); }
     }}>
-      <select value={form.accountId} onChange={(e) => setForm({ ...form, accountId: e.target.value })} required>
+      <select aria-label="Conta para movimentação" value={form.accountId} onChange={(e) => setForm({ ...form, accountId: e.target.value })} required>
         <option value="">Conta…</option>
         {contas.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
-      <select value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value as typeof form.tipo })}>
+      <select aria-label="Tipo de movimentação" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value as typeof form.tipo })}>
         <option value="entrada">Entrada</option>
         <option value="saida">Saída</option>
         {souMestre && <option value="ajuste">Ajuste do mestre</option>}
@@ -1342,11 +1342,11 @@ function Transferir({ characterId, contas, contasOutros, souMestre, podePix, pod
             await aoOk();
           } catch (err) { aoErro(err); }
         }}>
-          <select value={origem} onChange={(e) => setOrigem(e.target.value)} required>
+          <select aria-label="Conta de origem" value={origem} onChange={(e) => setOrigem(e.target.value)} required>
             <option value="">De…</option>
             {contas.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.currency})</option>)}
           </select>
-          <select value={destino} onChange={(e) => setDestino(e.target.value)} required>
+          <select aria-label="Conta de destino" value={destino} onChange={(e) => setDestino(e.target.value)} required>
             <option value="">Para…</option>
             {podeMesmaConta && (
             <optgroup label="Minhas contas">
