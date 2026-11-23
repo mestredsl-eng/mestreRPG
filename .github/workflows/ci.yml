@@ -197,6 +197,9 @@ jobs:
       - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
         run: node teste-bat-node-gate.mjs
 
+      - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
+        run: node teste-bat-restauracao-falha.mjs
+
   navegador:
     name: Navegador — homologações Playwright
     runs-on: ubuntu-latest
