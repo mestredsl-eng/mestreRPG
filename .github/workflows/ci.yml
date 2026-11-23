@@ -225,6 +225,7 @@ jobs:
             teste-sessoes-socket.mjs
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
+            teste-runtime-processos-298.mjs
           )
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
