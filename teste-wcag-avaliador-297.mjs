@@ -48,6 +48,27 @@ sec("SC 1.4.11 — classificação do indicador");
   // 6. Input desabilitado com texto/borda fracos: excluído do critério
   r = await avaliar(`<main style="${FUNDO};padding:20px"><button id="d1" disabled style="color:#333;border:1px solid #333;background:#111;padding:8px">Inativo</button></main>`);
   t("componente inativo excluído (sem viol/rev)", !temViol(r, "d1") && !temRev(r, "d1"), JSON.stringify(r).slice(0, 240));
+
+  // 6b. aria-label NÃO é cue visual: input só com aria-label e fronteira
+  // fraca ⇒ FAIL (nome acessível ≠ identificação visual)
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><input id="i5" aria-label="Nome" style="border:1px solid #2c3038;background:#1c2026;padding:6px;width:200px"></main>`);
+  t("aria-label sozinho não é contexto visual ⇒ FAIL", temViol(r, "i5"), JSON.stringify(r.naoTexto).slice(0, 240));
+
+  // 6c. Placeholder vazio (campo vazio → visível) com ::placeholder ≥4.5 ⇒ REVIEW válido
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><style>#i6::placeholder{color:#aab4c0}</style><input id="i6" placeholder="Digite o nome" style="border:1px solid #2c3038;background:#1c2026;padding:6px;width:200px;color:#e8eaee"></main>`);
+  t("placeholder visível com contraste ≥4.5 ⇒ REVIEW (contexto válido)", temRev(r, "i6") && (r.naoTexto.rev.join(" ").includes("pode identificar") || r.naoTexto.rev.join(" ").includes("valido")), JSON.stringify(r.naoTexto.rev).slice(0, 240));
+
+  // 6d. Mesmo input COM valor → placeholder some → sem contexto ⇒ FAIL
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><style>#i7::placeholder{color:#aab4c0}</style><input id="i7" placeholder="Digite o nome" value="preenchido" style="border:1px solid #2c3038;background:#1c2026;padding:6px;width:200px;color:#e8eaee"></main>`);
+  t("placeholder preenchido não conta ⇒ FAIL", temViol(r, "i7"), JSON.stringify(r.naoTexto).slice(0, 240));
+
+  // 6e. Label display:none ⇒ contexto inválido ⇒ REVIEW (não FAIL, não PASS)
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><label for="i8" style="display:none">Nome oculto</label><input id="i8" style="border:1px solid #2c3038;background:#1c2026;padding:6px;width:200px"></main>`);
+  t("label oculto ⇒ REVIEW (contexto não comprovado)", temRev(r, "i8") && !temViol(r, "i8"), JSON.stringify(r.naoTexto).slice(0, 240));
+
+  // 6f. Label com contraste insuficiente (<4.5) ⇒ contexto inválido ⇒ REVIEW
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><label for="i9" style="color:#3a4149">Nome apagado</label><input id="i9" style="border:1px solid #2c3038;background:#1c2026;padding:6px;width:200px"></main>`);
+  t("label com contraste <4.5 ⇒ REVIEW (contexto inválido)", temRev(r, "i9") && !temViol(r, "i9"), JSON.stringify(r.naoTexto).slice(0, 240));
 }
 
 sec("SC 1.4.11 — IMG e SVG como identificadores");
@@ -74,6 +95,12 @@ sec("SC 1.4.11 — IMG e SVG como identificadores");
   // 11. SVG decorativo (aria-hidden) ignorado
   r = await avaliar(`<main style="${FUNDO};padding:20px"><button id="sv2" style="padding:8px 14px;color:#e8eaee;background:#1c2026">Ação<svg width="16" height="16" aria-hidden="true"><path d="M2 2h16v16H2z" fill="#333333"/></svg></button></main>`);
   t("svg aria-hidden decorativo não gera violação", !temViol(r, "sv2"), JSON.stringify(r.naoTexto).slice(0, 240));
+
+  // 11b. IMG heterogênea: maioria clara + pequeno símbolo escuro essencial
+  // ⇒ média global poderia passar, mas região essencial não comprovada ⇒ REVIEW
+  const IMG_HETERO = "data:image/svg+xml;utf8," + encodeURIComponent("<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><rect width='10' height='10' fill='white'/><rect x='3' y='3' width='4' height='4' fill='black'/></svg>");
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><button id="ib4" style="border:1px solid #2c3038;background:#1c2026;padding:4px"><img src="${IMG_HETERO}" width="20" height="20" alt=""></button></main>`);
+  t("img heterogênea (símbolo essencial escuro) ⇒ REVIEW, não PASS por média", temRev(r, "ib4"), JSON.stringify(r.naoTexto).slice(0, 260));
 }
 
 sec("SC 2.5.8 — exceção inline estrita");
@@ -90,6 +117,10 @@ sec("SC 2.5.8 — exceção inline estrita");
   // 14. Botão pequeno dentro de <li> ⇒ não exceptuado
   r = await avaliar(`<main style="${FUNDO};padding:20px"><ul><li><button id="bt1" style="width:10px;height:10px;padding:0"></button><button id="bt2" style="width:10px;height:10px;padding:0"></button></li></ul></main>`);
   t("botões pequenos em li NÃO exceptuados — viol sem espaçamento", r.alvos.viol.length > 0, JSON.stringify(r.alvos).slice(0, 240));
+
+  // 14b. Links display:inline FORA de frase (sem p/li/td) ⇒ não exceptuados
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><div><a id="iso1" href="#" style="display:inline;font-size:12px;color:#8ab4ff">x</a><a id="iso2" href="#" style="display:inline;font-size:12px;color:#8ab4ff">y</a></div></main>`);
+  t("links inline isolados sem frase ⇒ NÃO exceptuados (viol)", r.alvos.viol.length > 0, JSON.stringify(r.alvos).slice(0, 240));
 }
 
 sec("Indicador de foco — alpha e geometrias");

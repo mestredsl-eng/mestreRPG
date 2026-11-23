@@ -82,23 +82,29 @@ function avaliarWcag() {
   const textoEfetivo = (el) => (el.innerText || el.textContent || "").trim();
   const ehCampo = (el) => /^(input|select|textarea)$/.test(el.tagName.toLowerCase());
 
-  // Amostragem conservadora de IMG rasterizado: média dos pixels opacos
-  // reduzidos a 32×32 via canvas, comparada ao adjacente. null = não
-  // mensurável (CORS/tainted/vazia) ⇒ REVIEW, nunca PASS por existência.
+  // Amostragem regional de IMG rasterizado (não conservadora seria a
+  // média global — uma região essencial escura se esconderia). Grade
+  // 4×4 sobre 32×32: cada célula com ≥20% pixels opacos gera um ratio
+  // próprio vs adjacente. Retorna {min,max} ou null (não mensurável).
   const medirImg = (img, bgRgb) => {
     try {
-      const n = 32;
+      const n = 32, cel = 8;
       const c = document.createElement("canvas");
       c.width = n; c.height = n;
       const ctx = c.getContext("2d", { willReadFrequently: true });
       ctx.drawImage(img, 0, 0, n, n);
       const d = ctx.getImageData(0, 0, n, n).data;
-      let r = 0, g = 0, b = 0, cnt = 0;
-      for (let i = 0; i < d.length; i += 4) {
-        if (d[i + 3] > 200) { r += d[i]; g += d[i + 1]; b += d[i + 2]; cnt++; }
+      const razoes = [];
+      for (let cy = 0; cy < 4; cy++) for (let cx = 0; cx < 4; cx++) {
+        let r = 0, g = 0, b = 0, cnt = 0;
+        for (let y = cy * cel; y < (cy + 1) * cel; y++) for (let x = cx * cel; x < (cx + 1) * cel; x++) {
+          const i = (y * n + x) * 4;
+          if (d[i + 3] > 200) { r += d[i]; g += d[i + 1]; b += d[i + 2]; cnt++; }
+        }
+        if (cnt >= cel * cel * 0.2) razoes.push(razao([r / cnt, g / cnt, b / cnt], bgRgb));
       }
-      if (!cnt) return null;
-      return razao([r / cnt, g / cnt, b / cnt], bgRgb);
+      if (!razoes.length) return null;
+      return { min: Math.min(...razoes), max: Math.max(...razoes) };
     } catch { return null; }
   };
 
@@ -147,33 +153,64 @@ function avaliarWcag() {
     if (imgs.length) {
       const bg = fundoDe(el);
       if (bg.review) return { tipo: "img", ok: false, incerto: `adjacente incalculável (${bg.review})` };
-      let melhor = 0, incerto = false;
+      let algumOk = false, incerto = false;
       for (const im of imgs) {
-        const r = medirImg(im, bg.rgb);
-        if (r === null) { incerto = true; continue; }
-        if (r > melhor) melhor = r;
+        const m = medirImg(im, bg.rgb);
+        if (m === null) { incerto = true; continue; }
+        if (m.min >= 3) { algumOk = true; continue; }        // todas as regiões ≥3
+        if (m.max >= 3) { incerto = true; continue; }        // heterogênea: região essencial não comprovada
+        // homogênea <3: imagem não identifica — segue p/ fronteira
       }
-      if (melhor >= 3) return { tipo: "img", ok: true, ratio: melhor };
-      if (incerto) return { tipo: "img", ok: false, incerto: "img não mensurável (CORS/vazia)" };
-      return { tipo: "img", ok: false, ratio: melhor };
+      if (algumOk) return { tipo: "img", ok: true };
+      if (incerto) return { tipo: "img", ok: false, incerto: "img heterogênea ou não mensurável — região essencial não comprovada" };
+      return { tipo: "img", ok: false };
     }
     return { tipo: null, ok: false };
   };
-  // Rótulo/contexto visível associado: labels, aria-*, title, placeholder
-  // ou <label> ancestral/associado — pode identificar sem fronteira,
-  // mas a norma não resolve sozinha ⇒ ambíguo vira REVIEW, não FAIL.
-  const temContexto = (el) => {
-    if (el.labels && el.labels.length) return true;
-    if (el.getAttribute("aria-label") || el.getAttribute("aria-labelledby") || el.getAttribute("title")) return true;
-    if (el.placeholder) return true;
-    if (el.closest("label")) return true;
+  // Rótulo/contexto só conta como cue visual se estiver REALMENTE
+  // renderizado e com contraste textual ≥4.5 (SC 1.4.3). aria-label,
+  // aria-labelledby e title são nome acessível, não cue visual — fora.
+  // placeholder só aparece com o campo vazio; ::placeholder é medido.
+  // Retorna "valido" | "invalido" (presente mas não comprovado) | "nenhum".
+  const labelsDe = (el) => {
+    const ls = [];
+    if (el.labels) ls.push(...el.labels);
     if (el.id) {
       try {
         const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
-        if (l && visivel(l)) return true;
+        if (l) ls.push(l);
       } catch { }
     }
-    return false;
+    const anc = el.closest("label");
+    if (anc) ls.push(anc);
+    return [...new Set(ls)];
+  };
+  const contrasteTexto = (el, pseudo = null) => {
+    const cs = pseudo ? getComputedStyle(el, pseudo) : getComputedStyle(el);
+    const fg = parse(cs.color);
+    if (!fg || fg[3] === 0) return null;
+    const bg = fundoDe(el);
+    if (bg.review) return null;
+    const fgc = fg[3] < 1 ? sobre(fg, [...bg.rgb, 1]) : fg.slice(0, 3);
+    return razao(fgc, bg.rgb);
+  };
+  const temContexto = (el) => {
+    let invalido = false;
+    for (const l of labelsDe(el)) {
+      const txt = (l.innerText || l.textContent || "").trim();
+      if (!txt || !visivel(l)) { invalido = true; continue; }
+      const r = contrasteTexto(l);
+      if (r === null) { invalido = true; continue; }
+      if (r >= 4.5) return "valido";
+      invalido = true; // visível mas contraste insuficiente (SC 1.4.3 falha à parte)
+    }
+    const tag = el.tagName.toLowerCase();
+    if ((tag === "input" || tag === "textarea") && el.placeholder && !(el.value || "")) {
+      const r = contrasteTexto(el, "::placeholder");
+      if (r !== null && r >= 4.5) return "valido";
+      invalido = true;
+    }
+    return invalido ? "invalido" : "nenhum";
   };
 
   for (const el of todos) {
@@ -214,8 +251,11 @@ function avaliarWcag() {
     if ((fillRatio !== null && fillRatio >= 3) || (bordaRatio !== null && bordaRatio >= 3)) continue; // PASS
     // Nenhum indicador atinge 3:1 — fronteira é o identificador necessário?
     const ev = `preenchimento×externo=${fmt(fillRatio)} borda×externo=${fmt(bordaRatio)} req=3`;
-    if (temContexto(el)) {
-      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; contexto/label pode identificar — sem veredito)`);
+    const ctx = temContexto(el);
+    if (ctx === "valido") {
+      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; label/placeholder visível pode identificar — sem veredito)`);
+    } else if (ctx === "invalido") {
+      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; contexto presente mas não comprovado — invisível/contraste)`);
     } else {
       out.naoTexto.viol.push(`${sel(el)} sem identificador visual: ${ev} ext=rgb(${extRgb.map(Math.round)})`);
     }

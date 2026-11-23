@@ -44,22 +44,39 @@ async function aguardarFechamento(obs, timeoutMs = 10000) {
 // sockets → browser → shutdown + close real → remoção do diretório.
 // Retorna a lista de erros de limpeza; nunca lança — quem chama decide
 // como contabilizar, para não mascarar a exceção original.
-async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = null, browser: br = null, dir = null } = {}) {
+async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = null, browser: br = null, pagina = null, contexto = null, dir = null } = {}) {
   const erros = [];
   for (const s of sk) {
     try {
       if (s && s.connected) {
-        // Evento disconnect REAL com timeout — o listener é preso antes do
-        // close (a emissão pode ser síncrona); timeout vira erro de limpeza.
-        const disc = new Promise((res) => s.once("disconnect", res));
-        const tempo = new Promise((res) => setTimeout(res, 5000));
-        s.close();
-        const primeiro = await Promise.race([disc.then(() => "disconnect"), tempo.then(() => "timeout")]);
-        if (primeiro === "timeout") erros.push("socket: disconnect não emitido em 5s");
+        // Evento disconnect REAL com timeout — listener preso antes do
+        // close (emissão pode ser síncrona); timer e listener sempre
+        // limpos em finally; timeout vira erro de limpeza explícito.
+        const resultado = await new Promise((resolve) => {
+          let done = false;
+          const onDisc = () => fin("disconnect");
+          const t = setTimeout(() => fin("timeout"), 5000);
+          function fin(v) {
+            if (done) return;
+            done = true;
+            clearTimeout(t);
+            s.off("disconnect", onDisc);
+            resolve(v);
+          }
+          s.once("disconnect", onDisc);
+          s.close();
+        });
+        if (resultado === "timeout") erros.push("socket: disconnect não emitido em 5s");
       } else if (s) {
         s.close();
       }
     } catch (e) { erros.push("socket: " + String(e?.message ?? e)); }
+  }
+  if (pagina) {
+    try { await pagina.close(); } catch (e) { erros.push("pagina: " + String(e?.message ?? e)); }
+  }
+  if (contexto) {
+    try { await contexto.close(); } catch (e) { erros.push("contexto: " + String(e?.message ?? e)); }
   }
   if (br) {
     try { await br.close(); } catch (e) { erros.push("browser: " + String(e?.message ?? e)); }
@@ -88,7 +105,8 @@ async function provaFalhaParcial() {
   sec("Teardown — falha injetada após aquisição parcial");
   const sk = [];
   const descFlags = [];
-  let d2, proc2 = null, fech2 = null, close2Ok = false, browser2 = null;
+  let d2, proc2 = null, fech2 = null, close2Ok = false;
+  let browser2 = null, ctx2 = null, pg2 = null;
   let erroOriginal = null, erros2 = [];
   try {
     d2 = dirTeste("desafio-ficha-falha");
@@ -118,21 +136,24 @@ async function provaFalhaParcial() {
     }
     await pronto(sk[0]);
     await pronto(sk[1]);
-    // Browser real também entra na aquisição parcial
+    // Browser real com contexto/página explícitos também na aquisição parcial
     browser2 = await chromium.launch();
-    const pg = await browser2.newPage();
-    await pg.goto(base2);
-    await pg.waitForLoadState("domcontentloaded").catch(() => {});
+    ctx2 = await browser2.newContext();
+    pg2 = await ctx2.newPage();
+    await pg2.goto(base2);
+    await pg2.waitForLoadState("domcontentloaded").catch(() => {});
     throw new Error("FALHA_INJETADA_pos_aquisicao_parcial");
   } catch (e) {
     erroOriginal = e;
   } finally {
-    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, browser: browser2, dir: d2 });
+    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, pagina: pg2, contexto: ctx2, browser: browser2, dir: d2 });
   }
   t("falha injetada propaga sem ser mascarada pelo cleanup", String(erroOriginal?.message ?? "").includes("FALHA_INJETADA"), String(erroOriginal?.message ?? erroOriginal).slice(0, 90));
   t("cleanup da prova sem erros", erros2.length === 0, erros2.join(" | "));
   t("dois sockets emitiram disconnect real (evento, não flag)", descFlags.length === 2 && descFlags.every((f) => f.ok));
-  t("browser real da prova fechado", !!browser2 && browser2.isConnected() === false);
+  t("página da prova fechada", !!pg2 && pg2.isClosed() === true);
+  t("contexto da prova sem páginas abertas", !!ctx2 && ctx2.pages().length === 0, `pages=${ctx2 ? ctx2.pages().length : "n/a"}`);
+  t("browser real da prova desconectado", !!browser2 && browser2.isConnected() === false);
   t("processo da prova chegou a close (stdio encerrado)", close2Ok === true);
   t("diretório da prova removido", !!d2 && !existsSync(d2), d2 || "sem dir");
 }
