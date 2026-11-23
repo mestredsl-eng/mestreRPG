@@ -132,7 +132,7 @@ try {
       const bytes = "banco preexistente que nao pode ser sobrescrito";
       writeFileSync(f.env.MESTRE_BANCO, bytes);
       const r = executar(f, "S\r\n");
-      check("ambíguo: banco existente bloqueia antes do prompt", !/Autorizar primeiro bootstrap\\?/i.test(r.saida), r.saida.slice(-800));
+      check("ambíguo: banco existente bloqueia antes do prompt", !/Autorizar primeiro bootstrap\?/i.test(r.saida), r.saida.slice(-800));
       check("ambíguo: falha encerra o boot antes do atualizador", !existsSync(f.updateMarker) && !tem(r.out, /auto-update\.mjs|aplicar-restauracao\.js|db:migrate|npm run start/i), r.out);
       check("ambíguo: banco preexistente fica byte-idêntico", readFileSync(f.env.MESTRE_BANCO, "utf8") === bytes);
       check("ambíguo: nenhum marcador ou autorização é gravado",
