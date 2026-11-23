@@ -89,6 +89,12 @@ function saldoDe(charId) {
     return JSON.parse(row.data || "{}").__sangue?.saldo ?? null;
   } finally { w.close(); }
 }
+function nomeDe(charId) {
+  const w = db();
+  try {
+    return w.prepare("select name from characters where id=?").get(charId)?.name ?? null;
+  } finally { w.close(); }
+}
 
 const CFG = {
   habilitado: true,
@@ -211,7 +217,7 @@ try {
   setSangue(CHAR2, { saldo: 4, capacidade: 8, usos: {}, historico: [] });
   // Personagem do PRÓPRIO mestre — dono real para a corrida de posse
   const pjM = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: M, body: { name: "Ficha do Mestre", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [] } },
+    cookie: M, body: { name: "Ficha do Mestre", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 1 }] } },
   });
   const CHARM = pjM.json?.personagem?.id ?? pjM.json?.id;
   setSangue(CHARM, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
@@ -435,6 +441,49 @@ try {
     await page.getByRole("button", { name: "Salvar", exact: true }).click();
     await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
     t("UI. salvar após ativação usa versão atual da ficha", /Ficha salva\./.test(await page.locator("body").innerText()));
+    await ctx.close();
+  }
+
+  // ---------- 2b. ACK tardio após trocar de ficha não troca o alvo do editor ----------
+  sec("UI. ativação pendente — não sobrescrever personagem aberto depois");
+  {
+    setSangue(CHARM, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
+    const { ctx, page } = await novaPagina(M);
+    await abrirFicha(page, "Ficha do Mestre");
+    const usarMestre = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. corrida de ficha: mestre tem Poder narrativo próprio", await usarMestre.count() === 1);
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object" && typeof cb === "function") {
+          // O servidor confirma o débito imediatamente; apenas atrasamos
+          // a resposta do ACK para o navegador.
+          return original(ev, payload, (ack) => setTimeout(() => cb(ack), 1800));
+        }
+        return original(ev, payload, cb);
+      };
+    });
+    await usarMestre.click();
+    for (let i = 0; i < 40 && saldoDe(CHARM) !== 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    t("UI. corrida de ficha: primeiro débito gravado no personagem de origem", saldoDe(CHARM) === 3);
+    await page.getByRole("button", { name: "Voltar", exact: true }).click();
+    await abrirFicha(page, "Herói Ações");
+    await page.getByRole("button", { name: "Editar ficha" }).click();
+    const nomeInput = page.locator("label").filter({ hasText: "Nome do personagem" }).locator("input");
+    t("UI. corrida de ficha: outro personagem segue em edição", await nomeInput.count() === 1);
+    await nomeInput.fill("Herói Renomeado");
+    await page.waitForTimeout(2100); // deixa o ACK tardio da ficha anterior resolver
+    t("UI. corrida de ficha: ACK antigo não troca nem reutiliza o editor",
+      await page.locator("h2").filter({ hasText: "Herói Ações" }).count() === 1
+      && await page.locator("label").filter({ hasText: "Nome do personagem" }).locator("input").count() === 1);
+    await page.getByRole("button", { name: "Salvar", exact: true }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
+    t("UI. corrida de ficha: salvar altera só o personagem atualmente aberto",
+      nomeDe(CHAR) === "Herói Renomeado" && nomeDe(CHARM) === "Ficha do Mestre",
+      `CHAR=${nomeDe(CHAR)} CHARM=${nomeDe(CHARM)}`);
     await ctx.close();
   }
 
