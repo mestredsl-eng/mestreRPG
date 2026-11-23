@@ -407,9 +407,9 @@ try {
   console.log("\\n== F5 — PUT × publish concorrentes ==");
 
   const uidMestreF5 = uid(), agoraMestreF5 = agora();
-  w.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+  wf.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
     .run(uidMestreF5, "mestre_f5_concorrente", "Mestre F5 Concorrente", await hashSenha("senha-jogador-123"), agoraMestreF5, agoraMestreF5);
-  w.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','ativo',?,?,?)")
+  wf.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','ativo',?,?,?)")
     .run(uid(), campId, uidMestreF5, agoraMestreF5, agoraMestreF5, agoraMestreF5);
   const cookieMestreF5 = sessao(banco, uidMestreF5);
 
