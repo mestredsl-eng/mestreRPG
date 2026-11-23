@@ -21,7 +21,7 @@ const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-let proc, ids, sid;
+let proc, ids, sid, browser;
 
 // Template de ficha com seções reais: atributos, conhecimentos, habilidades,
 // equipamento (moeda = inelegível) e um campo "livre" só elegível via flag.
@@ -560,7 +560,7 @@ try {
   t("privado: dono recebe", evJ1.teste.some((x) => x.id === rPriv?.id));
 
   sec("UI — fluxo principal pela ficha");
-  const browser = await chromium.launch();
+  browser = await chromium.launch();
   const errosM = [], errosJ = [];
   const ctxM = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const ctxJ = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
@@ -717,13 +717,12 @@ try {
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));
-  await browser.close();
-
   sockM.close(); sockJ1.close(); sockJ2.close();
 } catch (e) {
   fail++;
   console.log("FALHOU exceção:", e);
 } finally {
+  if (browser) await browser.close().catch(() => {});
   if (proc) await encerrarServidor(proc).catch(() => {});
   limparDir(DIR);
 }

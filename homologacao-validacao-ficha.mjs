@@ -3,25 +3,29 @@
 // Cobre desktop e mobile: painel persistente, erros específicos, destaque
 // de campo, navegação "ir para o campo" e preservação dos dados.
 import { chromium } from "playwright";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { prepararBanco, portaLivre, subirServidor, esperarSaudavel, criarCenario, req } from "./teste-base.mjs";
+import { prepararBanco, portaLivre, subirServidor, esperarSaudavel, criarCenario, req, encerrarServidor, limparDir } from "./teste-base.mjs";
 
-const DIR = mkdtempSync(join(tmpdir(), "mrpg-hom-val-"));
-const BANCO = join(DIR, "mestre-rpg.db");
-await prepararBanco(BANCO);
-const PORTA = await portaLivre();
-const BASE = `http://localhost:${PORTA}`;
-const proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
-proc.stderr.on("data", (d) => process.stderr.write(d));
-await esperarSaudavel(BASE, proc);
+let DIR;
+let proc;
+let browser;
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 
-const browser = await chromium.launch();
 try {
+  DIR = mkdtempSync(join(tmpdir(), "mrpg-hom-val-"));
+  const BANCO = join(DIR, "mestre-rpg.db");
+  await prepararBanco(BANCO);
+  const PORTA = await portaLivre();
+  const BASE = `http://localhost:${PORTA}`;
+  proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
+  proc.stderr.on("data", (d) => process.stderr.write(d));
+  await esperarSaudavel(BASE, proc);
+  browser = await chromium.launch();
+
   const c = await criarCenario(BASE, BANCO, { campanha: "Campanha Validação Ficha", jogadores: { jogador1: "jogador_um" } });
   const CID = c.campId, M = c.cookieMestre, J = c.jogadores.jogador1.cookie;
   const JID = c.jogadores.jogador1.id;
@@ -162,10 +166,12 @@ try {
   await cenario(1280, 800, "desktop", "Val Desk", "Val");
   await cenario(390, 844, "mobile", "Val Mob", "ValM");
 } finally {
-  await browser.close();
-  proc.kill();
-  await new Promise((r) => setTimeout(r, 500));
-  rmSync(DIR, { recursive: true, force: true });
+  if (browser) await browser.close().catch(() => {});
+  try {
+    if (proc) await encerrarServidor(proc);
+  } finally {
+    if (DIR) limparDir(DIR);
+  }
 }
 
 console.log(`\n==== homologação validação-ficha: ${pass} ok, ${fail} falhas ====`);
