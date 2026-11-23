@@ -342,6 +342,10 @@ function saldoDecimalComprovadoPeloHistorico(
         const saldoResultanteValido = compararDecimalSangue(evento.saldoResultante, saldoLegado);
         if (saldoResultanteValido === null || saldoResultanteValido < 0) return null;
         saldoDecimal = evento.saldoResultante;
+        // A recuperação limitada, com uso durável e snapshot no teto,
+        // estabelece um novo ponto de partida comprovado. A ambiguidade
+        // anterior não deve contaminar débitos/créditos posteriores.
+        reconstrucaoAmbigua = false;
       } else {
         // Crédito integral comprovado: a quantidade pedida coincide com o
         // delta durável, então a correção decimal normal continua segura.
