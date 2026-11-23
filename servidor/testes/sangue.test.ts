@@ -937,6 +937,51 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (poder.ok) assert.equal(poder.estado.saldo, 0);
   });
 
+  it("recuperação limitada comprovada encerra ambiguidade e libera D10 integral posterior", () => {
+    const em = new Date().toISOString();
+    const usoRecuperacao = "recuperar:" + REQ1;
+    const usoD10Anterior = "d10:" + TEST1;
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // Reconciliação/ajuste negativo antigo deixa o saldo binário 0.04
+        // com snapshot 0.04000000000000001. A recuperação solicitada em
+        // 0.6 é limitada ao teto e grava novo saldo exato de 0.6.
+        saldo: 0.39999999999999997,
+        usos: {
+          [usoRecuperacao]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ1,
+            personagemId: PID,
+            quantidade: 0.6,
+          },
+          [usoD10Anterior]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.07, motivo: "saldo legado", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.07 },
+          { em, tipo: "ajuste" as const, quantidade: -0.03, motivo: "reconciliação legada", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.04000000000000001 },
+          { em, tipo: "recuperacao" as const, quantidade: 0.5599999999999999, motivo: "recuperação limitada ao teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.6, usoId: usoRecuperacao },
+          { em, tipo: "uso" as const, quantidade: -0.2, motivo: "Poder anterior", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.39999999999999997, usoId: usoD10Anterior },
+        ],
+      },
+    };
+
+    const lido = lerSangue(dados);
+    assert.equal(lido.valido, true);
+    assert.equal(lido.estado.saldo, 0.4,
+      "recuperação limitada estabelece ponto exato e corrige o débito posterior");
+
+    const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.4 });
+    assert.equal(poder.ok, true, "novo D10 consome o saldo decimal integral de 0,4");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
   it("preserva saldo persistido ao reconstruir histórico truncado com âncora legada", () => {
     const em = new Date().toISOString();
     const dados: Record<string, unknown> = {
