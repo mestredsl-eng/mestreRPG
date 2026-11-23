@@ -226,14 +226,22 @@ jobs:
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
-            node "$s"
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
           done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -417,14 +425,22 @@ jobs:
             teste-a11y-fluxos-297.mjs
             homologacao-validacao-ficha.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
-            node "$s"
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
           done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
       - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
         run: |
           echo "===== teste-xp-historico-ui.mjs ====="
