@@ -359,6 +359,48 @@ try {
   t("F2c observado: v1 ficou publishedAt mas currentVersionId seguiu v2 (inconsistência documentada)",
     pubC.v1pub !== null && pubC.cur === v2C, JSON.stringify({ ...pubC, v1C, v2C }));
 
+  // ---- F4a: troca de modelo padrão — limpar default + set default sem tx ----
+  // PATCH isDefault:true faz UPDATE is_default=0 nos demais e depois UPDATE
+  // is_default=1 no alvo. Injetar falha no SEGUNDO update deve deixar o
+  // default anterior intacto; sem tx, o primeiro update já commitou.
+  const tplD1 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F4-D1" } })).json?.modelo?.id;
+  const tplD2 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F4-D2" } })).json?.modelo?.id;
+  await req(base, "PATCH", `/campaigns/${campId}/sheet-templates/${tplD1}`, { cookie: cookieMestre, body: { isDefault: true } });
+  const defaultsAntes = conta("select count(*) n from sheet_templates where campaign_id=? and is_default=1", campId);
+  dispara("f4_def", `CREATE TRIGGER f4_def BEFORE UPDATE ON sheet_templates
+    WHEN NEW.id='${tplD2}' AND NEW.is_default=1
+    BEGIN SELECT RAISE(ABORT,'F4'); END`);
+  const rF4a = await req(base, "PATCH", `/campaigns/${campId}/sheet-templates/${tplD2}`, { cookie: cookieMestre, body: { isDefault: true } });
+  derruba("f4_def");
+  const defaultsDepois = {
+    total: conta("select count(*) n from sheet_templates where campaign_id=? and is_default=1", campId),
+    d1: wf.prepare("select is_default from sheet_templates where id=?").get(tplD1)?.is_default,
+    d2: wf.prepare("select is_default from sheet_templates where id=?").get(tplD2)?.is_default,
+  };
+  t("F4a: falha no 2º update de default → API responde erro", rF4a.status >= 400, `status=${rF4a.status}`);
+  t("F4a observado: ZERO defaults após falha (default anterior perdido — defeito documentado)",
+    defaultsDepois.total === 0, JSON.stringify({ antes: defaultsAntes, ...defaultsDepois }));
+  // restaura default de D1 para os próximos cenários
+  wf.prepare("update sheet_templates set is_default=1 where id=?").run(tplD1);
+
+  // ---- F4b: duas trocas de default concorrentes → exatamente um vencedor ----
+  const tplE1 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F4-E1" } })).json?.modelo?.id;
+  const tplE2 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F4-E2" } })).json?.modelo?.id;
+  const [e1, e2] = await Promise.all([
+    req(base, "PATCH", `/campaigns/${campId}/sheet-templates/${tplE1}`, { cookie: cookieMestre, body: { isDefault: true } }),
+    req(base, "PATCH", `/campaigns/${campId}/sheet-templates/${tplE2}`, { cookie: cookieMestre, body: { isDefault: true } }),
+  ]);
+  const defaultsF4b = conta("select count(*) n from sheet_templates where campaign_id=? and is_default=1", campId);
+  t("F4b: defaults concorrentes → exatamente 1 is_default=1 ao final",
+    defaultsF4b === 1, `e1=${e1.status} e2=${e2.status} defaults=${defaultsF4b}`);
+
+  // ---- F5: PUT de estrutura vs publicação (TOCTOU) — SEM SEAM, documentado ----
+  // O handler faz SELECT+check de publishedAt e UPDATE em sequência síncrona;
+  // não há hook NODE_ENV=test para pausar entre eles. Prova determinística
+  // fica BLOCKED até seam de teste ou correção (UPDATE condicional
+  // publishedAt IS NULL). Registrado como pendente, não como cobertura.
+  console.log("  .. F5 BLOCKED: PUT×publish TOCTOU exige seam de pausa entre check e update — sem hook de teste em produção");
+
   // ---- F3: upload + vínculo a anotação — files ok, note_attachments aborta ----
   const notaF3 = await req(base, "POST", `/campaigns/${campId}/anotacoes`, {
     cookie: cookieMestre, body: { title: "Nota F3", kind: "diario", visibility: "privada" },
