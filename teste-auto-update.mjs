@@ -556,7 +556,7 @@ try {
     t("journal concluído foi removido", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ausente");
   }
 
-  sec("Extra — SIGKILL real imediatamente após o fast-forward");
+  sec("Extra — crash abrupto real imediatamente após o fast-forward");
   {
     const c = criarRepo("journal-sigkill-real");
     const shaAnterior = head(c.local);
@@ -577,10 +577,13 @@ try {
     });
     const shaNoCrash = head(c.local);
     const journal = lerJournal(c.local, JOURNAL_UPDATE, envEstado);
-    t("processo-filho foi interrompido depois do merge (não terminou normalmente)",
-      child.status !== 0 && child.status !== 91 && !child.error,
-      `status=${child.status} signal=${child.signal} error=${child.error?.message ?? ""}`);
-    t("SIGKILL deixou journal pull-iniciado com SHA alvo igual ao HEAD",
+    const marcadorCrash = String(child.stdout ?? "").includes("MESTRE_TEST_CRASH_AFTER_FAST_FORWARD");
+    const terminoAbrupto = child.error == null
+      && (child.signal === "SIGABRT" || (Number.isInteger(child.status) && child.status !== 0 && child.status !== 91));
+    t("processo-filho sofreu crash abrupto depois do fast-forward",
+      marcadorCrash && terminoAbrupto,
+      `status=${child.status} signal=${child.signal} marcador=${marcadorCrash} error=${child.error?.message ?? ""} stderr=${String(child.stderr ?? "").slice(-500)}`);
+    t("crash deixou journal pull-iniciado com SHA alvo igual ao HEAD",
       journal.status === "ok" && journal.dados.fase === "pull-iniciado"
         && journal.dados.shaNovo === shaNoCrash && shaNoCrash !== shaAnterior,
       `journal=${JSON.stringify(journal)} head=${shaNoCrash} anterior=${shaAnterior}`);
