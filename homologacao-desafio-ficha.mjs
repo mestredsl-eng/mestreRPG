@@ -14,14 +14,10 @@ let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-const DIR = dirTeste("desafio-ficha");
-const BANCO = `${DIR}/teste.db`;
-const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
-
-await prepararBanco(BANCO);
-const porta = await portaLivre();
-const BASE = `http://localhost:${porta}`;
+// Toda aquisição fica dentro do try: uma falha de setup também limpa.
+let DIR, BANCO, ARQ, BKS, BASE;
 let proc, ids, sid, browser, fechamentoServidor = null;
+const sockets = [];
 
 // O listener de `close` é registrado no spawn (antes de qualquer kill):
 // `exit` prova só o fim do processo; `close` prova stdio encerrado —
@@ -78,6 +74,13 @@ function conectar(cookie) {
     reconnection: false,
   });
 }
+// Todo socket é registrado na coleção externa ao try: o finally fecha
+// todos, inclusive os criados antes de uma falha parcial.
+function conectarRegistrado(cookie) {
+  const s = conectar(cookie);
+  sockets.push(s);
+  return s;
+}
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
 const emitirCb = (s, ev, payload) => new Promise((res) => s.emit(ev, payload, res));
 const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) => {
@@ -87,6 +90,12 @@ const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) =
 });
 
 try {
+  DIR = dirTeste("desafio-ficha");
+  BANCO = `${DIR}/teste.db`;
+  ARQ = `${DIR}/arq`; BKS = `${DIR}/bks`;
+  await prepararBanco(BANCO);
+  const porta = await portaLivre();
+  BASE = `http://localhost:${porta}`;
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   proc.stdout.resume();
@@ -263,7 +272,7 @@ try {
   sid = sess.json?.sessao?.id;
   t("sessão criada", !!sid, JSON.stringify(sess.json).slice(0, 120));
 
-  const sockM = conectar(ids.cm), sockJ1 = conectar(ids.j1.cookie), sockJ2 = conectar(ids.j2.cookie);
+  const sockM = conectarRegistrado(ids.cm), sockJ1 = conectarRegistrado(ids.j1.cookie), sockJ2 = conectarRegistrado(ids.j2.cookie);
   await Promise.all([pronto(sockM), pronto(sockJ1), pronto(sockJ2)]);
   for (const s of [sockM, sockJ1, sockJ2]) await emitirCb(s, "mesa:entrar", { sessionId: sid });
 
@@ -739,22 +748,36 @@ try {
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));
-  sockM.close(); sockJ1.close(); sockJ2.close();
 } catch (e) {
   fail++;
   console.log("FALHOU exceção:", e);
 } finally {
-  if (browser) await browser.close().catch(() => {});
+  // Ordem: sockets → browser → shutdown/close do servidor → remoção do DIR.
+  // Erro de cleanup falha a suíte sem mascarar a exceção original (o catch
+  // acima já a registrou antes deste bloco).
+  const errosLimpeza = [];
+  for (const s of sockets) {
+    try { s.close(); } catch (e) { errosLimpeza.push("socket: " + String(e?.message ?? e)); }
+  }
+  if (browser) {
+    try { await browser.close(); } catch (e) { errosLimpeza.push("browser: " + String(e?.message ?? e)); }
+  }
   try {
     if (proc) {
       await encerrarServidor(proc);
       if (fechamentoServidor) await aguardarFechamento(fechamentoServidor);
     }
   } catch (e) {
+    errosLimpeza.push("servidor: " + String(e?.message ?? e));
+  }
+  try {
+    if (DIR) limparDir(DIR);
+  } catch (e) {
+    errosLimpeza.push("dir: " + String(e?.message ?? e));
+  }
+  for (const msg of errosLimpeza) {
     fail++;
-    console.log("FALHOU teardown: close real do servidor não confirmado —", String(e?.message ?? e));
-  } finally {
-    limparDir(DIR);
+    console.log("FALHOU teardown:", msg);
   }
 }
 
