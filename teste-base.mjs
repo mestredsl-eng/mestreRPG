@@ -73,7 +73,9 @@ export function comDb(banco, fn) {
  * limpeza do diretório — essencial no Windows.
  */
 export async function encerrarServidor(proc, timeoutMs = 10000) {
-  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) {
+    return { exitCode: proc?.exitCode ?? null, signalCode: proc?.signalCode ?? null, fallback: false, jaEncerrado: true };
+  }
   const esperarExit = () => new Promise((resolve, reject) => {
     if (proc.exitCode !== null || proc.signalCode !== null) return resolve();
     const timer = setTimeout(() => {
@@ -84,15 +86,18 @@ export async function encerrarServidor(proc, timeoutMs = 10000) {
     proc.once("exit", onExit);
   });
 
+  let fallback = false;
   proc.kill("SIGTERM");
   try {
     await esperarExit();
   } catch {
+    fallback = true;
     try { proc.kill("SIGKILL"); } catch (erro) {
       if (proc.exitCode === null && proc.signalCode === null) throw erro;
     }
     await esperarExit();
   }
+  return { exitCode: proc.exitCode, signalCode: proc.signalCode, fallback };
 }
 /**
  * Remove o diretório temporário da suíte com retentativas (Windows/AV).
