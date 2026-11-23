@@ -16,7 +16,7 @@ O que ainda não existe é uma **loja/estabelecimento como entidade persistente 
 
 Hoje o fluxo é individual: compra debita a própria conta do personagem e adiciona o item ao inventário dele; venda retira do próprio inventário e credita a conta dele. O campo `contraparte` é texto descritivo; não efetua o pagamento para uma loja ou outro proprietário.
 
-Portanto, a entrega 1.1.0 deve se chamar e ser especificada como **Lojas e comércio entre comprador e estabelecimento**, não como uma segunda implementação de compra/venda.
+Portanto, a entrega 1.1.0 deve se chamar e ser especificada como **Lojas e comércio pela Internet diegética**, não como uma segunda implementação de compra/venda. A compra/venda sai da ficha/Patrimônio e passa a ser iniciada na área Internet. A ficha principal deixa de concentrar essas funções; Equipamento/Armazém será uma área independente que apenas reflete os itens recebidos/vendidos.
 
 ## 1. O que já existe e deve ser reutilizado
 
@@ -49,7 +49,7 @@ Portanto, a entrega 1.1.0 deve se chamar e ser especificada como **Lojas e comé
 - Compra/venda, saldo, item, histórico, metadados de estorno e idempotência por `requestId` são tratados na mesma transação. Há proteção contra retry duplicado, saldo insuficiente, item/template inexistente e corrida de estoque.
 - A UI já exibe “Comprar…” e fluxo de venda em Patrimônio: `site/src/paginas/Patrimonio.tsx#L290`, `#L512` e `#L727`. A aba Catálogo é atualmente exclusiva do mestre: `#L105`.
 
-**Limite atual:** a compra cria um item diretamente no inventário do personagem e debita a conta desse mesmo personagem. A venda retira item do inventário desse personagem e credita a conta dele. `contraparte`/campo counterparty registra um rótulo, não uma transferência real para o vendedor/loja. Não há conta de loja, estoque comercial nem uma entidade de estabelecimento.
+**Limite atual:** a compra cria um item diretamente no inventário do personagem e debita a conta desse mesmo personagem. A venda retira item do inventário desse personagem e credita a conta dele. `contraparte`/campo counterparty registra um rótulo, não uma transferência real para o vendedor/loja. Não há conta de loja, estoque comercial nem uma entidade de estabelecimento. Esses fluxos são backend reaproveitável, mas os botões/modais de compra e venda não devem continuar na ficha: a nova UI chama os serviços a partir da Internet.
 
 ### 1.4 Inventário
 
@@ -84,7 +84,26 @@ A tabela `characters` exige `membershipId`; `isNpc` significa atualmente “pers
 
 A separação entre espécie/raça e controlador (humano/IA/NPC) deve respeitar a arquitetura de identidade e capacidades prevista em #182. Não usar `isNpc` como substituto improvisado de Jogador IA.
 
-## 4. Recomendação técnica para a 1.1.0
+## 4. Separação dos módulos de interface
+
+### Internet
+- Novo ponto de entrada separado da ficha, com botão **Internet**.
+- Compra, venda, vitrine, lojas, ofertas e classificados vivem aqui.
+- A conta/ledger existente é chamada pelos serviços de pagamento; não criar carteira ou checkout duplicado na camada de UI.
+- Mais tarde a mesma área recebe mensagens, contatos, notícias, sites, redes sociais, empregos e empresas.
+
+### Equipamento/Armazém
+- Novo ponto de entrada separado da ficha, com botão **Equipamento/Armazém**.
+- Reúne inventário, equipamentos e veículos existentes, além de localização carregado/equipado/guardado.
+- Não oferece compra nem venda. O resultado de compras e vendas feitas pela Internet aparece aqui por meio do inventário atual.
+- A extração visual não deve apagar dados nem rotas existentes antes de haver substituição testada. Não criar tabela de inventário duplicada.
+- Verificar se `inventory_entries.location` e os dados atuais são suficientes para representar armazém/depósito; só propor modelo novo se houver lacuna real.
+
+### Ficha principal
+- Mantém os campos e regras do personagem (atributos, talentos, perícias, conhecimentos, habilidades, poderes, virtudes, defeitos/qualidades, raça, profissão etc.).
+- Retira os atalhos/modais de compra e venda e o bloco embutido de Patrimônio quando os módulos independentes estiverem prontos e os testes de regressão passarem.
+
+## 5. Recomendação técnica para a 1.1.0
 
 ### Modelo de domínio mínimo
 
@@ -118,7 +137,7 @@ Antes de codificar, resolver como contas e ledger representarão titulares que n
 
 Não criar uma tabela de saldo/ledger independente para lojas. Evitar também usar um NPC artificial como “conta bancária” da loja: uma empresa deve ser titular do caixa, independentemente de quem a administra ou trabalha nela.
 
-## 5. Testes e qualidade
+## 6. Testes e qualidade
 
 Arquivos de teste/homologação já existentes no repositório incluem:
 - `teste-financeiro-atomico.mjs`
@@ -143,12 +162,12 @@ Testes novos mínimos para loja:
 - isolamento entre campanhas e persistência em backup/restore;
 - regressão dos fluxos antigos de compra/venda direta da ficha.
 
-## 6. Resultado e próximo passo
+## 7. Resultado e próximo passo
 
 **Resultado comprovado pela leitura do código:** catálogo, Acervo, carteira, transferências e compra/venda individual já existem. O módulo novo necessário é a camada de estabelecimento/estoque comercial/checkout bilateral.
 
-**Próximo passo PAI (#287):** entregar inventário técnico com migrations e arquivos de suporte, comparar as duas opções de titularidade financeira, identificar testes executados pela CI de cada workflow e propor o menor modelo aditivo.  
+**Próximo passo PAI (#287):** entregar inventário técnico com migrations e arquivos de suporte, comparar as duas opções de titularidade financeira, identificar testes executados pela CI de cada workflow e propor o menor modelo aditivo. Auditar também a extração dos módulos Internet e Equipamento/Armazém sem apagar o backend patrimonial existente.  
 **Próximo passo INTERMEDIÁRIO (#289):** validar este contrato e a matriz de corrida/idempotência/rollback/ACL.  
-**Próximo passo FILHO (#288):** UX de descoberta de loja, vitrine, detalhe da oferta, carrinho/checkout e painel do proprietário — sem duplicar a aba Patrimônio atual.
+**Próximo passo FILHO (#288):** UX com dois botões e áreas independentes: Internet (lojas, compras/vendas) e Equipamento/Armazém (inventário, equipamento, veículos e depósito), removendo os fluxos comerciais da ficha.
 
 Nenhuma implementação foi feita por esta auditoria. A 0.8/1.0.8 continua congelada; a 0.9/1.0.9 continua sendo o corte ativo. Preparação da 1.1.0 permanece documental/UX/testes até estabilização da 1.0.9 e autorização explícita para implementar.
