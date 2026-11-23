@@ -8,6 +8,7 @@ import ExtratoXp from "../ExtratoXp";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
+import XpLote from "../XpLote";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -35,6 +36,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const [verArquivados, setVerArquivados] = useState(false);
+  const [xpLoteAberto, setXpLoteAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
@@ -135,6 +137,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
               <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
                 {verArquivados ? "Ver ativos" : "Ver arquivados"}
               </button>
+              {!verArquivados && souMestre && personagens.length > 0 && (
+                <button className="secundario" onClick={() => setXpLoteAberto(true)}>XP em lote</button>
+              )}
             )}
             {!verArquivados && (
             <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
@@ -197,6 +202,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
           </table>
           )}
         </section>
+      )}
+      {xpLoteAberto && souMestre && (
+        <XpLote campaignId={campaignId} personagens={personagens} nomes={new Map(personagens.map((p) => [p.id, p.name]))} aoFechar={() => setXpLoteAberto(false)} />
       )}
     </>
   );
