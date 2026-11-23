@@ -74,7 +74,13 @@ export interface ElementoDisponivel {
 }
 
 export interface Progressao {
-  xp: { saldo: number; historico: EventoXp[] };
+  xp: {
+    saldo: number;
+    historico: EventoXp[];
+    /** Saldo anterior ao primeiro evento retido quando o ledger
+     *  truncou no teto de 500 (Issue #185 P3). Ausente = íntegro. */
+    ancora?: number;
+  };
   disponiveis: ElementoDisponivel[];
 }
 
