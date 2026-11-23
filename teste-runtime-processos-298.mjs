@@ -76,6 +76,36 @@ async function esperarSaida(proc, timeoutMs = 20000) {
   });
 }
 
+/** Encerramento com prova de 'close' REAL (stdio drenado): delega o
+ *  shutdown a encerrarServidor (SIGTERM→SIGKILL) e exige que
+ *  esperarSaida retorne — null por timeout vira exceção, nunca PASS. */
+async function encerrarComClose(proc, timeoutMs = 15000) {
+  await encerrarServidor(proc, timeoutMs);
+  const saida = await esperarSaida(proc, timeoutMs);
+  if (saida === null) throw new Error(`close não chegou para pid=${proc.pid}`);
+  return saida;
+}
+
+/** Encerra exigindo close real; falha de close vira assert FALHOU
+ *  (nunca PASS silencioso). Uso em todo shutdown que antecede
+ *  restart/remoção de fixture — inclusive dentro de finally. */
+async function fecharComAssert(nome, proc) {
+  try { await encerrarComClose(proc); }
+  catch (e) { ok(`${nome} — close real`, false, String(e?.message ?? e)); }
+}
+
+/** Limpeza best-effort para finally/catch: garante kill + espera close,
+ *  mas NUNCA transforma falha de close em PASS — registra no stderr. */
+async function limparProcesso(p) {
+  try {
+    if (p.exitCode === null && p.signalCode === null) { try { p.kill("SIGKILL"); } catch {} }
+    const s = await esperarSaida(p, 8000);
+    if (s === null) console.error(`[limpeza] close não chegou pid=${p.pid}`);
+  } catch (e) {
+    console.error(`[limpeza] ${e?.message ?? e}`);
+  }
+}
+
 async function cenarioBase() {
   await prepararBanco(BANCO);
   const porta = await portaLivre();
@@ -159,7 +189,7 @@ async function main() {
     const camp = await req(base, "GET", `/campaigns/${campIdC1}`, { cookie: cookieAdmin });
     ok("C1 dados persistem após restart", camp.status === 200 && !!camp.json, `status=${camp.status}`);
     ok("C1 integrity_check ok", integridade(BANCO) === "ok");
-    await encerrarServidor(proc2);
+    await fecharComAssert("C1 teardown restart", proc2);
   }
 
   // ---------- C2: SIGKILL abrupto com WAL pendente → marcador recuperado ----------
@@ -189,7 +219,8 @@ async function main() {
       `wal=${walTamanho}B min=${walMinimo}B (page=${pageSize})`);
 
     proc.kill("SIGKILL");
-    await esperarSaida(proc, 10000);
+    const saidaKill = await esperarSaida(proc, 10000);
+    ok("C2 SIGKILL: close real após kill", saidaKill !== null, "timeout aguardando close");
     ok("C2 SIGKILL encerra processo", proc.exitCode !== null || proc.signalCode !== null);
 
     // restart imediato: trava de instância liberada pelo SO + WAL recovery
@@ -206,7 +237,7 @@ async function main() {
     } catch (e) {
       ok("C2 restart pós-SIGKILL saudável", false, String(e?.message ?? e).slice(0, 200));
     }
-    await encerrarServidor(proc2);
+    await fecharComAssert("C2 teardown restart", proc2);
   }
 
   // ---------- C3: instância duplicada no mesmo banco → causa específica ----------
@@ -225,8 +256,8 @@ async function main() {
     ok("C3 causa específica: trava de instância nos logs",
       /outra instância do Mestre RPG já está ativa/i.test(logDup),
       logDup.slice(-300));
-    if (saida === null) { try { dup.kill("SIGKILL"); } catch {} await esperarSaida(dup, 5000); }
-    await encerrarServidor(proc);
+    if (saida === null) await limparProcesso(dup);
+    await fecharComAssert("C3 teardown", proc);
   }
 
   // ---------- C4: porta ocupada → EADDRINUSE com causa específica ----------
@@ -278,7 +309,7 @@ async function main() {
       ok("C6 checagens.arquivos=true após correção", h2.json?.checagens?.arquivos === true);
       ok("C6 probe não deixou artefato", !existsSync(join(ARQ_C6, ".healthcheck")));
     } finally {
-      await encerrarServidor(proc);
+      await fecharComAssert("C6 teardown", proc);
     }
   }
 
@@ -310,8 +341,8 @@ async function main() {
       ok("C6b logout revoga sessão", lo.status === 200 || lo.status === 204, `status=${lo.status}`);
       ok("C6b socket existente é desconectado pelo logout", await desconectou);
 
-      // restart no mesmo banco/porta
-      await encerrarServidor(proc);
+      // restart no mesmo banco/porta — close real exigido antes de subir
+      await fecharComAssert("C6b shutdown pré-restart", proc);
       const proc2 = subir(porta, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
       try {
         await esperarSaudavel(base, proc2);
@@ -331,11 +362,11 @@ async function main() {
         sockets.push(sOk.socket);
         ok("C6b socket da sessão válida reconecta após restart", sOk.conectado, String(sOk.erro));
       } finally {
-        await encerrarServidor(proc2);
+        await fecharComAssert("C6b teardown restart", proc2);
       }
     } finally {
       for (const s of sockets) { try { s.disconnect(); } catch {} }
-      try { await encerrarServidor(proc); } catch {}
+      await limparProcesso(proc);
     }
   }
 
@@ -379,9 +410,7 @@ async function main() {
         ok("C7 integrity_check pós-corrida", integridade(BANCO) === "ok");
       }
     } finally {
-      for (const p of [procA, procB]) {
-        if (p.exitCode === null && p.signalCode === null) { try { p.kill("SIGKILL"); } catch {} await esperarSaida(p, 5000); }
-      }
+      for (const p of [procA, procB]) await limparProcesso(p);
     }
     // lock liberado após teardown: terceira instância sobe normalmente
     const portaC = await portaLivre();
@@ -392,7 +421,7 @@ async function main() {
     } catch (e) {
       ok("C7 lock liberado: terceira instância sobe após teardown", false, String(e?.message ?? e).slice(0, 150));
     }
-    await encerrarServidor(procC);
+    await fecharComAssert("C7 teardown", procC);
   }
 
   // ---------- C8: ciclos repetidos start→write→stop→start (3 ciclos) ----------
@@ -419,16 +448,17 @@ async function main() {
           const pageSize = comDb(BANCO, (db) => db.pragma("page_size", { simple: true }));
           const walOk = walT >= 32 + 24 + pageSize;
           proc.kill("SIGKILL");
-          await esperarSaida(proc, 10000);
+          const saidaKill = await esperarSaida(proc, 10000);
+          const killOk = saidaKill !== null && (proc.exitCode !== null || proc.signalCode !== null);
           const procR = subir(porta, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
           try {
             await esperarSaudavel(base, procR, 30000);
             const relido = await req(base, "GET", `/campaigns/${marcadorId}`, { cookie: cookieAdmin });
             const integ = integridade(BANCO) === "ok";
-            const cicloOk = gravou && walOk && relido.status === 200 && integ;
+            const cicloOk = gravou && walOk && killOk && relido.status === 200 && integ;
             todosOk &&= cicloOk;
-            detalhesCiclos.push(`ciclo2 kill: gravou=${gravou} wal=${walT}B relido=${relido.status} integ=${integ}`);
-          } finally { await encerrarServidor(procR); }
+            detalhesCiclos.push(`ciclo2 kill: gravou=${gravou} wal=${walT}B close=${saidaKill !== null} relido=${relido.status} integ=${integ}`);
+          } finally { await fecharComAssert(`C8 ciclo${ciclo} restart`, procR); }
         } else {
           // shutdown graceful → exit 0 → restart → reler marcador
           const deslig = await desligarGracefulAdmin(base, cookieAdmin);
@@ -442,10 +472,10 @@ async function main() {
             const cicloOk = gravou && gracioso && relido.status === 200 && integ;
             todosOk &&= cicloOk;
             detalhesCiclos.push(`ciclo${ciclo}: gravou=${gravou} graceful=${gracioso} relido=${relido.status} integ=${integ}`);
-          } finally { await encerrarServidor(procR); }
+          } finally { await fecharComAssert(`C8 ciclo${ciclo} restart`, procR); }
         }
       } finally {
-        if (proc.exitCode === null && proc.signalCode === null) { try { proc.kill("SIGKILL"); } catch {} await esperarSaida(proc, 5000); }
+        await limparProcesso(proc);
       }
     }
     ok("C8 3 ciclos start→write→stop→start íntegros", todosOk, detalhesCiclos.join(" | "));
@@ -462,11 +492,8 @@ async function main() {
     const aindaVivos = ativos.filter((p) => p.exitCode === null && p.signalCode === null);
     ok("C5 todos os processos encerrados pelos próprios cenários", aindaVivos.length === 0,
       `${aindaVivos.length} vivos: ${aindaVivos.map((p) => p.pid).join(",")}`);
-    // finally-style: encerra o que restou (limpeza, não prova)
-    for (const p of aindaVivos) {
-      try { p.kill("SIGKILL"); } catch {}
-      await esperarSaida(p, 5000);
-    }
+    // finally-style: encerra o que restou (limpeza best-effort + log)
+    for (const p of aindaVivos) await limparProcesso(p);
   }
 
   console.log(`\n${passaram} passaram, ${falharam} falharam`);
@@ -477,12 +504,7 @@ async function main() {
 main().catch(async (e) => {
   console.error("FALHA FATAL:", e);
   // finally: encerra processos do harness antes de limpar o diretório
-  for (const p of ativos) {
-    if (p.exitCode === null && p.signalCode === null) {
-      try { p.kill("SIGKILL"); } catch {}
-      await esperarSaida(p, 5000);
-    }
-  }
+  for (const p of ativos) await limparProcesso(p);
   limparDir(TMP);
   process.exit(1);
 });
