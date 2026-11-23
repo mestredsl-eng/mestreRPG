@@ -91,6 +91,7 @@ function executar(f, input) {
     `smoke sem NODE_OPTIONS: status=${smokeSemPreload.status} error=${smokeSemPreload.error?.message ?? ""} stdout=${String(smokeSemPreload.stdout ?? "").trim()} stderr=${String(smokeSemPreload.stderr ?? "").trim()}`,
     `smoke com NODE_OPTIONS: status=${smokeComPreload.status} error=${smokeComPreload.error?.message ?? ""} stdout=${String(smokeComPreload.stdout ?? "").trim()} stderr=${String(smokeComPreload.stderr ?? "").trim()}`,
   ].join("\\n");
+  console.log("[P10-C cmd.exe smoke]", diagnostico);
   // As invocações de diagnóstico usam o preload para provar o segundo caso;
   // limpar o log antes do BAT mantém a medição da ordem sem ruído.
   writeFileSync(f.log, "");
