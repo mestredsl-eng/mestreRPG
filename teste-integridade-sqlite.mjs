@@ -95,6 +95,19 @@ try {
   w.prepare("insert into money_transactions (id,character_id,campaign_id,kind,amount,account_id,counterparty_character_id,created_at) values (?,?,?,?,?,?,?,?)")
     .run(txB, charB, campId, "transferencia", 10, contaB, charApi, agora());
 
+  // Bloqueios de exclusão por histórico financeiro (política fail-closed):
+  // C = conta do personagem referenciada por tx de TERCEIRO → conta_referenciada
+  // D = personagem com tx PRÓPRIA → historico_financeiro
+  const charC = novoPersonagem(jogadores.j1.membershipId, "Com Conta Referenciada");
+  const charD = novoPersonagem(jogadores.j1.membershipId, "Com Historico Proprio");
+  const contaC = uid(), txC = uid(), txD = uid();
+  w.prepare("insert into financial_accounts (id,character_id,campaign_id,type,name,balance_cents,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+    .run(contaC, charC, campId, "banco", "Conta C", 0, "{}", agora(), agora());
+  w.prepare("insert into money_transactions (id,character_id,campaign_id,kind,amount,account_id,created_at) values (?,?,?,?,?,?,?)")
+    .run(txC, charB, campId, "transferencia", 5, contaC, agora());
+  w.prepare("insert into money_transactions (id,character_id,campaign_id,kind,amount,created_at) values (?,?,?,?,?,?)")
+    .run(txD, charD, campId, "ajuste_mestre", 1, agora());
+
   // Concorrência: PATCHes paralelos nunca corrompem — todo mundo 200
   // (serialização WAL) ou 409; o valor final é um dos enviados.
   const [p1, p2] = await Promise.all([
@@ -155,6 +168,27 @@ try {
   t("integrity_check ok após delete em cascata", comDb(banco, (db) => db.pragma("integrity_check", { simple: true })) === "ok");
   const del2 = await req(base, "DELETE", `/campaigns/${campId}/characters/${charApi}`, { cookie: cookieMestre });
   t("DELETE repetido → 404", del2.status === 404, `status=${del2.status}`);
+
+  // Conta do personagem referenciada por tx de terceiro → bloqueio limpo
+  const delC = await req(base, "DELETE", `/campaigns/${campId}/characters/${charC}`, { cookie: cookieMestre });
+  t("DELETE personagem com conta referenciada por terceiro → 409 conta_referenciada",
+    delC.status === 409 && delC.json?.codigo === "conta_referenciada",
+    `status=${delC.status} codigo=${delC.json?.codigo}`);
+  const intactoC = comDb(banco, (db) => ({
+    char: db.prepare("select count(*) n from characters where id=?").get(charC).n,
+    conta: db.prepare("select count(*) n from financial_accounts where id=?").get(contaC).n,
+    tx: db.prepare("select count(*) n from money_transactions where id=?").get(txC).n,
+  }));
+  t("após 409 conta_referenciada nada foi apagado (char+conta+tx intactos)",
+    intactoC.char === 1 && intactoC.conta === 1 && intactoC.tx === 1);
+
+  // Personagem com transação financeira própria → bloqueio limpo
+  const delD = await req(base, "DELETE", `/campaigns/${campId}/characters/${charD}`, { cookie: cookieMestre });
+  t("DELETE personagem com histórico financeiro próprio → 409 historico_financeiro",
+    delD.status === 409 && delD.json?.codigo === "historico_financeiro",
+    `status=${delD.status} codigo=${delD.json?.codigo}`);
+  t("após 409 historico_financeiro personagem permanece",
+    comDb(banco, (db) => db.prepare("select count(*) n from characters where id=?").get(charD).n) === 1);
   w.close();
 
   console.log("\n== C — exclusão de usuário (política e FK) ==");
