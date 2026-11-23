@@ -7,6 +7,7 @@ import { memberships } from "../db/schema.js";
 import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
+import { registrarSangue } from "./sangue.js";
 
 /**
  * Camada de tempo real (spec §16).
@@ -49,6 +50,7 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
   setIo(io);
   const db = getDb();
   registrarMesa(io);
+  registrarSangue(io);
 
   io.use(async (socket, next) => {
     const headers = socket.handshake.headers;

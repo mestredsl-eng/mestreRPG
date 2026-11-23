@@ -29,6 +29,7 @@ import { emitirCampanha } from "../lib/io.js";
 import { limiteUsuario } from "../lib/ratelimit.js";
 import {
   aplicarXp,
+  excecaoCapacidadeSangueDe,
   lerXp,
   resumoProgressao,
   simularCompraNivel,
@@ -109,7 +110,13 @@ progressaoRouter.get("/:characterId/progressao", async (req, res) => {
   const filtroVinculos = ehMestre
     ? undefined
     : (campo: CampoDef) => campoVisivelPara(campo, overrides[campo.id], false, acesso.ehDono, usuarioId, acesso.membershipId);
-  const resumo = resumoProgressao(estrutura, dados, regras, filtroVinculos ? { filtroVinculos } : {});
+  // Exceção #186: campo de capacidade de Sangue elegível a XP —
+  // derivada da config vigente + estrutura da versão vinculada.
+  const excSangue = excecaoCapacidadeSangueDe(estrutura, regras.config.sangue);
+  const resumo = resumoProgressao(estrutura, dados, regras, {
+    ...(filtroVinculos ? { filtroVinculos } : {}),
+    excecaoCapacidadeSangue: excSangue,
+  });
   const disponiveis = resumo.disponiveis;
   // Histórico: compras gravadas em campos ocultos perdem os detalhes
   // (nome/key/campoId/níveis/custo) e o motivo original — que embute o
@@ -374,10 +381,17 @@ progressaoRouter.post("/:characterId/comprar-ponto", requireLeasePersonagem(), l
     const overridesTx = overridesDe(atual);
     const filtroVinculosTx = (campo: CampoDef) =>
       campoVisivelPara(campo, overridesTx[campo.id], ehMestreTx, ehDonoTx, req.usuario!.id, atual.membershipId);
+    // Exceção #186 derivada das regras FRESCAS da transação — config
+    // alterada na janela já teria abortado no fingerprint 409 acima;
+    // aqui vale o config vigente validado por regrasTx.
+    const excSangueTx = excecaoCapacidadeSangueDe(estrutura!, regrasTx.config.sangue);
     const compra = simularCompraNivel(
       estrutura!, dados, regrasTx, kind, key, nivelAlvo,
       { id: req.usuario!.id, nome: autorNome },
-      { filtroVinculos: filtroVinculosTx },
+      {
+        filtroVinculos: filtroVinculosTx,
+        excecaoCapacidadeSangue: excSangueTx,
+      },
     );
     if (!compra.ok || !compra.dados) {
       return {

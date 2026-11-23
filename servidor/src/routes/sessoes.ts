@@ -76,7 +76,7 @@ sessoesRouter.get("/", requirePapel("mestre", "jogador", "espectador"), async (r
   const papel = req.membership!.role as "mestre" | "jogador" | "espectador";
   const uid = req.usuario!.id;
   const filtrada = await Promise.all(lista.map(async (s) => ({
-    ...s, vttState: await vttStateFiltradoHttp(s, papel, uid),
+    ...s, vttState: await vttStateFiltradoHttp(s, papel, uid, req.membership?.id),
   })));
   res.json({ sessoes: filtrada });
 });
@@ -163,7 +163,7 @@ sessoesRouter.get("/:sessionId", requirePapel("mestre", "jogador", "espectador")
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
   const t = await turnosDaSessao(s.id);
   res.json({
-    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id, req.membership!.id) },
     turnos: t?.state ?? { ordem: [], atual: -1, ativo: false },
   });
 });
@@ -274,7 +274,7 @@ sessoesRouter.get("/:sessionId/historico", requirePapel("mestre", "jogador", "es
     : [];
 
   res.json({
-    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id, req.membership!.id) },
     duracaoMs: inicio && fim ? fim - inicio : null,
     participantes: autores,
     eventos: eventos.map((m) => ({ id: m.id, kind: m.kind, content: m.content, createdAt: m.createdAt, autor: m.authorId ? autores.find((a) => a.id === m.authorId) ?? null : null })),
@@ -296,7 +296,7 @@ sessoesRouter.get("/:sessionId/estado", requirePapel("mestre", "jogador", "espec
   if (!s) { res.status(404).json({ erro: "Sessão não encontrada" }); return; }
   const t = await turnosDaSessao(s.id);
   res.json({
-    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id) },
+    sessao: { ...s, vttState: await vttStateFiltradoHttp(s, req.membership!.role as "mestre" | "jogador" | "espectador", req.usuario!.id, req.membership!.id) },
     turnos: t?.state ?? { ordem: [], atual: -1, ativo: false }, agora: Date.now(),
   });
 });

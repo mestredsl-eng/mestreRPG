@@ -15,6 +15,7 @@ import type { ItemDadoMesa } from "../MesaDados3D";
 import { efeitoDaClasse, classificarD10, rotuloClasseD10, faceExibida, type ClasseD10 } from "../convencaoD10";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
+import PainelSangue from "../PainelSangue";
 import { criarFilaMestreVoice } from "../lib/mestreVoice";
 // Núcleo matemático da régua (Issue #125): MESMO módulo do servidor —
 // distância euclidiana corrigida pela proporção real do mapa e
@@ -109,6 +110,13 @@ function rotuloMotivoRolagem(r: RolagemMesa): string {
 }
 
 const LADOS = [4, 6, 8, 10, 20] as const;
+
+/** Percentual da barra de HP do token: divisor real quando maximo>0;
+ *  máximo/atual inválidos ou máximo <= 0 renderizam 0 (sem NaN); clamp 0–100. */
+function percentualVida(atual: number, maximo: number): number {
+  if (!Number.isFinite(atual) || !Number.isFinite(maximo) || maximo <= 0) return 0;
+  return Math.max(0, Math.min(100, (atual / maximo) * 100));
+}
 
 function fmtTempo(ms: number) {
   const s = Math.max(0, Math.ceil(ms / 1000));
@@ -1244,7 +1252,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} ehMestre={ehMestreAtual} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
@@ -1342,6 +1350,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
         meuUserId={meuUserId}
         membros={membros}
         npcs={personagens.filter((p) => p.isNpc)}
+        fichas={personagens.filter((p) => !p.isNpc)}
         encerrada={sessaoAtual.status === "encerrada"}
         inicial={sessaoAtual.vttState ?? sessao.vttState ?? null}
         atualizacaoPapel={permSeq}
@@ -1459,7 +1468,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // Mesmo critério do backend (campoElegivelParaTeste em lib/ficha.ts):
 // usadoEmTestes explícito manda; sem a flag (fichas antigas), cai no
 // fallback por semântica — números "livres" (idade, contadores) não entram.
-const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento", "poder"]);
 
 // Regra compartilhada com o backend (campoElegivelParaTeste* em
 // servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback
@@ -1492,8 +1501,8 @@ interface CampoTeste {
 }
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
-  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro, ehMestre = false }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void; ehMestre?: boolean;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
@@ -1646,6 +1655,12 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
       )}
+      {/* C8-C1 (Issue #186): leitura de Sangue do personagem escolhido
+          no desafio — somente leitura via GET /characters/:id/sangue;
+          some sozinho quando o usuário não tem acesso (403). */}
+      {aberto && characterId && (
+        <PainelSangue characterId={characterId} ehMestre={ehMestre} />
+      )}
     </section>
   );
 }
@@ -1726,9 +1741,9 @@ function amostrarPontos(ps: { x: number; y: number }[], max = NEVOA_MAX_PONTOS):
   return out;
 }
 
-function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
+function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserId, membros, npcs, fichas, encerrada, inicial, atualizacaoPapel, geracaoRef, visaoBloqueada, aoPapelServidor }: {
   campaignId: string; sessionId: string; souMestre: boolean; ehEspectador: boolean; meuUserId: string;
-  membros: Membro[]; npcs: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
+  membros: Membro[]; npcs: PersonagemResumo[]; fichas: PersonagemResumo[]; encerrada: boolean; inicial: VttState | string | null;
   atualizacaoPapel: number;
   // geração autoritativa de permissões: referência do PAI, incrementada
   // sincronicamente no handler de mesa:permissao:atualizada — o filho
@@ -1744,6 +1759,10 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
   const [novoNome, setNovoNome] = useState("");
   const [novoUserId, setNovoUserId] = useState("");
   const [novoNpcId, setNovoNpcId] = useState("");
+  // Ficha ativa do membro selecionado (Issue #179-A): token de jogador
+  // precisa de personagemId concreto para carregar vida — nunca inferido
+  // automaticamente (o usuário pode ter várias fichas).
+  const [novoFichaId, setNovoFichaId] = useState("");
   const [selVtt, setSelVtt] = useState<string | null>(null);
   const tabRef = useRef<HTMLDivElement | null>(null);
   const dragRef = useRef<{ id: string; movendo: boolean } | null>(null);
@@ -1776,6 +1795,68 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
     socket.on("mesa:vtt", aoVtt);
     return () => { socket.off("mesa:vtt", aoVtt); };
   }, [sessionId]);
+
+  // HP/vitalidade mudam sem emitir mesa:vtt (rotas de personagem emitem
+  // personagens:atualizados; regras emitem regras:atualizadas). Em vez
+  // de confiar em payload, o cliente pede releitura autoritativa —
+  // o servidor devolve o VTT já filtrado por papel com a vida correta.
+  // RATE_LIMITED é transitório: agenda UMA nova tentativa após
+  // retryAfterMs (limitada), coalescida com os gatilhos de evento —
+  // nunca loop nem tempestade de retries. Erros de autorização/sessão
+  // encerrada não são repetidos.
+  const sessaoVttRef = useRef<string | null>(null);
+  useEffect(() => { sessaoVttRef.current = sessionId ?? null; }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || encerrada) return;
+    const sessaoDestaVez = sessionId;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let tentativas = 0;
+    const MAX_TENTATIVAS = 3;
+    const aplicarSeAtual = (r: { ok?: boolean; papel?: string; vtt?: VttState; codigo?: string; retryAfterMs?: number } | undefined) => {
+      // callback atrasado não pode aplicar o estado de uma sessão já trocada
+      if (sessaoVttRef.current !== sessaoDestaVez) return;
+      if (r?.ok && r.vtt) {
+        tentativas = 0;
+        sincronizarAutoritativo(r.vtt);
+        setVtt(r.vtt);
+        return;
+      }
+      const espera = retryAfterDoAck(r);
+      if (espera !== null && tentativas < MAX_TENTATIVAS) {
+        tentativas += 1;
+        // no máximo UMA tentativa pendente: uma atualização nova
+        // substitui a espera anterior (mantém só a mais recente)
+        if (retryTimer) clearTimeout(retryTimer);
+        retryTimer = setTimeout(() => {
+          retryTimer = null;
+          solicitar();
+        }, Math.max(espera, 50));
+      }
+    };
+    const solicitar = () => {
+      const sock = getSocket();
+      // nunca reenviar com o socket desconectado — o próximo evento
+      // de atualização agenda uma nova tentativa quando voltar
+      if (!sock.connected) return;
+      // uma nova solicitação substitui qualquer retry pendente
+      if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+      sock.volatile.emit("mesa:vtt:sincronizar", { sessionId: sessaoDestaVez }, aplicarSeAtual);
+    };
+    const sincronizar = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(solicitar, 250);
+    };
+    const socket = getSocket();
+    socket.on("personagens:atualizados", sincronizar);
+    socket.on("regras:atualizadas", sincronizar);
+    return () => {
+      if (timer) clearTimeout(timer);
+      if (retryTimer) clearTimeout(retryTimer);
+      socket.off("personagens:atualizados", sincronizar);
+      socket.off("regras:atualizadas", sincronizar);
+    };
+  }, [sessionId, encerrada]);
 
   // sincroniza com o estado persistido quando a sessão é recarregada
   // (ex.: entrada tardia na sala — eventos emitidos antes do join se perdem)
@@ -2557,7 +2638,26 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 title={tk.oculto ? `${tk.nome} (oculto)` : tk.nome}
                 onPointerDown={iniciarArraste(tk)}
                 onClick={() => { if (souMestre && !encerrada) setSelVtt(tk.id); }}
-              >{tk.nome.slice(0, 2).toUpperCase()}</button>
+              >
+                {tk.nome.slice(0, 2).toUpperCase()}
+                {tk.vida?.hp && (
+                  <span
+                    className="vtt-token-hp"
+                    title={`HP ${tk.vida.hp.atual}/${tk.vida.hp.maximo}`}
+                  >
+                    <span
+                      className="vtt-token-hp-fill"
+                      style={{ width: `${percentualVida(tk.vida.hp.atual, tk.vida.hp.maximo)}%` }}
+                    />
+                  </span>
+                )}
+                {tk.vida?.vitalidade && tk.vida.vitalidade.nivel > 0 && (
+                  <span
+                    className="vtt-token-vit"
+                    title={`Vitalidade: ${tk.vida.vitalidade.nome} (nível ${tk.vida.vitalidade.nivel})`}
+                  >{tk.vida.vitalidade.nivel}</span>
+                )}
+              </button>
             );
           })}
           {medida && dimsMapa && (() => {
@@ -2642,14 +2742,25 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
       {souMestre && !encerrada && vtt.mapa && (
         <div className="linha vtt-controles">
           <input placeholder="Nome do token" value={novoNome} onChange={(e) => setNovoNome(e.target.value)} />
-          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); if (e.target.value) setNovoNpcId(""); }}>
+          <select value={novoUserId} onChange={(e) => { setNovoUserId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoNpcId(""); }}>
             <option value="">Sem dono</option>
             {membros.filter((m) => m.status !== "removido").map((m) => (
               <option key={m.userId} value={m.userId}>{m.displayName || m.username}</option>
             ))}
           </select>
+          {novoUserId && !novoNpcId && (() => {
+            const membroSel = membros.find((m) => m.userId === novoUserId);
+            const fichasDoMembro = fichas.filter((p) =>
+              p.status !== "arquivado" && p.membershipId === membroSel?.membershipId);
+            return (
+              <select value={novoFichaId} onChange={(e) => setNovoFichaId(e.target.value)} aria-label="Vincular ficha do jogador">
+                <option value="">Sem ficha (sem vida no token)</option>
+                {fichasDoMembro.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+            );
+          })()}
           {npcs.length > 0 && (
-            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
+            <select value={novoNpcId} onChange={(e) => { setNovoNpcId(e.target.value); setNovoFichaId(""); if (e.target.value) setNovoUserId(""); }} aria-label="Vincular NPC">
               <option value="">Sem NPC</option>
               {npcs.map((p) => <option key={p.id} value={p.id}>{p.name} (NPC)</option>)}
             </select>
@@ -2664,9 +2775,9 @@ function TabuleiroVtt({ campaignId, sessionId, souMestre, ehEspectador, meuUserI
                 token: {
                   nome: novoNome.trim(), cor: "#4f8ef7", x: 0.5, y: 0.5,
                   userId: novoUserId || null,
-                  personagemId: npc?.id ?? null,
+                  personagemId: npc?.id ?? (novoFichaId || null),
                 },
-              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); });
+              }, () => { setNovoNome(""); setNovoUserId(""); setNovoNpcId(""); setNovoFichaId(""); });
             }}
           >Adicionar token</button>
           {selVtt && (() => {
