@@ -268,13 +268,16 @@ try {
   const fichaEncerrada = await req(BASE, "POST", `/campaigns/${campId}/characters`, {
     cookie: uFim.cookie, body: { name: "Na Encerrada", data: {} },
   });
-  // COMPORTAMENTO REAL OBSERVADO: o servidor NÃO bloqueia criação de
-  // personagem em campanha `concluida` — requirePapel só valida membership,
-  // campaigns.status não é consultado nas rotas de escrita. O 403 anterior
-  // era falso positivo (usuário sem membership). Registrado como divergência
-  // de produto para decisão — assert documenta o real, não o ideal.
-  t("criar personagem em campanha concluída → 201 (SEM bloqueio — divergência documentada)",
-    fichaEncerrada.status === 201, `status=${fichaEncerrada.status}`);
+  // DIAGNÓSTICO (não normativo): registra o status observado de criar
+  // personagem em campanha `concluida` sem escolher política — decisão do
+  // proprietário pendente. O assert normativo é apenas que a API responde
+  // de forma bem-formada (2xx/4xx), nunca 5xx nem corpo inválido.
+  const statusEncerrada = fichaEncerrada.status;
+  console.log(`  .. diagnóstico S8: POST /characters em campanha concluída → HTTP ${statusEncerrada} (política pendente — não normativo)`);
+  const respostaBemFormada = (statusEncerrada >= 200 && statusEncerrada < 300) ||
+    (statusEncerrada >= 400 && statusEncerrada < 500);
+  t("resposta a criar personagem em campanha concluída é bem-formada (nunca 5xx)",
+    respostaBemFormada && !!fichaEncerrada.json, `status=${statusEncerrada}`);
 
   sec("S9 — entrada inválida não deixa estado parcial");
   // Escopo honesto: código de convite inexistente é rejeitado na entrada e
