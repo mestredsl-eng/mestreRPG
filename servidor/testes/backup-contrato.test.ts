@@ -794,6 +794,7 @@ describe("T5 — backup legado v1 (formato v1.0.8)", () => {
 describe("T6 — backup rejeitado preserva o último backup válido", () => {
   it("alvo adulterado → 400; backup válido, inventário, markers e flag permanecem intactos", async () => {
     limparStateTeste();
+    mkdirSync(stateDirTeste(), { recursive: true });
     await setConfigBackup({ agenda: "manual", retencaoDiarios: 20, retencaoSemanais: 20 });
 
     const snapshotDir = (raiz: string) => {
