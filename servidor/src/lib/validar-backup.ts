@@ -126,8 +126,13 @@ export function validarBackup(dir: string): ResultadoValidacaoBackup {
   }
   // Despacho por formato: v2 declara 'manifestoVersao'; o legado v1
   // (v1.0.8 e anteriores) não tem esse campo e é reconhecido pela
-  // presença do mapa 'arquivos'. Qualquer outro formato é rejeitado.
+  // presença do mapa 'arquivos'. Os campos 'banco' e 'configuracao'
+  // são exclusivos do v2: se aparecem sem a versão, o manifesto foi
+  // truncado/adulterado e NÃO pode cair no caminho permissivo do legado.
   if (man.manifestoVersao === undefined) {
+    if ("banco" in man || "configuracao" in man) {
+      return { ok: false, problemas: ["manifesto v2 sem 'manifestoVersao': formato incompleto/rejeitado"] };
+    }
     return validarBackupLegado(dir, man);
   }
   if (man.manifestoVersao !== 2) {
@@ -240,11 +245,43 @@ function verificarMetaDeclarada(dir: string, rel: string, meta: MetaItem, proble
 
 /** PRAGMA integrity_check de um snapshot SQLite. */
 function verificarIntegridadeDb(dbPath: string, rotulo: string, problemas: string[]): void {
+  // O restaurador offline precisa apagar a flag em server_settings depois
+  // da troca. Um SQLite vazio (0 bytes) passa no integrity_check, mas não
+  // possui essa tabela e deixa a inicialização presa em rollback a cada boot.
+  // Validar o tipo/tamanho antes de abrir evita tratar truncamento como DB.
+  try {
+    const st = lstatSync(dbPath);
+    if (st.isSymbolicLink() || !st.isFile()) {
+      problemas.push(`${rotulo}: mestre-rpg.db não é arquivo regular`);
+      return;
+    }
+    if (st.size <= 0) {
+      problemas.push(`${rotulo}: mestre-rpg.db vazio/truncado (0 bytes)`);
+      return;
+    }
+  } catch (e) {
+    problemas.push(`${rotulo}: arquivo de banco inacessível (${String(e).slice(0, 120)})`);
+    return;
+  }
+
   try {
     const chk = new Database(dbPath, { readonly: true });
     try {
       const integ = String(chk.pragma("integrity_check", { simple: true }));
-      if (integ !== "ok") problemas.push(`${rotulo}: integrity_check falhou (${integ.slice(0, 120)})`);
+      if (integ !== "ok") {
+        problemas.push(`${rotulo}: integrity_check falhou (${integ.slice(0, 120)})`);
+        return;
+      }
+      const tabela = chk.prepare("SELECT type FROM sqlite_master WHERE name = ?").get("server_settings") as { type?: string } | undefined;
+      if (tabela?.type !== "table") {
+        problemas.push(`${rotulo}: tabela server_settings ausente — banco não pode concluir a restauração`);
+        return;
+      }
+      const colunas = chk.prepare("PRAGMA table_info(server_settings)").all() as { name: string }[];
+      const nomes = new Set(colunas.map((c) => c.name));
+      if (!nomes.has("key") || !nomes.has("value")) {
+        problemas.push(`${rotulo}: server_settings sem colunas key/value exigidas pelo restaurador`);
+      }
     } finally {
       chk.close();
     }
