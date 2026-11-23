@@ -398,10 +398,144 @@ try {
   t("F4b: defaults concorrentes → exatamente 1 is_default=1 ao final",
     defaultsF4b === 1, `e1=${e1.status} e2=${e2.status} defaults=${defaultsF4b}`);
 
-  // ---- F5: PUT de estrutura vs publicação (TOCTOU) — SEM SEAM, documentado ----
-  // O UPDATE da rota PUT agora é condicional a published_at IS NULL;
-  // a verificação continua sem harness determinístico de corrida PUT×publish.
-  console.log("  .. F5: escrita condicional published_at IS NULL aplicada; harness de corrida concorrente segue pendente.");
+  // ---- F5: PUT de estrutura vs publish concorrentes (TOCTOU) ----
+  // Dois mestres distintos da MESMA campanha iniciam as operações sob
+  // uma barreira de cliente. Rodamos as duas ordens de disparo (PUT→publish
+  // e publish→PUT) sem sleeps entre as chamadas. O resultado permitido é:
+  // PUT 200 se a gravação ganhou antes da publicação, ou PUT 409 se publish
+  // venceu; publish deve concluir uma única vez em ambos os casos.
+  console.log("\\n== F5 — PUT × publish concorrentes ==");
+
+  const uidMestreF5 = uid(), agoraMestreF5 = agora();
+  w.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+    .run(uidMestreF5, "mestre_f5_concorrente", "Mestre F5 Concorrente", await hashSenha("senha-jogador-123"), agoraMestreF5, agoraMestreF5);
+  w.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'mestre','ativo',?,?,?)")
+    .run(uid(), campId, uidMestreF5, agoraMestreF5, agoraMestreF5, agoraMestreF5);
+  const cookieMestreF5 = sessao(banco, uidMestreF5);
+
+  const eventosF5 = [];
+  const sockF5 = ioClient(base, {
+    path: "/socket.io", transports: ["websocket", "polling"], reconnection: false,
+    extraHeaders: { cookie: cookieMestre },
+  });
+  sockF5.on("fichas:atualizadas", (evento) => eventosF5.push(evento));
+  const conectadoF5 = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 5000);
+    sockF5.on("connect", () => { clearTimeout(timer); resolve(true); });
+    sockF5.on("connect_error", () => { clearTimeout(timer); resolve(false); });
+  });
+  const entrouF5 = conectadoF5 && await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 5000);
+    sockF5.emit("entrar-campanha", campId, (ack) => {
+      clearTimeout(timer);
+      resolve(ack === true);
+    });
+  });
+  t("F5 observer: mestre entra na room da campanha com ACK positivo", entrouF5 === true);
+
+  const novaBarreiraF5 = (partes) => {
+    let chegadas = 0;
+    let liberar;
+    const aberta = new Promise((resolve) => { liberar = resolve; });
+    return async () => {
+      chegadas++;
+      if (chegadas === partes) liberar();
+      await aberta;
+    };
+  };
+  const estruturaPutF5 = {
+    secoes: [{
+      id: "f5-secao",
+      titulo: "F5 concorrência",
+      ordem: 0,
+      campos: [{ id: "f5-campo", label: "Campo F5", tipo: "inteiro", semantico: "atributo" }],
+    }],
+    pontos: { habilitado: false },
+  };
+  const executarCorridaF5 = async (rotulo, ordemInicial) => {
+    const criadoF5 = await req(base, "POST", `/campaigns/${campId}/sheet-templates`, {
+      cookie: cookieMestre, body: { name: `F5-${rotulo}` },
+    });
+    const tplF5 = criadoF5.json?.modelo?.id;
+    const verF5 = criadoF5.json?.modelo?.versionId;
+    const antesF5 = comDb(banco, (db) => db.prepare(
+      "select structure,published_at from sheet_versions where id=?").get(verF5));
+    const curAntesF5 = comDb(banco, (db) => db.prepare(
+      "select current_version_id from sheet_templates where id=?").get(tplF5)?.current_version_id);
+    const auditAntesF5 = comDb(banco, (db) =>
+      db.prepare("select coalesce(max(rowid),0) m from audit_logs").get().m);
+    const eventosAntesF5 = eventosF5.length;
+    const barreiraF5 = novaBarreiraF5(2);
+    const enviarPutF5 = async () => {
+      await barreiraF5();
+      return req(base, "PUT", `/campaigns/${campId}/sheet-templates/${tplF5}/versions/${verF5}`, {
+        cookie: cookieMestre,
+        body: { estrutura: estruturaPutF5 },
+      });
+    };
+    const enviarPublishF5 = async () => {
+      await barreiraF5();
+      return req(base, "POST", `/campaigns/${campId}/sheet-templates/${tplF5}/publish`, {
+        cookie: cookieMestreF5,
+        body: { versionId: verF5 },
+      });
+    };
+    const [putF5, publishF5] = ordemInicial === "put-primeiro"
+      ? await Promise.all([enviarPutF5(), enviarPublishF5()])
+      : await Promise.all([enviarPublishF5(), enviarPutF5()]);
+
+    const depoisF5 = comDb(banco, (db) => ({
+      versao: db.prepare("select structure,published_at from sheet_versions where id=?").get(verF5),
+      current: db.prepare("select current_version_id from sheet_templates where id=?").get(tplF5)?.current_version_id,
+      auditorias: db.prepare(
+        "select action,campaign_id,detail from audit_logs where rowid>? and campaign_id=? order by rowid"
+      ).all(auditAntesF5, campId).filter((a) => a.action === "ficha.modelo_publicado"),
+    }));
+    const parseEstruturaF5 = (valor) => typeof valor === "string" ? JSON.parse(valor) : valor;
+    const estruturaEsperadaF5 = putF5.status === 200
+      ? estruturaPutF5
+      : parseEstruturaF5(antesF5.structure);
+    const eventosEsperadosF5 = 1 + (putF5.status === 200 ? 1 : 0);
+
+    // O publish deve produzir exatamente um evento; o PUT só produz o seu
+    // se venceu a corrida. Espera limitada apenas para entrega do Socket.IO,
+    // nunca usada para sincronizar as requisições concorrentes.
+    const limiteEventosF5 = Date.now() + 2500;
+    while (eventosF5.filter((e) => e?.templateId === tplF5).length < eventosEsperadosF5
+      && Date.now() < limiteEventosF5) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const eventosDoTemplateF5 = eventosF5.filter((e) => e?.templateId === tplF5);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const eventosFinaisF5 = eventosF5.filter((e) => e?.templateId === tplF5);
+
+    t(`F5 ${rotulo}: PUT termina em 200 ou 409, sem 5xx`,
+      putF5.status === 200 || putF5.status === 409, `status=${putF5.status}`);
+    t(`F5 ${rotulo}: publish concorrente conclui exatamente uma vez`,
+      publishF5.status === 200, `status=${publishF5.status}`);
+    t(`F5 ${rotulo}: published_at fica preenchido e ponteiro aponta para a versão publicada`,
+      !!depoisF5.versao?.published_at && depoisF5.current === verF5
+        && curAntesF5 === verF5 && antesF5.published_at == null,
+      JSON.stringify({ publicado: !!depoisF5.versao?.published_at, current: depoisF5.current, versao: verF5 }));
+    t(`F5 ${rotulo}: estrutura final é integral (PUT vence ou publish preserva original)`,
+      JSON.stringify(parseEstruturaF5(depoisF5.versao?.structure)) === JSON.stringify(estruturaEsperadaF5),
+      `put=${putF5.status} estrutura=${JSON.stringify(parseEstruturaF5(depoisF5.versao?.structure))}`);
+    t(`F5 ${rotulo}: uma única trilha de auditoria de publicação`,
+      depoisF5.auditorias.length === 1,
+      JSON.stringify(depoisF5.auditorias.map((a) => a.action)));
+    t(`F5 ${rotulo}: eventos realtime correspondem às gravações que venceram`,
+      eventosDoTemplateF5.length === eventosEsperadosF5 && eventosFinaisF5.length === eventosEsperadosF5,
+      `esperados=${eventosEsperadosF5} antes-settle=${eventosDoTemplateF5.length} finais=${eventosFinaisF5.length} baseline=${eventosAntesF5}`);
+  };
+
+  await executarCorridaF5("PUT-primeiro", "put-primeiro");
+  await executarCorridaF5("publish-primeiro", "publish-primeiro");
+  const desconectarF5 = await new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), 5000);
+    sockF5.once("disconnect", () => { clearTimeout(timer); resolve(true); });
+    try { sockF5.disconnect(); } catch { clearTimeout(timer); resolve(false); }
+  });
+  t("F5 teardown: disconnect realtime real observado", desconectarF5 === true);
 
   // ---- F3: upload + vínculo a anotação — files ok, note_attachments aborta ----
   const notaF3 = await req(base, "POST", `/campaigns/${campId}/anotacoes`, {
