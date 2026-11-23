@@ -530,6 +530,92 @@ export async function reverterAtualizacao(opts = {}) {
   return executarRollback(estado, { ...opts, cwd: repoDir, stateFile: arquivo });
 }
 
+/**
+ * Recupera journal durável de auto-update antes de qualquer etapa mutável
+ * do próximo boot. Nunca tenta "adivinhar": exige mesma instalação, branch,
+ * árvore limpa e HEAD igual ao SHA anterior ou ao SHA-alvo registrado.
+ */
+export async function recuperarAtualizacaoPendente(opts = {}) {
+  const cwd = opts.cwd ?? process.cwd();
+  const executar = opts.executar ?? executarReal;
+  const log = opts.log ?? (() => {});
+  const envGit = { ...GIT_ENV, ...(opts.envGit ?? {}) };
+  const envEstado = opts.envEstado ?? process.env;
+  const git = (args, repoDir = cwd) => executar("git", args, { cwd: repoDir, env: envGit, timeoutMs: TIMEOUT_GIT_MS });
+
+  const top = git(["rev-parse", "--show-toplevel"]);
+  if (top.code !== 0) return { ok: false, motivo: "sem-repositorio-git" };
+  const repoDir = String(top.stdout).trim();
+  const journal = lerJournalDuravel(repoDir, envEstado);
+  if (journal.status === "ausente") return { ok: true, recuperado: false, motivo: "sem-journal" };
+  if (journal.status !== "ok") {
+    return { ok: false, motivo: `journal-${journal.status}`, detalhes: journal };
+  }
+
+  const estado = journal.dados ?? {};
+  if (estado.fase === "concluido") {
+    try { limparJournalDuravel(repoDir, envEstado); }
+    catch (e) { return { ok: false, motivo: "falha-limpar-journal-concluido", detalhe: String(e?.message ?? e) }; }
+    return { ok: true, recuperado: false, motivo: "journal-concluido" };
+  }
+
+  const shaValido = (s) => typeof s === "string" && /^[0-9a-f]{40}$/i.test(s);
+  if (!shaValido(estado.shaAnterior) || !shaValido(estado.shaNovo)
+      || !estado.branch || !estado.repoDir || typeof estado.depsMudaram !== "boolean") {
+    return { ok: false, motivo: "journal-incompleto" };
+  }
+  const canon = (p) => {
+    const valor = resolve(p);
+    return process.platform === "win32" ? valor.toLowerCase() : valor;
+  };
+  if (canon(estado.repoDir) !== canon(repoDir)) {
+    return { ok: false, motivo: "repositorio-divergente" };
+  }
+
+  const branchAtual = git(["symbolic-ref", "--quiet", "--short", "HEAD"], repoDir);
+  if (branchAtual.code !== 0 || String(branchAtual.stdout).trim() !== estado.branch) {
+    return { ok: false, motivo: "branch-alterada-durante-atualizacao" };
+  }
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"], repoDir);
+  if (status.code !== 0 || String(status.stdout).trim() !== "") {
+    return { ok: false, motivo: "arvore-suja-recuperacao-bloqueada" };
+  }
+  const head = String(git(["rev-parse", "HEAD"], repoDir).stdout).trim();
+
+  // A intenção foi persistida antes do fast-forward. Se o HEAD ainda é o
+  // SHA anterior e o worktree está limpo, o merge não chegou a aplicar.
+  if (head === estado.shaAnterior && estado.fase === "pull-iniciado") {
+    try { limparJournalDuravel(repoDir, envEstado); }
+    catch (e) { return { ok: false, motivo: "falha-limpar-intencao-sem-pull", detalhe: String(e?.message ?? e) }; }
+    log("[auto-update] Journal indica que o fast-forward não foi aplicado; estado anterior intacto.");
+    return { ok: true, recuperado: true, motivo: "pull-nao-aplicado" };
+  }
+  if (head !== estado.shaNovo && head !== estado.shaAnterior) {
+    return { ok: false, motivo: "head-diferente-dos-shas-do-journal", head };
+  }
+
+  log(`[auto-update] Recuperação pendente detectada (fase=${estado.fase}, HEAD=${head.slice(0, 12)}).`);
+  const gravar = (dados) => {
+    gravarJournalDuravel(repoDir, dados, envEstado);
+    return true;
+  };
+  const rollback = await executarRollback(estado, {
+    ...opts, cwd: repoDir, executar, log, gravarJournal: gravar,
+  });
+  if (!rollback.ok) {
+    log(`[auto-update] Recuperação não concluída (${rollback.motivo}); boot bloqueado.`);
+    return { ok: false, motivo: rollback.motivo, rollback };
+  }
+  try {
+    gravar({ ...estado, fase: "concluido", concluidoEm: new Date().toISOString() });
+    limparJournalDuravel(repoDir, envEstado);
+  } catch (e) {
+    return { ok: false, motivo: "falha-finalizar-journal", detalhe: String(e?.message ?? e), rollback };
+  }
+  log(`[auto-update] Recuperação concluída; código retornou ao SHA ${estado.shaAnterior.slice(0, 12)}.`);
+  return { ok: true, recuperado: true, motivo: "rollback-concluido", shaAnterior: estado.shaAnterior };
+}
+
 function instrucaoRecuperacao(log, branchOriginal) {
   log("[auto-update] RECUPERACAO MANUAL NECESSARIA:");
   log("  1. Verifique 'git status' — nenhuma alteracao local foi descartada.");
