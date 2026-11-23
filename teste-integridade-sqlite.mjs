@@ -47,19 +47,33 @@ try {
   t("integrity_check = ok", fund.ic === "ok", fund.ic);
   t("foreign_key_check sem violações", fund.fk.length === 0);
 
-  // FKs realmente enforced: inserts diretos com pais inexistentes devem falhar
+  // PRAGMA foreign_keys é POR CONEXÃO, mas o driver better-sqlite3 o
+  // liga por padrão em TODA conexão nova (verificado: conexão crua de
+  // arquivo retorna 1). Somam-se a isso o PRAGMA explícito do servidor
+  // em criarBanco (servidor/src/db/index.ts:21-22). Abaixo provamos a
+  // semântica: COM o pragma ligado, o SQLite rejeita inserts órfãos.
+  const pragmaCru = comDb(banco, (db) => db.pragma("foreign_keys", { simple: true }));
+  t("conexão crua já nasce com foreign_keys=1 (default do driver + criarBanco explícito)",
+    pragmaCru === 1, `pragma=${pragmaCru}`);
+
+  // FKs realmente enforced COM pragma ligado: inserts diretos com pais
+  // inexistentes devem falhar — um FK por assert para identificar qual rejeitou.
   const w = abrirDb(banco);
   w.pragma("foreign_keys = ON");
   const tentaInsert = (sql, params) => { try { w.prepare(sql).run(...params); return null; } catch (e) { return String(e); } };
-  t("FK: characters.campaign_id inexistente rejeitado",
+  t("FK: characters.campaign_id inexistente rejeitado (pragma ON)",
     /FOREIGN KEY/.test(tentaInsert(
       "insert into characters (id,campaign_id,membership_id,name,data,status,created_at,updated_at) values (?,?,?,?,?,?,?,?)",
-      [uid(), "camp-inexistente", "memb-inexistente", "x", "{}", "rascunho", agora(), agora()])) ?? "");
-  t("FK: character_fields.character_id inexistente rejeitado",
+      [uid(), "camp-inexistente", c.membMestre, "x", "{}", "rascunho", agora(), agora()])) ?? "");
+  t("FK: characters.membership_id inexistente rejeitado (pragma ON)",
+    /FOREIGN KEY/.test(tentaInsert(
+      "insert into characters (id,campaign_id,membership_id,name,data,status,created_at,updated_at) values (?,?,?,?,?,?,?,?)",
+      [uid(), campId, "memb-inexistente", "x", "{}", "rascunho", agora(), agora()])) ?? "");
+  t("FK: character_fields.character_id inexistente rejeitado (pragma ON)",
     /FOREIGN KEY/.test(tentaInsert(
       "insert into character_fields (id,character_id,field_key,value,updated_at) values (?,?,?,?,?)",
       [uid(), "char-inexistente", "k", "{}", agora()])) ?? "");
-  t("FK: memberships.user_id inexistente rejeitado",
+  t("FK: memberships.user_id inexistente rejeitado (pragma ON)",
     /FOREIGN KEY/.test(tentaInsert(
       "insert into memberships (id,campaign_id,user_id,role,status,created_at,updated_at) values (?,?,?,?,?,?,?)",
       [uid(), campId, "user-inexistente", "jogador", "ativo", agora(), agora()])) ?? "");
@@ -67,7 +81,7 @@ try {
   const txContaRuim = tentaInsert(
     "insert into money_transactions (id,character_id,campaign_id,kind,amount,account_id,created_at) values (?,?,?,?,?,?,?)",
     [uid(), personagemMestre, campId, "ajuste_mestre", 1, "conta-inexistente", agora()]);
-  t("FK: money_transactions.account_id inexistente rejeitado (real)", /FOREIGN KEY/.test(txContaRuim ?? ""), txContaRuim ?? "sem erro");
+  t("FK: money_transactions.account_id inexistente rejeitado (pragma ON)", /FOREIGN KEY/.test(txContaRuim ?? ""), txContaRuim ?? "sem erro");
   // conexão `w` segue aberta para os INSERTs de fixture da seção B
 
   console.log("\n== B — ciclo de vida do personagem (API + cascata) ==");
