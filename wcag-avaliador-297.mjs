@@ -212,6 +212,42 @@ function avaliarWcag() {
     }
     return invalido ? "invalido" : "nenhum";
   };
+  // Select: a opção selecionada renderiza texto — identifica o VALOR,
+  // não o propósito do campo — e a seta nativa do UA não é mensurável
+  // via DOM. Ambos são cues candidatos ambíguos ⇒ REVIEW. Sem nenhum
+  // dos dois, segue o fluxo normal (contexto ⇒ REVIEW/FAIL).
+  const cueSelect = (el) => {
+    if (el.tagName.toLowerCase() !== "select") return null;
+    const cs = getComputedStyle(el);
+    const ap = `${cs.appearance || ""} ${cs.webkitAppearance || ""}`.toLowerCase();
+    const achado = ap.match(/menulist-button|menulist|base-select|searchfield|textfield|button|none|auto/);
+    const nativa = !achado || !["none", "textfield", "searchfield", "button"].includes(achado[0]);
+    const opt = el.selectedOptions && el.selectedOptions[0];
+    const txt = opt ? (opt.textContent || "").trim() : "";
+    let optLegivel = false;
+    if (txt && opt) {
+      const ocs = getComputedStyle(opt);
+      const fgO = parse(ocs.color);
+      const bgpO = parse(ocs.backgroundColor);
+      const bgpS = parse(cs.backgroundColor);
+      const extB = fundoDe(el, true);
+      if (fgO && !extB.review) {
+        const baseS = bgpS && bgpS[3] > 0
+          ? (bgpS[3] < 1 ? sobre(bgpS, [...extB.rgb, 1]) : bgpS.slice(0, 3))
+          : extB.rgb;
+        const base = bgpO && bgpO[3] > 0
+          ? (bgpO[3] < 1 ? sobre(bgpO, [...extB.rgb, 1]) : bgpO.slice(0, 3))
+          : baseS;
+        const fgc = fgO[3] < 1 ? sobre(fgO, [...base, 1]) : fgO.slice(0, 3);
+        optLegivel = razao(fgc, base) >= 4.5;
+      }
+    }
+    if (!nativa && !optLegivel) return null;
+    const partes = [];
+    if (optLegivel) partes.push(`opção "${txt.slice(0, 20)}" renderizada/legível`);
+    if (nativa) partes.push("affordance nativa do UA não mensurável via DOM");
+    return `select: ${partes.join(" + ")} — cue identifica valor, não propósito (associação ambígua)`;
+  };
 
   for (const el of todos) {
     if (!ehControle(el) || desabilitado(el)) continue;
@@ -251,6 +287,11 @@ function avaliarWcag() {
     if ((fillRatio !== null && fillRatio >= 3) || (bordaRatio !== null && bordaRatio >= 3)) continue; // PASS
     // Nenhum indicador atinge 3:1 — fronteira é o identificador necessário?
     const ev = `preenchimento×externo=${fmt(fillRatio)} borda×externo=${fmt(bordaRatio)} req=3`;
+    const cueSel = cueSelect(el);
+    if (cueSel) {
+      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; ${cueSel})`);
+      continue;
+    }
     const ctx = temContexto(el);
     if (ctx === "valido") {
       out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; label/placeholder visível pode identificar — sem veredito)`);

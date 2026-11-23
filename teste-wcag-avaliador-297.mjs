@@ -71,6 +71,21 @@ sec("SC 1.4.11 — classificação do indicador");
   t("label com contraste <4.5 ⇒ REVIEW (contexto inválido)", temRev(r, "i9") && !temViol(r, "i9"), JSON.stringify(r.naoTexto).slice(0, 240));
 }
 
+sec("SC 1.4.11 — select: cue ambíguo (diagnóstico #7106946553)");
+{
+  let r;
+  // 6g. Select com opção selecionada legível + chrome nativo do UA
+  // (appearance:auto, seta não mensurável): cue identifica o VALOR,
+  // não o propósito ⇒ REVIEW ambíguo — nunca FAIL nem PASS por conveniência
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><select id="s1" aria-label="Ação de pontos" style="border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:4px;width:140px"><option>Conceder</option><option>Remover</option></select></main>`);
+  t("select c/ opção legível + affordance nativa ⇒ REVIEW ambíguo", temRev(r, "s1") && !temViol(r, "s1") && r.naoTexto.rev.join(" ").includes("select"), JSON.stringify(r.naoTexto).slice(0, 300));
+
+  // 6h. Select appearance:none + opção sem texto legível ⇒ nenhum cue
+  // identificável ⇒ FAIL determinístico (não mascarado como REVIEW)
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><select id="s2" style="appearance:none;-webkit-appearance:none;border:1px solid #2c3038;background:#1c2026;color:#23262b;padding:4px;width:140px"><option></option></select></main>`);
+  t("select sem affordance/legibilidade ⇒ FAIL determinístico", temViol(r, "s2") && !temRev(r, "s2"), JSON.stringify(r.naoTexto).slice(0, 300));
+}
+
 sec("SC 1.4.11 — IMG e SVG como identificadores");
 {
   let r;
