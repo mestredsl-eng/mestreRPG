@@ -834,6 +834,74 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     if (r.ok) assert.equal(r.estado.saldo, 0);
   });
 
+  it("usa o snapshot durável quando uma recuperação antiga foi limitada pelo teto", () => {
+    const em = new Date().toISOString();
+    const usoId = `recuperar:${REQ1}`;
+    const usos = {
+      [usoId]: {
+        tipo: "recuperacao" as const,
+        em,
+        requestId: REQ1,
+        personagemId: PID,
+        quantidade: 1,
+      },
+    };
+    const eventos = [
+      { em, tipo: "ajuste" as const, quantidade: 0.04, motivo: "crédito inicial", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.04 },
+      // O delta antigo era o espaço binário restante, não a quantidade pedida.
+      { em, tipo: "recuperacao" as const, quantidade: 0.5599999999999999, motivo: "recuperação limitada", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.6, usoId },
+    ];
+    const aposCredito: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.6, usos, historico: eventos },
+    };
+    assert.equal(lerSangue(aposCredito).estado.saldo, 0.6,
+      "o saldo resultante gravado pela operação limitada é preservado");
+    const debito = registrarAjusteSangue(aposCredito, {
+      ...AUTOR, delta: -0.6, motivo: "gasto integral após recuperação antiga",
+    });
+    assert.equal(debito.ok, true, "o saldo válido de 0,60 ainda cobre o custo de 0,60");
+    if (debito.ok) assert.equal(debito.estado.saldo, 0);
+
+    const aposDebitoAntigo: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        saldo: 0,
+        usos,
+        historico: [
+          ...eventos,
+          { em, tipo: "uso" as const, quantidade: -0.6, motivo: "gasto integral", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0 },
+        ],
+      },
+    };
+    assert.equal(lerSangue(aposDebitoAntigo).estado.saldo, 0,
+      "a reconstrução não inventa saldo negativo após débito integral");
+    const gratuito = registrarUsoD10(aposDebitoAntigo, {
+      ...AUTOR, testId: TEST1, custo: 0,
+    });
+    assert.equal(gratuito.ok, true, "saldo zero continua permitindo Poder gratuito");
+    if (gratuito.ok) assert.equal(gratuito.estado.saldo, 0);
+
+    // Sem o uso durável ligado ao evento, não se tenta adivinhar se o delta
+    // menor foi um clamp antigo ou um crédito integral: fica o saldo gravado.
+    const ambiguo: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.6, usos: {}, historico: eventos },
+    };
+    assert.equal(lerSangue(ambiguo).estado.saldo, 0.6);
+  });
+
+  it("permite crédito integral quando a diferença até o teto não cabe em Number", () => {
+    const dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: { saldo: 0.09999999999999998, usos: {}, historico: [] },
+    };
+    const r = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.1, habilitada: true, capacidadeMax: 0.3,
+    });
+    assert.equal(r.ok, true, "o crédito de 0,1 cabe mesmo sem materializar cap - saldo");
+    if (r.ok) {
+      assert.equal(r.estado.saldo, 0.19999999999999998);
+      assert.equal(r.estado.usos[`recuperar:${REQ1}`]?.quantidade, 0.1);
+    }
+  });
+
   it("preserva valores IEEE vizinhos de 1 sem snap de 15 dígitos", () => {
     assert.equal(somarDecimalSangue(1.0000000000000002, 0), 1.0000000000000002);
     assert.equal(somarDecimalSangue(0.9999999999999999, 0), 0.9999999999999999);
@@ -884,7 +952,9 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     const invalida = registrarRecuperacaoSangue(dados, {
       ...AUTOR,
       requestId: REQ1,
-      quantidade: 0.5,
+      // O crédito solicitado ultrapassa o teto; só o delta de clamp
+      // (capacidade - saldo) seria necessário e não é representável.
+      quantidade: 2,
       habilitada: true,
       capacidadeMax: 1.2345678901234567,
     });
