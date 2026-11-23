@@ -346,6 +346,9 @@ jobs:
           if [ ! -f teste-bat-node-gate.mjs ]; then echo "teste-bat-node-gate.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-bat-node-gate.mjs
 
+      - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
+        run: node teste-bat-restauracao-falha.mjs
+
   navegador:
     name: Navegador — homologações Playwright
     runs-on: ubuntu-latest
