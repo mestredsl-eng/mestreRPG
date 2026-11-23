@@ -568,7 +568,7 @@ try {
       ...process.env,
       MESTRE_STATE_DIR: join(c.base, "state-sigkill"),
       MESTRE_TEST_REPO: c.local,
-      MESTRE_TEST_URL_OFICIAL: c.origin,
+      MESTRE_TEST_URL_OFICIAL: String(c.origin).replace(/\\/g, "/"),
     };
     const child = spawnSync(process.execPath, [
       join(process.cwd(), "teste-auto-update-crash-child.mjs"),
