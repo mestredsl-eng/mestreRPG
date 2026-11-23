@@ -47,7 +47,19 @@ async function aguardarFechamento(obs, timeoutMs = 10000) {
 async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = null, browser: br = null, dir = null } = {}) {
   const erros = [];
   for (const s of sk) {
-    try { s.close(); } catch (e) { erros.push("socket: " + String(e?.message ?? e)); }
+    try {
+      if (s && s.connected) {
+        // Evento disconnect REAL com timeout — o listener é preso antes do
+        // close (a emissão pode ser síncrona); timeout vira erro de limpeza.
+        const disc = new Promise((res) => s.once("disconnect", res));
+        const tempo = new Promise((res) => setTimeout(res, 5000));
+        s.close();
+        const primeiro = await Promise.race([disc.then(() => "disconnect"), tempo.then(() => "timeout")]);
+        if (primeiro === "timeout") erros.push("socket: disconnect não emitido em 5s");
+      } else if (s) {
+        s.close();
+      }
+    } catch (e) { erros.push("socket: " + String(e?.message ?? e)); }
   }
   if (br) {
     try { await br.close(); } catch (e) { erros.push("browser: " + String(e?.message ?? e)); }
@@ -75,7 +87,8 @@ async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = n
 async function provaFalhaParcial() {
   sec("Teardown — falha injetada após aquisição parcial");
   const sk = [];
-  let d2, proc2 = null, fech2 = null, close2Ok = false;
+  const descFlags = [];
+  let d2, proc2 = null, fech2 = null, close2Ok = false, browser2 = null;
   let erroOriginal = null, erros2 = [];
   try {
     d2 = dirTeste("desafio-ficha-falha");
@@ -99,19 +112,27 @@ async function provaFalhaParcial() {
         reconnection: false,
       });
       sk.push(s);
+      const f = { ok: false };
+      s.once("disconnect", () => { f.ok = true; });
+      descFlags.push(f);
     }
     await pronto(sk[0]);
     await pronto(sk[1]);
+    // Browser real também entra na aquisição parcial
+    browser2 = await chromium.launch();
+    const pg = await browser2.newPage();
+    await pg.goto(base2);
+    await pg.waitForLoadState("domcontentloaded").catch(() => {});
     throw new Error("FALHA_INJETADA_pos_aquisicao_parcial");
   } catch (e) {
     erroOriginal = e;
   } finally {
-    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, dir: d2 });
+    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, browser: browser2, dir: d2 });
   }
-  await new Promise((r) => setTimeout(r, 150)); // close do socket é assíncrono
   t("falha injetada propaga sem ser mascarada pelo cleanup", String(erroOriginal?.message ?? "").includes("FALHA_INJETADA"), String(erroOriginal?.message ?? erroOriginal).slice(0, 90));
   t("cleanup da prova sem erros", erros2.length === 0, erros2.join(" | "));
-  t("dois sockets da prova fechados", sk.length === 2 && sk.every((s) => s.connected === false), `conectados=${sk.filter((s) => s.connected).length}`);
+  t("dois sockets emitiram disconnect real (evento, não flag)", descFlags.length === 2 && descFlags.every((f) => f.ok));
+  t("browser real da prova fechado", !!browser2 && browser2.isConnected() === false);
   t("processo da prova chegou a close (stdio encerrado)", close2Ok === true);
   t("diretório da prova removido", !!d2 && !existsSync(d2), d2 || "sem dir");
 }
