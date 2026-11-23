@@ -131,6 +131,8 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Homologação Linux de componentes Boot Lock/Recovery (#271)
+        run: node teste-recovery-linux.mjs
       - name: Testes unitários do contrato de backup (Issue #155 W16)
         run: |
           if [ -f servidor/testes/backup-contrato.test.ts ]; then
