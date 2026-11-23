@@ -47,13 +47,20 @@ function fixture(nome, recibo = false) {
     'if (p) fs.appendFileSync(p, "node " + process.argv.slice(1).join(" ") + "\\n");',
     "",
   ].join("\n"));
-  writeFileSync(join(scripts, "auto-update.mjs"), [
-    'import { writeFileSync } from "node:fs";',
-    'writeFileSync(process.env.MESTRE_BOOT_TEST_UPDATE_MARKER, "called");',
-    'console.log("[sentinela] auto-update alcançado");',
-    "process.exit(1);",
-    "",
-  ].join("\n"));
+  // O avaliador real importa recuperarAtualizacaoPendente antes de
+  // mostrar o prompt. O sentinela precisa respeitar esse contrato de módulo
+  // quando importado e só abortar quando o BAT executar o arquivo diretamente.
+  const autoUpdateStub = String.raw`import { writeFileSync } from "node:fs";
+export async function recuperarAtualizacaoPendente() {
+  return { ok: true, recuperado: false, motivo: "fixture-sem-journal" };
+}
+if ((process.argv[1] ?? "").toLowerCase().endsWith("auto-update.mjs")) {
+  writeFileSync(process.env.MESTRE_BOOT_TEST_UPDATE_MARKER, "called");
+  console.log("[sentinela] auto-update alcançado");
+  process.exit(1);
+}
+`;
+  writeFileSync(join(scripts, "auto-update.mjs"), autoUpdateStub);
 
   const porta = String(36000 + (++sequencia));
   const env = {
