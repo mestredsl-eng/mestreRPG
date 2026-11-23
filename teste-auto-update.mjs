@@ -526,6 +526,53 @@ try {
     t("journal concluído foi removido", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ausente");
   }
 
+  sec("Extra — SIGKILL real imediatamente após o fast-forward");
+  {
+    const c = criarRepo("journal-sigkill-real");
+    const shaAnterior = head(c.local);
+    publicar(c, "release-para-sigkill", {
+      "package-lock.json": '{"lockfileVersion":3,"packages":{"x":{"version":"3"}}}\\n',
+      "site/vite.config.ts": "export default { define: { __SIGKILL__: true } };\\n",
+    });
+    const envEstado = {
+      ...process.env,
+      MESTRE_STATE_DIR: join(c.base, "state-sigkill"),
+      MESTRE_TEST_REPO: c.local,
+      MESTRE_TEST_URL_OFICIAL: c.origin,
+    };
+    const child = spawnSync(process.execPath, [
+      join(process.cwd(), "teste-auto-update-crash-child.mjs"),
+    ], {
+      cwd: c.local, env: envEstado, encoding: "utf8", timeout: 60_000, windowsHide: true,
+    });
+    const shaNoCrash = head(c.local);
+    const journal = lerJournal(c.local, JOURNAL_UPDATE, envEstado);
+    t("processo-filho foi interrompido depois do merge (não terminou normalmente)",
+      child.status !== 0 && child.status !== 91 && !child.error,
+      `status=${child.status} signal=${child.signal} error=${child.error?.message ?? ""}`);
+    t("SIGKILL deixou journal pull-iniciado com SHA alvo igual ao HEAD",
+      journal.status === "ok" && journal.dados.fase === "pull-iniciado"
+        && journal.dados.shaNovo === shaNoCrash && shaNoCrash !== shaAnterior,
+      `journal=${JSON.stringify(journal)} head=${shaNoCrash} anterior=${shaAnterior}`);
+    const statusDepoisCrash = String(git(["status", "--porcelain"], c.local).stdout).trim();
+    t("fast-forward interrompido deixou árvore limpa", statusDepoisCrash === "", statusDepoisCrash);
+
+    const reg = [];
+    const rb = await recuperarAtualizacaoPendente({
+      ...opcoesRepo(c),
+      envEstado,
+      executar: executarHibrido({ registro: reg }),
+      log: silencioso,
+    });
+    t("próximo boot reverte e conclui a recuperação", rb.ok && rb.recuperado, JSON.stringify(rb));
+    t("HEAD retorna exatamente ao SHA anterior", head(c.local) === shaAnterior);
+    t("recovery refaz npm ci + build servidor + build site",
+      reg.some((x) => x.endsWith(" ci"))
+        && reg.some((x) => x.includes("build -w servidor"))
+        && reg.some((x) => x.includes("build -w site")), reg.join(" | "));
+    t("journal removido depois da recuperação", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ausente");
+  }
+
   sec("Extra — journal pull-intent sem merge pode ser limpo sem reset/build");
   {
     const c = criarRepo("journal-crash-pre-merge");
