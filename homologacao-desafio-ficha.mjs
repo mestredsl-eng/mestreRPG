@@ -21,7 +21,27 @@ const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
 await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
-let proc, ids, sid, browser;
+let proc, ids, sid, browser, fechamentoServidor = null;
+
+// O listener de `close` é registrado no spawn (antes de qualquer kill):
+// `exit` prova só o fim do processo; `close` prova stdio encerrado —
+// teardown real. O timeout só começa quando o finally aguarda.
+function observarFechamento(p) {
+  return new Promise((resolve) => p.once("close", resolve));
+}
+async function aguardarFechamento(obs, timeoutMs = 10000) {
+  let timer;
+  try {
+    await Promise.race([
+      obs,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout aguardando close do processo do servidor")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // Template de ficha com seções reais: atributos, conhecimentos, habilidades,
 // equipamento (moeda = inelegível) e um campo "livre" só elegível via flag.
@@ -69,6 +89,8 @@ const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) =
 try {
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
+  proc.stdout.resume();
+  fechamentoServidor = observarFechamento(proc);
   await esperarSaudavel(BASE, proc);
 
   const cenario = await criarCenario(BASE, BANCO, {
@@ -723,8 +745,17 @@ try {
   console.log("FALHOU exceção:", e);
 } finally {
   if (browser) await browser.close().catch(() => {});
-  if (proc) await encerrarServidor(proc).catch(() => {});
-  limparDir(DIR);
+  try {
+    if (proc) {
+      await encerrarServidor(proc);
+      if (fechamentoServidor) await aguardarFechamento(fechamentoServidor);
+    }
+  } catch (e) {
+    fail++;
+    console.log("FALHOU teardown: close real do servidor não confirmado —", String(e?.message ?? e));
+  } finally {
+    limparDir(DIR);
+  }
 }
 
 console.log(`\n${pass} ok, ${fail} falhas`);

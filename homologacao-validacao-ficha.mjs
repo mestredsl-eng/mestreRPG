@@ -11,6 +11,28 @@ import { prepararBanco, portaLivre, subirServidor, esperarSaudavel, criarCenario
 let DIR;
 let proc;
 let browser;
+let fechamentoServidor = null;
+
+// O listener de `close` é registrado no spawn (antes de qualquer kill):
+// `exit` prova só o fim do processo; `close` prova stdio encerrado —
+// teardown real da fixture. O timeout só começa quando o finally aguarda,
+// para não medir a duração da suíte. Timeout rejeita e falha a suíte.
+function observarFechamento(p) {
+  return new Promise((resolve) => p.once("close", resolve));
+}
+async function aguardarFechamento(obs, timeoutMs = 10000) {
+  let timer;
+  try {
+    await Promise.race([
+      obs,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout aguardando close do processo do servidor")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -23,6 +45,8 @@ try {
   const BASE = `http://localhost:${PORTA}`;
   proc = subirServidor(PORTA, { banco: BANCO, arquivos: join(DIR, "arq"), backups: join(DIR, "bks") });
   proc.stderr.on("data", (d) => process.stderr.write(d));
+  proc.stdout.resume();
+  fechamentoServidor = observarFechamento(proc);
   await esperarSaudavel(BASE, proc);
   browser = await chromium.launch();
 
@@ -168,7 +192,13 @@ try {
 } finally {
   if (browser) await browser.close().catch(() => {});
   try {
-    if (proc) await encerrarServidor(proc);
+    if (proc) {
+      await encerrarServidor(proc);
+      if (fechamentoServidor) await aguardarFechamento(fechamentoServidor);
+    }
+  } catch (e) {
+    fail++;
+    console.log("FALHOU teardown: close real do servidor não confirmado —", String(e?.message ?? e));
   } finally {
     if (DIR) limparDir(DIR);
   }
