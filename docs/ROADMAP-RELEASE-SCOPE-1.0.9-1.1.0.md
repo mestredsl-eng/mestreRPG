@@ -24,7 +24,7 @@ A versão 0.8 é a versão que o dono está jogando e considera boa. Não recebe
 
 ## 3. Versão 0.9 / 1.0.9 — escopo ativo
 
-**Objetivo:** melhorar o uso narrativo de Poderes, entregar progressão XP com interface/extrato e tornar atualização/recuperação segura, preservando dados e backups criados pela 1.0.8.
+**Objetivo:** fechar a extensão narrativa de Poderes e a cadeia de atualização/recuperação segura. O pacote de XP em lote e extrato já foi integrado à main; resta validar regressões e consolidar a release. Preservar dados e backups criados pela 1.0.8.
 
 ### 3.1 Sangue/Poderes — extensão do fluxo de ficha
 
@@ -35,20 +35,27 @@ A versão 0.8 é a versão que o dono está jogando e considera boa. Não recebe
 
 ### 3.2 Atualização, Boot Lock e recuperação
 
-- **Issue #155 / cadeia #176, #188, #189 e dependências:** atualização segura, serialização do boot, recuperação e proteção dos dados locais.
-- **PR #280 / Issue #266 (W16):** leitura e validação de backups legados v1 produzidos pela 1.0.8, sem rejeitá-los na atualização para 1.0.9.
-- **PR #281 / Issue #270:** correção do harness de teste Windows; já foi incorporada à branch da stack de recuperação, não à main. É suporte de teste dessa cadeia, não funcionalidade isolada da release.
-- A #280 permanece empilhada sobre a branch de recuperação; não deve ser mesclada diretamente na main sem reconciliar primeiro a árvore #155.
-- Aceite: testes de contrato de backup executados (não SKIP), provas de integridade e preservação do último backup válido, Windows/Node suportados, CI completa no SHA final e revisão independente.
+- **Issue #155 / cadeia #176, #188, #189:** atualização segura, serialização do boot, recuperação e proteção dos dados locais.
+- **Issue #265 (W14):** detector de restauração fail-closed. A execução já existente deve continuar sem duplicação; a evidência em `b903bb2` cobre a view quebrada, mas faltam snapshots do banco/backup e prova do BAT bloquear migrate/start.
+- **Issue #266 / PR #280 (W16):** compatibilidade com backups legados v1 da 1.0.8 e preservação do último backup válido. HEAD `a4e0230f28e1ac900329d96075074a7adabd5f05`; Servidor e Windows SUCCESS; Browser pendente no run `45109255431`.
+- **PR #281:** correção do harness Windows já integrada à branch de recuperação (merge `46e2915`), não à main.
+- **Issue #270:** homologação real do BAT em Windows/cmd.exe; depende da cadeia #189.
+- **Issue #271:** homologação Linux; depende de W14/W16 e Boot Lock.
+- **Issue #272:** upgrade real 1.0.8 → candidata 1.0.9, dependente dos gates Windows/Linux e W14/W16.
+- **Issue #273:** integridade do pacote, manifests, changelog, instalação limpa e hashes; depende da candidata final.
+- **Issue #274:** coordenar DAG e montar uma única candidata 1.0.9.
+- **PR #189:** OPEN/Draft e `mergeable=false` contra main; não integrar às cegas. Exige reconciliar a ancestralidade e migrations.
+- **Aceite:** testes de contrato executados (não SKIP), prova de integridade e preservação, Windows e Linux homologados, upgrade real testado e CI completa na árvore final.
 
-### 3.3 Progressão XP — interface e extrato
+### 3.3 Progressão XP — IMPLEMENTADA NA MAIN; NÃO REFAZER
 
-- **Backend #213:** já existente na linha principal; reutilizar. Não criar tabela, endpoint ou ledger paralelo.
-- **PR #215:** interface de concessão de XP em lote.
-- **PR #217:** extrato/histórico de XP.
-- **PRs #257 e #258:** âncora/saldo de abertura do extrato e compatibilidade associada.
-- Consolidar as frentes numa árvore consumidora coerente e executar a CI canônica no merge-ref final.
-- Aceite: mestre-only, autorização por campanha/personagem, atomicidade, idempotência, auditoria, realtime, mobile e testes reais de UI/API.
+- Backend #213 já está integrado.
+- **#277** integrou a UI de XP em lote; merge commit `f70c2c71c79c646fb3d714ee622e2d6281db94e5`.
+- **#215** foi fechada como supersedida por #277. Não reabrir nem duplicar.
+- **#217, #257 e #258** estão fechadas como merged.
+- **#282** corrigiu o tipo `xp.ancora` e JSX; integrada em `a9585225ffb7b1a59d475d5f8a965692fe963fb7`.
+- CI pós-#282 na main: run `45107544190`, Servidor + Windows + Navegador 3/3 SUCCESS.
+- Esta frente já não é trabalho de implementação da 1.0.9. Apenas regressão, manutenção e inclusão correta no changelog final.
 
 ### 3.4 Fora do corte 1.0.9
 
@@ -65,7 +72,7 @@ Escopo futuro proposto a partir da Issue #185:
 
 ### Conflito a resolver antes de qualquer implementação
 
-A Issue #185 também menciona “concessão em lote” como melhoria futura. Porém, o backend de concessão em lote #213 já existe na main e a interface/extrato #215/#217 estão no escopo da 1.0.9.
+A Issue #185 também menciona “concessão em lote” como melhoria futura. Porém, o backend #213 e a UI #277 já estão integrados à main; #215 foi supersedida e #217/#257/#258 foram merged.
 
 Portanto, **não criar uma segunda implementação de XP em lote para a 1.1.0**. Antes de mover qualquer requisito adicional, o Gerente Operacional deve comparar o texto da #185 com #213/#215 e registrar se existe requisito funcional realmente diferente. Até essa reconciliação, o item fica marcado como sobreposição, não como entrega aprovada da 1.1.0.
 
@@ -99,6 +106,6 @@ A atribuição de uma responsabilidade não prova que uma sessão está ativa. C
 ## 7. Resumo executivo
 
 - **0.8 / 1.0.8:** congelada; preservar.
-- **0.9 / 1.0.9:** #279 + atualização/recuperação #155/#266 + XP UI/extrato #215/#217/#257/#258; é o único corte ativo.
+- **0.9 / 1.0.9:** #279 + atualização/recuperação #155/#265–#274. XP em lote/extrato (#213/#277/#217/#257/#258) já está integrado; não duplicar.
 - **1.1.0:** estorno auditado e XP por sessão/gancho narrativo; backlog futuro, sem implementação autorizada.
 - **XP em lote:** backend #213 já existe e sua UI está no plano da 1.0.9; reconciliar a menção antiga da #185 antes de qualquer trabalho adicional.
