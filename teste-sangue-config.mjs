@@ -158,6 +158,164 @@ try {
     t("rótulo não mapeado não ganha semântica", cfg?.sangue?.naturezas?.["Sem-Mapeamento"] === undefined);
   }
 
+  sec("7A. Excluir Poder remove seu custo de Sangue sem afetar os demais");
+  {
+    const p1 = await req(BASE, "POST", `/campaigns/${c.campId}/regras/elementos`, {
+      cookie: c.cookieMestre,
+      body: { kind: "poder", key: "poder_teste_remover", name: "Poder Teste Remover", definition: {} },
+    });
+    const p2 = await req(BASE, "POST", `/campaigns/${c.campId}/regras/elementos`, {
+      cookie: c.cookieMestre,
+      body: { kind: "poder", key: "poder_teste_preservar", name: "Poder Teste Preservar", definition: {} },
+    });
+    t("dois Poderes de teste criados", p1.status === 201 && p2.status === 201);
+    const cfgAntes = await putCfg(c.campId, c.cookieMestre, {
+      sangue: {
+        poderes: {
+          poder_teste_remover: { custo: 2 },
+          poder_teste_preservar: { custo: 3 },
+        },
+      },
+    });
+    t("custos dos dois Poderes aceitos", cfgAntes.status === 200, `status=${cfgAntes.status}`);
+
+    // Campanhas legadas importadas podem persistir pontos:null. O carregador
+    // normaliza esse valor em memória; a exclusão deve validar da mesma forma
+    // sem reescrever o JSON bruto nem perder a forma importada.
+    const dbPontosNulos = abrirDb(BANCO);
+    try {
+      const rs = dbPontosNulos.prepare(
+        "select id, config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId);
+      const config = JSON.parse(rs.config || "{}");
+      config.pontos = null;
+      dbPontosNulos.prepare("update rule_sets set config=? where id=?")
+        .run(JSON.stringify(config), rs.id);
+    } finally { dbPontosNulos.close(); }
+
+    // Simula uma escrita concorrente após a leitura inicial da rota, mas
+    // antes da limpeza do custo. A rota deve reler o JSON dentro da tx
+    // depois do DELETE e preservar a alteração de moeda.
+    const dbTrigger = abrirDb(BANCO);
+    try {
+      dbTrigger.exec(`
+        CREATE TRIGGER teste_config_concorrente_antes_delete
+        BEFORE DELETE ON rule_definitions
+        WHEN OLD.kind='poder' AND OLD.key='poder_teste_remover'
+        BEGIN
+          UPDATE rule_sets
+          SET config=json_set(config, '$.financeiro.moedaPrincipal', 'EUR')
+          WHERE id=OLD.rule_set_id;
+        END;
+      `);
+    } finally { dbTrigger.close(); }
+
+    const removido = await req(BASE, "DELETE", `/campaigns/${c.campId}/regras/elementos/${p1.json.id}`, {
+      cookie: c.cookieMestre,
+    });
+    const dbTriggerCleanup = abrirDb(BANCO);
+    try { dbTriggerCleanup.exec("DROP TRIGGER IF EXISTS teste_config_concorrente_antes_delete"); }
+    finally { dbTriggerCleanup.close(); }
+
+    t("Poder removido com pontos:null legado", removido.status === 200, `status=${removido.status}`);
+    const dbRawDepois = abrirDb(BANCO);
+    let configRawDepois;
+    try {
+      configRawDepois = JSON.parse(dbRawDepois.prepare(
+        "select config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId)?.config || "{}");
+    } finally { dbRawDepois.close(); }
+    t("normalização de validação preserva pontos:null no JSON bruto", configRawDepois.pontos === null,
+      JSON.stringify({ pontos: configRawDepois.pontos }));
+    const cfgDepois = await getCfg(c.campId, c.cookieMestre);
+    t("custo órfão removido e custo do outro Poder preservado",
+      cfgDepois?.sangue?.poderes?.poder_teste_remover === undefined &&
+        cfgDepois?.sangue?.poderes?.poder_teste_preservar?.custo === 3,
+      JSON.stringify(cfgDepois?.sangue?.poderes));
+    t("config concorrente de moeda preservada", cfgDepois?.financeiro?.moedaPrincipal === "EUR",
+      JSON.stringify(cfgDepois?.financeiro));
+    const putPosterior = await putCfg(c.campId, c.cookieMestre, { mesa: { acaoForaDeTurno: false } });
+    t("PUT posterior não fica bloqueado por custo órfão", putPosterior.status === 200, `status=${putPosterior.status}`);
+  }
+
+  sec("7B. Exclusão de Poder falha → rollback atômico de definição + JSON");
+  {
+    const criado = await req(BASE, "POST", `/campaigns/${c.campId}/regras/elementos`, {
+      cookie: c.cookieMestre,
+      body: { kind: "poder", key: "rollback_teste", name: "Poder Rollback Teste", definition: {} },
+    });
+    t("Poder para rollback criado", criado.status === 201, `status=${criado.status}`);
+    const cfg = await putCfg(c.campId, c.cookieMestre, {
+      sangue: { poderes: { rollback_teste: { custo: 7 } } },
+    });
+    t("custo do Poder para rollback salvo", cfg.status === 200, `status=${cfg.status}`);
+
+    const dbAntes = abrirDb(BANCO);
+    let configBrutaAntes;
+    let ruleSetId;
+    let definicaoAntes;
+    try {
+      configBrutaAntes = dbAntes.prepare(
+        "select config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId)?.config;
+      ruleSetId = dbAntes.prepare(
+        "select rule_set_id from rule_definitions where id=?",
+      ).get(criado.json.id)?.rule_set_id;
+      definicaoAntes = dbAntes.prepare(
+        "select id,kind,key,definition from rule_definitions where id=?",
+      ).get(criado.json.id);
+    } finally { dbAntes.close(); }
+    t("baseline bruto e definição registrados", typeof configBrutaAntes === "string" && !!ruleSetId && !!definicaoAntes);
+
+    const dbTrigger = abrirDb(BANCO);
+    try {
+      dbTrigger.exec(`
+        CREATE TRIGGER teste_rollback_delete_poder
+        BEFORE DELETE ON rule_definitions
+        WHEN OLD.kind='poder' AND OLD.key='rollback_teste'
+        BEGIN
+          UPDATE rule_sets
+          SET config=json_set(config, '$.sangue.habilitado', 'invalido')
+          WHERE id=OLD.rule_set_id;
+        END;
+      `);
+    } finally { dbTrigger.close(); }
+
+    let falha;
+    try {
+      falha = await req(BASE, "DELETE", `/campaigns/${c.campId}/regras/elementos/${criado.json.id}`, {
+        cookie: c.cookieMestre,
+      });
+    } finally {
+      const dbCleanup = abrirDb(BANCO);
+      try { dbCleanup.exec("DROP TRIGGER IF EXISTS teste_rollback_delete_poder"); }
+      finally { dbCleanup.close(); }
+    }
+    t("config inválida injetada → DELETE falha", falha.status >= 500, `status=${falha.status} ${JSON.stringify(falha.json).slice(0, 180)}`);
+
+    const dbDepois = abrirDb(BANCO);
+    let configBrutaDepois;
+    let definicaoDepois;
+    try {
+      configBrutaDepois = dbDepois.prepare(
+        "select config from rule_sets where campaign_id=? and is_active=1",
+      ).get(c.campId)?.config;
+      definicaoDepois = dbDepois.prepare(
+        "select id,kind,key,definition from rule_definitions where id=?",
+      ).get(criado.json.id);
+    } finally { dbDepois.close(); }
+    t("rollback restaura JSON bruto byte a byte", configBrutaDepois === configBrutaAntes,
+      `antes=${configBrutaAntes} depois=${configBrutaDepois}`);
+    t("rollback restaura a definição Poder", JSON.stringify(definicaoDepois) === JSON.stringify(definicaoAntes),
+      JSON.stringify(definicaoDepois));
+    const cfgDepois = await getCfg(c.campId, c.cookieMestre);
+    t("Poder e custo continuam funcionais após rollback",
+      cfgDepois?.sangue?.poderes?.rollback_teste?.custo === 7,
+      JSON.stringify(cfgDepois?.sangue?.poderes));
+    const putPosterior = await putCfg(c.campId, c.cookieMestre, { mesa: { acaoForaDeTurno: false } });
+    t("PUT posterior segue funcional após rollback", putPosterior.status === 200, `status=${putPosterior.status}`);
+  }
+
   sec("8. PUT parcial preserva campos não enviados");
   {
     const antes = await getCfg(c.campId, c.cookieMestre);

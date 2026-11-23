@@ -25,7 +25,7 @@ import {
 } from "./regras.js";
 import { hpMaximo, CHAVE_HP, CHAVE_VITALIDADE } from "./vida.js";
 import {
-  CHAVE_XP, KINDS_COMPRAVEIS_XP, precoProximoNivel, vinculosElemento,
+  CHAVE_XP, KINDS_COMPRAVEIS_XP, excecaoCapacidadeSangueDe, precoProximoNivel, vinculosElemento,
 } from "./progressao.js";
 import { CHAVE_PONTOS } from "./pontos.js";
 import { CHAVE_NPC_VISIVEL } from "./npc-visibility.js";
@@ -382,7 +382,18 @@ function sanearXp(
         const { kind, key, campoId } = cp;
         const na = cp.nivelAnterior, nn = cp.nivelNovo, cx = num(cp.custoXp);
         if (typeof kind !== "string" || typeof key !== "string" || typeof campoId !== "string") continue;
-        if (!KINDS_COMPRAVEIS_XP.has(kind)) continue;
+        // Característica só é elegível na exceção estreita da capacidade
+        // de Sangue: kind/key/campoId precisam corresponder ao vínculo
+        // autoritativo do ruleset. Não liberar o kind genericamente.
+        const excCapacidade = estrutura
+          ? excecaoCapacidadeSangueDe(estrutura, ctx.regras.config.sangue)
+          : null;
+        const compraCapacidadeSangue =
+          excCapacidade !== null &&
+          kind === excCapacidade.kind &&
+          key === excCapacidade.key &&
+          campoId === excCapacidade.campoId;
+        if (!KINDS_COMPRAVEIS_XP.has(kind) && !compraCapacidadeSangue) continue;
         if (!Number.isInteger(na) || !Number.isInteger(nn) || cx === null) continue;
         const elemento = ctx.regras.elementos.get(`${kind}:${key}`);
         if (!elemento || elemento.definition.disponivel === false) continue;

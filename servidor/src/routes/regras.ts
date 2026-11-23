@@ -190,8 +190,73 @@ regrasRouter.delete("/elementos/:elementId", requirePapel("mestre"), async (req,
     res.status(404).json({ erro: "Elemento não encontrado" });
     return;
   }
-  await db.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id));
-  await audit(req, "regra.elemento.removido", { elementId: el.id, kind: el.kind, key: el.key });
+  // A configuração de custo pertence ao mesmo ruleset e usa a key do
+  // Poder. Ler e atualizar config DENTRO da mesma transação evita que
+  // uma atualização concorrente (ex.: moeda/mesa/outro Poder) seja
+  // sobrescrita por um snapshot carregado antes do DELETE.
+  const custoSangueRemovido = db.transaction((tx) => {
+    // Primeiro remove a definição dentro da transação. Um trigger/alteração
+    // concorrente que ajuste o ruleset antes da remoção já fica visível
+    // na releitura abaixo; qualquer falha ainda reverte as duas mudanças.
+    tx.delete(ruleDefinitions).where(eq(ruleDefinitions.id, el.id)).run();
+
+    const [rulesetTx] = tx
+      .select({ config: ruleSets.config })
+      .from(ruleSets)
+      .where(eq(ruleSets.id, el.ruleSetId))
+      .limit(1)
+      .all();
+    if (!rulesetTx) throw new Error("Ruleset não encontrado durante exclusão de elemento");
+
+    const configBrutaTx = (rulesetTx.config ?? {}) as Record<string, unknown>;
+    // Igual ao carregador: configurações importadas antigas podem trazer
+    // pontos:null. Validamos a representação normalizada, mas a gravação
+    // abaixo continua partindo do JSON bruto para preservar o formato legado
+    // e as chaves de extensões desconhecidas.
+    const configValidadaTx = configRegrasSchema.safeParse({
+      ...configBrutaTx,
+      pontos: configBrutaTx.pontos ?? {},
+    });
+    if (!configValidadaTx.success) {
+      throw new Error("Configuração inválida durante exclusão de elemento");
+    }
+    // Validamos o shape conhecido, mas preservamos o JSON bruto para não
+    // descartar chaves de extensões futuras/desconhecidas ao salvar.
+    const sangueBruto = configBrutaTx.sangue;
+    const sangueAtualTx =
+      sangueBruto && typeof sangueBruto === "object" && !Array.isArray(sangueBruto)
+        ? sangueBruto as Record<string, unknown>
+        : {};
+    const poderesBrutos = sangueAtualTx.poderes;
+    const poderesAtuaisTx =
+      poderesBrutos && typeof poderesBrutos === "object" && !Array.isArray(poderesBrutos)
+        ? { ...(poderesBrutos as Record<string, unknown>) }
+        : {};
+    const removeCusto =
+      el.kind === "poder" && Object.prototype.hasOwnProperty.call(poderesAtuaisTx, el.key);
+
+    if (removeCusto) {
+      delete poderesAtuaisTx[el.key];
+      tx.update(ruleSets)
+        .set({
+          config: {
+            ...configBrutaTx,
+            sangue: { ...sangueAtualTx, poderes: poderesAtuaisTx },
+          },
+          updatedAt: new Date(),
+        })
+        .where(eq(ruleSets.id, el.ruleSetId))
+        .run();
+    }
+
+    return removeCusto;
+  });
+  await audit(req, "regra.elemento.removido", {
+    elementId: el.id,
+    kind: el.kind,
+    key: el.key,
+    custoSangueRemovido: custoSangueRemovido,
+  });
   emitirCampanha(req.params.campaignId, "regras:atualizadas", { elementId: el.id });
   res.json({ ok: true });
 });

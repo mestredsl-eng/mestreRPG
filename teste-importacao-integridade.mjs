@@ -56,6 +56,7 @@ try {
       campos: [
         { id: "for", label: "FOR", tipo: "inteiro", semantico: "atributo" },
         { id: "tal", label: "Talento", tipo: "inteiro", custoProgressivo: [1, 1, 1], semantico: "talento", regra: { kind: "talento", key: "talx" } },
+        { id: "cap", label: "Capacidade de Sangue", tipo: "inteiro", custoProgressivo: [1], semantico: "livre", regra: { kind: "caracteristica", key: "cap_sangue" } },
       ],
     }],
     pontos: { habilitado: true, pontosIniciais: 10, pools: [], custos: {} },
@@ -64,9 +65,14 @@ try {
 
   // elemento real da biblioteca vinculado ao campo "tal" — a prova de
   // financiamento (B2) exige kind:key existente nas regras da campanha
-  const rsAtivo = dbw.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+  const rsAtivo = dbw.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+  const configRegras = JSON.parse(rsAtivo.config || "{}");
+  configRegras.sangue = { habilitado: true, campoCapacidadeId: "cap", capacidade: { modo: "valor" } };
+  dbw.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(configRegras), rsAtivo.id);
   dbw.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
     .run(randomUUID(), rsAtivo.id, "talento", "talx", "Talento X", "{}", Date.now(), Date.now());
+  dbw.prepare("insert into rule_definitions (id,rule_set_id,kind,key,name,definition,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+    .run(randomUUID(), rsAtivo.id, "caracteristica", "cap_sangue", "Capacidade de Sangue", "{}", Date.now(), Date.now());
 
   // arquivo da campanha (alvo legítimo de __retrato)
   const fileId = randomUUID();
@@ -232,6 +238,23 @@ try {
   });
   ids.xpCompraValida = inserirPersonagem("ATQ xp compra válida", {
     for: 5, tal: 3, __xp: { ...ledgerComprasTal },
+  });
+  // Exceção estreita #186: a compra de Característica financia apenas
+  // o campo configurado como capacidade de Sangue no mesmo ruleset.
+  ids.xpCompraCapacidadeSangue = inserirPersonagem("ATQ XP capacidade de Sangue", {
+    for: 5, tal: 3, cap: 1,
+    __xp: {
+      saldo: 9,
+      historico: [
+        evXp(10, 10),
+        evCompra("cap", 0, 1, 9, {
+          kind: "caracteristica",
+          key: "cap_sangue",
+          nome: "Capacidade de Sangue",
+        }),
+      ],
+      financiado: { cap: [0] },
+    },
   });
 
   // --- B1: âncora e cadeias longas ---
@@ -593,6 +616,12 @@ try {
   check(p?.data.__xp?.saldo === 7 && p.data.__xp.historico.length === 4, "substituir: compra legítima preservada");
   p = personagemOrig("ATQ fin ok");
   check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[0,1]", "substituir: financiado comprovado preservado");
+  p = personagemOrig("ATQ XP capacidade de Sangue");
+  check(
+    p?.data.__xp?.saldo === 9 &&
+      JSON.stringify(p?.data.__xp?.financiado?.cap) === "[0]",
+    "substituir: prova da Característica vinculada à capacidade de Sangue preservada",
+  );
   p = personagemOrig("ATQ fin legado");
   check(JSON.stringify(p?.data.__xp?.financiado?.tal) === "[1,2]", "substituir: legado→índices comprovados");
   p = personagemOrig("ATQ fin sem prova");
@@ -615,6 +644,7 @@ try {
   // consequência econômica no caminho confiável
   check(calcNa("ATQ fin ok", campId).pools[0]?.gastos === 1, "substituir: financiado [0,1] → só 2→3 custa");
   check(calcNa("ATQ fin legado", campId).pools[0]?.gastos === 1, "substituir: legado [1,2] → só 0→1 custa");
+  check(calcNa("ATQ XP capacidade de Sangue", campId).pools[0]?.gastos === 3, "substituir: capacidade financiada por XP não é cobrada novamente em pontos");
   check(calcNa("ATQ fin sem prova", campId).pools[0]?.gastos === 3, "substituir: sem prova → custo integral");
   check(calcNa("ATQ fin custo inventado", campId).pools[0]?.gastos === 3, "substituir: custo inventado → custo integral");
 
