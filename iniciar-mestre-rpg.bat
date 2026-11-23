@@ -126,15 +126,24 @@ echo.
 echo [ATENCAO] Esta instalacao parece ser um primeiro uso limpo.
 echo O Mestre RPG precisara criar um banco de dados novo.
 echo Confirme somente se esta e realmente uma instalacao nova.
+set "MESTRE_BOOT_TENTATIVAS=0"
 :perguntar_primeiro_bootstrap_novamente
 set "MESTRE_BOOT_RESPOSTA="
 ver >nul
 set /p "MESTRE_BOOT_RESPOSTA=Autorizar primeiro bootstrap? [S/N]: "
-if errorlevel 1 goto :bootstrap_eof
+if errorlevel 1 goto :bootstrap_entrada_vazia
 if /i "%MESTRE_BOOT_RESPOSTA%"=="S" goto :confirmar_primeiro_bootstrap
 if /i "%MESTRE_BOOT_RESPOSTA%"=="N" goto :recusar_primeiro_bootstrap
-if not defined MESTRE_BOOT_RESPOSTA goto :perguntar_primeiro_bootstrap_novamente
 echo [AVISO] Resposta invalida. Digite S ou N.
+goto :perguntar_primeiro_bootstrap_novamente
+
+:bootstrap_entrada_vazia
+rem set /p usa ERRORLEVEL 1 tanto para ENTER vazio quanto para EOF.
+rem Repetimos entradas vazias limitadamente: ENTER pode ser corrigido,
+rem EOF/entrada ausente termina fail-closed depois de tres tentativas.
+set /a MESTRE_BOOT_TENTATIVAS+=1
+if %MESTRE_BOOT_TENTATIVAS% GEQ 3 goto :bootstrap_eof
+echo [AVISO] Nenhuma resposta recebida. Digite S ou N.
 goto :perguntar_primeiro_bootstrap_novamente
 
 :confirmar_primeiro_bootstrap
