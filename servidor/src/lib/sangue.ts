@@ -308,12 +308,11 @@ function saldoDecimalComprovadoPeloHistorico(
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
     if (!Number.isFinite(proximoDecimal)) return null;
 
-    if (evento.tipo === "ajuste" && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
-      // Reconciliações históricas e ajustes manuais anteriores ao requestId
-      // têm a mesma forma no ledger: ajuste sem usoId. Não há prova suficiente
-      // para reaplicar o delta sobre um saldo decimal já reconstruído; o
-      // saldoResultante é o checkpoint durável e evita repetir uma redução
-      // antiga que já absorveu o resíduo binário.
+    if (evento.tipo === "ajuste" && evento.quantidade < 0 && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
+      // Reconciliações históricas reduzem o saldo e eram registradas como
+      // ajustes negativos sem usoId. O saldoResultante é o checkpoint durável
+      // que evita repetir uma redução antiga que já absorveu o resíduo binário.
+      // Créditos positivos sem usoId continuam reconstruídos pela soma decimal.
       saldoDecimal = evento.saldoResultante;
     } else if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
       // Uma recuperação no teto grava quantidade zero por idempotência e
