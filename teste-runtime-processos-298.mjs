@@ -393,7 +393,8 @@ async function main() {
         await new Promise((r) => setTimeout(r, 300));
       }
       ok("C7 exatamente uma inicialização vence a corrida", !!vencedor,
-        `A exit=${procA.exitCode} sig=${procA.signalCode} | B exit=${procB.exitCode} sig=${procB.signalCode}`);
+        `A exit=${procA.exitCode} sig=${procA.signalCode} | B exit=${procB.exitCode} sig=${procB.signalCode}` +
+        `\n--- logA ---\n${logsDe(procA).slice(-800)}\n--- logB ---\n${logsDe(procB).slice(-800)}`);
       if (vencedor) {
         perdedor = vencedor.nome === "A" ? procB : procA;
         const saidaPerdedor = await esperarSaida(perdedor, 15000);
