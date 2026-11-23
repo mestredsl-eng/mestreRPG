@@ -342,7 +342,7 @@ export async function listarBackups(): Promise<BackupInfo[]> {
   const todos = await db.select().from(backups);
   return todos
     .filter((b) => !b.campaignId) // somente backups completos do servidor
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
     .map((b) => ({
       id: b.id, kind: b.kind, filePath: b.filePath, sizeBytes: b.sizeBytes,
       note: b.note,
