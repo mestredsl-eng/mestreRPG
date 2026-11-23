@@ -4,6 +4,7 @@
 // ⇒ REVIEW, IMG amostrado, inline estrito, foco com alpha composto.
 import { chromium } from "playwright";
 import { avaliarWcag, avaliarFocoIndicador } from "./wcag-avaliador-297.mjs";
+import { auditarNomes } from "./nomes-acessiveis-297.mjs";
 
 let pass = 0, fail = 0;
 const t = (n, c, x = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, x); } };
@@ -152,6 +153,48 @@ sec("Indicador de foco — alpha e geometrias");
   // 17. Sem outline/sombra ⇒ REVIEW (possível borda/fundo — inspeção)
   r = await avaliar(`<main style="${FUNDO};padding:20px"><button id="f3" style="padding:8px 14px;color:#e8eaee;outline:none;box-shadow:none">Alvo</button></main>`, "f3");
   t("foco sem indicador mensurável ⇒ REVIEW", r.rev.length > 0 && r.viol.length === 0, JSON.stringify(r).slice(0, 240));
+}
+
+sec("Nomes acessíveis — type-aware HTML-AAM (#7107456243)");
+{
+  const nomes = async (html) => {
+    await page.setContent(`<!doctype html><html><body>${html}</body></html>`);
+    return page.evaluate(auditarNomes);
+  };
+  let n;
+  // select com texto de opções mas sem label/ARIA/title ⇒ SEM nome
+  // (option text é valor corrente, não nome acessível)
+  n = await nomes(`<main><select id="sel1"><option>Conta…</option><option>Entrada</option><option>Dinheiro em espécie</option></select></main>`);
+  t("select só com opções ⇒ sem nome", n.some((x) => x.includes("sel1")), JSON.stringify(n));
+
+  // select com aria-label ⇒ nome
+  n = await nomes(`<main><select id="sel2" aria-label="Conta de origem"><option>Conta…</option></select></main>`);
+  t("select com aria-label ⇒ nome", !n.some((x) => x.includes("sel2")), JSON.stringify(n));
+
+  // select com <label for> ⇒ nome
+  n = await nomes(`<main><label for="sel3">Tipo de conta</label><select id="sel3"><option>especie</option></select></main>`);
+  t("select com label associado ⇒ nome", !n.some((x) => x.includes("sel3")), JSON.stringify(n));
+
+  // input number preenchido sem nenhuma fonte ⇒ SEM nome
+  // (value é conteúdo do campo, não nome)
+  n = await nomes(`<main><input id="num1" type="number" value="1"></main>`);
+  t("input number com valor ⇒ sem nome", n.some((x) => x.includes("num1")), JSON.stringify(n));
+
+  // botão com texto interno ⇒ nome (texto interno é fonte válida)
+  n = await nomes(`<main><button id="bt9">Registrar</button></main>`);
+  t("button com texto ⇒ nome", !n.some((x) => x.includes("bt9")), JSON.stringify(n));
+
+  // input texto com placeholder ⇒ fallback HTML-AAM ⇒ nome
+  n = await nomes(`<main><input id="tx1" placeholder="Descrição"></main>`);
+  t("input com placeholder ⇒ nome (fallback)", !n.some((x) => x.includes("tx1")), JSON.stringify(n));
+
+  // input type=submit com value ⇒ o value É o rótulo ⇒ nome
+  n = await nomes(`<main><input id="sb1" type="submit" value="Enviar"></main>`);
+  t("input submit com value ⇒ nome", !n.some((x) => x.includes("sb1")), JSON.stringify(n));
+
+  // link com texto ⇒ nome
+  n = await nomes(`<main><a id="lk1" href="#">Detalhes</a></main>`);
+  t("link com texto ⇒ nome", !n.some((x) => x.includes("lk1")), JSON.stringify(n));
 }
 
 await browser.close();
