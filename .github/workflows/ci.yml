@@ -422,6 +422,7 @@ jobs:
             homologacao-sessoes.mjs
             teste-realtime-paginas.mjs
             homologacao-pacotes-forjados.mjs
+            teste-wcag-avaliador-297.mjs
             teste-a11y-fluxos-297.mjs
             homologacao-validacao-ficha.mjs
           )
