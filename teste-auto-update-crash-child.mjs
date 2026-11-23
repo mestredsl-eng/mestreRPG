@@ -1,6 +1,7 @@
 // Processo-filho de teste: simula encerramento abrupto imediatamente após
 // o fast-forward, antes de verificar HEAD/registrar a próxima fase.
 import { verificarAtualizacao, executarReal } from "./scripts/auto-update.mjs";
+import { writeSync } from "node:fs";
 import { gravarEstado, JOURNAL_UPDATE } from "./scripts/estado-externo.mjs";
 
 const repoDir = process.env.MESTRE_TEST_REPO;
@@ -13,8 +14,11 @@ await verificarAtualizacao({
   executar(cmd, args, opcoes) {
     const r = executarReal(cmd, args, opcoes);
     if (cmd === "git" && args[0] === "merge" && args[1] === "--ff-only" && r.code === 0) {
-      // SIGKILL/TerminateProcess: não executa finally nem cleanup.
-      process.kill(process.pid, "SIGKILL");
+      // Crash deliberado após o fast-forward: process.abort() termina o
+      // processo sem executar finally/cleanup em POSIX e Windows. O marcador
+      // síncrono permite ao pai provar que o crash ocorreu após o merge.
+      writeSync(1, "MESTRE_TEST_CRASH_AFTER_FAST_FORWARD\\n");
+      process.abort();
     }
     return r;
   },
