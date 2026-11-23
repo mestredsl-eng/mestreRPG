@@ -308,15 +308,20 @@ function saldoDecimalComprovadoPeloHistorico(
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
     if (!Number.isFinite(proximoDecimal)) return null;
 
-    if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
+    if (evento.tipo === "ajuste" && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
+      // Reconciliações históricas e ajustes manuais anteriores ao requestId
+      // têm a mesma forma no ledger: ajuste sem usoId. Não há prova suficiente
+      // para reaplicar o delta sobre um saldo decimal já reconstruído; o
+      // saldoResultante é o checkpoint durável e evita repetir uma redução
+      // antiga que já absorveu o resíduo binário.
+      saldoDecimal = evento.saldoResultante;
+    } else if (evento.tipo === "recuperacao" && evento.quantidade === 0) {
       // Uma recuperação no teto grava quantidade zero por idempotência e
       // auditoria. Ela confirma o mesmo saldo legado, mas não desfaz uma
       // correção decimal comprovada por eventos anteriores.
       saldoLegado = proximoLegado;
       continue;
-    }
-
-    if (evento.tipo === "recuperacao" && proximoDecimal !== evento.saldoResultante) {
+    } else if (evento.tipo === "recuperacao" && proximoDecimal !== evento.saldoResultante) {
       // Antes da aritmética decimal, créditos limitados pelo teto podiam
       // gravar um delta binário menor que o solicitado, embora o saldo
       // resultante fosse exatamente o teto. O uso durável guarda a
