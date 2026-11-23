@@ -61,22 +61,48 @@ A versão 0.8 é a versão que o dono está jogando e considera boa. Não recebe
 
 PRs independentes de auditoria visual, CSS/acessibilidade, convites, autorizações e HP manual em tokens não entram automaticamente. Só podem ser adicionadas após decisão explícita de escopo e avaliação de risco.
 
-## 4. Versão 1.1.0 — backlog futuro, não iniciado
+## 4. Versão 1.1.0 — pacote ampliado, planejado e ainda não iniciado
 
-**Tema:** progressão avançada de XP. Esta versão começa depois da estabilização/publicação da 1.0.9.
+**Tema:** progressão avançada, transparência da campanha em tempo real e acabamento visual/acessível. A 1.1.0 deixa de ser apenas duas melhorias de XP: passa a reunir cinco entregas de produto em três frentes coerentes.
 
-Escopo futuro proposto a partir da Issue #185:
+A implementação começa somente depois da estabilização/publicação da 1.0.9 e de autorização explícita para abrir o ciclo 1.1.0. Até lá, o trabalho permitido é especificação, revisão de requisitos, preparação de testes e organização das dependências.
 
-1. **Estorno auditado de compra de nível:** evento append-only, autor/motivo, idempotência e validação de pré-requisitos, tetos, exclusividades e níveis dependentes. Nunca simular estorno apagando histórico ou reduzindo saldo sem evento.
-2. **XP por sessão ou gancho narrativo:** definir critérios de presença/ausência, personagens participantes e aprovação explícita do mestre. Não conceder XP automaticamente antes de regra aprovada.
+### 4.1 Progressão XP — auditoria, sessão e extrato
 
-### Conflito a resolver antes de qualquer implementação
+1. **Estorno auditado de compra de nível — #185, item 1.** Evento de estorno append-only, autor, motivo, idempotência e validação de pré-requisitos, tetos, exclusividades e níveis dependentes. Nunca apagar compras ou reduzir saldo para simular reversão.
+2. **XP por sessão/gancho narrativo — #185, item 2.** Definir participantes e personagens com base em evidência persistida/snapshot explícito, não na presença atual de Socket.IO. O mestre recebe prévia, pode ajustar e confirma concessões; nenhuma concessão automática sem política aprovada.
+3. **Saldo-âncora do Extrato XP — nova Issue #284.** Quando o histórico estiver limitado às 500 movimentações mais recentes, mostrar o saldo anterior ao período e explicar que o extrato é uma janela retida. Preservar ledger, âncora, assinatura e regras de privacidade. Primeiro confirmar que a lacuna ainda existe na main; não duplicar correção já feita.
 
-A Issue #185 também menciona “concessão em lote” como melhoria futura. Porém, o backend #213 e a UI #277 já estão integrados à main; #215 foi supersedida e #217/#257/#258 foram merged.
+**Não reimplementar lote XP nem Extrato:** backend #213, UI #277 e cadeia #217/#257/#258 estão integrados. #215 foi supersedida e #282 corrigiu o build. Essas entregas só recebem regressão/manutenção, não uma segunda implementação.
 
-Portanto, **não criar uma segunda implementação de XP em lote para a 1.1.0**. Antes de mover qualquer requisito adicional, o Gerente Operacional deve comparar o texto da #185 com #213/#215 e registrar se existe requisito funcional realmente diferente. Até essa reconciliação, o item fica marcado como sobreposição, não como entrega aprovada da 1.1.0.
+### 4.2 Finalização visual e acessibilidade — Issue #132
 
-Nenhuma implementação da 1.1.0 está autorizada por este documento. A #185 permanece em especificação/backlog até a conclusão da 1.0.9 e aprovação do Dono Técnico.
+A fundação visual, catálogo de atmosferas, preferências de conta e recomendações locais opt-in já receberam etapas anteriores (#134, #158, #166, #212 e #218). A 1.1.0 deve concluir apenas as lacunas restantes, sem refazer a base:
+
+- **Ícones semânticos nas abas da campanha — #233 / PR #235.** Manter rótulos textuais, acessibilidade, permissões por papel e layout mobile.
+- **Estados vazios ilustrados — #236 / PR #238.** Diferenciar lista vazia de filtro sem resultados; nunca esconder o formulário de convite.
+- **Carregamento e erro recuperável — #239 / PR #246.** Feedback acessível nas listas, retry somente com GET seguro já existente, sem polling nem retry automático. A #246 já foi absorvida na branch da #238; consolidar a cadeia uma única vez.
+- **Gate de CI:** reconciliar as suítes da cadeia visual e provar execução real no Browser, sem SKIP silencioso ou CI de SHA antigo.
+
+A entrega desta frente é a integração e homologação da cadeia visual completa; não é uma autorização para reescrever páginas nem para alterar mecânicas.
+
+### 4.3 Estado de sincronização da campanha — Issue #285
+
+Exibir um indicador discreto de conexão e horário da última sincronização concluída. Reutilizar Socket.IO e GETs já existentes; atualizar o horário somente depois de uma recarga bem-sucedida. Mostrar desconexão/reconexão sem apagar conteúdo já carregado. Sem novo endpoint, sala, polling, timer recorrente ou persistência adicional. Preservar as regras de visibilidade de Diário, Arquivos, Fichas, Regras e Histórico.
+
+### 4.4 Fora do corte 1.1.0
+
+- **Mestre IA / Mundo Vivo (#180–#184):** permanece no planejamento futuro 2.0, sem puxar arquitetura de agente para a linha 1.x.
+- **Funcionalidades já entregues:** iniciativa d20, régua, retratos, Mestre Voice, lote/extrato XP já integrado e HP/Vitalidade nos tokens não devem ser reimplementados nesta versão.
+- Qualquer outra ideia nova deve virar Issue própria, com aceite e dependências, antes de entrar no corte.
+
+### Critério de conclusão da 1.1.0
+
+- As três frentes acima entregues na mesma árvore candidata, com migrations somente quando justificadas e compatibilidade retroativa.
+- Testes de domínio, autorização, privacidade, idempotência e regressão executados no SHA final.
+- CI Servidor + Navegador + Windows verde no SHA/merge-ref exato, sem SKIP indevido.
+- CHANGELOG e artefatos anunciam somente funcionalidades realmente integradas.
+- Nenhuma mudança na instalação estável 0.8/1.0.8.
 
 ## 5. Responsabilidades operacionais
 
@@ -98,9 +124,9 @@ A atribuição de uma responsabilidade não prova que uma sessão está ativa. C
 |---|---|---|
 | **Devin — Gerente Operacional** | Auditoria de todas as PRs/Issues abertas por release; manter #204/#274 e este documento coerentes; preparar inventário da distribuição 1.0.9 | Organização e inventário; sem alterar manifests antes da candidata final |
 | **Devin — Gerente de Execução** | Abrir e acompanhar sessões reais de PAI/FILHO/INTERMEDIÁRIO; monitorar #279/#280; encadear #265–#273 sem colisão | Registrar sessão real, branch, SHA, CI e bloqueio; não declarar sessões sem prova |
-| **PAI** | Auditoria DAG #176→#188→#189; Boot Lock/recuperação; preparação Linux #271; desenho técnico XP futuro em #185 | Não duplicar a execução W14 #265 nem W16 #266/#280 |
-| **FILHO** | Regressão UI #279; confirmar XP/extrato já integrado sem recriar #215/#217/#257/#258; UX do estorno/XP por sessão em #185 | 1.1.0 somente documentação; sem código até autorização |
-| **INTERMEDIÁRIO** | Revisão final #279 e #280; preparação Windows #270; matriz de upgrade #272; auditoria técnica da especificação #185 | Homologações finais aguardam as dependências de #189/W14/W16 |
+| **PAI** | Auditoria DAG #176→#188→#189; Boot Lock/recuperação; preparação Linux #271; especificação técnica de XP #185/#284 e contrato de sincronização #285 | Não duplicar a execução W14 #265 nem W16 #266/#280; 1.1.0 sem implementação antes da liberação |
+| **FILHO** | Regressão UI #279; confirmar XP/extrato já integrado sem recriar #215/#217/#257/#258; UX #185/#284; indicador realtime #285; cadeia visual #233/#236/#239 | 1.1.0 somente especificação/preparação até a estabilização da 1.0.9 e autorização |
+| **INTERMEDIÁRIO** | Revisão final #279 e #280; preparação Windows #270; matriz de upgrade #272; auditoria independente de #185/#284/#285 e da cadeia visual #233/#236/#239 | Homologações finais aguardam as dependências de #189/W14/W16; não validar 1.1.0 em SHA antigo |
 
 **Checkpoint consultado:** #279@`951a345` com CI natural 3/3 SUCCESS (run `45108119458`); #280@`a4e0230` com Server/Windows SUCCESS e Browser pendente (run `45109255431`); #189 OPEN/Draft e não mergeable contra main. #265 já tem execução em andamento e não deve ser duplicada. XP lote/extrato está integrado na main.
 
@@ -119,5 +145,7 @@ A atribuição de uma responsabilidade não prova que uma sessão está ativa. C
 
 - **0.8 / 1.0.8:** congelada; preservar.
 - **0.9 / 1.0.9:** #279 + atualização/recuperação #155/#265–#274. XP em lote/extrato (#213/#277/#217/#257/#258) já está integrado; não duplicar.
-- **1.1.0:** estorno auditado e XP por sessão/gancho narrativo; backlog futuro, sem implementação autorizada.
-- **XP em lote:** backend #213 já existe e sua UI está no plano da 1.0.9; reconciliar a menção antiga da #185 antes de qualquer trabalho adicional.
+- **1.1.0:** pacote ampliado com três frentes: **progressão XP** (estorno, XP por sessão/gancho e transparência da âncora do extrato — #185/#284); **finalização visual/acessível** (#132, tarefas #233/#236/#239); **indicador realtime de conexão/sincronização** (#285).
+- **1.1.0:** ainda não iniciada; somente especificação e organização até a 1.0.9 estabilizar e o dono liberar o início.
+- **Mestre IA / Mundo Vivo:** continua no roadmap 2.0 (#180–#184), fora da 1.1.0.
+- **Regra permanente:** nenhum item da 1.1.0 autoriza alteração na instalação estável 0.8/1.0.8.
