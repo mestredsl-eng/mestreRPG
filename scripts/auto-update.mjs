@@ -436,8 +436,20 @@ async function executarRollback(estado, opts = {}) {
   if (status.code !== 0 || String(status.stdout).trim() !== "") {
     return { ok: false, motivo: "arvore-suja-rollback-bloqueado" };
   }
+  const marcar = (fase) => {
+    if (typeof opts.gravarJournal !== "function") return true;
+    try {
+      return opts.gravarJournal({ ...estado, fase, atualizadoEm: new Date().toISOString() }) === true;
+    } catch {
+      return false;
+    }
+  };
+  if (!marcar("rollback-iniciado")) {
+    return { ok: false, motivo: "falha-journal-rollback" };
+  }
+
   const head = String(git(["rev-parse", "HEAD"], repoDir).stdout).trim();
-  if (head !== estado.shaNovo) {
+  if (head !== estado.shaNovo && head !== estado.shaAnterior) {
     return { ok: false, motivo: "head-diferente-do-pull", head };
   }
   const anc = git(["merge-base", "--is-ancestor", estado.shaAnterior, head], repoDir);
@@ -445,28 +457,55 @@ async function executarRollback(estado, opts = {}) {
     return { ok: false, motivo: "sha-anterior-nao-e-ancestral" };
   }
 
-  log(`[auto-update] Revertendo para ${estado.shaAnterior.slice(0, 12)}...`);
-  const reset = git(["reset", "--hard", estado.shaAnterior], repoDir);
-  if (reset.code !== 0) {
-    return { ok: false, motivo: "falha-reset-rollback" };
+  if (head === estado.shaNovo) {
+    log(`[auto-update] Revertendo para ${estado.shaAnterior.slice(0, 12)}...`);
+    if (!marcar("rollback-reset-iniciado")) {
+      return { ok: false, motivo: "falha-journal-rollback-reset" };
+    }
+    const reset = git(["reset", "--hard", estado.shaAnterior], repoDir);
+    if (reset.code !== 0) {
+      return { ok: false, motivo: "falha-reset-rollback" };
+    }
+  } else {
+    // Um crash pode acontecer depois do reset e antes do rebuild/cleanup.
+    // HEAD já está no SHA anterior; repetimos deps/builds sem reset adicional.
+    log("[auto-update] HEAD ja esta no SHA anterior; retomando deps/builds do rollback...");
+  }
+  if (!marcar("rollback-codigo-restaurado")) {
+    return { ok: false, motivo: "falha-journal-codigo-restaurado", revertido: true };
   }
 
   // Restaura dependencias e artefatos compilados da versao anterior.
-  // O site/dist e ignorado pelo Git: um build da versao nova pode ter
-  // deixado arquivos parciais/mais recentes. O .bat compara timestamps
-  // de site/src e dist e nao conhece vite.config.ts; portanto nao podemos
-  // declarar rollback concluido sem reconstruir explicitamente ambos os
-  // workspaces ja no codigo restaurado.
+  // O site/dist e ignorado pelo Git, portanto sempre recompilamos ambos
+  // os workspaces antes de declarar a recuperacao concluida.
   if (estado.depsMudaram) {
+    if (!marcar("rollback-dependencias-iniciado")) {
+      return { ok: false, motivo: "falha-journal-dependencias", revertido: true };
+    }
     if (!npmCi(opts, executar, repoDir, log)) {
       return { ok: false, motivo: "npm-ci-pos-rollback-falhou", revertido: true };
     }
+    if (!marcar("rollback-dependencias-concluido")) {
+      return { ok: false, motivo: "falha-journal-dependencias-concluidas", revertido: true };
+    }
+  }
+  if (!marcar("rollback-build-servidor-iniciado")) {
+    return { ok: false, motivo: "falha-journal-build-servidor", revertido: true };
   }
   if (!buildServidor(opts, executar, repoDir, log)) {
     return { ok: false, motivo: "build-servidor-pos-rollback-falhou", revertido: true };
   }
+  if (!marcar("rollback-build-servidor-concluido")) {
+    return { ok: false, motivo: "falha-journal-build-servidor-concluido", revertido: true };
+  }
+  if (!marcar("rollback-build-site-iniciado")) {
+    return { ok: false, motivo: "falha-journal-build-site", revertido: true };
+  }
   if (!buildSite(opts, executar, repoDir, log, true)) {
     return { ok: false, motivo: "build-site-pos-rollback-falhou", revertido: true };
+  }
+  if (!marcar("rollback-concluido")) {
+    return { ok: false, motivo: "falha-journal-rollback-concluido", revertido: true };
   }
   if (opts.stateFile) { try { rmSync(opts.stateFile, { force: true }); } catch { /* ok */ } }
   return { ok: true, shaAnterior: estado.shaAnterior };
