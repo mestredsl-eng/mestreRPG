@@ -20,6 +20,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  gravarEstado as gravarEstadoExterno,
+  lerJournal as lerJournalExterno,
+  removerEstado,
+  JOURNAL_UPDATE,
+} from "./estado-externo.mjs";
 
 export const REPO_OFICIAL = "https://github.com/mestredsl-eng/mestreRPG";
 
@@ -284,6 +290,21 @@ function gravarEstado(arquivo, dados) {
 
 function lerEstado(arquivo) {
   try { return JSON.parse(readFileSync(arquivo, "utf8")); } catch { return null; }
+}
+
+function gravarJournalDuravel(repoDir, dados, env = process.env) {
+  return gravarEstadoExterno(repoDir, JOURNAL_UPDATE, {
+    ...dados,
+    atualizadoEm: new Date().toISOString(),
+  }, env);
+}
+
+function lerJournalDuravel(repoDir, env = process.env) {
+  return lerJournalExterno(repoDir, JOURNAL_UPDATE, env);
+}
+
+function limparJournalDuravel(repoDir, env = process.env) {
+  removerEstado(repoDir, JOURNAL_UPDATE, env);
 }
 
 /** npm ci — sem fallback indiscriminado: falha e reportada. */
