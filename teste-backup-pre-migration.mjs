@@ -160,11 +160,12 @@ try {
     // timestamp. O Drizzle aplica a última migration mesmo assim; logo
     // o preflight precisa criar backup antes de invocar o migrator.
     const db = new Database(c.env.MESTRE_BANCO);
-    let watermark: number | undefined;
     try {
-      const ultima = db.prepare("select created_at from __drizzle_migrations order by created_at desc limit 1").get() as { created_at: number } | undefined;
-      watermark = ultima?.created_at;
-      if (watermark === undefined) throw new Error("watermark não encontrado na fixture");
+      const ultima = db.prepare("select created_at from __drizzle_migrations order by created_at desc limit 1").get();
+      const watermark = ultima?.created_at;
+      if (typeof watermark !== "number" || !Number.isFinite(watermark)) {
+        throw new Error("watermark não encontrado ou inválido na fixture");
+      }
       db.prepare("insert into __drizzle_migrations (hash, created_at) values (?, ?)").run("fixture-duplicata-antiga", watermark);
     } finally { db.close(); }
 
