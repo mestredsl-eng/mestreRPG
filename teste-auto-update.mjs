@@ -460,6 +460,36 @@ try {
     t("GIT_DIR/WORK_TREE/INDEX_FILE/CONFIG herdados são ignorados", r.code === 0 && raizRetornada === esperada, `code=${r.code} retorno=${raizRetornada} esperado=${esperada}`);
   }
 
+  sec("Extra — instalação sem .git e sem journal pode iniciar sem auto-update");
+  {
+    const dir = join(RAIZ, "instalacao-zip-sem-git");
+    mkdirSync(dir, { recursive: true });
+    const envEstado = { ...process.env, MESTRE_STATE_DIR: join(dir, "state") };
+    const rb = await recuperarAtualizacaoPendente({ cwd: dir, envEstado, executar: execReal, log: silencioso });
+    t("ZIP sem .git e sem journal não bloqueia o primeiro boot",
+      rb.ok && rb.recuperado === false && rb.motivo === "sem-journal", JSON.stringify(rb));
+  }
+
+  sec("Extra — journal não pode falhar em silêncio antes do fast-forward");
+  {
+    const c = criarRepo("journal-write-fail");
+    publicar(c, "nao-aplicar-sem-journal");
+    const shaAnterior = head(c.local);
+    let merges = 0;
+    const exec = (cmd, args, opcoes = {}) => {
+      if (cmd === "git" && args[0] === "merge") merges++;
+      return executarReal(cmd, args, opcoes);
+    };
+    const r = await verificarAtualizacao({
+      ...opcoesRepo(c), executar: exec, log: silencioso,
+      registrarPullAntes: () => false,
+    });
+    t("journal recusado antes do fast-forward → atualização não aplicada",
+      r.atualizou === false && r.motivo === "falha-registro-journal", JSON.stringify(r));
+    t("nenhum merge foi executado e HEAD não mudou", merges === 0 && head(c.local) === shaAnterior,
+      `merges=${merges} head=${head(c.local)} anterior=${shaAnterior}`);
+  }
+
   sec("Extra — recuperação manual pelo arquivo de estado");
   {
     const c = criarRepo("c22-state-recovery");
