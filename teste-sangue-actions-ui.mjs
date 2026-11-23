@@ -498,15 +498,16 @@ try {
     }
     t("UI. corrida de ficha: primeiro débito gravado no personagem de origem", saldoDe(CHARM) === 3);
     // Dois "Voltar" coexistem na tela (cabeçalho da campanha + detalhe
-    // do personagem) — mirar o do detalhe da ficha aberta.
-    const secs = await page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) }).evaluateAll((els) => els.map((e) => ({
-      h2: [...e.querySelectorAll("h2")].map((h) => h.textContent).join("|"),
-      voltar: e.querySelectorAll('button').length,
-      html: e.outerHTML.slice(0, 300),
-    })));
-    console.log("DEBUG secs:", JSON.stringify(secs, null, 1));
-    await page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) })
-      .getByRole("button", { name: "Voltar", exact: true }).click();
+    // do personagem) — mirar o do detalhe da ficha aberta. Na janela do
+    // ACK tardio a ficha pode remontar e duplicar o cabeçalho por um
+    // instante; aguardar exatamente um "Voltar" do detalhe antes de
+    // clicar (falha continua ruidosa se a ambiguidade persistir).
+    const voltarDetalhe = page.locator("section.cartao", { has: page.locator("h2", { hasText: "Ficha do Mestre" }) })
+      .getByRole("button", { name: "Voltar", exact: true });
+    for (let i = 0; i < 50 && (await voltarDetalhe.count()) !== 1; i++) {
+      await page.waitForTimeout(100);
+    }
+    await voltarDetalhe.click();
     const outraFicha = page.locator("tr.clicavel", { hasText: "Herói Ações" }).first();
     await outraFicha.waitFor({ state: "visible", timeout: 15000 });
     await outraFicha.click();
