@@ -37,6 +37,7 @@ on:
       - feat/issue-132-reduced-motion
       - feat/issue-132-icones-abas
       - feat/issue-185-xp-lote
+      - feat/issue-185-xp-historico-ui
       - ci/issue-186-sangue-hmac-v2-tests
       - feat/issue-155-startup-auto-update
       - fix/issue-155-status-hardening
@@ -420,3 +421,7 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-xp-historico-ui.mjs ====="
+          node teste-xp-historico-ui.mjs

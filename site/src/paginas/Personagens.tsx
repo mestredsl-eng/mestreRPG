@@ -4,6 +4,7 @@ import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import ExtratoXp from "../ExtratoXp";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
@@ -623,6 +624,12 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           dono — montar o componente dispararia consultas 403 desnecessárias. */}
       {(souMestre || personagem.ehEu === true) && (
         <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      )}
+
+      {/* Extrato de XP: somente mestre/dono — mesmo recorte do backend
+          (GET /progressao). Leitor de NPC revelado não é dono e não vê. */}
+      {(souMestre || personagem.ehEu === true) && (
+        <ExtratoXp characterId={personagem.id} />
       )}
     </>
   );
