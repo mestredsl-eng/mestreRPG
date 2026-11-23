@@ -380,6 +380,40 @@ sec("W14 — nenhuma falha de leitura retorna sucesso silencioso");
 }
 {
   const raiz = novoRaiz();
+  // W14 cenário (c) da PR #192 / Issue #265: `server_settings` existe como
+  // VIEW quebrada — o nome está em sqlite_master (type='view'), mas a
+  // consulta falha de verdade por referenciar tabela inexistente. O
+  // detector não pode classificar isso como "nada a restaurar".
+  const dbFx = abrirDb(dbVivo(raiz));
+  dbFx.exec("create table marcador (value text)");
+  dbFx.prepare("insert into marcador values ('intocado')").run();
+  dbFx.exec("create view server_settings as select value from __tabela_inexistente__");
+  dbFx.close();
+  // prova de não-vacuidade: a view existe e seu SELECT realmente quebra
+  {
+    const chk = abrirDb(dbVivo(raiz));
+    let consultaFalhou = false;
+    try { chk.prepare("select value from server_settings").get(); } catch { consultaFalhou = true; }
+    chk.close();
+    t("W14-view: fixture — server_settings é view e SELECT quebra", consultaFalhou);
+  }
+  const r = rodar(raiz);
+  t("server_settings como view quebrada → FAIL-CLOSED (exit != 0)", r.code !== 0, `code=${r.code} ${r.saida.slice(0, 200)}`);
+  t("motivo: estado desconhecido", /desconhecido|segurança/i.test(r.saida), r.saida.slice(0, 250));
+  // sentinelas de que migration e servidor NÃO iniciaram: o restaurador
+  // sai != 0 e o orquestrador (iniciar-mestre-rpg.bat) aborta antes de
+  // `db:migrate`; o banco não pode ganhar __drizzle_migrations nem journal.
+  {
+    const chk = abrirDb(dbVivo(raiz));
+    const mig = chk.prepare("select name from sqlite_master where name='__drizzle_migrations'").get();
+    chk.close();
+    t("W14-view: migration não rodou (sem __drizzle_migrations)", !mig);
+  }
+  t("W14-view: nenhum journal/estado externo criado", !existsSync(journalPath(raiz)));
+  rmSync(raiz, { recursive: true, force: true });
+}
+{
+  const raiz = novoRaiz();
   let dbVivoAberto = null;
   let liberarGuardaWAL = null;
   try {
