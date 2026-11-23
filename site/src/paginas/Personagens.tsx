@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
+import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type MetadadoPoder, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
@@ -38,6 +38,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  const [metadadosPoderes, setMetadadosPoderes] = useState<MetadadoPoder[]>([]);
   const [verArquivados, setVerArquivados] = useState(false);
   const [xpLoteAberto, setXpLoteAberto] = useState(false);
   const [busca, setBusca] = useState("");
@@ -58,10 +59,12 @@ export default function Personagens({ campaignId, campanha }: Props) {
     }
     // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
     try {
-      const { elementos } = await api.obterVinculaveis(campaignId);
+      const { elementos, metadadosPoderes: poderes } = await api.obterVinculaveis(campaignId);
       setBiblioteca(elementos);
+      setMetadadosPoderes(poderes ?? []);
     } catch {
       setBiblioteca(null);
+      setMetadadosPoderes([]);
     }
   }, [campaignId, verArquivados]);
 
@@ -112,6 +115,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
         detalhe={selecionado}
         souMestre={souMestre}
         biblioteca={biblioteca}
+        metadadosPoderes={metadadosPoderes}
         campaignId={campaignId}
         aoVoltar={async () => {
           // Invalida qualquer GET de atualização iniciado pela ficha que
@@ -319,10 +323,11 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
   return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
+function PersonagemDetalheView({ detalhe, souMestre, biblioteca, metadadosPoderes, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
   biblioteca: Record<string, ElementoVinculavel[]> | null;
+  metadadosPoderes: MetadadoPoder[];
   campaignId: string;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
@@ -639,6 +644,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             somenteLeitura={!editando}
             aoMudar={editando ? aoMudar : undefined}
             biblioteca={biblioteca ?? undefined}
+            metadadosPoderes={metadadosPoderes}
             personagemId={personagem.id}
             pontosInicial={ficha?.pontos}
             poderesCfg={ficha?.poderes ?? null}

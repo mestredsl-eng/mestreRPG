@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type MetadadoPoder, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
 import PainelSangue from "./PainelSangue";
@@ -18,6 +18,8 @@ interface Props {
   aoMudar?: (campoId: string, valor: unknown) => void;
   /** Biblioteca de regras da campanha (Etapa 5): campos com regraKind usam estas opções. */
   biblioteca?: Record<string, ElementoVinculavel[]>;
+  /** Regra D10 por Poder, incluindo entradas inativas na biblioteca. */
+  metadadosPoderes?: MetadadoPoder[];
   /** Personagem dono da ficha — habilita a prévia de pontos em tempo real (sem salvar). */
   personagemId?: string;
   /** Saldo de pontos já calculado pelo servidor para os dados atuais. */
@@ -57,7 +59,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder, campaignId, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, metadadosPoderes = [], personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
@@ -192,7 +194,10 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       const nivel = typeof bruto === "number" ? bruto : typeof bruto === "string" ? Number(bruto) : 0;
       chaves = Number.isFinite(nivel) && nivel > 0 ? [regra.key] : [];
     }
-    chaves = chaves.filter((key) => (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true);
+    chaves = chaves.filter((key) =>
+      metadadosPoderes.find((e) => e.key === key)?.exigeTeste !== true
+      && (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true
+    );
     if (chaves.length === 0) return null;
     return (
       <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>

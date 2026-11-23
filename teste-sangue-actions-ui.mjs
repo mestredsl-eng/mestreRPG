@@ -89,6 +89,14 @@ function saldoDe(charId) {
     return JSON.parse(row.data || "{}").__sangue?.saldo ?? null;
   } finally { w.close(); }
 }
+function definicaoPoder(campId, key) {
+  const w = db();
+  try {
+    const rs = w.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const row = w.prepare("select definition from rule_definitions where rule_set_id=? and kind='poder' and key=?").get(rs.id, key);
+    return JSON.parse(row?.definition || "{}");
+  } finally { w.close(); }
+}
 function nomeDe(charId) {
   const w = db();
   try {
@@ -159,6 +167,7 @@ try {
   });
   // Poderes para a prova de nível fracionário: todos existem na
   // biblioteca — só o filtro de nível (finito > 0) separa os válidos.
+  let idPoderD10 = null;
   for (const [key, name] of [
     ["poder_frac", "Poder Fracionado"],
     ["poder_zero", "Poder Zero"],
@@ -172,10 +181,22 @@ try {
     ["poder_saus", "Poder Escalar Ausente"],
     ["poder_d10", "Poder de Teste"],
   ]) {
-    await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
+    const criado = await req(BASE, "POST", `/campaigns/${CID}/regras/elementos`, {
       cookie: M, body: { kind: "poder", key, name, definition: { disponivel: true, ...(key === "poder_d10" ? { exigeTeste: true } : {}) } },
     });
+    if (key === "poder_d10") idPoderD10 = criado.json?.id;
   }
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { exigeTeste: false } },
+  });
+  t("regra D10: PATCH persiste false ao desmarcar", definicaoPoder(CID, "poder_d10").exigeTeste === false);
+  await req(BASE, "PATCH", `/campaigns/${CID}/regras/elementos/${idPoderD10}`, {
+    cookie: M, body: { definition: { exigeTeste: true, disponivel: false } },
+  });
+  const vinculaveis = await req(BASE, "GET", `/campaigns/${CID}/regras/vinculaveis`, { cookie: J1 });
+  const metaD10 = vinculaveis.json?.metadadosPoderes?.find((p) => p.key === "poder_d10");
+  t("vinculáveis: Poder D10 inativo não é opção de aquisição", !(vinculaveis.json?.elementos?.poder ?? []).some((p) => p.key === "poder_d10"));
+  t("vinculáveis: metadado D10 do Poder inativo permanece", metaD10?.exigeTeste === true);
   const mod = await req(BASE, "POST", `/campaigns/${CID}/sheet-templates`, { cookie: M, body: { name: "Ficha Ações" } });
   const tid = mod.json.modelo.id, vid = mod.json.modelo.versionId;
   const estrutura = {
@@ -355,6 +376,16 @@ try {
       JSON.stringify({ ack: ackRecuperarNat, saldo: saldoDe(CHAR) }),
     );
     setOverrideCampo(CHAR, "nat", null);
+    const saldoAntesD10 = saldoDe(CHAR);
+    const ackD10Narrativo = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_d10", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO: Poder que exige D10 não aceita ativação narrativa direta",
+      ackD10Narrativo?.ok === false && ackD10Narrativo?.codigo === "poder_exige_teste"
+        && saldoDe(CHAR) === saldoAntesD10,
+      JSON.stringify({ ack: ackD10Narrativo, saldoAntes: saldoAntesD10, saldoDepois: saldoDe(CHAR) }),
+    );
     await ctx.close();
   }
 

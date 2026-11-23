@@ -570,7 +570,11 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
   }
   const out: Record<string, { key: string; name: string; category: string | null; descricao?: string; exigeTeste?: boolean }[]> = {};
   for (const [k, v] of porKind) out[k] = v.sort((a, b) => a.name.localeCompare(b.name));
-  res.json({ kinds: TIPOS_REGRA, elementos: out });
+  const metadadosPoderes = (regras.porKind.get("poder") ?? []).map((el) => ({
+    key: el.key,
+    exigeTeste: el.definition.exigeTeste === true,
+  }));
+  res.json({ kinds: TIPOS_REGRA, elementos: out, metadadosPoderes });
 });
 
 

@@ -417,10 +417,17 @@ function socketSangue(io: SocketIOServer) {
         if (!capacidadeSangueVisivelNaAcao(c2, papelTx, ehDonoTx, config)) {
           return { ok: false as const, codigo: "capacidade_indisponivel" };
         }
-        const poderesValidos = new Set((regras.porKind.get("poder") ?? []).map((e) => e.key));
-        if (!poderesValidos.has(poderKey)) {
+        const elementosPoder = regras.porKind.get("poder") ?? [];
+        const definicaoPoder = elementosPoder.find((e) => e.key === poderKey);
+        if (!definicaoPoder) {
           return { ok: false as const, codigo: "poder_desconhecido" };
         }
+        // Regra da campanha é autoridade do servidor: não aceitar chamada
+        // direta de sangue:ativar para Poder que só pode ser cobrado no D10.
+        if (definicaoPoder.definition.exigeTeste === true) {
+          return { ok: false as const, codigo: "poder_exige_teste" };
+        }
+        const poderesValidos = new Set(elementosPoder.map((e) => e.key));
         // O Poder precisa existir no ruleset E estar na ficha atual
         // do personagem (revalidado aqui, dentro da tx).
         const possui = extrairEscolhas(c2.estrutura, dados, regras).some(

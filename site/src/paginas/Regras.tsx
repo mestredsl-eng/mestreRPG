@@ -1283,7 +1283,7 @@ function ModalElemento({
         limitacoes,
         obrigatorios: listaKeys(form.obrigatorios),
         niveis: niveis.length ? niveis : undefined,
-        exigeTeste: form.kind === "poder" && form.exigeTeste ? true : undefined,
+        exigeTeste: form.kind === "poder" ? form.exigeTeste : undefined,
         disponivel: form.disponivel,
       },
     });

@@ -379,7 +379,11 @@ export const api = {
   validarFichaRegras: (cid: string, characterId: string) =>
     requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
   obterVinculaveis: (cid: string) =>
-    requisicao<{ kinds: string[]; elementos: Record<string, ElementoVinculavel[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
+    requisicao<{
+      kinds: string[];
+      elementos: Record<string, ElementoVinculavel[]>;
+      metadadosPoderes?: MetadadoPoder[];
+    }>(`/campaigns/${cid}/regras/vinculaveis`),
   /** Simulador da prévia do editor — mesmo pipeline da ficha real, sem gravar nada. */
   simularFicha: (cid: string, dados: { estrutura: EstruturaFicha; dados: Record<string, unknown>; pontosFicticios?: number }) =>
     requisicao<SimulacaoResultado>(`/campaigns/${cid}/regras/simulacao`, { method: "POST", body: JSON.stringify(dados) }),
@@ -942,6 +946,12 @@ export interface ElementoVinculavel {
   maximo?: number;
   /** true = uso exige D10; ausente/false = preserva ativação narrativa. */
   exigeTeste?: boolean;
+}
+
+/** Metadados de regra dos Poderes, inclusive os inativos na biblioteca. */
+export interface MetadadoPoder {
+  key: string;
+  exigeTeste: boolean;
 }
 
 export interface ResultadoValidacaoRegras {
