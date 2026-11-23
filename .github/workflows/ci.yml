@@ -424,6 +424,7 @@ jobs:
             homologacao-pacotes-forjados.mjs
             teste-wcag-avaliador-297.mjs
             teste-a11y-fluxos-297.mjs
+            homologacao-desafio-ficha.mjs
             homologacao-validacao-ficha.mjs
           )
           falhas=()

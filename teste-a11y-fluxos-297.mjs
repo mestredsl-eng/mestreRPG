@@ -103,6 +103,34 @@ async function checarFoco(page, rotulo) {
   else tc(`${rotulo}: indicador de foco AA`, true);
 }
 
+// Tab-order ampla (#274 despacho FILHO): Tab real deve parar apenas em
+// controles visíveis e nomeados — foco em controle sem nome visível é
+// falha de teclado+SC 4.1.2. Não compara ordem absoluta (layout
+// responsivo muda a sequência legítima entre viewports).
+async function checarTabOrder(page, rotulo, paradas = 14) {
+  const ruins = [];
+  let n = 0;
+  for (let i = 0; i < paradas; i++) {
+    await page.keyboard.press("Tab");
+    const info = await page.evaluate(() => {
+      const el = document.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return null;
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      const vis = r.width > 0 && r.height > 0 && cs.visibility !== "hidden" && cs.display !== "none";
+      const nome = (el.getAttribute("aria-label") || el.getAttribute("aria-labelledby")
+        || el.getAttribute("placeholder") || el.getAttribute("title")
+        || (el.tagName === "SELECT" ? "" : el.textContent) || "").trim().slice(0, 50);
+      return { tag: el.tagName.toLowerCase(), nome, vis };
+    });
+    if (!info) continue;
+    n++;
+    if (!info.vis || !info.nome) ruins.push(`${info.tag}:'${info.nome}'`);
+  }
+  t(`${rotulo}: Tab para em controles visíveis e nomeados`, n > 0 && ruins.length === 0,
+    ruins.length ? ruins.slice(0, 3).join(" | ") : `paradas=${n}`);
+}
+
 // semNome com escopo de elemento (formulário específico).
 async function semNomeEscopo(page, locator) {
   const h = await locator.elementHandle().catch(() => null);
@@ -178,6 +206,10 @@ async function checarTela(page, rotulo) {
   const sn = await semNome(page);
   t(`${rotulo}: controles com nome acessível`, sn.semNome.length === 0, sn.semNome.slice(0, 3).join(" | "));
   t(`${rotulo}: sem conflito aria-hidden em controle visível`, sn.conflitos.length === 0, sn.conflitos.slice(0, 3).join(" | "));
+  // Live regions (#274 despacho FILHO): o app monta .notificacoes-viewport
+  // com aria-live="polite" em toda tela — anúncios de status/erro dependem dela.
+  const liveRegions = await page.locator("[aria-live]").count();
+  t(`${rotulo}: região aria-live presente`, liveRegions > 0, `aria-live=${liveRegions}`);
   await checarWcag(page, rotulo).catch((e) => {
     tc(`${rotulo}: contraste AA`, "review", "avaliador falhou: " + String(e?.message ?? e).slice(0, 120));
     ta(`${rotulo}: alvos ≥24px`, "review", "avaliador falhou: " + String(e?.message ?? e).slice(0, 120));
@@ -206,6 +238,44 @@ try {
       if (ok) contasCriadas.push(name);
     }
   } else t("fixture: personagemMestre presente p/ contas", false);
+
+  // Fixture popover (#274 despacho FILHO): a ficha padrão do cenário é
+  // mínima (só FOR) — AjudaPopover só renderiza com descricao de
+  // elemento/opção da biblioteca. Criamos template+personagem com campo
+  // selecao_multipla ligado a regraKind "item" (seed tem descrições).
+  let popPersonagem = null;
+  if (cenario.campId) {
+    // Biblioteca opt-in: sem seed, opcoesBiblioteca fica vazia e o
+    // AjudaPopover nunca renderiza (o.d vem das descrições do seed).
+    await req(BASE, "POST", `/campaigns/${cenario.campId}/regras/seed`, {
+      cookie: cenario.cookieMestre, body: {},
+    });
+    const mod = await req(BASE, "POST", `/campaigns/${cenario.campId}/sheet-templates`, {
+      cookie: cenario.cookieMestre, body: { name: "Ficha A11y Ajuda" },
+    });
+    const tid = mod.json?.modelo?.id, vid = mod.json?.modelo?.versionId;
+    const estrutura = {
+      versao: 1,
+      secoes: [{ id: "s1", titulo: "Equipamento", ordem: 0, campos: [
+        { id: "f-itens", label: "Itens", tipo: "selecao_multipla", regraKind: "item" },
+      ] }],
+      pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} },
+    };
+    const put = await req(BASE, "PUT", `/campaigns/${cenario.campId}/sheet-templates/${tid}/versions/${vid}`, {
+      cookie: cenario.cookieMestre, body: { estrutura },
+    });
+    const pub = await req(BASE, "POST", `/campaigns/${cenario.campId}/sheet-templates/${tid}/publish`, {
+      cookie: cenario.cookieMestre, body: { versionId: vid },
+    });
+    const pj = await req(BASE, "POST", `/campaigns/${cenario.campId}/characters`, {
+      cookie: cenario.cookieMestre, body: { name: "A11y Ajuda Pop", templateVersionId: vid },
+    });
+    popPersonagem = pj.json?.personagem?.id ?? pj.json?.id ?? null;
+    t("fixture: template+personagem p/ popover de ajuda",
+      !!(tid && put.status < 300 && pub.status < 300 && popPersonagem),
+      `put=${put.status} pub=${pub.status} char=${!!popPersonagem}`);
+  } else t("fixture: campId presente p/ popover", false);
+
   browser = await chromium.launch();
 
   // ---------- Matriz viewport × fluxo (mestre) ----------
@@ -233,7 +303,9 @@ try {
     // Ficha: abrir personagem → detalhe (leitura) + patrimônio (regressão)
     await aba(page, "Personagens");
     await page.waitForTimeout(500);
-    const linha = page.locator("tr.clicavel").first();
+    // Personagem com contas financeiras (Mestre Herói) — o fixture de
+    // popover "A11y Ajuda Pop" não tem contas e quebraria Dinheiro.
+    const linha = page.locator("tr.clicavel", { hasText: "Mestre Herói" }).first();
     if (await linha.count()) {
       await linha.click();
       await page.waitForTimeout(500);
@@ -321,6 +393,11 @@ try {
     await page.keyboard.press("Tab");
     await page.waitForTimeout(150);
     await checarFoco(page, "campanha");
+    // Tab-order ampla (#274 despacho FILHO): paradas reais nomeadas/visíveis
+    for (let i = 0; i < 3; i++) await page.keyboard.press("Tab");
+    await checarTabOrder(page, "campanha");
+    // volta o foco ao topo para não contaminar zoom/modal seguintes
+    await page.evaluate(() => document.activeElement?.blur?.());
 
     // Zoom 200%
     await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
@@ -378,6 +455,42 @@ try {
       await login(page, "mestre_teste", "senha-forte-123");
       t("re-login restaura sessão", await page.getByText("Servidor online").isVisible());
     } else t("botão Sair presente", false);
+
+    // Popover de ajuda (AjudaPopover, #274 despacho FILHO): abre via
+    // botão nomeado, popover role=dialog com aria-label, Esc fecha.
+    if (popPersonagem) {
+      await irCampanha(page);
+      await page.waitForSelector(".abas", { timeout: 10000 });
+      await aba(page, "Personagens");
+      await page.waitForTimeout(600);
+      const linhaPop = page.locator("tr", { hasText: "A11y Ajuda Pop" }).first();
+      if (await linhaPop.count()) {
+        await linhaPop.click();
+        await page.waitForTimeout(800);
+        const btnEditar = page.getByRole("button", { name: "Editar ficha", exact: true });
+        if (await btnEditar.count()) {
+          await btnEditar.first().click();
+          await page.waitForTimeout(1200);
+          const btnAjuda = page.locator(".ajuda-botao").first();
+          t("popover: botão de ajuda presente na ficha", await btnAjuda.count() > 0);
+          if (await btnAjuda.count()) {
+            await btnAjuda.click();
+            const pop = page.locator(".ajuda-popover[role='dialog']").first();
+            await pop.waitFor({ timeout: 3000 }).catch(() => {});
+            t("popover: abre com role=dialog", await pop.count() > 0);
+            t("popover: nomeado por aria-label",
+              (await pop.getAttribute("aria-label") ?? "").trim().length > 0);
+            const exp = await btnAjuda.getAttribute("aria-expanded");
+            t("popover: aria-expanded=true ao abrir", exp === "true", `aria-expanded=${exp}`);
+            await page.keyboard.press("Escape");
+            await page.waitForTimeout(300);
+            t("popover: Esc fecha", (await page.locator(".ajuda-popover").count()) === 0);
+          }
+          const btnCancelar = page.getByRole("button", { name: "Cancelar", exact: true });
+          if (await btnCancelar.count()) { await btnCancelar.first().click(); await page.waitForTimeout(300); }
+        } else t("popover: botão Editar ficha presente", false);
+      } else t("popover: personagem fixture visível na lista", false);
+    } else t("popover: fixture de personagem presente", false);
     await ctx.close();
   }
 
