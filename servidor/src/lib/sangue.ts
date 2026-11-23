@@ -144,6 +144,21 @@ export function compararDecimalSangue(a: number, b: number): -1 | 0 | 1 | null {
   return ia < ib ? -1 : ia > ib ? 1 : 0;
 }
 
+/** Compara a+b com um limite sem converter a soma intermediária para Number. */
+function compararSomaDecimalSangue(a: number, b: number, limite: number): -1 | 0 | 1 | null {
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(limite)) return null;
+  const da = decomporDecimalSangue(a);
+  const db = decomporDecimalSangue(b);
+  const dl = decomporDecimalSangue(limite);
+  if (!da || !db || !dl) return null;
+  const [ia, ib, escalaSoma] = alinharDecimaisSangue(da, db);
+  const [soma, teto] = alinharDecimaisSangue(
+    { coeficiente: ia + ib, escala: escalaSoma },
+    dl,
+  );
+  return soma < teto ? -1 : soma > teto ? 1 : 0;
+}
+
 // ---------- Tipos ----------
 
 export type TipoEventoSangue = "inicial" | "uso" | "recuperacao" | "ajuste";
@@ -280,6 +295,7 @@ function saldoDecimalComprovadoPeloHistorico(
   saldoArmazenado: number,
   historico: EventoSangue[],
   ancora: number | undefined,
+  usos: Record<string, UsoSangue>,
 ): number | null {
   if (historico.length === 0) return null;
   let saldoLegado = ancora ?? 0;
@@ -291,9 +307,35 @@ function saldoDecimalComprovadoPeloHistorico(
     }
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
     if (!Number.isFinite(proximoDecimal)) return null;
+
+    if (evento.tipo === "recuperacao" && proximoDecimal !== evento.saldoResultante) {
+      // Antes da aritmética decimal, créditos limitados pelo teto podiam
+      // gravar um delta binário menor que o solicitado, embora o saldo
+      // resultante fosse exatamente o teto. O uso durável guarda a
+      // quantidade pedida; quando ela excede o delta aplicado, o snapshot
+      // saldoResultante é a única fronteira inequívoca da cadeia antiga.
+      const uso = evento.usoId ? usos[evento.usoId] : undefined;
+      if (!uso || uso.tipo !== "recuperacao" || typeof uso.quantidade !== "number" || evento.quantidade <= 0) {
+        return null; // sem prova do delta limitado: preservar saldo armazenado
+      }
+      const solicitadoVsAplicado = compararDecimalSangue(uso.quantidade, evento.quantidade);
+      if (solicitadoVsAplicado === null || solicitadoVsAplicado < 0) return null;
+      if (solicitadoVsAplicado > 0) {
+        const saldoResultanteValido = compararDecimalSangue(evento.saldoResultante, saldoLegado);
+        if (saldoResultanteValido === null || saldoResultanteValido < 0) return null;
+        saldoDecimal = evento.saldoResultante;
+      } else {
+        // Crédito integral comprovado: a quantidade pedida coincide com o
+        // delta durável, então a correção decimal normal continua segura.
+        saldoDecimal = proximoDecimal;
+      }
+    } else {
+      saldoDecimal = proximoDecimal;
+    }
     saldoLegado = proximoLegado;
-    saldoDecimal = proximoDecimal;
   }
+  const saldoNaoNegativo = compararDecimalSangue(saldoDecimal, 0);
+  if (saldoNaoNegativo === null || saldoNaoNegativo < 0) return null;
   return saldoLegado === saldoArmazenado ? saldoDecimal : null;
 }
 
@@ -342,6 +384,7 @@ export function lerSangue(dados: Record<string, unknown>): {
     saldo,
     historico,
     ancora !== null && ancora !== undefined && ancora >= 0 ? ancora : undefined,
+    usos,
   );
   return {
     estado: {
@@ -480,17 +523,33 @@ function registrarOperacao(
   // de histórico deve registrar quantidade neutra, não negativa-zero.
   let delta = params.delta === 0 ? 0 : params.delta;
   if (delta > 0 && typeof params.capacidadeMax === "number" && Number.isFinite(params.capacidadeMax)) {
-    const espacoBruto = subtrairDecimalSangue(params.capacidadeMax, estado.saldo);
-    const sinalEspaco = compararDecimalSangue(espacoBruto, 0);
-    if (sinalEspaco === null) {
-      return { ok: false, codigo: "quantidade_invalida", motivo: "espaço de capacidade não representável" };
-    }
-    const espaco = sinalEspaco > 0 ? espacoBruto : 0;
-    const excedeEspaco = compararDecimalSangue(delta, espaco);
-    if (excedeEspaco === null) {
+    // Compare saldo + crédito com o teto em coeficiente/escala. Não
+    // converta o espaço restante para Number antes de saber que haverá
+    // clamp: um espaço não representável não invalida um crédito integral
+    // que produz saldo final válido abaixo do teto.
+    const acimaDoTeto = compararSomaDecimalSangue(estado.saldo, delta, params.capacidadeMax);
+    if (acimaDoTeto === null) {
       return { ok: false, codigo: "quantidade_invalida", motivo: "comparação de capacidade não representável" };
     }
-    if (excedeEspaco > 0) delta = espaco;
+    if (acimaDoTeto > 0) {
+      const saldoVsTeto = compararDecimalSangue(estado.saldo, params.capacidadeMax);
+      if (saldoVsTeto === null) {
+        return { ok: false, codigo: "quantidade_invalida", motivo: "comparação do saldo com a capacidade não representável" };
+      }
+      if (saldoVsTeto >= 0) {
+        delta = 0;
+      } else {
+        // Só materializa a diferença quando ela será o delta efetivamente
+        // creditado. Se essa quantidade não puder ser representada sem
+        // perda, falha sem consumir o requestId.
+        const espacoEfetivo = subtrairDecimalSangue(params.capacidadeMax, estado.saldo);
+        const espacoPositivo = compararDecimalSangue(espacoEfetivo, 0);
+        if (!Number.isFinite(espacoEfetivo) || espacoPositivo === null || espacoPositivo <= 0) {
+          return { ok: false, codigo: "quantidade_invalida", motivo: "espaço de clamp não representável" };
+        }
+        delta = espacoEfetivo;
+      }
+    }
   }
   if (delta < 0) {
     const excedeSaldo = compararDecimalSangue(-delta, estado.saldo);
