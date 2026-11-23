@@ -192,6 +192,9 @@ jobs:
       - name: Testes do auto-update e execução real de npm.cmd
         run: node teste-auto-update.mjs
 
+      - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
+        run: node teste-bat-node-gate.mjs
+
   navegador:
     name: Navegador — homologações Playwright
     runs-on: ubuntu-latest
