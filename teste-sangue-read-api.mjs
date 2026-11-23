@@ -144,6 +144,7 @@ try {
         { id: "f-cap", label: "Capacidade", tipo: "inteiro" },
         { id: "f-cap-soma", label: "Cap Soma", tipo: "selecao_nivel" },
         { id: "f-cap-mapa", label: "Cap Mapa", tipo: "selecao_unica" },
+        { id: "f-qual", label: "Qualidade bônus", tipo: "inteiro" },
         { id: "f-nat", label: "Natureza", tipo: "selecao_unica" },
       ],
     }],
@@ -155,7 +156,7 @@ try {
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
     cookie: J1,
-    body: { name: "Lobisomem", templateVersionId: vid, data: { "f-cap": 8, "f-nat": "humano", "f-cap-soma": [{ key: "a", nivel: 2 }, { key: "b", nivel: 3 }], "f-cap-mapa": "Medio" } },
+    body: { name: "Lobisomem", templateVersionId: vid, data: { "f-cap": 8, "f-qual": 2, "f-nat": "humano", "f-cap-soma": [{ key: "a", nivel: 2 }, { key: "b", nivel: 3 }], "f-cap-mapa": "Medio" } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   t("personagem criado", !!CHAR, JSON.stringify(pj.json).slice(0, 160));
@@ -257,6 +258,31 @@ try {
       JSON.stringify(capDonoMestre.json),
     );
     setVisibilidadeCampo(vid, "f-cap", "todos");
+
+    // O bônus de Qualidade também é fonte da capacidade e precisa da
+    // mesma visibilidade efetiva do campo-base.
+    setVisibilidadeCampo(vid, "f-qual", "mestre");
+    setSangueConfig(CID, {
+      ...CFG_BASE,
+      capacidade: { bonusQualidade: { campoId: "f-qual", coeficiente: 1, modo: "valor" } },
+    });
+    const bonusPrivado = await getSangue(CHAR, J1);
+    t(
+      "dono não recebe saldo/capacidade quando o bônus de Qualidade é privado",
+      bonusPrivado.json?.estado === "capacidade_indisponivel" &&
+        bonusPrivado.json?.saldo === null &&
+        bonusPrivado.json?.capacidadeMax === null &&
+        bonusPrivado.json?.utilizavel === false,
+      JSON.stringify(bonusPrivado.json),
+    );
+    const mestreBonusPrivado = await getSangue(CHAR, M);
+    t(
+      "mestre continua vendo capacidade com bônus de Qualidade privado",
+      mestreBonusPrivado.json?.estado === "ok" && mestreBonusPrivado.json?.capacidadeMax === 10,
+      JSON.stringify(mestreBonusPrivado.json),
+    );
+    setSangueConfig(CID, CFG_BASE);
+    setVisibilidadeCampo(vid, "f-qual", "todos");
 
     // Natureza privada não pode ser inferida pelo rótulo nem pela ação
     // contextual de recuperação; capacidade independente continua legível.
