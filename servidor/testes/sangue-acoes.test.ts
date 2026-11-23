@@ -250,6 +250,25 @@ describe("recuperarSangue", () => {
     assert.ok(r.estado.usos[`recuperar:${REQ1}`]);
   });
 
+  it("capacidade não resolvida → recusa sem registrar recuperação", () => {
+    const dados = dadosCom(5);
+    const antes = JSON.stringify(dados);
+    const r = recuperarSangue(dados, {
+      ...paramsBase,
+      config: { ...CONFIG, campoCapacidadeId: "campo_inexistente" },
+      capacidadeMax: null,
+    });
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.equal(r.codigo, "capacidade_indisponivel");
+    assert.equal(JSON.stringify(dados), antes, "saldo e ledger permanecem intactos");
+  });
+
+  it("capacidade real prevalece sobre dica de teto divergente do chamador", () => {
+    const r = recuperarSangue(dadosCom(9), { ...paramsBase, capacidadeMax: 999 });
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.estado.saldo, 10);
+  });
+
   it("Vampiro → alimentar", () => {
     const r = recuperarSangue(
       { ...dadosCom(5), nat: "Vampiro" },
@@ -323,11 +342,7 @@ describe("recuperarSangue", () => {
     }
   });
 
-  it("recuperação no teto não excede capacidadeMax", () => {
-    const r = recuperarSangue(dadosCom(9), { ...paramsBase, capacidadeMax: 10 });
-    assert.equal(r.ok, true);
-    if (r.ok) assert.equal(r.estado.saldo, 10); // +2 limitado a +1
-  });
+
 
   it("replay do mesmo requestId não credita de novo", () => {
     let dados = dadosCom(5);

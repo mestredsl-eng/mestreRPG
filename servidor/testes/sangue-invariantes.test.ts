@@ -266,11 +266,14 @@ describe("invariantes — sequências combinadas", () => {
 
   it("truncamento de histórico e âncora estáveis em sequência longa", () => {
     let d = dados(500);
-    // 600 recuperações com requestIds únicos — saldo limitado por capacidadeMax=510? não: sem teto → saldo cresce; usar teto para forçar delta 0? Melhor: sem capacidadeMax, saldo sobe livre; histórico trunca em 500.
+    // A capacidade é autoritativa e vem da ficha vinculada. Declaramos
+    // um teto alto para isolar o comportamento de truncamento/âncora,
+    // sem depender de recuperação ilimitada nem de um teto implícito.
+    const fichaAltaCapacidade = ficha("Humano", 5000);
     for (let i = 1; i <= MAX_HISTORICO_SANGUE + 100; i++) {
       const r = recuperarSangue(d, {
         ...AUTOR, requestId: rid(1000 + i), estrutura: EST,
-        dadosFicha: ficha("Humano"), config: CONFIG,
+        dadosFicha: fichaAltaCapacidade, config: CONFIG,
       });
       assert.equal(r.ok, true, `passo ${i}`);
       if (r.ok) d = r.dados;
@@ -280,13 +283,14 @@ describe("invariantes — sequências combinadas", () => {
     if (!lido.ok) return;
     invariantes(lido.estado);
     assert.equal(lido.estado.historico.length, MAX_HISTORICO_SANGUE);
-    // âncora presente e consistente: saldoResultante do 1º evento - quantidade = saldo anterior à janela
+    // âncora = saldo anterior ao primeiro evento retido (evento 101).
     const primeiro = lido.estado.historico[0];
     assert.ok(primeiro);
     assert.equal(typeof primeiro.saldoResultante, "number");
-    // saldo final coerente: 500 + 2*(600) = 1700
+    assert.equal(lido.estado.ancora, 700);
+    // saldo final coerente: 500 + 2*(600) = 1700.
     assert.equal(lido.estado.saldo, 500 + 2 * (MAX_HISTORICO_SANGUE + 100));
-    // todos os usos preservados (nunca truncados)
+    // Todos os usos permanecem disponíveis para idempotência, fora do cap visual.
     assert.equal(Object.keys(lido.estado.usos).length, MAX_HISTORICO_SANGUE + 100);
   });
 });
