@@ -173,6 +173,7 @@ try {
     secoes: [{
       id: "s1", titulo: "Sangue", ordem: 0, campos: [
         { id: "cap", label: "Capacidade", tipo: "inteiro", semantico: "atributo", minimo: 1, maximo: 30 },
+        { id: "qual", label: "Qualidade bônus", tipo: "inteiro", semantico: "atributo", minimo: 0, maximo: 10 },
         { id: "nat", label: "Natureza", tipo: "selecao_unica", semantico: "livre", opcoes: ["Humano", "Vampiro"] },
         { id: "poderes", label: "Poderes", tipo: "selecao_nivel", semantico: "poder", regraKind: "poder" },
         // Campos escalares vinculados a Poder via campo.regra — o
@@ -194,7 +195,7 @@ try {
   setPoderesLimite(CID, 10);
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, {
-    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
+    cookie: J1, body: { name: "Herói Ações", templateVersionId: vid, data: { cap: 10, qual: 2, nat: "Humano", poderes: [{ key: "poder_fogo", nivel: 2 }] } },
   });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
   setSangue(CHAR, { saldo: 5, capacidade: 10, usos: {}, historico: [] });
@@ -347,6 +348,39 @@ try {
     );
 
     setOverrideCampo(CHAR, "cap", null);
+
+    // Mesmo com o campo-base visível, um bônus de Qualidade privado
+    // também compõe a capacidade e bloqueia ACKs que conteriam saldo.
+    setVisibilidadeCampo(vid, "cap", "todos");
+    setVisibilidadeCampo(vid, "qual", "mestre");
+    setSangueConfig(CID, {
+      ...CFG,
+      capacidade: {
+        ...CFG.capacidade,
+        bonusQualidade: { campoId: "qual", coeficiente: 1, modo: "valor" },
+      },
+    });
+    const ackAtivarBonus = await emitirAckSangue(page, "sangue:ativar", {
+      characterId: CHAR, poderKey: "poder_fogo", requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. ativar recusa bônus de Qualidade privado sem saldo",
+      ackAtivarBonus?.ok === false && ackAtivarBonus?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackAtivarBonus) && !("saldo" in ackAtivarBonus) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackAtivarBonus, saldo: saldoDe(CHAR) }),
+    );
+    const ackRecuperarBonus = await emitirAckSangue(page, "sangue:recuperar", {
+      characterId: CHAR, requestId: crypto.randomUUID(),
+    });
+    t(
+      "Socket.IO. recuperar recusa bônus de Qualidade privado sem mutar ledger",
+      ackRecuperarBonus?.ok === false && ackRecuperarBonus?.codigo === "capacidade_indisponivel"
+        && !("estado" in ackRecuperarBonus) && !("saldo" in ackRecuperarBonus) && saldoDe(CHAR) === 5,
+      JSON.stringify({ ack: ackRecuperarBonus, saldo: saldoDe(CHAR) }),
+    );
+    setSangueConfig(CID, CFG);
+    setVisibilidadeCampo(vid, "qual", "todos");
+
     setOverrideCampo(CHAR, "nat", { visibilidade: "selecionados", destinatarios: [] });
     const ackRecuperarNat = await emitirAckSangue(page, "sangue:recuperar", {
       characterId: CHAR, requestId: crypto.randomUUID(),
