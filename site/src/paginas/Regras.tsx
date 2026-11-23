@@ -1180,6 +1180,7 @@ function ModalElemento({
     obrigatorios: (def.obrigatorios ?? []).join(", "),
     niveis: (def.niveis ?? []).map((n) => ({ descricao: n.descricao ?? "", custo: n.custo?.toString() ?? "" })),
     disponivel: def.disponivel !== false,
+    exigeTeste: def.exigeTeste === true,
   });
   const [erroForm, setErroForm] = useState<string | null>(null);
 
@@ -1282,6 +1283,7 @@ function ModalElemento({
         limitacoes,
         obrigatorios: listaKeys(form.obrigatorios),
         niveis: niveis.length ? niveis : undefined,
+        exigeTeste: form.kind === "poder" && form.exigeTeste ? true : undefined,
         disponivel: form.disponivel,
       },
     });
@@ -1350,6 +1352,13 @@ function ModalElemento({
               <button type="button" className="mini" onClick={() => setForm({ ...form, niveis: [...form.niveis, { descricao: "", custo: "" }] })}>+ Nível</button>
             )}
           </div>
+          {form.kind === "poder" && (
+            <label className="checkbox">
+              <input type="checkbox" checked={form.exigeTeste} onChange={(e) => setForm({ ...form, exigeTeste: e.target.checked })} />
+              Exige teste D10
+              <small className="meta">Marque apenas quando o uso deste Poder precisar de rolagem. Desmarcado (padrão), ele pode ser ativado narrativamente na ficha.</small>
+            </label>
+          )}
           <label className="checkbox">
             <input type="checkbox" checked={form.disponivel} onChange={(e) => setForm({ ...form, disponivel: e.target.checked })} />
             Disponível na campanha
