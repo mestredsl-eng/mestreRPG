@@ -87,6 +87,29 @@ sec("SC 1.4.11 — select: cue ambíguo (diagnóstico #7106946553)");
   t("select sem affordance/legibilidade ⇒ FAIL determinístico", temViol(r, "s2") && !temRev(r, "s2"), JSON.stringify(r.naoTexto).slice(0, 300));
 }
 
+sec("SC 1.4.11 — input number: stepper nativo (#7110981908)");
+{
+  let r;
+  // n1. Input number appearance:auto COM valor: stepper nativo do UA
+  // renderizado (pseudo-elemento medido) ⇒ REVIEW — nunca FAIL/PASS
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><input id="n1" type="number" value="1" aria-label="Quantidade" style="border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:6px;width:80px"></main>`);
+  t("input number c/ stepper + valor ⇒ REVIEW", temRev(r, "n1") && !temViol(r, "n1") && r.naoTexto.rev.join(" ").includes("stepper"), JSON.stringify(r.naoTexto).slice(0, 300));
+
+  // n2. MESMO input VAZIO: o valor some, mas o stepper persiste ⇒ REVIEW
+  // (a classificação não depende do estado do valor)
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><input id="n2" type="number" aria-label="Quantidade" style="border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:6px;width:80px"></main>`);
+  t("input number vazio c/ stepper ⇒ REVIEW", temRev(r, "n2") && !temViol(r, "n2") && r.naoTexto.rev.join(" ").includes("stepper"), JSON.stringify(r.naoTexto).slice(0, 300));
+
+  // n3. appearance:none ⇒ stepper suprimido ⇒ sem affordance ⇒ FAIL
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><input id="n3" type="number" value="1" aria-label="Quantidade" style="appearance:none;-webkit-appearance:none;border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:6px;width:80px"></main>`);
+  t("input number appearance:none ⇒ FAIL determinístico", temViol(r, "n3") && !temRev(r, "n3"), JSON.stringify(r.naoTexto).slice(0, 300));
+
+  // n4. Composição de toolbar equivalente ao PainelPontosMestre
+  // (select + input number + botão Aplicar): stepper ⇒ REVIEW
+  r = await avaliar(`<main style="${FUNDO};padding:20px"><div style="display:flex;gap:6px;align-items:center"><select id="sx1" aria-label="Ação" style="border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:4px"><option>Conceder</option></select><input id="n4" type="number" value="1" aria-label="Quantidade" style="border:1px solid #2c3038;background:#1c2026;color:#e8eaee;padding:6px;width:70px"><button id="ap1" style="padding:6px 12px;color:#e8eaee;background:#2a2f38;border:1px solid #3a4150">Aplicar</button></div></main>`);
+  t("input number em toolbar contextual ⇒ REVIEW (stepper)", temRev(r, "n4") && !temViol(r, "n4"), JSON.stringify(r.naoTexto).slice(0, 300));
+}
+
 sec("SC 1.4.11 — IMG e SVG como identificadores");
 {
   let r;

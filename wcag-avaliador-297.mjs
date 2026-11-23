@@ -248,6 +248,24 @@ function avaliarWcag() {
     if (nativa) partes.push("affordance nativa do UA não mensurável via DOM");
     return `select: ${partes.join(" + ")} — cue identifica valor, não propósito (associação ambígua)`;
   };
+  // Input[type=number]: sob appearance nativa (auto/vazio) o UA pinta
+  // o stepper (setas de incremento) — affordance perceptível porém não
+  // mensurável via DOM (pseudo-elementos reportam display/opacity
+  // estáticos em qualquer appearance, verificado). Evidência concreta:
+  // o appearance computado do próprio controle. appearance suppressor
+  // (none/textfield/searchfield/button) ⇒ sem stepper ⇒ null ⇒ FAIL se
+  // não houver contexto. Não depende do valor: persiste no estado vazio.
+  const cueStepper = (el) => {
+    if (el.tagName.toLowerCase() !== "input") return null;
+    const tipo = (el.getAttribute("type") || "text").toLowerCase();
+    if (tipo !== "number") return null;
+    const cs = getComputedStyle(el);
+    const ap = `${cs.appearance || ""} ${cs.webkitAppearance || ""}`.toLowerCase();
+    const achado = ap.match(/menulist-button|menulist|base-select|searchfield|textfield|button|none|auto/);
+    const rotulo = achado ? achado[0] : "auto";
+    if (["none", "textfield", "searchfield", "button"].includes(rotulo)) return null;
+    return `input number: appearance=${rotulo} ⇒ stepper nativo do UA renderizado — affordance perceptível não mensurável via DOM`;
+  };
 
   for (const el of todos) {
     if (!ehControle(el) || desabilitado(el)) continue;
@@ -287,9 +305,9 @@ function avaliarWcag() {
     if ((fillRatio !== null && fillRatio >= 3) || (bordaRatio !== null && bordaRatio >= 3)) continue; // PASS
     // Nenhum indicador atinge 3:1 — fronteira é o identificador necessário?
     const ev = `preenchimento×externo=${fmt(fillRatio)} borda×externo=${fmt(bordaRatio)} req=3`;
-    const cueSel = cueSelect(el);
-    if (cueSel) {
-      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; ${cueSel})`);
+    const cueAmb = cueSelect(el) || cueStepper(el);
+    if (cueAmb) {
+      out.naoTexto.rev.push(`${sel(el)} fronteira ambígua (${ev}; ${cueAmb})`);
       continue;
     }
     const ctx = temContexto(el);
