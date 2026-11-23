@@ -399,6 +399,13 @@ try {
           copyFileSync(SCRIPT, join(dir, "scripts", "boot-lock.mjs"));
         }
       }
+      // Esta suíte mede Boot Lock + caminho pós-autorização (auto-update,
+      // falha de npm e exclusão mútua). O gate P10-C real é homologado
+      // separadamente por teste-bat-primeiro-bootstrap.mjs; aqui o preflight
+      // fixture representa uma instalação conhecida/autorizada para que os
+      // cenários alcancem o updater sem duplicar esse escopo.
+      writeFileSync(join(dir, "scripts", "avaliar-boot.mjs"),
+        'if ((process.argv[2] ?? "preflight") !== "preflight") process.exit(1);\\nprocess.exit(0);\\n');
       // auto-update stub: grava marcador e dorme (segura o lock p/ teste de corrida)
       writeFileSync(join(dir, "scripts", "auto-update.mjs"),
         `import { appendFileSync } from "node:fs";\n` +
