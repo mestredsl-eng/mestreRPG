@@ -418,25 +418,33 @@ try {
   });
   const stF3 = upF3.status;
   derruba("f3_anx");
-  const fileRowF3 = wf.prepare("select id, storage_name from files where campaign_id=? order by created_at desc limit 1").get(campId);
+  const fileRowsF3 = conta("select count(*) n from files where campaign_id=? and file_name='f3.txt'", campId);
   const anxF3 = conta("select count(*) n from note_attachments where note_id=?", noteF3);
-  const fisicoF3 = fileRowF3 ? existsSync(join(arquivos, campId, fileRowF3.storage_name)) : false;
-  t("F3: falha no vínculo à anotação → API responde erro (não 201)", stF3 !== 201, `status=${stF3}`);
-  t("F3 observado: files+arquivo físico órfãos sem note_attachments (defeito documentado)",
-    !!fileRowF3 && anxF3 === 0 && fisicoF3,
-    `file=${fileRowF3?.id} anx=${anxF3} fisico=${fisicoF3}`);
-  // caminho feliz após remover o trigger: novo upload vincula corretamente
+  const fisicosF3 = existsSync(join(arquivos, campId))
+    ? readdirSync(join(arquivos, campId)).filter((nome) => nome !== ".lixeira")
+    : [];
+  t("F3 corrigido: falha no vínculo à anotação → API responde erro controlado", stF3 >= 400, `status=${stF3}`);
+  t("F3 corrigido: transação reverte a linha files e note_attachments",
+    fileRowsF3 === 0 && anxF3 === 0, `files=${fileRowsF3} anexos=${anxF3}`);
+  t("F3 corrigido: arquivo físico criado pela tentativa falha foi removido",
+    fisicosF3.length === 0, `arquivos=${JSON.stringify(fisicosF3)}`);
+  // caminho feliz: metadados, arquivo físico e vínculo devem existir juntos.
   const upOk = await fetch(`${base}/api/campaigns/${campId}/arquivos/upload`, {
     method: "POST",
     headers: { cookie: cookieMestre, "x-file-name": "f3-ok.txt", "x-note-id": noteF3, "content-type": "application/octet-stream" },
     body: Buffer.from("conteudo feliz"),
   });
-  t("F3 caminho feliz pós-trigger: upload vinculado → 201", upOk.status === 201, `status=${upOk.status}`);
-  // limpeza dos órfãos F3 (files row + físico)
-  if (fileRowF3) {
-    wf.prepare("delete from files where id=?").run(fileRowF3.id);
-    try { rmSync(join(arquivos, campId, fileRowF3.storage_name), { force: true }); } catch { }
-  }
+  const rowOkF3 = wf.prepare("select id, storage_name from files where campaign_id=? and file_name='f3-ok.txt'").get(campId);
+  const attachmentOkF3 = rowOkF3
+    ? conta("select count(*) n from note_attachments where note_id=? and file_id=?", noteF3, rowOkF3.id)
+    : 0;
+  const physicalOkF3 = rowOkF3
+    ? existsSync(join(arquivos, campId, rowOkF3.storage_name))
+    : false;
+  t("F3 controle positivo: upload vinculado retorna 201", upOk.status === 201, `status=${upOk.status}`);
+  t("F3 controle positivo: files + note_attachments + arquivo físico existem juntos",
+    !!rowOkF3 && attachmentOkF3 === 1 && physicalOkF3,
+    `row=${!!rowOkF3} attachments=${attachmentOkF3} physical=${physicalOkF3}`);
   wf.close();
 
   // ---- F6: regressão de autorização cross-campaign em sheet-templates ----
