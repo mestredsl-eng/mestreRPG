@@ -365,15 +365,74 @@ try {
     t("UI. ação aparece junto ao Poder narrativo já escolhido", await usar.count() === 1);
     t("UI. Poder marcado para D10 não recebe botão narrativo",
       await page.getByRole("button", { name: "Usar Poder de Teste sem rolagem" }).count() === 0);
+
+    // Força a rota de fallback usada por browsers em HTTP via IP:
+    // randomUUID indisponível, getRandomValues continua funcional.
+    await page.evaluate(() => {
+      Object.defineProperty(window.crypto, "randomUUID", { configurable: true, value: undefined });
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.__narrativeAttempts = [];
+      s.__dropNextNarrativeAck = 1;
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object") {
+          s.__narrativeAttempts.push(payload.requestId);
+          if (s.__dropNextNarrativeAck > 0) {
+            s.__dropNextNarrativeAck--;
+            localStorage.setItem("__testeNarrativaRequestId", payload.requestId);
+            // Encaminha ao servidor e engole apenas o ACK: simula commit
+            // confirmado no DB com resposta perdida na rede.
+            return original(ev, payload, () => undefined);
+          }
+        }
+        return original(ev, payload, cb);
+      };
+    });
+
+    // 1ª tentativa: o servidor debita (5→3), mas o cliente não recebe ACK.
     await usar.click();
+    for (let i = 0; i < 80 && saldoDe(CHAR) !== 3; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const primeiroId = await page.evaluate(() => localStorage.getItem("__testeNarrativaRequestId"));
+    t("UI. HTTP fallback: gera UUID v4 sem randomUUID", /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(primeiroId ?? ""));
+    t("UI. ACK perdido após commit não impede o débito único", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
+
+    // Desmonta a ficha e reabre. O localStorage deve recuperar a mesma
+    // intenção, não criar um novo uso ao montar o botão novamente.
+    await page.goto("about:blank");
+    await abrirFicha(page, "Herói Ações");
+    await page.evaluate(() => {
+      const s = window.__mesaSocket;
+      const original = s.emit.bind(s);
+      s.__narrativeRetryIds = [];
+      s.emit = (ev, payload, cb) => {
+        if (ev === "sangue:ativar" && payload && typeof payload === "object") {
+          s.__narrativeRetryIds.push(payload.requestId);
+        }
+        return original(ev, payload, cb);
+      };
+    });
+    const usarNovamente = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    t("UI. ação narrativa reaparece após reabrir ficha", await usarNovamente.count() === 1);
+    await usarNovamente.click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll(".ficha-poder-acao"))
         .some((el) => /Poder de Fogo ativado/.test(el.textContent || "")),
     { timeout: 15000 });
-    await page.waitForTimeout(300);
-    t("UI. ativação narrativa cobra 2 pontos uma única vez", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
+    const segundoId = await page.evaluate(() => window.__mesaSocket.__narrativeRetryIds?.[0] ?? null);
+    t("UI. reabrir/repetir reutiliza o MESMO requestId", !!primeiroId && segundoId === primeiroId, `primeiro=${primeiroId} segundo=${segundoId}`);
+    t("UI. replay após ACK perdido não cobra pela segunda vez", saldoDe(CHAR) === 3, `db=${saldoDe(CHAR)}`);
     t("UI. confirmação mostra saldo restante", /3 Pontos de Sangue restantes/.test(await page.locator(".ficha-poder-acoes").innerText()));
     t("UI. painel atualiza saldo em tempo real", (await saldoNaTela(page)) === 3, `saldoTela=${await saldoNaTela(page)} db=${saldoDe(CHAR)}`);
+
+    // A confirmação também sincroniza updatedAt no detalhe: o jogador
+    // pode editar/salvar em seguida sem 409 nem descarte do formulário.
+    await page.getByRole("button", { name: "Editar ficha" }).click();
+    t("UI. ação de uso fica oculta durante edição", await page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" }).count() === 0);
+    await page.getByRole("button", { name: "Salvar", exact: true }).click();
+    await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
+    t("UI. salvar após ativação usa versão atual da ficha", /Ficha salva\./.test(await page.locator("body").innerText()));
     await ctx.close();
   }
 
