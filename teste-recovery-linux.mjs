@@ -126,26 +126,76 @@ async function main() {
     }
 
     // ---------- L4: index.js boot → SIGKILL → restart (POSIX) ----------
+    // Endurecido conforme ordem do Dono (7102568207): listeners de
+    // exit/close registrados logo após o spawn; kill aceito assertado;
+    // exit E close aguardados com timeout; segundo processo só inicia
+    // após close real do primeiro; finally garante close dos dois —
+    // timeout nunca vira PASS.
     {
+      const observar = (proc) => {
+        proc.__closed = false;
+        proc.once("close", () => { proc.__closed = true; });
+        return proc;
+      };
+      const esperarFechado = (proc, timeoutMs = 15000) => {
+        if (proc.__closed) return Promise.resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode });
+        return new Promise((resolve) => {
+          const t = setTimeout(() => resolve(null), timeoutMs);
+          proc.once("close", () => { clearTimeout(t); resolve({ exitCode: proc.exitCode, signalCode: proc.signalCode }); });
+        });
+      };
+
       const banco = join(TMP, "srv", "mestre-rpg.db");
       await prepararBanco(banco);
       const porta = await portaLivre();
       const arquivos = join(TMP, "srv-arquivos");
       const backups = join(TMP, "srv-backups");
-      const proc = subirServidor(porta, { banco, arquivos, backups });
       const base = `http://127.0.0.1:${porta}`;
-      await esperarSaudavel(base, proc);
-      proc.kill("SIGKILL");
-      await new Promise((r) => proc.once("exit", r));
-      const proc2 = subirServidor(porta, { banco, arquivos, backups });
+      let proc = null, proc2 = null;
       try {
-        await esperarSaudavel(base, proc2, 30000);
-        ok("L4 restart pós-SIGKILL saudável", true);
+        proc = observar(subirServidor(porta, { banco, arquivos, backups }));
+        await esperarSaudavel(base, proc);
+
+        const killAceito = proc.kill("SIGKILL");
+        ok("L4 kill SIGKILL aceito pelo SO", killAceito === true);
+        const saida1 = await esperarFechado(proc, 15000);
+        ok("L4 primeiro processo: exit+close reais", saida1 !== null,
+          "timeout aguardando close — stdio pode não ter drenado");
+        if (process.platform === "win32") {
+          // Windows: Node mapeia SIGKILL para TerminateProcess —
+          // encerramento abrupto equivalente; signalCode POSIX não se aplica.
+          console.log("  info L4 Windows: kill abrupto = TerminateProcess (sem signalCode POSIX)");
+          ok("L4 encerramento abrupto registrado (Windows)", proc.exitCode !== null || proc.signalCode !== null);
+        } else {
+          ok("L4 signalCode === SIGKILL (POSIX)", proc.signalCode === "SIGKILL",
+            `signalCode=${proc.signalCode} exitCode=${proc.exitCode}`);
+        }
+
+        // segundo processo SÓ após close confirmado do primeiro —
+        // prova liberação de handles/stdio, não apenas saída lógica
+        if (saida1 !== null) {
+          proc2 = observar(subirServidor(porta, { banco, arquivos, backups }));
+          await esperarSaudavel(base, proc2, 30000);
+          ok("L4 restart pós-SIGKILL saudável", true);
+        } else {
+          ok("L4 restart pós-SIGKILL saudável", false, "primeiro close não confirmado — restart não tentado");
+        }
       } catch (e) {
-        ok("L4 restart pós-SIGKILL saudável", false, String(e?.message ?? e).slice(0, 160));
-        try { proc2.kill("SIGKILL"); } catch {}
+        ok("L4 ciclo SIGKILL→restart saudável", false, String(e?.message ?? e).slice(0, 160));
+      } finally {
+        // cleanup garantido: mata o que estiver vivo e exige close real
+        for (const p of [proc, proc2]) {
+          if (p && p.exitCode === null && p.signalCode === null) { try { p.kill("SIGKILL"); } catch {} }
+        }
+        for (const [nome, p] of [["primeiro", proc], ["segundo", proc2]]) {
+          if (!p) continue;
+          const s = await esperarFechado(p, 15000);
+          if (s === null) {
+            falharam++;
+            console.log(`FALHOU L4 ${nome} processo: close não chegou pid=${p.pid}`);
+          }
+        }
       }
-      await encerrarServidor(proc2);
     }
 
     // ---------- L5: permissão negada no state dir → fail-closed ----------
