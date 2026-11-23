@@ -338,6 +338,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   }, [versaoServidor]);
   const [nome, setNome] = useState(personagem.name);
   const [editando, setEditando] = useState(false);
+  const [sincronizandoPoder, setSincronizandoPoder] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -471,7 +472,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
-          {!editando && podeEditar && <button onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>Editar ficha</button>}
+          {!editando && podeEditar && <button disabled={sincronizandoPoder} onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>{sincronizandoPoder ? "Sincronizando ficha…" : "Editar ficha"}</button>}
           {editando && (
             <>
               <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
@@ -625,7 +626,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
             podeLerSangue={souMestre || personagem.ehEu === true}
-            podeAtivarPoder={personagem.ehEu === true && !arquivado}
+            podeAtivarPoder={personagem.ehEu === true && !arquivado && !editando}
+            aoAtualizarPersonagem={aoRecarregar}
+            aoMudarAtivacaoPoder={setSincronizandoPoder}
             campaignId={campaignId}
             camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
