@@ -639,6 +639,28 @@ export async function executarBoot(opts = {}) {
   const cwd = opts.cwd ?? process.cwd();
   const executar = opts.executar ?? executarReal;
   const log = opts.log ?? ((m) => console.log(m));
+  const persistirDuravel = opts.persistirDuravel === true;
+  const envEstado = opts.envEstado ?? process.env;
+  const persistir = (dados) => {
+    if (!persistirDuravel) return true;
+    try {
+      gravarJournalDuravel(dados.repoDir ?? cwd, dados, envEstado);
+      return true;
+    } catch (e) {
+      log(`[auto-update] Falha ao persistir journal durável (${String(e?.message ?? e).slice(0, 200)}).`);
+      return false;
+    }
+  };
+  const limparJournal = (repoDir) => {
+    if (!persistirDuravel) return true;
+    try {
+      limparJournalDuravel(repoDir, envEstado);
+      return true;
+    } catch (e) {
+      log(`[auto-update] Journal concluído, mas não pôde ser removido (${String(e?.message ?? e).slice(0, 160)}).`);
+      return false;
+    }
+  };
 
   // Kill-switch por configuracao (Issue #156): MESTRE_AUTO_UPDATE=0
   // desativa o atualizador nesta instalacao. Verificado antes de
@@ -651,7 +673,15 @@ export async function executarBoot(opts = {}) {
 
   let v;
   try {
-    v = await verificarAtualizacao({ ...opts, cwd, executar, log });
+    v = await verificarAtualizacao({
+      ...opts, cwd, executar, log,
+      registrarPullAntes: persistirDuravel
+        ? (dados) => persistir(dados)
+        : opts.registrarPullAntes,
+      limparJournalSemPull: persistirDuravel
+        ? (repoDir) => limparJournal(repoDir)
+        : opts.limparJournalSemPull,
+    });
   } catch (e) {
     // excecao ANTES do pull nao pode ter atualizado o HEAD — boot local
     log(`[auto-update] Erro inesperado na verificacao: ${String(e?.message ?? e).slice(0, 200)} — seguindo com a versao local.`);
