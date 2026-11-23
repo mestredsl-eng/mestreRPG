@@ -147,24 +147,37 @@ describe("backup pré-migration — manifesto v2 e proteção (W16)", () => {
   });
 
   it("backup protegido sobrevive à retenção; desprotegido é rotacionado", async () => {
-    // retenção mínima: mantém só o mais recente de cada classe
-    await setConfigBackup({ agenda: "manual", retencaoDiarios: 1, retencaoSemanais: 1 });
-    await sleep(20);
-    const antigo = await criarBackup("manual", "antigo-desprotegido");
-    assert.equal(antigo.sucesso, true);
-    await sleep(20);
-    const protegido = await criarBackup("pre_update", "protegido", { proteger: true, meta: { shaAnterior: "a", shaNovo: "b" } });
-    assert.equal(protegido.sucesso, true, `protegido falhou: ${protegido.erros}`);
-    assert.ok(existsSync(protegido.dir));
-    await sleep(20);
-    const novo = await criarBackup("manual", "mais-recente");
-    assert.equal(novo.sucesso, true);
-    // após a criação de `novo`, a retenção rodou: `antigo` deve ter saído,
-    // `protegido` deve permanecer (marker ativo), `novo` permanece (mais recente)
-    assert.ok(!existsSync(antigo.dir), "backup antigo desprotegido não foi rotacionado");
-    assert.ok(existsSync(protegido.dir), "backup protegido foi removido pela retenção");
-    const lista = await listarBackups();
-    assert.ok(lista.some((b) => b.filePath === protegido.dir), "backup protegido sumiu do registro");
+    // STATE isolado deste subteste: a varredura de proteção lê
+    // process.env.MESTRE_STATE_DIR a cada chamada; qualquer resíduo de
+    // estado deixado por outros `it`s do arquivo não pode influenciar
+    // a decisão de reter/rotacionar aqui. Restaurado em finally.
+    const stateIsolado = mkdtempSync(join(tmpdir(), "backup-contrato-state-"));
+    const stateOriginal = process.env.MESTRE_STATE_DIR;
+    process.env.MESTRE_STATE_DIR = stateIsolado;
+    try {
+      // retenção mínima: mantém só o mais recente de cada classe
+      await setConfigBackup({ agenda: "manual", retencaoDiarios: 1, retencaoSemanais: 1 });
+      await sleep(20);
+      const antigo = await criarBackup("manual", "antigo-desprotegido");
+      assert.equal(antigo.sucesso, true);
+      await sleep(20);
+      const protegido = await criarBackup("pre_update", "protegido", { proteger: true, meta: { shaAnterior: "a", shaNovo: "b" } });
+      assert.equal(protegido.sucesso, true, `protegido falhou: ${protegido.erros}`);
+      assert.ok(existsSync(protegido.dir));
+      await sleep(20);
+      const novo = await criarBackup("manual", "mais-recente");
+      assert.equal(novo.sucesso, true);
+      // após a criação de `novo`, a retenção rodou: `antigo` deve ter saído,
+      // `protegido` deve permanecer (marker ativo), `novo` permanece (mais recente)
+      assert.ok(!existsSync(antigo.dir), "backup antigo desprotegido não foi rotacionado");
+      assert.ok(existsSync(protegido.dir), "backup protegido foi removido pela retenção");
+      const lista = await listarBackups();
+      assert.ok(lista.some((b) => b.filePath === protegido.dir), "backup protegido sumiu do registro");
+    } finally {
+      if (stateOriginal === undefined) delete process.env.MESTRE_STATE_DIR;
+      else process.env.MESTRE_STATE_DIR = stateOriginal;
+      rmSync(stateIsolado, { recursive: true, force: true });
+    }
   });
 
   it("desproteção aborta diante de evidência inconclusiva em protecao/", async () => {
