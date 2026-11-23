@@ -9,8 +9,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   verificarAtualizacao, executarBoot, reverterAtualizacao,
+  recuperarAtualizacaoPendente,
   executarReal, normalizarUrlRepo, REPO_OFICIAL,
 } from "./scripts/auto-update.mjs";
+import {
+  gravarEstado as gravarEstadoExterno,
+  lerJournal,
+  JOURNAL_UPDATE,
+} from "./scripts/estado-externo.mjs";
 
 let pass = 0, fail = 0;
 const anotarErro = (msg) => {
@@ -478,6 +484,107 @@ try {
       reg.some((x) => x.endsWith(" ci")) &&
       reg.some((x) => x.includes("build -w servidor")) &&
       reg.some((x) => x.includes("build -w site")), reg.join(" | "));
+  }
+
+  sec("Extra — journal durável: crash após fast-forward retoma rollback");
+  {
+    const c = criarRepo("journal-crash-pos-merge");
+    const shaAnterior = head(c.local);
+    publicar(c, "deps-site-alterados", {
+      "package-lock.json": '{"lockfileVersion":3,"packages":{"x":{"version":"2"}}}\\n',
+      "site/vite.config.ts": "export default { define: { __JOURNAL__: true } };\\n",
+    });
+    gitSetup(["fetch", "origin"], c.local);
+    gitSetup(["merge", "--ff-only", "origin/main"], c.local);
+    const shaNovo = head(c.local);
+    const envEstado = { ...process.env, MESTRE_STATE_DIR: join(c.base, "state-duravel") };
+    gravarEstadoExterno(c.local, JOURNAL_UPDATE, {
+      fase: "build-site-iniciado",
+      etapa: "build-site",
+      branch: "main",
+      repoDir: c.local,
+      shaAnterior,
+      shaNovo,
+      commits: 1,
+      depsMudaram: true,
+      siteMudou: true,
+      iniciadoEm: new Date().toISOString(),
+    }, envEstado);
+    const reg = [];
+    const rb = await recuperarAtualizacaoPendente({
+      ...opcoesRepo(c),
+      envEstado,
+      executar: executarHibrido({ registro: reg }),
+      log: silencioso,
+    });
+    t("journal pós-merge → rollback automático concluído", rb.ok && rb.recuperado, JSON.stringify(rb));
+    t("recuperação restaura exatamente o SHA anterior", head(c.local) === shaAnterior, `${head(c.local)} vs ${shaAnterior}`);
+    t("recovery reinstala dependências e reconstrói os dois workspaces",
+      reg.some((x) => x.endsWith(" ci"))
+        && reg.some((x) => x.includes("build -w servidor"))
+        && reg.some((x) => x.includes("build -w site")), reg.join(" | "));
+    t("journal concluído foi removido", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ausente");
+  }
+
+  sec("Extra — journal pull-intent sem merge pode ser limpo sem reset/build");
+  {
+    const c = criarRepo("journal-crash-pre-merge");
+    const shaAnterior = head(c.local);
+    publicar(c, "ainda-nao-aplicado", { "site/src/app.txt": "v2\\n" });
+    const alvo = String(git(["--git-dir", c.origin, "rev-parse", "refs/heads/main"], c.base).stdout).trim();
+    const envEstado = { ...process.env, MESTRE_STATE_DIR: join(c.base, "state-pre-merge") };
+    gravarEstadoExterno(c.local, JOURNAL_UPDATE, {
+      fase: "pull-iniciado",
+      etapa: "merge-fast-forward",
+      branch: "main",
+      repoDir: c.local,
+      shaAnterior,
+      shaNovo: alvo,
+      commits: 1,
+      depsMudaram: false,
+      siteMudou: true,
+      iniciadoEm: new Date().toISOString(),
+    }, envEstado);
+    const reg = [];
+    const rb = await recuperarAtualizacaoPendente({
+      ...opcoesRepo(c), envEstado,
+      executar: executarHibrido({ registro: reg }),
+      log: silencioso,
+    });
+    t("pull-intent sem merge → limpeza segura", rb.ok && rb.recuperado && rb.motivo === "pull-nao-aplicado", JSON.stringify(rb));
+    t("HEAD continua no SHA anterior, sem reset", head(c.local) === shaAnterior);
+    t("nenhum npm/build/reset foi executado", !reg.some((x) => /npm|reset --hard|build -w/.test(x)), reg.join(" | "));
+    t("journal de intenção removido", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ausente");
+  }
+
+  sec("Extra — journal pendente com árvore suja bloqueia sem sobrescrever");
+  {
+    const c = criarRepo("journal-dirty-block");
+    const shaAnterior = head(c.local);
+    publicar(c, "atualizacao");
+    gitSetup(["fetch", "origin"], c.local);
+    gitSetup(["merge", "--ff-only", "origin/main"], c.local);
+    const shaNovo = head(c.local);
+    const sujo = join(c.local, "site/src/local-user-change.txt");
+    writeFileSync(sujo, "alteracao local que nao pode ser perdida\\n");
+    const envEstado = { ...process.env, MESTRE_STATE_DIR: join(c.base, "state-dirty") };
+    gravarEstadoExterno(c.local, JOURNAL_UPDATE, {
+      fase: "build-servidor-iniciado",
+      branch: "main",
+      repoDir: c.local,
+      shaAnterior,
+      shaNovo,
+      commits: 1,
+      depsMudaram: false,
+      siteMudou: true,
+      iniciadoEm: new Date().toISOString(),
+    }, envEstado);
+    const rb = await recuperarAtualizacaoPendente({
+      ...opcoesRepo(c), envEstado, executar: executarHibrido(), log: silencioso,
+    });
+    t("árvore suja bloqueia recuperação", rb.ok === false && rb.motivo === "arvore-suja-recuperacao-bloqueada", JSON.stringify(rb));
+    t("HEAD atualizado e alteração local continuam intactos", head(c.local) === shaNovo && readFileSync(sujo, "utf8").includes("nao pode ser perdida"));
+    t("journal permanece para intervenção segura", lerJournal(c.local, JOURNAL_UPDATE, envEstado).status === "ok");
   }
 
   sec("Extra — config do site força rebuild mesmo com dist mais recente");
