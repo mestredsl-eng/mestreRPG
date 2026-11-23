@@ -312,6 +312,20 @@ function saldoDecimalComprovadoPeloHistorico(
     }
     const proximoDecimal = somarDecimalSangue(saldoDecimal, evento.quantidade);
     if (!Number.isFinite(proximoDecimal)) return null;
+    const usoRecuperacao =
+      evento.tipo === "recuperacao" && evento.usoId
+        ? usos[evento.usoId]
+        : undefined;
+    const solicitadoVsAplicado =
+      usoRecuperacao?.tipo === "recuperacao" &&
+      typeof usoRecuperacao.quantidade === "number" &&
+      evento.quantidade > 0
+        ? compararDecimalSangue(usoRecuperacao.quantidade, evento.quantidade)
+        : null;
+    // O snapshot pode coincidir com a soma arredondada para Number. A
+    // diferença durável entre solicitado e aplicado ainda comprova que
+    // houve clamp ao teto e que esse evento inaugura novo saldo exato.
+    const recuperacaoLimitadaComprovada = solicitadoVsAplicado === 1;
 
     if (evento.tipo === "ajuste" && evento.quantidade < 0 && !evento.usoId && proximoDecimal !== evento.saldoResultante) {
       // Reconciliações históricas e ajustes negativos manuais sem usoId
@@ -326,17 +340,19 @@ function saldoDecimalComprovadoPeloHistorico(
       // correção decimal comprovada por eventos anteriores.
       saldoLegado = proximoLegado;
       continue;
-    } else if (evento.tipo === "recuperacao" && proximoDecimal !== evento.saldoResultante) {
+    } else if (
+      evento.tipo === "recuperacao" &&
+      (proximoDecimal !== evento.saldoResultante || recuperacaoLimitadaComprovada)
+    ) {
       // Antes da aritmética decimal, créditos limitados pelo teto podiam
       // gravar um delta binário menor que o solicitado, embora o saldo
       // resultante fosse exatamente o teto. O uso durável guarda a
       // quantidade pedida; quando ela excede o delta aplicado, o snapshot
       // saldoResultante é a única fronteira inequívoca da cadeia antiga.
-      const uso = evento.usoId ? usos[evento.usoId] : undefined;
+      const uso = usoRecuperacao;
       if (!uso || uso.tipo !== "recuperacao" || typeof uso.quantidade !== "number" || evento.quantidade <= 0) {
         return null; // sem prova do delta limitado: preservar saldo armazenado
       }
-      const solicitadoVsAplicado = compararDecimalSangue(uso.quantidade, evento.quantidade);
       if (solicitadoVsAplicado === null || solicitadoVsAplicado < 0) return null;
       if (solicitadoVsAplicado > 0) {
         const saldoResultanteValido = compararDecimalSangue(evento.saldoResultante, saldoLegado);
