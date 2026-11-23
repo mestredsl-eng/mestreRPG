@@ -361,9 +361,11 @@ export async function verificarBackup(id: string): Promise<{ ok: boolean; detalh
   const integ = verificarBanco(dbPath);
   if (!integ.ok) { detalhes.push(`banco corrompido: ${integ.integridade}`); return { ok: false, detalhes }; }
   detalhes.push("banco ok");
-  // validação integral do manifesto — obrigatória para backups novos
-  // (manifestoVersao 2). Backups antigos sem o campo novo caem na
-  // verificação legada de arquivos apenas.
+  // validação integral do manifesto — obrigatória. validarBackup
+  // despacha por formato: v2 (manifestoVersao 2, hashes de
+  // banco/config/arquivos) ou legado v1 (formato da v1.0.8, contrato
+  // equivalente ao verificador original). Backups sem manifesto.json
+  // ou com formato desconhecido são rejeitados.
   // validação integral obrigatória — manifesto v2 + inventário real +
   // hashes + integridade (mesmo validador do restaurador offline).
   const v = validarBackup(b.filePath);

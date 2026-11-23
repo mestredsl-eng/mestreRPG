@@ -5,13 +5,13 @@
 // Executar: npm run test:backup-contrato -w servidor
 import assert from "node:assert/strict";
 import { describe, it, before } from "node:test";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, symlinkSync, truncateSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, readdirSync, symlinkSync, truncateSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
-import { gerarManifestoBackup } from "../../teste-fixture-backup.mjs";
+import { gerarManifestoBackup, sha256Arquivo } from "../../teste-fixture-backup.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RAIZ_REPO = resolve(__dirname, "..", "..");
@@ -82,6 +82,12 @@ before(async () => {
   mkdirSync(dirname(BANCO), { recursive: true });
   mkdirSync(ARQUIVOS, { recursive: true });
   mkdirSync(BACKUPS, { recursive: true });
+  // provisionamento explícito de primeiro bootstrap — mesmo contrato
+  // do instalador real: sem a autorização, migrate falha fechado.
+  const auth = spawnSync("node", [join(RAIZ_REPO, "scripts", "autorizar-bootstrap.mjs"), "--confirmar-provisionamento"], {
+    env: { ...process.env }, encoding: "utf8",
+  });
+  assert.equal(auth.status, 0, `autorizar-bootstrap falhou: ${auth.stdout}${auth.stderr}`);
   // migrations reais no banco descartável
   const mig = spawnSync("node", [join(RAIZ_REPO, "servidor", "dist", "db", "migrate.js")], {
     env: { ...process.env }, encoding: "utf8",
@@ -679,5 +685,100 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     assert.equal(v.ok, false, "raiz symlink deveria ser rejeitada");
     assert.ok(v.problemas.some((p) => p.includes("symlink") || p.includes("raiz")), v.problemas.join("; "));
     rmSync(link, { force: true });
+  });
+});
+
+// =====================================================================
+// T5 — formato LEGADO v1 (backups da v1.0.8 e anteriores, Issue #266/W16)
+// manifesto.json sem 'manifestoVersao': { arquivos: {"arquivos/<rel>":
+// {size,sha256}}, criadoEm, versao }. Contrato = verificador v1.0.8:
+// integridade SQLite + size/sha256 declarados + inventário restrito.
+// =====================================================================
+describe("T5 — backup legado v1 (formato v1.0.8)", () => {
+  /** Monta um backup no formato legado v1. */
+  function fixtureLegado(sufixo: string) {
+    const dir = join(TMP, `bkleg_${sufixo}`);
+    mkdirSync(dir, { recursive: true });
+    const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table t (id integer)");
+    db.close();
+    mkdirSync(join(dir, "arquivos", "campanha"), { recursive: true });
+    writeFileSync(join(dir, "arquivos", "campanha", "doc.txt"), "conteudo legado");
+    mkdirSync(join(dir, "configuracao"), { recursive: true });
+    writeFileSync(join(dir, "configuracao", "servidor.json"), JSON.stringify({ porta: 3001 }));
+    const arq: Record<string, { size: number; sha256: string }> = {};
+    for (const rel of ["arquivos/campanha/doc.txt"]) {
+      const p = join(dir, ...rel.split("/"));
+      arq[rel] = { size: statSync(p).size, sha256: sha256Arquivo(p) };
+    }
+    writeFileSync(join(dir, "manifesto.json"), JSON.stringify({
+      arquivos: arq, criadoEm: new Date().toISOString(), versao: "1.0.8",
+    }, null, 2));
+    return dir;
+  }
+  const manLeg = (dir: string) => JSON.parse(readFileSync(join(dir, "manifesto.json"), "utf8"));
+  const gravarLeg = (dir: string, man: unknown) => writeFileSync(join(dir, "manifesto.json"), JSON.stringify(man, null, 2));
+
+  it("backup legado válido → ok", () => {
+    const dir = fixtureLegado("ok");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado sem configuração → ok (config não existia como obrigatório no v1)", () => {
+    const dir = fixtureLegado("semcfg");
+    rmSync(join(dir, "configuracao"), { recursive: true, force: true });
+    const v = validarBackup(dir);
+    assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com arquivo adulterado → sha256 diverge → rejeita", () => {
+    const dir = fixtureLegado("adulterado");
+    writeFileSync(join(dir, "arquivos", "campanha", "doc.txt"), "conteudo adulterado!");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sha256") || p.includes("tamanho")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com arquivo extra não declarado → rejeita", () => {
+    const dir = fixtureLegado("extra");
+    writeFileSync(join(dir, "arquivos", "campanha", "extra.txt"), "intruso");
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("sem entrada no manifesto")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com traversal no caminho declarado → rejeita", () => {
+    const dir = fixtureLegado("traversal");
+    const man = manLeg(dir);
+    man.arquivos["arquivos/../escape.txt"] = { size: 1, sha256: "0".repeat(64) };
+    gravarLeg(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("caminho inválido")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifesto sem 'manifestoVersao' e sem 'arquivos' → formato desconhecido → rejeita", () => {
+    const dir = fixtureLegado("desconhecido");
+    gravarLeg(dir, { criadoEm: new Date().toISOString(), versao: "1.0.8" });
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("não reconhecido")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifestoVersao:1 explícito → NÃO é legado → rejeita por versão", () => {
+    const dir = fixtureLegado("v1explicito");
+    const man = { ...manLeg(dir), manifestoVersao: 1 };
+    gravarLeg(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("manifestoVersao")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
   });
 });

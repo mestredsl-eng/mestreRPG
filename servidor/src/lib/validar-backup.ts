@@ -5,16 +5,25 @@
 // nem adquirir locks.
 //
 // Regras (contrato):
-//  - manifesto.json obrigatório, parseável, manifestoVersao === 2;
+//  - manifesto.json obrigatório, parseável;
+//  - FORMATO v2 (atual): manifestoVersao === 2, entrada 'banco' e
+//    'configuracao' obrigatórias, hashes de banco/config/arquivos;
+//  - FORMATO LEGADO v1 (backups criados pela v1.0.8 e anteriores):
+//    sem 'manifestoVersao', com 'arquivos' declarando size+sha256.
+//    Suportado explicitamente — ver validarBackupLegado. Contrato
+//    legado = o que a v1.0.8 verificava: integridade SQLite do banco +
+//    tamanho/SHA-256 dos arquivos declarados + inventário sem
+//    entradas não declaradas. Campos que o formato v1 não registrava
+//    (hash do banco/config) NÃO são exigidos — não há como verificá-los;
 //  - inventário REAL do diretório comparado com o declarado, nos dois
 //    sentidos: arquivo sem entrada no manifesto ⇒ rejeita; entrada sem
 //    arquivo correspondente ⇒ rejeita;
 //  - caminhos absolutos, traversal (".."), separadores inválidos e
 //    symlinks ⇒ rejeita;
 //  - tamanho + SHA-256 conferidos para banco, configuração e todos os
-//    arquivos de campanha declarados;
+//    arquivos de campanha declarados (v2); arquivos declarados (v1);
 //  - ausência intencional de configuração representada por
-//    `configuracao: null` no manifesto (chave obrigatória);
+//    `configuracao: null` no manifesto v2 (chave obrigatória);
 //  - integridade SQLite (PRAGMA integrity_check) do banco snapshot.
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, readFileSync } from "node:fs";
@@ -115,6 +124,12 @@ export function validarBackup(dir: string): ResultadoValidacaoBackup {
   if (!man || typeof man !== "object" || Array.isArray(man)) {
     return { ok: false, problemas: ["manifesto.json não é um objeto JSON"] };
   }
+  // Despacho por formato: v2 declara 'manifestoVersao'; o legado v1
+  // (v1.0.8 e anteriores) não tem esse campo e é reconhecido pela
+  // presença do mapa 'arquivos'. Qualquer outro formato é rejeitado.
+  if (man.manifestoVersao === undefined) {
+    return validarBackupLegado(dir, man);
+  }
   if (man.manifestoVersao !== 2) {
     problemas.push(`manifestoVersao incompatível: ${(man as { manifestoVersao?: unknown }).manifestoVersao ?? "ausente"}`);
   }
@@ -175,55 +190,117 @@ export function validarBackup(dir: string): ResultadoValidacaoBackup {
   // ---- tamanho + sha256 dos declarados presentes ----
   for (const [rel, meta] of declarados) {
     if (!reais.has(rel)) continue; // já reportado acima
-    const p = join(dir, ...rel.split("/"));
-    if (typeof meta?.size !== "number" || typeof meta?.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(meta.sha256)) {
-      problemas.push(`${rel}: metadados incompletos no manifesto`);
-      continue;
-    }
-    // lstat: rejeita symlink trocado após o inventário (TOCTOU) e
-    // qualquer entrada que não seja arquivo regular.
-    let st;
-    try {
-      st = lstatSync(p);
-    } catch (e) {
-      problemas.push(`${rel}: arquivo declarado inacessível (${String(e).slice(0, 80)})`);
-      continue;
-    }
-    if (st.isSymbolicLink() || !st.isFile()) {
-      problemas.push(`${rel}: não é arquivo regular (symlink/especial proibido)`);
-      continue;
-    }
-    if (st.size !== meta.size) {
-      problemas.push(`${rel}: tamanho diverge (${st.size} != ${meta.size})`);
-      continue;
-    }
-    // Hash SEMPRE verificado em streaming — inclusive acima de 2 GiB.
-    let hashReal: string;
-    try {
-      hashReal = sha256Arquivo(p);
-    } catch (e) {
-      problemas.push(`${rel}: falha ao calcular sha256 (${String(e).slice(0, 80)})`);
-      continue;
-    }
-    if (hashReal !== meta.sha256) {
-      problemas.push(`${rel}: sha256 diverge`);
-    }
+    verificarMetaDeclarada(dir, rel, meta, problemas);
   }
 
   // ---- integridade SQLite do snapshot ----
-  const dbPath = join(dir, "mestre-rpg.db");
   if (reais.has("mestre-rpg.db")) {
+    verificarIntegridadeDb(join(dir, "mestre-rpg.db"), "banco", problemas);
+  }
+
+  return { ok: problemas.length === 0, problemas };
+}
+
+/** Confere size+sha256 de um arquivo declarado no manifesto. */
+function verificarMetaDeclarada(dir: string, rel: string, meta: MetaItem, problemas: string[]): void {
+  const p = join(dir, ...rel.split("/"));
+  if (typeof meta?.size !== "number" || typeof meta?.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(meta.sha256)) {
+    problemas.push(`${rel}: metadados incompletos no manifesto`);
+    return;
+  }
+  // lstat: rejeita symlink trocado após o inventário (TOCTOU) e
+  // qualquer entrada que não seja arquivo regular.
+  let st;
+  try {
+    st = lstatSync(p);
+  } catch (e) {
+    problemas.push(`${rel}: arquivo declarado inacessível (${String(e).slice(0, 80)})`);
+    return;
+  }
+  if (st.isSymbolicLink() || !st.isFile()) {
+    problemas.push(`${rel}: não é arquivo regular (symlink/especial proibido)`);
+    return;
+  }
+  if (st.size !== meta.size) {
+    problemas.push(`${rel}: tamanho diverge (${st.size} != ${meta.size})`);
+    return;
+  }
+  // Hash SEMPRE verificado em streaming — inclusive acima de 2 GiB.
+  let hashReal: string;
+  try {
+    hashReal = sha256Arquivo(p);
+  } catch (e) {
+    problemas.push(`${rel}: falha ao calcular sha256 (${String(e).slice(0, 80)})`);
+    return;
+  }
+  if (hashReal !== meta.sha256) {
+    problemas.push(`${rel}: sha256 diverge`);
+  }
+}
+
+/** PRAGMA integrity_check de um snapshot SQLite. */
+function verificarIntegridadeDb(dbPath: string, rotulo: string, problemas: string[]): void {
+  try {
+    const chk = new Database(dbPath, { readonly: true });
     try {
-      const chk = new Database(dbPath, { readonly: true });
-      try {
-        const integ = String(chk.pragma("integrity_check", { simple: true }));
-        if (integ !== "ok") problemas.push(`banco: integrity_check falhou (${integ.slice(0, 120)})`);
-      } finally {
-        chk.close();
-      }
-    } catch (e) {
-      problemas.push(`banco: não foi possível verificar integridade (${String(e).slice(0, 120)})`);
+      const integ = String(chk.pragma("integrity_check", { simple: true }));
+      if (integ !== "ok") problemas.push(`${rotulo}: integrity_check falhou (${integ.slice(0, 120)})`);
+    } finally {
+      chk.close();
     }
+  } catch (e) {
+    problemas.push(`${rotulo}: não foi possível verificar integridade (${String(e).slice(0, 120)})`);
+  }
+}
+
+/**
+ * Valida backup no FORMATO LEGADO v1 — produzido pela v1.0.8 e
+ * anteriores: { arquivos: { "arquivos/<rel>": {size,sha256} },
+ * criadoEm, versao } — sem 'manifestoVersao', sem hashes de
+ * banco/configuração (o formato não os registrava).
+ *
+ * Contrato = o que a v1.0.8 efetivamente verificava em
+ * verificarBackup/prepararRestauracao: integridade SQLite do banco +
+ * tamanho/SHA-256 de cada arquivo declarado + recusa de entradas não
+ * declaradas no inventário. O restante do diretório é restrito ao que
+ * o criador v1 escrevia: manifesto.json, mestre-rpg.db e, quando
+ * presente, configuracao/servidor.json (não hasheado no v1 — mesmo
+ * tratamento do verificador original).
+ */
+function validarBackupLegado(dir: string, man: Record<string, unknown>): ResultadoValidacaoBackup {
+  const problemas: string[] = [];
+  const arqDecl = man.arquivos;
+  if (!arqDecl || typeof arqDecl !== "object" || Array.isArray(arqDecl)) {
+    return { ok: false, problemas: ["manifesto.json não reconhecido: sem 'manifestoVersao' e sem mapa 'arquivos' válido (formato legado v1)"] };
+  }
+
+  // ---- banco: presença + integridade SQLite (contrato legado) ----
+  const dbPath = join(dir, "mestre-rpg.db");
+  if (!existsSync(dbPath)) {
+    problemas.push("banco: mestre-rpg.db ausente");
+  } else {
+    verificarIntegridadeDb(dbPath, "banco", problemas);
+  }
+
+  // ---- arquivos declarados: caminho seguro + size/sha256 ----
+  const declarados = new Set<string>();
+  for (const [rel, meta] of Object.entries(arqDecl as Record<string, MetaItem>)) {
+    if (!caminhoDeclaradoValido(rel) || !rel.startsWith("arquivos/")) {
+      problemas.push(`manifesto legado: caminho inválido em arquivos: '${rel}'`);
+      continue;
+    }
+    declarados.add(rel);
+    verificarMetaDeclarada(dir, rel, meta, problemas);
+  }
+
+  // ---- inventário real restrito ao que o criador v1 escrevia ----
+  const reais = new Set(inventarioReal(dir, problemas));
+  const permitidos = new Set(["manifesto.json", "mestre-rpg.db", "configuracao/servidor.json", ...declarados]);
+  for (const rel of reais) {
+    if (!permitidos.has(rel)) problemas.push(`arquivo sem entrada no manifesto legado: ${rel}`);
+  }
+  for (const rel of declarados) {
+    if (!reais.has(rel)) problemas.push(`entrada do manifesto sem arquivo: ${rel}`);
   }
 
   return { ok: problemas.length === 0, problemas };
