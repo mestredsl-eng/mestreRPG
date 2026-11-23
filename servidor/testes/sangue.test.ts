@@ -811,93 +811,54 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
     }
   });
 
-  it("corrige resíduo legado somente quando toda a cadeia comprova a aritmética binária anterior", () => {
+  it("corrige resíduo legado quando o débito D10 durável comprova a cadeia binária anterior", () => {
     const em = new Date().toISOString();
+    const usoId = "d10:" + TEST1;
     const dados: Record<string, unknown> = {
       [CHAVE_SANGUE]: {
         saldo: 0.09999999999999998,
-        usos: {},
+        usos: {
+          [usoId]: {
+            tipo: "uso" as const,
+            em,
+            requestId: null,
+            personagemId: PID,
+            testId: TEST1,
+          },
+        },
         historico: [
           { em, tipo: "ajuste", quantidade: 0.3, motivo: "crédito", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.3 },
-          { em, tipo: "ajuste", quantidade: -0.2, motivo: "débito", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.09999999999999998 },
+          { em, tipo: "uso", quantidade: -0.2, motivo: "gasto D10", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.09999999999999998, usoId },
         ],
       },
     };
     const lido = lerSangue(dados);
     assert.equal(lido.valido, true);
-    assert.equal(lido.estado.saldo, 0.1, "a cadeia legada reproduz o saldo decimal esperado");
+    assert.equal(lido.estado.saldo, 0.1, "o uso D10 durável permite reconstruir o decimal exato");
 
-    const r = registrarAjusteSangue(dados, {
-      ...AUTOR, delta: -0.1, motivo: "último débito",
-    });
-    assert.equal(r.ok, true, "saldo reconstituído cobre o débito decimal de 0,1");
+    const r = registrarUsoD10(dados, { ...AUTOR, testId: TEST2, custo: 0.1 });
+    assert.equal(r.ok, true, "saldo corrigido cobre o próximo Poder de custo 0,1");
     if (r.ok) assert.equal(r.estado.saldo, 0);
-  });
-
-  it("usa o snapshot durável quando uma recuperação antiga foi limitada pelo teto", () => {
-    const em = new Date().toISOString();
-    const usoId = `recuperar:${REQ1}`;
-    const usos = {
-      [usoId]: {
-        tipo: "recuperacao" as const,
-        em,
-        requestId: REQ1,
-        personagemId: PID,
-        quantidade: 1,
-      },
-    };
-    const eventos = [
-      { em, tipo: "ajuste" as const, quantidade: 0.04, motivo: "crédito inicial", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.04 },
-      // O delta antigo era o espaço binário restante, não a quantidade pedida.
-      { em, tipo: "recuperacao" as const, quantidade: 0.5599999999999999, motivo: "recuperação limitada", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.6, usoId },
-    ];
-    const aposCredito: Record<string, unknown> = {
-      [CHAVE_SANGUE]: { saldo: 0.6, usos, historico: eventos },
-    };
-    assert.equal(lerSangue(aposCredito).estado.saldo, 0.6,
-      "o saldo resultante gravado pela operação limitada é preservado");
-    const debito = registrarAjusteSangue(aposCredito, {
-      ...AUTOR, delta: -0.6, motivo: "gasto integral após recuperação antiga",
-    });
-    assert.equal(debito.ok, true, "o saldo válido de 0,60 ainda cobre o custo de 0,60");
-    if (debito.ok) assert.equal(debito.estado.saldo, 0);
-
-    const aposDebitoAntigo: Record<string, unknown> = {
-      [CHAVE_SANGUE]: {
-        saldo: 0,
-        usos,
-        historico: [
-          ...eventos,
-          { em, tipo: "uso" as const, quantidade: -0.6, motivo: "gasto integral", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0 },
-        ],
-      },
-    };
-    assert.equal(lerSangue(aposDebitoAntigo).estado.saldo, 0,
-      "a reconstrução não inventa saldo negativo após débito integral");
-    const gratuito = registrarUsoD10(aposDebitoAntigo, {
-      ...AUTOR, testId: TEST1, custo: 0,
-    });
-    assert.equal(gratuito.ok, true, "saldo zero continua permitindo Poder gratuito");
-    if (gratuito.ok) assert.equal(gratuito.estado.saldo, 0);
-
-    // Sem o uso durável ligado ao evento, não se tenta adivinhar se o delta
-    // menor foi um clamp antigo ou um crédito integral: fica o saldo gravado.
-    const ambiguo: Record<string, unknown> = {
-      [CHAVE_SANGUE]: { saldo: 0.6, usos: {}, historico: eventos },
-    };
-    assert.equal(lerSangue(ambiguo).estado.saldo, 0.6);
   });
 
   it("recuperação histórica sem crédito preserva correção decimal comprovada", () => {
     const em = new Date().toISOString();
-    const usoId = `recuperar:${REQ1}`;
+    const usoCredito = "recuperar:" + REQ2;
+    const usoSemCredito = "recuperar:" + REQ1;
     const dados: Record<string, unknown> = {
       [CHAVE_SANGUE]: {
         // O saldo binário legado de 0.1 + 0.7 era persistido como
         // 0.7999999999999999; a correção decimal comprovada é 0.8.
         saldo: 0.7999999999999999,
         usos: {
-          [usoId]: {
+          [usoCredito]: {
+            tipo: "recuperacao" as const,
+            em,
+            requestId: REQ2,
+            personagemId: PID,
+            quantidade: 0.7,
+          },
+          [usoSemCredito]: {
             tipo: "recuperacao" as const,
             em,
             requestId: REQ1,
@@ -907,8 +868,8 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
         },
         historico: [
           { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "capacidade base", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
-          { em, tipo: "ajuste" as const, quantidade: 0.7, motivo: "bonus de capacidade", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.7999999999999999 },
-          { em, tipo: "recuperacao" as const, quantidade: 0, motivo: "recuperação no teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId },
+          { em, tipo: "recuperacao" as const, quantidade: 0.7, motivo: "crédito de recuperação", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId: usoCredito },
+          { em, tipo: "recuperacao" as const, quantidade: 0, motivo: "recuperação no teto", autorId: "user-1", autorNome: "Jogador", saldoResultante: 0.7999999999999999, usoId: usoSemCredito },
         ],
       },
     };
@@ -920,6 +881,44 @@ describe("robustez numérica — entradas não finitas e listas parciais", () =>
 
     const poder = registrarUsoD10(dados, { ...AUTOR, testId: TEST1, custo: 0.8 });
     assert.equal(poder.ok, true, "Poder que custa o saldo corrigido completo continua disponível");
+    if (poder.ok) assert.equal(poder.estado.saldo, 0);
+  });
+
+  it("reconciliação antiga permanece ancorada após recuperação sem crédito", () => {
+    const em = new Date().toISOString();
+    let dados: Record<string, unknown> = {
+      [CHAVE_SANGUE]: {
+        // A soma binária antiga .1 + .2 fica em .30000000000000004.
+        saldo: 0.30000000000000004,
+        usos: {},
+        historico: [
+          { em, tipo: "ajuste" as const, quantidade: 0.1, motivo: "crédito 1", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.1 },
+          { em, tipo: "ajuste" as const, quantidade: 0.2, motivo: "crédito 2", autorId: "user-1", autorNome: "Mestre", saldoResultante: 0.30000000000000004 },
+        ],
+      },
+    };
+
+    const reconciliacao = reconciliarCapacidadeSangue(dados, {
+      ...AUTOR,
+      capacidadeNova: 0.1,
+      motivo: "redução de capacidade para 0,1",
+    });
+    assert.equal(reconciliacao.ok, true);
+    if (!reconciliacao.ok) return;
+    dados = reconciliacao.dados;
+    assert.equal(reconciliacao.estado.saldo, 0.1, "reconciliação grava o teto exato");
+
+    const recuperacao = registrarRecuperacaoSangue(dados, {
+      ...AUTOR, requestId: REQ1, quantidade: 0.1, habilitada: true, capacidadeMax: 0.1,
+    });
+    assert.equal(recuperacao.ok, true, "recuperação no teto registra o evento sem crédito");
+    if (!recuperacao.ok) return;
+    assert.equal(recuperacao.estado.historico.at(-1)?.quantidade, 0);
+    assert.equal(lerSangue(recuperacao.dados).estado.saldo, 0.1,
+      "a recuperação zero não reaplica o ajuste de reconciliação");
+
+    const poder = registrarUsoD10(recuperacao.dados, { ...AUTOR, testId: TEST1, custo: 0.1 });
+    assert.equal(poder.ok, true, "D10 consome o saldo inteiro reconciliado");
     if (poder.ok) assert.equal(poder.estado.saldo, 0);
   });
 
