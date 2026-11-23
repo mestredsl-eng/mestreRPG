@@ -4,12 +4,18 @@ import { api } from "./api";
 import { apiSangue, ApiErrorSangue, type SangueLeitura } from "./api-sangue";
 
 /**
- * Painel de Pontos de Sangue (Issue #186, C8-C1 + C8-C2).
+ * Pontos de Sangue integrados à ficha (Issue #186 — correção .9).
+ *
+ * Substitui o antigo painel independente: sem cartão próprio, sem
+ * segundo seletor de Poderes e sem fluxo paralelo de ativação — o
+ * consumo acontece no uso normal do Poder (D10 na Mesa/ficha), que já
+ * debita o custo configurado uma única vez no servidor.
  *
  * Leitura via `GET /characters/:id/sangue` (R7.1); mutações via
  * Socket.IO R6.3 (#230):
- *  - dono da ficha: `sangue:ativar` (poderKey + requestId UUID) e
- *    `sangue:recuperar` (requestId UUID);
+ *  - dono da ficha: `sangue:recuperar` (requestId UUID) — ação
+ *    efetiva vem do servidor (Descansar/Alimentar-se conforme a
+ *    natureza configurada na campanha);
  *  - mestre ativo: `sangue:ajustar` (delta+motivo+requestId UUID)
  *    e `sangue:reconciliar-capacidade` (motivo).
  * O cliente NUNCA envia custo, ação, quantidade, capacidade ou
@@ -17,11 +23,9 @@ import { apiSangue, ApiErrorSangue, type SangueLeitura } from "./api-sangue";
  * estáveis. `personagens:atualizados` pós-commit já dispara a
  * releitura (socket existente, sem evento novo).
  *
- * 403/404 → painel some (não-dono, espectador, ficha alheia).
+ * 403/404 → widget some (não-dono, espectador, ficha alheia).
  * Respostas HTTP obsoletas são descartadas por geração.
  */
-
-interface PoderProprio { key: string; nome: string; nivel: number }
 
 interface AckSangue {
   ok?: boolean;
@@ -48,11 +52,9 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   // Contexto do personagem para permissões de UI (o servidor revalida
   // tudo — isto só decide QUAIS controles renderizar).
   const [ehEu, setEhEu] = useState(false);
-  const [poderes, setPoderes] = useState<PoderProprio[]>([]);
   // Ações R6.3
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [msgAcao, setMsgAcao] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
-  const [poderSel, setPoderSel] = useState("");
   const [deltaAjuste, setDeltaAjuste] = useState("");
   const [motivoAjuste, setMotivoAjuste] = useState("");
   const [motivoReconciliar, setMotivoReconciliar] = useState("");
@@ -60,8 +62,8 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   // DEPOIS da troca é descartada — nunca sobrescreve o estado atual.
   const geracao = useRef(0);
   // requestId UUID por INTENÇÃO completa (evento + characterId +
-  // payload normalizado) — ativar:/recuperar:/ajustar: idempotentes
-  // no servidor (#230). Retry da MESMA intenção reutiliza o UUID;
+  // payload normalizado) — recuperar:/ajustar: idempotentes no
+  // servidor (#230). Retry da MESMA intenção reutiliza o UUID;
   // payload diferente gera UUID novo; somente ACK ok limpa a
   // intenção (timeout/erro ambíguo preserva para o retry).
   const reqIdRef = useRef<{ chave: string; id: string } | null>(null);
@@ -93,52 +95,6 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
         ehDono = lista?.personagens?.some((p) => p.id === characterId && p.ehEu === true) === true;
       }
       setEhEu(ehDono);
-      // Poderes do próprio personagem — dois caminhos canônicos
-      // (mesma semântica de extrairEscolhas em regras.ts):
-      //  a) selecao_nivel ligada a Poder (regraKind ou regra.kind):
-      //     itens com nivel INTEIRO finito 1..5 — o contrato formal
-      //     do tipo; fração aqui é dado corrompido e não conta;
-      //  b) campo escalar inteiro/decimal vinculado via
-      //     campo.regra {kind:"poder", key}: valor numérico finito
-      //     > 0 — 0.5 é posse válida (selecionado = n > 0).
-      // Nomes via biblioteca.
-      const ficha = det?.ficha;
-      const valores = ficha?.campos ?? {};
-      const chaves = new Set<string>();
-      for (const s of ficha?.estrutura?.secoes ?? []) {
-        for (const campo of s.campos ?? []) {
-          if (campo.tipo === "selecao_nivel"
-            && (campo.regraKind === "poder" || campo.regra?.kind === "poder")) {
-            const v = valores[campo.id];
-            if (!Array.isArray(v)) continue;
-            for (const item of v as { key?: unknown; nivel?: unknown }[]) {
-              if (item && typeof item === "object" && typeof item.key === "string" && item.key
-                && typeof item.nivel === "number" && Number.isInteger(item.nivel)
-                && item.nivel >= 1 && item.nivel <= 5) chaves.add(item.key);
-            }
-            continue;
-          }
-          if ((campo.tipo === "decimal" || campo.tipo === "inteiro")
-            && campo.regra?.kind === "poder"
-            && typeof campo.regra.key === "string" && campo.regra.key) {
-            const n = valores[campo.id];
-            if (typeof n === "number" && Number.isFinite(n) && n > 0) chaves.add(campo.regra.key);
-          }
-        }
-      }
-      let lista: PoderProprio[] = [];
-      if (chaves.size && cid) {
-        const vinc = await api.obterVinculaveis(cid).catch(() => null);
-        const biblioteca = vinc?.elementos?.["poder"] ?? [];
-        lista = [...chaves].map((key) => ({
-          key,
-          nome: biblioteca.find((e) => e.key === key)?.name ?? key,
-          nivel: 0,
-        }));
-      }
-      if (g !== geracao.current) return;
-      setPoderes(lista);
-      setPoderSel((atual) => (lista.some((p) => p.key === atual) ? atual : (lista[0]?.key ?? "")));
     } catch (e) {
       if (g !== geracao.current) return; // resposta obsoleta
       if (e instanceof ApiErrorSangue && (e.status === 403 || e.status === 404)) {
@@ -213,8 +169,7 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
   const acoesDisponiveis = podeUsar && ehEu;
 
   return (
-    <div className="cartao painel-sangue-leitura" style={{ minWidth: 0 }}>
-      <h3>Pontos de Sangue</h3>
+    <div className="painel-sangue-leitura">
       {carregando && <p className="meta" role="status">Carregando…</p>}
       {erro && <p className="ficha-aviso" role="alert">{erro}</p>}
       {msgAcao && (
@@ -261,7 +216,10 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
             </p>
           )}
 
-          {/* ---------- Ações do DONO (R6.3: ativar/recuperar) ---------- */}
+          {/* ---------- Ação do DONO (R6.3: recuperar) ----------
+              O consumo de Sangue por Poder NÃO aparece aqui: ocorre
+              no fluxo normal do Poder (D10 na ficha/Mesa), que já
+              debita o custo configurado uma única vez no servidor. */}
           {acoesDisponiveis && (
             <div className="linha" role="group" aria-label="Ações de Sangue" style={{ flexWrap: "wrap", marginTop: "0.5rem" }}>
               {sangue.acaoRecuperacao && (
@@ -273,24 +231,6 @@ export default function PainelSangue({ characterId, ehMestre = false }: { charac
                 >
                   {ocupado === "recuperar" ? "Recuperando…" : `${ROTULO_ACAO[sangue.acaoRecuperacao.acao]} (+${sangue.acaoRecuperacao.quantidade})`}
                 </button>
-              )}
-              {poderes.length > 0 && (
-                <>
-                  <select
-                    value={poderSel} onChange={(e) => setPoderSel(e.target.value)}
-                    aria-label="Poder a ativar" disabled={ocupado !== null}
-                  >
-                    {poderes.map((p) => <option key={p.key} value={p.key}>{p.nome}</option>)}
-                  </select>
-                  <button
-                    type="button" className="mini" disabled={ocupado !== null || !poderSel}
-                    onClick={() => {
-                      void executar("ativar", "sangue:ativar", { poderKey: poderSel }, true, "Poder ativado");
-                    }}
-                  >
-                    {ocupado === "ativar" ? "Ativando…" : "Ativar poder"}
-                  </button>
-                </>
               )}
             </div>
           )}

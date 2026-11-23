@@ -158,9 +158,15 @@ try {
     await page.locator(".cartao-campanha", { hasText: "Campanha Sangue Read UI" }).click();
     await page.getByRole("button", { name: "Personagens", exact: true }).click();
   };
-  const abrirFicha = async (page, nome) => {
+  const abrirFicha = async (page, nome, { esperarPainel = true } = {}) => {
     await abrirPersonagens(page);
     await page.locator("tr.clicavel", { hasText: nome }).first().click();
+    if (!esperarPainel) {
+      // Integração .9: sem config.sangue habilitada o widget nem monta
+      // — a ficha mostra só a característica, sem painel paralelo.
+      await page.waitForTimeout(1200);
+      return;
+    }
     await page.waitForSelector(".painel-sangue-leitura", { timeout: 15000 });
     // espera o GET resolver — "Carregando…" some quando o estado chega
     await page.waitForFunction(() => {
@@ -217,12 +223,11 @@ try {
   sec("UI. estados degradados");
   {
     const { ctx, page } = await novaPagina(J1);
-    // Sangue desabilitado
+    // Sangue desabilitado → config.sangue removida: o widget integrado
+    // nem monta (a ficha exibe apenas a característica configurada).
     setSangueConfig(CID, null);
-    await abrirFicha(page, "Lobisomem UI");
-    const txtOff = await page.locator(".painel-sangue-leitura").innerText();
-    t("UI. desabilitado → mensagem segura", /desabilitad/i.test(txtOff), txtOff.slice(0, 160));
-    t("UI. desabilitado → sem saldo", !/\b5\b|\b12\b/.test(txtOff));
+    await abrirFicha(page, "Lobisomem UI", { esperarPainel: false });
+    t("UI. desabilitado → widget ausente", await page.locator(".painel-sangue-leitura").count() === 0);
     // ledger inválido
     setSangueConfig(CID, CFG_BASE);
     setSangue(CHAR, "lixo-invalido");

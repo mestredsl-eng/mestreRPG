@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
@@ -31,6 +31,10 @@ interface Props {
    *  sem true explícito o painel nem é montado — evita GET /sangue que
    *  o servidor negaria com 403 (ex.: jogador lendo NPC público). */
   podeLerSangue?: boolean;
+  /** Campanha do personagem — usada só para resolver o vínculo de
+   *  Sangue (config.sangue.campoCapacidadeId) sem fetch extra de
+   *  personagem. */
+  campaignId?: string;
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
@@ -46,9 +50,14 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
+  // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
+  // capacidade — vem de config.sangue.campoCapacidadeId do ruleset.
+  // O widget de saldo/recuperação é montado junto a ESSE campo, não
+  // como painel separado. null = não montar (sem permissão/config).
+  const [sangueCampoId, setSangueCampoId] = useState<string | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
   // Erros de regras vindos da prévia do personagem (pontos-previa) — mesmo
   // pipeline do simulador, exibidos no bloco .simulacao-erros.
@@ -110,6 +119,27 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   const ehDefeito = (c: CampoDef) => c.regraKind === "defeito" || c.regra?.kind === "defeito";
   const camposPoder = useMemo(() => todosOsCampos.filter(ehPoder), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
   const camposDefeito = useMemo(() => todosOsCampos.filter(ehDefeito), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Resolve o campo de capacidade de Sangue uma vez por ficha: a
+  // configuração mora no ruleset da campanha (GET /regras é legível
+  // por membros). Sem config habilitada ou sem vínculo, nada é
+  // montado — evita GET /sangue desnecessário e ruído visual.
+  useEffect(() => {
+    if (!personagemId || !podeLerSangue || simulacao || !campaignId) {
+      setSangueCampoId(null);
+      return;
+    }
+    let vivo = true;
+    api.obterRegras(campaignId)
+      .then((regras) => {
+        const cfg = regras?.config?.sangue;
+        if (vivo && cfg?.habilitado === true && typeof cfg.campoCapacidadeId === "string" && cfg.campoCapacidadeId) {
+          setSangueCampoId(cfg.campoCapacidadeId);
+        }
+      })
+      .catch(() => { /* vínculo é best-effort — a ficha funciona sem ele */ });
+    return () => { vivo = false; };
+  }, [personagemId, podeLerSangue, simulacao, campaignId]);
 
   /** Chaves de elementos selecionadas num campo (strings ou {key,nivel}). */
   const chavesSelecionadas = (c: CampoDef): string[] => {
@@ -223,7 +253,12 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                <Fragment key={campo.id}>
+                  <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                  {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
+                    <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
+                  )}
+                </Fragment>
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -231,7 +266,12 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                        <Fragment key={campo.id}>
+                          <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                          {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
+                            <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
+                          )}
+                        </Fragment>
                       ))}
                     </div>
                   ))}
@@ -247,11 +287,15 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       {personagemId && !simulacao && (
         <ProgressaoXp characterId={personagemId} ehMestre={!!ehMestre} />
       )}
-      {/* Pontos de Sangue (Issue #186, C8-C1): painel somente leitura
-          via GET /characters/:id/sangue — sem controles de mutação.
-          Só monta quando o chamador declara podeLerSangue (mestre/dono);
-          sem isso nem a requisição é emitida (403 evitado). */}
-      {personagemId && !simulacao && podeLerSangue && (
+      {/* Pontos de Sangue (Issue #186 .9): o widget de saldo/
+          recuperação é montado JUNTO ao campo de capacidade da ficha
+          (ver mapas acima). Este fallback só existe quando a config
+          aponta um campo que NÃO existe nesta versão de ficha —
+          ex.: personagem em template antigo — para que os estados
+          degradados (capacidade_indisponivel etc.) continuem visíveis
+          em vez de sumirem silenciosamente. */}
+      {personagemId && !simulacao && podeLerSangue && sangueCampoId
+        && !todosOsCampos.some((c) => c.id === sangueCampoId) && (
         <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
       )}
     </div>
