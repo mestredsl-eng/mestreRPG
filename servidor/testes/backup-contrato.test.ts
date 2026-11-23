@@ -463,6 +463,7 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     const dir = join(TMP, `bkval_${sufixo}`);
     mkdirSync(dir, { recursive: true });
     const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table server_settings (key text primary key, value text, updated_at integer)");
     db.exec("create table t (id integer)");
     db.close();
     if (comCfg) {
@@ -484,6 +485,45 @@ describe("T4 — integridade do backup: manifesto × inventário real", () => {
     const dir = fixtureBackup("ok");
     const v = validarBackup(dir);
     assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+  });
+
+  it("banco de 0 bytes com manifesto/hash coerentes → rejeita como truncado", () => {
+    const dir = fixtureBackup("dbzero");
+    const dbPath = join(dir, "mestre-rpg.db");
+    writeFileSync(dbPath, Buffer.alloc(0));
+    const man = lerMan(dir);
+    man.banco = { size: 0, sha256: sha256Arquivo(dbPath) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("vazio/truncado")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("banco íntegro sem server_settings → rejeita antes da restauração", () => {
+    const dir = fixtureBackup("dbsemsettings");
+    const dbPath = join(dir, "mestre-rpg.db");
+    const db = new Database(dbPath);
+    db.exec("drop table server_settings");
+    db.close();
+    const man = lerMan(dir);
+    man.banco = { size: statSync(dbPath).size, sha256: sha256Arquivo(dbPath) };
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("server_settings ausente")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("manifesto v2 sem manifestoVersao → não pode cair no legado", () => {
+    const dir = fixtureBackup("v2semversao");
+    const man = lerMan(dir);
+    delete man.manifestoVersao;
+    gravarMan(dir, man);
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("v2 sem 'manifestoVersao'")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
   });
 
   it("banco alterado após manifesto → sha256 diverge", () => {
@@ -702,6 +742,7 @@ describe("T5 — backup legado v1 (formato v1.0.8)", () => {
     const dir = join(TMP, `bkleg_${sufixo}`);
     mkdirSync(dir, { recursive: true });
     const db = new Database(join(dir, "mestre-rpg.db"));
+    db.exec("create table server_settings (key text primary key, value text, updated_at integer)");
     db.exec("create table t (id integer)");
     db.close();
     mkdirSync(join(dir, "arquivos", "campanha"), { recursive: true });
@@ -725,6 +766,27 @@ describe("T5 — backup legado v1 (formato v1.0.8)", () => {
     const dir = fixtureLegado("ok");
     const v = validarBackup(dir);
     assert.equal(v.ok, true, `problemas: ${v.problemas.join("; ")}`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado com banco de 0 bytes → rejeita para não travar restauração", () => {
+    const dir = fixtureLegado("dbzero");
+    writeFileSync(join(dir, "mestre-rpg.db"), Buffer.alloc(0));
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("vazio/truncado")), v.problemas.join("; "));
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("legado sem server_settings → rejeita antes de agendar restauração", () => {
+    const dir = fixtureLegado("semsettings");
+    const dbPath = join(dir, "mestre-rpg.db");
+    const db = new Database(dbPath);
+    db.exec("drop table server_settings");
+    db.close();
+    const v = validarBackup(dir);
+    assert.equal(v.ok, false);
+    assert.ok(v.problemas.some((p) => p.includes("server_settings ausente")), v.problemas.join("; "));
     rmSync(dir, { recursive: true, force: true });
   });
 
