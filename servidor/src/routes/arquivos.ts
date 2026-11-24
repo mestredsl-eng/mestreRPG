@@ -1,5 +1,5 @@
 import express, { Router } from "express";
-import { createReadStream, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { resolve, extname, sep } from "node:path";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -285,21 +285,48 @@ arquivosRouter.post("/upload", requirePapel("mestre", "jogador"), limiteUsuario(
   garantirDir(cid);
   const destino = caminhoFisico(cid, storageName)!;
   try {
-    writeFileSync(destino, buffer);
+    // O nome é UUID, mas wx também garante que uma colisão nunca sobrescreva
+    // um arquivo preexistente que não pertence a esta requisição.
+    writeFileSync(destino, buffer, { flag: "wx" });
   } catch {
     res.status(500).json({ erro: "Falha ao gravar arquivo" }); return;
   }
 
-  await db.insert(files).values({
-    id, campaignId: cid, folderId, folderPath: "/",
-    fileName, displayName, description, category,
-    storageName, mimeType, sizeBytes: buffer.length,
-    status, visibility, recipients,
-    uploadedBy: req.usuario!.id, createdAt: new Date(), updatedAt: new Date(),
-  });
-  if (noteId) {
-    await db.insert(noteAttachments).values({ id: crypto.randomUUID(), noteId, fileId: id, createdBy: req.usuario!.id, createdAt: new Date() })
-      .onConflictDoNothing();
+  try {
+    // Metadados e vínculo à anotação confirmam juntos; se qualquer FK/trigger
+    // falhar, SQLite reverte ambos antes da compensação no filesystem.
+    db.transaction((tx) => {
+      tx.insert(files).values({
+        id, campaignId: cid, folderId, folderPath: "/",
+        fileName, displayName, description, category,
+        storageName, mimeType, sizeBytes: buffer.length,
+        status, visibility, recipients,
+        uploadedBy: req.usuario!.id, createdAt: new Date(), updatedAt: new Date(),
+      }).run();
+      if (noteId) {
+        tx.insert(noteAttachments).values({
+          id: crypto.randomUUID(), noteId, fileId: id,
+          createdBy: req.usuario!.id, createdAt: new Date(),
+        }).onConflictDoNothing().run();
+      }
+    });
+  } catch (erro) {
+    // O arquivo só é removido porque writeFileSync(wx) confirmou posse exclusiva.
+    try {
+      rmSync(destino, { force: true });
+    } catch (erroLimpeza) {
+      console.error("[arquivos] rollback físico do upload falhou", {
+        fileId: id,
+        erro: String(erroLimpeza),
+      });
+    }
+    console.error("[arquivos] registro transacional do upload falhou", {
+      fileId: id,
+      campanhaId: cid,
+      erro: String(erro),
+    });
+    res.status(500).json({ erro: "Falha ao registrar o arquivo e seu vínculo" });
+    return;
   }
   await audit(req, "arquivo.enviado", { fileId: id, fileName, status });
   emitirCampanha(cid, "arquivos:atualizados", {});
