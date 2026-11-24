@@ -354,6 +354,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Rebuild do addon nativo para Node 20 (ABI 115)
+        shell: bash
+        run: |
+          # npm ci rodou sob Node 22 (ABI 127); sem rebuild, better-sqlite3
+          # falha ao carregar nos passos Node 20 abaixo (ex.: teste-bat-adocao-legado).
+          npm rebuild better-sqlite3
       - name: Boot lock — Node 20 (versão mínima declarada)
         shell: bash
         run: |
