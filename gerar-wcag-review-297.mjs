@@ -282,8 +282,12 @@ function gerarMarkdown() {
       " complexas. O contraste do texto sobre esses gradientes é, em princípio," +
       " mensurável pelas cores das paradas — resta apenas a verificação visual" +
       " dirigida (1 screenshot por tema cobre as 38 verificações, pois o mesmo" +
-      " header/cartão aparece em todas). Isto NÃO converte REVIEW em PASS:" +
-      " a medição continua pendente de confirmação humana.");
+      " header/cartão aparece em todas). **Complemento executado:**" +
+      " `medir-contraste-gradientes-297.mjs` re-mediu esses fundos com" +
+      " resolução de gradientes — ver `docs/WCAG-CONTRASTE-GRADIENTES-1.0.9.md`" +
+      " (1208 elementos, 0 FAIL; evidência, não disposição)." +
+      " Isto NÃO converte REVIEW em PASS: a medição continua pendente de" +
+      " confirmação humana.");
     linhas.push("");
   }
 
