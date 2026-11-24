@@ -229,6 +229,7 @@ jobs:
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
             teste-ficha-cacadores.mjs
+            teste-runtime-processos-298.mjs
           )
           falhas=()
           for s in "${arquivos[@]}"; do
@@ -337,6 +338,8 @@ jobs:
       - run: npm ci
       - name: Build workspaces no Windows
         run: npm run build
+      - name: Ciclo de vida do processo/servidor (#298)
+        run: node teste-runtime-processos-298.mjs
       - name: Homologação de atualização e restauração no Windows (Issue #33)
         run: node teste-atualizacao-instalacao.mjs
       - name: Testes do auto-update e execução real de npm.cmd
