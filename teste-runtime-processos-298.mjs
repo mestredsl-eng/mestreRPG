@@ -372,6 +372,26 @@ async function main() {
 
   // ---------- C7: corrida real de duas inicializações ----------
   {
+    // Sonda pré-corrida (diagnóstico, pedido na investigação da falha de
+    // CI): tenta BEGIN IMMEDIATE na .trava ANTES de spawnar A/B. Se a
+    // trava já estiver detida, os dois corredores morrerão por SQLITE_BUSY
+    // — e esta sonda identifica o detentor (processos ainda vivos do
+    // harness) em vez de deixar a falha sem causa.
+    let sondaTrava = "trava livre";
+    {
+      const sonda = new Database(BANCO + ".trava");
+      sonda.pragma("busy_timeout = 2000");
+      try {
+        sonda.exec("BEGIN IMMEDIATE");
+        sonda.exec("ROLLBACK");
+      } catch (e) {
+        const vivos = ativos.filter((p) => p.exitCode === null && p.signalCode === null)
+          .map((p) => `pid=${p.pid}`).join(",") || "nenhum";
+        sondaTrava = `trava detida antes da corrida (${String(e?.message ?? e).slice(0, 80)}); processos vivos: ${vivos}`;
+      } finally { try { sonda.close(); } catch {} }
+    }
+    console.log(`  [C7 sonda] ${sondaTrava}`);
+
     const portaA = await portaLivre();
     const portaB = await portaLivre();
     const procA = subir(portaA, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
@@ -393,6 +413,7 @@ async function main() {
         await new Promise((r) => setTimeout(r, 300));
       }
       ok("C7 exatamente uma inicialização vence a corrida", !!vencedor,
+        `[sonda] ${sondaTrava}\n` +
         `A exit=${procA.exitCode} sig=${procA.signalCode} | B exit=${procB.exitCode} sig=${procB.signalCode}` +
         `\n--- logA ---\n${logsDe(procA).slice(-800)}\n--- logB ---\n${logsDe(procB).slice(-800)}`);
       if (vencedor) {
