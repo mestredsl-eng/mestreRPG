@@ -1,19 +1,22 @@
 // Item 2 da ordem do Dono (#318) — E2E do procedimento OFICIAL de boot
-// sobre instalação legada 1.0.8, em clone 100% descartável:
+// sobre instalação legada 1.0.8, em fixture 100% descartável:
 //
-//   clone do repo → checkout main@7e17c9b (1.0.8) → banco real no schema
-//   1.0.8 (34 migrations) + usuário/campanha → checkout da candidata →
-//   iniciar-mestre-rpg.bat REAL via cmd.exe → adoção assistida →
-//   auto-update (remoto local ⇒ skip conservador) → builds → migrate
-//   → servidor sobe → /api/health + login + dados preservados →
-//   taskkill (interrupção) → novo BAT → health de novo (retomada).
+//   árvore-fonte da candidata via `git archive HEAD` (sem .git) +
+//   banco REAL no schema 1.0.8 (journal truncado nas 34 migrations de
+//   main@7e17c9b — arquivos idênticos, diff vazio vs. candidata) +
+//   usuário/campanha/personagem → iniciar-mestre-rpg.bat REAL via
+//   cmd.exe → adoção assistida → auto-update (sem .git ⇒ skip
+//   conservador) → builds → migrate → servidor → /api/health + login +
+//   dados preservados → taskkill (interrupção) → novo BAT → health de
+//   novo (retomada).
 //
-// Nunca toca a instalação real: clone em temp, state/backups/arquivos
+// Nunca toca a instalação real: fixture em temp, state/backups/arquivos
 // isolados por env, node_modules por junction (npm ci é pulado).
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:net";
 import {
-  existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync,
+  copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
+  rmSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -30,16 +33,15 @@ const t = (n, c, extra = "") => {
   else { fail++; console.error("  FALHOU", n, extra); }
 };
 const ROOT = dirname(fileURLToPath(import.meta.url));
-const SHA_108 = "7e17c9bca9a893e5f4e05967f91629d0ccddbd0d"; // main = v1.0.8
-const REF_CANDIDATA = "origin/release/1.0.9-candidata"; // tip da branch (merge ref não existe em clone local)
+const ULTIMO_IDX_108 = 33; // main@7e17c9b: 34 migrations, idx 0..33
 const TEMP = mkdtempSync(join(tmpdir(), "mrpg-adocao-e2e-"));
-const CLONE = join(TEMP, "clone-legado");
+const FIX = join(TEMP, "instalacao-legada");
 const STATE = join(TEMP, "state");
 let batLog = "";
 
-const git = (args) => {
-  const r = spawnSync("git", args, { encoding: "utf8", timeout: 120000 });
-  if (r.status !== 0) throw new Error(`git ${args.join(" ")} → ${r.status}: ${(r.stderr ?? "").slice(0, 300)}`);
+const sh = (cmd, args, opts = {}) => {
+  const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 120000, ...opts });
+  if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} → ${r.status}: ${(r.stderr ?? r.stdout ?? "").slice(0, 300)}`);
   return (r.stdout ?? "").trim();
 };
 const portaLivre = () => new Promise((res) => {
@@ -60,8 +62,7 @@ async function esperarHealth(base, timeoutMs = 480000) {
 function matarArvore(proc) {
   if (!proc || proc.exitCode !== null) return Promise.resolve();
   return new Promise((res) => {
-    const killer = spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { encoding: "utf8" });
-    void killer;
+    spawnSync("taskkill", ["/PID", String(proc.pid), "/T", "/F"], { encoding: "utf8" });
     proc.once("exit", res);
     setTimeout(res, 10000);
   });
@@ -73,20 +74,41 @@ try {
     console.log("E2E do BAT exige Windows (cmd.exe + taskkill).");
     process.exitCode = 2;
   } else {
-    console.log("== E2E oficial: BAT real sobre instalação 1.0.8 em clone descartável ==");
+    console.log("== E2E oficial: BAT real sobre instalação 1.0.8 em fixture descartável ==");
 
-    // 1. Clone descartável + checkout 1.0.8.
-    git(["clone", "--quiet", ROOT, CLONE]);
-    git(["-C", CLONE, "checkout", "--quiet", "--detach", SHA_108]);
-    t("clone em 1.0.8", git(["-C", CLONE, "rev-parse", "HEAD"]) === SHA_108);
+    // 1. Árvore-fonte da candidata via git archive (somente arquivos
+    //    rastreados do HEAD testado — sem .git, node_modules, dados).
+    const tarPath = join(TEMP, "fonte.tar");
+    sh("git", ["-C", ROOT, "archive", "--format=tar", "-o", tarPath, "HEAD"]);
+    mkdirSync(FIX, { recursive: true });
+    sh("tar", ["--force-local", "-xf", tarPath, "-C", FIX]);
+    t("árvore da candidata extraída", existsSync(join(FIX, "iniciar-mestre-rpg.bat"))
+      && existsSync(join(FIX, "scripts", "adotar-legado.mjs"))
+      && !existsSync(join(FIX, ".git")));
 
-    // 2. Banco legado REAL: migrations da própria árvore 1.0.8 + dados.
-    const BANCO = join(CLONE, "banco", "mestre-rpg.db");
+    // 2. Banco legado REAL: subconjunto de migrations idêntico ao de
+    //    main@7e17c9b (entries idx<=33; diff dos arquivos vs. 1.0.8 é
+    //    vazio — migrations são append-only) + dados de usuário.
+    const journal = JSON.parse(
+      readFileSync(join(ROOT, "servidor", "migrations", "meta", "_journal.json"), "utf8"),
+    );
+    const antigas = journal.entries.filter((e) => e.idx <= ULTIMO_IDX_108);
+    const pastaAntigas = join(TEMP, "migrations-108");
+    mkdirSync(join(pastaAntigas, "meta"), { recursive: true });
+    const MIGRATIONS = join(ROOT, "servidor", "migrations");
+    for (const e of antigas) {
+      copyFileSync(join(MIGRATIONS, `${e.tag}.sql`), join(pastaAntigas, `${e.tag}.sql`));
+    }
+    writeFileSync(join(pastaAntigas, "meta", "_journal.json"),
+      JSON.stringify({ ...journal, entries: antigas }));
+    t("subconjunto 1.0.8 montado", antigas.length === 34, String(antigas.length));
+
+    const BANCO = join(FIX, "banco", "mestre-rpg.db");
     mkdirSync(dirname(BANCO), { recursive: true });
     {
       const sqlite = new Database(BANCO);
       sqlite.pragma("journal_mode = WAL");
-      await migrate(drizzle(sqlite), { migrationsFolder: join(CLONE, "servidor", "migrations") });
+      await migrate(drizzle(sqlite), { migrationsFolder: pastaAntigas });
       const agora = Date.now();
       const senha = await hashSenha("senha-e2e-123");
       sqlite.prepare("insert into users (id,username,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,1,'ativo',?,?)")
@@ -106,15 +128,10 @@ try {
       t("banco legado com 34 migrations", n === 34, String(n));
     }
 
-    // 3. Atualiza o CÓDIGO para a candidata (equivale ao auto-update do
-    //    boot anterior) sem tocar no banco — primeiro boot do launcher novo.
-    git(["-C", CLONE, "checkout", "--quiet", "--detach", REF_CANDIDATA]);
-    t("clone atualizado para a candidata", existsSync(join(CLONE, "scripts", "adotar-legado.mjs")));
-
-    // 4. node_modules por junction — `if not exist node_modules` do BAT
-    //    pula npm ci; dependências são idênticas entre os SHAs.
-    symlinkSync(join(ROOT, "node_modules"), join(CLONE, "node_modules"), "junction");
-    t("node_modules junction criado", existsSync(join(CLONE, "node_modules", "better-sqlite3")));
+    // 3. node_modules por junction — `if not exist node_modules` do BAT
+    //    pula npm ci; dependências idênticas às da árvore testada.
+    symlinkSync(join(ROOT, "node_modules"), join(FIX, "node_modules"), "junction");
+    t("node_modules junction criado", existsSync(join(FIX, "node_modules", "better-sqlite3")));
 
     const PORTA = await portaLivre();
     const env = {
@@ -123,15 +140,15 @@ try {
       MESTRE_STATE_DIR: STATE,
       MESTRE_PORTA: String(PORTA),
       MESTRE_BANCO: BANCO,
-      MESTRE_BACKUPS: join(CLONE, "backups"),
-      MESTRE_ARQUIVOS: join(CLONE, "arquivos", "campanhas"),
+      MESTRE_BACKUPS: join(FIX, "backups"),
+      MESTRE_ARQUIVOS: join(FIX, "arquivos", "campanhas"),
     };
     const BASE = `http://127.0.0.1:${PORTA}`;
 
     const dispararBat = (entrada) => {
       batLog = "";
       const proc = spawn("cmd.exe", ["/d", "/c", "iniciar-mestre-rpg.bat"], {
-        cwd: CLONE, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+        cwd: FIX, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
       });
       proc.stdout.on("data", (d) => { batLog += d; });
       proc.stderr.on("data", (d) => { batLog += d; });
@@ -139,7 +156,7 @@ try {
       return proc;
     };
 
-    // 5. PRIMEIRO BOOT do launcher novo sobre instalação 1.0.8.
+    // 4. PRIMEIRO BOOT do launcher novo sobre instalação 1.0.8.
     console.log("  … primeiro boot do BAT (build + adoção + migrate + start) — pode levar minutos");
     batProc = dispararBat("S\r\nx\r\nx\r\n");
     const health1 = await esperarHealth(BASE);
@@ -156,15 +173,14 @@ try {
     const lista = camps.campanhas ?? camps.campaigns ?? (Array.isArray(camps) ? camps : []);
     t("campanha legada listada na API", lista.some((c) => c.name === "Campanha E2E 1.0.8"), JSON.stringify(camps).slice(0, 160));
 
-    // Recibo de adoção + backup pre_adocao gravados no clone.
     const envClone = { ...process.env, MESTRE_STATE_DIR: STATE, MESTRE_BANCO: BANCO };
-    t("recibo de instalação concluída (adoção)", lerReciboInstalacao(CLONE, envClone).status === "ok");
-    const backupsDir = join(CLONE, "backups");
+    t("recibo de instalação concluída (adoção)", lerReciboInstalacao(FIX, envClone).status === "ok");
+    const backupsDir = join(FIX, "backups");
     const adocaoBackups = existsSync(backupsDir)
       ? readdirSync(backupsDir).filter((n) => n.startsWith("pre_adocao_")) : [];
     t("backup pre_adocao criado", adocaoBackups.length === 1, adocaoBackups.join(","));
 
-    // 6. Migrações aplicadas: banco agora no schema completo (36).
+    // 5. Migrações aplicadas: banco agora no schema completo (36).
     {
       const db = new Database(BANCO, { readonly: true });
       const n = db.prepare("select count(*) c from __drizzle_migrations").get().c;
@@ -177,7 +193,7 @@ try {
         `users=${users} campaigns=${campsDb} characters=${chars}`);
     }
 
-    // 7. INTERrupção: mata a árvore cmd→npm→node e sobe de novo.
+    // 6. INTERrupção: mata a árvore cmd→npm→node e sobe de novo.
     console.log("  … taskkill da árvore do servidor (interrupção)");
     await matarArvore(batProc);
     batProc = null;
@@ -199,8 +215,7 @@ try {
   if (batLog) console.error("  --- últimas linhas do BAT ---\n" + batLog.slice(-3000));
 } finally {
   await matarArvore(batProc);
-  // Remove a junction ANTES do rm recursivo (não tocar node_modules real).
-  try { rmSync(join(CLONE, "node_modules"), { force: true }); } catch { }
+  try { rmSync(join(FIX, "node_modules"), { force: true }); } catch { }
   rmSync(TEMP, { recursive: true, force: true });
 }
 
