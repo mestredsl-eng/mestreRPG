@@ -53,7 +53,8 @@ const JOURNAL_ADOCAO = "adocao-legado.json";
 // idx 0..33). A candidata adiciona 0034/0035 (idx 34/35).
 const ULTIMO_IDX_108 = 33;
 
-if (!process.argv.slice(2).includes("--confirmar")) {
+const args = process.argv.slice(2);
+if (!args.includes("--confirmar") && !args.includes("--confirmar-adocao")) {
   console.log("uso: node scripts/adotar-legado.mjs --confirmar");
   console.log("A adoção de instalação legada exige confirmação explícita do operador.");
   process.exit(2);
@@ -88,12 +89,18 @@ function listarArquivos(base) {
 let _Database = null;
 function requireSqlite() {
   if (_Database) return _Database;
-  try {
-    _Database = createRequire(import.meta.url)("better-sqlite3");
-  } catch {
-    falhar("sqlite-indisponivel", "better-sqlite3 não resolvido — execute 'npm ci' na raiz antes de adotar");
+  const require = createRequire(import.meta.url);
+  // better-sqlite3 é dependência do workspace servidor: tenta a
+  // resolução normal e depois os node_modules aninhados do pacote.
+  const candidatos = [
+    () => require("better-sqlite3"),
+    () => require(require("node:path").join(repoDir, "servidor", "node_modules", "better-sqlite3")),
+    () => createRequire(join(repoDir, "servidor", "package.json"))("better-sqlite3"),
+  ];
+  for (const tentar of candidatos) {
+    try { _Database = tentar(); return _Database; } catch { /* próxima */ }
   }
-  return _Database;
+  falhar("sqlite-indisponivel", "better-sqlite3 não resolvido — execute 'npm ci' na raiz antes de adotar");
 }
 
 /** Revalida o backup no disco: arquivos presentes, tamanhos e hashes
