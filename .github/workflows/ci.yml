@@ -272,6 +272,8 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || hashFiles('teste-ficha-roundtrip-292.mjs') != ''
         shell: bash
         run: node teste-ficha-roundtrip-292.mjs
+      - name: Regressão E2E ciclo de campanha, convites e membros (Issue #291)
+        run: node teste-ciclo-campanha.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -489,3 +491,7 @@ jobs:
           node teste-xp-historico-ui.mjs
       - name: E2E concessão XP em lote (#185)
         run: node teste-xp-lote-ui.mjs
+      - name: Suíte E2E UI do ciclo de campanha (#291 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-ciclo-campanha-ui.mjs ====="
+          node teste-ciclo-campanha-ui.mjs
