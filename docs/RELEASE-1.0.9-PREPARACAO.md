@@ -31,12 +31,14 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 ### Boot, atualização e recuperação — PR #308
 
-- HEAD atual consultado: `b96ec55821c5c7167c5b9321a74f471d42744e43`, base `main@7e17c9b`.
-- CI natural `45291491793`: job Windows **SUCCESS 19/19 etapas**, sem falhas e sem SKIPs.
-- Passaram no Windows: build, homologação de atualização/restauração, auto-update com `npm.cmd`, crash abrupto + journal/recovery, Boot Lock Node 22, Node 20 (mínimo), gate de versão do BAT, primeiro bootstrap P10-C via `cmd.exe` real e restauração fail-closed bloqueando migrate/start.
-- P10-C confirmou consentimento, prompt, ordem lock → autorização → revalidação → updater, entradas negativas/EOF e instalação existente.
-- **Ainda não declarar a CI da PR concluída:** Servidor e Navegador estavam `IN_PROGRESS` na última consulta do mesmo run. Exigir 3/3 no SHA exato e revisão formal elegível.
+- HEAD da branch: `9b8c6e6e45745e561a0f6d9bb0114ef01c275ef7`, base `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`.
+- CI natural canônica `45292327295`; merge-ref efetivamente testado nos três jobs: **`193a05755633b62eb57455e15ce10ebacd09616f`**.
+- **Windows:** SUCCESS, **19/19 etapas**, zero falhas e zero SKIPs. Inclui build, atualização/restauração, auto-update `npm.cmd` (**118/118**), Boot Lock Node 22 e 20, gate BAT (**21/21**), P10-C real via `cmd.exe` (**25/25**) e restauração fail-closed (**18/18**).
+- **Servidor:** SUCCESS, **29/29 etapas**, zero falhas e zero SKIPs. Inclui typecheck/build, 29 suítes obrigatórias, camada adicional #189 e teste Linux de componentes no runner Ubuntu.
+- **Linux component-level:** `teste-recovery-linux.mjs` executado em Ubuntu 26.04.1 / Node 22.23.5, **18 passaram / 0 falharam**. Cobriu aquisição/liberação/concorrência do lock, XDG/`MESTRE_STATE_DIR`, migrate fail-closed, SIGKILL real + restart e recusa de escrita em state dir sem permissão. Isso não cria nem homologa um launcher Linux; a camada é de componentes Node.
+- **Navegador:** ainda IN_PROGRESS na última consulta; a matriz obrigatória Playwright ainda não terminou, e Extrato XP + concessão de XP em lote continuam pendentes neste run.
 - A correção final do P10-C foi test-only: o sentinela passou a exportar `recuperarAtualizacaoPendente()` para satisfazer o contrato importado pelo avaliador real; não foram removidos nem relaxados asserts.
+- **Estado geral da CI #308: 2/3 jobs SUCCESS; Navegador pendente.** Ainda não é aceite 3/3 nem autorização de merge.
 
 ### Integridade SQLite e isolamento entre campanhas — PR #316
 
@@ -57,8 +59,9 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 ### Linux
 
-- Issue #271 / PR #311: harness de componentes Linux existe em branch própria, mas ainda não há evidência de execução em runner Linux versionado no SHA candidato.
-- **Gate em aberto:** executar a homologação Linux real na candidata integrada ou obter decisão explícita e registrada do proprietário para retirar/adiar esse gate antes do corte. Build Windows não substitui prova Linux.
+- A homologação de componentes foi incorporada isoladamente à #308; a branch divergente #311 (108 commits à frente) não foi mesclada.
+- No merge-ref `193a05755633b62eb57455e15ce10ebacd09616f`, runner Ubuntu 26.04.1 / Node 22.23.5: **18/18 checks PASS** em Boot Lock, XDG/state externo, migrate fail-closed, SIGKILL/restart e permissão do diretório de estado.
+- Isso homologa a camada de componentes Node no Linux. Não existe launcher oficial `.sh`; não anunciar nem pressupor suporte de inicialização Linux por shell.
 
 ## Itens condicionais — não anunciar até integrar e homologar
 
@@ -69,12 +72,12 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 - [ ] Uma única candidata 1.0.9 identificada, base `main`, DAG/diff cumulativo auditado e sem branches empilhadas pendentes.
 - [ ] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
-- [ ] PR #308: CI natural 3/3 no SHA final, incluindo Windows 19/19, P10-C real e restauração fail-closed, mais revisão independente.
+- [ ] PR #308: concluir o job Navegador e obter CI natural 3/3 no SHA/merge-ref final; Windows 19/19 e Linux component-level 18/18 já passaram no merge-ref `193a057`.
 - [ ] PR #316: CI natural 3/3 no SHA final, F1–F6 89/89, mais revisão independente formal.
 - [ ] PR #300: decisão explícita sobre as lacunas da Issue #297 e 38 REVIEW; só anunciar os fluxos efetivamente cobertos.
 - [ ] W14/W16 executados como regressões, preservando banco, arquivos, configuração e backup.
 - [ ] Homologação Windows real no SHA final.
-- [ ] Homologação Linux real em runner versionado, ou decisão explícita de escopo documentada pelo proprietário.
+- [x] Homologação Linux component-level em runner Ubuntu 26.04.1 no merge-ref `193a057` (18/18).
 - [ ] Upgrade/cutover real de instalação 1.0.8 para a candidata final, com banco, arquivos, backups, campanhas, fichas e progressão preservados.
 - [ ] Instalação limpa e build reproduzível de servidor/site.
 - [ ] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP.
