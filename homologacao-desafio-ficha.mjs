@@ -3,6 +3,7 @@
 // do valor PERSISTIDO da ficha (servidor autoritativo), penalidade de dados
 // negativos, adulteração do cliente ignorada, recebimento/rolagem pelo jogador,
 // visibilidade pública/privada e formulário manual preservado como secundário.
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 import { io as ioClient } from "socket.io-client";
 import {
@@ -14,14 +15,148 @@ let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 
-const DIR = dirTeste("desafio-ficha");
-const BANCO = `${DIR}/teste.db`;
-const ARQ = `${DIR}/arq`, BKS = `${DIR}/bks`;
+// Toda aquisição fica dentro do try: uma falha de setup também limpa.
+let DIR, BANCO, ARQ, BKS, BASE;
+let proc, ids, sid, browser, fechamentoServidor = null;
+const sockets = [];
 
-await prepararBanco(BANCO);
-const porta = await portaLivre();
-const BASE = `http://localhost:${porta}`;
-let proc, ids, sid;
+// O listener de `close` é registrado no spawn (antes de qualquer kill):
+// `exit` prova só o fim do processo; `close` prova stdio encerrado —
+// teardown real. O timeout só começa quando o finally aguarda.
+function observarFechamento(p) {
+  return new Promise((resolve) => p.once("close", resolve));
+}
+async function aguardarFechamento(obs, timeoutMs = 10000) {
+  let timer;
+  try {
+    await Promise.race([
+      obs,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("timeout aguardando close do processo do servidor")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Cleanup compartilhado entre o fluxo principal e a prova de falha:
+// sockets → browser → shutdown + close real → remoção do diretório.
+// Retorna a lista de erros de limpeza; nunca lança — quem chama decide
+// como contabilizar, para não mascarar a exceção original.
+async function limparRecursos({ sockets: sk = [], proc: p = null, fechamento = null, browser: br = null, pagina = null, contexto = null, dir = null } = {}) {
+  const erros = [];
+  for (const s of sk) {
+    try {
+      if (s && s.connected) {
+        // Evento disconnect REAL com timeout — listener preso antes do
+        // close (emissão pode ser síncrona); timer e listener sempre
+        // limpos em finally; timeout vira erro de limpeza explícito.
+        const resultado = await new Promise((resolve) => {
+          let done = false;
+          const onDisc = () => fin("disconnect");
+          const t = setTimeout(() => fin("timeout"), 5000);
+          function fin(v) {
+            if (done) return;
+            done = true;
+            clearTimeout(t);
+            s.off("disconnect", onDisc);
+            resolve(v);
+          }
+          s.once("disconnect", onDisc);
+          s.close();
+        });
+        if (resultado === "timeout") erros.push("socket: disconnect não emitido em 5s");
+      } else if (s) {
+        s.close();
+      }
+    } catch (e) { erros.push("socket: " + String(e?.message ?? e)); }
+  }
+  if (pagina) {
+    try { await pagina.close(); } catch (e) { erros.push("pagina: " + String(e?.message ?? e)); }
+  }
+  if (contexto) {
+    try { await contexto.close(); } catch (e) { erros.push("contexto: " + String(e?.message ?? e)); }
+  }
+  if (br) {
+    try { await br.close(); } catch (e) { erros.push("browser: " + String(e?.message ?? e)); }
+  }
+  try {
+    if (p) {
+      await encerrarServidor(p);
+      if (fechamento) await aguardarFechamento(fechamento);
+    }
+  } catch (e) {
+    erros.push("servidor: " + String(e?.message ?? e));
+  }
+  try {
+    if (dir) { if (!limparDir(dir)) erros.push("dir: limpeza falhou: " + dir); }
+  } catch (e) {
+    erros.push("dir: " + String(e?.message ?? e));
+  }
+  return erros;
+}
+
+// Prova determinística do caminho de exceção (ordem do Dono): adquire
+// dir+banco+porta+servidor+dois sockets e injeta erro. O MESMO
+// limparRecursos do finally deve fechar tudo; a falha original permanece
+// visível; a execução limpa posterior é o próprio fluxo principal abaixo.
+async function provaFalhaParcial() {
+  sec("Teardown — falha injetada após aquisição parcial");
+  const sk = [];
+  const descFlags = [];
+  let d2, proc2 = null, fech2 = null, close2Ok = false;
+  let browser2 = null, ctx2 = null, pg2 = null;
+  let erroOriginal = null, erros2 = [];
+  try {
+    d2 = dirTeste("desafio-ficha-falha");
+    const banco2 = `${d2}/teste.db`;
+    await prepararBanco(banco2);
+    const porta2 = await portaLivre();
+    const base2 = `http://localhost:${porta2}`;
+    proc2 = subirServidor(porta2, { banco: banco2, arquivos: `${d2}/arq`, backups: `${d2}/bks` });
+    proc2.stderr.on("data", () => {});
+    proc2.stdout.resume();
+    fech2 = observarFechamento(proc2);
+    fech2.then(() => { close2Ok = true; });
+    await esperarSaudavel(base2, proc2);
+    const c2 = await criarCenario(base2, banco2, { jogadores: {} });
+    const token = decodeURIComponent(c2.cookieMestre.split("=")[1]);
+    for (let i = 0; i < 2; i++) {
+      const s = ioClient(base2, {
+        path: "/socket.io",
+        transports: ["websocket"],
+        extraHeaders: { cookie: `mestre_rpg_session=${encodeURIComponent(token)}` },
+        reconnection: false,
+      });
+      sk.push(s);
+      const f = { ok: false };
+      s.once("disconnect", () => { f.ok = true; });
+      descFlags.push(f);
+    }
+    await pronto(sk[0]);
+    await pronto(sk[1]);
+    // Browser real com contexto/página explícitos também na aquisição parcial
+    browser2 = await chromium.launch();
+    ctx2 = await browser2.newContext();
+    pg2 = await ctx2.newPage();
+    await pg2.goto(base2);
+    await pg2.waitForLoadState("domcontentloaded").catch(() => {});
+    throw new Error("FALHA_INJETADA_pos_aquisicao_parcial");
+  } catch (e) {
+    erroOriginal = e;
+  } finally {
+    erros2 = await limparRecursos({ sockets: sk, proc: proc2, fechamento: fech2, pagina: pg2, contexto: ctx2, browser: browser2, dir: d2 });
+  }
+  t("falha injetada propaga sem ser mascarada pelo cleanup", String(erroOriginal?.message ?? "").includes("FALHA_INJETADA"), String(erroOriginal?.message ?? erroOriginal).slice(0, 90));
+  t("cleanup da prova sem erros", erros2.length === 0, erros2.join(" | "));
+  t("dois sockets emitiram disconnect real (evento, não flag)", descFlags.length === 2 && descFlags.every((f) => f.ok));
+  t("página da prova fechada", !!pg2 && pg2.isClosed() === true);
+  t("contexto da prova sem páginas abertas", !!ctx2 && ctx2.pages().length === 0, `pages=${ctx2 ? ctx2.pages().length : "n/a"}`);
+  t("browser real da prova desconectado", !!browser2 && browser2.isConnected() === false);
+  t("processo da prova chegou a close (stdio encerrado)", close2Ok === true);
+  t("diretório da prova removido", !!d2 && !existsSync(d2), d2 || "sem dir");
+}
 
 // Template de ficha com seções reais: atributos, conhecimentos, habilidades,
 // equipamento (moeda = inelegível) e um campo "livre" só elegível via flag.
@@ -58,6 +193,13 @@ function conectar(cookie) {
     reconnection: false,
   });
 }
+// Todo socket é registrado na coleção externa ao try: o finally fecha
+// todos, inclusive os criados antes de uma falha parcial.
+function conectarRegistrado(cookie) {
+  const s = conectar(cookie);
+  sockets.push(s);
+  return s;
+}
 const pronto = (s) => new Promise((res, rej) => { s.on("connect", res); s.on("connect_error", rej); });
 const emitirCb = (s, ev, payload) => new Promise((res) => s.emit(ev, payload, res));
 const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) => {
@@ -66,9 +208,19 @@ const esperar = (s, ev, timeout = 8000, pred) => new Promise((resolve, reject) =
   s.on(ev, h);
 });
 
+await provaFalhaParcial();
+
 try {
+  DIR = dirTeste("desafio-ficha");
+  BANCO = `${DIR}/teste.db`;
+  ARQ = `${DIR}/arq`; BKS = `${DIR}/bks`;
+  await prepararBanco(BANCO);
+  const porta = await portaLivre();
+  BASE = `http://localhost:${porta}`;
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
   proc.stderr.on("data", (d) => process.stderr.write(d));
+  proc.stdout.resume();
+  fechamentoServidor = observarFechamento(proc);
   await esperarSaudavel(BASE, proc);
 
   const cenario = await criarCenario(BASE, BANCO, {
@@ -241,7 +393,7 @@ try {
   sid = sess.json?.sessao?.id;
   t("sessão criada", !!sid, JSON.stringify(sess.json).slice(0, 120));
 
-  const sockM = conectar(ids.cm), sockJ1 = conectar(ids.j1.cookie), sockJ2 = conectar(ids.j2.cookie);
+  const sockM = conectarRegistrado(ids.cm), sockJ1 = conectarRegistrado(ids.j1.cookie), sockJ2 = conectarRegistrado(ids.j2.cookie);
   await Promise.all([pronto(sockM), pronto(sockJ1), pronto(sockJ2)]);
   for (const s of [sockM, sockJ1, sockJ2]) await emitirCb(s, "mesa:entrar", { sessionId: sid });
 
@@ -560,7 +712,7 @@ try {
   t("privado: dono recebe", evJ1.teste.some((x) => x.id === rPriv?.id));
 
   sec("UI — fluxo principal pela ficha");
-  const browser = await chromium.launch();
+  browser = await chromium.launch();
   const errosM = [], errosJ = [];
   const ctxM = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
   const ctxJ = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
@@ -717,15 +869,18 @@ try {
 
   t("UI. console sem erros (mestre)", errosM.length === 0, errosM.slice(0, 2).join(" | "));
   t("UI. console sem erros (jogador)", errosJ.length === 0, errosJ.slice(0, 2).join(" | "));
-  await browser.close();
-
-  sockM.close(); sockJ1.close(); sockJ2.close();
 } catch (e) {
   fail++;
   console.log("FALHOU exceção:", e);
 } finally {
-  if (proc) await encerrarServidor(proc).catch(() => {});
-  limparDir(DIR);
+  // Ordem: sockets → browser → shutdown/close do servidor → remoção do DIR.
+  // Erro de cleanup falha a suíte sem mascarar a exceção original (o catch
+  // acima já a registrou antes deste bloco).
+  const errosLimpeza = await limparRecursos({ sockets, proc, fechamento: fechamentoServidor, browser, dir: DIR });
+  for (const msg of errosLimpeza) {
+    fail++;
+    console.log("FALHOU teardown:", msg);
+  }
 }
 
 console.log(`\n${pass} ok, ${fail} falhas`);

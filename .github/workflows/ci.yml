@@ -229,14 +229,22 @@ jobs:
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
-            node "$s"
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
           done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
       - name: Suítes da stack #189 — Servidor sem navegador
         shell: bash
         run: |
@@ -449,15 +457,27 @@ jobs:
             homologacao-sessoes.mjs
             teste-realtime-paginas.mjs
             homologacao-pacotes-forjados.mjs
+            teste-wcag-avaliador-297.mjs
+            teste-a11y-fluxos-297.mjs
+            homologacao-desafio-ficha.mjs
+            homologacao-validacao-ficha.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
-            node "$s"
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
           done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
       - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
         run: |
           echo "===== teste-xp-historico-ui.mjs ====="
