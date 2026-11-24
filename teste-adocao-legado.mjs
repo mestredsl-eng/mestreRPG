@@ -45,7 +45,7 @@ function sha256(caminho) {
 /** Monta uma "instalação" fixture DENTRO do repo (resolução de
  *  better-sqlite3 sobe até o node_modules da raiz) com banco no esquema
  *  1.0.8 exato: journal truncado nas 34 primeiras entradas. */
-async function fixtureLegada(nome, { dados = true } = {}) {
+async function fixtureLegada(nome, { dados = true, bancoRel = "banco/mestre-rpg.db" } = {}) {
   const dir = mkdtempSync(join(ROOT, `.tmp-adocao-${nome}-`));
   const app = join(dir, "instalacao legada");
   mkdirSync(join(app, "scripts"), { recursive: true });
@@ -58,7 +58,7 @@ async function fixtureLegada(nome, { dados = true } = {}) {
     join(app, "servidor", "migrations", "meta", "_journal.json"));
 
   const stateDir = join(dir, "state");
-  const banco = join(dir, "banco", "mestre-rpg.db");
+  const banco = join(dir, ...bancoRel.split("/"));
   mkdirSync(dirname(banco), { recursive: true });
 
   // Migrations 1.0.8: primeiras 34 entradas do journal vigente.
@@ -219,6 +219,25 @@ try {
     const r = rodarAdocao(f);
     t("banco inválido → exit 1", r.status === 1, `status=${r.status}`);
     t("banco inválido → sem recibo", lerReciboInstalacao(f.app, f.env).status === "ausente");
+    rmSync(f.dir, { recursive: true, force: true });
+  }
+
+  // --- Issue #320: MESTRE_BANCO com nome/caminho alternativo ---
+  {
+    const f = await fixtureLegada("nome-alt", { bancoRel: "dados-legado/legado-2024.db" });
+    const r = rodarAdocao(f);
+    t("banco nome alternativo → exit 0", r.status === 0, `status=${r.status} ${r.stderr} ${r.stdout}`);
+    const dirB = readdirSync(f.env.MESTRE_BACKUPS).find((n) => n.startsWith("pre_adocao_"));
+    const manifest = JSON.parse(readFileSync(join(f.env.MESTRE_BACKUPS, dirB, "manifest.json"), "utf8"));
+    const entradaBanco = manifest.arquivos.find((e) => e.destino === join("banco", "legado-2024.db"));
+    t("manifest aponta para o basename real", !!entradaBanco, JSON.stringify(manifest.arquivos));
+    t("sha256 do manifesto confere com a cópia",
+      entradaBanco && sha256(join(f.env.MESTRE_BACKUPS, dirB, "banco", "legado-2024.db")) === entradaBanco.sha256);
+    const db = new Database(join(f.env.MESTRE_BACKUPS, dirB, "banco", "legado-2024.db"), { readonly: true });
+    t("backup reaberto passa integrity_check",
+      db.pragma("integrity_check", { simple: true }) === "ok");
+    db.close();
+    t("recibo gravado com nome alternativo", lerReciboInstalacao(f.app, f.env).status === "ok");
     rmSync(f.dir, { recursive: true, force: true });
   }
 
