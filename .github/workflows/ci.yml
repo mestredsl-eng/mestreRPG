@@ -228,6 +228,7 @@ jobs:
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
+            teste-escopo-cruzado.mjs
             teste-ficha-cacadores.mjs
             teste-runtime-processos-298.mjs
           )
