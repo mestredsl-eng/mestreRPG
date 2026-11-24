@@ -9,7 +9,9 @@
 - Branch de integração: `release/1.0.9-candidata`
 - Conteúdo integrado por merges normais (sem rebase/force-push): PRs #308, #316, #300, #302, #307, #310 e #317.
 - Bump de versão aplicado na mesma árvore: `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`; `CHANGELOG.md` com seção `[1.0.0.9]`; migration `0035_release_1009_stabilizacao_news` + snapshot/journal consistentes.
-- Suítes reconciliadas na árvore candidata executadas localmente: `teste-novidades` 118/118, `teste-integridade-sqlite` 91/91, `teste-ficha-roundtrip-292` 34/34, `teste-ciclo-campanha` 51/51, `teste-runtime-processos-298` 39/39, `teste-ficha-cacadores` 91/91, `teste-ciclo-campanha-ui` 37/37; typecheck/build do servidor e build do site limpos.
+- Suítes reconciliadas na árvore candidata executadas localmente: `teste-novidades` 118/118, `teste-integridade-sqlite` 91/91, `teste-ficha-roundtrip-292` 34/34, `teste-ciclo-campanha` 51/51, `teste-runtime-processos-298` 39/39, `teste-ficha-cacadores` 91/91, `teste-ciclo-campanha-ui` 37/37, `teste-atualizacao-instalacao` 29/29; typecheck/build do servidor e build do site limpos.
+- **CI natural da candidata: 6/6 SUCCESS** no SHA `f0dd2082d9076220d1bf9380329f89c203429b57` — Servidor, Navegador (Playwright), Auto-update Windows, Build e relatório, voz e Progressão XP, sem falhas ou SKIPs.
+- **Upgrade real 1.0.8 → 1.0.9 homologado** (fixture descartável de `main@7e17c9b`): migrate com backup pré-update, 36 migrations, integridade/FK ok, contagens preservadas, smoke autenticado (login, campanhas, fichas, extrato XP, xp-lote, Central 1.0.9). Evidência na PR #318 e Issue #272.
 
 ## Identificação planejada
 
@@ -78,24 +80,24 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 ## Gate de publicação — checklist obrigatório
 
-- [ ] Uma única candidata 1.0.9 identificada, base `main`, DAG/diff cumulativo auditado e sem branches empilhadas pendentes.
-- [ ] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
-- [ ] PR #308 no HEAD atual `c2842b5`: Windows 19/19 e Servidor 29/29 SUCCESS; Navegador ainda IN_PROGRESS no run `45426615734`. Os 3/3 anteriores pertencem ao SHA antigo `9b8c6e6`.
-- [ ] PR #316 no HEAD atual `887ced3`: Windows SUCCESS; Servidor e Navegador IN_PROGRESS no run `45428706739`. O resultado 89/89 é do SHA anterior `0d2a06c`; a regressão F4 `RAISE(IGNORE)` ainda aguarda execução. **Revisão independente formal continua pendente.**
-- [ ] PR #300: CI 3/3 verde e matriz 204/204; limitar anúncios aos fluxos cobertos. Permanecem convite/cadastro (#255), estados vazio/loading/erro (#238) e 38 REVIEW de contraste sem disposição humana.
-- [ ] W14/W16 executados como regressões, preservando banco, arquivos, configuração e backup.
-- [x] Homologação Windows real no HEAD #308: Node 22/20, P10-C 25/25 e restauração fail-closed 18/18; a homologação final de cutover 1.0.8→1.0.9 continua separada.
-- [x] Homologação Linux component-level em runner Ubuntu 26.04.1 no merge-ref `193a057` (18/18).
-- [ ] Upgrade/cutover real de instalação 1.0.8 para a candidata final, com banco, arquivos, backups, campanhas, fichas e progressão preservados.
-- [ ] Instalação limpa e build reproduzível de servidor/site.
-- [ ] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP.
-- [ ] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final.
-- [ ] `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`, todos no mesmo commit.
-- [ ] `CHANGELOG.md` atualizado somente com funcionalidades integradas e validadas.
-- [ ] Versão na API/UI e metadados de backup consistente com `1.0.9`.
-- [ ] Pacote/árvore de distribuição revisado para excluir banco, arquivos de usuários, backups, segredos, caches e temporários.
-- [ ] CI natural 3/3 na **candidata única que reúna #308 + #316 e o escopo de testes escolhido**, após integração e revisão.
-- [ ] Revisões independentes registradas e bloqueadores resolvidos.
+- [x] Uma única candidata 1.0.9 identificada: branch `release/1.0.9-candidata` (PR #318), base `main@7e17c9b`, merges normais de #308/#316/#300/#302/#307/#310/#317; #306 fechada como superseded.
+- [x] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
+- [x] PR #308 integrada: na candidata, Windows Auto-update SUCCESS (19 etapas, Node 22/20, BAT, P10-C, restauração fail-closed) e Servidor/Navegador SUCCESS no SHA `f0dd208`.
+- [x] PR #316 integrada: suíte `teste-integridade-sqlite` 91/91 na árvore candidata (inclui regressão F4 `RAISE(IGNORE)`); CI natural SUCCESS. **Revisão independente formal continua pendente** — repositório tem um único colaborador com escrita.
+- [x] PR #300 integrada: CI 3/3 verde e matriz 204/204 na candidata; anúncios limitados aos fluxos cobertos. Permanecem convite/cadastro (#255), estados vazio/loading/erro (#238) e 38 REVIEW de contraste sem disposição humana — não anunciados como concluídos.
+- [x] W14/W16 executados como regressões na árvore candidata (`teste-backup-pre-migration`, `teste-restauracao-*`, backup legado v1), preservando banco, arquivos, configuração e backup.
+- [x] Homologação Windows real na candidata: Node 22/20, P10-C real via `cmd.exe`, restauração fail-closed — job Auto-update Windows SUCCESS em `f0dd208`.
+- [x] Homologação Linux component-level na stack #308 (18/18, Ubuntu runner).
+- [x] Upgrade/cutover real de instalação 1.0.8 para a candidata: fixture `main@7e17c9b` + migrate + smoke autenticado — evidência na PR #318 e Issue #272.
+- [x] Instalação limpa e build reproduzível: suites de bootstrap/P10-C na CI + build servidor/site limpos localmente.
+- [x] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP (job Servidor SUCCESS; smoke pós-upgrade confirmou escrita e leitura).
+- [x] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final `f0dd208` — CI natural 6/6 SUCCESS.
+- [x] `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`, todos no mesmo commit.
+- [x] `CHANGELOG.md` atualizado somente com funcionalidades integradas e validadas (`[1.0.0.9]`).
+- [x] Versão na API/UI e metadados de backup consistente com `1.0.9` (`lerVersao()` lê `package.json`; smoke confirmou Central exibindo 1.0.9).
+- [ ] Pacote/árvore de distribuição revisado para excluir banco, arquivos de usuários, backups, segredos, caches e temporários — sem empacotador oficial homologado, distribuição é código-fonte (ver procedimento de corte).
+- [x] CI natural completa na candidata única #318: 6/6 SUCCESS em `f0dd208`.
+- [ ] Revisões independentes registradas e bloqueadores resolvidos — aguardando colaborador elegível adicionado pelo proprietário.
 - [ ] Autorização final do proprietário para tag/publicação.
 
 ## Procedimento de corte — somente depois dos gates
