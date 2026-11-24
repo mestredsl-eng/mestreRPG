@@ -277,5 +277,8 @@ Cálculo offline (mesma fórmula WCAG) das cores de borda candidatas do próprio
 | **`--horror-vinho-claro` `#b85c69`** (já usado em foco/acentos) | **3.82–4.48:1** | **sim** |
 | `--horror-ambar` `#b99a62` | 6.29–7.38:1 | sim |
 | `--horror-texto-suave` `#b4a9b1` | 7.40–8.69:1 | sim |
+| neutro `#5a6272` (sugestão intermediária) | 2.74–3.22:1 | **não uniforme** — falha nas superfícies mais escuras |
+| neutro `#6a7285` | 3.49–4.09:1 | sim |
+| neutro `#8a93a8` | 5.46–6.41:1 | sim |
 
-Se a disposição humana decidir reforçar a fronteira dos campos, basta apontar `border-color` de `input`/`select`/`textarea` para `--horror-vinho-claro` (ou um tom intermediário entre vinho e âmbar) — uma alteração de tema de uma linha, sem tocar markup/JS. Alternativa sem mudança visual: aceitar a identificação por label/contexto adjacente, prevista na própria SC 1.4.11. **Ambas as saídas dependem de decisão humana — este documento só quantifica o custo de cada uma.**
+Se a disposição humana decidir reforçar a fronteira dos campos, basta apontar `border-color` de `input`/`select`/`textarea` para `--horror-vinho-claro` (ou um tom intermediário entre vinho e âmbar) — uma alteração de tema de uma linha, sem tocar markup/JS; se preferir tom neutro, `#6a7285` também atinge 3:1 em todas as superfícies (`#5a6272` NÃO — ver tabela). Alternativa sem mudança visual: aceitar a identificação por label/contexto adjacente, prevista na própria SC 1.4.11. **Ambas as saídas dependem de decisão humana — este documento só quantifica o custo de cada uma.**
