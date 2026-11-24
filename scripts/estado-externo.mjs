@@ -38,7 +38,7 @@
 // ausência de banco ou ausência do próprio state dir.
 import { createHash, randomBytes } from "node:crypto";
 import {
-  closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync,
+  closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync,
   readFileSync, renameSync, rmSync, writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -590,6 +590,82 @@ export function validarPrecondicoesBootstrap(repoDir, env = process.env) {
   const c = checarNucleoBootstrap(repoDir, env);
   if (c.status === "bloqueado") return { pronto: false, motivo: c.motivo };
   return { pronto: true, motivo: c.status === "ja-autorizado" ? "ja-autorizado" : "limpo" };
+}
+
+/**
+ * Identifica somente um CANDIDATO a instalação legada para adoção assistida.
+ * Este preflight NÃO valida SQLite nem autoriza migração: ele apenas permite
+ * que o operador confirme a intenção. O script de adoção, executado depois
+ * de npm ci/build, valida o schema 1.0.8 exato, integridade e backup completo
+ * antes de gravar o recibo permanente.
+ *
+ * Retorno false para banco ausente, symlink, estado de protocolo pré-existente,
+ * corrompido, quarentenado ou arquivos inesperados no state dir.
+ */
+export function avaliarCandidatoAdocaoLegada(repoDir, env = process.env) {
+  const banco = caminhoBancoConfigurado(repoDir, env);
+  try {
+    const st = lstatSync(banco);
+    if (!st.isFile() || st.isSymbolicLink() || st.size <= 0) {
+      return { adotavel: false, motivo: "banco-legado-nao-regular" };
+    }
+  } catch (e) {
+    return { adotavel: false, motivo: e?.code === "ENOENT" ? "banco-legado-ausente" : "banco-legado-ilegivel" };
+  }
+
+  const estados = [
+    ["recibo", lerReciboInstalacao(repoDir, env)],
+    ["autorizacao", lerAutorizacaoBootstrap(repoDir, env)],
+    ["provisionamento", lerProvisionamento(repoDir, env)],
+    ["journal-update", lerJournal(repoDir, JOURNAL_UPDATE, env)],
+    ["journal-restauracao", lerJournal(repoDir, JOURNAL_RESTAURACAO, env)],
+  ];
+  for (const [nome, estado] of estados) {
+    if (estado.status !== "ausente") return { adotavel: false, motivo: `${nome}-${estado.status}` };
+  }
+
+  const dir = dirEstado(repoDir, env);
+  let nomes = [];
+  try {
+    if (existsSync(dir)) nomes = readdirSync(dir);
+  } catch {
+    return { adotavel: false, motivo: "state-ilegivel" };
+  }
+  if (nomes.some((n) => n.includes(".quarentena-")
+    || n.startsWith("bootstrap-autorizacao.consumida-"))) {
+    return { adotavel: false, motivo: "state-quarentenado-ou-interrompido" };
+  }
+
+  // O único JSON alheio ao protocolo permitido é o lock pertencente ao
+  // processo atual. Marcadores de backup são aceitos somente com identidade
+  // completa e caminho de backup; qualquer outro estado exige investigação.
+  for (const nome of nomes) {
+    if (nome === "mestre-boot-lock.json") continue;
+    if (nome === "protecao") {
+      const protDir = join(dir, nome);
+      let markers;
+      try { markers = readdirSync(protDir); }
+      catch { return { adotavel: false, motivo: "protecao-ilegivel" }; }
+      for (const marker of markers) {
+        if (!marker.endsWith(".json") || marker.includes(".quarentena-")) {
+          return { adotavel: false, motivo: "protecao-estado-desconhecido" };
+        }
+        let dados;
+        try { dados = JSON.parse(readFileSync(join(protDir, marker), "utf8")); }
+        catch { return { adotavel: false, motivo: "protecao-corrompida" }; }
+        if (!dados || dados.protocoloVersao !== PROTOCOLO_VERSAO
+          || dados.instalacaoId !== instalacaoId(repoDir)
+          || dados.repoCanon !== caminhoCanonico(repoDir)
+          || typeof dados.backupDir !== "string" || !dados.backupDir) {
+          return { adotavel: false, motivo: "protecao-divergente" };
+        }
+      }
+      continue;
+    }
+    return { adotavel: false, motivo: "state-arquivo-desconhecido" };
+  }
+
+  return { adotavel: true, motivo: "banco-legado-candidato" };
 }
 
 export function autorizarPrimeiroBootstrap(repoDir, env = process.env) {
