@@ -2,7 +2,7 @@
 
 > **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Documento atualizado em 24/11/2026 às 12:52 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
+> Documento atualizado em 24/11/2026 às 12:55 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
 
 ## Identificação planejada
 
@@ -42,7 +42,7 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 ### Integridade SQLite e isolamento entre campanhas — PR #316
 
 - HEAD atual: `887ced30e3bd6504ea15947c3e944ced8b3bce89`, base `main@7e17c9b`.
-- Run natural atual: `45428706739`, no HEAD `887ced3`. **Windows SUCCESS (16 etapas); Servidor SUCCESS (27 etapas); Navegador IN_PROGRESS** na última leitura de 24/11/2026 12:52 BRT.
+- Run natural atual: `45428706739`, no HEAD `887ced3`. **Windows SUCCESS (16 etapas); Servidor SUCCESS (27 etapas); Navegador IN_PROGRESS** na última leitura de 24/11/2026 12:55 BRT.
 - O job Servidor executou `teste-integridade-sqlite.mjs` no SHA atual: **91 passaram / 0 falharam**. Os dois asserts novos F4 confirmaram: UPDATE ignorado retorna 409 e rollback preserva o default anterior. O job Windows também concluiu SUCCESS.
 - Histórico: no SHA anterior `0d2a06c`, a suíte SQLite executou **89/89** e a CI fechou 3/3; isso é histórico, não substitui o navegador pendente do SHA atual.
 - **F4 corrigido e verificado pelo job Servidor no HEAD atual:** o UPDATE do template-alvo filtra por `id + campaignId`, exige `changes === 1` dentro da transação e responde 409 com rollback quando o alvo fica indisponível. O job Navegador ainda precisa concluir para fechar 3/3.
