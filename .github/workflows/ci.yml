@@ -351,6 +351,20 @@ jobs:
         shell: bash
         run: |
           node teste-boot-lock.mjs
+
+      # Estes testes montam bancos SQLite reais via better-sqlite3 —
+      # precisam rodar no Node 22 (ABI do módulo nativo compilado no
+      # npm ci), ANTES da troca para Node 20 abaixo.
+      - name: Homologar adoção de instalação legada 1.0.8 (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-adocao-legado.mjs
+
+      - name: E2E oficial BAT→health/login sobre instalação 1.0.8 (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-adocao-legado-boot.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -368,11 +382,6 @@ jobs:
         shell: bash
         run: |
           node teste-bat-primeiro-bootstrap.mjs
-
-      - name: Homologar adoção de instalação legada 1.0.8 (cmd.exe real)
-        shell: bash
-        run: |
-          node teste-bat-adocao-legado.mjs
 
       - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
         run: node teste-bat-restauracao-falha.mjs
