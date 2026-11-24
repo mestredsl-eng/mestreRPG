@@ -81,7 +81,7 @@ A versão 1.0.7 reuniu duas melhorias anteriores:
 iniciar-mestre-rpg.bat
 ```
 
-O script instala dependências se preciso, compila o backend e o frontend (`site/dist`, servido pelo próprio backend na porta 3001), roda as migrações, verifica se a porta 3001 já está em uso (evita instância duplicada) e sobe o servidor. A aplicação completa — API, frontend e Socket.IO — fica disponível em `http://localhost:3001`. Em desenvolvimento, `npm run dev` sobe o frontend com hot-reload em `http://localhost:5173` (proxy para a API).
+O script instala dependências se preciso, verifica se a porta 3001 já está em uso (evita instância duplicada), tenta atualizar o código via Git de forma segura (somente clones do repositório oficial, sem alterações locais — ver "Atualização automática" no `docs/GUIA-OPERACAO.md`), compila o backend e o frontend (`site/dist`, servido pelo próprio backend na porta 3001), roda as migrações e sobe o servidor. A aplicação completa — API, frontend e Socket.IO — fica disponível em `http://localhost:3001`. Em desenvolvimento, `npm run dev` sobe o frontend com hot-reload em `http://localhost:5173` (proxy para a API).
 
 ### Encerrar
 
@@ -137,6 +137,8 @@ Apenas o **administrador global** pode restaurar. Backups nunca são servidos pu
 6. Se algo der errado, restaure o backup do passo 1 pelo procedimento acima; o banco anterior fica preservado em `backups/pre_restore_*/` para rollback.
 
 Os dados (`banco/`, `arquivos/`, `backups/`, `configuracao/`) ficam fora do código — atualizar o programa nunca exige recriar campanhas.
+
+**Auto-update no boot:** em instalações via Git, o `iniciar-mestre-rpg.bat` verifica e aplica atualizações do repositório oficial automaticamente, com proteções e rollback (ver `docs/GUIA-OPERACAO.md` §10.1). Para desativar nesta instalação, defina `MESTRE_AUTO_UPDATE=0` como variável de ambiente (`set MESTRE_AUTO_UPDATE=0` no terminal antes de rodar o `.bat`, ou `setx MESTRE_AUTO_UPDATE 0` para valer em novos terminais); sem a variável ou com outro valor, o auto-update permanece habilitado e o boot continua normal em ambos os casos.
 
 ### Acesso externo via HTTPS (amigos pelo navegador)
 

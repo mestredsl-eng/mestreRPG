@@ -1,6 +1,6 @@
 {
   "name": "@mestre-rpg/servidor",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "private": true,
   "type": "module",
   "scripts": {
@@ -12,10 +12,11 @@
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
-    "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts"
+    "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts",
+    "test:backup-contrato": "tsx --test testes/backup-contrato.test.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^12.2.0",
+    "better-sqlite3": "12.9.0",
     "drizzle-orm": "^0.45.4",
     "express": "^4.21.2",
     "socket.io": "^4.8.1",

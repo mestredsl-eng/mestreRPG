@@ -239,6 +239,20 @@
       "when": 1795374175383,
       "tag": "0033_release_1008_pontos_sangue_vtt_news",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1795419496335,
+      "tag": "0034_release_1006_auto_update_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1795535932258,
+      "tag": "0035_release_1009_stabilizacao_news",
+      "breakpoints": true
     }
   ]
 }

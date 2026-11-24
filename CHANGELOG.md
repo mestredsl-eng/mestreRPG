@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [1.0.0.9] - 2026-11-24
+
+### Novidades
+
+- **Concessão de XP em lote:** o mestre seleciona vários personagens na ficha atual e concede pontos de experiência em uma única operação, com deduplicação por pedido e extrato das concessões.
+- **Extrato de XP somente leitura:** histórico de concessões por personagem com âncora preservada quando eventos antigos são truncados, mantendo a rastreabilidade do saldo.
+- **Pontos de Sangue na ficha configurável:** painel de Sangue vinculado à ficha configurada da campanha, exibindo saldo e capacidade conforme a configuração do mestre.
+- **Atualização automática no boot com recuperação:** o `iniciar-mestre-rpg.bat` verifica o repositório oficial, aplica atualizações seguras com lock de instância única, journal durável e rollback automático após interrupções — incluindo encerramento abrupto durante a atualização — preservando banco, arquivos, configuração e backups. Instalações da 1.0.8 são atualizadas por procedimento controlado e testado.
+
+### Integridade e segurança
+
+- **Integridade SQLite e isolamento entre campanhas:** operações de modelos de ficha, upload de anexos e publicações passaram a usar transações atômicas com verificação de `changes`, revertendo integralmente quando o alvo fica indisponível; requisições cross-campaign retornam 404 sem alterar dados, auditoria ou eventos.
+- **Backup de formato legado:** backups criados pela 1.0.8 e anteriores continuam sendo reconhecidos e validados pelo verificador atual, com restauração fail-closed.
+
+### Acessibilidade
+
+- **Nomes acessíveis nos controles financeiros:** os seis seletores de conta, moeda, tipo de movimentação, origem e destino do painel Dinheiro agora expõem nomes acessíveis, corrigindo violações de SC 4.1.2.
+- **Matriz de homologação visual e de fluxos:** cobertura E2E de contraste WCAG 2.2 AA, regiões vivas `aria-live`, popovers de ajuda, ordem de tabulação e alvos de ponteiro nos fluxos críticos.
+
+### Validação
+
+- Suítes de regressão de ciclo de campanha, ficha de caçadores/round-trip e ciclo de vida do processo executadas na árvore candidata.
+- Homologação Windows real: Node 22 e Node 20, gate BAT via `cmd.exe`, P10-C real e restauração fail-closed.
+- Homologação Linux component-level do Boot Lock/Recovery em runner Ubuntu.
+
 ## [1.0.0.8] - 2026-11-22
 
 ### Novidades
@@ -41,6 +66,18 @@
 - **Downgrade controlado preservado:** o jogador ainda pode tornar uma nota compartilhada privada no mesmo PATCH, e o servidor limpa os destinatários ao fazer isso.
 - **Paridade com a criação:** a mesma regra de `kind`/`visibility` aplicada no POST agora vale para o PATCH; mestres permanecem isentos e a propriedade da nota continua obrigatória.
 - **Registro na Central de Novidades:** a migration `0030_release_1006_diario_permissoes_news.sql` publica esta correção na categoria `correcao`, versão `1.0.6`.
+
+### Atualização automática na inicialização
+
+- **Auto-update Git no boot:** o `iniciar-mestre-rpg.bat` agora verifica o repositório oficial antes de subir o servidor. Quando há commits novos em um fast-forward seguro, o updater aplica `git pull --ff-only`, reinstala dependências quando o lockfile muda e recompila o servidor e o frontend.
+- **Proteções contra atualização insegura:** o updater se recusa a atualizar com Git ausente, sem `.git`, remoto diferente do oficial (incluindo URLs reescritas por `url.*.insteadOf` e múltiplas URLs), branch detached, upstream que não seja `origin/<branch-atual>`, árvore suja (rastreada ou não) ou divergência. Falhas de rede, autenticação e timeout apenas adiam a atualização — nunca bloqueiam a inicialização.
+- **Rollback controlado:** se dependências ou builds falharem após o pull, o updater restaura o commit anterior somente com árvore limpa, HEAD exato e mesma branch, reinstala dependências e recompila ambos os workspaces; se a integridade não puder ser garantida, encerra com código de erro e instruções, sem sucesso falso.
+- **Execução segura de npm no Windows:** comandos npm passam por allowlist fixa via `ComSpec`, sem shell livre; variáveis `GIT_*` herdadas do processo são descartadas para impedir redirecionamento de repositório.
+- **Registro na Central de Novidades:** migration `0034_release_1006_auto_update_news.sql`, com seed idempotente próprio (`INSERT OR IGNORE`, UUID `...0110`), publica esta funcionalidade na versão `1.0.6`, categoria `novidade`.
+
+### Testes
+
+- `teste-auto-update.mjs` cobre 80 cenários: ausência de Git, instalação sem repositório, fast-forward, falhas de rede/auth/timeout, URLs reescritas e ambíguas, árvore suja, upstream inválido ou de fork, divergência, falhas de dependências e build, rollback completo com rebuild dos dois workspaces, proteção contra alterações locais durante o rollback, lockfiles aninhados, variáveis `GIT_*` hostis e recuperação manual pelo arquivo de estado — incluindo execução real de `npm.cmd` no runner Windows.
 
 ## [1.0.0.5] - 2026-11-19
 
