@@ -4,6 +4,8 @@ import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import EquipamentoArmazem from "./EquipamentoArmazem";
+import Internet from "./Internet";
 import ExtratoXp from "../ExtratoXp";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
@@ -345,6 +347,9 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [confirmando, setConfirmando] = useState<"excluir" | "arquivar" | "restaurar" | null>(null);
   const [retratoModal, setRetratoModal] = useState(false);
   const [operando, setOperando] = useState(false);
+  // Pontos de entrada 1.1.0 fora da ficha: Equipamento/Armazém e Internet.
+  // Módulos independentes — abrir um não fecha o Patrimônio legado.
+  const [modulo, setModulo] = useState<"equipamento" | "internet" | null>(null);
 
   const arquivado = personagem.status === "arquivado";
   // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
@@ -630,6 +635,35 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
           />
         )}
       </section>
+
+      {/* Pontos de entrada independentes da ficha (1.1.0): Equipamento/
+          Armazém e Internet. Mesmo recorte de audiência do Patrimônio —
+          dono do personagem ou mestre. Internet não aparece em
+          arquivado (patrimônio congelado, sem comércio). */}
+      {(souMestre || personagem.ehEu === true) && (
+        <section className="cartao">
+          <div className="linha" role="group" aria-label="Módulos do personagem">
+            <button
+              className={modulo === "equipamento" ? "ativo" : "secundario"}
+              aria-pressed={modulo === "equipamento"}
+              onClick={() => setModulo(modulo === "equipamento" ? null : "equipamento")}
+            >Equipamento/Armazém</button>
+            {!arquivado && (
+              <button
+                className={modulo === "internet" ? "ativo" : "secundario"}
+                aria-pressed={modulo === "internet"}
+                onClick={() => setModulo(modulo === "internet" ? null : "internet")}
+              >Internet</button>
+            )}
+          </div>
+        </section>
+      )}
+      {modulo === "equipamento" && (souMestre || personagem.ehEu === true) && (
+        <EquipamentoArmazem characterId={personagem.id} campaignId={campaignId} />
+      )}
+      {modulo === "internet" && !arquivado && (souMestre || personagem.ehEu === true) && (
+        <Internet characterId={personagem.id} campaignId={campaignId} ficha={ficha} />
+      )}
 
       {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
           dono — montar o componente dispararia consultas 403 desnecessárias. */}
