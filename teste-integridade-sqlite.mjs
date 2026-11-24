@@ -385,8 +385,22 @@ try {
   t("F4a corrigido: falha ao promover alvo preserva o default anterior",
     defaultsDepois.total === 1 && defaultsDepois.d1 === 1 && defaultsDepois.d2 === 0,
     JSON.stringify({ antes: defaultsAntes, ...defaultsDepois }));
-  // restaura default de D1 para os próximos cenários
+  // Restaura o default anterior e simula um alvo que deixa de aceitar o
+  // UPDATE final sem abortar a instrução. RAISE(IGNORE) produz changes=0;
+  // o serviço deve transformar isso em conflito e reverter a limpeza anterior.
   wf.prepare("update sheet_templates set is_default=1 where id=?").run(tplD1);
+  dispara("f4_ignore", `CREATE TRIGGER f4_ignore BEFORE UPDATE ON sheet_templates
+    WHEN NEW.id='${tplD2}' AND NEW.is_default=1
+    BEGIN SELECT RAISE(IGNORE); END`);
+  const rF4Ignore = await req(base, "PATCH", `/campaigns/${campId}/sheet-templates/${tplD2}`, { cookie: cookieMestre, body: { isDefault: true } });
+  derruba("f4_ignore");
+  const defaultsDepoisIgnore = {
+    total: conta("select count(*) n from sheet_templates where campaign_id=? and is_default=1", campId),
+    d1: wf.prepare("select is_default from sheet_templates where id=?").get(tplD1)?.is_default,
+    d2: wf.prepare("select is_default from sheet_templates where id=?").get(tplD2)?.is_default,
+  };
+  t("F4 alvo ignorado: UPDATE com zero linhas retorna conflito 409", rF4Ignore.status === 409, `status=${rF4Ignore.status}`);
+  t("F4 alvo ignorado: rollback preserva default anterior", defaultsDepoisIgnore.total === 1 && defaultsDepoisIgnore.d1 === 1 && defaultsDepoisIgnore.d2 === 0, JSON.stringify(defaultsDepoisIgnore));
 
   // ---- F4b: duas trocas de default concorrentes → exatamente um vencedor ----
   const tplE1 = (await req(base, "POST", `/campaigns/${campId}/sheet-templates`, { cookie: cookieMestre, body: { name: "F4-E1" } })).json?.modelo?.id;
