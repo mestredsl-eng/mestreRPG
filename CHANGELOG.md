@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+## [1.0.0.9] - 2026-11-24
+
+### Novidades
+
+- **Concessão de XP em lote:** o mestre seleciona vários personagens na ficha atual e concede pontos de experiência em uma única operação, com deduplicação por pedido e extrato das concessões.
+- **Extrato de XP somente leitura:** histórico de concessões por personagem com âncora preservada quando eventos antigos são truncados, mantendo a rastreabilidade do saldo.
+- **Pontos de Sangue na ficha configurável:** painel de Sangue vinculado à ficha configurada da campanha, exibindo saldo e capacidade conforme a configuração do mestre.
+- **Atualização automática no boot com recuperação:** o `iniciar-mestre-rpg.bat` verifica o repositório oficial, aplica atualizações seguras com lock de instância única, journal durável e rollback automático após interrupções — incluindo encerramento abrupto durante a atualização — preservando banco, arquivos, configuração e backups. Instalações da 1.0.8 são atualizadas por procedimento controlado e testado.
+
+### Integridade e segurança
+
+- **Integridade SQLite e isolamento entre campanhas:** operações de modelos de ficha, upload de anexos e publicações passaram a usar transações atômicas com verificação de `changes`, revertendo integralmente quando o alvo fica indisponível; requisições cross-campaign retornam 404 sem alterar dados, auditoria ou eventos.
+- **Backup de formato legado:** backups criados pela 1.0.8 e anteriores continuam sendo reconhecidos e validados pelo verificador atual, com restauração fail-closed.
+
+### Acessibilidade
+
+- **Nomes acessíveis nos controles financeiros:** os seis seletores de conta, moeda, tipo de movimentação, origem e destino do painel Dinheiro agora expõem nomes acessíveis, corrigindo violações de SC 4.1.2.
+- **Matriz de homologação visual e de fluxos:** cobertura E2E de contraste WCAG 2.2 AA, regiões vivas `aria-live`, popovers de ajuda, ordem de tabulação e alvos de ponteiro nos fluxos críticos.
+
+### Validação
+
+- Suítes de regressão de ciclo de campanha, ficha de caçadores/round-trip e ciclo de vida do processo executadas na árvore candidata.
+- Homologação Windows real: Node 22 e Node 20, gate BAT via `cmd.exe`, P10-C real e restauração fail-closed.
+- Homologação Linux component-level do Boot Lock/Recovery em runner Ubuntu.
+
 ## [1.0.0.8] - 2026-11-22
 
 ### Novidades
