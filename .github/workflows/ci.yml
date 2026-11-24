@@ -258,6 +258,25 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Testes 1.0.9 — ficha, runtime e ciclo de campanha (API)
+        shell: bash
+        run: |
+          set -euo pipefail
+          arquivos=(
+            teste-ficha-cacadores.mjs
+            teste-runtime-processos-298.mjs
+            teste-ciclo-campanha.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte 1.0.9 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
+          done
+      - name: Round-trip e anti-injeção da ficha (Issue #292)
+        run: node teste-ficha-roundtrip-292.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -321,6 +340,8 @@ jobs:
       - run: npm ci
       - name: Build workspaces no Windows
         run: npm run build
+      - name: Ciclo de vida do processo/servidor (#298)
+        run: node teste-runtime-processos-298.mjs
       - name: Homologação de atualização e restauração no Windows (Issue #33)
         run: node teste-atualizacao-instalacao.mjs
       - name: Testes do auto-update e execução real de npm.cmd
@@ -463,3 +484,7 @@ jobs:
           node teste-xp-historico-ui.mjs
       - name: E2E concessão XP em lote (#185)
         run: node teste-xp-lote-ui.mjs
+      - name: Suíte E2E UI do ciclo de campanha (#291 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-ciclo-campanha-ui.mjs ====="
+          node teste-ciclo-campanha-ui.mjs
