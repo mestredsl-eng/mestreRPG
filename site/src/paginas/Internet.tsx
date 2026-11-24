@@ -135,7 +135,7 @@ export default function Internet({ characterId, campaignId }: Props) {
       <h3>Internet</h3>
       <div className="abas" role="tablist">
         <button role="tab" aria-selected={aba === "lojas"} className={aba === "lojas" ? "ativo" : "secundario"} onClick={() => setAba("lojas")}>Lojas</button>
-        <button role="tab" aria-selected={aba === "pedidos"} className={aba === "pedidos" ? "ativo" : "secundario"} onClick={() => setAba("pedidos")}>Compras</button>
+        <button role="tab" aria-selected={aba === "pedidos"} className={aba === "pedidos" ? "ativo" : "secundario"} onClick={() => setAba("pedidos")}>Histórico</button>
       </div>
       {erro && <p className="erro" role="alert">{erro}</p>}
 
@@ -188,7 +188,12 @@ export default function Internet({ characterId, campaignId }: Props) {
                 <p className="meta">
                   {p.items.map((i) => `${i.qty}× ${i.name}`).join(", ")} — {fmtMoeda(p.totalCents, p.currency)}
                 </p>
-                <span className={`badge ${p.status === "concluido" ? "badge-ativa" : "badge-bloqueada"}`}>{p.status}</span>
+                <span className={`badge ${p.status === "concluido" ? "badge-ativa" : "badge-bloqueada"}`}>{p.status}</span>{" "}
+                {/* LOJA-B também aparece em /pedidos (buyerCharacterId = vendedor);
+                    data.direction distingue — nunca exibir venda como compra. */}
+                <span className="badge badge-npc">
+                  {p.data?.direction === "venda_para_loja" ? "Venda p/ loja" : "Compra"}
+                </span>
               </li>
             ))}
           </ul>
