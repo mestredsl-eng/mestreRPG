@@ -235,6 +235,78 @@ try {
   const contasOk = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, { cookie: j1.cookie });
   t("gestor vê caixa", contasOk.status === 200 && contasOk.json?.contas?.length === 1, JSON.stringify(contasOk.json?.contas?.length));
 
+  sec("correções de borda (revisão #329)");
+  // reabre a loja para os testes de borda
+  await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}`, { cookie: mestre, body: { isOpen: true } });
+
+  // 1. accountId no fingerprint: mesmo requestId + conta diferente → 409
+  const conta2 = await req(BASE, "POST", `/characters/${charOk}/financeiro/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Cartão", balanceReais: 50 },
+  });
+  const conta2Id = conta2.json?.id;
+  const divConta = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: conta2Id, items: [{ offerId, qty: 1 }], requestId: "compra-001" },
+  });
+  t("mesmo requestId + conta diferente → 409", divConta.status === 409 && divConta.json?.erro === "request_id_divergente", JSON.stringify(divConta.json));
+  const divContaVenda = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invId, qty: 1, accountId: conta2Id, requestId: "venda-001" },
+  });
+  t("venda: requestId+conta divergente → 409", divContaVenda.status === 409 && divContaVenda.json?.erro === "request_id_divergente", JSON.stringify(divContaVenda.json));
+
+  // 2. moeda da oferta divergente → 409 sem efeitos
+  const ofertaUsd = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+    cookie: j1.cookie, body: { name: "Item USD", priceCents: 100, currency: "USD" },
+  });
+  const offerUsd = ofertaUsd.json?.id;
+  const moeda = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: offerUsd, qty: 1 }], requestId: "compra-usd-1" },
+  });
+  t("oferta em moeda divergente → 409", moeda.status === 409 && moeda.json?.erro === "moeda_divergente", JSON.stringify(moeda.json));
+
+  // 3. direção em /pedidos
+  const pedCompra = await req(BASE, "GET", `/characters/${charOk}/comercio/pedidos?direcao=compra`, { cookie: j1.cookie });
+  const pedVenda = await req(BASE, "GET", `/characters/${charOk}/comercio/pedidos?direcao=venda_para_loja`, { cookie: j1.cookie });
+  const dirs = (pedCompra.json?.pedidos ?? []).map((p) => p.direcao);
+  const dirsV = (pedVenda.json?.pedidos ?? []).map((p) => p.direcao);
+  t("filtro compra só compras", pedCompra.status === 200 && dirs.length > 0 && dirs.every((d) => d === "compra"), JSON.stringify(dirs));
+  t("filtro venda só vendas", pedVenda.status === 200 && dirsV.length === 1 && dirsV[0] === "venda_para_loja", JSON.stringify(dirsV));
+
+  // 4. segunda conta caixa → 409
+  const caixa2 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Caixa 2", papel: "caixa" },
+  });
+  t("segunda conta caixa → 409", caixa2.status === 409 && caixa2.json?.erro === "caixa_ja_existe", JSON.stringify(caixa2.json));
+
+  // 5. LOJA-B sem aquisicao.unitCents → 422 mesmo com valueCents
+  const invSemValor = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invSemValor, charOk, "Bugiganga", 3, JSON.stringify({ valueCents: 500 }), agora, agora);
+    db.close();
+  }
+  const vendaSemValor = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invSemValor, qty: 1, accountId: contaId, requestId: "venda-sem-valor-1" },
+  });
+  t("item sem unitCents autoritativo → 422", vendaSemValor.status === 422 && vendaSemValor.json?.erro === "item_sem_valor", JSON.stringify(vendaSemValor.json));
+  const bugiganga = comDb(BANCO, (db) => db.prepare("select quantity from inventory_entries where id=?").get(invSemValor)?.quantity);
+  t("falha não baixou estoque do item", bugiganga === 3, String(bugiganga));
+
+  // 6. papel proprietario tem mesmas permissões de gestor nesta fatia
+  const gestorProp = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/gestores`, {
+    cookie: mestre, body: { membershipId: j2.membershipId, role: "proprietario" },
+  });
+  t("proprietario vinculado", gestorProp.status === 201, JSON.stringify(gestorProp.json));
+  const propOferta = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+    cookie: j2.cookie, body: { name: "Oferta do Prop", priceCents: 10 },
+  });
+  t("proprietario gerencia como gestor", propOferta.status === 201, String(propOferta.status));
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;

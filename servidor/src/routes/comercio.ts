@@ -73,7 +73,11 @@ async function gateInternet(p: typeof characters.$inferSelect) {
   return avaliarElegibilidadeInternet(estrutura, dados, regras, todos, chavesTemplate);
 }
 
-/** Loja pertence à campanha e o usuário é mestre da campanha ou gestor da loja. */
+/** Loja pertence à campanha e o usuário é mestre da campanha ou gestor da loja.
+ *  Semântica de papel (revisão #329 item 6): `shop_managers.role` aceita
+ *  gestor|proprietario, mas NESTA fatia ambos têm permissões IDÊNTICAS de
+ *  gestão — o campo existe para evolução futura (ex.: proprietações
+ *  futuras), não para diferenciação de acesso atual. */
 async function acessoLoja(req: Request, shopId: string) {
   const campaignId = req.params.campaignId as string;
   const [loja] = await db.select().from(shops).where(and(eq(shops.id, shopId), eq(shops.campaignId, campaignId))).limit(1);
@@ -190,6 +194,13 @@ comercioLojasRouter.post("/lojas/:shopId/contas", requirePapel("mestre", "jogado
   if ("erro" in acesso) { res.status(acesso.erro ?? 403).json({ erro: "Loja não encontrada ou sem permissão" }); return; }
   const b = contaLojaSchema.safeParse(req.body ?? {});
   if (!b.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
+  if (b.data.papel === "caixa") {
+    const existentes = await db.select({ id: financialAccounts.id, data: financialAccounts.data })
+      .from(financialAccounts).where(eq(financialAccounts.shopId, acesso.loja.id));
+    if (existentes.some((c) => (c.data as Record<string, unknown>)?.papel === "caixa")) {
+      res.status(409).json({ erro: "caixa_ja_existe" }); return;
+    }
+  }
   const regras = await carregarRegras(req.params.campaignId as string);
   const casas = regras.config.financeiro.casasDecimais;
   const id = crypto.randomUUID();
@@ -284,7 +295,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
   const gate = await gateInternet(personagem);
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
 
-  const fp = fingerprint({ op: "comprar", buyer: personagem.id, shopId: b.data.shopId, items: b.data.items });
+  const fp = fingerprint({ op: "comprar", buyer: personagem.id, shopId: b.data.shopId, accountId: b.data.accountId, items: b.data.items });
   const pedidoExistente = await db.select().from(shopOrders)
     .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, b.data.requestId))).limit(1);
   if (pedidoExistente[0]) {
@@ -332,6 +343,9 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
             .where(and(eq(shopOffers.id, of.id), eq(shopOffers.stockQty, of.stockQty))).run();
           // changes===1 garantido pela leitura+escrita na mesma tx síncrona
           if ((upd as { changes?: number }).changes !== 1) throw new ErroComercio(409, "estoque_insuficiente", { offerId: of.id });
+        }
+        if (of.currency && of.currency !== contaComprador.currency) {
+          throw new ErroComercio(409, "moeda_divergente", { offerId: of.id, oferta: of.currency, conta: contaComprador.currency });
         }
         linhas.push({ oferta: of, qty: item.qty });
         totalCents += of.priceCents * item.qty;
@@ -435,7 +449,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
   const gate = await gateInternet(personagem);
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
 
-  const fp = fingerprint({ op: "vender", seller: personagem.id, shopId: b.data.shopId, item: b.data.inventoryEntryId, qty: b.data.qty });
+  const fp = fingerprint({ op: "vender", seller: personagem.id, shopId: b.data.shopId, accountId: b.data.accountId, item: b.data.inventoryEntryId, qty: b.data.qty });
   const pedidoExistente = await db.select().from(shopOrders)
     .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, b.data.requestId))).limit(1);
   if (pedidoExistente[0]) {
@@ -472,10 +486,11 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
       if (equipVinculado.length) throw new ErroComercio(409, "item_equipado");
       if (item.quantity < b.data.qty) throw new ErroComercio(409, "quantidade_insuficiente");
 
-      // preço: unitCents da aquisição original ou valueCents unitário
+      // preço unitário AUTORITATIVO: somente aquisicao.unitCents (gravado
+      // pelo servidor na compra). valueCents é semântica ambígua (pode ser
+      // total do stack) — não serve de unitário para qty>1 (revisão #329).
       const aquisicao = dadosItem.aquisicao as Record<string, unknown> | undefined;
-      const valorUnit = typeof aquisicao?.unitCents === "number" ? aquisicao.unitCents
-        : typeof dadosItem.valueCents === "number" ? dadosItem.valueCents : null;
+      const valorUnit = typeof aquisicao?.unitCents === "number" ? aquisicao.unitCents : null;
       if (valorUnit === null) throw new ErroComercio(422, "item_sem_valor");
       if (b.data.expectedUnitCents !== undefined && b.data.expectedUnitCents !== valorUnit) {
         throw new ErroComercio(409, "preco_divergente", { precoAtualCents: valorUnit });
@@ -562,13 +577,24 @@ comercioPersonagemRouter.get("/elegibilidade", async (req, res) => {
   res.json({ elegivel: gate.elegivel, motivos: gate.motivos });
 });
 
-/** GET /api/characters/:characterId/comercio/pedidos — histórico do personagem. */
+/** GET /api/characters/:characterId/comercio/pedidos — histórico do personagem.
+ *  `buyerCharacterId` é sobrecarregado: em LOJA-B guarda o VENDEDOR (a loja
+ *  é a compradora). A resposta expõe `direcao` (compra|venda_para_loja)
+ *  derivada de data.direction, e `?direcao=` filtra — a UI não deve inferir
+ *  direção pelo nome do campo (revisão #329). */
 comercioPersonagemRouter.get("/pedidos", async (req, res) => {
   const acesso = await acessoPersonagem(req);
   if ("erro" in acesso) { res.status(acesso.erro === 404 ? 404 : 403).json({ erro: "Sem acesso" }); return; }
   const { personagem } = acesso;
+  const filtro = typeof req.query.direcao === "string" ? req.query.direcao : null;
+  if (filtro && filtro !== "compra" && filtro !== "venda_para_loja") {
+    res.status(400).json({ erro: "direcao_invalida" }); return;
+  }
   const lista = await db.select().from(shopOrders)
     .where(and(eq(shopOrders.campaignId, personagem.campaignId), eq(shopOrders.buyerCharacterId, personagem.id)))
     .orderBy(shopOrders.createdAt);
-  res.json({ pedidos: lista });
+  const pedidos = lista
+    .map((o) => ({ ...o, direcao: (o.data as Record<string, unknown>)?.direction ?? "compra" }))
+    .filter((o) => !filtro || o.direcao === filtro);
+  res.json({ pedidos });
 });
