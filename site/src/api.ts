@@ -430,6 +430,18 @@ export const api = {
   estornarOperacao: (charId: string, opId: string) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacoes/${encodeURIComponent(opId)}/estornar`, { method: "POST" }),
 
+  // Comércio diegético 1.1.0 (backend: PRs #328/#329 — contrato LOJA-A/B)
+  comercioElegibilidade: (charId: string) =>
+    requisicao<{ elegivel: boolean; motivos: string[] }>(`/characters/${charId}/comercio/elegibilidade`),
+  comercioLojas: (cid: string) =>
+    requisicao<{ lojas: LojaComercio[] }>(`/campaigns/${cid}/comercio/lojas`),
+  comercioComprar: (charId: string, dados: { shopId: string; accountId: string; items: { offerId: string; qty: number; expectedUnitCents?: number }[]; requestId: string }) =>
+    requisicao<{ id: string; replay?: boolean; totalCents?: number; itens?: { offerId: string; name: string; qty: number; unitCents: number }[] }>(`/characters/${charId}/comercio/comprar`, { method: "POST", body: JSON.stringify(dados) }),
+  comercioVender: (charId: string, dados: { shopId: string; inventoryEntryId: string; qty: number; accountId: string; expectedUnitCents?: number; requestId: string }) =>
+    requisicao<{ id: string; replay?: boolean; totalCents?: number }>(`/characters/${charId}/comercio/vender`, { method: "POST", body: JSON.stringify(dados) }),
+  comercioPedidos: (charId: string) =>
+    requisicao<{ pedidos: PedidoComercio[] }>(`/characters/${charId}/comercio/pedidos`),
+
   // Catálogo de itens (Etapa 6)
   listarCatalogo: (cid: string) =>
     requisicao<{ itens: ItemCatalogo[]; categorias: string[]; acervo?: AcervoCatalogoItem[] }>(`/campaigns/${cid}/inventario`),
@@ -1161,6 +1173,62 @@ export interface Financeiro {
   };
   contas: ContaFinanceira[];
   historico: TransacaoFinanceira[];
+}
+
+// ---- Comércio diegético 1.1.0 (lojas/ofertas/pedidos) ----
+
+export interface OfertaComercio {
+  id: string;
+  shopId: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  currency: string;
+  stockQty: number | null;
+  isActive: boolean;
+  itemTemplateId: string | null;
+  /** calculado no servidor: stockQty NULL = ilimitado */
+  emEstoque: boolean;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LojaComercio {
+  id: string;
+  campaignId: string;
+  name: string;
+  category: string | null;
+  location: string | null;
+  description: string | null;
+  isOpen: boolean;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  ofertas: OfertaComercio[];
+}
+
+export interface PedidoComercioItem {
+  offerId?: string;
+  inventoryEntryId?: string;
+  name: string;
+  qty: number;
+  unitCents: number;
+}
+
+export interface PedidoComercio {
+  id: string;
+  campaignId: string;
+  shopId: string;
+  requestId: string;
+  buyerCharacterId: string;
+  items: PedidoComercioItem[];
+  totalCents: number;
+  currency: string;
+  status: string;
+  moneyTransactionIds: string[];
+  data: { fingerprint?: string; direction?: string } & Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ItemCatalogo {

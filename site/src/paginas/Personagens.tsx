@@ -662,7 +662,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         <EquipamentoArmazem characterId={personagem.id} campaignId={campaignId} />
       )}
       {modulo === "internet" && !arquivado && (souMestre || personagem.ehEu === true) && (
-        <Internet characterId={personagem.id} campaignId={campaignId} ficha={ficha} />
+        <Internet characterId={personagem.id} campaignId={campaignId} />
       )}
 
       {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
