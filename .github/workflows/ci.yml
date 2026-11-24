@@ -257,6 +257,7 @@ jobs:
             teste-backup-pre-migration.mjs
             teste-estado-externo.mjs
             teste-primeiro-bootstrap.mjs
+            teste-adocao-legado.mjs
             teste-trava-instancia.mjs
             teste-p10c-gates.mjs
             teste-docs-operacao.mjs
@@ -367,6 +368,11 @@ jobs:
         shell: bash
         run: |
           node teste-bat-primeiro-bootstrap.mjs
+
+      - name: Homologar adoção de instalação legada 1.0.8 (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-adocao-legado.mjs
 
       - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
         run: node teste-bat-restauracao-falha.mjs

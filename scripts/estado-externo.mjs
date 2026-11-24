@@ -262,6 +262,11 @@ export function gravarConsentimento(repoDir, consentimento, dadosExtra = {}) {
 
 export const ARQUIVO_AUTORIZACAO_BOOTSTRAP = "bootstrap-autorizacao.json";
 export const ARQUIVO_PROVISIONAMENTO = "provisionamento.json";
+/** Journal durável da adoção assistida de instalação legada
+ *  (scripts/adotar-legado.mjs). TolERADO no state dir durante a
+ *  avaliação de candidato — é o único arquivo de estado que a própria
+ *  adoção em andamento pode ter criado. */
+export const ARQUIVO_ADOCAO_LEGADO = "adocao-legado.json";
 const PREFIXO_AUTORIZACAO_CONSUMIDA = "bootstrap-autorizacao.consumida-";
 const TIPO_RECIBO_CONCLUIDA = "instalacao-concluida";
 const TIPO_AUTORIZACAO = "primeiro-bootstrap";
@@ -640,7 +645,7 @@ export function avaliarCandidatoAdocaoLegada(repoDir, env = process.env) {
   // processo atual. Marcadores de backup são aceitos somente com identidade
   // completa e caminho de backup; qualquer outro estado exige investigação.
   for (const nome of nomes) {
-    if (nome === "mestre-boot-lock.json") continue;
+    if (nome === "mestre-boot-lock.json" || nome === ARQUIVO_ADOCAO_LEGADO) continue;
     if (nome === "protecao") {
       const protDir = join(dir, nome);
       let markers;

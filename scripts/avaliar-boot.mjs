@@ -2,11 +2,14 @@
 // Gate executável de boot (P10-C / Issue #155).
 // Exit 0: instalação conhecida e boot seguro.
 // Exit 10: primeiro bootstrap limpo; o BAT deve perguntar S/N.
+// Exit 11: instalação legada candidata a adoção assistida; o BAT deve
+//          perguntar S/N e chamar scripts/adotar-legado.mjs --confirmar.
 // Exit 1: estado ambíguo, corrompido, interrompido ou recuperação pendente.
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   avaliarBoot,
+  avaliarCandidatoAdocaoLegada,
   diagnosticarBootstrap,
   validarPrecondicoesBootstrap,
 } from "./estado-externo.mjs";
@@ -44,6 +47,16 @@ if (estado === "instalacao-concluida" || estado === "primeiro-bootstrap") {
 }
 
 if (estado === "desconhecido" && modo === "preflight") {
+  // Instalação legada (1.0.8) não tem artefatos do protocolo: banco
+  // existente + state limpo é candidato a ADOÇÃO ASSISTIDA, não a
+  // primeiro bootstrap. Exit 11 → o BAT pergunta S/N e, se aceito,
+  // executa scripts/adotar-legado.mjs (schema exato + integridade +
+  // backup validado + recibo) antes de qualquer etapa mutável.
+  const adocao = avaliarCandidatoAdocaoLegada(repoDir);
+  if (adocao.adotavel) {
+    console.log(`[boot] instalação legada candidata a adoção assistida (${adocao.motivo}).`);
+    process.exit(11);
+  }
   const pre = validarPrecondicoesBootstrap(repoDir);
   // Só oferece consentimento se a prova completa de instalação limpa
   // passou. Qualquer journal, banco, backup, recibo ou estado divergente

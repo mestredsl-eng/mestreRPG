@@ -117,9 +117,64 @@ if not exist scripts\avaliar-boot.mjs (
     exit /b 1
 )
 node scripts\avaliar-boot.mjs preflight
+if errorlevel 11 goto :adocao_legada_candidata
 if errorlevel 10 goto :perguntar_primeiro_bootstrap
 if errorlevel 1 goto :falha_preflight_bootstrap
 goto :bootstrap_autorizado
+
+:adocao_legada_candidata
+echo.
+echo [ATENCAO] Instalacao anterior detectada (banco de dados existente,
+echo          sem registro do protocolo novo de inicializacao).
+echo O Mestre RPG vai adotar esta instalacao como legitima, apos
+echo confirmar o esquema do banco, a integridade e criar um backup
+echo completo e validado em backups\pre_adocao_*.
+echo Nenhum dado sera apagado. A atualizacao continuara normalmente.
+set "MESTRE_ADOCAO_TENTATIVAS=0"
+:adocao_legada_novamente
+set "MESTRE_ADOCAO_RESPOSTA="
+ver >nul
+set /p "MESTRE_ADOCAO_RESPOSTA=Adotar esta instalacao existente? [S/N]: "
+if errorlevel 1 goto :adocao_legada_entrada_vazia
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="S" goto :confirmar_adocao_legada
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="N" goto :recusar_adocao_legada
+echo [AVISO] Resposta invalida. Digite S ou N.
+goto :adocao_legada_novamente
+
+:adocao_legada_entrada_vazia
+rem Mesmo criterio do primeiro bootstrap: ENTER vazio repete ate 3x;
+rem EOF/entrada ausente termina fail-closed.
+set /a MESTRE_ADOCAO_TENTATIVAS+=1
+if %MESTRE_ADOCAO_TENTATIVAS% GEQ 3 goto :adocao_legada_eof
+echo [AVISO] Nenhuma resposta recebida. Digite S ou N.
+goto :adocao_legada_novamente
+
+:confirmar_adocao_legada
+if not exist scripts\adotar-legado.mjs goto :falha_adocao_legado
+node scripts\adotar-legado.mjs --confirmar
+if errorlevel 1 goto :falha_adocao_legado
+node scripts\avaliar-boot.mjs validar
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:recusar_adocao_legada
+echo [AVISO] Adocao recusada. Nenhuma atualizacao, restauracao,
+echo         migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:adocao_legada_eof
+echo [ERRO] Entrada terminou antes da confirmacao. Boot abortado por seguranca.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:falha_adocao_legado
+echo [ERRO] Nao foi possivel concluir a adocao da instalacao existente.
+echo        Verifique o motivo exibido acima. Nenhum recibo foi emitido
+echo        e nenhuma etapa de banco sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
 
 :perguntar_primeiro_bootstrap
 echo.
