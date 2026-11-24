@@ -174,13 +174,27 @@ modelosRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) => 
   // "Modelo para novos personagens" é único por campanha.
   // A remoção do default anterior e a promoção do alvo precisam confirmar juntas.
   if (body.data.isDefault) {
-    db.transaction((tx) => {
-      tx.update(sheetTemplates)
-        .set({ isDefault: false })
-        .where(and(eq(sheetTemplates.campaignId, campaignIdDe(req)), eq(sheetTemplates.isDefault, true)))
-        .run();
-      tx.update(sheetTemplates).set(dados).where(eq(sheetTemplates.id, t.id)).run();
-    });
+    // A leitura inicial de t acontece antes da transação. Revalidar o alvo
+    // no próprio UPDATE evita limpar o default anterior e commitar zero
+    // defaults se o template desaparecer ou sair da campanha nesse intervalo.
+    const conflitoAlvo = new Error("Modelo não está mais disponível nesta campanha");
+    try {
+      db.transaction((tx) => {
+        tx.update(sheetTemplates)
+          .set({ isDefault: false })
+          .where(and(eq(sheetTemplates.campaignId, campaignIdDe(req)), eq(sheetTemplates.isDefault, true)))
+          .run();
+        const atualizacao = tx.update(sheetTemplates).set(dados).where(and(
+          eq(sheetTemplates.id, t.id),
+          eq(sheetTemplates.campaignId, campaignIdDe(req)),
+        )).run();
+        if (atualizacao.changes !== 1) throw conflitoAlvo;
+      });
+    } catch (erro) {
+      if (erro !== conflitoAlvo) throw erro;
+      res.status(409).json({ erro: "Modelo não está mais disponível nesta campanha." });
+      return;
+    }
   } else {
     await db.update(sheetTemplates).set(dados).where(eq(sheetTemplates.id, t.id));
   }
