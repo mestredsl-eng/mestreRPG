@@ -1,8 +1,15 @@
 # Mestre RPG v1.0.9 — preparação de release
 
-> **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
+> **ESTADO: CANDIDATA ÚNICA MONTADA — AGUARDANDO CI NATURAL E GATES FINAIS. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Documento atualizado em 24/11/2026 às 12:48 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
+> Documento atualizado em 24/11/2026. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a homologação de upgrade/cutover nem a autorização final do proprietário.
+
+## Candidata única
+
+- Branch de integração: `release/1.0.9-candidata`
+- Conteúdo integrado por merges normais (sem rebase/force-push): PRs #308, #316, #300, #302, #307, #310 e #317.
+- Bump de versão aplicado na mesma árvore: `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`; `CHANGELOG.md` com seção `[1.0.0.9]`; migration `0035_release_1009_stabilizacao_news` + snapshot/journal consistentes.
+- Suítes reconciliadas na árvore candidata executadas localmente: `teste-novidades` 118/118, `teste-integridade-sqlite` 91/91, `teste-ficha-roundtrip-292` 34/34, `teste-ciclo-campanha` 51/51, `teste-runtime-processos-298` 39/39, `teste-ficha-cacadores` 91/91, `teste-ciclo-campanha-ui` 37/37; typecheck/build do servidor e build do site limpos.
 
 ## Identificação planejada
 
