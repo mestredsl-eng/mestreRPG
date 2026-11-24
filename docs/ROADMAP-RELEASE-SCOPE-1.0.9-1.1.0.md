@@ -61,47 +61,54 @@ A versão 0.8 é a versão que o dono está jogando e considera boa. Não recebe
 
 PRs independentes de auditoria visual, CSS/acessibilidade, convites, autorizações e HP manual em tokens não entram automaticamente. Só podem ser adicionadas após decisão explícita de escopo e avaliação de risco.
 
-## 4. Versão 1.1.0 — pacote ampliado, planejado e ainda não iniciado
+## 4. Versão 1.1.0 — primeira fatia: comércio pela Internet e separação dos módulos
 
-**Tema:** progressão avançada, transparência da campanha em tempo real e acabamento visual/acessível. A 1.1.0 deixa de ser apenas duas melhorias de XP: passa a reunir cinco entregas de produto em três frentes coerentes.
+**Tema:** primeira fatia funcional do rollout do Mundo Vivo (#286): separar **Internet** e **Equipamento/Armazém** da ficha e entregar lojas/comércio pela Internet. A 1.1.0 **não** é o pacote de progressão/visual/realtime antes candidato — ver §4.4 para o destino dessas frentes.
 
-A implementação começa somente depois da estabilização/publicação da 1.0.9 e de autorização explícita para abrir o ciclo 1.1.0. Até lá, o trabalho permitido é especificação, revisão de requisitos, preparação de testes e organização das dependências.
+A implementação começa somente depois da estabilização/publicação da 1.0.9 e de autorização explícita para abrir o ciclo 1.1.0. Até lá, o trabalho permitido é especificação, auditoria, revisão de requisitos, preparação de testes e organização das dependências — **sem afirmar que loja/checkout já existe**: hoje não existe entidade loja, oferta, estoque comercial ou checkout bilateral; o que existe é o domínio financeiro/patrimonial por personagem (ver auditoria #287).
 
-### 4.1 Progressão XP — auditoria, sessão e extrato
+### 4.1 Contrato de módulos da primeira fatia
 
-1. **Estorno auditado de compra de nível — #185, item 1.** Evento de estorno append-only, autor, motivo, idempotência e validação de pré-requisitos, tetos, exclusividades e níveis dependentes. Nunca apagar compras ou reduzir saldo para simular reversão.
-2. **XP por sessão/gancho narrativo — #185, item 2.** Definir participantes e personagens com base em evidência persistida/snapshot explícito, não na presença atual de Socket.IO. O mestre recebe prévia, pode ajustar e confirma concessões; nenhuma concessão automática sem política aprovada.
-3. **Saldo-âncora do Extrato XP — nova Issue #284.** Quando o histórico estiver limitado às 500 movimentações mais recentes, mostrar o saldo anterior ao período e explicar que o extrato é uma janela retida. Preservar ledger, âncora, assinatura e regras de privacidade. Primeiro confirmar que a lacuna ainda existe na main; não duplicar correção já feita.
+Separação explícita aprovada pelo dono (detalhada em `ROADMAP-MUNDO-VIVO-ROLLOUT-1.1X.md` e Issue #288):
 
-**Não reimplementar lote XP nem Extrato:** backend #213, UI #277 e cadeia #217/#257/#258 estão integrados. #215 foi supersedida e #282 corrigiu o build. Essas entregas só recebem regressão/manutenção, não uma segunda implementação.
+- **Internet = loja/oferta/checkout.** Botão independente fora da ficha. Abriga vitrine de lojas, ofertas, preços, estoque comercial, compras, vendas e classificados — usando o dinheiro/ledger, inventário e Acervo existentes, sem carteira paralela.
+- **Equipamento/Armazém = patrimônio físico.** Botão independente fora da ficha. Inventário, equipamentos, veículos, itens carregados e itens guardados. **Não é lugar de comprar/vender** — reflete o resultado das operações feitas na Internet.
+- **Ficha = campos e regras do personagem.** Atributos, características, talentos, perícias, conhecimentos, habilidades, poderes e demais campos oficiais do template. A ficha deixa de montar o painel de patrimônio inteiro.
 
-### 4.2 Finalização visual e acessibilidade — Issue #132
+### 4.2 Comércio — lojas na Internet (Issue #286, fatia 1.1.0)
 
-A fundação visual, catálogo de atmosferas, preferências de conta e recomendações locais opt-in já receberam etapas anteriores (#134, #158, #166, #212 e #218). A 1.1.0 deve concluir apenas as lacunas restantes, sem refazer a base:
+- Loja com nome, categoria, localização, proprietário/responsável e estado; ofertas de produtos/serviços apoiadas em templates/Acervo existentes.
+- Estoque comercial e caixa/conta da loja **dentro do mesmo domínio financeiro/ledger** — nunca saldo paralelo; titularidade a definir pela auditoria #287 (NPC/personagem vs. entidade nova).
+- Compra: debitar comprador, creditar loja, reduzir estoque e entregar item ao inventário do comprador **atomicamente e idempotentemente**; estorno/audit/realtime preservados.
+- Administração inicial manual pelo mestre/proprietário; autonomia de NPCs e Jogadores IA fica para fatias posteriores.
 
-- **Ícones semânticos nas abas da campanha — #233 / PR #235.** Manter rótulos textuais, acessibilidade, permissões por papel e layout mobile.
-- **Estados vazios ilustrados — #236 / PR #238.** Diferenciar lista vazia de filtro sem resultados; nunca esconder o formulário de convite.
-- **Carregamento e erro recuperável — #239 / PR #246.** Feedback acessível nas listas, retry somente com GET seguro já existente, sem polling nem retry automático. A #246 já foi absorvida na branch da #238; consolidar a cadeia uma única vez.
-- **Gate de CI:** reconciliar as suítes da cadeia visual e provar execução real no Browser, sem SKIP silencioso ou CI de SHA antigo.
+### 4.3 Dependências e trilhas da fatia
 
-A entrega desta frente é a integração e homologação da cadeia visual completa; não é uma autorização para reescrever páginas nem para alterar mecânicas.
+- **#287 (PAI):** auditoria econômica — contas/ledger/PIX/compra-venda/estorno/Acervo/catálogo/inventário e modelo mínimo de loja/oferta/estoque/caixa/recibo.
+- **#290 (PAI):** auditoria patrimonial — extração de Equipamento/Armazém sem duplicar inventário, semântica real de `location`, plano de UI e matriz de regressão.
+- **#288 (FILHO):** delta UX — consolidação dos dois botões e wireflows, sem repetir specs aceitas.
+- **#289 (INTERMEDIÁRIO):** matriz de testes comercial/extração patrimonial.
+- Cada entrega vira PR pequena, independente e testável, com release-alvo explícito.
 
-### 4.3 Estado de sincronização da campanha — Issue #285
+### 4.4 Fatias 1.1.x posteriores e fora do corte 1.1.0
 
-Exibir um indicador discreto de conexão e horário da última sincronização concluída. Reutilizar Socket.IO e GETs já existentes; atualizar o horário somente depois de uma recarga bem-sucedida. Mostrar desconexão/reconexão sem apagar conteúdo já carregado. Sem novo endpoint, sala, polling, timer recorrente ou persistência adicional. Preservar as regras de visibilidade de Diário, Arquivos, Fichas, Regras e Histórico.
+**Restante do Mundo Vivo:** continua fatiado nas versões 1.1.x posteriores e na integração 2.0, conforme `ROADMAP-MUNDO-VIVO-ROLLOUT-1.1X.md` — Internet diegética expandida (dispositivos, mensagens, contatos), sites/notícias/classificados/redes, empresas e trabalho, NPCs habitantes, Jogadores IA e, por fim, guildas/territórios; a 2.0 integra o ecossistema completo. Nenhuma dessas fatias entra na 1.1.0 sem nova decisão do dono.
 
-### 4.4 Fora do corte 1.1.0
+**Frentes antes candidatas à 1.1.0, realocadas para fatias posteriores da linha 1.1.x** (não apagadas; reordenar exige decisão explícita):
 
-- **Mestre IA / Mundo Vivo (#180–#184):** permanece no planejamento futuro 2.0, sem puxar arquitetura de agente para a linha 1.x.
-- **Funcionalidades já entregues:** iniciativa d20, régua, retratos, Mestre Voice, lote/extrato XP já integrado e HP/Vitalidade nos tokens não devem ser reimplementados nesta versão.
-- Qualquer outra ideia nova deve virar Issue própria, com aceite e dependências, antes de entrar no corte.
+- **Progressão XP — #185/#284:** estorno auditado de compra de nível, XP por sessão/gancho narrativo e saldo-âncora do Extrato XP.
+- **Finalização visual/acessibilidade — #132 (#233/#236/#239):** ícones semânticos, estados vazios ilustrados, carregamento/erro recuperável.
+- **Sincronização da campanha — #285:** indicador discreto de conexão/última sincronização.
+
+**Fora de qualquer release sem Issue própria:** funcionalidades já entregues (iniciativa d20, régua, retratos, Mestre Voice, lote/extrato XP integrado, HP/Vitalidade nos tokens) não devem ser reimplementadas; ideias novas viram Issue com aceite e dependências.
 
 ### Critério de conclusão da 1.1.0
 
-- As três frentes acima entregues na mesma árvore candidata, com migrations somente quando justificadas e compatibilidade retroativa.
+- A fatia de comércio (#286) entregue na árvore candidata: botões **Internet** e **Equipamento/Armazém** fora da ficha, compra/checkout atômico e idempotente, sem segundo inventário/saldo/ledger, com dados e IDs legados preservados.
+- Auditorias #287/#290 concluídas e revisadas; especificações #288/#289 integradas; implementação somente após autorização do dono.
 - Testes de domínio, autorização, privacidade, idempotência e regressão executados no SHA final.
 - CI Servidor + Navegador + Windows verde no SHA/merge-ref exato, sem SKIP indevido.
-- CHANGELOG e artefatos anunciam somente funcionalidades realmente integradas.
+- CHANGELOG e artefatos anunciam somente funcionalidades realmente integradas — **nenhum anúncio de loja/checkout antes da implementação existir**.
 - Nenhuma mudança na instalação estável 0.8/1.0.8.
 
 ## 5. Responsabilidades operacionais
@@ -124,7 +131,7 @@ A atribuição de uma responsabilidade não prova que uma sessão está ativa. C
 |---|---|---|
 | **Devin — Gerente Operacional** | Auditoria de todas as PRs/Issues abertas por release; manter #204/#274 e este documento coerentes; preparar inventário da distribuição 1.0.9 | Organização e inventário; sem alterar manifests antes da candidata final |
 | **Devin — Gerente de Execução** | Abrir e acompanhar sessões reais de PAI/FILHO/INTERMEDIÁRIO; monitorar #279/#280; encadear #265–#273 sem colisão | Registrar sessão real, branch, SHA, CI e bloqueio; não declarar sessões sem prova |
-| **PAI** | Auditoria DAG #176→#188→#189; Boot Lock/recuperação; preparação Linux #271; especificação técnica de XP #185/#284 e contrato de sincronização #285 | Não duplicar a execução W14 #265 nem W16 #266/#280; 1.1.0 sem implementação antes da liberação |
+| **PAI** | Auditoria DAG #176→#188→#189; Boot Lock/recuperação; preparação Linux #271; auditorias 1.1.x #287 (economia/lojas) e #290 (Equipamento/Armazém) | Não duplicar a execução W14 #265 nem W16 #266/#280; 1.1.x sem implementação antes da liberação |
 | **FILHO** | Regressão UI #279; confirmar XP/extrato já integrado sem recriar #215/#217/#257/#258; UX #185/#284; indicador realtime #285; cadeia visual #233/#236/#239 | 1.1.0 somente especificação/preparação até a estabilização da 1.0.9 e autorização |
 | **INTERMEDIÁRIO** | Revisão final #279 e #280; preparação Windows #270; matriz de upgrade #272; auditoria independente de #185/#284/#285 e da cadeia visual #233/#236/#239 | Homologações finais aguardam as dependências de #189/W14/W16; não validar 1.1.0 em SHA antigo |
 
@@ -145,7 +152,7 @@ A atribuição de uma responsabilidade não prova que uma sessão está ativa. C
 
 - **0.8 / 1.0.8:** congelada; preservar.
 - **0.9 / 1.0.9:** #279 + atualização/recuperação #155/#265–#274. XP em lote/extrato (#213/#277/#217/#257/#258) já está integrado; não duplicar.
-- **1.1.0:** pacote ampliado com três frentes: **progressão XP** (estorno, XP por sessão/gancho e transparência da âncora do extrato — #185/#284); **finalização visual/acessível** (#132, tarefas #233/#236/#239); **indicador realtime de conexão/sincronização** (#285).
-- **1.1.0:** ainda não iniciada; somente especificação e organização até a 1.0.9 estabilizar e o dono liberar o início.
-- **Mestre IA / Mundo Vivo:** continua no roadmap 2.0 (#180–#184), fora da 1.1.0.
+- **1.1.0:** primeira fatia do Mundo Vivo — **comércio pela Internet** (lojas/ofertas/checkout bilateral) + botões independentes **Internet** e **Equipamento/Armazém** fora da ficha (#286–#290). XP (#185/#284), visual (#132) e sincronização (#285) foram realocados para fatias 1.1.x posteriores.
+- **1.1.0:** ainda não iniciada; somente auditoria, especificação e organização até a 1.0.9 estabilizar e o dono liberar o início. Loja/checkout **não existem** hoje.
+- **Mundo Vivo:** subsistemas da 2.0 entregues funcionalmente na linha 1.1.x (ver `ROADMAP-MUNDO-VIVO-ROLLOUT-1.1X.md`); a 2.0 integra o ecossistema completo.
 - **Regra permanente:** nenhum item da 1.1.0 autoriza alteração na instalação estável 0.8/1.0.8.
