@@ -29,12 +29,32 @@ export function adquirirTravaInstancia(caminhoBanco: string): void {
   const caminho = caminhoTrava(caminhoBanco);
   mkdirSync(dirname(caminho), { recursive: true });
   const db = new Database(caminho);
-  db.pragma("busy_timeout = 0");
-  try {
-    db.exec("BEGIN EXCLUSIVE");
-  } catch (e) {
+  db.pragma("busy_timeout = 0"); // cada tentativa falha na hora; a espera é o retry externo limitado
+  // BUSY transitório na criação/abertura simultânea do arquivo .trava
+  // (dois processos no mesmo instante — ex.: corrida de boot no CI) pode
+  // fazer BEGIN EXCLUSIVE falhar para AMBOS. Retry limitado e fail-closed:
+  // se uma instância detém a trava de verdade, todas as tentativas falham
+  // e a rejeição acontece após no máximo TENTATIVAS×ESPERA_MS.
+  const TENTATIVAS = 40;
+  const ESPERA_MS = 50;
+  const sab = new Int32Array(new SharedArrayBuffer(4));
+  let ultimoErro: unknown = null;
+  for (let i = 0; i < TENTATIVAS; i++) {
+    try {
+      db.exec("BEGIN EXCLUSIVE");
+      ultimoErro = null;
+      break;
+    } catch (e) {
+      ultimoErro = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/locked|busy/i.test(msg)) break; // erro não-BUSY: falha imediata
+      try { db.exec("ROLLBACK"); } catch { /* sem transação ativa */ }
+      if (i < TENTATIVAS - 1) Atomics.wait(sab, 0, 0, ESPERA_MS);
+    }
+  }
+  if (ultimoErro) {
     try { db.close(); } catch { /* ignora */ }
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = ultimoErro instanceof Error ? ultimoErro.message : String(ultimoErro);
     throw new Error(`outra instância do Mestre RPG já está ativa neste banco (${msg})`);
   }
   trava = db;
