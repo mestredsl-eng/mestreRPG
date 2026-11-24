@@ -162,6 +162,16 @@ if (!candidato.adotavel) {
 // 2. Validação do banco: integridade + esquema 1.0.8 exato ou 1.0.9 já
 //    aplicada (quando um boot intermediário já migrou o banco oficial).
 const banco = caminhoBancoConfigurado(repoDir, env);
+// Nome real do arquivo de banco: o backup copia byte a byte para
+// banco/<basename> e a validação/reabertura usa o MESMO caminho
+// derivado — um nome fixo falharia fechado com MESTRE_BANCO customizado
+// (Issue #320). basename não pode conter separadores; ainda assim,
+// "."/".."/vazio são rejeitados para nunca sair de backupDir/banco.
+const baseBanco = banco.split(/[\\/]/).pop();
+if (!baseBanco || baseBanco === "." || baseBanco === "..") {
+  falhar("caminho-banco-invalido", banco);
+}
+const relBancoCopia = join("banco", baseBanco);
 let aplicadas;
 try {
   const Database = requireSqlite();
@@ -204,7 +214,7 @@ const dirBackups = (env.MESTRE_BACKUPS ?? "").trim() || join(repoDir, "backups")
 let backupDir = faseJournal === "backup-ok" ? journal.dados?.backupDir : null;
 let backupOk = false;
 if (backupDir && existsSync(backupDir)) {
-  const v = validarBackup(backupDir, join("banco", "mestre-rpg.db"));
+  const v = validarBackup(backupDir, relBancoCopia);
   backupOk = v.ok;
   if (!v.ok) console.log(`[adocao] backup anterior inválido (${v.motivo}) — refazendo.`);
 }
@@ -214,7 +224,6 @@ if (!backupOk) {
   mkdirSync(backupDir, { recursive: true });
 
   // Banco + sidecars (WAL/SHM/journal) — byte a byte.
-  const baseBanco = banco.split(/[\\/]/).pop();
   const dirBancoOrig = dirname(banco);
   const nomesBanco = [baseBanco];
   try {
@@ -275,7 +284,7 @@ if (!backupOk) {
     arquivos: entradas,
   });
 
-  const v = validarBackup(backupDir, join("banco", "mestre-rpg.db"));
+  const v = validarBackup(backupDir, relBancoCopia);
   if (!v.ok) falhar("backup-invalidado", v.motivo);
   gravarEstado(repoDir, JOURNAL_ADOCAO, {
     tipo: "adocao-legado",
