@@ -253,6 +253,13 @@
       "when": 1795535932258,
       "tag": "0035_release_1009_stabilizacao_news",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1795560239088,
+      "tag": "0036_free_quentin_quire",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,8 @@ import { getDb, CAMINHOS } from "../db/index.js";
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
-  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
+  financialAccounts, moneyTransactions, shops, shopManagers, shopOffers, shopOrders,
+  sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
   users,
 } from "../db/schema.js";
 import type { EstadoCampanha } from "./estado.js";
@@ -203,8 +204,13 @@ export function inserirEstado(tx: Tx, dados: EstadoCampanha, opts: { origem?: Or
   inserir(tx, inventoryEntries, dados.inventoryEntries);
   inserir(tx, equipmentEntries, dados.equipmentEntries);
   inserir(tx, vehicles, dados.vehicles);
+  // lojas antes de financialAccounts/moneyTransactions: shop_id é FK delas
+  inserir(tx, shops, dados.shops);
+  inserir(tx, shopManagers, dados.shopManagers);
+  inserir(tx, shopOffers, dados.shopOffers);
   inserir(tx, financialAccounts, dados.financialAccounts);
   inserir(tx, moneyTransactions, dados.moneyTransactions);
+  inserir(tx, shopOrders, dados.shopOrders);
   inserir(tx, sessions, normalizarNumerosSessao(dados.sessions));
   inserir(tx, turns, dados.turns);
   inserir(tx, chatMessages, dados.chatMessages);
@@ -261,6 +267,11 @@ export async function restaurarEstado(campaignId: string, dados: EstadoCampanha,
     limpar(sessions, eq(sessions.campaignId, campaignId));
     limpar(moneyTransactions, eq(moneyTransactions.campaignId, campaignId));
     limpar(financialAccounts, eq(financialAccounts.campaignId, campaignId));
+    // lojas: filhas primeiro; shops só depois das contas/transações que a referenciam
+    limpar(shopOrders, eq(shopOrders.campaignId, campaignId));
+    limpar(shopOffers, eq(shopOffers.campaignId, campaignId));
+    limpar(shopManagers, eq(shopManagers.campaignId, campaignId));
+    limpar(shops, eq(shops.campaignId, campaignId));
     limpar(vehicles, eq(vehicles.campaignId, campaignId));
     if (charIds.length) {
       limpar(equipmentEntries, inArray(equipmentEntries.characterId, charIds));

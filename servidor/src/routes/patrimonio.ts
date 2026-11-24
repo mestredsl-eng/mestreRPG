@@ -1419,9 +1419,9 @@ patrimonioRouter.post("/financeiro/transferir", async (req, res) => {
       // Personagem arquivado é somente leitura — se qualquer lado da
       // transferência (PIX fictício entre personagens) estiver arquivado,
       // a operação inteira é recusada: sem débito, crédito ou histórico.
-      const charIds = [...new Set([origemTx.characterId, destinoTx.characterId])];
-      const arquivados = tx.select({ id: characters.id }).from(characters)
-        .where(and(inArray(characters.id, charIds), eq(characters.status, "arquivado"))).all();
+      const charIds = [...new Set([origemTx.characterId, destinoTx.characterId].filter((x): x is string => x !== null))];
+      const arquivados = charIds.length ? tx.select({ id: characters.id }).from(characters)
+        .where(and(inArray(characters.id, charIds), eq(characters.status, "arquivado"))).all() : [];
       if (arquivados.length) throw new Error("personagem_arquivado");
 
       const novoOrigem = origemTx.balanceCents - cents;
