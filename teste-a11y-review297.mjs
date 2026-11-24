@@ -497,6 +497,22 @@ try {
       estadoFinal: d ? d.disposicao : "REVIEW",
     };
   });
+  // Discriminador de ocorrência (ressalva INTERMEDIário): entradas rev[]
+  // idênticas no mesmo contexto são nós DOM distintos — numera repetições.
+  {
+    const vistos = new Map();
+    for (const m of matriz) {
+      const gk = `${m.fluxo}|${m.papel}|${m.viewport}|${m.tipo}|${m.rev}`;
+      const n = (vistos.get(gk) || 0) + 1;
+      vistos.set(gk, n);
+      m.ocorrencia = n;
+      m.grupoTam = 0; // preenchido abaixo
+    }
+    for (const m of matriz) {
+      const gk = `${m.fluxo}|${m.papel}|${m.viewport}|${m.tipo}|${m.rev}`;
+      m.grupoTam = vistos.get(gk);
+    }
+  }
 
   // resumo por causaClasse
   const porClasse = {};
@@ -536,7 +552,8 @@ try {
   md.push("\n## Casos\n");
   md.push("| # | Tipo | Causa | Seletor | Conteúdo | req | Amostra (pior px) | Disposição | Shot |\n|---|---|---|---|---|---|---|---|---|");
   disposicoes.forEach((d, idx) => {
-    md.push(`| ${idx + 1} | ${d.tipo} | ${d.causaClasse} | \`${d.sel || "—"}\` | ${(d.conteudo || "").slice(0, 40)} | ${d.req} | ${d.amostra ? d.amostra.minR : "—"} | ${d.disposicao} | ${d.shot || "—"} |`);
+    const conteudo = (d.conteudo || "").replace(/\s+/g, " ").trim().replace(/\|/g, "\\|").slice(0, 40);
+    md.push(`| ${idx + 1} | ${d.tipo} | ${d.causaClasse} | \`${(d.sel || "—").replace(/\|/g, "\\|")}\` | ${conteudo} | ${d.req} | ${d.amostra ? d.amostra.minR : "—"} | ${d.disposicao} | ${d.shot || "—"} |`);
   });
   writeFileSync(join(OUT, "review-contraste.md"), md.join("\n"));
 
@@ -552,8 +569,9 @@ try {
       ? (ev.grad ? `gradiente ${ev.grad.min}–${ev.grad.max}:1` : ev.amostra ? `pior px ${ev.amostra.minR}:1` : "sem amostra") +
         (ev.shot ? ` · ${ev.shot}` : "")
       : "—";
-    const conteudo = (m.conteudo || "").replace(/\|/g, "\\|").slice(0, 50);
-    const sel = (m.seletor || "—").replace(/\|/g, "\\|");
+    const limpo = (s) => (s || "").replace(/\s+/g, " ").trim();
+    const conteudo = limpo(m.conteudo).replace(/\|/g, "\\|").slice(0, 50);
+    const sel = limpo(m.seletor).replace(/\|/g, "\\|") + (m.grupoTam > 1 ? ` #${m.ocorrencia}` : "");
     mm.push(`| ${idx + 1} | ${m.requisito} | ${m.fluxo} | ${m.papel} | ${m.viewport} | ${m.req} | ${m.tipo} | \`${sel}\` | ${conteudo} | ${m.arquivoAssert} | ${evTxt} | ${m.estadoFinal} |`);
   });
   writeFileSync(join(OUT, "matriz-review-ocorrencias.md"), mm.join("\n"));
