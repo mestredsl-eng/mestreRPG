@@ -125,16 +125,70 @@ function medirPagina() {
     out.push(s.slice(ini).trim());
     return out.filter(Boolean);
   };
-  // Extrai cores de parada de uma camada gradient(...).
-  const coresDaCamada = (camada) => {
-    const cores = [];
-    const re = /(?:rgba?|color|hsla?)\([^()]*\)|#[0-9a-fA-F]{3,8}\b/g;
-    let m;
-    while ((m = re.exec(camada))) {
-      const c = parse(m[0]);
-      if (c) cores.push(c);
+  // Cor de parada de gradiente: rgb()/rgba()/hex/transparent.
+  const parseCorToken = (s) => {
+    const t = (s || "").trim().toLowerCase();
+    if (t === "transparent") return [0, 0, 0, 0];
+    const m = /rgba?\(([^)]+)\)/.exec(t);
+    if (m) {
+      const p = m[1].split(",").map((x) => parseFloat(x));
+      if (p.length < 3 || p.some(Number.isNaN)) return null;
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
     }
-    return cores;
+    const h = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(t);
+    if (h) {
+      const x = h[1];
+      const v = x.length === 3
+        ? [0, 1, 2].map((i) => parseInt(x[i] + x[i], 16))
+        : [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16));
+      const a = x.length === 8 ? parseInt(x.slice(6, 8), 16) / 255 : 1;
+      return [...v, a];
+    }
+    return null;
+  };
+  // Extrai paradas (cor + posição) de uma camada gradient(...).
+  // Posições em px/em são ignoradas (sequenciais) — suficiente porque a
+  // amostragem cobre o espaço paramétrico de cada segmento.
+  const paradasDaCamada = (camada) => {
+    const ini = camada.indexOf("(");
+    if (ini < 0) return [];
+    const inner = camada.slice(ini + 1, camada.lastIndexOf(")") > ini ? camada.lastIndexOf(")") : undefined);
+    const partes = splitCamadas(inner);
+    const paradas = [];
+    for (const parte of partes) {
+      const cm = /(rgba?\([^()]*\)|#[0-9a-fA-F]{3,8}\b|transparent)/i.exec(parte);
+      if (!cm) continue; // color hint — ignorado (raro; não usado no tema)
+      const cor = parseCorToken(cm[1]);
+      if (!cor) continue;
+      paradas.push({ cor });
+    }
+    return paradas;
+  };
+  // Amostra o interior do gradiente: 9 pontos por segmento (inclui
+  // paradas). Necessário porque a razão de contraste é não-linear na
+  // luminância — se a luminância do texto/borda ficar ENTRE as das
+  // paradas, o mínimo real ocorre dentro do segmento, não nas pontas.
+  const amostrarGradiente = (camadaStr, abaixo, origem) => {
+    const paradas = paradasDaCamada(camadaStr);
+    if (!paradas.length) return [];
+    const out = [];
+    const AMOSTRAS = 8;
+    const emitir = (cor) => {
+      const comp = cor[3] < 1 ? sobre(cor, abaixo) : cor;
+      out.push({
+        cor: comp.slice(0, 3).map((v) => Math.round(v)),
+        origem, tipo: camadaStr.slice(0, 22), alpha: +cor[3].toFixed(2),
+      });
+    };
+    if (paradas.length === 1) { emitir(paradas[0].cor); return out; }
+    for (let i = 0; i < paradas.length - 1; i++) {
+      const c0 = paradas[i].cor, c1 = paradas[i + 1].cor;
+      for (let k = 0; k <= AMOSTRAS; k++) {
+        const t = k / AMOSTRAS;
+        emitir([0, 1, 2, 3].map((j) => c0[j] + (c1[j] - c0[j]) * t));
+      }
+    }
+    return out;
   };
 
   // Fundo efetivo subindo a cadeia (partindo de `inicio`): cores e
@@ -185,14 +239,7 @@ function medirPagina() {
         out.push({ cor: camada.cor.slice(0, 3).map((v) => Math.round(v)), origem: sel(camada.el), tipo: "cor" });
       } else {
         for (const img of camada.camadas) {
-          const cores = coresDaCamada(img);
-          for (const c of cores) {
-            const comp = c[3] < 1 ? sobre(c, fundo.abaixo) : c;
-            out.push({
-              cor: comp.slice(0, 3).map((v) => Math.round(v)),
-              origem: sel(camada.el), tipo: img.slice(0, 22), alpha: c[3],
-            });
-          }
+          out.push(...amostrarGradiente(img, fundo.abaixo, sel(camada.el)));
         }
       }
     }
@@ -352,15 +399,59 @@ function medirFocoGradiente() {
     out.push(s.slice(ini).trim());
     return out.filter(Boolean);
   };
-  const coresDaCamada = (camada) => {
-    const cores = [];
-    const re = /(?:rgba?|color|hsla?)\([^()]*\)|#[0-9a-fA-F]{3,8}\b/g;
-    let m;
-    while ((m = re.exec(camada))) {
-      const c = parse(m[0]);
-      if (c) cores.push(c);
+  const parseCorToken = (s) => {
+    const t = (s || "").trim().toLowerCase();
+    if (t === "transparent") return [0, 0, 0, 0];
+    const m = /rgba?\(([^)]+)\)/.exec(t);
+    if (m) {
+      const p = m[1].split(",").map((x) => parseFloat(x));
+      if (p.length < 3 || p.some(Number.isNaN)) return null;
+      return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
     }
-    return cores;
+    const h = /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/.exec(t);
+    if (h) {
+      const x = h[1];
+      const v = x.length === 3
+        ? [0, 1, 2].map((i) => parseInt(x[i] + x[i], 16))
+        : [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16));
+      const a = x.length === 8 ? parseInt(x.slice(6, 8), 16) / 255 : 1;
+      return [...v, a];
+    }
+    return null;
+  };
+  const paradasDaCamada = (camada) => {
+    const ini = camada.indexOf("(");
+    if (ini < 0) return [];
+    const fim = camada.lastIndexOf(")");
+    const inner = camada.slice(ini + 1, fim > ini ? fim : undefined);
+    const paradas = [];
+    for (const parte of splitCamadas(inner)) {
+      const cm = /(rgba?\([^()]*\)|#[0-9a-fA-F]{3,8}\b|transparent)/i.exec(parte);
+      if (!cm) continue;
+      const cor = parseCorToken(cm[1]);
+      if (cor) paradas.push({ cor });
+    }
+    return paradas;
+  };
+  // Amostra o interior do gradiente (9 pontos por segmento) — a razão
+  // de contraste é não-linear na luminância; o mínimo pode ocorrer
+  // dentro do segmento quando a luminância do texto fica entre as paradas.
+  const amostrarGradiente = (camadaStr, abaixo, origem) => {
+    const paradas = paradasDaCamada(camadaStr);
+    const out = [];
+    const emitir = (cor) => {
+      const comp = cor[3] < 1 ? sobre(cor, [...abaixo, 1]) : cor.slice(0, 3);
+      out.push(comp.slice(0, 3).map((v) => Math.round(v)));
+    };
+    if (paradas.length === 1) { emitir(paradas[0].cor); return out; }
+    for (let i = 0; i < paradas.length - 1; i++) {
+      const c0 = paradas[i].cor, c1 = paradas[i + 1].cor;
+      for (let k = 0; k <= 8; k++) {
+        const t = k / 8;
+        emitir([0, 1, 2, 3].map((j) => c0[j] + (c1[j] - c0[j]) * t));
+      }
+    }
+    return out;
   };
   // fundo externo (a partir do pai) — mesma lógica do fundoEfetivo
   const camadas = [];
@@ -374,7 +465,7 @@ function medirFocoGradiente() {
       const grads = imgs.filter((i) => /gradient\(/.test(i));
       const outras = imgs.filter((i) => !/gradient\(/.test(i));
       if (outras.length) return { sel: sel(el), resultado: "imagem-real" };
-      if (grads.length) camadas.push({ tipo: "gradiente", camadas: grads });
+      if (grads.length) camadas.push({ tipo: "gradiente", camadas: grads, el: cur });
     }
     if (bg) { camadas.push({ tipo: "cor", cor: bg }); if (bg[3] === 1) break; }
     cur = cur.parentElement;
@@ -395,10 +486,7 @@ function medirFocoGradiente() {
   for (const camada of camadas) {
     if (camada.tipo === "cor") externos.push(camada.cor.slice(0, 3).map((v) => Math.round(v)));
     else for (const img of camada.camadas) {
-      for (const c of coresDaCamada(img)) {
-        const comp = c[3] < 1 ? sobre(c, [...abaixo, 1]) : c;
-        externos.push(comp.slice(0, 3).map((v) => Math.round(v)));
-      }
+      externos.push(...amostrarGradiente(img, abaixo, sel(camada.el)));
     }
   }
   // cor do indicador: outline ou box-shadow única (mesma regra do auditor)
@@ -628,9 +716,11 @@ function gerarMarkdown() {
 
   L.push("## Notas metodológicas");
   L.push("");
-  L.push("- O pior contraste é o mínimo entre TODAS as paradas de cor de todos os" +
-    " gradientes do fundo efetivo — conservador: pixels do meio do gradiente" +
-    " têm contraste intermediário, nunca pior que as extremidades.");
+  L.push("- O pior contraste é o mínimo sobre uma AMOSTRAGEM do gradiente" +
+    " (9 pontos por segmento, interpolação sRGB entre paradas) — necessário" +
+    " porque a razão de contraste é não-linear na luminância: quando a" +
+    " luminância do texto/borda fica entre as das paradas, o mínimo real" +
+    " ocorre dentro do segmento, não nas extremidades.");
   L.push("- Paradas com alpha < 1 foram compostas sobre o fundo efetivo abaixo" +
     " do gradiente (mesma composição `sobre()` do auditor).");
   L.push("- Texto: limiar 4.5:1 normal, 3.0:1 grande (≥24px ou ≥18.66px negrito)" +

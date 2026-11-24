@@ -8,7 +8,7 @@ a revisão — não alteram o status REVIEW original.
 
 ## 1. Texto sobre gradiente (SC 1.4.3)
 
-**1209 elementos medidos — 1209 computado-PASS, 0 computado-FAIL**.
+**1208 elementos medidos — 1208 computado-PASS, 0 computado-FAIL**.
 
 | tela / fluxo | viewport | elementos | PASS | FAIL | pior razão |
 |---|---|---|---|---|---|
@@ -33,7 +33,7 @@ a revisão — não alteram o status REVIEW original.
 | patrimônio Dinheiro | tablet-768 | 65 | 65 | 0 | 5.73:1 |
 | aba Mesa | tablet-768 | 24 | 24 | 0 | 5.73:1 |
 | login→painel | desktop-1366 | 13 | 13 | 0 | 5.73:1 |
-| campanha (visão geral) | desktop-1366 | 28 | 28 | 0 | 5.73:1 |
+| campanha (visão geral) | desktop-1366 | 27 | 27 | 0 | 5.73:1 |
 | aba Personagens | desktop-1366 | 35 | 35 | 0 | 5.73:1 |
 | aba Diário | desktop-1366 | 24 | 24 | 0 | 5.56:1 |
 | aba Arquivos | desktop-1366 | 26 | 26 | 0 | 5.56:1 |
@@ -53,7 +53,7 @@ a revisão — não alteram o status REVIEW original.
 
 | fundo(s) | cor do texto | limiar | n | pior | melhor | exemplos |
 |---|---|---|---|---|---|---|
-| button.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 311 | 8.90:1 | 10.72:1 | campanha (visão geral)/celular-390/`button.secundario`; campanha (visão geral)/celular-390/`button.secundario`; campanha (visão geral)/celular-390/`button.secundario` |
+| button.secundario,div.abas,section.cartao,main.container.container-largo,div#root,body,html | rgb(201,205,211) | 4.5:1 | 310 | 8.90:1 | 8.90:1 | campanha (visão geral)/celular-390/`button.secundario`; campanha (visão geral)/celular-390/`button.secundario`; campanha (visão geral)/celular-390/`button.secundario` |
 | span,button,nav,header.topo,div#root,body,html | rgb(180,169,177) | 4.5:1 | 210 | 8.08:1 | 8.08:1 | login→painel/celular-390/`span`; login→painel/celular-390/`span`; login→painel/celular-390/`span` |
 | span,button.ativo,nav,header.topo,div#root,body,html | rgb(255,242,242) | 4.5:1 | 36 | 14.52:1 | 14.52:1 | login→painel/celular-390/`span`; campanha (visão geral)/celular-390/`span`; aba Personagens/celular-390/`span` |
 | span,button.sair,nav,header.topo,div#root,body,html | rgb(230,154,161) | 4.5:1 | 36 | 5.73:1 | 5.73:1 | login→painel/celular-390/`span`; campanha (visão geral)/celular-390/`span`; aba Personagens/celular-390/`span` |
@@ -122,119 +122,119 @@ a revisão — não alteram o status REVIEW original.
 
 | tela | viewport | campo | tipo | fillMin | bordaMin | piorCaso | contexto |
 |---|---|---|---|---|---|---|---|
-| aba Personagens | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | search · placeholder |
-| aba Personagens | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| aba Arquivos | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| aba Arquivos | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| aba Personagens | celular-390 | `input` | input | 1 | 1.29 | 1.29 | search · placeholder |
+| aba Personagens | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
+| aba Arquivos | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| aba Arquivos | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
 | aba Convites | celular-390 | `select` | select | 1 | 1.28 | 1.28 | select · 1 label(is) · Papel inicial
 Jogador
 Espectad |
 | aba Convites | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Máx. de usos |
 | aba Convites | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Expira em (horas) |
 | aba Convites | celular-390 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
-| ficha detalhe | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| ficha detalhe | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| ficha detalhe | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| ficha detalhe | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
+| ficha detalhe | celular-390 | `input` | input | 1 | 1.29 | 1.29 | number |
+| ficha detalhe | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
 | ficha detalhe | celular-390 | `select` | select | 1 | 1.28 | 1.28 | select |
 | ficha detalhe | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number |
 | ficha detalhe | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | ficha detalhe | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Inventário | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Inventário | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Inventário | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| patrimônio Inventário | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Inventário | celular-390 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Inventário | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
 | patrimônio Inventário | celular-390 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Inventário | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number |
 | patrimônio Inventário | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | patrimônio Inventário | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Dinheiro | celular-390 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Dinheiro | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Dinheiro | celular-390 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Dinheiro | celular-390 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Dinheiro | celular-390 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Dinheiro | celular-390 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
 | patrimônio Dinheiro | celular-390 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | celular-390 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | celular-390 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | patrimônio Dinheiro | celular-390 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| aba Personagens | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | search · placeholder |
-| aba Personagens | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| aba Arquivos | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| aba Arquivos | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| aba Personagens | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | search · placeholder |
+| aba Personagens | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
+| aba Arquivos | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| aba Arquivos | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
 | aba Convites | tablet-768 | `select` | select | 1 | 1.28 | 1.28 | select · 1 label(is) · Papel inicial
 Jogador
 Espectad |
 | aba Convites | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Máx. de usos |
 | aba Convites | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Expira em (horas) |
 | aba Convites | tablet-768 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
-| ficha detalhe | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| ficha detalhe | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| ficha detalhe | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| ficha detalhe | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
+| ficha detalhe | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | number |
+| ficha detalhe | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
 | ficha detalhe | tablet-768 | `select` | select | 1 | 1.28 | 1.28 | select |
 | ficha detalhe | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number |
 | ficha detalhe | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | ficha detalhe | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Inventário | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Inventário | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Inventário | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| patrimônio Inventário | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
 | patrimônio Inventário | tablet-768 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number |
 | patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | patrimônio Inventário | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Dinheiro | tablet-768 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Dinheiro | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Dinheiro | tablet-768 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Dinheiro | tablet-768 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Dinheiro | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Dinheiro | tablet-768 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
 | patrimônio Dinheiro | tablet-768 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | tablet-768 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | patrimônio Dinheiro | tablet-768 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| aba Personagens | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | search · placeholder |
-| aba Personagens | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| aba Arquivos | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| aba Arquivos | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| aba Personagens | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | search · placeholder |
+| aba Personagens | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
+| aba Arquivos | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| aba Arquivos | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
 | aba Convites | desktop-1366 | `select` | select | 1 | 1.28 | 1.28 | select · 1 label(is) · Papel inicial
 Jogador
 Espectad |
 | aba Convites | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Máx. de usos |
 | aba Convites | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number · 1 label(is) · placeholder · Expira em (horas) |
 | aba Convites | desktop-1366 | `input` | input | 1 | — | 1 | checkbox · 1 label(is) · Exigir aprovação do mestre |
-| ficha detalhe | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| ficha detalhe | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| ficha detalhe | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| ficha detalhe | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| ficha detalhe | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
+| ficha detalhe | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | number |
+| ficha detalhe | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| ficha detalhe | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
 | ficha detalhe | desktop-1366 | `select` | select | 1 | 1.28 | 1.28 | select |
 | ficha detalhe | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number |
 | ficha detalhe | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | ficha detalhe | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | ficha detalhe | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Inventário | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Inventário | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Inventário | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
-| patrimônio Inventário | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
+| patrimônio Inventário | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Inventário | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
 | patrimônio Inventário | desktop-1366 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number |
 | patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
 | patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
 | patrimônio Inventário | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | text · placeholder |
-| patrimônio Dinheiro | desktop-1366 | `select` | select | 1.01 | 1.29 | 1.29 | select |
-| patrimônio Dinheiro | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | number |
-| patrimônio Dinheiro | desktop-1366 | `input` | input | 1.01 | 1.29 | 1.29 | text · placeholder |
+| patrimônio Dinheiro | desktop-1366 | `select` | select | 1 | 1.29 | 1.29 | select |
+| patrimônio Dinheiro | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | number |
+| patrimônio Dinheiro | desktop-1366 | `input` | input | 1 | 1.29 | 1.29 | text · placeholder |
 | patrimônio Dinheiro | desktop-1366 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | desktop-1366 | `select` | select | 1 | 1.28 | 1.28 | select |
 | patrimônio Dinheiro | desktop-1366 | `input` | input | 1 | 1.28 | 1.28 | number · placeholder |
@@ -257,7 +257,7 @@ São as entradas 'fronteira ambígua' da lista REVIEW: o auditor já tinha os qu
 
 ## Notas metodológicas
 
-- O pior contraste é o mínimo entre TODAS as paradas de cor de todos os gradientes do fundo efetivo — conservador: pixels do meio do gradiente têm contraste intermediário, nunca pior que as extremidades.
+- O pior contraste é o mínimo sobre uma AMOSTRAGEM do gradiente (9 pontos por segmento, interpolação sRGB entre paradas) — necessário porque a razão de contraste é não-linear na luminância: quando a luminância do texto/borda fica entre as das paradas, o mínimo real ocorre dentro do segmento, não nas extremidades.
 - Paradas com alpha < 1 foram compostas sobre o fundo efetivo abaixo do gradiente (mesma composição `sobre()` do auditor).
 - Texto: limiar 4.5:1 normal, 3.0:1 grande (≥24px ou ≥18.66px negrito) — idêntico ao `grande()` de `wcag-avaliador-297.mjs`.
 - Controles (1.4.11): por parada de gradiente externa, usa-se o MELHOR identificador (preenchimento×externo ou borda×externo ≥3:1); o veredito final é o PIOR desses melhores — ou seja, PASS só se a fronteira for identificável em qualquer pixel do gradiente.
