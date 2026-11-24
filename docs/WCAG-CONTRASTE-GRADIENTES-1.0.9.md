@@ -263,3 +263,19 @@ São as entradas 'fronteira ambígua' da lista REVIEW: o auditor já tinha os qu
 - Controles (1.4.11): por parada de gradiente externa, usa-se o MELHOR identificador (preenchimento×externo ou borda×externo ≥3:1); o veredito final é o PIOR desses melhores — ou seja, PASS só se a fronteira for identificável em qualquer pixel do gradiente.
 - `abaixo-3:1` não é violação confirmada: a SC 1.4.11 admite contexto adjacente (label visível) como alternativa à fronteira — a decisão é humana.
 - Entradas 'select: affordance nativa do UA' e 'stepper nativo' envolvem renderização do user-agent não mensurável via DOM — permanecem para disposição humana mesmo com quocientes calculados.
+
+## 4. Análise de correção de borda (opcional — insumo p/ decisão)
+
+Cálculo offline (mesma fórmula WCAG) das cores de borda candidatas do próprio tema contra o conjunto de superfícies escuras onde os campos aparecem (paradas dos gradientes `.cartao`/`.ficha-secao`/body/html, todas entre ~#0b0a0f e ~#211b26). Borda com alpha é composta sobre cada externo antes do quociente — reproduz os ~1.3:1 medidos:
+
+| cor de borda candidata | contraste vs superfícies (min–max) | atinge 3:1? |
+|---|---|---|
+| atual `rgba(154,130,145,.20–.24)` | 1.27–1.42:1 | não |
+| `--horror-borda` `rgba(154,111,125,.24)` | 1.29–1.34:1 | não |
+| `--horror-borda-forte` `rgba(177,91,105,.48)` | 1.81–1.84:1 | não |
+| `--horror-vinho` `#8d3d4b` | 2.32–2.73:1 | não |
+| **`--horror-vinho-claro` `#b85c69`** (já usado em foco/acentos) | **3.82–4.48:1** | **sim** |
+| `--horror-ambar` `#b99a62` | 6.29–7.38:1 | sim |
+| `--horror-texto-suave` `#b4a9b1` | 7.40–8.69:1 | sim |
+
+Se a disposição humana decidir reforçar a fronteira dos campos, basta apontar `border-color` de `input`/`select`/`textarea` para `--horror-vinho-claro` (ou um tom intermediário entre vinho e âmbar) — uma alteração de tema de uma linha, sem tocar markup/JS. Alternativa sem mudança visual: aceitar a identificação por label/contexto adjacente, prevista na própria SC 1.4.11. **Ambas as saídas dependem de decisão humana — este documento só quantifica o custo de cada uma.**
