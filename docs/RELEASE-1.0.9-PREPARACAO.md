@@ -2,7 +2,7 @@
 
 > **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Documento atualizado em 24/11/2026 às 12:55 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
+> Documento atualizado em 24/11/2026 às 12:58 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
 
 ## Identificação planejada
 
@@ -31,12 +31,13 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 ### Boot, atualização e recuperação — PR #308
 
-- HEAD atual da branch: `c2842b588f76327183a109f670acd5b37d7f96a2`, base `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`.
-- Run natural atual: `45426615734`, no HEAD `c2842b5`. **3/3 SUCCESS**: Windows (19 etapas), Servidor (29 etapas) e Navegador (14 etapas), sem falhas nos três jobs.
-- Os resultados anteriores do run `45292451107` pertencem ao HEAD anterior `9b8c6e6`; continuam como histórico/regressão, mas não substituem a CI do SHA atual.
-- **Windows atual:** 19/19 etapas, sem falhas; a homologação de atualização/restauração executou **29/29**. O run anterior também cobriu auto-update `npm.cmd` (118/118), Boot Lock Node 22 e 20, gate BAT (21/21), P10-C via `cmd.exe` (25/25) e restauração fail-closed (18/18).
-- **Servidor atual:** 29/29 etapas, sem falhas; typecheck/build e suítes obrigatórias concluíram. O log inclui P10-C gates (**54/54**) e documentação operacional (**12/12**).
-- **Navegador atual:** job concluído com SUCCESS; as suites obrigatórias v1.0.8 e as E2E de Extrato XP e XP em lote foram executadas no SHA atual.
+- HEAD atual da branch: `304ae2c47505412d5da4adb4ad7dc503cb18f3a5`, base `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`.
+- Run natural atual: `45431241733`, no HEAD `304ae2c`. **Em execução** na última leitura de 24/11/2026 12:58 BRT: Windows está depois do step runtime #298; Servidor ainda está na homologação Linux #271 e tem as suítes 1.0.9 e round-trip na fila; Navegador ainda executa as suítes obrigatórias e tem o E2E UI #291 na fila. Não contar este SHA como PASS até 3/3 SUCCESS.
+- Histórico imediato: run `45426615734` fechou **3/3 SUCCESS** em `c2842b5` (Windows 19 etapas, Servidor 29 e Navegador 15). Isso comprova o estado anterior, mas não cobre os novos testes portados no SHA atual.
+- **Integração test-only no HEAD atual:** commit `304ae2c` portou da #302 os testes de ficha/ruleset e round-trip (#292), da #307 o E2E API/UI de campanha/convites/membros (#291) e da #310 o harness de runtime C1–C8 (#298). São seis arquivos de teste/fixture + workflow; sem alteração de comportamento do produto.
+- **Windows atual:** o step `Ciclo de vida do processo/servidor (#298)` terminou SUCCESS; o job ainda estava executando o auto-update na última leitura.
+- **Servidor atual:** ainda não terminou a homologação Linux #271; depois executará ficha 91 verificações, ciclo de campanha API e round-trip anti-injeção.
+- **Navegador atual:** ainda na suíte obrigatória; depois executará o E2E UI de campanha/membros. Não declarar PASS antes do step fechar.
 - **Linux component-level:** no run anterior `45292451107`, `teste-recovery-linux.mjs` passou **18/18** em Ubuntu 26.04.1 / Node 22.23.5: lock, XDG/`MESTRE_STATE_DIR`, migrate fail-closed, SIGKILL/restart e permissão do diretório de estado. Isso não cria nem homologa launcher Linux; são testes de componentes Node.
 
 ### Integridade SQLite e isolamento entre campanhas — PR #316
@@ -69,14 +70,14 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 - **Uso narrativo de Poderes na ficha** — PR #279 permanece aberta. Incluir somente se integrada, revisada e testada na candidata.
 - **Qualquer entrega Draft/Issue aberta** — não anunciar como concluída sem integração efetiva e evidência no SHA final.
 - **Issue #294 / PR #316:** a antiga PR de diagnóstico #306 continua aberta/Draft sobre base antiga `a958522`; a suíte atualizada e as correções de produção estão em #316. Tratar #306 como supersedida; não integrar ambas em paralelo.
-- **Testes de domínio/ciclo/runtime ainda fora da candidata:** PR #302 (#292) no SHA `df2fea7` passou CI antiga 3/3 (ficha 91/91 + round-trip 34/34); PR #307 (#291) no SHA `fc66da2` passou CI antiga 3/3 (API 51/51 + UI 37/37); PR #310 (#298) no SHA `1588208` passou CI antiga 3/3 (C1–C8, 39/39 no harness runtime). Todas usam base antiga `a958522` e não estão no diff/árvore da candidata #308 atual. Reconciliar/rebasear em branch candidata e repetir CI antes de contar como entregues.
+- **Testes de domínio/ciclo/runtime:** PRs #302/#307/#310 tinham CI verde em bases antigas (`a958522`), mas esses artefatos foram portados para a candidata #308 no commit `304ae2c`. O run natural `45431241733` está executando os testes no SHA novo; só contar essas frentes como integradas após o run fechar 3/3 e confirmar os resultados dos steps (ficha/ruleset, API/UI campanha e runtime). As PRs-fonte continuam Draft e não devem ser mescladas em paralelo.
 - **Linux:** PR #311 é branch Draft antiga sobre stack #189; a cobertura de componentes Node já está incluída na #308. Não integrar #311 em paralelo sem identificar delta único.
 
 ## Gate de publicação — checklist obrigatório
 
 - [ ] Uma única candidata 1.0.9 identificada, base `main`, DAG/diff cumulativo auditado e sem branches empilhadas pendentes.
 - [ ] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
-- [x] PR #308 no HEAD atual `c2842b5`: CI natural 3/3 SUCCESS no run `45426615734` — Windows 19 etapas, Servidor 29, Navegador 14; sem falhas.
+- [ ] PR #308 no HEAD atual `304ae2c`: CI natural `45431241733` está em execução com as suites #292/#291/#298 portadas; o 3/3 de `c2842b5` é histórico e não cobre os testes novos.
 - [ ] PR #316 no HEAD atual `887ced3`: Windows e Servidor SUCCESS; o Servidor executou a suíte SQLite 91/91 e confirmou os dois asserts F4 novos. Navegador ainda IN_PROGRESS no run `45428706739`. **Revisão independente formal continua pendente.**
 - [ ] PR #300: CI 3/3 verde e matriz 204/204; limitar anúncios aos fluxos cobertos. Permanecem convite/cadastro (#255), estados vazio/loading/erro (#238) e 38 REVIEW de contraste sem disposição humana.
 - [ ] W14/W16 executados como regressões, preservando banco, arquivos, configuração e backup.
@@ -85,7 +86,7 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 - [ ] Upgrade/cutover real de instalação 1.0.8 para a candidata final, com banco, arquivos, backups, campanhas, fichas e progressão preservados.
 - [ ] Instalação limpa e build reproduzível de servidor/site.
 - [ ] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP.
-- [ ] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final. Reconciliar #302/#307/#310 (CI atual verde apenas nos SHAs de branches antigas) à candidata e reexecutar CI.
+- [ ] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final. #302/#307/#310 já foram portadas para #308; aguardar 3/3 no SHA `304ae2c` e conferir os logs dos novos steps.
 - [ ] `package.json`, `servidor/package.json`, `site/package.json` e `package-lock.json` em `1.0.9`, todos no mesmo commit.
 - [ ] `CHANGELOG.md` atualizado somente com funcionalidades integradas e validadas.
 - [ ] Versão na API/UI e metadados de backup consistente com `1.0.9`.
