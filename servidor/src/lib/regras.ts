@@ -109,6 +109,25 @@ export const configRegrasSchema = z.object({
       jogadorCriaContas: true,
       slotsEquipamento: [],
     }),
+  // Gate de elegibilidade da Internet diegética (Issue #286, 1.1.0):
+  // (pontos em perícia/conhecimento do grupo A OU grupo B >= 1) E
+  // (item físico dispositivo no patrimônio). Chaves = `key` dos elementos
+  // do ruleset/Acervo; templateIds = ids de item_templates do catálogo.
+  internet: z
+    .object({
+      grupoPericiasA: z.array(z.string().min(1).max(80)).max(20).default(["computador"]),
+      grupoPericiasB: z.array(z.string().min(1).max(80)).max(20).default(["tecnologia"]),
+      dispositivoChaves: z.array(z.string().min(1).max(80)).max(30).default([
+        "notebook", "notebook_campo", "celular_descartavel", "celular_reforcado",
+      ]),
+      dispositivoTemplateIds: z.array(z.string().min(1).max(80)).max(30).default([]),
+    })
+    .default({
+      grupoPericiasA: ["computador"],
+      grupoPericiasB: ["tecnologia"],
+      dispositivoChaves: ["notebook", "notebook_campo", "celular_descartavel", "celular_reforcado"],
+      dispositivoTemplateIds: [],
+    }),
   // Mesa em tempo real (Etapa 7)
   mesa: z
     .object({

@@ -15,6 +15,7 @@ import { xpLoteRouter } from "./routes/xp-lote.js";
 import { defeitosRouter } from "./routes/defeitos.js";
 import { regrasRouter } from "./routes/regras.js";
 import { patrimonioRouter } from "./routes/patrimonio.js";
+import { comercioLojasRouter, comercioPersonagemRouter } from "./routes/comercio.js";
 import { catalogoRouter } from "./routes/catalogo.js";
 import { sessoesRouter } from "./routes/sessoes.js";
 import { anotacoesRouter } from "./routes/anotacoes.js";
@@ -90,7 +91,7 @@ app.use(express.json({ limit: "2mb" }));
 const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
-  personagensRouter, progressaoRouter, sangueRouter, xpLoteRouter, regrasRouter, patrimonioRouter, catalogoRouter,
+  personagensRouter, progressaoRouter, sangueRouter, xpLoteRouter, regrasRouter, patrimonioRouter, comercioLojasRouter, comercioPersonagemRouter, catalogoRouter,
   defeitosRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
@@ -119,6 +120,8 @@ app.use("/api/campaigns/:campaignId/characters", personagensRouter);
 app.use("/api/campaigns/:campaignId/defeitos", defeitosRouter);
 app.use("/api/campaigns/:campaignId/regras", regrasRouter);
 app.use("/api/characters/:characterId", patrimonioRouter);
+app.use("/api/characters/:characterId/comercio", comercioPersonagemRouter);
+app.use("/api/campaigns/:campaignId/comercio", comercioLojasRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);
 app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
