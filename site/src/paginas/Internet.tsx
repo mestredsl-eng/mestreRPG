@@ -192,7 +192,7 @@ export default function Internet({ characterId, campaignId }: Props) {
                 {/* LOJA-B também aparece em /pedidos (buyerCharacterId = vendedor);
                     data.direction distingue — nunca exibir venda como compra. */}
                 <span className="badge badge-npc">
-                  {p.data?.direction === "venda_para_loja" ? "Venda p/ loja" : "Compra"}
+                  {(p.direcao ?? p.data?.direction) === "venda_para_loja" ? "Venda p/ loja" : "Compra"}
                 </span>
               </li>
             ))}
@@ -474,7 +474,7 @@ function CheckoutOferta({ loja, characterId, oferta, contas, aoVoltar, aoConclui
 function Recibo({ pedido, nomeLoja, aoFechar }: { pedido: PedidoComercio; nomeLoja?: string; aoFechar: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
-  const direcao = pedido.data?.direction === "venda_para_loja" ? "Venda para loja" : "Compra";
+  const direcao = (pedido.direcao ?? pedido.data?.direction) === "venda_para_loja" ? "Venda para loja" : "Compra";
   return (
     <div className="cartao cartao-destaque" role="dialog" aria-modal="true" aria-label="Recibo da operação">
       <div ref={ref} tabIndex={-1}>

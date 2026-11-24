@@ -1227,6 +1227,9 @@ export interface PedidoComercio {
   currency: string;
   status: string;
   moneyTransactionIds: string[];
+  /** Direção canônica do pedido (contrato #329 @ 858aeab+):
+   *  "compra" | "venda_para_loja" — fallback data.direction em versões antigas. */
+  direcao?: string;
   data: { fingerprint?: string; direction?: string } & Record<string, unknown>;
   createdAt: string;
 }

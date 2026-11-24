@@ -18,15 +18,14 @@ const fmtValor = (cents: number | null) => (cents === null ? "—" : `R$ ${(cent
 const fmtMoeda = (cents: number, moeda = "BRL") =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: moeda }).format(cents / 100);
 
-/** Preço unitário do item para LOJA-B: o servidor deriva de
- *  data.aquisicao.unitCents (compra anterior) ou data.valueCents — a UI
- *  apenas exibe o mesmo valor e o envia como expectedUnitCents para o
- *  servidor revalidar (409 preco_divergente se mudou). */
+/** Preço unitário autoritativo do item para LOJA-B: SOMENTE
+ *  data.aquisicao.unitCents (gravado pelo servidor na compra). O campo
+ *  valueCents é ambíguo (unit-vs-total) e o servidor o rejeita com
+ *  422 item_sem_valor — a UI não deve exibir cotação que o backend
+ *  recusaria. */
 function precoUnitarioItem(item: ItemInventario): number | null {
   const aquisicao = item.data?.aquisicao as { unitCents?: unknown } | undefined;
-  if (typeof aquisicao?.unitCents === "number") return aquisicao.unitCents;
-  const v = item.data?.valueCents;
-  return typeof v === "number" ? v : null;
+  return typeof aquisicao?.unitCents === "number" ? aquisicao.unitCents : null;
 }
 
 function itemEquipado(item: ItemInventario, equipamentos: Equipamento[]): boolean {
@@ -334,7 +333,8 @@ function VendaParaLoja({ characterId, campaignId, item, precoUnit, equipado, aoF
       id: r.id, campaignId, shopId, requestId, buyerCharacterId: characterId,
       items: [{ inventoryEntryId: item.id, name: item.name, qty, unitCents }],
       totalCents: r.totalCents ?? total, currency: "BRL",
-      status: "concluido", moneyTransactionIds: [], data: { direction: "venda_para_loja" },
+      status: "concluido", moneyTransactionIds: [], direcao: "venda_para_loja",
+      data: { direction: "venda_para_loja" },
       createdAt: new Date().toISOString(),
     });
   };
