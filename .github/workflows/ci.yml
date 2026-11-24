@@ -519,3 +519,7 @@ jobs:
         run: |
           echo "===== teste-ciclo-campanha-ui.mjs ====="
           node teste-ciclo-campanha-ui.mjs
+      - name: Suíte E2E UI do convite de campanha (#254 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-convite-campanha-ui.mjs ====="
+          node teste-convite-campanha-ui.mjs
