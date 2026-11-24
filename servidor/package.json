@@ -16,7 +16,7 @@
     "test:backup-contrato": "tsx --test testes/backup-contrato.test.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^12.2.0",
+    "better-sqlite3": "12.9.0",
     "drizzle-orm": "^0.45.4",
     "express": "^4.21.2",
     "socket.io": "^4.8.1",
