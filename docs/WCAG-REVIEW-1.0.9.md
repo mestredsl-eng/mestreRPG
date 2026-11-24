@@ -1436,7 +1436,7 @@ Novid | 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 2
 
 _5 combinação(ões) únicas de elemento+imagem; 401 amostras brutas._
 
-**Observação para a disposição humana:** todas as fontes de `bg-image` encontradas são `linear-gradient` entre duas cores escuras opacas (componentes de tema — vinho/azul/pedra), não fotografias nem texturas complexas. O contraste do texto sobre esses gradientes é, em princípio, mensurável pelas cores das paradas — resta apenas a verificação visual dirigida (1 screenshot por tema cobre as 38 verificações, pois o mesmo header/cartão aparece em todas). **Complemento executado:** `medir-contraste-gradientes-297.mjs` re-mediu esses fundos com resolução de gradientes — ver `docs/WCAG-CONTRASTE-GRADIENTES-1.0.9.md` (1208 elementos, 0 FAIL; evidência, não disposição). Isto NÃO converte REVIEW em PASS: a medição continua pendente de confirmação humana.
+**Observação para a disposição humana:** todas as fontes de `bg-image` encontradas são `linear-gradient` entre duas cores escuras opacas (componentes de tema — vinho/azul/pedra), não fotografias nem texturas complexas. O contraste do texto sobre esses gradientes é, em princípio, mensurável pelas cores das paradas — resta apenas a verificação visual dirigida (1 screenshot por tema cobre as 38 verificações, pois o mesmo header/cartão aparece em todas). **Complemento executado:** `medir-contraste-gradientes-297.mjs` re-mediu esses fundos com resolução de gradientes — ver `docs/WCAG-CONTRASTE-GRADIENTES-1.0.9.md` (1209 textos PASS/0 FAIL, 147 controles medidos, 2 foco PASS; evidência, não disposição). Isto NÃO converte REVIEW em PASS: a medição continua pendente de confirmação humana.
 
 ## Relação com o placar "~38" da suíte
 

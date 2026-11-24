@@ -285,7 +285,7 @@ function gerarMarkdown() {
       " header/cartão aparece em todas). **Complemento executado:**" +
       " `medir-contraste-gradientes-297.mjs` re-mediu esses fundos com" +
       " resolução de gradientes — ver `docs/WCAG-CONTRASTE-GRADIENTES-1.0.9.md`" +
-      " (1208 elementos, 0 FAIL; evidência, não disposição)." +
+      " (1209 textos PASS/0 FAIL, 147 controles medidos, 2 foco PASS; evidência, não disposição)." +
       " Isto NÃO converte REVIEW em PASS: a medição continua pendente de" +
       " confirmação humana.");
     linhas.push("");

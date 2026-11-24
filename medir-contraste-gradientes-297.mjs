@@ -1,6 +1,6 @@
 // Evidência complementar ao item 4 (PR #318): mede o contraste REAL do
-// texto sobre os fundos `bg-image` que o auditor avaliarWcag marca como
-// REVIEW por não compor gradientes via DOM.
+// texto E das fronteiras de controles sobre os fundos `bg-image` que o
+// auditor avaliarWcag marca como REVIEW por não compor gradientes via DOM.
 //
 // Inspeção prévia (docs/WCAG-REVIEW-1.0.9.md) mostrou que TODAS as
 // fontes de background-image nas telas auditadas são linear/radial-
@@ -8,6 +8,8 @@
 // bitmap. Este script replica a MESMA fixture e a MESMA matriz de
 // telas/viewport da suíte, mas em vez de contar rev[] executa um
 // avaliador que:
+//
+//   TEXTOS (SC 1.4.3):
 //   1. encontra elementos de texto cujo fundo efetivo passa por um
 //      ancestral com background-image antes de cor opaca (a mesma
 //      condição que gera o REVIEW "(tag bg-image)");
@@ -17,6 +19,21 @@
 //      camadas) do texto contra esse gradiente;
 //   5. classifica contra o limiar aplicável (4.5:1 texto normal,
 //      3:1 texto grande — mesma regra `grande()` do auditor).
+//
+//   CONTROLES (SC 1.4.11 — input/select/textarea):
+//   6. para cada campo visível, resolve o fundo EXTERNO (a partir do
+//      pai, como `fundoDe(el, externo=true)` do auditor);
+//   7. quando o externo é gradiente, calcula preenchimento×externo e
+//      borda×externo contra CADA parada — o pior caso por parada usa o
+//      melhor identificador (preenchimento ou borda), e o veredito usa
+//      o PIOR desses melhores (conservador: identifica em qualquer pixel);
+//   8. quando o externo é sólido, reproduz os mesmos quocientes do
+//      auditor e anexa contexto (labels, tipo, placeholder) para a
+//      disposição humana das entradas "fronteira ambígua".
+//
+//   FOCO:
+//   9. nos mesmos passos de Tab da suíte, mede outline/box-shadow do
+//      activeElement contra o gradiente externo (os 2 REVIEWs de foco).
 //
 // Isto NÃO converte REVIEW em PASS: gera evidência numérica para a
 // disposição humana (o gate formal continua sendo humano). Elementos
@@ -46,10 +63,10 @@ const VIEWPORTS = [
   { nome: "desktop-1366", width: 1366, height: 768 },
 ];
 
-const medicoes = [];
+const medicoes = [];   // { tipo: "texto"|"controle"|"foco", ... }
 
 // ---------- avaliador in-page (serializado por page.evaluate) ----------
-function medirContrasteGradientes() {
+function medirPagina() {
   const parse = (s) => {
     const m = /rgba?\(([^)]+)\)/.exec(s || "");
     if (!m) return null;
@@ -120,12 +137,12 @@ function medirContrasteGradientes() {
     return cores;
   };
 
-  // Fundo efetivo: sobe a cadeia coletando cores e gradientes até cor
-  // opaca. Retorna { tipo: "gradiente", el, camadas, abaixo } ou
-  // { tipo: "solido", rgb } ou { tipo: "imagem", el } (url real).
-  const fundoGradiente = (el) => {
-    const camadas = [];   // {el, tipo:'gradiente'|'cor', cores?}
-    let cur = el, achouOpaco = false;
+  // Fundo efetivo subindo a cadeia (partindo de `inicio`): cores e
+  // gradientes até cor opaca. Retorna { tipo:"gradiente", camadas,
+  // abaixo } | { tipo:"solido", rgb } | { tipo:"imagem", detalhe }.
+  const fundoEfetivo = (inicio) => {
+    const camadas = [];
+    let cur = inicio, achouOpaco = false;
     while (cur && cur.nodeType === 1) {
       const cs = getComputedStyle(cur);
       const temImg = cs.backgroundImage && cs.backgroundImage !== "none";
@@ -144,16 +161,11 @@ function medirContrasteGradientes() {
       cur = cur.parentElement;
     }
     if (!camadas.some((c) => c.tipo === "gradiente")) {
-      // sem gradiente: reproduz o resultado do auditor (sólido ou branco)
       let acc = [255, 255, 255, 1];
       const cores = camadas.filter((c) => c.tipo === "cor").map((c) => c.cor).reverse();
       for (const c of cores) acc = sobre(c, acc);
       return { tipo: "solido", rgb: acc.slice(0, 3) };
     }
-    // "abaixo" = composto das camadas posteriores ao ÚLTIMO gradiente
-    // (fundo que aparece através de paradas translúcidas). Se houver
-    // cor opaca depois do último gradiente, é ela; senão canvas branco
-    // (mesmo fallback do auditor — não ocorre: html tem cor opaca).
     const idxUlt = camadas.map((c, i) => c.tipo === "gradiente" ? i : -1).filter((i) => i >= 0).pop();
     let abaixo = [255, 255, 255, 1];
     for (const c of camadas.slice(idxUlt + 1).reverse()) {
@@ -162,8 +174,36 @@ function medirContrasteGradientes() {
     return { tipo: "gradiente", camadas, abaixo };
   };
 
-  const out = [];
+  // Cores candidatas do fundo (todas as paradas de todos os gradientes,
+  // compostas sobre o que está abaixo; cores sólidas entram como estão).
+  const candidatosDeFundo = (fundo) => {
+    if (fundo.tipo === "solido") return [{ cor: fundo.rgb, origem: "solido", tipo: "cor" }];
+    if (fundo.tipo !== "gradiente") return [];
+    const out = [];
+    for (const camada of fundo.camadas) {
+      if (camada.tipo === "cor") {
+        out.push({ cor: camada.cor.slice(0, 3).map((v) => Math.round(v)), origem: sel(camada.el), tipo: "cor" });
+      } else {
+        for (const img of camada.camadas) {
+          const cores = coresDaCamada(img);
+          for (const c of cores) {
+            const comp = c[3] < 1 ? sobre(c, fundo.abaixo) : c;
+            out.push({
+              cor: comp.slice(0, 3).map((v) => Math.round(v)),
+              origem: sel(camada.el), tipo: img.slice(0, 22), alpha: c[3],
+            });
+          }
+        }
+      }
+    }
+    return out;
+  };
+
+  const textos = [];
+  const controles = [];
   const todos = [...document.querySelectorAll("body *")].filter(visivel);
+
+  // --- textos (SC 1.4.3) — mesmo recorte do auditor ---
   for (const el of todos) {
     if (el.closest("svg")) continue;
     if (desabilitado(el)) continue;
@@ -172,47 +212,25 @@ function medirContrasteGradientes() {
     const cs = getComputedStyle(el);
     const fg0 = parse(cs.color);
     if (!fg0) continue;
-    const fundo = fundoGradiente(el);
-    if (fundo.tipo === "solido") continue;               // já medido pelo auditor
+    const fundo = fundoEfetivo(el);
+    if (fundo.tipo === "solido") continue;
     if (fundo.tipo === "imagem") {
-      out.push({ sel: sel(el), fg: fg0.slice(0, 3), fundo: "imagem-real", detalhe: fundo.detalhe });
+      textos.push({ sel: sel(el), fg: fg0.slice(0, 3), fundo: "imagem-real", detalhe: fundo.detalhe });
       continue;
     }
-    // composto do texto sobre cada cor candidata (fg translúcido compõe)
-    const candidatos = [];
-    // cores sólidas acima do primeiro gradiente também contam
-    for (const camada of fundo.camadas) {
-      if (camada.tipo === "cor") {
-        candidatos.push({ tipo: "cor", cor: camada.cor.slice(0, 3), origem: sel(camada.el) });
-      } else {
-        for (const img of camada.camadas) {
-          const cores = coresDaCamada(img);
-          if (!cores.length) {
-            candidatos.push({ tipo: "gradiente-sem-cor", origem: sel(camada.el) });
-            continue;
-          }
-          for (const c of cores) {
-            const comp = c[3] < 1 ? sobre(c, fundo.abaixo) : c;
-            candidatos.push({
-              tipo: img.slice(0, 22), cor: comp.slice(0, 3).map((v) => Math.round(v)),
-              alpha: c[3], origem: sel(camada.el),
-            });
-          }
-        }
-      }
-    }
+    const candidatos = candidatosDeFundo(fundo);
     const comCor = candidatos.filter((c) => Array.isArray(c.cor));
-    if (!comCor.length) { out.push({ sel: sel(el), fg: fg0.slice(0, 3), fundo: "gradiente-sem-cor" }); continue; }
+    if (!comCor.length) { textos.push({ sel: sel(el), fg: fg0.slice(0, 3), fundo: "gradiente-sem-cor" }); continue; }
     const limiar = grande(cs) ? 3.0 : 4.5;
     let pior = Infinity, melhor = 0;
     const razoes = comCor.map((cand) => {
-      const fg = fg0[3] < 1 ? sobre(fg0, cand.cor.concat ? [...cand.cor, 1] : cand.cor) : fg0;
+      const fg = fg0[3] < 1 ? sobre(fg0, [...cand.cor, 1]) : fg0;
       const r = razao(fg.slice(0, 3), cand.cor);
       if (r < pior) pior = r;
       if (r > melhor) melhor = r;
       return { ...cand, razao: +r.toFixed(2) };
     });
-    out.push({
+    textos.push({
       sel: sel(el), fg: fg0.slice(0, 3).map((v) => Math.round(v)),
       fontePx: cs.fontSize, peso: cs.fontWeight,
       limiar, pior: +pior.toFixed(2), melhor: +melhor.toFixed(2),
@@ -222,7 +240,193 @@ function medirContrasteGradientes() {
       nCores: comCor.length,
     });
   }
-  return out;
+
+  // --- controles (SC 1.4.11) — campos input/select/textarea visíveis ---
+  for (const el of todos) {
+    const tag = el.tagName.toLowerCase();
+    if (!["input", "select", "textarea"].includes(tag)) continue;
+    if ((el.getAttribute("type") || "").toLowerCase() === "hidden") continue;
+    if (desabilitado(el)) continue;
+    const cs = getComputedStyle(el);
+    const bw = parseFloat(cs.borderTopWidth) || 0;
+    const bs = cs.borderTopStyle;
+    const temBorda = bw >= 1 && bs !== "none" && bs !== "hidden";
+    const bgProprio = parse(cs.backgroundColor);
+    const temProprio = !!(bgProprio && bgProprio[3] > 0);
+    // contexto auxiliar p/ disposição humana (não decide nada)
+    const labels = el.labels ? [...el.labels] : [];
+    const contexto = {
+      tipo: tag === "input" ? (el.getAttribute("type") || "text") : tag,
+      labels: labels.filter(visivel).length,
+      labelTexto: labels.map((l) => (l.innerText || l.textContent || "").trim().slice(0, 30)).filter(Boolean).slice(0, 2),
+      placeholder: !!(el.placeholder && !(el.value || "")),
+    };
+    const ext = fundoEfetivo(el.parentElement || el);
+    if (ext.tipo === "imagem") {
+      controles.push({ sel: sel(el), fundo: "imagem-real", detalhe: ext.detalhe, contexto });
+      continue;
+    }
+    const externos = candidatosDeFundo(ext).filter((c) => Array.isArray(c.cor));
+    if (!externos.length) { controles.push({ sel: sel(el), fundo: "gradiente-sem-cor", contexto }); continue; }
+    const gradiente = ext.tipo === "gradiente";
+    // preenchimento e borda compostos sobre CADA cor externa candidata
+    const fillComps = [], bordaComps = [];
+    for (const e of externos) {
+      const e4 = [...e.cor, 1];
+      if (temProprio) {
+        const f = bgProprio[3] < 1 ? sobre(bgProprio, e4) : bgProprio;
+        fillComps.push(razao(f.slice(0, 3), e.cor));
+      }
+      if (temBorda) {
+        const bc = parse(cs.borderTopColor);
+        if (bc && bc[3] > 0) {
+          const b = bc[3] < 1 ? sobre(bc, e4) : bc;
+          bordaComps.push(razao(b.slice(0, 3), e.cor));
+        }
+      }
+    }
+    const fmt = (arr) => (arr.length ? +Math.min(...arr).toFixed(2) : null);
+    const fillMin = fmt(fillComps), bordaMin = fmt(bordaComps);
+    // identificabilidade por parada externa: melhor entre fill/borda;
+    // veredito = PIOR desses melhores (robusto a qualquer pixel do gradiente)
+    let piorMelhor = Infinity;
+    for (let i = 0; i < externos.length; i++) {
+      const ops = [];
+      if (fillComps.length) ops.push(fillComps[i]);
+      if (bordaComps.length) ops.push(bordaComps[i]);
+      if (ops.length) piorMelhor = Math.min(piorMelhor, Math.max(...ops));
+    }
+    if (!isFinite(piorMelhor)) piorMelhor = null;
+    controles.push({
+      sel: sel(el), tag, gradiente,
+      temProprio, temBorda,
+      fillMin, bordaMin,
+      piorCaso: piorMelhor === null ? null : +piorMelhor.toFixed(2),
+      veredito: piorMelhor === null ? "sem-indicador" : (piorMelhor >= 3 ? "computado-PASS" : "abaixo-3:1"),
+      nExternos: externos.length,
+      contexto,
+    });
+  }
+
+  return { textos, controles };
+}
+
+// Indicador de foco vs gradiente externo (os 2 REVIEWs de foco da suíte).
+function medirFocoGradiente() {
+  const el = document.activeElement;
+  if (!el || el === document.body || el === document.documentElement) return null;
+  const parse = (s) => {
+    const m = /rgba?\(([^)]+)\)/.exec(s || "");
+    if (!m) return null;
+    const p = m[1].split(",").map((x) => parseFloat(x));
+    if (p.length < 3 || p.some(Number.isNaN)) return null;
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  };
+  const lum = (c) => {
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  };
+  const razao = (c1, c2) => {
+    const l1 = lum(c1), l2 = lum(c2);
+    const [hi, lo] = l1 >= l2 ? [l1, l2] : [l2, l1];
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  const sobre = (cima, baixo) => [
+    cima[0] * cima[3] + baixo[0] * (1 - cima[3]),
+    cima[1] * cima[3] + baixo[1] * (1 - cima[3]),
+    cima[2] * cima[3] + baixo[2] * (1 - cima[3]),
+  ];
+  const sel = (e) => {
+    const id = e.id ? "#" + e.id : "";
+    const cls = typeof e.className === "string" && e.className.trim() ? "." + e.className.trim().split(/\s+/)[0] : "";
+    return (e.tagName.toLowerCase() + id + cls).slice(0, 60);
+  };
+  const splitCamadas = (s) => {
+    const out = []; let prof = 0, ini = 0;
+    for (let i = 0; i < s.length; i++) {
+      const ch = s[i];
+      if (ch === "(") prof++;
+      else if (ch === ")") prof--;
+      else if (ch === "," && prof === 0) { out.push(s.slice(ini, i).trim()); ini = i + 1; }
+    }
+    out.push(s.slice(ini).trim());
+    return out.filter(Boolean);
+  };
+  const coresDaCamada = (camada) => {
+    const cores = [];
+    const re = /(?:rgba?|color|hsla?)\([^()]*\)|#[0-9a-fA-F]{3,8}\b/g;
+    let m;
+    while ((m = re.exec(camada))) {
+      const c = parse(m[0]);
+      if (c) cores.push(c);
+    }
+    return cores;
+  };
+  // fundo externo (a partir do pai) — mesma lógica do fundoEfetivo
+  const camadas = [];
+  let cur = el.parentElement, viuImg = false;
+  while (cur && cur.nodeType === 1) {
+    const cs = getComputedStyle(cur);
+    const temImg = cs.backgroundImage && cs.backgroundImage !== "none";
+    const bg = parse(cs.backgroundColor);
+    if (temImg) {
+      const imgs = splitCamadas(cs.backgroundImage);
+      const grads = imgs.filter((i) => /gradient\(/.test(i));
+      const outras = imgs.filter((i) => !/gradient\(/.test(i));
+      if (outras.length) return { sel: sel(el), resultado: "imagem-real" };
+      if (grads.length) camadas.push({ tipo: "gradiente", camadas: grads });
+    }
+    if (bg) { camadas.push({ tipo: "cor", cor: bg }); if (bg[3] === 1) break; }
+    cur = cur.parentElement;
+  }
+  const idxUlt = camadas.map((c, i) => c.tipo === "gradiente" ? i : -1).filter((i) => i >= 0).pop();
+  if (idxUlt === undefined) {
+    let acc = [255, 255, 255];
+    for (const c of camadas.filter((x) => x.tipo === "cor").map((x) => x.cor).reverse()) {
+      acc = sobre(c, [...acc, 1]);
+    }
+    return { sel: sel(el), resultado: "solido", rgb: acc.slice(0, 3) };
+  }
+  let abaixo = [255, 255, 255];
+  for (const c of camadas.slice(idxUlt + 1).reverse()) {
+    if (c.tipo === "cor") abaixo = sobre(c.cor, [...abaixo, 1]);
+  }
+  const externos = [];
+  for (const camada of camadas) {
+    if (camada.tipo === "cor") externos.push(camada.cor.slice(0, 3).map((v) => Math.round(v)));
+    else for (const img of camada.camadas) {
+      for (const c of coresDaCamada(img)) {
+        const comp = c[3] < 1 ? sobre(c, [...abaixo, 1]) : c;
+        externos.push(comp.slice(0, 3).map((v) => Math.round(v)));
+      }
+    }
+  }
+  // cor do indicador: outline ou box-shadow única (mesma regra do auditor)
+  const cs = getComputedStyle(el);
+  const ow = parseFloat(cs.outlineWidth) || 0;
+  let cor = null, tipoInd = null;
+  if (cs.outlineStyle !== "none" && ow >= 1) {
+    const oc = parse(cs.outlineColor);
+    if (oc && oc[3] > 0) { cor = oc.slice(0, 3); tipoInd = `outline ${ow}px`; }
+  }
+  if (!cor) {
+    const bs = cs.boxShadow;
+    if (bs && bs !== "none") {
+      const cores = [...bs.matchAll(/rgba?\([^)]*\)|#[0-9a-fA-F]{3,8}\b/g)]
+        .map((m) => parse(m[0])).filter((c) => c && c[3] > 0);
+      if (cores.length === 1) { cor = cores[0].slice(0, 3); tipoInd = "box-shadow"; }
+      else if (cores.length > 1) return { sel: sel(el), resultado: "multiplo", n: cores.length };
+    }
+  }
+  if (!cor) return { sel: sel(el), resultado: "sem-indicador" };
+  const razoes = externos.map((e) => +razao(cor, e).toFixed(2));
+  const pior = Math.min(...razoes);
+  return {
+    sel: sel(el), resultado: "medido", indicador: tipoInd,
+    fg: cor.map((v) => Math.round(v)), pior: +pior.toFixed(2),
+    veredito: pior >= 3 ? "computado-PASS" : "abaixo-3:1",
+    nExternos: externos.length,
+  };
 }
 
 // ---------- helpers de navegação (idênticos à suíte) ----------
@@ -243,10 +447,21 @@ async function aba(page, nome) {
 
 async function medir(page, pagina, viewport) {
   try {
-    const r = await page.evaluate(medirContrasteGradientes);
-    for (const m of r) medicoes.push({ pagina, viewport, ...m });
+    const r = await page.evaluate(medirPagina);
+    for (const m of r.textos) medicoes.push({ tipo: "texto", pagina, viewport, ...m });
+    for (const m of r.controles) medicoes.push({ tipo: "controle", pagina, viewport, ...m });
   } catch (e) {
-    medicoes.push({ pagina, viewport, sel: "(erro)", fundo: "erro-avaliador", detalhe: String(e?.message ?? e).slice(0, 160) });
+    medicoes.push({ tipo: "erro", pagina, viewport, sel: "(erro)", fundo: "erro-avaliador", detalhe: String(e?.message ?? e).slice(0, 160) });
+  }
+}
+
+async function medirFoco(page, pagina, viewport) {
+  try {
+    const r = await page.evaluate(medirFocoGradiente);
+    if (r) medicoes.push({ tipo: "foco", pagina, viewport, ...r });
+    else medicoes.push({ tipo: "foco", pagina, viewport, resultado: "sem-foco", detalhe: await page.evaluate(() => document.activeElement ? document.activeElement.tagName + "." + String(document.activeElement.className).slice(0, 40) : "null") });
+  } catch (e) {
+    medicoes.push({ tipo: "erro", pagina, viewport, sel: "(erro)", fundo: "erro-avaliador-foco", detalhe: String(e?.message ?? e).slice(0, 160) });
   }
 }
 
@@ -255,63 +470,60 @@ function gerarMarkdown() {
   const L = [];
   L.push("# WCAG — contraste medido sobre gradientes (evidência p/ disposição)");
   L.push("");
-  L.push("Complemento de `WCAG-REVIEW-1.0.9.md` (item 4, PR #318). As ~1340 entradas" +
-    " de REVIEW por `bg-image` foram re-medidas com um avaliador que resolve" +
+  L.push("Complemento de `WCAG-REVIEW-1.0.9.md` (item 4, PR #318). As entradas de" +
+    " REVIEW por `bg-image` foram re-medidas com um avaliador que resolve" +
     " `linear-gradient`/`radial-gradient` do computed style: cada parada de cor" +
-    " é composta sobre o fundo efetivo abaixo dela (incluindo alpha) e o pior" +
-    " contraste WCAG texto×fundo é calculado. Mesma fixture, servidor real," +
-    " telas e viewports da suíte `teste-a11y-fluxos-297.mjs`.");
+    " é composta sobre o fundo efetivo abaixo dela (incluindo alpha). Mesma" +
+    " fixture, servidor real, telas e viewports da suíte" +
+    " `teste-a11y-fluxos-297.mjs`.");
   L.push("");
   L.push("**Isto é evidência, não disposição.** O gate humano continua pendente;");
-  L.push("`computado-PASS`/`computado-FAIL` são medições objetivas para acelerar");
+  L.push("`computado-PASS`/`abaixo-3:1` são medições objetivas para acelerar");
   L.push("a revisão — não alteram o status REVIEW original.");
   L.push("");
 
-  const validas = medicoes.filter((m) => m.veredito);
-  const falhas = validas.filter((m) => m.veredito === "computado-FAIL");
-  const passes = validas.filter((m) => m.veredito === "computado-PASS");
-  const outros = medicoes.filter((m) => !m.veredito);
-  L.push(`**Medições:** ${validas.length} elementos de texto sobre gradiente` +
-    ` — **${passes.length} computado-PASS**, **${falhas.length} computado-FAIL**` +
-    (outros.length ? `, ${outros.length} não mensuráveis/erros` : "") + ".");
-  L.push("");
+  const textos = medicoes.filter((m) => m.tipo === "texto" && m.veredito);
+  const controles = medicoes.filter((m) => m.tipo === "controle");
+  const focos = medicoes.filter((m) => m.tipo === "foco");
+  const erros = medicoes.filter((m) => m.tipo === "erro");
 
-  // resumo por página×viewport
+  // ===== TEXTOS =====
+  const tPass = textos.filter((m) => m.veredito === "computado-PASS");
+  const tFail = textos.filter((m) => m.veredito === "computado-FAIL");
+  const tOutros = textos.filter((m) => !m.veredito);
+  L.push("## 1. Texto sobre gradiente (SC 1.4.3)");
+  L.push("");
+  L.push(`**${textos.length} elementos medidos — ${tPass.length} computado-PASS,` +
+    ` ${tFail.length} computado-FAIL**${tOutros.length ? `, ${tOutros.length} não mensuráveis` : ""}.`);
+  L.push("");
   const grupos = new Map();
-  for (const m of validas) {
+  for (const m of textos.filter((x) => x.veredito)) {
     const k = `${m.pagina} | ${m.viewport}`;
     if (!grupos.has(k)) grupos.set(k, { p: 0, f: 0, min: Infinity });
     const g = grupos.get(k);
     if (m.veredito === "computado-PASS") g.p++; else g.f++;
     g.min = Math.min(g.min, m.pior);
   }
-  L.push("## Resumo por tela × viewport (pior contraste encontrado)");
-  L.push("");
-  L.push("| tela / fluxo | viewport | elementos | PASS | FAIL | pior razão | limiar mínimo |");
-  L.push("|---|---|---|---|---|---|---|");
+  L.push("| tela / fluxo | viewport | elementos | PASS | FAIL | pior razão |");
+  L.push("|---|---|---|---|---|---|");
   for (const [k, g] of grupos) {
     const [pagina, viewport] = k.split(" | ");
-    L.push(`| ${pagina} | ${viewport} | ${g.p + g.f} | ${g.p} | ${g.f} | ${g.min.toFixed(2)}:1 | ${g.f ? "ver abaixo" : "4.5:1 / 3:1 (grande)"} |`);
+    L.push(`| ${pagina} | ${viewport} | ${g.p + g.f} | ${g.p} | ${g.f} | ${g.min.toFixed(2)}:1 |`);
   }
   L.push("");
-
-  // FAILs primeiro — são os que exigem decisão
-  if (falhas.length) {
-    L.push("## computed-FAIL — exigem decisão de design/revisão");
+  if (tFail.length) {
+    L.push("### computed-FAIL (texto)");
     L.push("");
-    L.push("| # | tela | viewport | elemento | fg | limiar | pior razão | fundos | amostra de paradas |");
-    L.push("|---|---|---|---|---|---|---|---|---|");
-    falhas.slice(0, 200).forEach((m, i) => {
+    L.push("| tela | viewport | elemento | fg | limiar | pior razão | amostra |");
+    L.push("|---|---|---|---|---|---|---|");
+    for (const m of tFail.slice(0, 100)) {
       const amostra = (m.amostra || []).slice(0, 3).map((a) => `${a.tipo} ${a.cor}→${a.razao}`).join("; ");
-      L.push(`| ${i + 1} | ${m.pagina} | ${m.viewport} | \`${m.sel}\` | rgb(${m.fg}) | ${m.limiar}:1 | ${m.pior}:1 | ${(m.fundos || []).join(", ")} | ${amostra.replace(/\|/g, "\\|")} |`);
-    });
-    if (falhas.length > 200) L.push(`| … | | | | | | | | +${falhas.length - 200} FAILs adicionais (mesmo padrão) |`);
+      L.push(`| ${m.pagina} | ${m.viewport} | \`${m.sel}\` | rgb(${m.fg}) | ${m.limiar}:1 | ${m.pior}:1 | ${amostra.replace(/\|/g, "\\|")} |`);
+    }
     L.push("");
   }
-
-  // PASS: agrega por assinatura de fundo+fg para não listar 1300 linhas
   const porPadrao = new Map();
-  for (const m of passes) {
+  for (const m of tPass) {
     const k = `${(m.fundos || []).join(",")}|rgb(${m.fg})|${m.limiar}`;
     if (!porPadrao.has(k)) porPadrao.set(k, { n: 0, min: Infinity, max: 0, exemplos: [] });
     const p = porPadrao.get(k);
@@ -320,23 +532,97 @@ function gerarMarkdown() {
       p.exemplos.push(`${m.pagina}/${m.viewport}/\`${m.sel}\``);
     }
   }
-  L.push("## Padrões computado-PASS (deduplicados por fundo+cor de texto)");
+  L.push("### Padrões computado-PASS (deduplicados por fundo+cor de texto)");
   L.push("");
-  L.push("| fundo(s) | cor do texto | limiar | n elementos | pior razão | melhor razão | exemplos |");
+  L.push("| fundo(s) | cor do texto | limiar | n | pior | melhor | exemplos |");
   L.push("|---|---|---|---|---|---|---|");
-  const ord = [...porPadrao.entries()].sort((a, b) => b[1].n - a[1].n);
-  for (const [k, p] of ord) {
+  for (const [k, p] of [...porPadrao.entries()].sort((a, b) => b[1].n - a[1].n)) {
     const [fundos, fg, limiar] = k.split("|");
     L.push(`| ${fundos.replace(/\|/g, ", ")} | ${fg} | ${limiar}:1 | ${p.n} | ${p.min.toFixed(2)}:1 | ${p.max.toFixed(2)}:1 | ${p.exemplos.join("; ").replace(/\|/g, "\\|")} |`);
   }
   L.push("");
 
-  if (outros.length) {
-    L.push("## Não mensuráveis / erros");
+  // ===== CONTROLES =====
+  L.push("## 2. Controles input/select/textarea — fronteira×externo (SC 1.4.11)");
+  L.push("");
+  const cGrad = controles.filter((m) => m.gradiente === true);
+  const cSol = controles.filter((m) => m.gradiente === false);
+  const cPass = cGrad.filter((m) => m.veredito === "computado-PASS");
+  const cAbaixo = cGrad.filter((m) => m.veredito === "abaixo-3:1");
+  const cSem = controles.filter((m) => !["computado-PASS", "abaixo-3:1"].includes(m.veredito));
+  L.push(`**${controles.length} campos medidos:** ${cGrad.length} com externo em gradiente` +
+    ` (${cPass.length} computado-PASS, ${cAbaixo.length} abaixo-3:1)` +
+    ` + ${cSol.length} com externo sólido (quocientes do auditor reproduzidos p/ contexto).`);
+  L.push("");
+  if (cAbaixo.length) {
+    L.push("### Controles sobre gradiente abaixo de 3:1 (pior caso)");
+    L.push("");
+    L.push("| tela | viewport | campo | tipo | fillMin | bordaMin | piorCaso | contexto |");
+    L.push("|---|---|---|---|---|---|---|---|");
+    for (const m of cAbaixo.slice(0, 120)) {
+      const cx = m.contexto || {};
+      const ctx = [cx.tipo, cx.labels ? `${cx.labels} label(is)` : "", cx.placeholder ? "placeholder" : "", (cx.labelTexto || []).join("/")].filter(Boolean).join(" · ");
+      L.push(`| ${m.pagina} | ${m.viewport} | \`${m.sel}\` | ${m.tag} | ${m.fillMin ?? "—"} | ${m.bordaMin ?? "—"} | ${m.piorCaso} | ${ctx.replace(/\|/g, "\\|")} |`);
+    }
+    if (cAbaixo.length > 120) L.push(`| … | | | | | | | +${cAbaixo.length - 120} |`);
+    L.push("");
+  }
+  if (cSol.length) {
+    L.push("### Controles com externo sólido — quocientes reproduzidos (contexto p/ disposição)");
+    L.push("");
+    L.push("São as entradas 'fronteira ambígua' da lista REVIEW: o auditor já tinha" +
+      " os quocientes; aqui ficam deduplicadas por (campo, fillMin, bordaMin) com" +
+      " o contexto de labels para a decisão humana.");
+    L.push("");
+    const dedup = new Map();
+    for (const m of cSol) {
+      const k = `${m.sel}|${m.fillMin}|${m.bordaMin}`;
+      if (!dedup.has(k)) dedup.set(k, { m, n: 0, telas: new Set() });
+      const d = dedup.get(k); d.n++; d.telas.add(`${m.pagina}/${m.viewport}`);
+    }
+    L.push("| campo | fillMin | bordaMin | piorCaso | n amostras | telas | tipo | labels | placeholder |");
+    L.push("|---|---|---|---|---|---|---|---|---|");
+    for (const { m, n, telas } of dedup.values()) {
+      const cx = m.contexto || {};
+      L.push(`| \`${m.sel}\` | ${m.fillMin ?? "—"} | ${m.bordaMin ?? "—"} | ${m.piorCaso ?? "—"} | ${n} | ${[...telas].slice(0, 4).join(", ").replace(/\|/g, "\\|")} | ${cx.tipo || "—"} | ${cx.labels || 0} | ${cx.placeholder ? "sim" : "não"} |`);
+    }
+    L.push("");
+  }
+  if (cSem.length) {
+    L.push("### Controles não classificados");
     L.push("");
     const cont = {};
-    for (const m of outros) cont[m.fundo] = (cont[m.fundo] || 0) + 1;
+    for (const m of cSem) cont[m.fundo || m.veredito] = (cont[m.fundo || m.veredito] || 0) + 1;
     for (const [k, n] of Object.entries(cont)) L.push(`- \`${k}\`: ${n}`);
+    L.push("");
+  }
+
+  // ===== FOCO =====
+  L.push("## 3. Indicador de foco × gradiente externo");
+  L.push("");
+  const fMed = focos.filter((m) => m.resultado === "medido");
+  const fOut = focos.filter((m) => m.resultado !== "medido");
+  for (const m of fMed) {
+    L.push(`- **${m.pagina}** (\`${m.sel}\`, ${m.indicador}): pior contraste vs gradiente externo = **${m.pior}:1** → ${m.veredito} (limiar 3:1).`);
+  }
+  for (const m of fOut) {
+    L.push(`- **${m.pagina}** (\`${m.sel}\`): ${m.resultado || m.tipo}${m.n ? ` (${m.n} cores)` : ""} — não mensurável por este avaliador.`);
+  }
+  if (!focos.length) L.push("- nenhuma medição de foco executada.");
+  L.push("");
+
+  if (tOutros.length) {
+    L.push("## Texto não mensurável");
+    L.push("");
+    const cont = {};
+    for (const m of tOutros) cont[m.fundo] = (cont[m.fundo] || 0) + 1;
+    for (const [k, n] of Object.entries(cont)) L.push(`- \`${k}\`: ${n}`);
+    L.push("");
+  }
+  if (erros.length) {
+    L.push("## Erros do avaliador");
+    L.push("");
+    for (const e of erros) L.push(`- ${e.pagina} / ${e.viewport} / ${e.tipo}: ${e.detalhe || e.fundo}`);
     L.push("");
   }
 
@@ -347,12 +633,17 @@ function gerarMarkdown() {
     " têm contraste intermediário, nunca pior que as extremidades.");
   L.push("- Paradas com alpha < 1 foram compostas sobre o fundo efetivo abaixo" +
     " do gradiente (mesma composição `sobre()` do auditor).");
-  L.push("- Limiar: 4.5:1 texto normal, 3.0:1 texto grande (≥24px ou ≥18.66px" +
-    " negrito) — idêntico ao `grande()` de `wcag-avaliador-297.mjs`.");
-  L.push("- Entradas SC 1.4.11 (não-texto) e indicador de foco não são cobertas" +
-    " aqui — permanecem para disposição humana.");
-  L.push("- `computado-FAIL` não é violação confirmada: gradiente com parada" +
-    " extrema pode não cobrir a área do glifo; a decisão visual final é humana.");
+  L.push("- Texto: limiar 4.5:1 normal, 3.0:1 grande (≥24px ou ≥18.66px negrito)" +
+    " — idêntico ao `grande()` de `wcag-avaliador-297.mjs`.");
+  L.push("- Controles (1.4.11): por parada de gradiente externa, usa-se o MELHOR" +
+    " identificador (preenchimento×externo ou borda×externo ≥3:1); o veredito" +
+    " final é o PIOR desses melhores — ou seja, PASS só se a fronteira for" +
+    " identificável em qualquer pixel do gradiente.");
+  L.push("- `abaixo-3:1` não é violação confirmada: a SC 1.4.11 admite contexto" +
+    " adjacente (label visível) como alternativa à fronteira — a decisão é humana.");
+  L.push("- Entradas 'select: affordance nativa do UA' e 'stepper nativo' envolvem" +
+    " renderização do user-agent não mensurável via DOM — permanecem para" +
+    " disposição humana mesmo com quocientes calculados.");
   L.push("");
   return L.join("\n");
 }
@@ -466,6 +757,35 @@ try {
     await ctx.close();
   }
 
+  // ---------- foco (paridade com a suíte: só desktop, Tab real) ----------
+  console.log("\n== desktop-1366 (foco) ==");
+  try {
+    const ctx = await browser.newContext({ viewport: { width: 1366, height: 768 } });
+    const page = await ctx.newPage();
+    await page.goto(BASE);
+    await page.waitForLoadState("networkidle").catch(() => {});
+    for (let i = 0; i < 15; i++) {
+      await page.keyboard.press("Tab");
+      const info = await page.evaluate(() => {
+        const el = document.activeElement;
+        if (!el || el === document.body) return null;
+        return { rotulo: (el.getAttribute("aria-label") || el.textContent || el.getAttribute("placeholder") || "").trim().slice(0, 40) };
+      });
+      if (info && /Entrar/.test(info.rotulo)) break;
+    }
+    await medirFoco(page, "login (foco)", "desktop-1366");
+
+    await login(page, "mestre_teste", "senha-forte-123");
+    await irCampanha(page);
+    await page.waitForSelector(".abas", { timeout: 10000 });
+    await page.keyboard.press("Tab");
+    await page.waitForTimeout(150);
+    await medirFoco(page, "campanha (foco)", "desktop-1366");
+    await ctx.close();
+  } catch (e) {
+    medicoes.push({ tipo: "erro", pagina: "foco", viewport: "desktop-1366", sel: "(bloco)", fundo: "erro-bloco-foco", detalhe: String(e?.message ?? e).slice(0, 200) });
+  }
+
   await browser.close();
 } finally {
   if (browser) await browser.close().catch(() => {});
@@ -473,8 +793,11 @@ try {
   limparDir(DIR);
 }
 
-const validas = medicoes.filter((m) => m.veredito);
-console.log(`\n==== medições: ${validas.length} | PASS ${validas.filter((m) => m.veredito === "computado-PASS").length} | FAIL ${validas.filter((m) => m.veredito === "computado-FAIL").length} | outros ${medicoes.length - validas.length} ====`);
+const tOk = medicoes.filter((m) => m.tipo === "texto" && m.veredito === "computado-PASS").length;
+const tFail = medicoes.filter((m) => m.tipo === "texto" && m.veredito === "computado-FAIL").length;
+const cPass = medicoes.filter((m) => m.tipo === "controle" && m.veredito === "computado-PASS").length;
+const cAbaixo = medicoes.filter((m) => m.tipo === "controle" && m.veredito === "abaixo-3:1").length;
+console.log(`\n==== texto: ${tOk} PASS / ${tFail} FAIL | controles: ${cPass} PASS / ${cAbaixo} abaixo-3:1 | foco: ${medicoes.filter((m) => m.tipo === "foco").length} ==== `);
 
 const outPath = join(REPO, "docs", "WCAG-CONTRASTE-GRADIENTES-1.0.9.md");
 mkdirSync(dirname(outPath), { recursive: true });
