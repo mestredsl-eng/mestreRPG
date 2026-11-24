@@ -257,6 +257,7 @@ jobs:
             teste-backup-pre-migration.mjs
             teste-estado-externo.mjs
             teste-primeiro-bootstrap.mjs
+            teste-adocao-legada.mjs
             teste-trava-instancia.mjs
             teste-p10c-gates.mjs
             teste-docs-operacao.mjs

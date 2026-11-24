@@ -117,9 +117,58 @@ if not exist scripts\avaliar-boot.mjs (
     exit /b 1
 )
 node scripts\avaliar-boot.mjs preflight
+rem Exit 11 = instalacao legada 1.0.8 candidata a adocao assistida.
+rem Deve ser testado ANTES do exit 10: errorlevel e ">=".
+if errorlevel 11 goto :perguntar_adocao_legada
 if errorlevel 10 goto :perguntar_primeiro_bootstrap
 if errorlevel 1 goto :falha_preflight_bootstrap
 goto :bootstrap_autorizado
+
+:perguntar_adocao_legada
+echo.
+echo [ATENCAO] Foi detectada uma instalacao anterior do Mestre RPG.
+echo O assistente vai validar o banco, criar um backup completo
+echo e somente entao adotara a instalacao existente.
+echo Nenhum dado sera apagado. Confirme somente se este e o
+echo computador onde a instalacao anterior foi usada.
+set "MESTRE_ADOCAO_TENTATIVAS=0"
+:perguntar_adocao_legada_novamente
+set "MESTRE_ADOCAO_RESPOSTA="
+ver >nul
+set /p "MESTRE_ADOCAO_RESPOSTA=Adotar instalacao existente? [S/N]: "
+if errorlevel 1 goto :adocao_entrada_vazia
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="S" goto :confirmar_adocao_legada
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="N" goto :recusar_adocao_legada
+echo [AVISO] Resposta invalida. Digite S ou N.
+goto :perguntar_adocao_legada_novamente
+
+:adocao_entrada_vazia
+set /a MESTRE_ADOCAO_TENTATIVAS+=1
+if %MESTRE_ADOCAO_TENTATIVAS% GEQ 3 goto :bootstrap_eof
+echo [AVISO] Nenhuma resposta recebida. Digite S ou N.
+goto :perguntar_adocao_legada_novamente
+
+:confirmar_adocao_legada
+if not exist scripts\adotar-legado.mjs goto :falha_adocao_legada
+node scripts\adotar-legado.mjs --confirmar-adocao
+if errorlevel 1 goto :falha_adocao_legada
+node scripts\avaliar-boot.mjs validar
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:recusar_adocao_legada
+echo [AVISO] Adocao recusada. Nenhuma atualizacao, restauracao,
+echo         migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:falha_adocao_legada
+echo [ERRO] Nao foi possivel concluir a adocao da instalacao legada.
+echo        Nenhuma etapa de banco sera executada. O backup, se
+echo        criado, permanece em backups\adocao-* para diagnostico.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
 
 :perguntar_primeiro_bootstrap
 echo.

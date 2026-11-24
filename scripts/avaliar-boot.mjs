@@ -7,6 +7,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   avaliarBoot,
+  avaliarCandidatoAdocaoLegada,
   diagnosticarBootstrap,
   validarPrecondicoesBootstrap,
 } from "./estado-externo.mjs";
@@ -44,6 +45,15 @@ if (estado === "instalacao-concluida" || estado === "primeiro-bootstrap") {
 }
 
 if (estado === "desconhecido" && modo === "preflight") {
+  // Instalação legada 1.0.8 com banco existente e zero estado de
+  // protocolo: candidata a adoção assistida. Exit 11 pede ao BAT um
+  // consentimento distinto do primeiro bootstrap — a adoção valida
+  // schema/integridade/backup antes de gravar o recibo.
+  const legado = avaliarCandidatoAdocaoLegada(repoDir);
+  if (legado.adotavel) {
+    console.log("[boot] instalação legada candidata a adoção assistida; aguardando confirmação explícita do operador.");
+    process.exit(11);
+  }
   const pre = validarPrecondicoesBootstrap(repoDir);
   // Só oferece consentimento se a prova completa de instalação limpa
   // passou. Qualquer journal, banco, backup, recibo ou estado divergente
