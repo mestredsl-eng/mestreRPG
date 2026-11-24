@@ -88,7 +88,8 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 - [x] W14/W16 executados como regressões na árvore candidata (`teste-backup-pre-migration`, `teste-restauracao-*`, backup legado v1), preservando banco, arquivos, configuração e backup.
 - [x] Homologação Windows real na candidata: Node 22/20, P10-C real via `cmd.exe`, restauração fail-closed — job Auto-update Windows SUCCESS em `f0dd208`.
 - [x] Homologação Linux component-level na stack #308 (18/18, Ubuntu runner).
-- [x] Upgrade/cutover real de instalação 1.0.8 para a candidata: fixture `main@7e17c9b` + migrate + smoke autenticado — evidência na PR #318 e Issue #272.
+- [x] Upgrade 1.0.8 → candidata homologado em **fixture descartável** (`main@7e17c9b`): migrate com backup pré-update, 36 migrations, integridade/FK ok, contagens preservadas, smoke autenticado — evidência na PR #318 e Issue #272.
+- [ ] **Cutover na instalação real 1.0.8 do proprietário**: não executado — homologações não tocam a instalação real; exige procedimento controlado e decisão do proprietário.
 - [x] Instalação limpa e build reproduzível: suites de bootstrap/P10-C na CI + build servidor/site limpos localmente.
 - [x] XP em lote e Extrato XP executados na CI da árvore candidata, sem SKIP (job Servidor SUCCESS; smoke pós-upgrade confirmou escrita e leitura).
 - [x] Testes de segurança, integridade SQLite, Mesa, ficha/ruleset, acessibilidade e regressões aplicáveis executados no SHA final `f0dd208` — CI natural 6/6 SUCCESS.
