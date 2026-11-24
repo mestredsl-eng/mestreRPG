@@ -7,9 +7,15 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { hashSenha, hashToken } from "./servidor/dist/lib/password.js";
+import {
+  autorizarPrimeiroBootstrap, gravarProvisionamento, lerProvisionamento,
+} from "./scripts/estado-externo.mjs";
+
+const REPO = dirname(fileURLToPath(import.meta.url));
 
 export function dirTeste(nome) {
   return mkdtempSync(join(tmpdir(), `mrpg-${nome}-`));
@@ -18,9 +24,26 @@ export function dirTeste(nome) {
 /** Cria banco vazio e aplica todas as migrations do servidor. */
 export async function prepararBanco(banco) {
   for (const suf of ["", "-wal", "-shm"]) rmSync(banco + suf, { force: true });
+  // P10-B: migrate.ts só segue com banco vazio quando o estado de
+  // instalação é reconhecido (bootstrap autorizado). Provisiona o
+  // state dir isolado por banco — mesmo env que o filho recebe.
+  const stateDir = join(dirname(banco), "state-externo");
+  const envEstado = {
+    ...process.env,
+    MESTRE_STATE_DIR: stateDir,
+    MESTRE_BANCO: banco,
+    MESTRE_BACKUPS: join(dirname(banco), "backups"),
+  };
+  if (lerProvisionamento(REPO, envEstado).status === "ausente") {
+    gravarProvisionamento(REPO, envEstado);
+  }
+  const auth = autorizarPrimeiroBootstrap(REPO, envEstado);
+  if (!auth.autorizado) {
+    throw new Error(`prepararBanco: bootstrap não autorizado (${auth.motivo})`);
+  }
   await new Promise((res, rej) => {
     const p = spawn("node", ["servidor/dist/db/migrate.js"], {
-      env: { ...process.env, MESTRE_BANCO: banco },
+      env: { ...process.env, MESTRE_BANCO: banco, MESTRE_STATE_DIR: stateDir, MESTRE_BACKUPS: join(dirname(banco), "backups") },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let err = "";
@@ -37,8 +60,10 @@ export function portaLivre() {
   });
 }
 
+const TAMANHO_BUF_SAIDA = 32 * 1024;
+
 export function subirServidor(porta, { banco, arquivos, backups, env }) {
-  return spawn("node", ["servidor/dist/index.js"], {
+  const proc = spawn("node", ["servidor/dist/index.js"], {
     env: {
       ...process.env,
       NODE_ENV: "test", // barreiras/hooks de teste só existem neste ambiente
@@ -50,16 +75,37 @@ export function subirServidor(porta, { banco, arquivos, backups, env }) {
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // Diagnóstico: acumula stdout/stderr do filho (cauda limitada) para que
+  // uma morte precoce seja investigável — sem isso o erro "servidor morreu"
+  // não carrega nenhuma evidência do motivo real.
+  const buf = { out: "", err: "" };
+  const acumular = (canal) => (d) => {
+    buf[canal] += d;
+    if (buf[canal].length > TAMANHO_BUF_SAIDA) buf[canal] = buf[canal].slice(-TAMANHO_BUF_SAIDA);
+  };
+  proc.stdout?.on("data", acumular("out"));
+  proc.stderr?.on("data", acumular("err"));
+  proc.mestreSaida = buf;
+  return proc;
+}
+
+function caudaSaida(proc) {
+  const b = proc?.mestreSaida;
+  if (!b) return "";
+  const partes = [];
+  if (b.out.trim()) partes.push("stdout:\n" + b.out.trimEnd().slice(-4000));
+  if (b.err.trim()) partes.push("stderr:\n" + b.err.trimEnd().slice(-4000));
+  return partes.length ? "\n--- saída do servidor ---\n" + partes.join("\n") : "";
 }
 
 export async function esperarSaudavel(base, proc, timeoutMs = 90000) {
   const limite = Date.now() + timeoutMs;
   while (Date.now() < limite) {
     try { const r = await fetch(base + "/api/health", { signal: AbortSignal.timeout(2000) }); if (r.ok) return; } catch { }
-    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode);
+    if (proc.exitCode !== null) throw new Error("servidor morreu: " + proc.exitCode + caudaSaida(proc));
     await new Promise((r) => setTimeout(r, 400));
   }
-  throw new Error("timeout aguardando /api/health");
+  throw new Error("timeout aguardando /api/health" + caudaSaida(proc));
 }
 
 export function comDb(banco, fn) {

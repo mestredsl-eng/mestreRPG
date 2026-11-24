@@ -13,7 +13,7 @@ import {
 
 const DIR = dirTeste("sangue-config-ui");
 const BANCO = `${DIR}/mestre-rpg-teste.db`;
-prepararBanco(BANCO);
+await prepararBanco(BANCO);
 const porta = await portaLivre();
 const BASE = `http://127.0.0.1:${porta}`;
 const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });

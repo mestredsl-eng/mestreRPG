@@ -131,6 +131,8 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Homologação Linux de componentes Boot Lock/Recovery (#271)
+        run: node teste-recovery-linux.mjs
       - name: Testes unitários do contrato de backup (Issue #155 W16)
         run: |
           if [ -f servidor/testes/backup-contrato.test.ts ]; then
@@ -234,6 +236,28 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Suítes da stack #189 — Servidor sem navegador
+        shell: bash
+        run: |
+          set -euo pipefail
+          arquivos=(
+            teste-restauracao-journal.mjs
+            teste-restauracao-boot.mjs
+            teste-backup-pre-migration.mjs
+            teste-estado-externo.mjs
+            teste-primeiro-bootstrap.mjs
+            teste-trava-instancia.mjs
+            teste-p10c-gates.mjs
+            teste-docs-operacao.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte da stack #189 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
+          done
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -302,12 +326,10 @@ jobs:
       - name: Testes do auto-update e execução real de npm.cmd
         shell: bash
         run: |
-          if [ ! -f teste-auto-update.mjs ]; then echo "teste-auto-update.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-auto-update.mjs
       - name: Boot lock — Node 22
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
       - uses: actions/setup-node@v4
         with:
@@ -315,8 +337,20 @@ jobs:
       - name: Boot lock — Node 20 (versão mínima declarada)
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
+
+      - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-node-gate.mjs
+
+      - name: Homologar autorização P10-C no primeiro bootstrap (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-primeiro-bootstrap.mjs
+
+      - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
+        run: node teste-bat-restauracao-falha.mjs
 
   navegador:
     name: Navegador — homologações Playwright
