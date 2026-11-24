@@ -16,6 +16,17 @@ export interface ItemPatrimonioParaGate {
   data?: unknown;
 }
 
+/** Extrai a chave canônica de item de um `data` de inventário/equipamento
+ *  (data.regra.key gravado pelo servidor ou data.templateId → catálogo). */
+export function chaveItemDe(data: unknown): { regraKey?: string; templateId?: string } {
+  const d = (data ?? {}) as Record<string, unknown>;
+  const regra = d.regra as { kind?: string; key?: string } | undefined;
+  return {
+    regraKey: regra?.kind === "item" && typeof regra.key === "string" ? regra.key : undefined,
+    templateId: typeof d.templateId === "string" ? d.templateId : undefined,
+  };
+}
+
 export interface ResultadoElegibilidade {
   elegivel: boolean;
   /** explicação estável para UI/auditoria: o que faltou */
@@ -37,16 +48,15 @@ function nivelMaximo(estrutura: EstruturaFicha, dados: Record<string, unknown>, 
 
 /** Item conta como dispositivo se o `data` gravado pelo servidor referencia
  *  uma chave canônica do Acervo/ruleset ou um templateId configurado. */
-function ehDispositivo(item: ItemPatrimonioParaGate, cfg: RegrasCampanha["config"]["internet"]): boolean {
-  const d = (item.data ?? {}) as Record<string, unknown>;
-  const regra = d.regra as { kind?: string; key?: string } | undefined;
-  if (regra?.kind === "item" && typeof regra.key === "string") {
-    const keys = new Set(cfg.dispositivoChaves.map(norm));
-    if (keys.has(norm(regra.key))) return true;
-  }
-  const templateId = d.templateId;
-  if (typeof templateId === "string" && cfg.dispositivoTemplateIds.includes(templateId)) return true;
-  return false;
+function ehDispositivo(item: ItemPatrimonioParaGate, cfg: RegrasCampanha["config"]["internet"], chavesTemplate: Map<string, string | undefined>): boolean {
+  const { regraKey, templateId } = chaveItemDe(item.data);
+  const keys = new Set(cfg.dispositivoChaves.map(norm));
+  if (regraKey && keys.has(norm(regraKey))) return true;
+  // templateId configurado explicitamente OU template do catálogo cujo
+  // data.regra.key resolve para uma chave de dispositivo (mesma regra do FILHO).
+  if (templateId && cfg.dispositivoTemplateIds.includes(templateId)) return true;
+  const chaveTemplate = templateId ? chavesTemplate.get(templateId) : undefined;
+  return !!chaveTemplate && keys.has(norm(chaveTemplate));
 }
 
 /**
@@ -59,6 +69,7 @@ export function avaliarElegibilidadeInternet(
   dados: Record<string, unknown>,
   regras: RegrasCampanha,
   itensPatrimonio: ItemPatrimonioParaGate[],
+  chavesTemplate: Map<string, string | undefined> = new Map(),
 ): ResultadoElegibilidade {
   const cfg = regras.config.internet;
   const motivos: string[] = [];
@@ -68,7 +79,7 @@ export function avaliarElegibilidadeInternet(
   const temPericia = nivelA >= 1 || nivelB >= 1;
   if (!temPericia) motivos.push("pericia_ou_conhecimento_insuficiente");
 
-  const temDispositivo = itensPatrimonio.some((i) => ehDispositivo(i, cfg));
+  const temDispositivo = itensPatrimonio.some((i) => ehDispositivo(i, cfg, chavesTemplate));
   if (!temDispositivo) motivos.push("dispositivo_ausente");
 
   return { elegivel: temPericia && temDispositivo, motivos };

@@ -5,7 +5,7 @@
 import { Router, type Request, type Response } from "express";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
   campaigns, characters, financialAccounts, moneyTransactions,
@@ -14,7 +14,7 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
-import { avaliarElegibilidadeInternet } from "../lib/internet.js";
+import { avaliarElegibilidadeInternet, chaveItemDe } from "../lib/internet.js";
 import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
 import { sheetVersions } from "../db/schema.js";
 import { emitirCampanha } from "../lib/io.js";
@@ -53,13 +53,24 @@ async function acessoPersonagem(req: Request) {
   return { personagem: p, membership, ehMestre, ehDono };
 }
 
-/** Gate Internet fail-closed: estrutura+regras+patrimônio do personagem. */
+/** Gate Internet fail-closed: estrutura+regras+patrimônio do personagem.
+ *  Resolve templateId→catálogo (data.regra.key do template) para que item
+ *  comprado de template de dispositivo também habilite — mesma regra da UI. */
 async function gateInternet(p: typeof characters.$inferSelect) {
   const [estrutura, regras] = await Promise.all([estruturaDoPersonagem(p), carregarRegras(p.campaignId)]);
   const dados = (p.data ?? {}) as Record<string, unknown>;
   const itens = await db.select({ data: inventoryEntries.data }).from(inventoryEntries).where(eq(inventoryEntries.characterId, p.id));
   const equip = await db.select({ data: equipmentEntries.data }).from(equipmentEntries).where(eq(equipmentEntries.characterId, p.id));
-  return avaliarElegibilidadeInternet(estrutura, dados, regras, [...itens, ...equip]);
+  const todos = [...itens, ...equip];
+  // coleta templateIds referenciados e resolve a chave canônica de cada um
+  const templateIds = [...new Set(todos.map((i) => chaveItemDe(i.data).templateId).filter((x): x is string => !!x))];
+  const chavesTemplate = new Map<string, string | undefined>();
+  if (templateIds.length) {
+    const tpls = await db.select({ id: itemTemplates.id, data: itemTemplates.data }).from(itemTemplates)
+      .where(and(inArray(itemTemplates.id, templateIds), eq(itemTemplates.campaignId, p.campaignId)));
+    for (const tpl of tpls) chavesTemplate.set(tpl.id, chaveItemDe(tpl.data).regraKey);
+  }
+  return avaliarElegibilidadeInternet(estrutura, dados, regras, todos, chavesTemplate);
 }
 
 /** Loja pertence à campanha e o usuário é mestre da campanha ou gestor da loja. */
@@ -536,6 +547,19 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
   emitirPatrimonio(campaignId, personagem.id);
   emitirCampanha(campaignId, "comercio:atualizado", { shopId: loja.id, orderId });
   res.status(201).json({ id: orderId, totalCents });
+});
+
+/** GET /elegibilidade — veredito do servidor para a UI do módulo Internet.
+ *  Mesma função fail-closed usada nas mutações; nunca decide por nome. */
+comercioPersonagemRouter.get("/elegibilidade", async (req, res) => {
+  const acesso = await acessoPersonagem(req);
+  if ("erro" in acesso) {
+    const st = acesso.erro === 404 ? 404 : acesso.erro === 409 ? 409 : 403;
+    res.status(st).json({ erro: st === 404 ? "Personagem não encontrado" : st === 409 ? "Personagem arquivado" : "Sem acesso" });
+    return;
+  }
+  const gate = await gateInternet(acesso.personagem);
+  res.json({ elegivel: gate.elegivel, motivos: gate.motivos });
 });
 
 /** GET /api/characters/:characterId/comercio/pedidos — histórico do personagem. */

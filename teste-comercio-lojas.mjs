@@ -76,6 +76,14 @@ try {
   });
   t("sem dispositivo → 403 internet_indisponivel", rGate2.status === 403 && rGate2.json?.erro === "internet_indisponivel", JSON.stringify(rGate2.json));
 
+  // endpoint de elegibilidade para a UI (mesmo veredito fail-closed)
+  const eOk = await req(BASE, "GET", `/characters/${charOk}/comercio/elegibilidade`, { cookie: j1.cookie });
+  t("elegibilidade charOk → true", eOk.status === 200 && eOk.json?.elegivel === true, JSON.stringify(eOk.json));
+  const eSem = await req(BASE, "GET", `/characters/${charSemPericia}/comercio/elegibilidade`, { cookie: j2.cookie });
+  t("elegibilidade sem pericia → false + motivo", eSem.status === 200 && eSem.json?.elegivel === false && eSem.json?.motivos?.includes("pericia_ou_conhecimento_insuficiente"), JSON.stringify(eSem.json));
+  const eSemDev = await req(BASE, "GET", `/characters/${charSemDevice}/comercio/elegibilidade`, { cookie: j2.cookie });
+  t("elegibilidade sem device → motivo dispositivo", eSemDev.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eSemDev.json));
+
   sec("gestão da loja");
   const loja = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
     cookie: mestre, body: { name: "Loja do Zé", category: "mercadoria", location: "Centro" },
