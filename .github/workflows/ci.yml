@@ -228,6 +228,7 @@ jobs:
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
+            teste-ficha-cacadores.mjs
           )
           falhas=()
           for s in "${arquivos[@]}"; do
@@ -267,6 +268,10 @@ jobs:
             echo "===== $s ====="
             node "$s"
           done
+      - name: Round-trip e anti-injeção da ficha (Issue #292)
+        if: github.event_name != 'workflow_dispatch' || hashFiles('teste-ficha-roundtrip-292.mjs') != ''
+        shell: bash
+        run: node teste-ficha-roundtrip-292.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
