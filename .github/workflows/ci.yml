@@ -230,6 +230,7 @@ jobs:
             teste-integridade-sqlite.mjs
             teste-escopo-cruzado.mjs
             teste-arquivos-ci.mjs
+            teste-proxy-acesso.mjs
             teste-ficha-cacadores.mjs
             teste-runtime-processos-298.mjs
           )
