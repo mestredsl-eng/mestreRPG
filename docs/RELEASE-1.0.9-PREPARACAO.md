@@ -2,7 +2,7 @@
 
 > **ESTADO: RASCUNHO INTERNO. NÃO PUBLICAR, NÃO TAGUEAR E NÃO DISTRIBUIR.**
 >
-> Documento atualizado em 24/11/2026 com os últimos runs naturais. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
+> Documento atualizado em 24/11/2026 às 12:48 BRT. Os estados de CI abaixo estão vinculados aos SHAs atuais; jobs ainda em execução não contam como PASS. Não substitui a candidata única, a homologação de upgrade/cutover nem a autorização final do proprietário.
 
 ## Identificação planejada
 
@@ -31,22 +31,22 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 ### Boot, atualização e recuperação — PR #308
 
-- HEAD da branch: `9b8c6e6e45745e561a0f6d9bb0114ef01c275ef7`, base `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`.
-- CI natural canônica mais recente: `45292451107`, HEAD `9b8c6e6e45745e561a0f6d9bb0114ef01c275ef7`; merge-ref registrado pelo teste Linux: **`193a05755633b62eb57455e15ce10ebacd09616f`**.
-- **Windows:** SUCCESS, **19/19 etapas**, zero falhas e zero SKIPs. Inclui build, atualização/restauração, auto-update `npm.cmd` (**118/118**), Boot Lock Node 22 e 20, gate BAT (**21/21**), P10-C real via `cmd.exe` (**25/25**) e restauração fail-closed (**18/18**).
-- **Servidor:** SUCCESS, **29/29 etapas**, zero falhas e zero SKIPs. Inclui typecheck/build, 29 suítes obrigatórias, camada adicional #189 e teste Linux de componentes no runner Ubuntu.
-- **Linux component-level:** `teste-recovery-linux.mjs` executado em Ubuntu 26.04.1 / Node 22.23.5, **18 passaram / 0 falharam**. Cobriu aquisição/liberação/concorrência do lock, XDG/`MESTRE_STATE_DIR`, migrate fail-closed, SIGKILL real + restart e recusa de escrita em state dir sem permissão. Isso não cria nem homologa um launcher Linux; a camada é de componentes Node.
-- **Navegador:** SUCCESS, **15/15 etapas**, sem falhas ou SKIPs; suites obrigatórias Playwright, Extrato XP e concessão XP em lote passaram.
-- A correção final do P10-C foi test-only: o sentinela passou a exportar `recuperarAtualizacaoPendente()` para satisfazer o contrato importado pelo avaliador real; não foram removidos nem relaxados asserts.
-- **Estado geral da CI #308: 3/3 jobs SUCCESS** (Servidor 29/29, Windows 19/19, Navegador 15/15), sem falhas ou SKIPs. CI técnica fechada no HEAD atual.
+- HEAD atual da branch: `c2842b588f76327183a109f670acd5b37d7f96a2`, base `main@7e17c9bca9a893e5f4e05967f91629d0ccddbd0d`.
+- Run natural atual: `45426615734`, no HEAD `c2842b5`. **Windows SUCCESS (19/19 etapas); Servidor SUCCESS (29/29); Navegador IN_PROGRESS** na última leitura de 24/11/2026 12:48 BRT. Portanto, ainda não há 3/3 no HEAD atual.
+- Os resultados anteriores do run `45292451107` pertencem ao HEAD anterior `9b8c6e6`; continuam como histórico/regressão, mas não substituem a CI do SHA atual.
+- **Windows atual:** 19/19 etapas, sem falhas; a homologação de atualização/restauração executou **29/29**. O run anterior também cobriu auto-update `npm.cmd` (118/118), Boot Lock Node 22 e 20, gate BAT (21/21), P10-C via `cmd.exe` (25/25) e restauração fail-closed (18/18).
+- **Servidor atual:** 29/29 etapas, sem falhas; typecheck/build e as suítes obrigatórias concluíram. O log inclui P10-C gates (**54/54**) e documentação operacional (**12/12**).
+- **Navegador:** ainda em execução; não marcar como PASS até o job terminar com conclusão SUCCESS no mesmo SHA.
+- **Linux component-level:** no run anterior `45292451107`, `teste-recovery-linux.mjs` passou **18/18** em Ubuntu 26.04.1 / Node 22.23.5: lock, XDG/`MESTRE_STATE_DIR`, migrate fail-closed, SIGKILL/restart e permissão do diretório de estado. Isso não cria nem homologa launcher Linux; são testes de componentes Node.
 
 ### Integridade SQLite e isolamento entre campanhas — PR #316
 
-- HEAD: `0d2a06c471b0e053f13635955dbb53665da5b551`, base `main@7e17c9b`.
-- CI natural mais recente `45291323608`: **3/3 SUCCESS** — Servidor 27 etapas, Windows 16 etapas, Navegador 15 etapas; sem falhas e sem SKIPs.
-- `teste-integridade-sqlite.mjs`: **89 passaram / 0 falharam**, incluindo F1–F6, as duas rodadas concorrentes PUT × publish (F5), rollback de upload/vínculo, isolamento cross-campaign, auditoria/eventos e reabertura/integrity_check.
-- A descrição da PR foi atualizada para retirar a afirmação obsoleta de que faltava teste concorrente F5.
-- **Revisão independente ainda pendente:** a única submissão GitHub registrada é `COMMENTED` pelo mesmo usuário do repositório; isso não constitui `APPROVE` independente. Manter Draft até revisão elegível real.
+- HEAD atual: `887ced30e3bd6504ea15947c3e944ced8b3bce89`, base `main@7e17c9b`.
+- Run natural atual: `45428706739`, no HEAD `887ced3`. **Windows SUCCESS (16 etapas); Servidor e Navegador IN_PROGRESS** na última leitura de 24/11/2026 12:48 BRT. Não contar a CI anterior como aceite do patch novo.
+- Histórico: no SHA anterior `0d2a06c`, a suíte SQLite executou **89/89** e a CI fechou 3/3. Esse resultado não inclui a correção F4 abaixo nem os dois asserts novos.
+- **F4 corrigido no HEAD atual, aguardando CI:** o UPDATE do template-alvo agora filtra por `id + campaignId`, exige `changes === 1` dentro da transação e responde 409 com rollback quando o alvo fica indisponível. A suíte acrescentou SQLite `RAISE(IGNORE)` para provar que a limpeza do default anterior é revertida quando o UPDATE final afeta zero linhas.
+- **Revisão independente ainda pendente:** a única submissão formal existente é `COMMENTED` pelo mesmo usuário autor; não equivale a `APPROVE` independente. Manter Draft até revisão elegível real.
+- O índice parcial único de F4 permanece decisão separada; nenhuma migration ou alteração de dados legados foi executada. O serviço agora fecha o caso de zero linhas, mas não declarar garantia schema-level sem a decisão e a constraint correspondentes.
 - Limites declarados: ENOSPC global não coberto; sem outbox/reconciliação para falha extraordinária de auditoria pós-commit; compensação física que falhe por segundo erro do filesystem é registrada, mas sem reparação automática neste escopo.
 
 ### Acessibilidade e matriz de fluxos — PR #300 / Issue #297
@@ -67,13 +67,14 @@ A integração não equivale, sozinha, a aceite de release. O diff final e a CI 
 
 - **Uso narrativo de Poderes na ficha** — PR #279 permanece aberta. Incluir somente se integrada, revisada e testada na candidata.
 - **Qualquer entrega Draft/Issue aberta** — não anunciar como concluída sem integração efetiva e evidência no SHA final.
+- **Issue #294 / PR #316:** a antiga PR de diagnóstico #306 continua aberta/Draft sobre base antiga `a958522`; a suíte atualizada e as correções de produção estão em #316. Tratar #306 como supersedida; não integrar ambas em paralelo.
 
 ## Gate de publicação — checklist obrigatório
 
 - [ ] Uma única candidata 1.0.9 identificada, base `main`, DAG/diff cumulativo auditado e sem branches empilhadas pendentes.
 - [ ] Todas as funcionalidades anunciadas estão no commit candidato; nenhuma Draft ou Issue aberta é apresentada como entregue.
-- [x] PR #308: CI natural 3/3 no HEAD `9b8c6e6`; Windows 19/19, Servidor 29/29 (inclui Linux component-level 18/18) e Navegador 15/15, sem falhas ou SKIPs.
-- [x] PR #316: CI natural 3/3 no HEAD `0d2a06c`; F1–F6 89/89, sem falhas ou SKIPs. **Revisão independente formal continua pendente.**
+- [ ] PR #308 no HEAD atual `c2842b5`: Windows 19/19 e Servidor 29/29 SUCCESS; Navegador ainda IN_PROGRESS no run `45426615734`. Os 3/3 anteriores pertencem ao SHA antigo `9b8c6e6`.
+- [ ] PR #316 no HEAD atual `887ced3`: Windows SUCCESS; Servidor e Navegador IN_PROGRESS no run `45428706739`. O resultado 89/89 é do SHA anterior `0d2a06c`; a regressão F4 `RAISE(IGNORE)` ainda aguarda execução. **Revisão independente formal continua pendente.**
 - [ ] PR #300: CI 3/3 verde e matriz 204/204; limitar anúncios aos fluxos cobertos. Permanecem convite/cadastro (#255), estados vazio/loading/erro (#238) e 38 REVIEW de contraste sem disposição humana.
 - [ ] W14/W16 executados como regressões, preservando banco, arquivos, configuração e backup.
 - [x] Homologação Windows real no HEAD #308: Node 22/20, P10-C 25/25 e restauração fail-closed 18/18; a homologação final de cutover 1.0.8→1.0.9 continua separada.
