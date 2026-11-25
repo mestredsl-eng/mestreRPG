@@ -127,6 +127,65 @@ try {
   });
   const contaId = contaComprador.json?.id;
   t("comprador tem conta", !!contaId, JSON.stringify(contaComprador.json));
+  
+  sec("isolamento de templates entre campanhas");
+  const outraCampanha = await req(BASE, "POST", "/campaigns", {
+    cookie: mestre, body: { name: "Campanha Externa Comércio" },
+  });
+  const outraCampId = comDb(BANCO, (db) => db.prepare(
+    "select id from campaigns where name=? order by created_at desc limit 1",
+  ).get("Campanha Externa Comércio")?.id);
+  t("fixture de campanha externa criada", (outraCampanha.status === 201 || outraCampanha.status === 200) && !!outraCampId, JSON.stringify(outraCampanha.json));
+  const tplExternoId = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into item_templates (id,campaign_id,name,category,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+      .run(tplExternoId, outraCampId, "Template Privado Externo", "segredo", JSON.stringify({ dadoPrivado: "NAO_DEVE_VAZAR" }), 1, agora, agora);
+    db.close();
+  }
+  const ofertaIsolada = await req(BASE, "POST", "/campaigns/" + campId + "/comercio/lojas/" + shopId + "/ofertas", {
+    cookie: j1.cookie, body: { name: "Oferta Isolada", priceCents: 100, stockQty: 1 },
+  });
+  const ofertaIsoladaId = ofertaIsolada.json?.id;
+  t("oferta de isolamento criada", ofertaIsolada.status === 201 && !!ofertaIsoladaId, JSON.stringify(ofertaIsolada.json));
+  const patchTemplateExterno = await req(BASE, "PATCH", "/campaigns/" + campId + "/comercio/lojas/" + shopId + "/ofertas/" + ofertaIsoladaId, {
+    cookie: j1.cookie, body: { itemTemplateId: tplExternoId },
+  });
+  t("PATCH recusa template de outra campanha", patchTemplateExterno.status === 400, JSON.stringify(patchTemplateExterno.json));
+  const templatePersistido = comDb(BANCO, (db) => db.prepare("select item_template_id from shop_offers where id=?").get(ofertaIsoladaId)?.item_template_id);
+  t("PATCH não persiste referência cruzada", templatePersistido === null, String(templatePersistido));
+
+  // Simula registro legado/inconsistente para provar que o checkout também
+  // falha fechado, sem importar dados de template de outra campanha.
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update shop_offers set item_template_id=? where id=?").run(tplExternoId, ofertaIsoladaId);
+    db.close();
+  }
+  const antesCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    estoque: db.prepare("select stock_qty from shop_offers where id=?").get(ofertaIsoladaId)?.stock_qty,
+    itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='Oferta Isolada'").get(charOk).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-template-001'").get().c,
+  }));
+  const compraTemplateExterno = await req(BASE, "POST", "/characters/" + charOk + "/comercio/comprar", {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: ofertaIsoladaId, qty: 1 }], requestId: "cross-campaign-template-001" },
+  });
+  const depoisCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    estoque: db.prepare("select stock_qty from shop_offers where id=?").get(ofertaIsoladaId)?.stock_qty,
+    itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='Oferta Isolada'").get(charOk).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-template-001'").get().c,
+  }));
+  t("checkout bloqueia template externo", compraTemplateExterno.status === 409 && compraTemplateExterno.json?.erro === "template_indisponivel", JSON.stringify(compraTemplateExterno.json));
+  t("bloqueio não altera saldo/caixa/estoque/inventário/ledger/recibo", JSON.stringify(antesCross) === JSON.stringify(depoisCross), JSON.stringify({ antesCross, depoisCross }));
+
 
   const compra = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
     cookie: j1.cookie,
