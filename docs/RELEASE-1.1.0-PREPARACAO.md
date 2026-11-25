@@ -144,3 +144,15 @@ PR #338 (Community Standards) e PR #340 (documentação de rate limiting) são f
 - Não faz merge de nenhuma PR da implementação.
 - Não acessa nem altera a instalação, banco, arquivos, backups ou servidor local do proprietário.
 - Atualizar este documento contra a candidata real antes de usar qualquer checklist como PASS.
+
+
+## Atualização de reconciliação — 25/11/2026, 03:21 BRT
+
+A `main` avançou de `cc95eef` para `a1522a8c6acf92c41aa5652539c377a947dfba08` enquanto esta preparação era aberta. A comparação de commits confirma que os dois commits novos vieram da PR #340 e só adicionaram `docs/SEGURANCA-RATE-LIMIT-296.md`; não alteraram o código comercial 1.1.0.
+
+Contagens atuais contra `main@a1522a8`:
+- #328: 9 à frente / 7 atrás (base histórica `6f770a2`); precisa sincronizar e reexecutar CI.
+- #327: 16 à frente / 2 atrás (base `cc95eef`); CI 3/3 verde pertence ao HEAD `0e62330`, não à main atualizada.
+- #341 (esta preparação): 1 à frente / 2 atrás; diff contém somente este documento e permanece Draft/mergeável.
+
+A fotografia de CI continua: #327 run `45556998995` SUCCESS 3/3; #329 run `45557022249` ainda IN_PROGRESS na última leitura, com Servidor e Windows SUCCESS e Playwright executando; #336 108/108 local declarado, sem CI da suíte.
