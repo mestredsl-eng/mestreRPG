@@ -227,6 +227,8 @@ jobs:
             teste-autorizacao-concorrencia.mjs
             teste-rate-limit-socket.mjs
             teste-sessoes-socket.mjs
+            teste-sessoes-conta.mjs
+            teste-mass-assignment.mjs
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs

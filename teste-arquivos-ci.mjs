@@ -5,8 +5,9 @@
 // isolamento entre campanhas, membro removido sem reuso de acesso,
 // moderação de envio de jogador, persistência em disco.
 // Harness autocontido (banco temporário + servidor spawnado) — CI-safe.
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { request as httpRequest } from "node:http";
 import { createHash } from "node:crypto";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -149,6 +150,102 @@ try {
     db.close();
     const fisico = row ? resolve(`${DIR}/arq/${CID}`, row.storage_name) : "";
     t("7 arquivo persistido em disco dentro do dir da campanha", !!row && existsSync(fisico), fisico);
+  }
+
+  // ---------- 8. interrupção durante upload (#295 residual) ----------
+  // 8a/8b: cliente destrói o socket no meio do corpo — o servidor deve
+  // seguir saudável e não pode sobrar linha em `files` nem órfão em disco.
+  const arquivosDir = `${DIR}/arq/${CID}`;
+  const contarLinhas = () => {
+    const db = abrirDb(BANCO);
+    const n = db.prepare("select count(*) c from files where campaign_id=?").get(CID).c;
+    db.close();
+    return n;
+  };
+  const arquivosEmDisco = () => {
+    const nomes = new Set();
+    const walk = (d) => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) { if (e.name !== ".lixeira") walk(p); }
+        else nomes.add(e.name);
+      }
+    };
+    if (existsSync(arquivosDir)) walk(arquivosDir);
+    return nomes;
+  };
+  const storageNames = () => {
+    const db = abrirDb(BANCO);
+    const s = new Set(db.prepare("select storage_name from files where campaign_id=?").all(CID).map((r) => r.storage_name));
+    db.close();
+    return s;
+  };
+  const nAntes = contarLinhas();
+
+  const uploadSocketAbort = () => new Promise((resolveP) => {
+    const reqHttp = httpRequest(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
+      method: "POST",
+      headers: {
+        cookie: mestre, "content-type": "application/octet-stream",
+        "x-file-name": encodeURIComponent("abortado-parcial.txt"),
+        "x-file-mime": "text/plain",
+        "content-length": String(5 * 1024 * 1024), // declara 5MB, envia ~64KB e corta
+      },
+    }, (res) => { res.resume(); resolveP(res.statusCode ?? 0); });
+    reqHttp.on("error", () => resolveP(0));
+    reqHttp.write(Buffer.alloc(64 * 1024, 0x61));
+    setTimeout(() => reqHttp.destroy(), 40);
+  });
+  await uploadSocketAbort();
+  await uploadSocketAbort();
+  await new Promise((r) => setTimeout(r, 500)); // janela p/ eventual cleanup/erro
+
+  const healthAposAborto = await fetch(`${BASE}/api/health`).then((r) => r.ok).catch(() => false);
+  t("8a servidor saudável após 2 uploads abortados no socket", healthAposAborto);
+  t("8b nenhum upload abortado virou registro", contarLinhas() === nAntes,
+    `${nAntes}→${contarLinhas()}`);
+  {
+    const disco = arquivosEmDisco(), dbSet = storageNames();
+    const orfaos = [...disco].filter((f) => !dbSet.has(f));
+    const faltando = [...dbSet].filter((f) => !disco.has(f));
+    t("8c disco↔banco consistentes após abortos", orfaos.length === 0 && faltando.length === 0,
+      `orfaos=${orfaos.join(",")} faltando=${faltando.join(",")}`);
+  }
+
+  // 8d/8e: kill do servidor NO MEIO de um upload grande + restart —
+  // nenhuma linha pode apontar para arquivo parcial/inexistente e o
+  // serviço volta íntegro.
+  {
+    const grande = Buffer.alloc(20 * 1024 * 1024, 0x62); // .txt 20MB < limite 25MB
+    const pUpload = fetch(`${BASE}/api/campaigns/${CID}/arquivos/upload`, {
+      method: "POST",
+      headers: { cookie: mestre, "content-type": "application/octet-stream",
+        "x-file-name": encodeURIComponent("grande-interrompido.txt"), "x-file-mime": "text/plain" },
+      body: grande,
+    }).then((r) => r.status).catch(() => 0);
+    await new Promise((r) => setTimeout(r, 120)); // corpo em transferência/processamento
+    await encerrarServidor(proc);
+    const stUpload = await pUpload.catch(() => 0);
+    proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+    await esperarSaudavel(BASE, proc);
+    t("8d servidor reiniciado após kill durante upload", true, `upload status=${stUpload}`);
+    {
+      const db = abrirDb(BANCO);
+      const rows = db.prepare("select storage_name, size_bytes from files where campaign_id=?").all(CID);
+      db.close();
+      const invalidas = rows.filter((r2) => {
+        const p = join(arquivosDir, r2.storage_name);
+        return !existsSync(p) || statSync(p).size !== r2.size_bytes;
+      });
+      t("8e nenhuma row aponta para arquivo parcial/inexistente", invalidas.length === 0,
+        invalidas.map((r2) => r2.storage_name).join(","));
+      const disco = arquivosEmDisco(), dbSet = storageNames();
+      const orfaos = [...disco].filter((f) => !dbSet.has(f));
+      t("8f nenhum órfão em disco após crash (informativo se >0)", true,
+        `orfaos=${orfaos.length}${orfaos.length ? " [" + orfaos.join(",") + "]" : ""}`);
+      const upPos = await upload(mestre, CID, "pos-crash.txt", "funciona");
+      t("8g upload funciona após reinício", upPos.status === 201, `status=${upPos.status}`);
+    }
   }
 } catch (e) {
   t("execução sem exceção", false, String(e?.message ?? e).slice(0, 200));
