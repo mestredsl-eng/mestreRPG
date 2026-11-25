@@ -6,8 +6,9 @@ import { io as ioCliente } from "socket.io-client";
 import { existsSync, writeFileSync, rmSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
-  criarCenario, comDb, abrirDb, req, encerrarServidor, limparDir,
+  criarCenario, comDb, abrirDb, req, encerrarServidor, limparDir, sessao,
 } from "./teste-base.mjs";
+import { hashSenha } from "./servidor/dist/lib/password.js";
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
@@ -1068,6 +1069,447 @@ try {
   t("L5: socket com payloads malformados NÃO entrou em sala (zero eventos)",
     evL5.length === 0, `eventos=${evL5.length}`);
   sockL5.close();
+
+  // ================= B1–B7: cobertura residual portada da #336 =================
+  // Port fiel dos cenários exclusivos de teste-comercio-289.mjs (ordem do
+  // Dono Técnico): gate por operação, device canônico fail-closed, bordas
+  // LOJA-A/LOJA-B, isolamento loja/gestor/campanha, realtime (perda de
+  // ponto + envelope só-ids + elegível sem inscrição OOC) e regressão
+  // patrimonial. charOk pertence a j2 desde a seção de titularidade
+  // (donoAtual já declarado na seção L1/L3/L4/L5).
+  const insItemB = (characterId, nome, data, qtd = 1) => {
+    const db = abrirDb(BANCO);
+    const id = crypto.randomUUID();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(id, characterId, nome, qtd, JSON.stringify(data), Date.now(), Date.now());
+    db.close();
+    return id;
+  };
+  const comprarSonda = (charId, cookie, requestId, shop = "loja-inexistente", conta = "conta-x") =>
+    req(BASE, "POST", `/characters/${charId}/comercio/comprar`, {
+      cookie, body: { shopId: shop, accountId: conta, items: [{ offerId: "of-x", qty: 1 }], requestId },
+    });
+
+  // ---- fixture B2: regra 'espada' + templates com data.regra.key ----
+  {
+    const db = abrirDb(BANCO);
+    const rs = db.prepare("select id from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const agora = Date.now();
+    db.prepare("insert or ignore into rule_definitions (id,rule_set_id,kind,key,name,category,parent_key,definition,created_at,updated_at) values (?,?,?,?,?,?,?, '{}',?,?)")
+      .run(crypto.randomUUID(), rs.id, "item", "espada", "Espada", null, null, agora, agora);
+    const insTpl = db.prepare("insert into item_templates (id,campaign_id,name,category,description,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)");
+    insTpl.run("tpl-notebook-b", campId, "Notebook Template B", "equipamento", null,
+      JSON.stringify({ regra: { kind: "item", key: "notebook" } }), 1, agora, agora);
+    insTpl.run("tpl-espada-b", campId, "Espada Template B", "equipamento", null,
+      JSON.stringify({ regra: { kind: "item", key: "espada" } }), 1, agora, agora);
+    db.close();
+  }
+
+  // ---- personagens do gate (B1/B2/B6) ----
+  const charGatePerda = cenario.novoPersonagem(j1.membershipId, "B Gate Perde Ponto", { comp: 1 });
+  const charZero = cenario.novoPersonagem(j2.membershipId, "B Zero", { comp: 0 });
+  const charNome = cenario.novoPersonagem(j2.membershipId, "B So Nome", { comp: 1 });
+  const charTplOk = cenario.novoPersonagem(j2.membershipId, "B Tpl Notebook", { comp: 1 });
+  const charTplEspada = cenario.novoPersonagem(j2.membershipId, "B Tpl Espada", { comp: 1 });
+  const charTplFantasma = cenario.novoPersonagem(j2.membershipId, "B Tpl Fantasma", { comp: 1 });
+  const charEquip = cenario.novoPersonagem(j1.membershipId, "B Equipado", { comp: 1 });
+  const charTransf = cenario.novoPersonagem(j1.membershipId, "B Doador", { comp: 1 });
+  const charDest = cenario.novoPersonagem(j2.membershipId, "B Receptor", {});
+  const charRtPerda = cenario.novoPersonagem(j1.membershipId, "B RT Perde Ponto", { comp: 1 });
+  insItemB(charGatePerda, "Notebook", { regra: { kind: "item", key: "notebook" } });
+  insItemB(charZero, "Notebook", { regra: { kind: "item", key: "notebook" } });
+  insItemB(charNome, "Notebook", {}); // mesmo nome, SEM chave canônica
+  insItemB(charTplOk, "Notebook X", { templateId: "tpl-notebook-b" });
+  insItemB(charTplEspada, "Espada X", { templateId: "tpl-espada-b" });
+  insItemB(charTplFantasma, "Coisa X", { templateId: "tpl-fantasma-b" });
+  insItemB(charEquip, "Notebook", { regra: { kind: "item", key: "notebook" } });
+  insItemB(charRtPerda, "Notebook", { regra: { kind: "item", key: "notebook" } });
+  const nbTransfId = insItemB(charTransf, "Notebook", { regra: { kind: "item", key: "notebook" } });
+
+  sec("B1/B2 — gate por operação e device canônico fail-closed");
+  const elegB = (charId, cookie) => req(BASE, "GET", `/characters/${charId}/comercio/elegibilidade`, { cookie });
+
+  // B2 — resolução canônica: nome sozinho não habilita; templateId resolve
+  // via data.regra.key do template; chave não-device e template fantasma
+  // falham fechado
+  const eZero = await elegB(charZero, j2.cookie);
+  t("B2: comp=0 + notebook → inelegível (perícia)", eZero.json?.elegivel === false
+    && eZero.json?.motivos?.includes("pericia_ou_conhecimento_insuficiente"), JSON.stringify(eZero.json));
+  const cZero = await comprarSonda(charZero, j2.cookie, "b2-zero-1");
+  t("B2: comprar sem perícia → 403", cZero.status === 403 && cZero.json?.erro === "internet_indisponivel", `${cZero.status} ${JSON.stringify(cZero.json)}`);
+  const eNome = await elegB(charNome, j2.cookie);
+  t("B2: item 'Notebook' sem chave canônica → dispositivo_ausente", eNome.json?.elegivel === false
+    && eNome.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eNome.json));
+  const cNome = await comprarSonda(charNome, j2.cookie, "b2-nome-1");
+  t("B2: comprar com device só por nome → 403", cNome.status === 403, String(cNome.status));
+  const eTplOk = await elegB(charTplOk, j2.cookie);
+  t("B2: templateId→regra.key notebook → elegível", eTplOk.json?.elegivel === true, JSON.stringify(eTplOk.json));
+  const eTplEspada = await elegB(charTplEspada, j2.cookie);
+  t("B2: templateId→regra.key espada → dispositivo_ausente", eTplEspada.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eTplEspada.json));
+  const eTplFantasma = await elegB(charTplFantasma, j2.cookie);
+  t("B2: templateId inexistente → dispositivo_ausente (fail-closed)", eTplFantasma.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eTplFantasma.json));
+
+  // B2 — item EQUIPADO continua sendo posse (gate lê inventário+equipamento)
+  const eqAntes = await elegB(charEquip, j1.cookie);
+  t("B2: pré-equipar elegível", eqAntes.json?.elegivel === true, JSON.stringify(eqAntes.json));
+  const nbEquipId = comDb(BANCO, (db) => db.prepare(
+    "select id from inventory_entries where character_id=? and name='Notebook' limit 1").get(charEquip)?.id);
+  const equiparB = await req(BASE, "POST", `/characters/${charEquip}/inventario/${nbEquipId}/equipar`, {
+    cookie: j1.cookie, body: {},
+  });
+  t("B2: equipar notebook → 201", equiparB.status === 201, JSON.stringify(equiparB.json));
+  const eqDepois = await elegB(charEquip, j1.cookie);
+  t("B2: device equipado ainda elegível", eqDepois.json?.elegivel === true, JSON.stringify(eqDepois.json));
+  const invAposEquip = comDb(BANCO, (db) => db.prepare("select count(*) c from inventory_entries where id=?").get(nbEquipId).c);
+  t("B2: unidade saiu do inventário p/ equipamento", invAposEquip === 0, String(invAposEquip));
+
+  // B2 — transferência real do dispositivo: origem perde elegibilidade;
+  // destino tem device mas segue inelegível por falta de perícia
+  const transfB = await req(BASE, "POST", `/characters/${charTransf}/inventario/${nbTransfId}/transferir`, {
+    cookie: mestre, body: { destinoCharacterId: charDest, ignorarPrerequisitos: true },
+  });
+  t("B2: transferir notebook → receptor", transfB.status === 200 || transfB.status === 201, `${transfB.status} ${JSON.stringify(transfB.json)}`);
+  const eOrigB = await elegB(charTransf, j1.cookie);
+  t("B2: origem sem device → dispositivo_ausente", eOrigB.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eOrigB.json));
+  const eDestB = await elegB(charDest, j2.cookie);
+  t("B2: destino com device mas sem perícia → inelegível", eDestB.json?.elegivel === false
+    && eDestB.json?.motivos?.includes("pericia_ou_conhecimento_insuficiente")
+    && !eDestB.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(eDestB.json));
+
+  // B1 — perder ponto DEPOIS de entrar na Internet: a próxima operação
+  // revalida o gate por operação (não por sessão) e nega 403
+  const ePerdaAntes = await elegB(charGatePerda, j1.cookie);
+  t("B1: antes da perda: elegível", ePerdaAntes.json?.elegivel === true, JSON.stringify(ePerdaAntes.json));
+  {
+    const db = abrirDb(BANCO);
+    const row = db.prepare("select data from characters where id=?").get(charGatePerda);
+    const dados = JSON.parse(row.data);
+    dados.comp = 0;
+    db.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), charGatePerda);
+    db.close();
+  }
+  const ePerdaDepois = await elegB(charGatePerda, j1.cookie);
+  t("B1: ponto removido → inelegível na chamada seguinte", ePerdaDepois.json?.elegivel === false
+    && ePerdaDepois.json?.motivos?.includes("pericia_ou_conhecimento_insuficiente"), JSON.stringify(ePerdaDepois.json));
+  const cPerda = await comprarSonda(charGatePerda, j1.cookie, "b1-perda-1");
+  t("B1: compra após perda de ponto → 403 (gate por operação, não por sessão)", cPerda.status === 403, String(cPerda.status));
+
+  // negativas fail-closed não criam pedidos/transações/itens
+  const contagensB = () => comDb(BANCO, (db) => ({
+    orders: db.prepare("select count(*) c from shop_orders").get().c,
+    txs: db.prepare("select count(*) c from money_transactions").get().c,
+    inv: db.prepare("select count(*) c from inventory_entries").get().c,
+  }));
+  const antesNegB = contagensB();
+  await comprarSonda(charZero, j2.cookie, "b2-zero-2");
+  await comprarSonda(charNome, j2.cookie, "b2-nome-2");
+  await comprarSonda(charTplFantasma, j2.cookie, "b2-fantasma-1");
+  const depoisNegB = contagensB();
+  t("B2: negativas → zero pedidos/transações/itens criados",
+    depoisNegB.orders === antesNegB.orders && depoisNegB.txs === antesNegB.txs && depoisNegB.inv === antesNegB.inv,
+    JSON.stringify({ antesNegB, depoisNegB }));
+
+  sec("B3 — LOJA-A: saldo insuficiente, rollback multi-item, corrida último item");
+  // conta pequena do charOk (dono atual j2) para o saldo_insuficiente
+  const contaB3 = await req(BASE, "POST", `/characters/${charOk}/financeiro/contas`, {
+    cookie: donoAtual, body: { type: "especie", name: "Bolso B3", balanceReais: 5 },
+  });
+  const contaB3Id = contaB3.json?.id;
+  t("B3: conta pequena do comprador", contaB3.status === 201 && !!contaB3Id, JSON.stringify(contaB3.json));
+  const mkOfertaB3 = async (body) => {
+    const r = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, { cookie: j1.cookie, body });
+    return r.json?.id;
+  };
+  const offSaldo = await mkOfertaB3({ name: "B3 Item Caro", priceCents: 500000, stockQty: 10 });
+  const offRA = await mkOfertaB3({ name: "B3 Item A", priceCents: 200, stockQty: 10 });
+  const offRE = await mkOfertaB3({ name: "B3 Item Esgotando", priceCents: 100, stockQty: 1 });
+  const offRace = await mkOfertaB3({ name: "B3 Item Corrida", priceCents: 300, stockQty: 1 });
+  const offInativa = await mkOfertaB3({ name: "B4 Item Inativo", priceCents: 300, stockQty: 10 });
+  await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas/${offInativa}`, { cookie: j1.cookie, body: { isActive: false } });
+
+  const saldoB3Antes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaB3Id).b);
+  const estqAAntes = comDb(BANCO, (db) => db.prepare("select stock_qty s from shop_offers where id=?").get(offRA).s);
+  const caixaAntesB3 = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(caixaId).b);
+
+  // saldo insuficiente: offSaldo 500000 > saldo (500)
+  const semSaldo = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: donoAtual,
+    body: { shopId, accountId: contaB3Id, items: [{ offerId: offSaldo, qty: 1 }], requestId: "b3-saldo-1" },
+  });
+  t("B3: saldo insuficiente → 422 saldo_insuficiente", semSaldo.status === 422 && semSaldo.json?.erro === "saldo_insuficiente", `${semSaldo.status} ${JSON.stringify(semSaldo.json)}`);
+
+  // rollback multi-item: 2ª linha estoura estoque → NADA da 1ª linha vale
+  const rollbackB3 = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: donoAtual,
+    body: { shopId, accountId: contaB3Id, items: [{ offerId: offRA, qty: 1 }, { offerId: offRE, qty: 5 }], requestId: "b3-rollback-1" },
+  });
+  t("B3: multi-item c/ estoque estourado → 409", rollbackB3.status === 409 && rollbackB3.json?.erro === "estoque_insuficiente", `${rollbackB3.status} ${JSON.stringify(rollbackB3.json)}`);
+  const posRollbackB3 = comDb(BANCO, (db) => ({
+    estoqA: db.prepare("select stock_qty s from shop_offers where id=?").get(offRA).s,
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaB3Id).b,
+    caixa: db.prepare("select balance_cents b from financial_accounts where id=?").get(caixaId).b,
+    orders: db.prepare("select count(*) c from shop_orders where request_id='b3-rollback-1'").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'b3-rollback-1:%'").get().c,
+    itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='B3 Item A'").get(charOk).c,
+  }));
+  t("B3: rollback → estoque da 1ª linha intacto", posRollbackB3.estoqA === estqAAntes, `antes ${estqAAntes} atual ${posRollbackB3.estoqA}`);
+  t("B3: rollback → saldo/caixa intactos", posRollbackB3.saldo === saldoB3Antes && posRollbackB3.caixa === caixaAntesB3, JSON.stringify(posRollbackB3));
+  t("B3: rollback → zero recibo/transação/item entregue", posRollbackB3.orders === 0 && posRollbackB3.txs === 0 && posRollbackB3.itens === 0, JSON.stringify(posRollbackB3));
+
+  // corrida do ÚLTIMO item: dois requestIds distintos disputam stockQty=1
+  const [rA, rB] = await Promise.all([
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+      cookie: donoAtual,
+      body: { shopId, accountId: contaB3Id, items: [{ offerId: offRace, qty: 1 }], requestId: "b3-race-a" },
+    }),
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+      cookie: donoAtual,
+      body: { shopId, accountId: contaB3Id, items: [{ offerId: offRace, qty: 1 }], requestId: "b3-race-b" },
+    }),
+  ]);
+  const stRaceB3 = [rA.status, rB.status].sort((a, b) => a - b);
+  t("B3: último item → um 201 + um 409", stRaceB3[0] === 201 && stRaceB3[1] === 409, JSON.stringify([rA.status, rB.status, rA.json?.erro, rB.json?.erro]));
+  const posCorridaB3 = comDb(BANCO, (db) => ({
+    estoq: db.prepare("select stock_qty s from shop_offers where id=?").get(offRace).s,
+    orders: db.prepare("select count(*) c from shop_orders where request_id in ('b3-race-a','b3-race-b')").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'b3-race-%'").get().c,
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaB3Id).b,
+    caixa: db.prepare("select balance_cents b from financial_accounts where id=?").get(caixaId).b,
+  }));
+  t("B3: último item → estoque zerado, 1 recibo, 2 pernas de ledger",
+    posCorridaB3.estoq === 0 && posCorridaB3.orders === 1 && posCorridaB3.txs === 2, JSON.stringify(posCorridaB3));
+  t("B3: último item → débito/crédito aplicados exatamente uma vez",
+    posCorridaB3.saldo === saldoB3Antes - 300 && posCorridaB3.caixa === caixaAntesB3 + 300,
+    `saldo ${saldoB3Antes}→${posCorridaB3.saldo} caixa ${caixaAntesB3}→${posCorridaB3.caixa}`);
+
+  // oferta inativa → 409 oferta_indisponivel, zero efeitos
+  const inativaB4 = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: donoAtual,
+    body: { shopId, accountId: contaB3Id, items: [{ offerId: offInativa, qty: 1 }], requestId: "b4-inativa-1" },
+  });
+  t("B4: oferta inativa → 409 oferta_indisponivel", inativaB4.status === 409 && inativaB4.json?.erro === "oferta_indisponivel", `${inativaB4.status} ${JSON.stringify(inativaB4.json)}`);
+
+  sec("B4 — LOJA-B: pilha parcial, preço divergente, item equipado");
+  const saldoVendAntes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
+  const caixaVendAntes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(caixaId).b);
+
+  // pilha de 3 unidades a 15.00 — venda parcial de 1
+  const invPilha = insItemB(charOk, "Relíquia B4", { aquisicao: { unitCents: 1500, qtdOriginal: 3 } }, 3);
+  const vendaParcial = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invPilha, qty: 1, accountId: contaId, requestId: "b4-vend-parcial" },
+  });
+  t("B4: venda parcial qty1 de pilha 3 → 201", vendaParcial.status === 201 && vendaParcial.json?.totalCents === 1500, `${vendaParcial.status} ${JSON.stringify(vendaParcial.json)}`);
+  const posParcial = comDb(BANCO, (db) => ({
+    qtd: db.prepare("select quantity q from inventory_entries where id=?").get(invPilha).q,
+    vendedor: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b,
+    caixa: db.prepare("select balance_cents b from financial_accounts where id=?").get(caixaId).b,
+  }));
+  t("B4: pilha 3→2, vendedor +1500, caixa −1500",
+    posParcial.qtd === 2 && posParcial.vendedor === saldoVendAntes + 1500 && posParcial.caixa === caixaVendAntes - 1500,
+    JSON.stringify(posParcial));
+
+  // quantidade insuficiente: restam 2, pedir 5
+  const qtdInsuf = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invPilha, qty: 5, accountId: contaId, requestId: "b4-vend-qtd" },
+  });
+  t("B4: quantidade insuficiente → 409 quantidade_insuficiente", qtdInsuf.status === 409 && qtdInsuf.json?.erro === "quantidade_insuficiente", `${qtdInsuf.status} ${JSON.stringify(qtdInsuf.json)}`);
+
+  // preço unitário divergente na venda → 409 preco_divergente
+  const precoVend = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invPilha, qty: 1, accountId: contaId, expectedUnitCents: 999, requestId: "b4-vend-preco" },
+  });
+  t("B4: expectedUnitCents divergente → 409 preco_divergente", precoVend.status === 409 && precoVend.json?.erro === "preco_divergente", `${precoVend.status} ${JSON.stringify(precoVend.json)}`);
+
+  // item com unidade EQUIPADA não pode ser vendido (vínculo real via API)
+  const invEquipB = insItemB(charOk, "Medalha B4", { aquisicao: { unitCents: 800, qtdOriginal: 2 } }, 2);
+  const equiparMed = await req(BASE, "POST", `/characters/${charOk}/inventario/${invEquipB}/equipar`, {
+    cookie: donoAtual, body: {},
+  });
+  t("B4: equipar 1 unidade da pilha → 201", equiparMed.status === 201, JSON.stringify(equiparMed.json));
+  const equipIdB = equiparMed.json?.id;
+  const vendaEquip = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invEquipB, qty: 1, accountId: contaId, requestId: "b4-vend-equip" },
+  });
+  t("B4: item com unidade equipada → 409 item_equipado", vendaEquip.status === 409 && vendaEquip.json?.erro === "item_equipado", `${vendaEquip.status} ${JSON.stringify(vendaEquip.json)}`);
+  const qtdAposNegEquip = comDb(BANCO, (db) => db.prepare("select quantity q from inventory_entries where id=?").get(invEquipB)?.q);
+  t("B4: negativa não baixou a pilha", qtdAposNegEquip === 1, String(qtdAposNegEquip));
+
+  // regressão: vínculo equipamento↔inventário visível na leitura legada
+  const eqsB = await req(BASE, "GET", `/characters/${charOk}/equipamentos`, { cookie: donoAtual });
+  const eqMedalha = (eqsB.json?.equipamentos ?? []).find((e) => e.name === "Medalha B4");
+  t("B4: GET /equipamentos mostra vínculo inventoryEntryId",
+    !!eqMedalha && eqMedalha.data?.inventoryEntryId === invEquipB, JSON.stringify(eqMedalha?.data ?? {}));
+
+  // desequipar devolve a unidade → pilha volta a 2 → venda passa
+  const desequiparB = await req(BASE, "POST", `/characters/${charOk}/equipamentos/${equipIdB}/desequipar`, { cookie: donoAtual, body: {} });
+  t("B4: desequipar → unidade devolvida", desequiparB.status === 200 || desequiparB.status === 201, `${desequiparB.status} ${JSON.stringify(desequiparB.json)}`);
+  const qtdAposDes = comDb(BANCO, (db) => db.prepare("select quantity q from inventory_entries where id=?").get(invEquipB)?.q);
+  t("B4: pilha restaurada 1→2", qtdAposDes === 2, String(qtdAposDes));
+  const vendaPosDes = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invEquipB, qty: 1, accountId: contaId, requestId: "b4-vend-posdes" },
+  });
+  t("B4: após desequipar, venda conclui → 201", vendaPosDes.status === 201, `${vendaPosDes.status} ${JSON.stringify(vendaPosDes.json)}`);
+
+  sec("B5 — isolamento: loja cross-campanha, gestor cross-loja, espectador");
+  // gestor da shopId (j1) NÃO gerencia loja2 (mesma campanha, sem vínculo)
+  const loja2B5 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B5 Loja Alheia" },
+  });
+  const shop2B5 = loja2B5.json?.id;
+  t("B5: loja2 criada", loja2B5.status === 201 && !!shop2B5, JSON.stringify(loja2B5.json));
+  const ofShop2B5 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shop2B5}/ofertas`, {
+    cookie: mestre, body: { name: "B5 Oferta Loja2", priceCents: 100 },
+  });
+  t("B5: mestre cria oferta na loja2", ofShop2B5.status === 201, String(ofShop2B5.status));
+  const j1NaLoja2 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shop2B5}/ofertas`, {
+    cookie: j1.cookie, body: { name: "B5 Invasão", priceCents: 1 },
+  });
+  t("B5: gestor da loja1 NÃO gerencia loja2 → 403", j1NaLoja2.status === 403, String(j1NaLoja2.status));
+  const j1ContasLoja2 = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas/${shop2B5}/contas`, { cookie: j1.cookie });
+  t("B5: gestor da loja1 NÃO vê caixa da loja2 → 403", j1ContasLoja2.status === 403, String(j1ContasLoja2.status));
+  const j1PatchLoja2 = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shop2B5}`, {
+    cookie: j1.cookie, body: { isOpen: false },
+  });
+  t("B5: gestor da loja1 NÃO edita loja2 → 403", j1PatchLoja2.status === 403, String(j1PatchLoja2.status));
+
+  // cross-campaign: loja criada na campanha externa (fixture já existente)
+  const lojaCampB = await req(BASE, "POST", `/campaigns/${outraCampId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B5 Loja Campanha Externa" },
+  });
+  const shopCampB = lojaCampB.json?.id;
+  t("B5: loja na campanha externa criada", lojaCampB.status === 201 && !!shopCampB, JSON.stringify(lojaCampB.json));
+  const compraCruzada = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: donoAtual,
+    body: { shopId: shopCampB, accountId: contaId, items: [{ offerId: "of-x", qty: 1 }], requestId: "b5-cruzada-1" },
+  });
+  t("B5: comprar loja de OUTRA campanha → 404 (escopo por campanha)", compraCruzada.status === 404, `${compraCruzada.status} ${JSON.stringify(compraCruzada.json)}`);
+  const contasCampB = await req(BASE, "GET", `/campaigns/${outraCampId}/comercio/lojas/${shopCampB}/contas`, { cookie: j1.cookie });
+  t("B5: j1 sem membership na campanha externa → 403 no caixa", contasCampB.status === 403, String(contasCampB.status));
+  const vitrineCampB = await req(BASE, "GET", `/campaigns/${outraCampId}/comercio/lojas?personagem=${charOk}`, { cookie: j1.cookie });
+  t("B5: vitrine de campanha sem membership → 403 sem dados", vitrineCampB.status === 403 && vitrineCampB.json?.lojas === undefined, `${vitrineCampB.status} ${JSON.stringify(vitrineCampB.json).slice(0, 120)}`);
+  const vitrineA = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: donoAtual });
+  const idsVitrineB5 = (vitrineA.json?.lojas ?? []).map((l) => l.id);
+  t("B5: vitrine da campanha não lista loja externa", !idsVitrineB5.includes(shopCampB), JSON.stringify(idsVitrineB5));
+
+  // papel espectador: gestão de loja negada
+  {
+    const db = abrirDb(BANCO);
+    const uid = crypto.randomUUID();
+    db.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+      .run(uid, "espectador_b5", "Espectador B5", await hashSenha("senha-espectador-123"), Date.now(), Date.now());
+    const mid = crypto.randomUUID();
+    db.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'espectador','ativo',?,?,?)")
+      .run(mid, campId, uid, Date.now(), Date.now(), Date.now());
+    db.close();
+    const cookieEsp = sessao(BANCO, uid);
+    const espContas = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, { cookie: cookieEsp });
+    t("B5: espectador não vê caixa → 403", espContas.status === 403, String(espContas.status));
+    const espOferta = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+      cookie: cookieEsp, body: { name: "B5 Oferta Esp", priceCents: 1 },
+    });
+    t("B5: espectador não gerencia loja → 403", espOferta.status === 403, String(espOferta.status));
+  }
+
+  sec("B6 — realtime: perda de ponto mid-session, envelope só-ids, OOC sem inscrição");
+  // elegível SEM inscrição Internet (só room OOC) não recebe o módulo
+  const sockOoc = await conectarSocket(donoAtual); // j2 é dono do charOk (elegível)
+  const evOoc = [];
+  sockOoc.on("comercio:atualizado", (d) => evOoc.push(d));
+  await emitirCb(sockOoc, "entrar-campanha", campId);
+  const gatilhoB6a = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B6 Loja Sinal A" },
+  });
+  t("B6: gatilho A → 201", gatilhoB6a.status === 201, String(gatilhoB6a.status));
+  await dormir(700);
+  t("B6: elegível sem inscrição Internet não recebe via OOC",
+    evOoc.length === 0, `recebeu ${evOoc.length} evento(s)`);
+
+  // inscrito recebe; envelope contém só IDs
+  const sockIc = await conectarSocket(donoAtual);
+  const evIc = [];
+  sockIc.on("comercio:atualizado", (d) => evIc.push(d));
+  await emitirCb(sockIc, "entrar-campanha", campId);
+  t("B6: elegível inscreve no canal Internet",
+    (await emitirCb(sockIc, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  const gatilhoB6b = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B6 Loja Sinal B" },
+  });
+  t("B6: gatilho B → 201", gatilhoB6b.status === 201, String(gatilhoB6b.status));
+  await dormir(700);
+  t("B6: inscrito recebe comercio:atualizado", evIc.length >= 1, `eventos=${evIc.length}`);
+  const chavesB6 = [...new Set(evIc.flatMap((d) => Object.keys(d ?? {})))];
+  t("B6: eventos de comércio têm envelope só-ids",
+    chavesB6.length > 0 && chavesB6.every((k) => ["shopId", "orderId"].includes(k)), chavesB6.join(","));
+
+  // perda de PONTO no meio da sessão → entrega cortada + reinscrição negada
+  const sockRt = await conectarSocket(j1.cookie);
+  const evRt = [];
+  sockRt.on("comercio:atualizado", (d) => evRt.push(d));
+  await emitirCb(sockRt, "entrar-campanha", campId);
+  t("B6: charRtPerda inscreve → true",
+    (await emitirCb(sockRt, "entrar-internet", { campaignId: campId, characterId: charRtPerda })) === true);
+  const gatilhoB6c = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B6 Loja Sinal C" },
+  });
+  t("B6: gatilho C → 201", gatilhoB6c.status === 201, String(gatilhoB6c.status));
+  await dormir(700);
+  const nRtAntes = evRt.length;
+  t("B6: charRtPerda recebia eventos antes da revogação", nRtAntes > 0, `eventos=${nRtAntes}`);
+  {
+    const db = abrirDb(BANCO);
+    const row = db.prepare("select data from characters where id=?").get(charRtPerda);
+    const dados = JSON.parse(row.data);
+    dados.comp = 0;
+    db.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), charRtPerda);
+    db.close();
+  }
+  const gatilhoB6d = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "B6 Loja Sinal D" },
+  });
+  t("B6: gatilho D pós-perda → 201", gatilhoB6d.status === 201, String(gatilhoB6d.status));
+  await dormir(700);
+  t("B6: entrega cortada após perda de ponto (revalidação por entrega)",
+    evRt.length === nRtAntes, `${nRtAntes} → ${evRt.length}`);
+  t("B6: reinscrição negada após perda de ponto",
+    (await emitirCb(sockRt, "entrar-internet", { campaignId: campId, characterId: charRtPerda })) === false);
+  sockOoc.close(); sockIc.close(); sockRt.close();
+
+  sec("B7 — regressão patrimonial pós-comércio");
+  // item comprado na loja mantém ID, quantidade, procedência e template
+  const invB7 = await req(BASE, "GET", `/characters/${charOk}/inventario`, { cookie: donoAtual });
+  const itemLojaB7 = (invB7.json?.itens ?? []).find((i) => i.name === "Espada Curta");
+  const aqB7 = itemLojaB7?.data?.aquisicao;
+  t("B7: item da loja legível via /inventario com procedência",
+    !!itemLojaB7 && aqB7?.origem === "loja" && aqB7?.shopId === shopId && typeof aqB7?.orderId === "string",
+    JSON.stringify(itemLojaB7?.data ?? {}).slice(0, 200));
+  t("B7: quantidade do item comprado preservada", itemLojaB7?.quantity === 1, String(itemLojaB7?.quantity));
+
+  // veículo criado via API legada permanece intacto após todo o comércio
+  const veicB7 = await req(BASE, "POST", `/characters/${charOk}/veiculos`, {
+    cookie: donoAtual, body: { name: "Carroça B7", kind: "terrestre", plate: "B7-1" },
+  });
+  t("B7: veículo criado via API legada", veicB7.status === 201 || veicB7.status === 200, `${veicB7.status} ${JSON.stringify(veicB7.json)}`);
+  const veicsB7 = await req(BASE, "GET", `/characters/${charOk}/veiculos`, { cookie: donoAtual });
+  const veicOkB7 = (veicsB7.json?.veiculos ?? []).find((v) => v.name === "Carroça B7");
+  t("B7: veículo listado intacto", !!veicOkB7 && veicOkB7.plate === "B7-1", JSON.stringify(veicOkB7?.plate));
+
+  // financeiro legado: contas e histórico coerentes após compras/vendas
+  const finB7 = await req(BASE, "GET", `/characters/${charOk}/financeiro`, { cookie: donoAtual });
+  const contaFinB7 = (finB7.json?.contas ?? []).find((c) => c.id === contaId);
+  t("B7: GET /financeiro mostra saldo pós-comércio", !!contaFinB7, JSON.stringify(finB7.json?.contas?.length));
+  const historicoB7 = finB7.json?.historico ?? [];
+  const temCompraB7 = historicoB7.some((h) => h.shopId === shopId);
+  t("B7: histórico financeiro contém pernas do comércio", temCompraB7, `historico=${historicoB7.length}`);
+
+  // characters.data do comprador não foi tocado pelo comércio
+  const dadosCharB7 = comDb(BANCO, (db) => db.prepare("select data from characters where id=?").get(charOk).data);
+  const dadosObjB7 = JSON.parse(dadosCharB7);
+  t("B7: characters.data do comprador intacto (só ficha)", dadosObjB7.comp === 1 && dadosObjB7.for === 5, JSON.stringify(dadosObjB7).slice(0, 120));
 
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
