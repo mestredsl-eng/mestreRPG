@@ -44,6 +44,10 @@ const entrarCampanha = (s, campId) => new Promise((res) => {
   const to = setTimeout(() => res(false), 5000);
   s.emit("entrar-campanha", campId, (ok) => { clearTimeout(to); res(ok === true); });
 });
+const entrarInternet = (s, campId, charId) => new Promise((res) => {
+  const to = setTimeout(() => res(false), 5000);
+  s.emit("entrar-internet", { campaignId: campId, characterId: charId }, (ok) => { clearTimeout(to); res(ok === true); });
+});
 
 try {
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
@@ -215,33 +219,67 @@ try {
   const cPerda = await comprarDummy(charPerda, j1.cookie, "g289-perda-1");
   t("compra após perda de ponto → 403 (gate por operação, não por sessão)", cPerda.status === 403, String(cPerda.status));
 
-  sec("realtime — gate Internet no canal (contrato aceito #289)");
-  // Dois sockets na room geral campanha:* (canal OOC/Mesa — deve
-  // continuar funcionando para ambos):
-  //   sEleg = j1, dono de personagens elegíveis (charOk etc.)
-  //   sInel = j2, dono APENAS de personagens inelegíveis (comp=0 ou sem
-  //           dispositivo canônico)
-  // Regra aceita (Dono Técnico c7152569806 / matriz 7145266473+7145282774):
-  // comercio:atualizado NÃO pode chegar ao inelegível — nem com envelope
-  // só-ids. Os asserts finais ficam no fim da suíte, após compras E
-  // vendas reais, para cobrir os dois eventos do módulo.
-  const eventosComercioEleg = [];
-  const eventosComercioInel = [];
-  const eventosGeralEleg = [];
-  const eventosGeralInel = [];
-  const sEleg = conectar(BASE, j1.cookie);
-  const sInel = conectar(BASE, j2.cookie);
-  for (const [s, evC, evG] of [
-    [sEleg, eventosComercioEleg, eventosGeralEleg],
-    [sInel, eventosComercioInel, eventosGeralInel],
-  ]) {
-    s.on("comercio:atualizado", (d) => evC.push(d));
-    s.on("campanha:atualizada", (d) => evG.push(d));
+  sec("realtime — canal Internet separado do OOC (#329 @ 52f680f)");
+  // Contrato implementado: sala internet:{campanha}:{personagem} via
+  // `entrar-internet` (autorização servidor-side: sessão, membership,
+  // titularidade dono/mestre e gate cumulativo NO JOIN). O fan-out
+  // revalida o gate de cada personagem antes de CADA entrega — quem
+  // perdeu elegibilidade é removido da sala e não recebe nada.
+  // A sala geral campanha:* (OOC/Mesa) não carrega mais eventos do módulo.
+  //
+  // Sockets:
+  //   sCampJ1/sCampJ2 — só room OOC (regressão do canal geral)
+  //   sICj1 — j1 inscrito em internet:charOk (elegível)
+  //   sICj2 — j2: tenta inscrições negadas e entra em charTplOk (elegível)
+  //   sRtPerda/sRtDev — j1 inscrito em personagens que perderão o gate
+  //     NO MEIO da sessão (ponto e dispositivo) → revogação de entrega
+  const charRtPerda = cenario.novoPersonagem(j1.membershipId, "RT Perde Ponto", { comp: 1 });
+  insItem(charRtPerda, "Notebook", { regra: { kind: "item", key: "notebook" } });
+  const charRtDev = cenario.novoPersonagem(j1.membershipId, "RT Perde Device", { comp: 1 });
+  const nbRtDevId = insItem(charRtDev, "Notebook", { regra: { kind: "item", key: "notebook" } });
+
+  const evs = {};
+  const escutar = (s, tag) => {
+    evs[tag] = { comercio: [], geral: [] };
+    s.on("comercio:atualizado", (d) => evs[tag].comercio.push(d));
+    s.on("campanha:atualizada", (d) => evs[tag].geral.push(d));
+  };
+  const sCampJ1 = conectar(BASE, j1.cookie); escutar(sCampJ1, "campJ1");
+  const sCampJ2 = conectar(BASE, j2.cookie); escutar(sCampJ2, "campJ2");
+  const sICj1 = conectar(BASE, j1.cookie); escutar(sICj1, "icJ1");
+  const sICj2 = conectar(BASE, j2.cookie); escutar(sICj2, "icJ2");
+  const sRtPerda = conectar(BASE, j1.cookie); escutar(sRtPerda, "rtPerda");
+  const sRtDev = conectar(BASE, j1.cookie); escutar(sRtDev, "rtDev");
+
+  t("sockets OOC entram na room campanha:*",
+    (await entrarCampanha(sCampJ1, campId)) === true
+    && (await entrarCampanha(sCampJ2, campId)) === true);
+
+  // inscrições NEGADAS: inelegível, não-dono, template não-device,
+  // template fantasma, sem nada — tudo cb(false), sem entrada na sala
+  const negadas = [
+    ["inelegível sem perícia (charZero)", sICj2, charZero],
+    ["device só por nome (charNameOnly)", sICj2, charNameOnly],
+    ["templateId não-device (charTplEspada)", sICj2, charTplEspada],
+    ["templateId inexistente (charTplFantasma)", sICj2, charTplFantasma],
+    ["sem perícia nem device (charSemNada)", sICj2, charSemNada],
+    ["personagem de outro jogador (charOk via j2)", sICj2, charOk],
+    ["personagem de j2 via j1 (charZero)", sICj1, charZero],
+  ];
+  for (const [rot, sock, charId] of negadas) {
+    const ok = await entrarInternet(sock, campId, charId);
+    t(`entrar-internet NEGADO: ${rot}`, ok === false);
   }
-  const entrouEleg = await entrarCampanha(sEleg, campId);
-  const entrouInel = await entrarCampanha(sInel, campId);
-  t("elegível e inelegível entram na room OOC campanha:*",
-    entrouEleg === true && entrouInel === true, `${entrouEleg}/${entrouInel}`);
+  // positivas: dono elegível entra; j2 entra no SEU personagem elegível
+  // (charTplOk) — prova que o gate é por personagem, não por usuário
+  t("entrar-internet: j1/dono elegível (charOk) → true",
+    (await entrarInternet(sICj1, campId, charOk)) === true);
+  t("entrar-internet: j2 no próprio elegível (charTplOk) → true",
+    (await entrarInternet(sICj2, campId, charTplOk)) === true);
+  t("entrar-internet: j1 em charRtPerda → true",
+    (await entrarInternet(sRtPerda, campId, charRtPerda)) === true);
+  t("entrar-internet: j1 em charRtDev → true",
+    (await entrarInternet(sRtDev, campId, charRtDev)) === true);
   await dormir(300);
 
   sec("LOJA — setup mínimo (loja, gestor, caixa, ofertas, conta)");
@@ -604,37 +642,92 @@ try {
   const dadosObj = JSON.parse(dadosChar);
   t("characters.data do comprador intacto (só ficha)", dadosObj.comp === 1 && dadosObj.for === 5, JSON.stringify(dadosObj).slice(0, 120));
 
-  sec("realtime — verificação final do gate Internet");
+  sec("realtime — entrega, revogação mid-session e regressão OOC");
   await dormir(500); // drena emissões pendentes das compras/vendas já feitas
-  // Regra aceita (matriz 7145266473/7145282774 + ordem c7152569806): o
-  // canal do módulo Internet/comércio não pode entregar
-  // comercio:atualizado a quem é inelegível — nem com envelope só-ids.
-  t("elegível recebe comercio:atualizado (invalidação do módulo)",
-    eventosComercioEleg.length > 0, `eventos=${eventosComercioEleg.length}`);
-  const chavesComercio = [...new Set(eventosComercioEleg.flatMap((d) => Object.keys(d ?? {})))];
-  t("eventos de comércio ao elegível têm envelope só-ids",
-    chavesComercio.every((k) => ["shopId", "orderId"].includes(k)), chavesComercio.join(","));
-  // ASSERT CENTRAL DO GATE: j2 só possui personagens inelegíveis e
-  // segue conectado na room OOC — deve receber ZERO eventos do módulo.
-  // Se este assert falhar, o canal realtime ainda não separa o gate da
-  // Internet (bloqueio P1 aberto na #329 — ver c7152569806).
-  t("inelegível NÃO recebe comercio:atualizado (gate realtime)",
-    eventosComercioInel.length === 0,
-    `inelegível recebeu ${eventosComercioInel.length} evento(s) — canal ainda emite para a room inteira`);
+  // LOJA-A (rtCompra + sondas) e LOJA-B (vendas) já emitiram
+  // comercio:atualizado — a entrega agora é SOMENTE via sala internet:*.
+  t("elegível inscrito (charOk) recebe comercio:atualizado",
+    evs.icJ1.comercio.length > 0, `eventos=${evs.icJ1.comercio.length}`);
+  t("j2 no próprio elegível (charTplOk) recebe comercio:atualizado",
+    evs.icJ2.comercio.length > 0, `eventos=${evs.icJ2.comercio.length}`);
+  const chavesComercio = [...new Set(evs.icJ1.comercio.flatMap((d) => Object.keys(d ?? {})))];
+  t("eventos de comércio têm envelope só-ids",
+    chavesComercio.length > 0 && chavesComercio.every((k) => ["shopId", "orderId"].includes(k)), chavesComercio.join(","));
+  // ASSERT CENTRAL: socket de usuário inelegível permanece na room OOC
+  // campanha:* mas NÃO tem inscrição Internet — deve receber ZERO
+  // eventos do módulo (nem envelope só-ids).
+  t("inelegível só-OOC recebe ZERO comercio:atualizado (gate realtime)",
+    evs.campJ2.comercio.length === 0,
+    `recebeu ${evs.campJ2.comercio.length} evento(s)`);
+  // simétrico: usuário elegível SEM inscrição Internet também não
+  // recebe via campanha:* — prova que o fan-out saiu da sala geral
+  t("elegível sem inscrição Internet não recebe via OOC",
+    evs.campJ1.comercio.length === 0,
+    `recebeu ${evs.campJ1.comercio.length} evento(s) na room geral`);
 
-  // Regressão OOC/Mesa: evento geral da campanha continua chegando aos
-  // DOIS sockets — a correção do gate não pode quebrar o canal geral.
+  // ---- revogação de entrega NO MEIO da sessão ----
+  // sonda de comércio controlada: oferta nova + compra qty1 do charOk.
+  // A criação da oferta também emite comercio:atualizado — drenar ANTES
+  // dos snapshots para não confundir gatilho com evento atrasado.
+  const offSonda = await mkOferta({ name: "Sonda RT 289", priceCents: 100, stockQty: 50 });
+  await dormir(700);
+  const sonda = async (rid) => {
+    const r = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+      cookie: j1.cookie,
+      body: { shopId, accountId: contaId, items: [{ offerId: offSonda, qty: 1 }], requestId: rid },
+    });
+    return r;
+  };
+
+  // perda de PONTO: charRtPerda perde comp no banco (mesma técnica do
+  // charPerda) DEPOIS de já estar inscrito e recebendo eventos
+  const nPerdaAntes = evs.rtPerda.comercio.length;
+  t("charRtPerda recebia eventos antes da revogação", nPerdaAntes > 0, `eventos=${nPerdaAntes}`);
+  {
+    const db = abrirDb(BANCO);
+    const row = db.prepare("select data from characters where id=?").get(charRtPerda);
+    const dados = JSON.parse(row.data);
+    dados.comp = 0;
+    db.prepare("update characters set data=? where id=?").run(JSON.stringify(dados), charRtPerda);
+    db.close();
+  }
+  const sondaPerda = await sonda("rt-289-sonda-perda");
+  t("sonda pós-perda de ponto → 201", sondaPerda.status === 201, `${sondaPerda.status} ${JSON.stringify(sondaPerda.json)}`);
+  await dormir(700);
+  t("entrega cortada após perda de ponto (revalidação por entrega)",
+    evs.rtPerda.comercio.length === nPerdaAntes,
+    `${nPerdaAntes} → ${evs.rtPerda.comercio.length}`);
+  t("reinscrição negada após perda de ponto",
+    (await entrarInternet(sRtPerda, campId, charRtPerda)) === false);
+
+  // perda de DISPOSITIVO: transfere o notebook de charRtDev para charDest
+  const nDevAntes = evs.rtDev.comercio.length;
+  t("charRtDev recebia eventos antes da revogação", nDevAntes > 0, `eventos=${nDevAntes}`);
+  const transfDev = await req(BASE, "POST", `/characters/${charRtDev}/inventario/${nbRtDevId}/transferir`, {
+    cookie: mestre, body: { destinoCharacterId: charDest, ignorarPrerequisitos: true },
+  });
+  t("transferência do notebook (revogação de device) → 200/201",
+    transfDev.status === 200 || transfDev.status === 201, `${transfDev.status} ${JSON.stringify(transfDev.json)}`);
+  const sondaDev = await sonda("rt-289-sonda-dev");
+  t("sonda pós-perda de device → 201", sondaDev.status === 201, `${sondaDev.status} ${JSON.stringify(sondaDev.json)}`);
+  await dormir(700);
+  t("entrega cortada após perda de dispositivo (revalidação por entrega)",
+    evs.rtDev.comercio.length === nDevAntes,
+    `${nDevAntes} → ${evs.rtDev.comercio.length}`);
+  t("reinscrição negada após perda de dispositivo",
+    (await entrarInternet(sRtDev, campId, charRtDev)) === false);
+
+  // ---- regressão OOC/Mesa: canal geral intacto para os dois lados ----
+  const g1Antes = evs.campJ1.geral.length, g2Antes = evs.campJ2.geral.length;
   const patchCamp = await req(BASE, "PATCH", `/campaigns/${campId}`, {
     cookie: mestre, body: { description: "regressão canal OOC 289" },
   });
   t("PATCH campanha (gatilho de evento geral) → 200", patchCamp.status === 200, String(patchCamp.status));
   await dormir(600);
-  t("canal geral preservado: elegível recebe campanha:atualizada",
-    eventosGeralEleg.length > 0, `eventos=${eventosGeralEleg.length}`);
-  t("canal geral preservado: inelegível recebe campanha:atualizada",
-    eventosGeralInel.length > 0, `eventos=${eventosGeralInel.length}`);
-  console.log("  .. BLOCKED: 'não conseguir inscrever-se no canal Internet/comércio' e 'revogação de entrega após perda de ponto/dispositivo durante a sessão' dependem do nome/contrato do canal dedicado que o PAI vai criar na #329 (ordem c7152569806) — asserts serão promovidos quando o contrato existir.");
-
+  t("canal OOC preservado: elegível recebe campanha:atualizada",
+    evs.campJ1.geral.length > g1Antes, `${g1Antes} → ${evs.campJ1.geral.length}`);
+  t("canal OOC preservado: inelegível recebe campanha:atualizada",
+    evs.campJ2.geral.length > g2Antes, `${g2Antes} → ${evs.campJ2.geral.length}`);
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;
