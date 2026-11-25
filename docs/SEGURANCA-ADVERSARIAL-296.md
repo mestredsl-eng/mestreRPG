@@ -52,6 +52,8 @@ Job `Servidor` (sem navegador), `.github/workflows/ci.yml`:
 | `teste-convite-cadastro.mjs` | 32 | convite, isAdmin forjado, corrida de aceite |
 | `teste-proxy-acesso.mjs` | 18 | trust proxy / headers |
 | `teste-arquivos-ci.mjs` | 27 | anexos adversariais |
+| `teste-mesa-seguranca.mjs` | ~18 | papéis e privacidade dentro da mesa |
+| `teste-mesa-virtual.mjs` | — | idempotência, turnos, reconexão socket |
 | `auth-cookie.test.ts` (tsx) | 4 testes | parser de cookie de sessão |
 
 Job `Navegador` (Playwright):
@@ -59,8 +61,7 @@ Job `Navegador` (Playwright):
 | Suíte | Verificações | Frente |
 |---|---|---|
 | `teste-mesa-d10-e2e.mjs` | 29 | D10 canônico, requestId, OOC×diegético, reconexão |
-| `homologacao-mesa-virtual` / `teste-mesa-virtual.mjs` | — | idempotência, turnos, reconexão socket |
-| `teste-mesa-seguranca.mjs` | ~18 | papéis e privacidade dentro da mesa |
+| `homologacao-mesa-virtual.mjs` | — | homologação Playwright da mesa virtual |
 
 Contagens marcadas com `~` são pontos de verificação estáticos no código;
 as demais foram medidas em execução local/CI. Suítes de apoio não

@@ -238,6 +238,65 @@ try {
   const codigos = new Set((convitesB.json?.convites ?? []).map((x) => x.id));
   t("lista de convites íntegra (ids únicos)", codigos.size === (convitesB.json?.convites ?? []).length);
 
+  sec("S7b — modelos/sheet-templates por status de membership (regressão #256)");
+  // Membership pendente/bloqueada com papel mestre NÃO pode ler estrutura
+  // não publicada nem listar rascunhos — apenas ativo+mestre tem visão
+  // completa. Portado de teste-membership-bloqueado-modelos.mjs (#256).
+  const invMod = await req(BASE, "POST", `/campaigns/${campId}/invitations`, {
+    cookie: cookieMestre, body: { role: "jogador", maxUses: 1, requiresApproval: false },
+  });
+  const uMod = await novoUsuario("ciclo_modelos_status");
+  const aceitouMod = await req(BASE, "POST", `/convites/${invMod.json.convite.code}/aceitar`, { cookie: uMod.cookie });
+  t("membro entra para a regressão de modelos", aceitouMod.status === 200 || aceitouMod.status === 201, `status=${aceitouMod.status}`);
+  const mMod = membershipDe(campId, uMod.id);
+  const promoveMod = await req(BASE, "PATCH", `/campaigns/${campId}/members/${mMod.id}`, {
+    cookie: cookieMestre, body: { role: "mestre" },
+  });
+  t("membro promovido a mestre ativo", promoveMod.status === 200, `status=${promoveMod.status}`);
+
+  const prefixoModelos = `/campaigns/${campId}/sheet-templates`;
+  const criadoModelo = await req(BASE, "POST", prefixoModelos, {
+    cookie: cookieMestre, body: { name: "Modelo confidencial ciclo" },
+  });
+  const templateIdMod = criadoModelo.json?.modelo?.id;
+  t("mestre cria modelo com rascunho", criadoModelo.status === 201 && !!templateIdMod, JSON.stringify(criadoModelo.json));
+
+  const detalheAtivoMod = await req(BASE, "GET", `${prefixoModelos}/${templateIdMod}`, { cookie: uMod.cookie });
+  const versaoRascunhoAtiva = detalheAtivoMod.json?.versoes?.find((v) => v.rascunho === true);
+  t("mestre ativo lê estrutura do próprio rascunho (controle positivo)",
+    detalheAtivoMod.status === 200 && !!versaoRascunhoAtiva?.estrutura, `status=${detalheAtivoMod.status}`);
+
+  // pendente (papel histórico mestre) vê só o que um jogador vê: modelo de
+  // rascunho some da lista e a estrutura não é devolvida no detalhe
+  const pendenteMod = await req(BASE, "PATCH", `/campaigns/${campId}/members/${mMod.id}`, {
+    cookie: cookieMestre, body: { status: "pendente" },
+  });
+  t("mestre passa a pendente", pendenteMod.status === 200, `status=${pendenteMod.status}`);
+  const listaPendenteMod = await req(BASE, "GET", prefixoModelos, { cookie: uMod.cookie });
+  t("membership pendente não lista modelo de rascunho",
+    listaPendenteMod.status === 200 && !(listaPendenteMod.json?.modelos ?? []).some((m) => m.id === templateIdMod),
+    `status=${listaPendenteMod.status}`);
+  const detalhePendenteMod = await req(BASE, "GET", `${prefixoModelos}/${templateIdMod}`, { cookie: uMod.cookie });
+  const rascunhoPendenteMod = detalhePendenteMod.json?.versoes?.find((v) => v.rascunho === true);
+  t("membership pendente não recebe estrutura do rascunho",
+    detalhePendenteMod.status === 200 && !!rascunhoPendenteMod && !("estrutura" in rascunhoPendenteMod),
+    `status=${detalhePendenteMod.status}`);
+
+  // bloqueado corta também as leituras, mesmo com papel histórico mestre
+  const bloqueiaMod = await req(BASE, "PATCH", `/campaigns/${campId}/members/${mMod.id}`, {
+    cookie: cookieMestre, body: { status: "bloqueado" },
+  });
+  t("membership mestre bloqueada", bloqueiaMod.status === 200, `status=${bloqueiaMod.status}`);
+  const listaBloqueadaMod = await req(BASE, "GET", prefixoModelos, { cookie: uMod.cookie });
+  t("membership bloqueada não lista modelos (403)", listaBloqueadaMod.status === 403, `status=${listaBloqueadaMod.status}`);
+  const detalheBloqueadoMod = await req(BASE, "GET", `${prefixoModelos}/${templateIdMod}`, { cookie: uMod.cookie });
+  t("membership bloqueada não lê detalhe/versões (403)", detalheBloqueadoMod.status === 403, `status=${detalheBloqueadoMod.status}`);
+
+  // restaura o fixture: membro volta a jogador ativo
+  await req(BASE, "PATCH", `/campaigns/${campId}/members/${mMod.id}`, {
+    cookie: cookieMestre, body: { role: "jogador", status: "ativo" },
+  });
+
   sec("S8 — campanha vazia, com membros e encerrada");
   // campanha "vazia" = só mestre (camp2 tem uB; criar uma terceira sem membros)
   const campVazia = await req(BASE, "POST", "/campaigns", { cookie: cookieMestre, body: { name: "Vazia" } });
