@@ -9,7 +9,7 @@ Obrigado pelo interesse no Mestre RPG. Este documento explica como relatar probl
 3. Procure Issues e Pull Requests existentes antes de abrir um novo registro.
 4. Para mudanças grandes, decisões de arquitetura, alterações de banco ou novas áreas funcionais, converse primeiro em uma Issue. Isso evita trabalho duplicado e decisões incompatíveis.
 
-O repositório é público, mas atualmente não contém um arquivo \`LICENSE\`. Portanto, não presuma que o código, as artes ou outros materiais estejam liberados para reutilização, redistribuição ou uso comercial. Até que o responsável publique uma licença, consulte-o antes de reutilizar materiais fora deste repositório. Envie somente contribuições próprias ou materiais para os quais você tenha autorização.
+O software-fonte deste repositório é distribuído sob a licença [MIT](LICENSE). Ela permite uso, cópia, modificação, distribuição, sublicenciamento e comercialização, desde que o aviso de copyright e o texto da licença sejam preservados. Essa permissão não concede direitos sobre marcas, nomes, logotipos, personagens, artes ou materiais de terceiros que estejam identificados como pertencentes a seus respectivos titulares. Antes de enviar uma contribuição, confirme que você é autor do material ou possui autorização para licenciá-lo sob MIT. Ao enviar uma contribuição de software, você concorda que ela será disponibilizada sob a mesma licença.
 
 ## Fluxo de trabalho
 
