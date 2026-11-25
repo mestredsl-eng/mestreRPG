@@ -40,6 +40,7 @@ const ERRO_LABEL: Record<string, string> = {
   quantidade_insuficiente: "Quantidade indisponível no inventário.",
   item_equipado: "Item equipado não pode ser vendido.",
   caixa_insuficiente: "O caixa da loja não tem fundos suficientes.",
+  template_indisponivel: "O vínculo do item com o catálogo não é mais válido — recarregue a vitrine.",
 };
 
 type FaseGate = "carregando" | "indisponivel" | "negado" | "elegivel";
