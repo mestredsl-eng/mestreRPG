@@ -289,6 +289,7 @@ jobs:
           set -euo pipefail
           arquivos=(
             teste-comercio-lojas.mjs
+            teste-comercio-289.mjs
           )
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
