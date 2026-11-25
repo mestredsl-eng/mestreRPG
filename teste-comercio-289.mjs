@@ -215,16 +215,33 @@ try {
   const cPerda = await comprarDummy(charPerda, j1.cookie, "g289-perda-1");
   t("compra após perda de ponto → 403 (gate por operação, não por sessão)", cPerda.status === 403, String(cPerda.status));
 
-  sec("realtime — room campanha:* e eventos comercio:*");
-  // O módulo emite comercio:atualizado via emitirCampanha para a room
-  // inteira da campanha. Um membro inelegível para a Internet continua
-  // na room (membership ≠ elegibilidade de módulo). Prova-se que o
-  // payload não carrega dados sensíveis — somente ids de loja/pedido.
-  const eventosComercio = [];
+  sec("realtime — gate Internet no canal (contrato aceito #289)");
+  // Dois sockets na room geral campanha:* (canal OOC/Mesa — deve
+  // continuar funcionando para ambos):
+  //   sEleg = j1, dono de personagens elegíveis (charOk etc.)
+  //   sInel = j2, dono APENAS de personagens inelegíveis (comp=0 ou sem
+  //           dispositivo canônico)
+  // Regra aceita (Dono Técnico c7152569806 / matriz 7145266473+7145282774):
+  // comercio:atualizado NÃO pode chegar ao inelegível — nem com envelope
+  // só-ids. Os asserts finais ficam no fim da suíte, após compras E
+  // vendas reais, para cobrir os dois eventos do módulo.
+  const eventosComercioEleg = [];
+  const eventosComercioInel = [];
+  const eventosGeralEleg = [];
+  const eventosGeralInel = [];
+  const sEleg = conectar(BASE, j1.cookie);
   const sInel = conectar(BASE, j2.cookie);
-  const entrou = await entrarCampanha(sInel, campId);
-  t("socket de jogador inelegível entra na room campanha:*", entrou === true);
-  sInel.on("comercio:atualizado", (d) => eventosComercio.push(d));
+  for (const [s, evC, evG] of [
+    [sEleg, eventosComercioEleg, eventosGeralEleg],
+    [sInel, eventosComercioInel, eventosGeralInel],
+  ]) {
+    s.on("comercio:atualizado", (d) => evC.push(d));
+    s.on("campanha:atualizada", (d) => evG.push(d));
+  }
+  const entrouEleg = await entrarCampanha(sEleg, campId);
+  const entrouInel = await entrarCampanha(sInel, campId);
+  t("elegível e inelegível entram na room OOC campanha:*",
+    entrouEleg === true && entrouInel === true, `${entrouEleg}/${entrouInel}`);
   await dormir(300);
 
   sec("LOJA — setup mínimo (loja, gestor, caixa, ofertas, conta)");
@@ -257,27 +274,15 @@ try {
   const contaId = conta.json?.id;
   t("conta do comprador", conta.status === 201 && !!contaId, JSON.stringify(conta.json));
 
-  // dispara um evento real de comércio para observar o que chega ao socket inelegível
+  // dispara um evento real de comércio (LOJA-A) — a verificação dos
+  // eventos recebidos por cada socket acontece no fim da suíte, após
+  // também uma venda LOJA-B, para cobrir os dois emissores do módulo.
   const rtCompra = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
     cookie: j1.cookie,
     body: { shopId, accountId: contaId, items: [{ offerId: offA, qty: 1 }], requestId: "rt-289-001" },
   });
   t("compra válida p/ gatilho realtime → 201", rtCompra.status === 201, JSON.stringify(rtCompra.json));
   await dormir(800);
-  // Envelope exigido (revisão do proprietário na PR #336): se o módulo
-  // usa realtime apenas como invalidação/refresh, o evento PODE chegar
-  // ao inelegível — mas somente com ids. O assert exige ENTREGA (>0) E
-  // envelope restrito; zero eventos não passa mais como "vazio".
-  // BLOCKED: a semântica completa do gate realtime (negar inscrição/
-  // leitura/mutação inelegível no canal do módulo) segue pendente de
-  // decisão do proprietário — ver #289. Este teste prova apenas o
-  // envelope de invalidação hoje implementado via room campanha:*.
-  const chavesVazadas = eventosComercio.flatMap((d) => Object.keys(d ?? {}))
-    .filter((k) => !["shopId", "orderId"].includes(k));
-  t("realtime: invalidação entregue ao inelegível com envelope só-ids",
-    eventosComercio.length > 0 && chavesVazadas.length === 0,
-    `eventos=${eventosComercio.length} chaves=${[...new Set(eventosComercio.flatMap((d) => Object.keys(d ?? {})))]}`);
-  console.log(`  .. realtime: ${eventosComercio.length} evento(s) comercio:atualizado; payload só ids. BLOCKED: bloqueio de inscrição/leitura inelegível no canal do módulo pendente de decisão (#289)`);
 
   sec("LOJA-A — saldo insuficiente e rollback multi-item");
   const saldoAntes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
@@ -598,6 +603,37 @@ try {
   const dadosChar = comDb(BANCO, (db) => db.prepare("select data from characters where id=?").get(charOk).data);
   const dadosObj = JSON.parse(dadosChar);
   t("characters.data do comprador intacto (só ficha)", dadosObj.comp === 1 && dadosObj.for === 5, JSON.stringify(dadosObj).slice(0, 120));
+
+  sec("realtime — verificação final do gate Internet");
+  await dormir(500); // drena emissões pendentes das compras/vendas já feitas
+  // Regra aceita (matriz 7145266473/7145282774 + ordem c7152569806): o
+  // canal do módulo Internet/comércio não pode entregar
+  // comercio:atualizado a quem é inelegível — nem com envelope só-ids.
+  t("elegível recebe comercio:atualizado (invalidação do módulo)",
+    eventosComercioEleg.length > 0, `eventos=${eventosComercioEleg.length}`);
+  const chavesComercio = [...new Set(eventosComercioEleg.flatMap((d) => Object.keys(d ?? {})))];
+  t("eventos de comércio ao elegível têm envelope só-ids",
+    chavesComercio.every((k) => ["shopId", "orderId"].includes(k)), chavesComercio.join(","));
+  // ASSERT CENTRAL DO GATE: j2 só possui personagens inelegíveis e
+  // segue conectado na room OOC — deve receber ZERO eventos do módulo.
+  // Se este assert falhar, o canal realtime ainda não separa o gate da
+  // Internet (bloqueio P1 aberto na #329 — ver c7152569806).
+  t("inelegível NÃO recebe comercio:atualizado (gate realtime)",
+    eventosComercioInel.length === 0,
+    `inelegível recebeu ${eventosComercioInel.length} evento(s) — canal ainda emite para a room inteira`);
+
+  // Regressão OOC/Mesa: evento geral da campanha continua chegando aos
+  // DOIS sockets — a correção do gate não pode quebrar o canal geral.
+  const patchCamp = await req(BASE, "PATCH", `/campaigns/${campId}`, {
+    cookie: mestre, body: { description: "regressão canal OOC 289" },
+  });
+  t("PATCH campanha (gatilho de evento geral) → 200", patchCamp.status === 200, String(patchCamp.status));
+  await dormir(600);
+  t("canal geral preservado: elegível recebe campanha:atualizada",
+    eventosGeralEleg.length > 0, `eventos=${eventosGeralEleg.length}`);
+  t("canal geral preservado: inelegível recebe campanha:atualizada",
+    eventosGeralInel.length > 0, `eventos=${eventosGeralInel.length}`);
+  console.log("  .. BLOCKED: 'não conseguir inscrever-se no canal Internet/comércio' e 'revogação de entrega após perda de ponto/dispositivo durante a sessão' dependem do nome/contrato do canal dedicado que o PAI vai criar na #329 (ordem c7152569806) — asserts serão promovidos quando o contrato existir.");
 
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
