@@ -408,11 +408,13 @@ function VitrineLoja({ loja, characterId, contas, aoVoltar, aoConcluido, aoErro 
       </div>
       {lojaAtual.description && <p className="meta">{lojaAtual.description}</p>}
       {!lojaAtual.isOpen && <p className="meta">Loja fechada — é possível consultar as ofertas, mas não comprar.</p>}
-      {lojaAtual.ofertas.length === 0 ? (
+      {/* Gestores/mestres recebem ofertas inativas na resposta (p/ gestão);
+          a vitrine exibe só as publicadas — inativas ficam na Gestão. */}
+      {lojaAtual.ofertas.filter((o) => o.isActive).length === 0 ? (
         <p className="meta">Nenhuma oferta ativa nesta loja.</p>
       ) : (
         <ul className="lista-lojas">
-          {lojaAtual.ofertas.map((o) => (
+          {lojaAtual.ofertas.filter((o) => o.isActive).map((o) => (
             <li key={o.id} className="cartao cartao-campanha">
               <div className="linha-entre">
                 <strong>{o.name}</strong>
