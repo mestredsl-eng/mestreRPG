@@ -551,7 +551,7 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
     key: string; name: string; category: string | null;
     descricao?: string;
     niveis?: { descricao?: string; custo?: number }[];
-    custoPontos?: number; maximo?: number;
+    custoPontos?: number; maximo?: number; exigeTeste?: boolean;
   }[]>();
   for (const el of regras.elementos.values()) {
     if (el.definition.disponivel === false) continue;
@@ -564,12 +564,17 @@ regrasRouter.get("/vinculaveis", requirePapel("mestre", "jogador"), async (req, 
       niveis: el.definition.niveis?.length ? el.definition.niveis : undefined,
       custoPontos: el.definition.custoPontos,
       maximo: el.definition.maximo,
+      exigeTeste: el.kind === "poder" && el.definition.exigeTeste === true ? true : undefined,
     });
     porKind.set(el.kind, lista);
   }
-  const out: Record<string, { key: string; name: string; category: string | null; descricao?: string }[]> = {};
+  const out: Record<string, { key: string; name: string; category: string | null; descricao?: string; exigeTeste?: boolean }[]> = {};
   for (const [k, v] of porKind) out[k] = v.sort((a, b) => a.name.localeCompare(b.name));
-  res.json({ kinds: TIPOS_REGRA, elementos: out });
+  const metadadosPoderes = (regras.porKind.get("poder") ?? []).map((el) => ({
+    key: el.key,
+    exigeTeste: el.definition.exigeTeste === true,
+  }));
+  res.json({ kinds: TIPOS_REGRA, elementos: out, metadadosPoderes });
 });
 
 

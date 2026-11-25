@@ -1,8 +1,9 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type MetadadoPoder, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
 import PainelSangue from "./PainelSangue";
+import { getSocket } from "./socket";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -17,6 +18,8 @@ interface Props {
   aoMudar?: (campoId: string, valor: unknown) => void;
   /** Biblioteca de regras da campanha (Etapa 5): campos com regraKind usam estas opções. */
   biblioteca?: Record<string, ElementoVinculavel[]>;
+  /** Regra D10 por Poder, incluindo entradas inativas na biblioteca. */
+  metadadosPoderes?: MetadadoPoder[];
   /** Personagem dono da ficha — habilita a prévia de pontos em tempo real (sem salvar). */
   personagemId?: string;
   /** Saldo de pontos já calculado pelo servidor para os dados atuais. */
@@ -31,6 +34,12 @@ interface Props {
    *  sem true explícito o painel nem é montado — evita GET /sangue que
    *  o servidor negaria com 403 (ex.: jogador lendo NPC público). */
   podeLerSangue?: boolean;
+  /** Dono ativo da ficha: pode ativar um Poder sem rolagem. O D10 continua cobrando no fluxo de teste. */
+  podeAtivarPoder?: boolean;
+  /** Sincroniza a versão atual da ficha após a confirmação de uma ativação de Poder. */
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  /** Bloqueia a entrada no modo de edição enquanto a ativação sincroniza a versão da ficha. */
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
   /** Campanha do personagem — usada só para resolver o vínculo de
    *  Sangue (config.sangue.campoCapacidadeId) sem fetch extra de
    *  personagem. */
@@ -50,7 +59,7 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, campaignId, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, metadadosPoderes = [], personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
   // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
@@ -168,6 +177,46 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
 
   const faltaDefeito = !!poderesCfg?.exigirDefeito && poderesSelecionados.size > 0 && defeitosSelecionados.size === 0;
 
+  // Ativação narrativa: reutiliza os Poderes que já estão selecionados
+  // nesta ficha. Não cria seletor paralelo e não interfere no D10.
+  const acoesPoderCampo = (campo: CampoDef) => {
+    if (!personagemId || !podeAtivarPoder || simulacao || !ehPoder(campo)) return null;
+    // "Usado em testes" pertence ao CAMPO e não distingue os Poderes
+    // dentro de uma lista. A distinção de uso é por elemento da biblioteca:
+    // somente o Poder marcado "Exige teste D10" fica sem ação narrativa.
+    // Metadado ausente em fichas/campanhas antigas preserva o uso narrativo.
+    const regra = campo.regra;
+    let chaves = chavesSelecionadas(campo);
+    // Campos numéricos vinculados a um Poder representam posse por nível.
+    // Só oferece ação quando o nível existente na ficha é > 0.
+    if (regra?.kind === "poder" && regra.key) {
+      const bruto = valores[campo.id];
+      const nivel = typeof bruto === "number" ? bruto : typeof bruto === "string" ? Number(bruto) : 0;
+      chaves = Number.isFinite(nivel) && nivel > 0 ? [regra.key] : [];
+    }
+    chaves = chaves.filter((key) =>
+      metadadosPoderes.find((e) => e.key === key)?.exigeTeste !== true
+      && (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true
+    );
+    if (chaves.length === 0) return null;
+    return (
+      <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
+        {chaves.map((key) => {
+          const nome = (biblioteca?.poder ?? []).find((e) => e.key === key)?.name ?? key;
+          return <AtivacaoPoderNarrativa
+            key={key}
+            characterId={personagemId}
+            poderKey={key}
+            nome={nome}
+            aoAtualizarPersonagem={aoAtualizarPersonagem}
+            aoMudarAtivacaoPoder={aoMudarAtivacaoPoder}
+          />;
+        })}
+        <span className="meta">Ativação sem rolagem. Quando o Poder exigir teste, use o D10 na Mesa — o custo será cobrado por lá.</span>
+      </div>
+    );
+  };
+
   /**
    * Alterna um poder respeitando o limite configurado.
    * limite=1 → selecionar outro substitui o anterior; limite=N → bloqueia
@@ -255,6 +304,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               {secao.campos.map((campo, ci) => (
                 <Fragment key={campo.id}>
                   <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                  {acoesPoderCampo(campo)}
                   {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
                     <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
                   )}
@@ -268,6 +318,7 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                       {sub.campos.map((campo) => (
                         <Fragment key={campo.id}>
                           <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                          {acoesPoderCampo(campo)}
                           {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
                             <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
                           )}
@@ -299,6 +350,165 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
         <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
       )}
     </div>
+  );
+}
+
+/** ID v4 também funciona em HTTP por IP: randomUUID pode faltar fora de contexto seguro,
+ * mas getRandomValues continua disponível nesses navegadores. */
+const UUID_SANGUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function criarRequestIdSangue(): string {
+  const fonte = window.crypto;
+  if (typeof fonte.randomUUID === "function") return fonte.randomUUID();
+  if (typeof fonte.getRandomValues !== "function") {
+    throw new Error("Este navegador não oferece geração segura de identificadores.");
+  }
+  const bytes = fonte.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
+}
+
+function chaveRequestIdSangue(characterId: string, poderKey: string): string {
+  return `mestre-rpg:sangue:ativacao-pendente:${encodeURIComponent(characterId)}:${encodeURIComponent(poderKey)}`;
+}
+
+/** Recupera a mesma intenção após desmontar/reabrir a ficha ou recarregar a página. */
+function obterRequestIdSangue(chave: string): string {
+  const salvo = window.localStorage.getItem(chave);
+  if (salvo && UUID_SANGUE_RE.test(salvo)) return salvo;
+  const novo = criarRequestIdSangue();
+  window.localStorage.setItem(chave, novo);
+  return novo;
+}
+
+function limparRequestIdSangue(chave: string, requestId: string): void {
+  if (window.localStorage.getItem(chave) === requestId) {
+    window.localStorage.removeItem(chave);
+  }
+}
+
+/** Ativa um Poder já escolhido na ficha, sem abrir um segundo seletor.
+ * A intenção fica persistida até um ACK conclusivo; reabrir a ficha
+ * reenvia o mesmo requestId e o ledger impede o segundo débito.
+ * O uso com teste continua passando exclusivamente pelo D10 da Mesa. */
+function AtivacaoPoderNarrativa({ characterId, poderKey, nome, aoAtualizarPersonagem, aoMudarAtivacaoPoder }: {
+  characterId: string;
+  poderKey: string;
+  nome: string;
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const requestId = useRef<string | null>(null);
+  const emAndamento = useRef(false);
+  const storageKey = chaveRequestIdSangue(characterId, poderKey);
+
+  const ativar = () => {
+    if (emAndamento.current) return;
+    emAndamento.current = true;
+    setOcupado(true);
+    aoMudarAtivacaoPoder?.(true);
+    setMensagem(null);
+
+    let id: string;
+    try {
+      // Persistir ANTES de emitir: se o servidor confirmar o débito e a
+      // resposta se perder, o ID sobrevive ao fechamento/reabertura da ficha.
+      id = requestId.current ?? obterRequestIdSangue(storageKey);
+      requestId.current = id;
+    } catch {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+      setMensagem({ tipo: "erro", texto: "Não foi possível guardar a tentativa com segurança. O Poder não foi enviado; verifique o armazenamento do navegador." });
+      return;
+    }
+
+    let resolvido = false;
+    const liberar = () => {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+    };
+    const finalizarTimeout = window.setTimeout(() => {
+      if (resolvido) return;
+      resolvido = true;
+      liberar();
+      // Não limpar requestId: o servidor pode ter gravado o débito
+      // antes de a confirmação se perder. O próximo clique é replay.
+      setMensagem({ tipo: "erro", texto: "Sem confirmação do servidor. Clique novamente para reenviar a mesma tentativa, sem cobrar duas vezes." });
+    }, 15000);
+
+    try {
+      getSocket().emit("sangue:ativar", {
+        characterId,
+        poderKey,
+        requestId: id,
+      }, (ack: { ok?: boolean; erro?: string; codigo?: string; estado?: { saldo?: number } } | undefined) => {
+        if (resolvido) return;
+        resolvido = true;
+        window.clearTimeout(finalizarTimeout);
+
+        if (ack?.ok === true) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // O request continua idempotente no servidor; manter o valor
+            // salvo é mais seguro do que criar uma intenção nova por engano.
+          }
+          requestId.current = null;
+          const saldo = ack.estado?.saldo;
+          void (async () => {
+            try {
+              await aoAtualizarPersonagem?.();
+              setMensagem({ tipo: "ok", texto: saldo === undefined ? `${nome} ativado.` : `${nome} ativado · ${saldo} Pontos de Sangue restantes.` });
+            } catch {
+              setMensagem({ tipo: "erro", texto: `${nome} foi ativado, mas a ficha não pôde ser atualizada. Reabra a ficha antes de editar.` });
+            } finally {
+              liberar();
+            }
+          })();
+          return;
+        }
+
+        if (ack?.ok === false) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // Sem ACK positivo, manter o mesmo ID continua sendo seguro.
+          }
+          requestId.current = null;
+          setMensagem({ tipo: "erro", texto: ack.erro ?? "Não foi possível ativar este Poder." });
+          liberar();
+          return;
+        }
+
+        // ACK ausente/indefinido é ambíguo: não descartar a intenção.
+        setMensagem({ tipo: "erro", texto: "O servidor não confirmou a tentativa. Clique novamente para consultar o mesmo uso sem novo débito." });
+        liberar();
+      });
+    } catch {
+      window.clearTimeout(finalizarTimeout);
+      resolvido = true;
+      liberar();
+      // Mantém requestId persistido; o emit pode ter chegado ao servidor.
+      setMensagem({ tipo: "erro", texto: "Falha de conexão. Tente novamente para reenviar a mesma tentativa." });
+    }
+  };
+
+  return (
+    <span className="ficha-poder-acao">
+      <button type="button" className="mini" disabled={ocupado} onClick={ativar} aria-label={`Usar ${nome} sem rolagem`}>
+        {ocupado ? `Usando ${nome}…` : `Usar ${nome}`}
+      </button>
+      {mensagem && (
+        <small className={mensagem.tipo === "ok" ? "meta" : "ficha-aviso"} role={mensagem.tipo === "ok" ? "status" : "alert"}>
+          {mensagem.texto}
+        </small>
+      )}
+    </span>
   );
 }
 

@@ -802,6 +802,8 @@ export const definicaoElementoSchema = z.object({
   fuel: econString(160),
   capacity: econString(160),
   veiculo: z.preprocess(sanitizarVeiculo, veiculoSchema.optional()),
+  // Ausente significa regra legada: o Poder pode ser usado narrativamente.
+  exigeTeste: z.boolean().optional(),
   disponivel: z.boolean().default(true),
   ordem: z.preprocess((v) => (v === null ? undefined : v), z.number().default(0)),
 });
