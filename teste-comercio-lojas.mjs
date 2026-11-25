@@ -185,6 +185,41 @@ try {
   }));
   t("checkout bloqueia template externo", compraTemplateExterno.status === 409 && compraTemplateExterno.json?.erro === "template_indisponivel", JSON.stringify(compraTemplateExterno.json));
   t("bloqueio não altera saldo/caixa/estoque/inventário/ledger/recibo", JSON.stringify(antesCross) === JSON.stringify(depoisCross), JSON.stringify({ antesCross, depoisCross }));
+  
+  // A origem também precisa ser validada: um inventory_entry legado/adulterado
+  // não pode criar oferta LOJA-B vinculada ao template de outra campanha.
+  const invTemplateExterno = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invTemplateExterno, charOk, "Item com Template Externo", 1,
+        JSON.stringify({ templateId: tplExternoId, aquisicao: { unitCents: 500, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const antesVendaCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invTemplateExterno)?.quantity,
+    ofertas: db.prepare("select count(*) c from shop_offers where shop_id=? and item_template_id=?").get(shopId, tplExternoId).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-item-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-item-template-001'").get().c,
+  }));
+  const vendaTemplateExterno = await req(BASE, "POST", "/characters/" + charOk + "/comercio/vender", {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invTemplateExterno, qty: 1, accountId: contaId, expectedUnitCents: 500, requestId: "cross-campaign-item-template-001" },
+  });
+  const depoisVendaCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invTemplateExterno)?.quantity,
+    ofertas: db.prepare("select count(*) c from shop_offers where shop_id=? and item_template_id=?").get(shopId, tplExternoId).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-item-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-item-template-001'").get().c,
+  }));
+  t("LOJA-B bloqueia item com template de outra campanha", vendaTemplateExterno.status === 409 && vendaTemplateExterno.json?.erro === "template_indisponivel", JSON.stringify(vendaTemplateExterno.json));
+  t("LOJA-B não altera saldo/caixa/inventário/estoque/ledger/recibo", JSON.stringify(antesVendaCross) === JSON.stringify(depoisVendaCross), JSON.stringify({ antesVendaCross, depoisVendaCross }));
+
 
 
   const compra = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
