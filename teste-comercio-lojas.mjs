@@ -127,6 +127,100 @@ try {
   });
   const contaId = contaComprador.json?.id;
   t("comprador tem conta", !!contaId, JSON.stringify(contaComprador.json));
+  
+  sec("isolamento de templates entre campanhas");
+  const outraCampanha = await req(BASE, "POST", "/campaigns", {
+    cookie: mestre, body: { name: "Campanha Externa Comércio" },
+  });
+  const outraCampId = comDb(BANCO, (db) => db.prepare(
+    "select id from campaigns where name=? order by created_at desc limit 1",
+  ).get("Campanha Externa Comércio")?.id);
+  t("fixture de campanha externa criada", (outraCampanha.status === 201 || outraCampanha.status === 200) && !!outraCampId, JSON.stringify(outraCampanha.json));
+  const tplExternoId = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into item_templates (id,campaign_id,name,category,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+      .run(tplExternoId, outraCampId, "Template Privado Externo", "segredo", JSON.stringify({ dadoPrivado: "NAO_DEVE_VAZAR" }), 1, agora, agora);
+    db.close();
+  }
+  const ofertaIsolada = await req(BASE, "POST", "/campaigns/" + campId + "/comercio/lojas/" + shopId + "/ofertas", {
+    cookie: j1.cookie, body: { name: "Oferta Isolada", priceCents: 100, stockQty: 1 },
+  });
+  const ofertaIsoladaId = ofertaIsolada.json?.id;
+  t("oferta de isolamento criada", ofertaIsolada.status === 201 && !!ofertaIsoladaId, JSON.stringify(ofertaIsolada.json));
+  const patchTemplateExterno = await req(BASE, "PATCH", "/campaigns/" + campId + "/comercio/lojas/" + shopId + "/ofertas/" + ofertaIsoladaId, {
+    cookie: j1.cookie, body: { itemTemplateId: tplExternoId },
+  });
+  t("PATCH recusa template de outra campanha", patchTemplateExterno.status === 400, JSON.stringify(patchTemplateExterno.json));
+  const templatePersistido = comDb(BANCO, (db) => db.prepare("select item_template_id from shop_offers where id=?").get(ofertaIsoladaId)?.item_template_id);
+  t("PATCH não persiste referência cruzada", templatePersistido === null, String(templatePersistido));
+
+  // Simula registro legado/inconsistente para provar que o checkout também
+  // falha fechado, sem importar dados de template de outra campanha.
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update shop_offers set item_template_id=? where id=?").run(tplExternoId, ofertaIsoladaId);
+    db.close();
+  }
+  const antesCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    estoque: db.prepare("select stock_qty from shop_offers where id=?").get(ofertaIsoladaId)?.stock_qty,
+    itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='Oferta Isolada'").get(charOk).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-template-001'").get().c,
+  }));
+  const compraTemplateExterno = await req(BASE, "POST", "/characters/" + charOk + "/comercio/comprar", {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: ofertaIsoladaId, qty: 1 }], requestId: "cross-campaign-template-001" },
+  });
+  const depoisCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    estoque: db.prepare("select stock_qty from shop_offers where id=?").get(ofertaIsoladaId)?.stock_qty,
+    itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='Oferta Isolada'").get(charOk).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-template-001'").get().c,
+  }));
+  t("checkout bloqueia template externo", compraTemplateExterno.status === 409 && compraTemplateExterno.json?.erro === "template_indisponivel", JSON.stringify(compraTemplateExterno.json));
+  t("bloqueio não altera saldo/caixa/estoque/inventário/ledger/recibo", JSON.stringify(antesCross) === JSON.stringify(depoisCross), JSON.stringify({ antesCross, depoisCross }));
+  
+  // A origem também precisa ser validada: um inventory_entry legado/adulterado
+  // não pode criar oferta LOJA-B vinculada ao template de outra campanha.
+  const invTemplateExterno = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invTemplateExterno, charOk, "Item com Template Externo", 1,
+        JSON.stringify({ templateId: tplExternoId, aquisicao: { unitCents: 500, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const antesVendaCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invTemplateExterno)?.quantity,
+    ofertas: db.prepare("select count(*) c from shop_offers where shop_id=? and item_template_id=?").get(shopId, tplExternoId).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-item-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-item-template-001'").get().c,
+  }));
+  const vendaTemplateExterno = await req(BASE, "POST", "/characters/" + charOk + "/comercio/vender", {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invTemplateExterno, qty: 1, accountId: contaId, expectedUnitCents: 500, requestId: "cross-campaign-item-template-001" },
+  });
+  const depoisVendaCross = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invTemplateExterno)?.quantity,
+    ofertas: db.prepare("select count(*) c from shop_offers where shop_id=? and item_template_id=?").get(shopId, tplExternoId).c,
+    ledger: db.prepare("select count(*) c from money_transactions where request_id like 'cross-campaign-item-template-001:%'").get().c,
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id='cross-campaign-item-template-001'").get().c,
+  }));
+  t("LOJA-B bloqueia item com template de outra campanha", vendaTemplateExterno.status === 409 && vendaTemplateExterno.json?.erro === "template_indisponivel", JSON.stringify(vendaTemplateExterno.json));
+  t("LOJA-B não altera saldo/caixa/inventário/estoque/ledger/recibo", JSON.stringify(antesVendaCross) === JSON.stringify(depoisVendaCross), JSON.stringify({ antesVendaCross, depoisVendaCross }));
+
+
 
   const compra = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
     cookie: j1.cookie,
@@ -705,20 +799,45 @@ try {
   t("OOC intacto: inelegível recebe patrimonio:atualizado", evPatNeg.length >= 1, String(evPatNeg.length));
   t("OOC intacto: elegível recebe patrimonio:atualizado", evPatOk.length >= 1, String(evPatOk.length));
 
-  // revogação: remove o dispositivo → próxima entrega não chega nem ao elegível
+  // transferência de titularidade durante a sessão: o novo dono pode entrar,
+  // mas o socket do ex-dono deve ser expulso antes da próxima entrega.
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update characters set membership_id=? where id=?").run(j2.membershipId, charOk);
+    db.close();
+  }
+  t("novo titular pode inscrever-se após transferência",
+    (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  t("ex-titular não consegue reinscrever-se após transferência",
+    (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  const evExTitularAntes = evComOk.length;
+  const evNovoTitularAntes = evComNeg.length;
+  const lojaTransferencia = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Transferência RT" },
+  });
+  t("gatilho pós-transferência 201", lojaTransferencia.status === 201, JSON.stringify(lojaTransferencia.json));
+  await dormir(600);
+  t("ex-titular perde entrega após transferência", evComOk.length === evExTitularAntes,
+    `${evExTitularAntes}→${evComOk.length}`);
+  t("novo titular continua recebendo após transferência", evComNeg.length > evNovoTitularAntes,
+    `${evNovoTitularAntes}→${evComNeg.length}`);
+
+  // revogação por perda do dispositivo: também corta o novo titular.
   {
     const db = abrirDb(BANCO);
     db.prepare("delete from inventory_entries where character_id=? and json_extract(data,'$.regra.key')='notebook'").run(charOk);
     db.close();
   }
-  const evAntes = evComOk.length;
+  const evAntesRevogacao = evComNeg.length;
   const lojaSinal = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
     cookie: mestre, body: { name: "Loja Sinal RT" },
   });
   t("gatilho pós-revogação 201", lojaSinal.status === 201, JSON.stringify(lojaSinal.json));
   await dormir(600);
-  t("revogado não recebe nova entrega", evComOk.length === evAntes, `${evAntes}→${evComOk.length}`);
-  t("reinscrição negada após revogação", (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  t("revogado não recebe nova entrega", evComNeg.length === evAntesRevogacao,
+    `${evAntesRevogacao}→${evComNeg.length}`);
+  t("reinscrição negada após revogação",
+    (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
 
   sockOk.close(); sockNeg.close();
 

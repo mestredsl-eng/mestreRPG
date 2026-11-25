@@ -5,7 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
 import { sessions, memberships } from "../db/schema.js";
-import { personagemElegivelInternet } from "./gate-internet.js";
+import { personagemAutorizadoInternet } from "./gate-internet.js";
 
 /** Instância do Socket.IO para emissão de eventos fora do handshake. */
 let io: SocketIOServer | null = null;
@@ -68,11 +68,20 @@ export function emitirComercioInternet(campaignId: string, dados: unknown) {
       }
       for (const [characterId, sids] of porPersonagem) {
         const sala = `${prefixo}${characterId}`;
-        const elegivel = await personagemElegivelInternet(characterId);
+        const autorizados = new Map<string, boolean>();
         for (const sid of sids) {
           const sock = instancia.sockets.sockets.get(sid);
           if (!sock) continue;
-          if (elegivel) sock.emit("comercio:atualizado", dados);
+          const usuario = sock.data.usuario as { id?: string } | undefined;
+          const userId = typeof usuario?.id === "string" ? usuario.id : null;
+          let autorizado = false;
+          if (userId) {
+            if (!autorizados.has(userId)) {
+              autorizados.set(userId, await personagemAutorizadoInternet(characterId, userId, campaignId));
+            }
+            autorizado = autorizados.get(userId) === true;
+          }
+          if (autorizado) sock.emit("comercio:atualizado", dados);
           else void sock.leave(sala);
         }
       }

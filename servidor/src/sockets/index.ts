@@ -3,9 +3,9 @@ import { Server as SocketIOServer } from "socket.io";
 import { and, eq } from "drizzle-orm";
 import { autenticarHandshake } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
-import { memberships, characters } from "../db/schema.js";
+import { memberships } from "../db/schema.js";
 import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
-import { personagemElegivelInternet } from "../lib/gate-internet.js";
+import { personagemAutorizadoInternet } from "../lib/gate-internet.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 import { registrarSangue } from "./sangue.js";
@@ -122,28 +122,11 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
       }
       const sala = `internet:${campaignId}:${characterId}`;
       try {
-        const [m] = await db
-          .select({ id: memberships.id, role: memberships.role })
-          .from(memberships)
-          .where(and(
-            eq(memberships.campaignId, campaignId),
-            eq(memberships.userId, usuario.id),
-            eq(memberships.status, "ativo"),
-          ))
-          .limit(1);
-        if (!m) { cb?.(false); return; }
-        const [personagem] = await db.select().from(characters)
-          .where(and(eq(characters.id, characterId), eq(characters.campaignId, campaignId)))
-          .limit(1);
-        if (!personagem || personagem.status === "arquivado") { cb?.(false); return; }
-        // titularidade: dono do personagem (membership da ficha) ou mestre
-        if (m.role !== "mestre") {
-          const [dono] = await db.select({ userId: memberships.userId }).from(memberships)
-            .where(eq(memberships.id, personagem.membershipId)).limit(1);
-          if (dono?.userId !== usuario.id) { cb?.(false); return; }
+        // O mesmo veredito server-side é usado no join e em cada entrega.
+        if (!(await personagemAutorizadoInternet(characterId, usuario.id, campaignId))) {
+          cb?.(false);
+          return;
         }
-        // gate cumulativo revalidado na inscrição — inelegível nem entra
-        if (!(await personagemElegivelInternet(characterId))) { cb?.(false); return; }
         if (!barreiraRestauracaoAtiva(campaignId)) socket.join(sala);
         cb?.(!barreiraRestauracaoAtiva(campaignId));
       } catch {
