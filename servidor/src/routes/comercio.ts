@@ -299,7 +299,7 @@ const ofertaSchema = z.object({
   priceCents: z.number().int().positive(),
   currency: z.string().max(10).optional(),
   stockQty: z.number().int().nonnegative().nullable().optional(),
-  itemTemplateId: z.string().optional(),
+  itemTemplateId: z.string().min(1).optional(),
 });
 
 comercioLojasRouter.post("/lojas/:shopId/ofertas", requirePapel("mestre", "jogador"), async (req, res) => {
@@ -326,6 +326,15 @@ comercioLojasRouter.patch("/lojas/:shopId/ofertas/:offerId", requirePapel("mestr
   if (!b.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   const [of] = await db.select().from(shopOffers).where(and(eq(shopOffers.id, req.params.offerId), eq(shopOffers.shopId, req.params.shopId))).limit(1);
   if (!of) { res.status(404).json({ erro: "Oferta não encontrada" }); return; }
+  // O vínculo do Acervo precisa pertencer à campanha da loja também no PATCH.
+  // Sem esta validação um gestor poderia anexar template de outra campanha.
+  if (b.data.itemTemplateId !== undefined) {
+    const [tpl] = await db.select({ id: itemTemplates.id, campaignId: itemTemplates.campaignId })
+      .from(itemTemplates).where(eq(itemTemplates.id, b.data.itemTemplateId)).limit(1);
+    if (!tpl || tpl.campaignId !== req.params.campaignId) {
+      res.status(400).json({ erro: "Template inexistente nesta campanha" }); return;
+    }
+  }
   await db.update(shopOffers).set({ ...b.data, updatedAt: new Date() }).where(eq(shopOffers.id, of.id));
   emitirComercioInternet(req.params.campaignId as string, { shopId: req.params.shopId });
   res.json({ ok: true });
@@ -469,8 +478,13 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
       for (const { oferta, qty } of linhas) {
         let dataItem: Record<string, unknown> = {};
         if (oferta.itemTemplateId) {
-          const [tpl] = tx.select().from(itemTemplates).where(eq(itemTemplates.id, oferta.itemTemplateId)).limit(1).all();
-          dataItem = { ...(tpl?.data as Record<string, unknown> ?? {}), templateId: oferta.itemTemplateId };
+          // Defesa em profundidade: referências legadas/inconsistentes também
+          // não podem importar dados do Acervo de outra campanha.
+          const [tpl] = tx.select().from(itemTemplates)
+            .where(and(eq(itemTemplates.id, oferta.itemTemplateId), eq(itemTemplates.campaignId, campaignId)))
+            .limit(1).all();
+          if (!tpl) throw new ErroComercio(409, "template_indisponivel", { offerId: oferta.id });
+          dataItem = { ...(tpl.data as Record<string, unknown> ?? {}), templateId: oferta.itemTemplateId };
         }
         dataItem = {
           ...dataItem,
