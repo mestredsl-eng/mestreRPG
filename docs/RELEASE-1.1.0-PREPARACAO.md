@@ -306,3 +306,27 @@ Ordem `7168039299` (Dono Técnico): merge normal da `main` atual nesta branch do
 ### Decisão de prontidão (atualizada)
 
 B1–B7 foram portados para a suíte CI-enabled da #329 (`320ee73`) — resta o CI desse SHA fechar SUCCESS. Permanecem pendentes: merge do stack #328→#329→#327 pelo proprietário, wiring do E2E de UI após backend em main, e aceite final. A 1.1.0 **ainda não é candidata de release**. Nenhuma promoção de Draft, merge, alteração de workflow, tag ou release foi realizada nesta atualização.
+
+
+
+## Checkpoint de integração pós-merge da fundação — 25/11/2026, 13:47 BRT
+
+Esta fotografia substitui os estados anteriores quando houver divergência. A integração da fundação #328 foi autorizada e concluída; os próximos passos continuam condicionados à CI e à decisão explícita do proprietário sobre o delta do workflow da #329.
+
+### Estado confirmado no GitHub
+
+- **main:** `48aeb1e2c0773da049a7450ca4dac7de618c8d71` — merge normal da PR #328, com migrations 0036/0037, adoção 1.0.9 e testes de schema.
+- **#328:** merged em `48aeb1e`. CI do HEAD `76a8f47`: Servidor, Navegador e Windows SUCCESS.
+- **#329:** HEAD `320ee73caff7d3340a53591232d5a4fea17063ad`, agora direcionada a `main@48aeb1e`, Draft e mergeable. Port B1–B7 adicionou 70 asserts à suíte `teste-comercio-lojas.mjs`, total **223/223**. O log do job Servidor da CI run `45654682237` confirma **223 passaram, 0 falharam**; build/typecheck, Servidor e Windows estão SUCCESS. O job Navegador ainda está IN_PROGRESS; não declarar CI 3/3 até terminar.
+- **B1–B7:** os sete grupos exigidos pela matriz #336 estão agora na suíte executada pelo job Servidor: gate por operação, dispositivo canônico, saldo/rollback/concorrência LOJA-A, bordas LOJA-B, isolamento campanha/gestor, revogação/envelope realtime e não-regressão patrimonial. Devin executou também o estado de teste correspondente localmente (223/223). A #336 continua como suíte complementar/histórica; não é necessário adicionar outro step de workflow para esses grupos.
+- **#327:** HEAD `e897f06`; CI run `45582842125` fechou 5/5 SUCCESS nesse SHA. Homologação integrada reportada localmente: `teste-internet-e2e.mjs` 41/41 e `teste-mesa-d10-e2e.mjs` 29/29. Esses dois resultados são locais, não CI. Após o merge de #328, esta PR ainda precisa ser validada contra a nova main/backend final; o E2E específico da Internet continua sem wiring na CI.
+- **#341:** HEAD `5a0ddf9`, diff exclusivo de documentação, mas o checkpoint de sua branch ainda usa `main@f6979f4`; a main atual avançou para `48aeb1e`. A CI run `45654951420` tem Servidor e Windows SUCCESS; Navegador IN_PROGRESS. Reconciliar a branch documental com a main atual e atualizar a fotografia novamente após a integração final.
+
+### Decisões e gates ainda abertos
+
+1. **Delta de workflow da #329:** a PR contém 19 linhas aditivas em `.github/workflows/ci.yml`: inclui a branch base da stack no gatilho e executa o teste de schema e a suíte de comércio. O delta preserva os steps existentes, e o job Servidor confirmou a execução 223/223. Ainda assim, a regra do projeto exige autorização explícita do proprietário para alterar workflow. Não mesclar #329 antes dessa autorização e da CI 3/3 no SHA testado.
+2. **Interface:** depois de #329 entrar em main, revalidar #327 na base atual e decidir/autorização para ligar `teste-internet-e2e.mjs` ao job Navegador. O step foi preparado, mas ainda não está no workflow.
+3. **Corte de versão:** a main ainda usa versão `1.0.9` nos manifests; `CHANGELOG.md` permanece com `[Unreleased]` vazio. Ainda faltam bump coerente de manifests/lockfile, destaques no README e Changelog, migration idempotente 0038 para Central de Novidades, runbook de upgrade 1.0.9→1.1.0 e homologação desses artefatos na candidata.
+4. **Candidata/release:** após integração backend → UI e os gates da versão, criar uma única candidata a partir da main, executar CI no SHA exato, revisar o diff contra v1.0.9 e então preparar tag/release. Não existe candidata final ainda.
+
+Nenhuma tag ou GitHub Release foi criada. A PR #328 foi a única mesclada nesta etapa; #329, #327 e #341 continuam Draft/open. Não declarar a 1.1.0 pronta para distribuição até fechar os gates acima.
