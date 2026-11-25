@@ -677,6 +677,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         <Internet
           characterId={personagem.id}
           campaignId={campaignId}
+          souMestre={souMestre}
           itemInicial={itemVendaPendente}
           aoItemConsumido={() => setItemVendaPendente(null)}
         />
