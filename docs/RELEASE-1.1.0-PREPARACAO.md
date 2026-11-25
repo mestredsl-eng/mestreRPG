@@ -284,3 +284,25 @@ Esta seção é a fotografia mais recente. Ela substitui os estados anteriores q
 ### Decisão de prontidão
 
 A 1.1.0 **ainda não é candidata de release**: B1–B7 ainda precisam estar na suíte CI-enabled e passar no CI do SHA final; a CI do HEAD mais recente da UI ainda estava em execução; a documentação precisa ser reconciliada com a main atual. Não promover Draft, mesclar PRs, alterar `.github/workflows/ci.yml`, criar tag ou release sem as autorizações correspondentes.
+
+
+## Checkpoint de execução — 25/11/2026 (sincronização #341 + estado consolidado)
+
+Ordem `7168039299` (Dono Técnico): merge normal da `main` atual nesta branch documental, preservando diff docs-only, com atualização da fotografia de estado. Executado pelo FILHO.
+
+### Sincronização desta branch
+
+- `docs/release-1.1.0-preparacao` estava baseada em `main@a1522a8` (4 commits atrás). Merge normal de `origin/main@f6979f4` aplicado — **zero conflitos**; o diff vs main permanece exclusivamente `docs/RELEASE-1.1.0-PREPARACAO.md` (docs-only preservado).
+
+### Fotografia de estado verificada (GitHub, ~16:40 UTC)
+
+- **`main`:** `f6979f48e5fff68a1ec4fedc72a5c48e1b3cdc55`.
+- **#327 — UI/Internet:** HEAD `e897f06b9024d32a0e864da7ebafd9421e712502`. CI run `45582842125` fechou **5/5 SUCCESS** (Servidor, Navegador, Build, Auto-update Windows, voz). `teste-internet-e2e.mjs` com **41/41 PASS local** no worktree integrado (#329@`8931b7e` + UI) e **29/29** na regressão OOC×D10. Arquivo segue sem wiring no job Navegador — aplicação do step proposto aguarda backend em main + autorização de workflow.
+- **#328 — fundação:** HEAD `76a8f4708b6eabd1211995f4f2ce61d150187d1c`; CI **5/5 SUCCESS**. Regressão 1.0.9 versionada (36 migrations, 3 contas, 6 transações) executada no job Servidor.
+- **#329 — comércio/backend:** HEAD avançou para `320ee73` — port integral B1–B7 de #336 para `teste-comercio-lojas.mjs` (suíte já CI-enabled); Devin verificou **223 passaram** localmente no estado idêntico ao commit. CI do novo HEAD em andamento na última consulta (Build SUCCESS; Servidor/Windows/Navegador rodando).
+- **#336 — matriz complementar:** HEAD `eea7e0f9ff1afd0fe80ec28b8bc7ef7fb2f00cef`; revisão semântica do port B1–B7 aprovada sem gaps.
+- **#341 — este documento:** Draft; branch agora sincronizada com `main@f6979f4`.
+
+### Decisão de prontidão (atualizada)
+
+B1–B7 foram portados para a suíte CI-enabled da #329 (`320ee73`) — resta o CI desse SHA fechar SUCCESS. Permanecem pendentes: merge do stack #328→#329→#327 pelo proprietário, wiring do E2E de UI após backend em main, e aceite final. A 1.1.0 **ainda não é candidata de release**. Nenhuma promoção de Draft, merge, alteração de workflow, tag ou release foi realizada nesta atualização.
