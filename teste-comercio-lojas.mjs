@@ -520,6 +520,85 @@ try {
   const recEscopo3 = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_orders where request_id='escopo-003'").get().c);
   t("escopo divergente: um único recibo", recEscopo3 === 1, String(recEscopo3));
 
+  sec("efeito 4 LOJA-B — entrada no estoque comercial (bloqueio P1)");
+  // venda-001 vendeu 'Relíquia Antiga' (sem template, unitCents 4000)
+  const estqRelquia = comDb(BANCO, (db) => db.prepare(
+    "select stock_qty, is_active, price_cents, item_template_id, data from shop_offers where shop_id=? and name='Relíquia Antiga'",
+  ).all(shopId));
+  t("venda cria oferta de estoque inativa", estqRelquia.length === 1 && estqRelquia[0].is_active === 0 && estqRelquia[0].stock_qty === 1, JSON.stringify(estqRelquia));
+  t("oferta de estoque com custo e proveniência", estqRelquia[0]?.price_cents === 4000 && JSON.parse(estqRelquia[0]?.data ?? "{}").origem === "revenda_loja", JSON.stringify(estqRelquia[0]?.data));
+
+  // segunda venda do mesmo item (sem template → casa por name) acumula
+  const invRel2 = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invRel2, charOk, "Relíquia Antiga", 1, JSON.stringify({ aquisicao: { unitCents: 4000, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const vendaRel2 = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invRel2, qty: 1, accountId: contaId, requestId: "venda-rel2" },
+  });
+  t("segunda venda 201", vendaRel2.status === 201, JSON.stringify(vendaRel2.json));
+  const estqRelquia2 = comDb(BANCO, (db) => db.prepare(
+    "select count(*) c, sum(stock_qty) s from shop_offers where shop_id=? and name='Relíquia Antiga'",
+  ).get(shopId));
+  t("estoque acumulou para 2 na mesma oferta", estqRelquia2.c === 1 && estqRelquia2.s === 2, JSON.stringify(estqRelquia2));
+
+  // caminho canônico: item COM templateId casa por item_template_id
+  const tplId = crypto.randomUUID();
+  const invTpl = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into item_templates (id,campaign_id,name,category,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?)")
+      .run(tplId, campId, "Amuleto Antigo", "reliquia", "{}", 1, agora, agora);
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invTpl, charOk, "Amuleto Antigo", 1, JSON.stringify({ templateId: tplId, aquisicao: { unitCents: 7000, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const vendaTpl = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invTpl, qty: 1, accountId: contaId, requestId: "venda-tpl-1" },
+  });
+  t("venda com template 201", vendaTpl.status === 201, JSON.stringify(vendaTpl.json));
+  const estqTpl = comDb(BANCO, (db) => db.prepare(
+    "select stock_qty, item_template_id, is_active from shop_offers where shop_id=? and item_template_id=?",
+  ).all(shopId, tplId));
+  t("estoque vinculado por template canônico", estqTpl.length === 1 && estqTpl[0].stock_qty === 1 && estqTpl[0].is_active === 0, JSON.stringify(estqTpl));
+
+  // falha não cria oferta: caixa zerado → 422 antes do crédito de estoque
+  const saldoCaixaAntes = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents);
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update financial_accounts set balance_cents=0 where id=?").run(caixaId);
+    db.close();
+  }
+  const invFalha = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invFalha, charOk, "Item Que Nao Entra", 1, JSON.stringify({ aquisicao: { unitCents: 999999, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const ofertasAntes = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_offers where shop_id=?").get(shopId).c);
+  const vendaFalha = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invFalha, qty: 1, accountId: contaId, requestId: "venda-falha-1" },
+  });
+  const ofertasDepois = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_offers where shop_id=?").get(shopId).c);
+  const itemFalha = comDb(BANCO, (db) => db.prepare("select count(*) c from inventory_entries where id=?").get(invFalha).c);
+  t("caixa insuficiente → 422 e zero oferta/estoque", vendaFalha.status === 422 && ofertasDepois === ofertasAntes, JSON.stringify([vendaFalha.status, vendaFalha.json, ofertasAntes, ofertasDepois]));
+  t("falha preservou item no inventário", itemFalha === 1, String(itemFalha));
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update financial_accounts set balance_cents=? where id=?").run(saldoCaixaAntes, caixaId);
+    db.close();
+  }
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;
