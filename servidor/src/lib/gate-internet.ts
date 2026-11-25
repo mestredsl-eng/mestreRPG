@@ -70,7 +70,9 @@ export async function personagemAutorizadoInternet(characterId: string, userId: 
       eq(memberships.status, "ativo"),
     ))
     .limit(1);
-  if (!m) return false;
+  // Hotfix #356: papel espectador nunca opera a Internet do personagem —
+  // nem como titular. Cobre o join do socket e a revalidação por entrega.
+  if (!m || m.role === "espectador") return false;
 
   if (m.role !== "mestre") {
     const [dono] = await db.select({ userId: memberships.userId }).from(memberships)

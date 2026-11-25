@@ -1511,6 +1511,57 @@ try {
   const dadosObjB7 = JSON.parse(dadosCharB7);
   t("B7: characters.data do comprador intacto (só ficha)", dadosObjB7.comp === 1 && dadosObjB7.for === 5, JSON.stringify(dadosObjB7).slice(0, 120));
 
+  sec("356 — hotfix: espectador-dono não opera Internet/comércio");
+  // Cenário real do F1 (#353): membership rebaixada para espectador mantém
+  // characters.membershipId → o personagem segue "dele". Rebaixa a membership
+  // dona do charOk (j2) e verifica HTTP + socket + vitrine.
+  const midDonoCharOk = comDb(BANCO, (db) => db.prepare("select membership_id from characters where id=?").get(charOk).membership_id);
+  { const dbw = abrirDb(BANCO); dbw.prepare("update memberships set role='espectador', updated_at=? where id=?").run(Date.now(), midDonoCharOk); dbw.close(); }
+
+  const compraEsp = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: donoAtual,
+    body: { shopId, accountId: contaId, items: [{ offerId, qty: 1, expectedUnitCents: 2500 }], requestId: "esp356-compra" },
+  });
+  t("356: espectador-dono comprar → 403", compraEsp.status === 403, `${compraEsp.status} ${JSON.stringify(compraEsp.json)}`);
+  const vendaEsp = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: crypto.randomUUID(), qty: 1, accountId: contaId, requestId: "esp356-venda" },
+  });
+  t("356: espectador-dono vender → 403", vendaEsp.status === 403, `${vendaEsp.status} ${JSON.stringify(vendaEsp.json)}`);
+  const elegEsp = await req(BASE, "GET", `/characters/${charOk}/comercio/elegibilidade`, { cookie: donoAtual });
+  t("356: espectador-dono elegibilidade privada → 403", elegEsp.status === 403, String(elegEsp.status));
+  const pedEsp = await req(BASE, "GET", `/characters/${charOk}/comercio/pedidos`, { cookie: donoAtual });
+  t("356: espectador-dono pedidos privados → 403", pedEsp.status === 403, String(pedEsp.status));
+  const semEfeitoEsp = comDb(BANCO, (db) => ({
+    pedidos: db.prepare("select count(*) c from shop_orders where request_id in ('esp356-compra','esp356-venda')").get().c,
+    saldo: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+  }));
+  t("356: compras/vendas negadas sem efeito (0 pedidos, saldo intacto)",
+    semEfeitoEsp.pedidos === 0 && typeof semEfeitoEsp.saldo === "number",
+    `pedidos=${semEfeitoEsp.pedidos} saldo=${semEfeitoEsp.saldo}`);
+
+  const vitrineEsp = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: donoAtual });
+  t("356: espectador-dono ainda lê a vitrine pública", vitrineEsp.status === 200 && Array.isArray(vitrineEsp.json?.lojas), `${vitrineEsp.status}`);
+
+  const sockEsp = await conectarSocket(donoAtual);
+  const evEsp = [];
+  sockEsp.on("comercio:atualizado", (d) => evEsp.push(d));
+  await emitirCb(sockEsp, "entrar-campanha", campId);
+  t("356: espectador-dono entrar-internet → cb(false)",
+    (await emitirCb(sockEsp, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  const gatilhoEsp = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "356 Loja Sinal" },
+  });
+  t("356: gatilho de loja → 201", gatilhoEsp.status === 201, String(gatilhoEsp.status));
+  await dormir(700);
+  t("356: espectador-dono não recebe comercio:atualizado", evEsp.length === 0, `eventos=${evEsp.length}`);
+  sockEsp.close();
+
+  // controle positivo: membership restaurada a jogador volta a operar
+  { const dbw = abrirDb(BANCO); dbw.prepare("update memberships set role='jogador', updated_at=? where id=?").run(Date.now(), midDonoCharOk); dbw.close(); }
+  const elegPos = await req(BASE, "GET", `/characters/${charOk}/comercio/elegibilidade`, { cookie: donoAtual });
+  t("356: controle — jogador restaurado elegibilidade → 200", elegPos.status === 200, String(elegPos.status));
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;
