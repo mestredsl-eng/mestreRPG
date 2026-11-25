@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-25
+
+### Novidades
+
+- **Internet diegética com gate por personagem:** pelo menos 1 ponto em Computador ou Tecnologia e posse de notebook/celular reconhecido pelo catálogo. O servidor resolve referências canônicas, conta equipamento equipado e revalida a elegibilidade nas operações e nos eventos em tempo real.
+- **Lojas e caixas por campanha:** lojas, gestores, ofertas e contas de caixa com isolamento por campanha e vínculo de membership.
+- **Comércio integrado ao patrimônio:** compra de ofertas e venda de itens do personagem para lojas, com conferência de preço, quantidade, estoque e saldo no servidor; operações transacionais, recibos, débito/crédito e procedência no inventário.
+- **Equipamento/Armazém:** nova área de consulta de inventário, equipamentos, vínculos e veículos, com dados de peso/capacidade e atalho para vender item na Internet.
+
+### Integridade e permissões
+
+- **Gate fail-closed:** item reconhecido por nome apenas não libera Internet; a elegibilidade depende da chave canônica do item/template e dos pontos configurados.
+- **Revogação em tempo real:** perda do requisito durante a sessão interrompe a entrega de eventos da Internet e impede nova inscrição.
+- **Atomicidade do comércio:** falhas de saldo/estoque/preço/quantidade e concorrência no último item não devem deixar pedidos, lançamentos ou entregas parciais.
+
 ## [1.0.0.9] - 2026-11-24
 
 ### Novidades
