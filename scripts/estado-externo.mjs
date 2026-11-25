@@ -601,8 +601,8 @@ export function validarPrecondicoesBootstrap(repoDir, env = process.env) {
  * Identifica somente um CANDIDATO a instalação legada para adoção assistida.
  * Este preflight NÃO valida SQLite nem autoriza migração: ele apenas permite
  * que o operador confirme a intenção. O script de adoção, executado depois
- * de npm ci/build, valida o schema 1.0.8 exato, integridade e backup completo
- * antes de gravar o recibo permanente.
+ * de npm ci/build, valida o schema 1.0.8/1.0.9 exato, integridade e backup
+ * completo antes de gravar o recibo permanente.
  *
  * Retorno false para banco ausente, symlink, estado de protocolo pré-existente,
  * corrompido, quarentenado ou arquivos inesperados no state dir.
