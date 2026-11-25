@@ -421,12 +421,49 @@ try {
   });
   t("após desequipar, venda conclui → 201", vendaPosDes.status === 201, `${vendaPosDes.status} ${JSON.stringify(vendaPosDes.json)}`);
 
-  // BLOCKED (#289/LB1, efeito 4 dos cinco atômicos): a matriz exige
-  // "aumento do estoque comercial da loja" na venda LOJA-B, mas o
-  // contrato/código da stack #329 ainda não implementa esse efeito
-  // (bloqueio registrado na PR #329). Quando o PAI fechar o modelo de
-  // estoque, acrescentar aqui o assert correspondente. NÃO é PASS.
-  console.log("  .. BLOCKED: LOJA-B efeito 'entrada no estoque comercial da loja' — contrato/implementação pendente (aguarda PAI/#329)");
+  // efeito 4 LB1 (#329 @ 2ca6890): entrada no estoque comercial na mesma
+  // tx. Sem templateId → casa oferta por name com item_template_id NULL;
+  // sem match → cria oferta INATIVA a custo com proveniência revenda_loja.
+  const ofertaMedalha = comDb(BANCO, (db) => db.prepare(
+    "select id, stock_qty, price_cents, is_active, item_template_id, data from shop_offers where shop_id=? and name='Medalha 289'",
+  ).get(shopId));
+  const dataMedalha = ofertaMedalha ? JSON.parse(ofertaMedalha.data) : null;
+  t("LOJA-B: venda credita estoque comercial (oferta inativa a custo)",
+    !!ofertaMedalha && ofertaMedalha.is_active === 0 && ofertaMedalha.stock_qty === 1
+    && ofertaMedalha.price_cents === 800 && ofertaMedalha.item_template_id === null
+    && dataMedalha?.origem === "revenda_loja" && dataMedalha?.unitCostCents === 800
+    && dataMedalha?.orderId === vendaPosDes.json?.id,
+    JSON.stringify(ofertaMedalha ?? null).slice(0, 300));
+
+  // segunda venda do mesmo item → acumula stockQty na mesma oferta
+  const invEquip2 = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invEquip2, charOk, "Medalha 289", 1, JSON.stringify({ aquisicao: { unitCents: 800, qtdOriginal: 1 } }), Date.now(), Date.now());
+    db.close();
+  }
+  const vendaMedalha2 = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invEquip2, qty: 1, accountId: contaId, requestId: "vend289-med2" },
+  });
+  t("segunda venda Medalha → 201", vendaMedalha2.status === 201, `${vendaMedalha2.status} ${JSON.stringify(vendaMedalha2.json)}`);
+  const estqMedalha = comDb(BANCO, (db) => db.prepare(
+    "select count(*) c, sum(stock_qty) s from shop_offers where shop_id=? and name='Medalha 289'",
+  ).get(shopId));
+  t("estoque comercial acumulou 1→2 na mesma oferta",
+    estqMedalha.c === 1 && estqMedalha.s === 2, JSON.stringify(estqMedalha));
+
+  // replay da venda não recredita estoque (idempotência do efeito 4)
+  const replayVend = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invEquip2, qty: 1, accountId: contaId, requestId: "vend289-med2" },
+  });
+  t("replay venda → mesmo pedido", replayVend.status === 200 && replayVend.json?.id === vendaMedalha2.json?.id, JSON.stringify(replayVend.json));
+  const estqAposReplay = comDb(BANCO, (db) => db.prepare(
+    "select sum(stock_qty) s from shop_offers where shop_id=? and name='Medalha 289'",
+  ).get(shopId).s);
+  t("replay não recreditou estoque", estqAposReplay === 2, String(estqAposReplay));
 
   // caixa insuficiente na LOJA-B: loja 2 com caixa zerado
   const lojaPobre = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
@@ -461,6 +498,10 @@ try {
   t("caixa insuficiente: vendedor/item/ledger intactos",
     posSemCaixa.vendedor === vendedorAntes && posSemCaixa.qtd === 1 && posSemCaixa.orders === 0 && posSemCaixa.txs === 0,
     JSON.stringify(posSemCaixa));
+  const ofertasPobre = comDb(BANCO, (db) => db.prepare(
+    "select count(*) c from shop_offers where shop_id=?",
+  ).get(shopPobre).c);
+  t("caixa insuficiente: zero oferta criada no estoque da loja", ofertasPobre === 0, String(ofertasPobre));
 
   sec("gestor não-mestre e isolamento entre campanhas");
   // j1 é gestor da shopId mas NÃO da shop2 (criada pelo mestre sem vínculo)
