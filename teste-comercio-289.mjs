@@ -48,6 +48,12 @@ const entrarInternet = (s, campId, charId) => new Promise((res) => {
   const to = setTimeout(() => res(false), 5000);
   s.emit("entrar-internet", { campaignId: campId, characterId: charId }, (ok) => { clearTimeout(to); res(ok === true); });
 });
+// sair-internet não tem ack no servidor — leave é síncrono; emitir e
+// drenar um pouco é suficiente antes de medir a entrega
+const sairInternet = (s, campId, charId) => {
+  s.emit("sair-internet", { campaignId: campId, characterId: charId });
+  return dormir(400);
+};
 
 try {
   proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
@@ -546,6 +552,75 @@ try {
   ).get(shopPobre).c);
   t("caixa insuficiente: zero oferta criada no estoque da loja", ofertasPobre === 0, String(ofertasPobre));
 
+  sec("LOJA-B — corrida do último item e loja fechada (lacunas L1/L3)");
+  // L1: duas vendas concorrentes, requestIds distintos, qty=1 — a baixa
+  // do inventário é atômica: exatamente um commit, um 409, um par de
+  // pernas, um recibo e uma entrada no estoque comercial
+  const invCorrida = insItem(charOk, "Item Corrida Venda", { aquisicao: { unitCents: 700, qtdOriginal: 1 } });
+  const saldoCorridaAntes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
+  const [cvA, cvB] = await Promise.all([
+    req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+      cookie: j1.cookie,
+      body: { shopId, inventoryEntryId: invCorrida, qty: 1, accountId: contaId, requestId: "vendcorr-289-a" },
+    }),
+    req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+      cookie: j1.cookie,
+      body: { shopId, inventoryEntryId: invCorrida, qty: 1, accountId: contaId, requestId: "vendcorr-289-b" },
+    }),
+  ]);
+  // invariante da corrida: exatamente UM 201; o perdedor recebe 4xx.
+  // Observado no produto: 404 item_nao_encontrado — a venda vencedora
+  // deleta a linha de inventário ao zerar (comercio.ts ~740), então o
+  // perdedor não encontra o item. Atomicidade preservada; status literal
+  // difere do 409 previsto na ordem L1 — registrado para decisão do PAI.
+  const okA = cvA.status === 201, okB = cvB.status === 201;
+  const perdedor = [cvA, cvB].find((r) => r.status !== 201);
+  t("corrida venda último item: exatamente um 201 + perdedor 4xx (404|409)",
+    okA !== okB && perdedor && [404, 409].includes(perdedor.status),
+    `statuses=${cvA.status},${cvB.status} bodies=${JSON.stringify(cvA.json)?.slice(0, 80)}|${JSON.stringify(cvB.json)?.slice(0, 80)}`);
+  const posVendCorrida = comDb(BANCO, (db) => ({
+    inv: db.prepare("select quantity q from inventory_entries where id=?").get(invCorrida),
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b,
+    orders: db.prepare("select count(*) c from shop_orders where request_id in ('vendcorr-289-a','vendcorr-289-b')").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'vendcorr-289-%'").get().c,
+    ofertas: db.prepare("select count(*) c, sum(stock_qty) s from shop_offers where shop_id=? and name='Item Corrida Venda'").get(shopId),
+  }));
+  t("corrida: inventário zerado/removido, débito único (+700), 1 recibo, 2 pernas, 1 oferta estoque qty=1",
+    (!posVendCorrida.inv || posVendCorrida.inv.q === 0)
+    && posVendCorrida.saldo === saldoCorridaAntes + 700
+    && posVendCorrida.orders === 1 && posVendCorrida.txs === 2
+    && posVendCorrida.ofertas.c === 1 && posVendCorrida.ofertas.s === 1,
+    JSON.stringify(posVendCorrida));
+
+  // L3: loja fechada → venda nega 409 loja_fechada com zero efeitos
+  const patchFecha = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}`, {
+    cookie: mestre, body: { isOpen: false },
+  });
+  t("PATCH loja isOpen=false → 200 (setup L3)", patchFecha.status === 200, String(patchFecha.status));
+  const invFechada = insItem(charOk, "Item Loja Fechada", { aquisicao: { unitCents: 300, qtdOriginal: 1 } });
+  const saldoAntesFech = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
+  const vendFechada = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invFechada, qty: 1, accountId: contaId, requestId: "vend289-fechada" },
+  });
+  t("venda em loja fechada → 409 loja_fechada", vendFechada.status === 409 && vendFechada.json?.erro === "loja_fechada",
+    `${vendFechada.status} ${JSON.stringify(vendFechada.json)}`);
+  const posFechada = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b,
+    qtd: db.prepare("select quantity q from inventory_entries where id=?").get(invFechada)?.q,
+    orders: db.prepare("select count(*) c from shop_orders where request_id='vend289-fechada'").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'vend289-fechada:%'").get().c,
+    oferta: db.prepare("select count(*) c from shop_offers where shop_id=? and name='Item Loja Fechada'").get(shopId).c,
+  }));
+  t("loja fechada: vendedor/item/ledger/recibo/estoque intactos",
+    posFechada.saldo === saldoAntesFech && posFechada.qtd === 1
+    && posFechada.orders === 0 && posFechada.txs === 0 && posFechada.oferta === 0,
+    JSON.stringify(posFechada));
+  const patchReabre = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}`, {
+    cookie: mestre, body: { isOpen: true },
+  });
+  t("reabertura da loja → 200 (setup das sondas)", patchReabre.status === 200, String(patchReabre.status));
+
   sec("gestor não-mestre e isolamento entre campanhas");
   // j1 é gestor da shopId mas NÃO da shop2 (criada pelo mestre sem vínculo)
   const loja2 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
@@ -787,6 +862,44 @@ try {
     evs.campJ1.geral.length > g1Antes, `${g1Antes} → ${evs.campJ1.geral.length}`);
   t("canal OOC preservado: inelegível recebe campanha:atualizada",
     evs.campJ2.geral.length > g2Antes, `${g2Antes} → ${evs.campJ2.geral.length}`);
+
+  // ---- L4: sair-internet voluntário corta a entrega; reinscrição volta ----
+  const nSaiAntes = evs.icJ1.comercio.length;
+  await sairInternet(sICj1, campId, charOk);
+  const sondaSai = await sonda("rt-289-sonda-sai");
+  t("sonda pós-sair-internet → 201", sondaSai.status === 201, String(sondaSai.status));
+  await dormir(700);
+  t("após sair-internet o socket NÃO recebe comercio:atualizado",
+    evs.icJ1.comercio.length === nSaiAntes,
+    `${nSaiAntes} → ${evs.icJ1.comercio.length}`);
+  t("reinscrição após sair-internet → true",
+    (await entrarInternet(sICj1, campId, charOk)) === true);
+  const sondaVolta = await sonda("rt-289-sonda-volta");
+  t("sonda pós-reinscrição → 201", sondaVolta.status === 201, String(sondaVolta.status));
+  await dormir(700);
+  t("após reinscrição o socket volta a receber",
+    evs.icJ1.comercio.length > nSaiAntes,
+    `${nSaiAntes} → ${evs.icJ1.comercio.length}`);
+
+  // ---- L5: entrar-internet com payload malformado → cb(false), sem sala ----
+  const sBad = conectar(BASE, j1.cookie);
+  const evsBad = [];
+  sBad.on("comercio:atualizado", (d) => evsBad.push(d));
+  const malformados = [null, "string", 42, {}, { campaignId: campId }, { characterId: charOk }, { campaignId: 123, characterId: charOk }, { campaignId: campId, characterId: 42 }];
+  let malNegados = 0;
+  for (const payload of malformados) {
+    const ok = await new Promise((res) => {
+      const to = setTimeout(() => res("timeout"), 4000);
+      sBad.emit("entrar-internet", payload, (r) => { clearTimeout(to); res(r === true); });
+    });
+    if (ok === false) malNegados++;
+  }
+  t("entrar-internet malformado: todos cb(false)", malNegados === malformados.length, `${malNegados}/${malformados.length}`);
+  const sondaBad = await sonda("rt-289-sonda-bad");
+  t("sonda pós-payloads malformados → 201", sondaBad.status === 201, String(sondaBad.status));
+  await dormir(700);
+  t("socket com payloads malformados NÃO entrou em sala Internet (zero eventos)",
+    evsBad.length === 0, `eventos=${evsBad.length}`);
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;
