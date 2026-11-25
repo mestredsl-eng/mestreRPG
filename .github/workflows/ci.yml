@@ -195,6 +195,8 @@ jobs:
         run: npx tsx --test servidor/testes/sangue-invariantes.test.ts
       - name: Testes unitários do parser de cookie de sessão (Issue #296)
         run: npx tsx --test servidor/testes/auth-cookie.test.ts
+      - name: Testes unitários do schema de comércio (Issue #286)
+        run: npx tsx --test servidor/testes/comercio-schema.test.ts
       - name: Suítes obrigatórias v1.0.8 — Servidor sem navegador
         shell: bash
         run: |
@@ -270,6 +272,21 @@ jobs:
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte da stack #189 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
+          done
+      - name: Suítes 1.1.0 — comércio sem navegador
+        shell: bash
+        run: |
+          set -euo pipefail
+          arquivos=(
+            teste-comercio-lojas.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte 1.1.0 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
