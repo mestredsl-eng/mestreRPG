@@ -13,6 +13,7 @@
 // Nunca toca a instalação real: fixture em temp, state/backups/arquivos
 // isolados por env, node_modules por junction (npm ci é pulado).
 import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import {
   copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync,
@@ -76,6 +77,12 @@ try {
   } else {
     console.log("== E2E oficial: BAT real sobre instalação 1.0.8 em fixture descartável ==");
 
+    // Porta sorteada ANTES da extração: configuracao/servidor.json
+    // (rastreado, porta 3001) tem precedência sobre MESTRE_PORTA — sem o
+    // patch abaixo o fixture colidiria com um servidor dev na 3001.
+    const PORTA = await portaLivre();
+    const BASE = `http://127.0.0.1:${PORTA}`;
+
     // 1. Árvore-fonte da candidata via git archive (somente arquivos
     //    rastreados do HEAD testado — sem .git, node_modules, dados).
     const tarPath = join(TEMP, "fonte.tar");
@@ -85,6 +92,16 @@ try {
     t("árvore da candidata extraída", existsSync(join(FIX, "iniciar-mestre-rpg.bat"))
       && existsSync(join(FIX, "scripts", "adotar-legado.mjs"))
       && !existsSync(join(FIX, ".git")));
+
+    // Porta efetiva do fixture: json.porta prevalece sobre MESTRE_PORTA
+    // (mesma precedência de servidor/src/config.ts) — aponta para a
+    // porta livre sorteada para não depender da 3001 estar ocupada.
+    {
+      const cfgPath = join(FIX, "configuracao", "servidor.json");
+      const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+      cfg.porta = PORTA;
+      writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    }
 
     // 2. Banco legado REAL: subconjunto de migrations idêntico ao de
     //    main@7e17c9b (entries idx<=33; diff dos arquivos vs. 1.0.8 é
@@ -119,8 +136,118 @@ try {
         .run("m-e2e", "c-e2e", "u-e2e", "mestre", "{}", "ativo", agora, agora, agora);
       sqlite.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
         .run("ch-e2e", "c-e2e", "m-e2e", "Herói E2E", "{}", "{}", "aprovada", agora, agora);
+
+      // --- Fixture rica (#272): domínios reais de uma instalação 1.0.8 ---
+      // Segundo membro/personagem (jogador) para chat e vínculos.
+      sqlite.prepare("insert into users (id,username,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,0,'ativo',?,?)")
+        .run("u-j1", "jogador_e2e", senha, agora, agora);
+      sqlite.prepare("insert into memberships (id,campaign_id,user_id,role,permissions,status,joined_at,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+        .run("m-j1", "c-e2e", "u-j1", "jogador", "{}", "ativo", agora, agora, agora);
+      // __xp/__sangue viajam dentro de characters.data (ledger reservado).
+      const dadosHeroi = JSON.stringify({
+        nome: "Herói E2E", nivel: 3,
+        __xp: { saldo: 120, ancora: 0, historico: [
+          { tipo: "concessao", quantidade: 100, motivo: "sessão 0", em: new Date(agora - 86400000).toISOString(), por: "u-e2e" },
+          { tipo: "compra", quantidade: -20, motivo: "perícia", em: new Date(agora - 3600000).toISOString(), por: "u-e2e" },
+        ] },
+        __sangue: { saldo: 3, usos: {}, historico: [] },
+      });
+      sqlite.prepare("update characters set data=? where id=?").run(dadosHeroi, "ch-e2e");
+      sqlite.prepare("insert into characters (id,campaign_id,membership_id,name,data,overrides,status,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+        .run("ch-j1", "c-e2e", "m-j1", "Aliada J1", JSON.stringify({ nome: "Aliada J1" }), "{}", "aprovada", agora, agora);
+
+      // Inventário + modelo + equipamento vinculado.
+      sqlite.prepare("insert into item_templates (id,campaign_id,name,category,description,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+        .run("it-e2e", "c-e2e", "Poção de Cura", "consumivel", "Cura 1d6+1 PV", "{}", 1, agora, agora);
+      sqlite.prepare("insert into inventory_entries (id,character_id,name,quantity,description,category,location,condition,weight,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("inv-e2e-1", "ch-e2e", "Poção de Cura", 3, "do template it-e2e", "consumivel", "mochila", "novo", 0.2, JSON.stringify({ templateId: "it-e2e" }), agora, agora);
+      sqlite.prepare("insert into inventory_entries (id,character_id,name,quantity,description,category,location,condition,weight,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("inv-e2e-2", "ch-e2e", "Corda 20m", 1, null, "utilidade", "mochila", "usado", 1.5, "{}", agora, agora);
+      sqlite.prepare("insert into equipment_entries (id,character_id,name,kind,slot,equipped,description,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run("eq-e2e-1", "ch-e2e", "Espada Curta", "arma", "mao_direita", 1, "dano 1d6", "{}", agora, agora);
+      sqlite.prepare("insert into equipment_entries (id,character_id,name,kind,slot,equipped,description,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run("eq-e2e-2", "ch-e2e", "Gibão de Couro", "armadura", "torso", 0, "CA 12", "{}", agora, agora);
+
+      // Veículo + contas/transações financeiras.
+      sqlite.prepare("insert into vehicles (id,character_id,campaign_id,name,kind,brand,model,year,color,plate,serial_number,condition,value_cents,fuel,capacity,ownership,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("veh-e2e", "ch-e2e", "c-e2e", "Carroça do Bardo", "terrestre", "Genérica", "Carroça", 2020, "marrom", "XYZ-1234", "SN-E2E-001", "boa", 250000, 0.5, 4, "propriedade", "{}", agora, agora);
+      sqlite.prepare("insert into financial_accounts (id,character_id,campaign_id,type,name,institution,agency,account_number,holder,currency,balance_cents,credit_limit_cents,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("fin-e2e", "ch-e2e", "c-e2e", "banco", "Conta do Tesouro", "Banco Real", "0001", "12345-6", "Herói E2E", "BRL", 150050, null, "{}", agora, agora);
+      sqlite.prepare("insert into money_transactions (id,character_id,campaign_id,kind,amount,currency,account,description,created_by,created_at,account_id,amount_cents,balance_before_cents,balance_after_cents,request_id) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("mtx-e2e-1", "ch-e2e", "c-e2e", "saldo_inicial", 1000, "BRL", "banco", "saldo inicial da fixture", "u-e2e", agora, "fin-e2e", 100000, 0, 100000, "req-e2e-1");
+      sqlite.prepare("insert into money_transactions (id,character_id,campaign_id,kind,amount,currency,account,description,created_by,created_at,account_id,amount_cents,balance_before_cents,balance_after_cents,request_id) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("mtx-e2e-2", "ch-e2e", "c-e2e", "entrada", 500.5, "BRL", "banco", "pagamento da guilda", "u-e2e", agora, "fin-e2e", 50050, 100000, 150050, "req-e2e-2");
+
+      // XP em lote (ledger) + configurações + pasta.
+      sqlite.prepare("insert into xp_lotes (id,campaign_id,request_id,payload_hash,motivo,itens,total_personagens,total_xp,created_by,created_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run("xpl-e2e", "c-e2e", "req-xp-e2e", "hash-fixture-e2e", "recompensa da sessão 0", JSON.stringify([{ personagemId: "ch-e2e", xp: 120 }]), 1, 120, "u-e2e", agora);
+      sqlite.prepare("insert into server_settings (key,value,updated_at) values (?,?,?)")
+        .run("fixture.chave_e2e", "valor-config-e2e", agora);
+      sqlite.prepare("insert into server_settings (key,value,updated_at) values (?,?,?)")
+        .run("regra.dados_e2e", "{\"narracao\":\"livre\"}", agora);
+      sqlite.prepare("insert into folders (id,campaign_id,parent_id,name,allow_player_uploads,created_by,created_at) values (?,?,?,?,?,?,?)")
+        .run("fld-e2e", "c-e2e", null, "Mapas", 0, "u-e2e", agora);
+
+      // Mesa: sessão + turno + rolagem + chat OOC/diegético + teste.
+      sqlite.prepare("insert into sessions (id,campaign_id,number,name,summary,started_at,status,created_by,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?)")
+        .run("ses-e2e", "c-e2e", 1, "Sessão 0 — Tumba dos Ecos", "abertura da campanha", agora - 7200000, "encerrada", "u-e2e", agora - 7200000, agora);
+      sqlite.prepare("insert into turns (id,session_id,state,updated_by,updated_at) values (?,?,?, ?,?)")
+        .run("trn-e2e", "ses-e2e", "{}", "u-e2e", agora);
+      sqlite.prepare("insert into rolls (id,campaign_id,session_id,character_id,user_id,dice,results,reason,visibility,created_at,request_id) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run("rol-e2e", "c-e2e", "ses-e2e", "ch-e2e", "u-e2e",
+          JSON.stringify([{ sides: 20, count: 1 }]),
+          JSON.stringify({ grupos: [{ lados: 20, resultados: [17] }], total: 17 }),
+          "teste de perícia", "publica", agora - 3600000, "req-roll-e2e");
+      sqlite.prepare("insert into chat_messages (id,campaign_id,session_id,author_id,kind,content,visibility,created_at,speaker_character_id,speaker_name,speaker_gender) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run("msg-e2e-ooc", "c-e2e", "ses-e2e", "u-j1", "texto", "(OOC) quem tem a chave mestra?", "publica", agora - 3500000, null, null, null);
+      sqlite.prepare("insert into chat_messages (id,campaign_id,session_id,author_id,kind,content,visibility,created_at,speaker_character_id,speaker_name,speaker_gender) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run("msg-e2e-ic", "c-e2e", "ses-e2e", "u-j1", "texto", "Eu tenho, colega.", "publica", agora - 3400000, "ch-j1", "Aliada J1", "feminino");
+      sqlite.prepare("insert into tests (id,campaign_id,session_id,character_id,requested_by,skill_ref,modifiers,dice_count,dice_sides,target,status,roll_id,visibility,created_at,updated_at,request_id) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("tst-e2e", "c-e2e", "ses-e2e", "ch-e2e", "u-e2e", "pericia", "[]", 1, 20, 15, "sucesso", "rol-e2e", "publica", agora - 3600000, agora - 3600000, "req-tst-e2e");
+
+      // Anexo real em disco + linha files + nota vinculada.
+      const ANEXO_DIR = join(FIX, "arquivos", "campanhas", "c-e2e");
+      mkdirSync(ANEXO_DIR, { recursive: true });
+      const ANEXO_NOME = "anexo-e2e-mapa.txt";
+      const ANEXO_CONTEUDO = "MAPA DA TOMBA DOS ECOS — fixture 1.0.8\ncorredor norte -> sala do guardiao\n";
+      writeFileSync(join(ANEXO_DIR, ANEXO_NOME), ANEXO_CONTEUDO);
+      sqlite.prepare("insert into files (id,campaign_id,folder_path,file_name,mime_type,size_bytes,uploaded_by,visibility,created_at,folder_id,display_name,description,category,status,storage_name,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("fil-e2e", "c-e2e", "/Mapas", "mapa-da-tumba.txt", "text/plain", Buffer.byteLength(ANEXO_CONTEUDO), "u-e2e", "mestre", agora, "fld-e2e", "Mapa da Tumba", "mapa da sessão 0", "mapa", "aprovado", ANEXO_NOME, agora);
+      sqlite.prepare("insert into notes (id,campaign_id,owner_id,character_id,category,title,content,visibility,status,created_at,updated_at,kind,important) values (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run("nte-e2e", "c-e2e", "u-e2e", "ch-e2e", "sessao", "Gancho: chave mestra", "A chave mestra abre a sala norte.", "mestre", "concluida", agora - 3000000, agora - 3000000, "diario", 1);
+      sqlite.prepare("insert into note_attachments (id,note_id,file_id,created_by,created_at) values (?,?,?,?,?)")
+        .run("nat-e2e", "nte-e2e", "fil-e2e", "u-e2e", agora);
       sqlite.close();
     }
+
+    // Baseline determinístico (#272): contagens + campos semânticos +
+    // hash do anexo em disco — comparado após o upgrade.
+    const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
+    const ANEXO_PATH = join(FIX, "arquivos", "campanhas", "c-e2e", "anexo-e2e-mapa.txt");
+    const BASELINE = {};
+    {
+      const db = new Database(BANCO, { readonly: true });
+      const tabelas = ["users", "campaigns", "memberships", "characters", "item_templates",
+        "inventory_entries", "equipment_entries", "vehicles", "financial_accounts",
+        "money_transactions", "xp_lotes", "folders", "sessions",
+        "turns", "rolls", "chat_messages", "tests", "files", "notes", "note_attachments"];
+      for (const tb of tabelas) BASELINE["n_" + tb] = db.prepare(`select count(*) c from ${tb}`).get().c;
+      // server_settings é chave-valor: o boot pode LEGITIMAMENTE semear
+      // chaves novas — a prova é que as chaves da fixture sobrevivem
+      // intactas, não que o total de chaves é imutável.
+      BASELINE.server_settings = Object.fromEntries(
+        db.prepare("select key, value from server_settings order by key").all().map((r) => [r.key, r.value]),
+      );
+      BASELINE.characters_data = Object.fromEntries(
+        db.prepare("select id, data from characters order by id").all().map((r) => [r.id, r.data]),
+      );
+      BASELINE.contas = db.prepare("select id, balance_cents from financial_accounts order by id").all();
+      BASELINE.fk_violations = db.pragma("foreign_key_check").length;
+      BASELINE.integrity = db.pragma("integrity_check")[0].integrity_check;
+      db.close();
+    }
+    BASELINE.anexo_sha256 = sha256(ANEXO_PATH);
+    BASELINE.anexo_bytes = readFileSync(ANEXO_PATH).length;
     {
       const db = new Database(BANCO, { readonly: true });
       const n = db.prepare("select count(*) c from __drizzle_migrations").get().c;
@@ -133,7 +260,6 @@ try {
     symlinkSync(join(ROOT, "node_modules"), join(FIX, "node_modules"), "junction");
     t("node_modules junction criado", existsSync(join(FIX, "node_modules", "better-sqlite3")));
 
-    const PORTA = await portaLivre();
     const env = {
       ...process.env,
       PATH: dirname(process.execPath) + ";" + (process.env.PATH || ""),
@@ -143,7 +269,6 @@ try {
       MESTRE_BACKUPS: join(FIX, "backups"),
       MESTRE_ARQUIVOS: join(FIX, "arquivos", "campanhas"),
     };
-    const BASE = `http://127.0.0.1:${PORTA}`;
 
     const dispararBat = (entrada) => {
       batLog = "";
@@ -189,7 +314,7 @@ try {
       const chars = db.prepare("select count(*) c from characters").get().c;
       db.close();
       t("migrations completas aplicadas no boot", n === 36, String(n));
-      t("dados preservados após migrate", users === 1 && campsDb === 1 && chars === 1,
+      t("dados preservados após migrate", users === 2 && campsDb === 1 && chars === 2,
         `users=${users} campaigns=${campsDb} characters=${chars}`);
     }
 
@@ -208,6 +333,43 @@ try {
       body: JSON.stringify({ username: "mestre_e2e", password: "senha-e2e-123" }),
     });
     t("login funciona após retomada", login2.ok, `status ${login2.status}`);
+
+    // 7. Preservação integral da fixture rica (#272): compara o banco
+    //    pós-upgrade com o baseline — contagens, dados semânticos das
+    //    fichas (__xp/__sangue), saldos, integridade/FK e hash do anexo.
+    {
+      const db = new Database(BANCO, { readonly: true });
+      const diffs = [];
+      for (const [k, v] of Object.entries(BASELINE)) {
+        if (k.startsWith("n_")) {
+          const tb = k.slice(2);
+          const agora = db.prepare(`select count(*) c from ${tb}`).get().c;
+          if (agora !== v) diffs.push(`${tb}: ${v}→${agora}`);
+        }
+      }
+      t("contagens de todos os domínios preservadas", diffs.length === 0, diffs.join("; "));
+      const dataAgora = Object.fromEntries(
+        db.prepare("select id, data from characters order by id").all().map((r) => [r.id, r.data]),
+      );
+      t("characters.data íntegro (__xp/__sangue inclusos)",
+        JSON.stringify(dataAgora) === JSON.stringify(BASELINE.characters_data));
+      const contasAgora = db.prepare("select id, balance_cents from financial_accounts order by id").all();
+      t("saldos financeiros preservados",
+        JSON.stringify(contasAgora) === JSON.stringify(BASELINE.contas),
+        JSON.stringify(contasAgora));
+      const settingsAgora = Object.fromEntries(
+        db.prepare("select key, value from server_settings order by key").all().map((r) => [r.key, r.value]),
+      );
+      const settingsPerdidas = Object.entries(BASELINE.server_settings)
+        .filter(([k, v]) => settingsAgora[k] !== v).map(([k]) => k);
+      t("server_settings da fixture preservadas", settingsPerdidas.length === 0,
+        settingsPerdidas.join(","));
+      t("foreign_key_check limpo pós-upgrade", db.pragma("foreign_key_check").length === 0);
+      t("integrity_check ok pós-upgrade", db.pragma("integrity_check")[0].integrity_check === "ok");
+      db.close();
+      t("anexo em disco preservado (sha256)", sha256(ANEXO_PATH) === BASELINE.anexo_sha256
+        && readFileSync(ANEXO_PATH).length === BASELINE.anexo_bytes);
+    }
   }
 } catch (e) {
   fail++;
