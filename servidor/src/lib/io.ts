@@ -77,7 +77,7 @@ export function emitirComercioInternet(campaignId: string, dados: unknown) {
           let autorizado = false;
           if (userId) {
             if (!autorizados.has(userId)) {
-              autorizados.set(userId, await personagemAutorizadoInternet(characterId, userId));
+              autorizados.set(userId, await personagemAutorizadoInternet(characterId, userId, campaignId));
             }
             autorizado = autorizados.get(userId) === true;
           }

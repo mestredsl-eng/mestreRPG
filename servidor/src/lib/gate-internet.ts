@@ -57,8 +57,10 @@ export async function personagemElegivelInternet(characterId: string): Promise<b
  * cumulativo. Impede que um ex-dono continue recebendo eventos depois de
  * uma transferência de personagem durante uma sessão já conectada.
  */
-export async function personagemAutorizadoInternet(characterId: string, userId: string): Promise<boolean> {
-  const [p] = await db.select().from(characters).where(eq(characters.id, characterId)).limit(1);
+export async function personagemAutorizadoInternet(characterId: string, userId: string, campaignId: string): Promise<boolean> {
+  const [p] = await db.select().from(characters)
+    .where(and(eq(characters.id, characterId), eq(characters.campaignId, campaignId)))
+    .limit(1);
   if (!p || p.status === "arquivado") return false;
 
   const [m] = await db.select({ role: memberships.role }).from(memberships)
