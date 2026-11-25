@@ -259,3 +259,28 @@ O Devin registrou que a sincronização #328@76a8f47 → #329 deve esperar a CI 
 L1 segue com comportamento observado: o perdedor da corrida recebe 404 `item_nao_encontrado` quando o vencedor remove a linha de inventário. Atomicidade e ledger estão coerentes segundo a prova local, mas o contrato 404 versus 409 ainda está com o PAI para definição. Não contar L1 como definitivamente fechado até esse ponto ser tratado.
 
 A #329 ainda contém o delta próprio de `.github/workflows/ci.yml` (branch trigger + testes de schema e comércio). A revisão técnica considerou o delta aditivo e sem remoções, mas a aprovação explícita do proprietário ainda não foi registrada. #327/#328/#329/#336/#341 permanecem Draft/open; nenhuma integração foi mergeada em main.
+
+
+
+## Checkpoint de execução — 25/11/2026 (após 09:10 BRT)
+
+Esta seção é a fotografia mais recente. Ela substitui os estados anteriores quando houver divergência; não transforma a preparação em candidata.
+
+### Estado comprovado
+
+- **#327 — UI / Internet:** HEAD `e897f06b9024d32a0e864da7ebafd9421e712502`. O FILHO adicionou 10 verificações UI específicas (perda de ponto, dispositivo fantasma, isolamento de caixa/loja, ausência de membership e silêncio realtime pós-revogação). Execução local de `node teste-internet-e2e.mjs`: **41/41 PASS**. A suíte OOC×Internet segue com **29/29 PASS local** no worktree integrado contra #329@\`8931b7e\`. CI run `45582842125`: Servidor SUCCESS e Auto-update Windows SUCCESS; Navegador ainda IN_PROGRESS na última consulta. Não declarar a CI deste novo HEAD fechada.
+- **#328 — fundação:** HEAD `76a8f4708b6eabd1211995f4f2ce61d150187d1c`; CI reportada como **5/5 SUCCESS**. A regressão `teste-adocao-legado.mjs` para a fixture exata 1.0.9 (36 migrations, 3 contas e 6 transações) é executada pelo job Servidor e preserva os dados, com FK/integrity checks aprovados.
+- **#329 — comércio/backend integrado:** HEAD `8931b7ea829b323edac9acd3dcde842ab3c1523c`, baseada em #328@\`76a8f47\`. CI run `45576590199`: **3/3 SUCCESS** (Servidor, Windows, Navegador). Evidências locais reportadas nesse SHA: comércio 153/153; adoção 45/45; restauração journal 117/117; boot 236/236. L1–L5 foram portados para a suíte executada na CI; o contrato de venda distingue 404 para item inexistente de 409 para item consumido em corrida.
+- **#336 — matriz complementar:** HEAD `eea7e0f9ff1afd0fe80ec28b8bc7ef7fb2f00cef`. Revisão semântica confirma o port L1–L5 sem gaps. A classificação seguinte identificou **7 grupos de cobertura ainda não executados pela CI da #329** e os marcou como bloqueadores até port/prova: B1 gate por operação após perda de ponto; B2 resolução canônica de dispositivo; B3 saldo insuficiente/rollback multi-item/corrida LOJA-A; B4 bordas LOJA-B; B5 isolamento de campanha/gestor; B6 revogação realtime/envelope de IDs; B7 não-regressão patrimonial.
+- **#341 — este documento:** HEAD anterior `3f4c79a`; PR continua Draft. A base registrada é `main@a1522a8`, enquanto a main atual conhecida é `f6979f4`; a branch documental ainda precisa ser reconciliada com main antes do aceite final.
+
+### Próxima execução — sem ampliar escopo
+
+- **PAI / #329:** recebeu ordem `7157827642` para portar os testes já existentes B1–B7 da #336 para `teste-comercio-lojas.mjs`, que já roda no job Servidor. Não alterar workflow; se algum teste revelar defeito de produto, reportar reprodução antes de mexer na produção.
+- **INTERMEDIÁRIO / #336:** recebeu ordem `7157828358` para revisar semanticamente B1–B7 após o port.
+- **FILHO / #327:** recebeu ordem `7157829066`; entregou 41/41 locais e auditoria UI dos gaps solicitados. Falta fechar o run de CI do HEAD `e897f06`.
+- **PAI / #341:** recebeu ordem `7157830010` para atualizar este checkpoint e reconciliar a documentação. Esta atualização documental foi aplicada pelo Dono Técnico como avanço imediato; o PAI ainda deve confirmar a sincronização da branch documental com main.
+
+### Decisão de prontidão
+
+A 1.1.0 **ainda não é candidata de release**: B1–B7 ainda precisam estar na suíte CI-enabled e passar no CI do SHA final; a CI do HEAD mais recente da UI ainda estava em execução; a documentação precisa ser reconciliada com a main atual. Não promover Draft, mesclar PRs, alterar `.github/workflows/ci.yml`, criar tag ou release sem as autorizações correspondentes.
