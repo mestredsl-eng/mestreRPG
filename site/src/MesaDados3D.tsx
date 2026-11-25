@@ -5,6 +5,7 @@ import {
   criarCenaMesa, passoCena, cenaRepousada, semiLadoMesa, definirAlvoDado,
   type DadoMesa,
 } from "./fisicaMesa";
+import { movimentoReduzido } from "./visualUsuario";
 
 export interface ItemDadoMesa {
   lados: number;
@@ -121,7 +122,7 @@ export default function MesaDados3D({ dados, semente = 7, estado, className }: P
       sementeRef.current = semente;
     }
     const limite = semiLadoMesa(cena.length);
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = movimentoReduzido();
     if (reduced) {
       // Sem simulação: cada dado já nasce assentado na face do servidor,
       // distribuído na grade de spawn — resultado final imediato.

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type MetadadoPoder, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
+import EstadoVazio from "../EstadoVazio";
+import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
 import EquipamentoArmazem from "./EquipamentoArmazem";
@@ -39,6 +41,10 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const selecaoEpochRef = useRef(0);
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // Issue #239 — loading só na primeira carga; recargas por socket são
+  // silenciosas para não piscar a lista a cada evento.
+  const [carregando, setCarregando] = useState(true);
+  const primeiraCarga = useRef(true);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
   const [metadadosPoderes, setMetadadosPoderes] = useState<MetadadoPoder[]>([]);
   const [verArquivados, setVerArquivados] = useState(false);
@@ -48,6 +54,8 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const souMestre = campanha?.meuPapel === "mestre";
 
   const carregar = useCallback(async () => {
+    const inicial = primeiraCarga.current;
+    if (inicial) setCarregando(true);
     try {
       const [{ personagens }, { modelos }] = await Promise.all([
         api.listarPersonagens(campaignId, verArquivados),
@@ -58,6 +66,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
       setErro(null);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar");
+    } finally {
+      primeiraCarga.current = false;
+      setCarregando(false);
     }
     // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
     try {
@@ -175,7 +186,8 @@ export default function Personagens({ campaignId, campanha }: Props) {
             )}
           </div>
         </div>
-        {erro && <p className="erro">{erro}</p>}
+        {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
+        {carregando && <EstadoCarregando>Carregando personagens…</EstadoCarregando>}
         {modelosPublicados.length === 0 && (
           <p className="meta">Nenhum modelo de ficha publicado. O mestre precisa criar e publicar uma ficha primeiro.</p>
         )}
@@ -194,7 +206,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
       </section>
 
       {personagens.length === 0 ? (
-        <section className="cartao"><p>{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</p></section>
+        <section className="cartao"><EstadoVazio icone="vazio-lista">{verArquivados ? "Nenhum personagem arquivado." : "Nenhum personagem ainda."}</EstadoVazio></section>
       ) : (
         <section className="cartao">
           <div className="linha filtros-lista">
@@ -205,7 +217,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
             </select>
           </div>
           {visiveis.length === 0 ? (
-            <p className="meta">Nenhum personagem corresponde à busca.</p>
+            <EstadoVazio icone="vazio-busca">Nenhum personagem corresponde à busca.</EstadoVazio>
           ) : (
           <table className="tabela">
             <thead>
