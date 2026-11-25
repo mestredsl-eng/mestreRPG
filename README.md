@@ -171,3 +171,12 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 - Painel **Administração → Servidor** — uptime, versão, contagens, último backup, logs recentes e configurações globais.
 - Problemas comuns: porta 3001 ocupada (o `.bat` avisa e sugere `parar-mestre-rpg.bat`); "pouco espaço em disco" (o health sinaliza abaixo do limite); backup falhando (verifique permissão de escrita na pasta de destino).
 
+## Comunidade e contribuição
+
+- [Código de Conduta](CODE_OF_CONDUCT.md): convivência e participação nos espaços do projeto.
+- [Como contribuir](CONTRIBUTING.md): fluxo de Issues, branches, Pull Requests, testes e cuidados técnicos.
+- [Política de segurança](SECURITY.md): como reportar vulnerabilidades de forma responsável.
+- [Suporte](SUPPORT.md): instalação, operação e solicitação de ajuda.
+- [Acessibilidade](ACCESSIBILITY.md): compromissos, limitações conhecidas e como relatar barreiras.
+
+Use os formulários de [Issues](https://github.com/mestredsl-eng/mestreRPG/issues) para bugs e propostas de melhoria. Não publique credenciais, dados pessoais, bancos, backups ou conteúdo privado de campanhas.
