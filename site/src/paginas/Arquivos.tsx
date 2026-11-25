@@ -247,7 +247,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
                     <button className="secundario" onClick={() => setVisualizando(a)}>Visualizar</button>
                   )}
                   <a className="secundario" href={url(a, true)} download={a.displayName}>Download</a>
-                  {membroAtivo && (souMestre || a.ehMeu) && <button className="secundario" onClick={() => setEditando({ ...a })}>Editar</button>}
+                  {membroAtivo && (souMestre || (!ehEspectador && a.ehMeu)) && <button className="secundario" onClick={() => setEditando({ ...a })}>Editar</button>}
                   {membroAtivo && (souMestre || a.ehMeu) && <button className="secundario" onClick={() => setConfirmando({ tipo: "arquivo", a })}>Excluir</button>}
                 </div>
               </li>
