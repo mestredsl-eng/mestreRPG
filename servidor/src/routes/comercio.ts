@@ -32,8 +32,10 @@ async function gateInternet(p: typeof characters.$inferSelect) {
   return gateInternetDoPersonagem(p);
 }
 
-/** Acesso de personagem para rotas /characters/:characterId (mesma regra do patrimônio). */
-async function acessoPersonagem(req: Request) {
+/** Acesso de personagem para rotas /characters/:characterId (mesma regra do patrimônio).
+ *  Hotfix #356: papel espectador é negado por padrão — só a vitrine pública
+ *  (/lojas GET) opta por manter a leitura via `permitirEspectador`. */
+async function acessoPersonagem(req: Request, opcoes?: { permitirEspectador?: boolean }) {
   const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
   if (!p) return { erro: 404 as const };
   const membership = await getMembership(p.campaignId, req.usuario!.id);
@@ -41,6 +43,7 @@ async function acessoPersonagem(req: Request) {
   const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, p.membershipId)).limit(1);
   const ehDono = membroDono?.userId === req.usuario!.id;
   if (!membership || membership.status !== "ativo" || (!ehMestre && !ehDono)) return { erro: 403 as const };
+  if (membership.role === "espectador" && !opcoes?.permitirEspectador) return { erro: 403 as const };
   if (p.status === "arquivado") return { erro: 409 as const, detalhe: "personagem_arquivado" };
   return { personagem: p, membership, ehMestre, ehDono };
 }
@@ -48,7 +51,7 @@ async function acessoPersonagem(req: Request) {
 /** Variante de acessoPersonagem para rotas sem :characterId nos params
  *  (vitrine da campanha recebe o personagem por ?personagem=). Garante
  *  também que o personagem pertence à campanha da rota. */
-async function acessoPersonagemId(req: Request, campaignId: string, characterId: string) {
+async function acessoPersonagemId(req: Request, campaignId: string, characterId: string, opcoes?: { permitirEspectador?: boolean }) {
   const [p] = await db.select().from(characters)
     .where(and(eq(characters.id, characterId), eq(characters.campaignId, campaignId))).limit(1);
   if (!p) return { erro: 404 as const };
@@ -57,6 +60,7 @@ async function acessoPersonagemId(req: Request, campaignId: string, characterId:
   const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, p.membershipId)).limit(1);
   const ehDono = membroDono?.userId === req.usuario!.id;
   if (!membership || membership.status !== "ativo" || (!ehMestre && !ehDono)) return { erro: 403 as const };
+  if (membership.role === "espectador" && !opcoes?.permitirEspectador) return { erro: 403 as const };
   if (p.status === "arquivado") return { erro: 409 as const, detalhe: "personagem_arquivado" };
   return { personagem: p, membership, ehMestre, ehDono };
 }
@@ -154,7 +158,7 @@ comercioLojasRouter.get("/lojas", requirePapel("mestre", "jogador", "espectador"
   const campaignId = req.params.campaignId as string;
   const personagemId = typeof req.query.personagem === "string" ? req.query.personagem : null;
   if (!personagemId) { res.status(400).json({ erro: "personagem_obrigatorio" }); return; }
-  const acesso = await acessoPersonagemId(req, campaignId, personagemId);
+  const acesso = await acessoPersonagemId(req, campaignId, personagemId, { permitirEspectador: true });
   if ("erro" in acesso) { responderAcesso(res, acesso); return; }
   const gate = await gateInternet(acesso.personagem);
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
