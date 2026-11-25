@@ -307,6 +307,38 @@ try {
   });
   t("proprietario gerencia como gestor", propOferta.status === 201, String(propOferta.status));
 
+  sec("corrida de replay simultâneo");
+  // oferta ilimitada para isolar o efeito da corrida
+  const ofertaCorrida = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+    cookie: j1.cookie, body: { name: "Item Corrida", priceCents: 100 },
+  });
+  const offerCorrida = ofertaCorrida.json?.id;
+  const saldoAntesCorrida = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
+  const corpoCorrida = { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 1 }], requestId: "corrida-001" };
+  const [c1, c2] = await Promise.all([
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, { cookie: j1.cookie, body: corpoCorrida }),
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, { cookie: j1.cookie, body: corpoCorrida }),
+  ]);
+  const statuses = [c1.status, c2.status].sort();
+  t("corrida: um 201 + um replay 200", statuses[0] === 200 && statuses[1] === 201, JSON.stringify([c1.status, c2.status, c1.json, c2.json]));
+  t("corrida: mesmo pedido nas duas respostas", c1.json?.id && c1.json.id === c2.json?.id, `${c1.json?.id} vs ${c2.json?.id}`);
+  const saldoAposCorrida = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
+  t("corrida: débito aplicado exatamente uma vez", saldoAposCorrida === saldoAntesCorrida - 100, `${saldoAntesCorrida}→${saldoAposCorrida}`);
+  const txsCorrida = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where request_id in ('corrida-001:out','corrida-001:in')").get().c);
+  t("corrida: ledger com exatamente 2 pernas", txsCorrida === 2, String(txsCorrida));
+
+  // mesmo requestId + fingerprint divergente concorrente → um commit + 409
+  const corpoDiv = { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 5 }], requestId: "corrida-002" };
+  const corpoDiv2 = { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 9 }], requestId: "corrida-002" };
+  const [d1, d2] = await Promise.all([
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, { cookie: j1.cookie, body: corpoDiv }),
+    req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, { cookie: j1.cookie, body: corpoDiv2 }),
+  ]);
+  const stDiv = [d1.status, d2.status].sort();
+  t("corrida divergente: um commit + um 409", (stDiv[0] === 201 && stDiv[1] === 409) || (stDiv[0] === 200 && stDiv[1] === 409), JSON.stringify([d1.status, d2.status, d1.json?.erro, d2.json?.erro]));
+  const pedidosDiv = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_orders where request_id='corrida-002'").get().c);
+  t("corrida divergente: um único recibo", pedidosDiv === 1, String(pedidosDiv));
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;

@@ -104,6 +104,31 @@ class ErroComercio extends Error {
   constructor(public status: number, public codigo: string, public detalhes?: unknown) { super(codigo); }
 }
 
+/** Colisão UNIQUE em shop_orders(campaign_id,request_id): duas requisições
+ *  simultâneas com o mesmo requestId passam juntas pelo pré-check e uma
+ *  perde na inserção dentro da transação. O rollback já aconteceu — relê
+ *  o vencedor: fingerprint igual → replay; divergente → 409. Nunca 500. */
+function ehColisaoPedido(e: unknown): boolean {
+  const err = e as { code?: string; message?: string } | null;
+  return err?.code === "SQLITE_CONSTRAINT_UNIQUE"
+    || /UNIQUE constraint failed: shop_orders/.test(err?.message ?? "");
+}
+
+/** Resolve a colisão relendo o pedido vencedor. Retorna true se respondeu. */
+async function resolverColisaoPedido(
+  res: Response, campaignId: string, requestId: string, fp: string,
+): Promise<boolean> {
+  const [vencedor] = await db.select().from(shopOrders)
+    .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, requestId))).limit(1);
+  const fpVencedor = (vencedor?.data as Record<string, unknown> | undefined)?.fingerprint;
+  if (vencedor && fpVencedor === fp) {
+    res.json({ id: vencedor.id, replay: true });
+    return true;
+  }
+  res.status(409).json({ erro: "request_id_divergente" });
+  return true;
+}
+
 function emitirPatrimonio(campaignId: string, characterId: string) {
   emitirCampanha(campaignId, "patrimonio:atualizado", { characterId });
 }
@@ -413,6 +438,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
     });
   } catch (e) {
     if (e instanceof ErroComercio) { res.status(e.status).json({ erro: e.codigo, detalhes: e.detalhes }); return; }
+    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, b.data.requestId, fp)) return;
     throw e;
   }
 
@@ -555,6 +581,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
     });
   } catch (e) {
     if (e instanceof ErroComercio) { res.status(e.status).json({ erro: e.codigo, detalhes: e.detalhes }); return; }
+    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, b.data.requestId, fp)) return;
     throw e;
   }
 
