@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type EstruturaFicha, type ModeloResumo, type VersaoModelo } from "../api";
 import EditorFicha from "../EditorFicha";
 import { ModalConfirmar } from "../Modal";
-import { useSincronizacaoCampanha } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 
 const estruturaVazia = (): EstruturaFicha => ({
   versao: 1,
@@ -54,6 +54,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       if (g !== geracao.current) return;
       setModelos(modelos);
       setErro(null);
+      registrarSyncOk(campaignId);
       try {
         const { kinds, elementos } = await api.obterVinculaveis(campaignId);
         if (g !== geracao.current) return;
