@@ -3,8 +3,9 @@ import { Server as SocketIOServer } from "socket.io";
 import { and, eq } from "drizzle-orm";
 import { autenticarHandshake } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
-import { memberships } from "../db/schema.js";
+import { memberships, characters } from "../db/schema.js";
 import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
+import { personagemElegivelInternet } from "../lib/gate-internet.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 import { registrarSangue } from "./sangue.js";
@@ -102,6 +103,59 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
 
     socket.on("sair-campanha", (campaignId: string) => {
       socket.leave(`campanha:${campaignId}`);
+    });
+
+    // Inscrição no canal IC/comércio (bloqueio P1 #329/7152569806).
+    // Autorização servidor-side: sessão (já no handshake), membership ativa,
+    // personagem da campanha, titularidade (dono do personagem ou mestre)
+    // e gate Internet cumulativo revalidado NO MOMENTO do join. O cliente
+    // nunca escolhe a sala — só recebe `internet:{campaignId}:{characterId}`
+    // se passar em tudo; caso contrário cb(false) e nenhum evento chega.
+    socket.on("entrar-internet", async (payload: unknown, cb?: (ok: boolean) => void) => {
+      const usuario = socket.data.usuario;
+      const p = payload as { campaignId?: unknown; characterId?: unknown } | null;
+      const campaignId = typeof p?.campaignId === "string" ? p.campaignId : null;
+      const characterId = typeof p?.characterId === "string" ? p.characterId : null;
+      if (!usuario || !campaignId || !characterId || barreiraRestauracaoAtiva(campaignId)) {
+        cb?.(false);
+        return;
+      }
+      const sala = `internet:${campaignId}:${characterId}`;
+      try {
+        const [m] = await db
+          .select({ id: memberships.id, role: memberships.role })
+          .from(memberships)
+          .where(and(
+            eq(memberships.campaignId, campaignId),
+            eq(memberships.userId, usuario.id),
+            eq(memberships.status, "ativo"),
+          ))
+          .limit(1);
+        if (!m) { cb?.(false); return; }
+        const [personagem] = await db.select().from(characters)
+          .where(and(eq(characters.id, characterId), eq(characters.campaignId, campaignId)))
+          .limit(1);
+        if (!personagem || personagem.status === "arquivado") { cb?.(false); return; }
+        // titularidade: dono do personagem (membership da ficha) ou mestre
+        if (m.role !== "mestre") {
+          const [dono] = await db.select({ userId: memberships.userId }).from(memberships)
+            .where(eq(memberships.id, personagem.membershipId)).limit(1);
+          if (dono?.userId !== usuario.id) { cb?.(false); return; }
+        }
+        // gate cumulativo revalidado na inscrição — inelegível nem entra
+        if (!(await personagemElegivelInternet(characterId))) { cb?.(false); return; }
+        if (!barreiraRestauracaoAtiva(campaignId)) socket.join(sala);
+        cb?.(!barreiraRestauracaoAtiva(campaignId));
+      } catch {
+        cb?.(false);
+      }
+    });
+
+    socket.on("sair-internet", (payload: unknown) => {
+      const p = payload as { campaignId?: unknown; characterId?: unknown } | null;
+      if (typeof p?.campaignId === "string" && typeof p?.characterId === "string") {
+        socket.leave(`internet:${p.campaignId}:${p.characterId}`);
+      }
     });
   });
 
