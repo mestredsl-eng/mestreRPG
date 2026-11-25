@@ -5,8 +5,8 @@
 import { Router, type Request, type Response } from "express";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { getDb } from "../db/index.js";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { getDb, type Db } from "../db/index.js";
 import {
   campaigns, characters, financialAccounts, moneyTransactions,
   shopManagers, shopOffers, shopOrders, shops, memberships, inventoryEntries, equipmentEntries, itemTemplates,
@@ -533,6 +533,55 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
   res.status(201).json({ id: orderId, totalCents, itens: itensEntregues });
 });
 
+type DbTx = Parameters<Parameters<Db["transaction"]>[0]>[0];
+
+/** Efeito 4 da matriz LB1 (#289): o item vendido entra no estoque
+ *  comercial da loja NA MESMA transação do pagamento/baixa — qualquer
+ *  falha reverte caixa, vendedor, inventário, ledger, estoque e recibo.
+ *
+ *  Vínculo item→estoque ( shop_offers É o estoque comercial ):
+ *  - item com data.templateId → casa oferta da loja por item_template_id
+ *    (chave canônica do catálogo/Acervo);
+ *  - sem templateId → casa por name dentro da loja (única chave estável;
+ *    o nome é o que a vitrine exibe — documentado, não é fuzzy match).
+ *  Match → stockQty += qty (NULL = ilimitado permanece). Sem match →
+ *  cria oferta INATIVA com priceCents = custo pago e proveniência em
+ *  data (orderId/origem/unitCostCents): o gestor revisa, define o preço
+ *  de revenda e ativa para a vitrine — evita listar a custo sem decisão. */
+function creditarEstoqueLoja(
+  tx: DbTx,
+  loja: typeof shops.$inferSelect,
+  campaignId: string,
+  item: { name: string; description: string | null; templateId?: string },
+  qty: number,
+  unitCents: number,
+  orderId: string,
+  currency: string,
+  agora: Date,
+) {
+  const tpl = item.templateId ?? null;
+  const [existente] = tpl
+    ? tx.select().from(shopOffers)
+      .where(and(eq(shopOffers.shopId, loja.id), eq(shopOffers.itemTemplateId, tpl))).limit(1).all()
+    : tx.select().from(shopOffers)
+      .where(and(eq(shopOffers.shopId, loja.id), isNull(shopOffers.itemTemplateId), eq(shopOffers.name, item.name))).limit(1).all();
+  if (existente) {
+    if (existente.stockQty !== null) {
+      tx.update(shopOffers).set({ stockQty: existente.stockQty + qty, updatedAt: agora })
+        .where(eq(shopOffers.id, existente.id)).run();
+    }
+    return;
+  }
+  tx.insert(shopOffers).values({
+    id: crypto.randomUUID(), shopId: loja.id, campaignId,
+    name: item.name, description: item.description ?? undefined,
+    priceCents: Math.round(unitCents), currency, stockQty: qty,
+    itemTemplateId: tpl ?? undefined, isActive: false,
+    data: { origem: "revenda_loja", orderId, unitCostCents: unitCents },
+    createdAt: agora, updatedAt: agora,
+  }).run();
+}
+
 const venderSchema = z.object({
   shopId: z.string().min(1),
   inventoryEntryId: z.string().min(1),
@@ -663,6 +712,14 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
       } else {
         tx.update(inventoryEntries).set({ quantity: novaQtd, updatedAt: agora }).where(eq(inventoryEntries.id, item.id)).run();
       }
+
+      // efeito 4 LB1: entrada no estoque comercial da loja (mesma tx)
+      creditarEstoqueLoja(tx, loja, campaignId,
+        {
+          name: item.name, description: item.description,
+          templateId: typeof dadosItem.templateId === "string" ? dadosItem.templateId : undefined,
+        },
+        b.data.qty, valorUnit, orderId, contaVendedor.currency, agora);
 
       tx.insert(shopOrders).values({
         id: orderId, campaignId, shopId: loja.id, requestId: b.data.requestId,
