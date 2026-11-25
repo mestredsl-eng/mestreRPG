@@ -1,0 +1,237 @@
+{
+  "gerado": "2026-11-25T20:37:13.326Z",
+  "resultados": [
+    {
+      "caso": "login → painel · controles",
+      "controles": [
+        {
+          "tag": "input",
+          "type": "text",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(201, 205, 211)",
+          "placeholderRazaoBg": 11.738,
+          "labelTexto": "Usuário",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        },
+        {
+          "tag": "input",
+          "type": "password",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(201, 205, 211)",
+          "placeholderRazaoBg": 11.738,
+          "labelTexto": "Senha",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        }
+      ],
+      "labelsAmostra": [
+        {
+          "texto": "Usuário",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        },
+        {
+          "texto": "Senha",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        }
+      ]
+    },
+    {
+      "caso": "foco evidência foco-painel-desktop-1366.png",
+      "elemento": {
+        "tag": "button",
+        "nome": "Painel",
+        "outline": "solid 2px rgb(184, 92, 105)",
+        "rect": {
+          "x": 414.125,
+          "y": 12,
+          "w": 91.578125,
+          "h": 36
+        }
+      },
+      "bgAdjacente": {
+        "rgb": [
+          24,
+          24,
+          24
+        ],
+        "n": 4690
+      },
+      "razaoOutlineBg": 4.04
+    },
+    {
+      "caso": "foco evidência foco-campanha-desktop-1366.png",
+      "elemento": {
+        "tag": "button",
+        "nome": "Voltar",
+        "outline": "solid 2px rgb(184, 92, 105)",
+        "rect": {
+          "x": 1228.796875,
+          "y": 140.796875,
+          "w": 72.875,
+          "h": 36.59375
+        }
+      },
+      "bgAdjacente": {
+        "rgb": [
+          24,
+          24,
+          24
+        ],
+        "n": 4736
+      },
+      "razaoOutlineBg": 4.04
+    },
+    {
+      "caso": "Arquivos · input pesquisa + select categoria",
+      "controles": [
+        {
+          "tag": "input",
+          "type": "text",
+          "bg": "rgb(20, 22, 26)",
+          "placeholderCor": "rgb(117, 117, 117)",
+          "placeholderRazaoBg": 3.931,
+          "labelTexto": null,
+          "labelCor": null,
+          "labelRazaoBgExterno": null
+        },
+        {
+          "tag": "select",
+          "type": "select-one",
+          "bg": "rgb(20, 22, 26)",
+          "placeholderCor": "rgb(232, 230, 227)",
+          "placeholderRazaoBg": 14.541,
+          "labelTexto": null,
+          "labelCor": null,
+          "labelRazaoBgExterno": null
+        }
+      ],
+      "labelsAmostra": []
+    },
+    {
+      "caso": "Convites · select papel + numbers + checkbox",
+      "controles": [
+        {
+          "tag": "select",
+          "type": "select-one",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(201, 205, 211)",
+          "placeholderRazaoBg": 11.738,
+          "labelTexto": "Papel inicial\nJogador\nEspectador",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        },
+        {
+          "tag": "input",
+          "type": "number",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(117, 117, 117)",
+          "placeholderRazaoBg": 4.066,
+          "labelTexto": "Máx. de usos",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        },
+        {
+          "tag": "input",
+          "type": "number",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(117, 117, 117)",
+          "placeholderRazaoBg": 4.066,
+          "labelTexto": "Expira em (horas)",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        },
+        {
+          "tag": "input",
+          "type": "checkbox",
+          "bg": "rgb(15, 18, 25)",
+          "placeholderCor": "rgb(201, 205, 211)",
+          "placeholderRazaoBg": 11.738,
+          "labelTexto": "Exigir aprovação do mestre",
+          "labelCor": "rgb(201, 205, 211)",
+          "labelRazaoBgExterno": null
+        }
+      ],
+      "labelsAmostra": [
+        {
+          "texto": "Papel inicial\nJogador\nEspectador",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        },
+        {
+          "texto": "Máx. de usos",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        },
+        {
+          "texto": "Expira em (horas)",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        },
+        {
+          "texto": "Exigir aprovação do mestre",
+          "cor": "rgb(201, 205, 211)",
+          "fundo": "rgb(11,10,15)",
+          "img": false
+        }
+      ]
+    },
+    {
+      "caso": "Convites · checkbox nativo",
+      "shot": "checkbox-probe.png",
+      "box": {
+        "x": 692.984375,
+        "y": 416.65625,
+        "width": 13,
+        "height": 13
+      },
+      "hist": {
+        "centro": [
+          "3,3,3×467",
+          "8,8,8×82",
+          "5,5,5×10",
+          "7,7,7×8",
+          "4,4,4×7",
+          "1,1,1×2"
+        ],
+        "bordaControle": [
+          "1,1,1×90",
+          "1,1,1×44",
+          "8,8,8×38",
+          "5,5,5×2",
+          "7,7,7×2",
+          "5,4,5×1",
+          "2,2,3×1",
+          "1,1,1×56",
+          "8,8,8×16",
+          "3,3,3×2",
+          "6,6,6×2",
+          "7,7,7×2",
+          "1,1,1×56",
+          "8,8,8×16",
+          "3,3,3×2",
+          "6,6,6×2",
+          "7,7,7×2"
+        ],
+        "externo": [
+          "1,1,1×330",
+          "1,1,1×330",
+          "1,1,1×330",
+          "1,1,1×270",
+          "12,12,13×30",
+          "10,10,11×18",
+          "9,9,9×12"
+        ],
+        "W": 66,
+        "H": 66
+      }
+    }
+  ]
+}

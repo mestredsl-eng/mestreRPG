@@ -1,0 +1,2203 @@
+{
+  "gerado": "2026-11-25T20:17:52.857Z",
+  "sha": "a5e8c54",
+  "ordem": "7173173001",
+  "resultados": [
+    {
+      "caso": "login→painel · foco",
+      "viewport": "celular-390",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 1,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 33,
+            "y": 159.4375,
+            "w": 324,
+            "h": 34
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 33,
+            "y": 226.4375,
+            "w": 324,
+            "h": 34
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 33,
+            "y": 272.4375,
+            "w": 324,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 33,
+            "y": 321.03125,
+            "w": 324,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 33,
+            "y": 159.4375,
+            "w": 324,
+            "h": 34
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 33,
+            "y": 226.4375,
+            "w": 324,
+            "h": 34
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 33,
+            "y": 272.4375,
+            "w": 324,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 33,
+            "y": 321.03125,
+            "w": 324,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "login→painel · foco",
+      "viewport": "celular-390",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 13.59375,
+            "y": 39.1875,
+            "w": 76.109375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Campanhas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 96.421875,
+            "y": 39.1875,
+            "w": 111.21875,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Acervo",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 214.359375,
+            "y": 39.1875,
+            "w": 80.578125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Novidades\n7",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 13.59375,
+            "y": 81.90625,
+            "w": 132.15625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Guildas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 152.46875,
+            "y": 81.90625,
+            "w": 84.3125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Administração",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 243.5,
+            "y": 81.90625,
+            "w": 123.890625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Conta",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 13.59375,
+            "y": 124.625,
+            "w": 74.609375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Sair",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 94.921875,
+            "y": 124.625,
+            "w": 62.640625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.sair adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 13.59375,
+            "y": 39.1875,
+            "w": 76.109375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "campanha · foco",
+      "viewport": "celular-390",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Voltar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 276.3125,
+            "y": 235.015625,
+            "w": 72.875,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Informações",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 40.796875,
+            "y": 302.40625,
+            "w": 108.03125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Mesa",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 156.828125,
+            "y": 302.40625,
+            "w": 66,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Personagens",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 230.828125,
+            "y": 302.40625,
+            "w": 115.65625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Diário",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 40.796875,
+            "y": 342.78125,
+            "w": 68.40625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Histórico",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 117.203125,
+            "y": 342.78125,
+            "w": 86.796875,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Arquivos",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 212,
+            "y": 342.78125,
+            "w": 86.8125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Fichas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 40.796875,
+            "y": 383.15625,
+            "w": 73.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Regras",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 122,
+            "y": 383.15625,
+            "w": 77.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Participantes (3)",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 207.203125,
+            "y": 383.15625,
+            "w": 135.640625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "dica-diario-celular-390",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhuma anotação.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-diario-celular-390.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 795,
+      "nTot": 11132,
+      "nBgAnel": 2484,
+      "minAnel": 1.492,
+      "p5Anel": 1.883,
+      "p25Anel": 4.697,
+      "medianaAnel": 5.777,
+      "piorPxAnel": [
+        112,
+        117,
+        134
+      ],
+      "piorGlobal": 1.492
+    },
+    {
+      "caso": "dica-arquivos-celular-390",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhum arquivo nesta visualização.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-arquivos-celular-390.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 1333,
+      "nTot": 19412,
+      "nBgAnel": 4423,
+      "minAnel": 1.494,
+      "p5Anel": 1.8,
+      "p25Anel": 4.78,
+      "medianaAnel": 5.85,
+      "piorPxAnel": [
+        111,
+        117,
+        135
+      ],
+      "piorGlobal": 1.494
+    },
+    {
+      "caso": "Arquivos · inputs",
+      "viewport": "celular-390",
+      "papel": "mestre",
+      "total": 2,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "input",
+          "type": "text",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [],
+          "placeholder": "Pesquisar…",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-celular-390-0-input-text.png"
+        },
+        {
+          "idx": 1,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Filtrar por categoria",
+          "labels": [],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-celular-390-1-select-select-one.png"
+        }
+      ]
+    },
+    {
+      "caso": "label-checkbox-celular-390",
+      "tipo": "texto",
+      "seletor": "label.checkbox",
+      "texto": "Exigir aprovação do mestre",
+      "fg": "rgb(201, 205, 211)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "label-checkbox-celular-390.png",
+      "fgRgb": [
+        201,
+        205,
+        211
+      ],
+      "nInk": 1065,
+      "nTot": 14812,
+      "nBgAnel": 3450,
+      "minAnel": 1.388,
+      "p5Anel": 1.72,
+      "p25Anel": 5.727,
+      "medianaAnel": 11.199,
+      "piorPxAnel": [
+        172,
+        174,
+        181
+      ],
+      "piorGlobal": 1.388
+    },
+    {
+      "caso": "Convites · inputs",
+      "viewport": "celular-390",
+      "papel": "mestre",
+      "total": 4,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Papel do convite",
+          "labels": [
+            "Papel inicial\nJogador\nEspectador"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-celular-390-0-select-select-one.png"
+        },
+        {
+          "idx": 1,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Máx. de usos"
+          ],
+          "placeholder": "Ilimitado",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-celular-390-1-input-number.png"
+        },
+        {
+          "idx": 2,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Expira em (horas)"
+          ],
+          "placeholder": "Nunca",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-celular-390-2-input-number.png"
+        },
+        {
+          "idx": 3,
+          "tag": "input",
+          "type": "checkbox",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Exigir aprovação do mestre"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "0px none rgb(201, 205, 211)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-celular-390-3-input-checkbox.png"
+        }
+      ]
+    },
+    {
+      "caso": "ficha-dono-celular-390",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-celular-390.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 482,
+      "nTot": 6968,
+      "nBgAnel": 1350,
+      "minAnel": 1.446,
+      "p5Anel": 1.656,
+      "p25Anel": 5.163,
+      "medianaAnel": 7.696,
+      "piorPxAnel": [
+        149,
+        139,
+        148
+      ],
+      "piorGlobal": 1.446
+    },
+    {
+      "caso": "ficha-dono-inventario-celular-390",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-inventario-celular-390.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 47,
+      "nTot": 6968,
+      "nBgAnel": 737,
+      "minAnel": 1.405,
+      "p5Anel": 1.617,
+      "p25Anel": 1.875,
+      "medianaAnel": 2.626,
+      "piorPxAnel": [
+        211,
+        201,
+        204
+      ],
+      "piorGlobal": 1.405
+    },
+    {
+      "caso": "ficha-dono-dinheiro-celular-390",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-dinheiro-celular-390.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 47,
+      "nTot": 6968,
+      "nBgAnel": 737,
+      "minAnel": 1.405,
+      "p5Anel": 1.617,
+      "p25Anel": 1.875,
+      "medianaAnel": 2.626,
+      "piorPxAnel": [
+        211,
+        201,
+        204
+      ],
+      "piorGlobal": 1.405
+    },
+    {
+      "caso": "login→painel · foco",
+      "viewport": "tablet-768",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 1,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 211,
+            "y": 175.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 211,
+            "y": 241.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 211,
+            "y": 286.4375,
+            "w": 346,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 211,
+            "y": 335.03125,
+            "w": 346,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 211,
+            "y": 175.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 211,
+            "y": 241.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 211,
+            "y": 286.4375,
+            "w": 346,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 211,
+            "y": 335.03125,
+            "w": 346,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "login→painel · foco",
+      "viewport": "tablet-768",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 148.125,
+            "y": 41.59375,
+            "w": 91.578125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Campanhas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 246.421875,
+            "y": 41.59375,
+            "w": 131.28125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Acervo",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 384.421875,
+            "y": 41.59375,
+            "w": 96.625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Novidades\n7",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 487.765625,
+            "y": 41.59375,
+            "w": 152.65625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Guildas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 647.140625,
+            "y": 41.59375,
+            "w": 100.859375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Administração",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 422.71875,
+            "y": 84.3125,
+            "w": 145.625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Conta",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 575.0625,
+            "y": 84.3125,
+            "w": 89.875,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Sair",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 671.65625,
+            "y": 84.3125,
+            "w": 76.34375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.sair adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 148.125,
+            "y": 41.59375,
+            "w": 91.578125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "campanha · foco",
+      "viewport": "tablet-768",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Voltar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 642.75,
+            "y": 213.109375,
+            "w": 72.875,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Informações",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 52.359375,
+            "y": 280.5,
+            "w": 108.03125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Mesa",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 168.390625,
+            "y": 280.5,
+            "w": 66,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Personagens",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 242.390625,
+            "y": 280.5,
+            "w": 115.65625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Diário",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 366.046875,
+            "y": 280.5,
+            "w": 68.40625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Histórico",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 442.453125,
+            "y": 280.5,
+            "w": 86.796875,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Arquivos",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 537.25,
+            "y": 280.5,
+            "w": 86.8125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Fichas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 632.0625,
+            "y": 280.5,
+            "w": 73.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Regras",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 52.359375,
+            "y": 320.875,
+            "w": 77.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Participantes (3)",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 137.5625,
+            "y": 320.875,
+            "w": 135.640625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "dica-diario-tablet-768",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhuma anotação.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-diario-tablet-768.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 767,
+      "nTot": 11132,
+      "nBgAnel": 2439,
+      "minAnel": 1.492,
+      "p5Anel": 1.772,
+      "p25Anel": 4.647,
+      "medianaAnel": 5.682,
+      "piorPxAnel": [
+        112,
+        117,
+        134
+      ],
+      "piorGlobal": 1.492
+    },
+    {
+      "caso": "dica-arquivos-tablet-768",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhum arquivo nesta visualização.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-arquivos-tablet-768.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 1360,
+      "nTot": 19412,
+      "nBgAnel": 4385,
+      "minAnel": 1.492,
+      "p5Anel": 1.935,
+      "p25Anel": 4.76,
+      "medianaAnel": 5.795,
+      "piorPxAnel": [
+        112,
+        117,
+        134
+      ],
+      "piorGlobal": 1.492
+    },
+    {
+      "caso": "Arquivos · inputs",
+      "viewport": "tablet-768",
+      "papel": "mestre",
+      "total": 2,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "input",
+          "type": "text",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [],
+          "placeholder": "Pesquisar…",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-tablet-768-0-input-text.png"
+        },
+        {
+          "idx": 1,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Filtrar por categoria",
+          "labels": [],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-tablet-768-1-select-select-one.png"
+        }
+      ]
+    },
+    {
+      "caso": "label-checkbox-tablet-768",
+      "tipo": "texto",
+      "seletor": "label.checkbox",
+      "texto": "Exigir aprovação do mestre",
+      "fg": "rgb(201, 205, 211)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "label-checkbox-tablet-768.png",
+      "fgRgb": [
+        201,
+        205,
+        211
+      ],
+      "nInk": 1062,
+      "nTot": 14812,
+      "nBgAnel": 3420,
+      "minAnel": 1.388,
+      "p5Anel": 1.761,
+      "p25Anel": 6.023,
+      "medianaAnel": 11.199,
+      "piorPxAnel": [
+        172,
+        174,
+        181
+      ],
+      "piorGlobal": 1.388
+    },
+    {
+      "caso": "Convites · inputs",
+      "viewport": "tablet-768",
+      "papel": "mestre",
+      "total": 4,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Papel do convite",
+          "labels": [
+            "Papel inicial\nJogador\nEspectador"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-tablet-768-0-select-select-one.png"
+        },
+        {
+          "idx": 1,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Máx. de usos"
+          ],
+          "placeholder": "Ilimitado",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-tablet-768-1-input-number.png"
+        },
+        {
+          "idx": 2,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Expira em (horas)"
+          ],
+          "placeholder": "Nunca",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-tablet-768-2-input-number.png"
+        },
+        {
+          "idx": 3,
+          "tag": "input",
+          "type": "checkbox",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Exigir aprovação do mestre"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "0px none rgb(201, 205, 211)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-tablet-768-3-input-checkbox.png"
+        }
+      ]
+    },
+    {
+      "caso": "ficha-dono-tablet-768",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-tablet-768.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 510,
+      "nTot": 6968,
+      "nBgAnel": 1460,
+      "minAnel": 1.446,
+      "p5Anel": 1.883,
+      "p25Anel": 5.339,
+      "medianaAnel": 7.696,
+      "piorPxAnel": [
+        149,
+        139,
+        148
+      ],
+      "piorGlobal": 1.446
+    },
+    {
+      "caso": "ficha-dono-inventario-tablet-768",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-inventario-tablet-768.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 87,
+      "nTot": 6968,
+      "nBgAnel": 850,
+      "minAnel": 1.416,
+      "p5Anel": 1.657,
+      "p25Anel": 1.875,
+      "medianaAnel": 2.736,
+      "piorPxAnel": [
+        211,
+        202,
+        205
+      ],
+      "piorGlobal": 1.416
+    },
+    {
+      "caso": "ficha-dono-dinheiro-tablet-768",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-dinheiro-tablet-768.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 87,
+      "nTot": 6968,
+      "nBgAnel": 850,
+      "minAnel": 1.416,
+      "p5Anel": 1.657,
+      "p25Anel": 1.875,
+      "medianaAnel": 2.739,
+      "piorPxAnel": [
+        211,
+        202,
+        205
+      ],
+      "piorGlobal": 1.416
+    },
+    {
+      "caso": "login→painel · foco",
+      "viewport": "desktop-1366",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 1,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 510,
+            "y": 175.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 510,
+            "y": 241.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 510,
+            "y": 286.4375,
+            "w": 346,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 510,
+            "y": 335.03125,
+            "w": 346,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 510,
+            "y": 175.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "input",
+          "nome": "",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(141, 61, 75, 0.12) 0px 0px 0px 3px",
+          "rect": {
+            "x": 510,
+            "y": 241.4375,
+            "w": 346,
+            "h": 33
+          },
+          "visivel": true,
+          "medicao": "input adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Entrar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(0, 0, 0, 0.18) 0px 3px 10px 0px, rgba(255, 230, 232, 0.08) 0px 1px 0px 0px inset",
+          "rect": {
+            "x": 510,
+            "y": 286.4375,
+            "w": 346,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Primeiro acesso? Criar conta de administrador",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 510,
+            "y": 335.03125,
+            "w": 346,
+            "h": 24
+          },
+          "visivel": true,
+          "medicao": "button.link adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "login→painel · foco",
+      "viewport": "desktop-1366",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 414.125,
+            "y": 12,
+            "w": 91.578125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Campanhas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 512.421875,
+            "y": 12,
+            "w": 131.28125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Acervo",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 650.421875,
+            "y": 12,
+            "w": 96.625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Novidades\n7",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 753.765625,
+            "y": 12,
+            "w": 152.65625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Guildas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 913.140625,
+            "y": 12,
+            "w": 100.859375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Administração",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 1020.71875,
+            "y": 12,
+            "w": 145.625,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Conta",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 1173.0625,
+            "y": 12,
+            "w": 89.875,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Sair",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 1269.65625,
+            "y": 12,
+            "w": 76.34375,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.sair adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Painel",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": "rgba(184, 92, 105, 0.11) 0px 0px 0px 1px inset, rgba(0, 0, 0, 0.16) 0px 4px 16px 0px",
+          "rect": {
+            "x": 414.125,
+            "y": 12,
+            "w": 91.578125,
+            "h": 36
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "campanha · foco",
+      "viewport": "desktop-1366",
+      "papel": "mestre",
+      "paradas": [
+        {
+          "i": 0,
+          "tag": "button",
+          "nome": "Voltar",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 1228.796875,
+            "y": 140.796875,
+            "w": 72.875,
+            "h": 36.59375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 1,
+          "tag": "button",
+          "nome": "Informações",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 64.3125,
+            "y": 208.1875,
+            "w": 108.03125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.ativo adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 2,
+          "tag": "button",
+          "nome": "Mesa",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 180.34375,
+            "y": 208.1875,
+            "w": 66,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 3,
+          "tag": "button",
+          "nome": "Personagens",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 254.34375,
+            "y": 208.1875,
+            "w": 115.65625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 4,
+          "tag": "button",
+          "nome": "Diário",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 378,
+            "y": 208.1875,
+            "w": 68.40625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 5,
+          "tag": "button",
+          "nome": "Histórico",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 454.40625,
+            "y": 208.1875,
+            "w": 86.796875,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 6,
+          "tag": "button",
+          "nome": "Arquivos",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 549.203125,
+            "y": 208.1875,
+            "w": 86.8125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 7,
+          "tag": "button",
+          "nome": "Fichas",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 644.015625,
+            "y": 208.1875,
+            "w": 73.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 8,
+          "tag": "button",
+          "nome": "Regras",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 725.21875,
+            "y": 208.1875,
+            "w": 77.203125,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        },
+        {
+          "i": 9,
+          "tag": "button",
+          "nome": "Participantes (3)",
+          "outline": "solid 2px rgb(184, 92, 105)",
+          "boxShadow": null,
+          "rect": {
+            "x": 810.421875,
+            "y": 208.1875,
+            "w": 135.640625,
+            "h": 32.375
+          },
+          "visivel": true,
+          "medicao": "button.secundario adjacente externo incalculável (bg-image)"
+        }
+      ]
+    },
+    {
+      "caso": "dica-diario-desktop-1366",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhuma anotação.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-diario-desktop-1366.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 780,
+      "nTot": 11132,
+      "nBgAnel": 2457,
+      "minAnel": 1.492,
+      "p5Anel": 1.72,
+      "p25Anel": 4.584,
+      "medianaAnel": 5.663,
+      "piorPxAnel": [
+        112,
+        117,
+        134
+      ],
+      "piorGlobal": 1.492
+    },
+    {
+      "caso": "dica-arquivos-desktop-1366",
+      "tipo": "texto",
+      "seletor": "li.dica",
+      "texto": "Nenhum arquivo nesta visualização.",
+      "fg": "rgb(139, 147, 167)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "dica-arquivos-desktop-1366.png",
+      "fgRgb": [
+        139,
+        147,
+        167
+      ],
+      "nInk": 1315,
+      "nTot": 19412,
+      "nBgAnel": 4391,
+      "minAnel": 1.492,
+      "p5Anel": 1.72,
+      "p25Anel": 4.697,
+      "medianaAnel": 5.739,
+      "piorPxAnel": [
+        112,
+        117,
+        134
+      ],
+      "piorGlobal": 1.492
+    },
+    {
+      "caso": "Arquivos · inputs",
+      "viewport": "desktop-1366",
+      "papel": "mestre",
+      "total": 2,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "input",
+          "type": "text",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [],
+          "placeholder": "Pesquisar…",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-desktop-1366-0-input-text.png"
+        },
+        {
+          "idx": 1,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Filtrar por categoria",
+          "labels": [],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(44, 48, 56)",
+          "bgColor": "rgb(20, 22, 26)",
+          "color": "rgb(232, 230, 227)",
+          "shot": "arquivos-input-desktop-1366-1-select-select-one.png"
+        }
+      ]
+    },
+    {
+      "caso": "label-checkbox-desktop-1366",
+      "tipo": "texto",
+      "seletor": "label.checkbox",
+      "texto": "Exigir aprovação do mestre",
+      "fg": "rgb(201, 205, 211)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "label-checkbox-desktop-1366.png",
+      "fgRgb": [
+        201,
+        205,
+        211
+      ],
+      "nInk": 1062,
+      "nTot": 14812,
+      "nBgAnel": 3420,
+      "minAnel": 1.388,
+      "p5Anel": 1.756,
+      "p25Anel": 5.995,
+      "medianaAnel": 11.174,
+      "piorPxAnel": [
+        172,
+        174,
+        181
+      ],
+      "piorGlobal": 1.388
+    },
+    {
+      "caso": "Convites · inputs",
+      "viewport": "desktop-1366",
+      "papel": "mestre",
+      "total": 4,
+      "itens": [
+        {
+          "idx": 0,
+          "tag": "select",
+          "type": "select-one",
+          "id": null,
+          "name": null,
+          "aria": "Papel do convite",
+          "labels": [
+            "Papel inicial\nJogador\nEspectador"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-desktop-1366-0-select-select-one.png"
+        },
+        {
+          "idx": 1,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Máx. de usos"
+          ],
+          "placeholder": "Ilimitado",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-desktop-1366-1-input-number.png"
+        },
+        {
+          "idx": 2,
+          "tag": "input",
+          "type": "number",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Expira em (horas)"
+          ],
+          "placeholder": "Nunca",
+          "appearance": "auto auto",
+          "border": "1px solid rgb(42, 47, 63)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-desktop-1366-2-input-number.png"
+        },
+        {
+          "idx": 3,
+          "tag": "input",
+          "type": "checkbox",
+          "id": null,
+          "name": null,
+          "aria": null,
+          "labels": [
+            "Exigir aprovação do mestre"
+          ],
+          "placeholder": null,
+          "appearance": "auto auto",
+          "border": "0px none rgb(201, 205, 211)",
+          "bgColor": "rgb(15, 18, 25)",
+          "color": "rgb(201, 205, 211)",
+          "shot": "convites-input-desktop-1366-3-input-checkbox.png"
+        }
+      ]
+    },
+    {
+      "caso": "ficha-dono-desktop-1366",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-desktop-1366.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 516,
+      "nTot": 6968,
+      "nBgAnel": 1471,
+      "minAnel": 1.446,
+      "p5Anel": 1.856,
+      "p25Anel": 4.841,
+      "medianaAnel": 7.618,
+      "piorPxAnel": [
+        149,
+        139,
+        148
+      ],
+      "piorGlobal": 1.446
+    },
+    {
+      "caso": "ficha-dono-inventario-desktop-1366",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-inventario-desktop-1366.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 16,
+      "nTot": 6968,
+      "nBgAnel": 193,
+      "minAnel": 1.416,
+      "p5Anel": 1.657,
+      "p25Anel": 1.875,
+      "medianaAnel": 3.142,
+      "piorPxAnel": [
+        211,
+        202,
+        205
+      ],
+      "piorGlobal": 1.416
+    },
+    {
+      "caso": "ficha-dono-dinheiro-desktop-1366",
+      "tipo": "texto",
+      "seletor": "p.meta.ficha-dono",
+      "texto": "Jogador: Mestre Teste · Aprovada",
+      "fg": "rgb(180, 169, 177)",
+      "req": 4.5,
+      "fundoImg": {
+        "decl": "linear-gradient(145deg, rgba(31, 26, 36, 0.97), rgba(22, 19, 27, 0.98))",
+        "em": "section.cartao"
+      },
+      "fundoOpaco": "rgb(11,10,15) @html",
+      "shot": "ficha-dono-dinheiro-desktop-1366.png",
+      "fgRgb": [
+        180,
+        169,
+        177
+      ],
+      "nInk": 16,
+      "nTot": 6968,
+      "nBgAnel": 193,
+      "minAnel": 1.416,
+      "p5Anel": 1.657,
+      "p25Anel": 1.875,
+      "medianaAnel": 3.142,
+      "piorPxAnel": [
+        211,
+        202,
+        205
+      ],
+      "piorGlobal": 1.416
+    }
+  ]
+}
