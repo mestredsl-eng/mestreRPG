@@ -432,6 +432,59 @@ try {
   const valDump = await req(BASE, "GET", `/campaigns/${CAMP_ID}/regras/validacao/${charDumpId}`, { cookie: cookieMestre });
   t("validação de regras do personagem dump responde", valDump.status === 200, `status=${valDump.status}`);
 
+  sec("F — #304 campo.obrigatorio: transição que bloqueia ficha incompleta");
+  // O7.2 — esvaziar obrigatório explicitamente no payload → 400 atômico
+  const patchEsvazia = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${charDumpId}`, {
+    cookie: cookieMestre, body: { data: { "8da47020": "", "107c7c6f": 99 } },
+  });
+  t("PATCH esvaziando obrigatório → 400", patchEsvazia.status === 400, `status=${patchEsvazia.status}`);
+  const dadosAposEsvazia = JSON.parse(comDb(BANCO, (db) =>
+    db.prepare("select data from characters where id=?").get(charDumpId).data));
+  t("PATCH rejeitado não gravou NADA (Profissão e Idade intactas)",
+    dadosAposEsvazia["8da47020"] === "policial" && dadosAposEsvazia["107c7c6f"] === 34,
+    JSON.stringify({ prof: dadosAposEsvazia["8da47020"], idade: dadosAposEsvazia["107c7c6f"] }));
+  // submissão de ficha incompleta → 400; completa → transição ok
+  const DADOS_SEM_OBRIG = { ...DADOS_DUMP };
+  delete DADOS_SEM_OBRIG["8da47020"]; delete DADOS_SEM_OBRIG["f13e57cf"];
+  const criacaoIncompleta = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: u.cookie, body: { name: "Incompleta 304", templateVersionId: verDumpId, data: DADOS_SEM_OBRIG },
+  });
+  const idIncompleta = criacaoIncompleta.json?.personagem?.id ?? criacaoIncompleta.json?.id;
+  t("rascunho incompleto ainda é criado (permissivo)", criacaoIncompleta.status === 200 || criacaoIncompleta.status === 201, `status=${criacaoIncompleta.status}`);
+  const submeteIncompleta = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idIncompleta}`, {
+    cookie: u.cookie, body: { status: "aguardando_aprovacao" },
+  });
+  t("submissão sem obrigatório → 400", submeteIncompleta.status === 400, `status=${submeteIncompleta.status} ${JSON.stringify(submeteIncompleta.json)?.slice(0, 150)}`);
+  const completaEsubmete = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${idIncompleta}`, {
+    cookie: u.cookie, body: { status: "aguardando_aprovacao", data: { "8da47020": "policial", "f13e57cf": "Morena média" } },
+  });
+  t("submissão completa → 200", completaEsubmete.status === 200, `status=${completaEsubmete.status} ${JSON.stringify(completaEsubmete.json)?.slice(0, 150)}`);
+  // NPC aprovado não tem bypass: criação sem Profissão/Cor → 400
+  const npcIncompleto = await req(BASE, "POST", `/campaigns/${CAMP_ID}/characters`, {
+    cookie: cookieMestre, body: { name: "NPC Incompleto", templateVersionId: verDumpId, isNpc: true, data: {} },
+  });
+  t("NPC sem obrigatório → 400 (sem bypass)", npcIncompleto.status === 400, `status=${npcIncompleto.status}`);
+  // ficha legada aprovada incompleta: PATCH neutro NÃO é bloqueado
+  {
+    const w = abrirDb(BANCO); const agora = Date.now();
+    try {
+      const id = randomUUID();
+      const memb = w.prepare("select id from memberships where campaign_id=? and user_id=?").get(CAMP_ID, u.id);
+      const dadosLegado = JSON.parse(JSON.stringify(DADOS_SEM_OBRIG));
+      w.prepare("insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, CAMP_ID, memb.id, verDumpId, "Legada Aprovada Incompleta", JSON.stringify(dadosLegado), "{}", "aprovada", 0, agora, agora);
+      w.close();
+      const patchNeutro = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${id}`, {
+        cookie: cookieMestre, body: { data: { "107c7c6f": 35 } },
+      });
+      t("PATCH neutro em aprovada legada incompleta → 200", patchNeutro.status === 200, `status=${patchNeutro.status} ${JSON.stringify(patchNeutro.json)?.slice(0, 150)}`);
+      const tentaEsvaziarLegada = await req(BASE, "PATCH", `/campaigns/${CAMP_ID}/characters/${id}`, {
+        cookie: cookieMestre, body: { data: { "8da47020": "" } },
+      });
+      t("mesmo legada: esvaziar obrigatório enviado → 400", tentaEsvaziarLegada.status === 400, `status=${tentaEsvaziarLegada.status}`);
+    } finally { try { w.close(); } catch {} }
+  }
+
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail > 0) process.exitCode = 1;
 } finally {
