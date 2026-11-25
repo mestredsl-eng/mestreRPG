@@ -86,10 +86,21 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
 
   const carregarRef = useRef<() => Promise<void>>(async () => undefined);
 
+  const carregarGate = useCallback(async () => {
+    try {
+      const r = await api.comercioElegibilidade(characterId);
+      setGate(r.elegivel ? { fase: "elegivel", motivos: [] } : { fase: "negado", motivos: r.motivos });
+    } catch {
+      // Endpoint ausente (backend de comércio ainda não publicado nesta
+      // versão do servidor) ou falha de rede — fail-closed, nunca presumir.
+      setGate({ fase: "indisponivel", motivos: [] });
+    }
+  }, [characterId]);
+
   const carregar = useCallback(async () => {
     try {
       const [{ lojas }, { pedidos }, fin, inv, eq] = await Promise.all([
-        api.comercioLojas(campaignId),
+        api.comercioLojas(campaignId, characterId),
         api.comercioPedidos(characterId),
         api.obterFinanceiro(characterId).catch(() => null as Financeiro | null),
         // inventário/equipamentos alimentam a aba "Vender" (LOJA-B);
@@ -104,22 +115,18 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
       setEquipamentos(eq ? eq.equipamentos : []);
       setErro(null);
     } catch (e) {
+      // Leituras são gated desde #329 @ 55f8adc: se o acesso foi revogado
+      // entre o gate e o reload, a resposta é 403 internet_indisponivel —
+      // revalida o gate para exibir o motivo real em vez de erro genérico.
+      if (e instanceof ApiError && e.status === 403) {
+        void carregarGate();
+        return;
+      }
       setErro(e instanceof Error ? e.message : "Erro ao carregar comércio");
     }
-  }, [campaignId, characterId]);
+  }, [campaignId, characterId, carregarGate]);
   carregarRef.current = carregar;
   recarregarRef.current = carregar;
-
-  const carregarGate = useCallback(async () => {
-    try {
-      const r = await api.comercioElegibilidade(characterId);
-      setGate(r.elegivel ? { fase: "elegivel", motivos: [] } : { fase: "negado", motivos: r.motivos });
-    } catch {
-      // Endpoint ausente (backend de comércio ainda não publicado nesta
-      // versão do servidor) ou falha de rede — fail-closed, nunca presumir.
-      setGate({ fase: "indisponivel", motivos: [] });
-    }
-  }, [characterId]);
 
   useEffect(() => {
     void carregarGate();
@@ -320,11 +327,11 @@ function VitrineLoja({ loja, characterId, contas, aoVoltar, aoConcluido, aoErro 
   // ter mudado (outro comprador, gestor).
   const recarregarLoja = useCallback(async () => {
     try {
-      const { lojas } = await api.comercioLojas(loja.campaignId);
+      const { lojas } = await api.comercioLojas(loja.campaignId, characterId);
       const atual = lojas.find((l) => l.id === loja.id);
       if (atual) setLojaAtual(atual);
     } catch { /* mantém a vitrine carregada */ }
-  }, [loja.campaignId, loja.id]);
+  }, [loja.campaignId, loja.id, characterId]);
 
   if (ofertaSel) {
     return (

@@ -433,8 +433,11 @@ export const api = {
   // Comércio diegético 1.1.0 (backend: PRs #328/#329 — contrato LOJA-A/B)
   comercioElegibilidade: (charId: string) =>
     requisicao<{ elegivel: boolean; motivos: string[] }>(`/characters/${charId}/comercio/elegibilidade`),
-  comercioLojas: (cid: string) =>
-    requisicao<{ lojas: LojaComercio[] }>(`/campaigns/${cid}/comercio/lojas`),
+  // ?personagem= obrigatório desde o gate nas leituras (#329 @ 55f8adc):
+  // o servidor valida dono/mestre + gateInternet a cada chamada; sem o
+  // parâmetro → 400, inelegível → 403 internet_indisponivel sem dados.
+  comercioLojas: (cid: string, charId: string) =>
+    requisicao<{ lojas: LojaComercio[] }>(`/campaigns/${cid}/comercio/lojas?personagem=${encodeURIComponent(charId)}`),
   comercioComprar: (charId: string, dados: { shopId: string; accountId: string; items: { offerId: string; qty: number; expectedUnitCents?: number }[]; requestId: string }) =>
     requisicao<{ id: string; replay?: boolean; totalCents?: number; itens?: { offerId: string; name: string; qty: number; unitCents: number }[] }>(`/characters/${charId}/comercio/comprar`, { method: "POST", body: JSON.stringify(dados) }),
   comercioVender: (charId: string, dados: { shopId: string; inventoryEntryId: string; qty: number; accountId: string; expectedUnitCents?: number; requestId: string }) =>
