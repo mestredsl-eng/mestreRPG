@@ -54,7 +54,11 @@ export function emitirCampanha(campaignId: string, evento: string, dados: unknow
 export function emitirComercioInternet(campaignId: string, dados: unknown) {
   agendarAutosave(campaignId);
   const instancia = io;
-  if (!instancia) return;
+  // L2 (#336/7155835610): fail-closed — nenhuma entrega de comércio
+  // enquanto a barreira de restauração estiver ativa, e rechecagem
+  // imediatamente antes de CADA entrega após os awaits (mesmo padrão
+  // de emitirPrivadoCampanha). Emissões legítimas após o commit seguem.
+  if (!instancia || barreiraRestauracaoAtiva(campaignId)) return;
   void (async () => {
     try {
       const prefixo = `internet:${campaignId}:`;
@@ -68,6 +72,10 @@ export function emitirComercioInternet(campaignId: string, dados: unknown) {
       }
       for (const [characterId, sids] of porPersonagem) {
         const sala = `${prefixo}${characterId}`;
+        // janela determinística de teste (NODE_ENV=test): segura a
+        // emissão aqui para o teste cobrir a rechecagem pós-await
+        await pausaTesteEmit(`internet:${campaignId}`);
+        if (barreiraRestauracaoAtiva(campaignId)) return;
         const autorizados = new Map<string, boolean>();
         for (const sid of sids) {
           const sock = instancia.sockets.sockets.get(sid);
@@ -81,6 +89,9 @@ export function emitirComercioInternet(campaignId: string, dados: unknown) {
             }
             autorizado = autorizados.get(userId) === true;
           }
+          // rechecagem imediatamente antes de cada entrega — sem await
+          // entre a checagem e o emit
+          if (barreiraRestauracaoAtiva(campaignId)) return;
           if (autorizado) sock.emit("comercio:atualizado", dados);
           else void sock.leave(sala);
         }
