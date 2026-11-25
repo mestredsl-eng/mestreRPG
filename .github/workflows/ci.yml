@@ -43,6 +43,8 @@ on:
       - fix/issue-155-status-hardening
       - fix/issue-155-boot-lock
       - test/issue-155-homologacao-w
+      # Base da PR #329 (stack 1.1.0 comércio sobre #328) — faz o CI rodar nela.
+      - feat/1.1.0-lojas-backend
     types:
       - opened
       - synchronize
