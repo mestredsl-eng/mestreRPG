@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
+import { registrarSyncOk } from "../useSincronizacao";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
@@ -52,6 +53,7 @@ export default function Personagens({ campaignId, campanha }: Props) {
       setPersonagens(personagens);
       setModelos(modelos);
       setErro(null);
+      registrarSyncOk(campaignId);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao carregar");
     }

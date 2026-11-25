@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getSocket } from "./socket";
+import { useUltimaSync } from "./useSincronizacao";
 
 export type EstadoConexao = "conectando" | "conectado" | "reconectando" | "desconectado";
 
@@ -47,13 +48,39 @@ export function useEstadoConexao(): EstadoConexao {
   return estado;
 }
 
-/** Indicador discreto de conexão — usar dentro de telas que dependem do tempo real. */
-export function IndicadorConexao() {
+function rotuloHora(ts: number): string {
+  return new Date(ts).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Indicador discreto de conexão — usar dentro de telas que dependem do tempo real.
+ * Com `campaignId`, acrescenta a hora da última sincronização concluída
+ * (Issue #285): o horário só avança após um GET autoritativo terminar
+ * com sucesso — não no recebimento de evento nem no socket.connected.
+ */
+export function IndicadorConexao({ campaignId }: { campaignId?: string }) {
   const estado = useEstadoConexao();
+  const ultima = useUltimaSync(campaignId ?? "");
+
+  let texto = ROTULO[estado];
+  let detalhe: string | null = null;
+  if (estado === "conectado" && ultima !== null) {
+    texto = `${ROTULO.conectado} · Atualizado às ${rotuloHora(ultima)}`;
+    detalhe = "Última atualização de dados concluída com sucesso";
+  } else if (estado === "desconectado") {
+    if (campaignId) texto = `${ROTULO.desconectado} · sincronização interrompida`;
+    detalhe = "Sincronização interrompida — os dados exibidos podem estar desatualizados";
+  } else if (estado === "reconectando") {
+    detalhe = "Reconectando — a sincronização será retomada automaticamente";
+  }
+
   return (
-    <span className={`conexao conexao-${estado}`} title="Status da conexão em tempo real">
+    <span
+      className={`conexao conexao-${estado}`}
+      title={detalhe ? `${ROTULO[estado]} — ${detalhe}` : "Status da conexão em tempo real"}
+    >
       <i aria-hidden="true" />
-      {ROTULO[estado]}
+      {texto}
     </span>
   );
 }
