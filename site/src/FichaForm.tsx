@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type MetadadoPoder, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { api, type CampoDef, type ConfigPoderes, type ConfigSangue, type ElementoVinculavel, type MetadadoPoder, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { apiSangue, type SangueLeitura } from "./api-sangue";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
 import PainelSangue from "./PainelSangue";
@@ -67,6 +68,13 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   // O widget de saldo/recuperação é montado junto a ESSE campo, não
   // como painel separado. null = não montar (sem permissão/config).
   const [sangueCampoId, setSangueCampoId] = useState<string | null>(null);
+  // config.sangue completa do ruleset — custos por Poder para a prévia
+  // da ativação narrativa (o servidor continua sendo a autoridade).
+  const [sangueCfg, setSangueCfg] = useState<ConfigSangue | null>(null);
+  // Leitura autoritativa do saldo (GET /sangue) — só buscada quando o
+  // usuário pode ativar Poder; null = desconhecido (UI não bloqueia,
+  // o servidor rejeita fail-closed).
+  const [sangueLeitura, setSangueLeitura] = useState<SangueLeitura | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
   // Erros de regras vindos da prévia do personagem (pontos-previa) — mesmo
   // pipeline do simulador, exibidos no bloco .simulacao-erros.
@@ -142,13 +150,41 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
     api.obterRegras(campaignId)
       .then((regras) => {
         const cfg = regras?.config?.sangue;
-        if (vivo && cfg?.habilitado === true && typeof cfg.campoCapacidadeId === "string" && cfg.campoCapacidadeId) {
+        if (!vivo || !cfg) return;
+        setSangueCfg(cfg.habilitado === true ? cfg : null);
+        if (cfg.habilitado === true && typeof cfg.campoCapacidadeId === "string" && cfg.campoCapacidadeId) {
           setSangueCampoId(cfg.campoCapacidadeId);
         }
       })
       .catch(() => { /* vínculo é best-effort — a ficha funciona sem ele */ });
     return () => { vivo = false; };
   }, [personagemId, podeLerSangue, simulacao, campaignId]);
+
+  // Saldo atual para a prévia de custo/suficiência nos botões de
+  // ativação. Revalida em personagens:atualizados do MESMO personagem —
+  // a ativação confirma pelo ACK e o evento cobre ajustes do mestre.
+  useEffect(() => {
+    if (!personagemId || !podeAtivarPoder || simulacao) {
+      setSangueLeitura(null);
+      return;
+    }
+    let vivo = true;
+    const carregar = () => {
+      apiSangue.obter(personagemId)
+        .then((r) => { if (vivo) setSangueLeitura(r); })
+        .catch(() => { if (vivo) setSangueLeitura(null); });
+    };
+    carregar();
+    const socket = getSocket();
+    const aoMudar = (d: { characterId?: string } | undefined) => {
+      if (d?.characterId === personagemId) carregar();
+    };
+    socket.on("personagens:atualizados", aoMudar);
+    return () => {
+      vivo = false;
+      socket.off("personagens:atualizados", aoMudar);
+    };
+  }, [personagemId, podeAtivarPoder, simulacao]);
 
   /** Chaves de elementos selecionadas num campo (strings ou {key,nivel}). */
   const chavesSelecionadas = (c: CampoDef): string[] => {
@@ -199,15 +235,24 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       && (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true
     );
     if (chaves.length === 0) return null;
+    // Prévia de custo (Issue #186 §4): custo vem de config.sangue.poderes
+    // da campanha; sem entrada = gratuito. O saldo exibido é o do GET
+    // autoritativo — desconhecido (null) nunca bloqueia a UI.
+    const saldoAtual = sangueLeitura?.estado === "ok" ? sangueLeitura.saldo : null;
     return (
       <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
         {chaves.map((key) => {
           const nome = (biblioteca?.poder ?? []).find((e) => e.key === key)?.name ?? key;
+          const custo = sangueCfg?.poderes?.[key]?.custo ?? 0;
+          const insuficiente = saldoAtual !== null && custo > saldoAtual;
           return <AtivacaoPoderNarrativa
             key={key}
             characterId={personagemId}
             poderKey={key}
             nome={nome}
+            custoSangue={custo}
+            saldoSangue={saldoAtual}
+            insuficienteSangue={insuficiente}
             aoAtualizarPersonagem={aoAtualizarPersonagem}
             aoMudarAtivacaoPoder={aoMudarAtivacaoPoder}
           />;
@@ -392,10 +437,16 @@ function limparRequestIdSangue(chave: string, requestId: string): void {
  * A intenção fica persistida até um ACK conclusivo; reabrir a ficha
  * reenvia o mesmo requestId e o ledger impede o segundo débito.
  * O uso com teste continua passando exclusivamente pelo D10 da Mesa. */
-function AtivacaoPoderNarrativa({ characterId, poderKey, nome, aoAtualizarPersonagem, aoMudarAtivacaoPoder }: {
+function AtivacaoPoderNarrativa({ characterId, poderKey, nome, custoSangue = 0, saldoSangue = null, insuficienteSangue = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder }: {
   characterId: string;
   poderKey: string;
   nome: string;
+  /** Custo configurado em config.sangue.poderes (0 = gratuito/sem config). */
+  custoSangue?: number;
+  /** Saldo atual do GET /sangue; null = ainda desconhecido. */
+  saldoSangue?: number | null;
+  /** Saldo conhecido e menor que o custo — prévia fail-closed da UI. */
+  insuficienteSangue?: boolean;
   aoAtualizarPersonagem?: () => void | Promise<void>;
   aoMudarAtivacaoPoder?: (andamento: boolean) => void;
 }) {
@@ -498,11 +549,23 @@ function AtivacaoPoderNarrativa({ characterId, poderKey, nome, aoAtualizarPerson
     }
   };
 
+  const rotuloCusto = custoSangue > 0 ? ` · ${custoSangue} Sangue` : "";
   return (
     <span className="ficha-poder-acao">
-      <button type="button" className="mini" disabled={ocupado} onClick={ativar} aria-label={`Usar ${nome} sem rolagem`}>
-        {ocupado ? `Usando ${nome}…` : `Usar ${nome}`}
+      <button
+        type="button" className="mini" disabled={ocupado || insuficienteSangue}
+        onClick={ativar} aria-label={`Usar ${nome} sem rolagem`}
+        title={insuficienteSangue && saldoSangue !== null
+          ? `Saldo insuficiente: ${saldoSangue} de ${custoSangue} Pontos de Sangue necessários`
+          : undefined}
+      >
+        {ocupado ? `Usando ${nome}…` : `Usar ${nome}${rotuloCusto}`}
       </button>
+      {insuficienteSangue && saldoSangue !== null && (
+        <small className="ficha-aviso" role="alert">
+          Saldo insuficiente ({saldoSangue}/{custoSangue} Sangue)
+        </small>
+      )}
       {mensagem && (
         <small className={mensagem.tipo === "ok" ? "meta" : "ficha-aviso"} role={mensagem.tipo === "ok" ? "status" : "alert"}>
           {mensagem.texto}
