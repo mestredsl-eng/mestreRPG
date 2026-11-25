@@ -339,6 +339,55 @@ try {
   const pedidosDiv = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_orders where request_id='corrida-002'").get().c);
   t("corrida divergente: um único recibo", pedidosDiv === 1, String(pedidosDiv));
 
+  sec("gate de leitura — vitrine e histórico (bloqueio 7147784264)");
+  // 4 pares válidos: (computador|tecnologia) × (notebook|celular_descartavel)
+  // charOk já cobre computador+notebook
+  const charCompCel = cenario.novoPersonagem(j1.membershipId, "Comp Celular", { comp: 1 });
+  const charTecNote = cenario.novoPersonagem(j1.membershipId, "Tec Notebook", { tec: 1 });
+  const charTecCel = cenario.novoPersonagem(j1.membershipId, "Tec Celular", { tec: 1 });
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    const ins = db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)");
+    ins.run(crypto.randomUUID(), charCompCel, "Celular", 1, JSON.stringify({ regra: { kind: "item", key: "celular_descartavel" } }), agora, agora);
+    ins.run(crypto.randomUUID(), charTecNote, "Notebook", 1, JSON.stringify({ regra: { kind: "item", key: "notebook" } }), agora, agora);
+    ins.run(crypto.randomUUID(), charTecCel, "Celular", 1, JSON.stringify({ regra: { kind: "item", key: "celular_descartavel" } }), agora, agora);
+    db.close();
+  }
+  for (const [id, rotulo] of [[charOk, "comp+notebook"], [charCompCel, "comp+celular"], [charTecNote, "tec+notebook"], [charTecCel, "tec+celular"]]) {
+    const v = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${id}`, { cookie: j1.cookie });
+    t(`vitrine par válido ${rotulo} → 200`, v.status === 200 && Array.isArray(v.json?.lojas), `${v.status} ${JSON.stringify(v.json).slice(0, 120)}`);
+    const p = await req(BASE, "GET", `/characters/${id}/comercio/pedidos`, { cookie: j1.cookie });
+    t(`pedidos par válido ${rotulo} → 200`, p.status === 200 && Array.isArray(p.json?.pedidos), `${p.status}`);
+  }
+
+  // negações — zero dados da Internet retornados
+  const vSemParam = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas`, { cookie: j1.cookie });
+  t("vitrine sem ?personagem → 400", vSemParam.status === 400 && vSemParam.json?.erro === "personagem_obrigatorio", JSON.stringify(vSemParam.json));
+  const vInel = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charSemPericia}`, { cookie: j2.cookie });
+  t("vitrine sem pericia → 403 sem dados", vInel.status === 403 && vInel.json?.erro === "internet_indisponivel" && vInel.json?.lojas === undefined, JSON.stringify(vInel.json).slice(0, 160));
+  const vSemDev = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charSemDevice}`, { cookie: j2.cookie });
+  t("vitrine sem device → 403 sem dados", vSemDev.status === 403 && vSemDev.json?.lojas === undefined, String(vSemDev.status));
+  const vNaoDono = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: j2.cookie });
+  t("vitrine characterId alheio → 403", vNaoDono.status === 403, String(vNaoDono.status));
+  const vMestreInel = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charSemPericia}`, { cookie: mestre });
+  t("vitrine mestre+personagem inelegível → 403", vMestreInel.status === 403 && vMestreInel.json?.lojas === undefined, String(vMestreInel.status));
+  const vInexistente = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=personagem-inexistente`, { cookie: j1.cookie });
+  t("vitrine personagem inexistente → 404", vInexistente.status === 404, String(vInexistente.status));
+  const pInel = await req(BASE, "GET", `/characters/${charSemPericia}/comercio/pedidos`, { cookie: j2.cookie });
+  t("pedidos inelegível → 403 sem dados", pInel.status === 403 && pInel.json?.pedidos === undefined, String(pInel.status));
+  const pNaoDono = await req(BASE, "GET", `/characters/${charOk}/comercio/pedidos`, { cookie: j2.cookie });
+  t("pedidos characterId alheio → 403", pNaoDono.status === 403, String(pNaoDono.status));
+
+  // revalidação: revogar o dispositivo nega a leitura na chamada seguinte
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("delete from inventory_entries where character_id=?").run(charCompCel);
+    db.close();
+  }
+  const vRevogado = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charCompCel}`, { cookie: j1.cookie });
+  t("device revogado → vitrine 403 dispositivo_ausente", vRevogado.status === 403 && vRevogado.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(vRevogado.json));
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;

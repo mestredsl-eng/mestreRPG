@@ -53,6 +53,28 @@ async function acessoPersonagem(req: Request) {
   return { personagem: p, membership, ehMestre, ehDono };
 }
 
+/** Variante de acessoPersonagem para rotas sem :characterId nos params
+ *  (vitrine da campanha recebe o personagem por ?personagem=). Garante
+ *  também que o personagem pertence à campanha da rota. */
+async function acessoPersonagemId(req: Request, campaignId: string, characterId: string) {
+  const [p] = await db.select().from(characters)
+    .where(and(eq(characters.id, characterId), eq(characters.campaignId, campaignId))).limit(1);
+  if (!p) return { erro: 404 as const };
+  const membership = await getMembership(campaignId, req.usuario!.id);
+  const ehMestre = membership?.role === "mestre";
+  const [membroDono] = await db.select().from(memberships).where(eq(memberships.id, p.membershipId)).limit(1);
+  const ehDono = membroDono?.userId === req.usuario!.id;
+  if (!membership || membership.status !== "ativo" || (!ehMestre && !ehDono)) return { erro: 403 as const };
+  if (p.status === "arquivado") return { erro: 409 as const, detalhe: "personagem_arquivado" };
+  return { personagem: p, membership, ehMestre, ehDono };
+}
+
+/** Responde erro de acesso padronizado (compartilhado pelas leituras gated). */
+function responderAcesso(res: Response, acesso: { erro?: number }) {
+  const st = acesso.erro === 404 ? 404 : acesso.erro === 409 ? 409 : 403;
+  res.status(st).json({ erro: st === 404 ? "Personagem não encontrado" : st === 409 ? "Personagem arquivado" : "Sem acesso" });
+}
+
 /** Gate Internet fail-closed: estrutura+regras+patrimônio do personagem.
  *  Resolve templateId→catálogo (data.regra.key do template) para que item
  *  comprado de template de dispositivo também habilite — mesma regra da UI. */
@@ -142,9 +164,18 @@ const lojaSchema = z.object({
   description: z.string().max(2000).optional(),
 });
 
-/** GET /api/campaigns/:campaignId/comercio/lojas — vitrine (membros; vitrine não exige gate — o gate é do comprador na operação). */
+/** GET /api/campaigns/:campaignId/comercio/lojas?personagem=<id> — vitrine.
+ *  Leitura da Internet do PERSONAGEM (bloqueio de aceite 7147784264): exige
+ *  personagem autorizado da campanha + gate Internet revalidado a cada
+ *  chamada. Somente /elegibilidade permanece aberto (informa o motivo). */
 comercioLojasRouter.get("/lojas", requirePapel("mestre", "jogador", "espectador"), async (req, res) => {
   const campaignId = req.params.campaignId as string;
+  const personagemId = typeof req.query.personagem === "string" ? req.query.personagem : null;
+  if (!personagemId) { res.status(400).json({ erro: "personagem_obrigatorio" }); return; }
+  const acesso = await acessoPersonagemId(req, campaignId, personagemId);
+  if ("erro" in acesso) { responderAcesso(res, acesso); return; }
+  const gate = await gateInternet(acesso.personagem);
+  if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
   const lista = await db.select().from(shops).where(eq(shops.campaignId, campaignId));
   const ofertas = await db.select().from(shopOffers).where(and(eq(shopOffers.campaignId, campaignId), eq(shopOffers.isActive, true)));
   res.json({
@@ -611,8 +642,11 @@ comercioPersonagemRouter.get("/elegibilidade", async (req, res) => {
  *  direção pelo nome do campo (revisão #329). */
 comercioPersonagemRouter.get("/pedidos", async (req, res) => {
   const acesso = await acessoPersonagem(req);
-  if ("erro" in acesso) { res.status(acesso.erro === 404 ? 404 : 403).json({ erro: "Sem acesso" }); return; }
+  if ("erro" in acesso) { responderAcesso(res, acesso); return; }
   const { personagem } = acesso;
+  // histórico é leitura da Internet: mesmo gate fail-closed das mutações
+  const gate = await gateInternet(personagem);
+  if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
   const filtro = typeof req.query.direcao === "string" ? req.query.direcao : null;
   if (filtro && filtro !== "compra" && filtro !== "venda_para_loja") {
     res.status(400).json({ erro: "direcao_invalida" }); return;
