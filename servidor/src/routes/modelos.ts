@@ -74,11 +74,11 @@ function templatePublico(t: typeof sheetTemplates.$inferSelect, versaoAtual?: { 
 modelosRouter.get("/", async (req, res) => {
   const campaignId = campaignIdDe(req);
   const m = await getMembership(campaignId, req.usuario!.id);
-  if (!m || m.status === "removido") {
+  if (!m || m.status === "removido" || m.status === "bloqueado") {
     res.status(403).json({ erro: "Sem permissão nesta campanha" });
     return;
   }
-  const ehMestre = m.role === "mestre";
+  const ehMestre = m.status === "ativo" && m.role === "mestre";
   const rows = await db
     .select()
     .from(sheetTemplates)
@@ -253,7 +253,7 @@ modelosRouter.post("/:templateId/duplicate", requirePapel("mestre"), async (req,
 /** GET .../sheet-templates/:templateId — detalhe com versões */
 modelosRouter.get("/:templateId", async (req, res) => {
   const m = await getMembership(campaignIdDe(req), req.usuario!.id);
-  if (!m || m.status === "removido") {
+  if (!m || m.status === "removido" || m.status === "bloqueado") {
     res.status(403).json({ erro: "Sem permissão nesta campanha" });
     return;
   }
@@ -266,7 +266,7 @@ modelosRouter.get("/:templateId", async (req, res) => {
     res.status(404).json({ erro: "Modelo não encontrado" });
     return;
   }
-  const ehMestre = m.role === "mestre";
+  const ehMestre = m.status === "ativo" && m.role === "mestre";
   const versoes = await db
     .select()
     .from(sheetVersions)
