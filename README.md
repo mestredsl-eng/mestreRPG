@@ -180,3 +180,7 @@ O backend serve a aplicação completa (frontend + API + Socket.IO) na porta **3
 - [Acessibilidade](ACCESSIBILITY.md): compromissos, limitações conhecidas e como relatar barreiras.
 
 Use os formulários de [Issues](https://github.com/mestredsl-eng/mestreRPG/issues) para bugs e propostas de melhoria. Não publique credenciais, dados pessoais, bancos, backups ou conteúdo privado de campanhas.
+
+## Licença
+
+O software-fonte do Mestre RPG é distribuído sob a licença [MIT](LICENSE). A licença permite reutilização e distribuição, inclusive comercial, desde que o aviso de copyright e a licença sejam preservados. Marcas, logotipos, artes e materiais de terceiros não recebem automaticamente esses direitos; consulte seus avisos e titulares.
