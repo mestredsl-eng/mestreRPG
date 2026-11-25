@@ -182,3 +182,34 @@ As frentes foram separadas para reduzir trabalho duplicado e evitar sobreposiç�
 Os pedidos estão registrados em comentários nas PRs/Issue. Isso constitui uma divisão de trabalho documentada, **não comprova que sessões externas dos agentes já iniciaram ou concluíram as tarefas**. Não há assignees/reviewers formais registrados no GitHub para essas PRs.
 
 O Dono Técnico mantém somente a coordenação, reconciliação de estado e preparação da release, evitando alterar branches de implementação que pertencem às frentes acima. Nenhuma ordem permite modificar `.github/workflows/ci.yml`, mesclar, retarget, publicar tag/release ou iniciar escopo 1.1.1.
+
+
+## Atualização de estado — 25/11/2026 (reconciliação mais recente)
+
+Esta seção substitui as fotografias anteriores quando houver divergência de status. A `main` verificada agora é `f6979f48e5fff68a1ec4fedc72a5c48e1b3cdc55`.
+
+### Estado por SHA e CI
+
+- **#327 — UI:** HEAD `f84ea9b82321fe15101ab1947120a7fa024ba5f3`, sincronizada com a main atual por merge normal. Run `45564318683`: **3/3 SUCCESS** (Servidor, Windows e Navegador). O FILHO reportou `teste-internet-e2e.mjs` com **31/31 PASS local** contra o stack #328/#329. Esse arquivo permanece no PR, mas não está wired na CI; a CI verde atual ainda não executa essa jornada integrada. O wiring só deve ocorrer quando o backend estiver em main e após decisão/autorização sobre workflow.
+- **#328 — fundação:** HEAD `e82b5cc8c7e9cd0b9361bd8b08237f87174564a4`, sincronizada com a main atual. Run `45564997816`: **3/3 SUCCESS** (Servidor, Windows e Navegador). PAI reportou auditoria manual one-off de fixture 1.0.9 (36 migrations, 3 contas e 6 transações preservadas por comparação canônica, `foreign_key_check` 0). **Ressalva:** o teste versionado `teste-bat-adocao-legado-boot.mjs` ainda constrói fixture **1.0.8** (34 migrations, 1 conta e 2 transações). A prova exata 1.0.9 ainda precisa virar regressão reproduzível na CI; ordem registrada em #328.
+- **#329 — implementação backend:** HEAD continua `698035fe0e11e3b04290c153781a8799d6a815fc`; run `45557022249` foi **3/3 SUCCESS**, com **127/127** na suíte comercial. Entretanto, a branch é baseada no HEAD antigo da #328 (`b0a8817`) e está **11 commits atrás** do HEAD atual #328 (`e82b5cc`); precisa de merge normal da fundação atual e CI nova. A PR também contém delta em `.github/workflows/ci.yml`, cuja aceitação requer decisão explícita do proprietário. PAI recebeu tarefa para sincronização e correção/teste do achado L2 abaixo.
+- **#336 — testes complementares:** HEAD `2f27ba0ef6b164946ec97dabe78bbf3a2d4499da`; execução local reportada **108/108**, não CI. A revisão semântica concluiu que a união das suítes cobre a matriz principal, mas registrou L1–L5: corrida do último item LOJA-B (média), fan-out durante barreira de restauração (média), venda em loja fechada (baixa), unsubscribe voluntário (baixa) e payload malformado de inscrição (baixa). L2 foi confirmado por inspeção estática em `emitirComercioInternet`: não consulta `barreiraRestauracaoAtiva` antes/depois dos awaits, ao contrário de `emitirPrivadoCampanha`. INTERMEDIÁRIO recebeu ordem para os testes L1/L3/L4/L5; PAI recebeu L2 na #329.
+- **#341 — preparação:** continua Draft e documental. Não é candidata de release.
+
+### Próximas provas exigidas
+
+1. #328: commitar regressão automatizada exata de upgrade v1.0.9 com 3 contas/6 transações, preservação integral, backup e FK/integrity checks; a prova one-off não substitui CI.
+2. #329: integrar #328@e82b5cc por merge normal; resolver L2 com teste determinístico durante restauração; executar CI no novo HEAD.
+3. #336: executar os testes L1/L3/L4/L5 e reportar resultados por SHA, separando testes locais de CI.
+4. #327: manter E2E 31/31 identificado como local até poder executá-lo contra a stack integrada; não ligar step na CI antes de o backend estar em main e do aceite do workflow.
+5. Após a integração backend → UI, validar DAG/diff cumulativo e executar teste E2E integrado na candidata.
+
+### Ordens recentes e limites
+
+- Comentário #328 `7155850015`: regressão automatizada de 1.0.9.
+- Comentário #329 `7155835610`: merge da #328 atual e L2 com teste de restauração.
+- Comentário #336 `7155836254`: L1/L3/L4/L5.
+- Comentário #286 `7155836977`: coordenação do DAG e atualização dos bloqueios.
+- Essas são tarefas registradas no GitHub; só commits, logs/CI e evidência reproduzível comprovam entrega.
+
+A versão 1.1.0 permanece **não candidata**. Nenhuma integração, promoção de Draft, mudança de workflow, tag ou release está autorizada por esta atualização.
