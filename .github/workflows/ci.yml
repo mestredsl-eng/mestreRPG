@@ -229,6 +229,8 @@ jobs:
             teste-sessoes-socket.mjs
             teste-sessoes-conta.mjs
             teste-mass-assignment.mjs
+            teste-guildas-admin.mjs
+            teste-convite-cadastro.mjs
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
