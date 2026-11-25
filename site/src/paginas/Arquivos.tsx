@@ -24,6 +24,10 @@ function ehPdf(mime?: string | null) { return mime === "application/pdf"; }
 export default function Arquivos({ campaignId, campanha }: { campaignId: string; campanha: CampanhaResumo }) {
   const souMestre = campanha.meuPapel === "mestre";
   const ehEspectador = campanha.meuPapel === "espectador";
+  // Issue #296: status pendente/bloqueado/removido é somente-leitura —
+  // o servidor já nega as escritas (requirePapel exige status ativo);
+  // a UI não oferece ações que falhariam (mesmo padrão do Diário).
+  const membroAtivo = campanha.meuStatus === "ativo";
   const [arquivos, setArquivos] = useState<ArquivoBiblioteca[]>([]);
   const [pastas, setPastas] = useState<PastaBiblioteca[]>([]);
   const [pastaAtual, setPastaAtual] = useState<string | null>(null); // null = raiz, "__todos" = todas
@@ -145,7 +149,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
   };
 
   const url = (a: ArquivoBiblioteca, download = false) => api.urlArquivo(campaignId, a.id, download);
-  const podeEnviar = souMestre || (!ehEspectador && jogadoresEnviam);
+  const podeEnviar = membroAtivo && (souMestre || (!ehEspectador && jogadoresEnviam));
 
   return (
     <section className="cartao">
@@ -243,8 +247,8 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
                     <button className="secundario" onClick={() => setVisualizando(a)}>Visualizar</button>
                   )}
                   <a className="secundario" href={url(a, true)} download={a.displayName}>Download</a>
-                  {(souMestre || a.ehMeu) && <button className="secundario" onClick={() => setEditando({ ...a })}>Editar</button>}
-                  {(souMestre || a.ehMeu) && <button className="secundario" onClick={() => setConfirmando({ tipo: "arquivo", a })}>Excluir</button>}
+                  {membroAtivo && (souMestre || a.ehMeu) && <button className="secundario" onClick={() => setEditando({ ...a })}>Editar</button>}
+                  {membroAtivo && (souMestre || a.ehMeu) && <button className="secundario" onClick={() => setConfirmando({ tipo: "arquivo", a })}>Excluir</button>}
                 </div>
               </li>
             ))}
