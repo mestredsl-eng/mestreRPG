@@ -112,11 +112,15 @@ async function acessoLoja(req: Request, shopId: string) {
   return { loja, membership, gestor: true, papel: gm.role };
 }
 
-/** Conta de caixa da loja: marcada data.papel==="caixa" ou única conta da loja. */
+/** Conta de caixa da loja: marcada data.papel==="caixa" ou única conta
+ *  SEM papel explícito (legado). papel:"reserva" nunca vira caixa —
+ *  correção 7148991534: ausência de papel ≠ "reserva". */
 function contaCaixaDaLoja(contas: (typeof financialAccounts.$inferSelect)[]) {
-  const caixa = contas.find((c) => (c.data as Record<string, unknown>)?.papel === "caixa");
+  const papel = (c: typeof financialAccounts.$inferSelect) =>
+    (c.data as Record<string, unknown> | null)?.papel;
+  const caixa = contas.find((c) => papel(c) === "caixa");
   if (caixa) return caixa;
-  return contas.length === 1 ? contas[0] : null;
+  return contas.length === 1 && papel(contas[0]) !== "reserva" ? contas[0] : null;
 }
 
 const fingerprint = (payload: unknown) =>
@@ -136,12 +140,18 @@ function ehColisaoPedido(e: unknown): boolean {
     || /UNIQUE constraint failed: shop_orders/.test(err?.message ?? "");
 }
 
-/** Resolve a colisão relendo o pedido vencedor. Retorna true se respondeu. */
+/** Resolve a colisão relendo o pedido vencedor NO MESMO ESCOPO
+ *  (campanha+ator+direção+requestId — matriz #289). Retorna true se respondeu. */
 async function resolverColisaoPedido(
-  res: Response, campaignId: string, requestId: string, fp: string,
+  res: Response, campaignId: string, userId: string, direction: string, requestId: string, fp: string,
 ): Promise<boolean> {
   const [vencedor] = await db.select().from(shopOrders)
-    .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, requestId))).limit(1);
+    .where(and(
+      eq(shopOrders.campaignId, campaignId),
+      eq(shopOrders.createdBy, userId),
+      eq(shopOrders.direction, direction),
+      eq(shopOrders.requestId, requestId),
+    )).limit(1);
   const fpVencedor = (vencedor?.data as Record<string, unknown> | undefined)?.fingerprint;
   if (vencedor && fpVencedor === fp) {
     res.json({ id: vencedor.id, replay: true });
@@ -258,15 +268,47 @@ comercioLojasRouter.post("/lojas/:shopId/contas", requirePapel("mestre", "jogado
     }
   }
   const regras = await carregarRegras(req.params.campaignId as string);
-  const casas = regras.config.financeiro.casasDecimais;
+  const cfg = regras.config.financeiro;
+  const casas = cfg.casasDecimais;
+  const saldoInicial = Math.round((b.data.balanceReais ?? 0) * 10 ** casas);
+  const moeda = b.data.currency ?? cfg.moedaPrincipal;
+  if (!cfg.moedas.some((m) => m.codigo === moeda) && moeda !== cfg.moedaPrincipal) {
+    res.status(400).json({ erro: `Moeda "${moeda}" não configurada na campanha` }); return;
+  }
+  // Paridade com patrimonium.ts: conta com saldo positivo exige
+  // jogadorCompraVenda para não-mestre; mestre é isento (bloqueio
+  // 7148991024 — gestor-jogador não pode contornar a política).
+  const ehMestre = acesso.membership?.role === "mestre";
+  if (!ehMestre && saldoInicial > 0 && !cfg.jogadorCompraVenda) {
+    res.status(403).json({ erro: "Criar conta com saldo positivo exige permissão de compra/venda nesta campanha" }); return;
+  }
+  // Piso de saldo inicial: mesma regra das contas de personagem.
+  const pisoInicial = cfg.permitirSaldoNegativo ? -Infinity : 0;
+  if (saldoInicial < pisoInicial) {
+    res.status(400).json({ erro: "Saldo inicial negativo não permitido nesta campanha" }); return;
+  }
   const id = crypto.randomUUID();
   const agora = new Date();
-  await db.insert(financialAccounts).values({
-    id, characterId: null, shopId: acesso.loja.id, campaignId: req.params.campaignId as string,
-    type: b.data.type, name: b.data.name, currency: b.data.currency ?? "BRL",
-    balanceCents: Math.round((b.data.balanceReais ?? 0) * 10 ** casas),
-    data: { papel: b.data.papel }, createdAt: agora, updatedAt: agora,
-  }).run();
+  // Conta + lançamento saldo_inicial na MESMA transação (titular =
+  // estabelecimento: character_id NULL + shop_id). Saldo zero não gera
+  // lançamento — mesmo contrato de patrimonium.ts.
+  db.transaction((tx) => {
+    tx.insert(financialAccounts).values({
+      id, characterId: null, shopId: acesso.loja.id, campaignId: req.params.campaignId as string,
+      type: b.data.type, name: b.data.name, currency: moeda,
+      balanceCents: saldoInicial,
+      data: { papel: b.data.papel }, createdAt: agora, updatedAt: agora,
+    }).run();
+    if (saldoInicial !== 0) {
+      tx.insert(moneyTransactions).values({
+        id: crypto.randomUUID(), shopId: acesso.loja.id, campaignId: req.params.campaignId as string,
+        kind: "saldo_inicial", amount: saldoInicial / 10 ** casas, currency: moeda,
+        account: b.data.type, accountId: id, amountCents: saldoInicial,
+        balanceBeforeCents: 0, balanceAfterCents: saldoInicial,
+        description: "Saldo inicial", createdBy: req.usuario!.id, createdAt: agora,
+      }).run();
+    }
+  });
   await audit(req, "comercio.conta.criada", { shopId: acesso.loja.id, accountId: id });
   res.status(201).json({ id });
 });
@@ -352,8 +394,15 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
 
   const fp = fingerprint({ op: "comprar", buyer: personagem.id, shopId: b.data.shopId, accountId: b.data.accountId, items: b.data.items });
+  // Escopo idempotente aceito (#289): campanha + ator + direção + requestId.
+  const userId = req.usuario!.id;
   const pedidoExistente = await db.select().from(shopOrders)
-    .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, b.data.requestId))).limit(1);
+    .where(and(
+      eq(shopOrders.campaignId, campaignId),
+      eq(shopOrders.createdBy, userId),
+      eq(shopOrders.direction, "compra"),
+      eq(shopOrders.requestId, b.data.requestId),
+    )).limit(1);
   if (pedidoExistente[0]) {
     const fpAnt = (pedidoExistente[0].data as Record<string, unknown>)?.fingerprint;
     if (fpAnt === fp) { res.json({ id: pedidoExistente[0].id, replay: true }); return; }
@@ -421,13 +470,17 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
       const casas = regras.config.financeiro.casasDecimais;
       const txOut = crypto.randomUUID(); const txIn = crypto.randomUUID();
       txIds.push(txOut, txIn);
+      // pernas do ledger incluem o escopo (requestId+direção+ator) — o
+      // UNIQUE de money_transactions é (campaign_id, request_id) e não
+      // pode colidir entre atores/direções independentes (#289).
+      const escopoTx = `${b.data.requestId}:compra:${userId}`;
       tx.insert(moneyTransactions).values({
         id: txOut, characterId: personagem.id, shopId: loja.id, campaignId,
         kind: "compra", amount: -(totalCents / 10 ** casas), currency: contaComprador.currency,
         account: contaComprador.type, accountId: contaComprador.id, amountCents: -totalCents,
         balanceBeforeCents: contaComprador.balanceCents, balanceAfterCents: novoComprador,
         counterparty: `Loja: ${loja.name}`, description: `Compra na loja ${loja.name}`,
-        requestId: `${b.data.requestId}:out`, createdBy: req.usuario!.id, createdAt: agora,
+        requestId: `${escopoTx}:out`, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
       tx.insert(moneyTransactions).values({
         id: txIn, shopId: loja.id, campaignId, kind: "venda",
@@ -435,7 +488,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
         account: caixa.type, accountId: caixa.id, amountCents: totalCents,
         balanceBeforeCents: caixa.balanceCents, balanceAfterCents: novoCaixa,
         counterparty: `Personagem: ${personagem.name}`, description: `Venda na loja ${loja.name}`,
-        requestId: `${b.data.requestId}:in`, createdBy: req.usuario!.id, createdAt: agora,
+        requestId: `${escopoTx}:in`, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
       tx.update(financialAccounts).set({ balanceCents: novoComprador, updatedAt: agora }).where(eq(financialAccounts.id, contaComprador.id)).run();
       tx.update(financialAccounts).set({ balanceCents: novoCaixa, updatedAt: agora }).where(eq(financialAccounts.id, caixa.id)).run();
@@ -462,6 +515,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
 
       tx.insert(shopOrders).values({
         id: orderId, campaignId, shopId: loja.id, requestId: b.data.requestId,
+        createdBy: userId, direction: "compra",
         buyerCharacterId: personagem.id, items: itensEntregues, totalCents, currency: contaComprador.currency,
         status: "concluido", moneyTransactionIds: txIds,
         data: { fingerprint: fp, direction: "compra" }, createdAt: agora,
@@ -469,7 +523,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
     });
   } catch (e) {
     if (e instanceof ErroComercio) { res.status(e.status).json({ erro: e.codigo, detalhes: e.detalhes }); return; }
-    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, b.data.requestId, fp)) return;
+    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, userId, "compra", b.data.requestId, fp)) return;
     throw e;
   }
 
@@ -507,8 +561,14 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
 
   const fp = fingerprint({ op: "vender", seller: personagem.id, shopId: b.data.shopId, accountId: b.data.accountId, item: b.data.inventoryEntryId, qty: b.data.qty });
+  const userId = req.usuario!.id;
   const pedidoExistente = await db.select().from(shopOrders)
-    .where(and(eq(shopOrders.campaignId, campaignId), eq(shopOrders.requestId, b.data.requestId))).limit(1);
+    .where(and(
+      eq(shopOrders.campaignId, campaignId),
+      eq(shopOrders.createdBy, userId),
+      eq(shopOrders.direction, "venda_para_loja"),
+      eq(shopOrders.requestId, b.data.requestId),
+    )).limit(1);
   if (pedidoExistente[0]) {
     const fpAnt = (pedidoExistente[0].data as Record<string, unknown>)?.fingerprint;
     if (fpAnt === fp) { res.json({ id: pedidoExistente[0].id, replay: true }); return; }
@@ -574,6 +634,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
       const casas = regras.config.financeiro.casasDecimais;
       const txOut = crypto.randomUUID(); const txIn = crypto.randomUUID();
       txIds.push(txOut, txIn);
+      const escopoTx = `${b.data.requestId}:venda_para_loja:${userId}`;
       // perna da loja: sai dinheiro (compra para revenda)
       tx.insert(moneyTransactions).values({
         id: txOut, shopId: loja.id, campaignId, kind: "compra",
@@ -581,7 +642,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
         account: caixa.type, accountId: caixa.id, amountCents: -totalCents,
         balanceBeforeCents: caixa.balanceCents, balanceAfterCents: novoCaixa,
         counterparty: `Personagem: ${personagem.name}`, description: `Compra de ${item.name} na loja`,
-        requestId: `${b.data.requestId}:out`, createdBy: req.usuario!.id, createdAt: agora,
+        requestId: `${escopoTx}:out`, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
       // perna do vendedor: entra dinheiro (venda)
       tx.insert(moneyTransactions).values({
@@ -590,7 +651,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
         account: contaVendedor.type, accountId: contaVendedor.id, amountCents: totalCents,
         balanceBeforeCents: contaVendedor.balanceCents, balanceAfterCents: novoVendedor,
         counterparty: `Loja: ${loja.name}`, description: `Venda de ${item.name} para ${loja.name}`,
-        requestId: `${b.data.requestId}:in`, createdBy: req.usuario!.id, createdAt: agora,
+        requestId: `${escopoTx}:in`, createdBy: req.usuario!.id, createdAt: agora,
       }).run();
       tx.update(financialAccounts).set({ balanceCents: novoCaixa, updatedAt: agora }).where(eq(financialAccounts.id, caixa.id)).run();
       tx.update(financialAccounts).set({ balanceCents: novoVendedor, updatedAt: agora }).where(eq(financialAccounts.id, contaVendedor.id)).run();
@@ -605,6 +666,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
 
       tx.insert(shopOrders).values({
         id: orderId, campaignId, shopId: loja.id, requestId: b.data.requestId,
+        createdBy: userId, direction: "venda_para_loja",
         buyerCharacterId: personagem.id, items: [{ inventoryEntryId: item.id, name: nomeItem, qty: b.data.qty, unitCents: valorUnit }],
         totalCents, currency: contaVendedor.currency, status: "concluido", moneyTransactionIds: txIds,
         data: { fingerprint: fp, direction: "venda_para_loja" }, createdAt: agora,
@@ -612,7 +674,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
     });
   } catch (e) {
     if (e instanceof ErroComercio) { res.status(e.status).json({ erro: e.codigo, detalhes: e.detalhes }); return; }
-    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, b.data.requestId, fp)) return;
+    if (ehColisaoPedido(e) && await resolverColisaoPedido(res, campaignId, userId, "venda_para_loja", b.data.requestId, fp)) return;
     throw e;
   }
 

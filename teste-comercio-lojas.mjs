@@ -139,7 +139,7 @@ try {
     caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
     estoque: db.prepare("select stock_qty from shop_offers where id=?").get(offerId)?.stock_qty,
     itens: db.prepare("select count(*) c from inventory_entries where character_id=? and name='Espada Curta'").get(charOk).c,
-    txs: db.prepare("select count(*) c from money_transactions where request_id in ('compra-001:out','compra-001:in')").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'compra-001:%'").get().c,
   }));
   t("débito comprador 10000→7500", saldos.comprador === 7500, String(saldos.comprador));
   t("crédito caixa 100000→102500", saldos.caixa === 102500, String(saldos.caixa));
@@ -324,7 +324,7 @@ try {
   t("corrida: mesmo pedido nas duas respostas", c1.json?.id && c1.json.id === c2.json?.id, `${c1.json?.id} vs ${c2.json?.id}`);
   const saldoAposCorrida = comDb(BANCO, (db) => db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents);
   t("corrida: débito aplicado exatamente uma vez", saldoAposCorrida === saldoAntesCorrida - 100, `${saldoAntesCorrida}→${saldoAposCorrida}`);
-  const txsCorrida = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where request_id in ('corrida-001:out','corrida-001:in')").get().c);
+  const txsCorrida = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where request_id like 'corrida-001:%'").get().c);
   t("corrida: ledger com exatamente 2 pernas", txsCorrida === 2, String(txsCorrida));
 
   // mesmo requestId + fingerprint divergente concorrente → um commit + 409
@@ -387,6 +387,138 @@ try {
   }
   const vRevogado = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charCompCel}`, { cookie: j1.cookie });
   t("device revogado → vitrine 403 dispositivo_ausente", vRevogado.status === 403 && vRevogado.json?.motivos?.includes("dispositivo_ausente"), JSON.stringify(vRevogado.json));
+
+  sec("bloqueios financeiros do Dono Técnico (7148991024/534/022)");
+
+  // --- 1. abertura de caixa: ledger saldo_inicial + política ---
+  // gestor com jogadorCompraVenda ligado (default): saldo positivo ok + ledger
+  const contaInicial = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Fundo de Troco", balanceReais: 250, papel: "reserva" },
+  });
+  const contaInicialId = contaInicial.json?.id;
+  t("conta reserva com saldo → 201", contaInicial.status === 201 && !!contaInicialId, JSON.stringify(contaInicial.json));
+  const txInicial = comDb(BANCO, (db) => db.prepare(
+    "select kind, shop_id, character_id, amount_cents, balance_before_cents, balance_after_cents from money_transactions where account_id=? and kind='saldo_inicial'",
+  ).get(contaInicialId));
+  t("saldo_inicial no ledger com shop_id e sem personagem",
+    txInicial?.shop_id === shopId && txInicial?.character_id === null
+    && txInicial?.amount_cents === 25000 && txInicial?.balance_before_cents === 0 && txInicial?.balance_after_cents === 25000,
+    JSON.stringify(txInicial));
+
+  // política desligada: gestor-jogador não abre conta com saldo; mestre é isento
+  {
+    const db = abrirDb(BANCO);
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const cfg = JSON.parse(rs.config || "{}");
+    cfg.financeiro = { ...(cfg.financeiro ?? {}), jogadorCompraVenda: false };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+    db.close();
+  }
+  const negadoSaldo = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Caixa Proibido", balanceReais: 10, papel: "reserva" },
+  });
+  t("gestor sem jogadorCompraVenda + saldo>0 → 403", negadoSaldo.status === 403, JSON.stringify(negadoSaldo.json));
+  const isentoMestre = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: mestre, body: { type: "especie", name: "Caixa do Mestre", balanceReais: 10, papel: "reserva" },
+  });
+  t("mestre isento da política → 201", isentoMestre.status === 201, JSON.stringify(isentoMestre.json));
+  {
+    const db = abrirDb(BANCO);
+    const rs = db.prepare("select id, config from rule_sets where campaign_id=? and is_active=1").get(campId);
+    const cfg = JSON.parse(rs.config || "{}");
+    cfg.financeiro = { ...(cfg.financeiro ?? {}), jogadorCompraVenda: true };
+    db.prepare("update rule_sets set config=? where id=?").run(JSON.stringify(cfg), rs.id);
+    db.close();
+  }
+
+  // saldo negativo rejeitado (permitirSaldoNegativo=false) e moeda inválida
+  const negSaldo = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Negativa", balanceReais: -50, papel: "reserva" },
+  });
+  t("saldo inicial negativo → 400", negSaldo.status === 400, JSON.stringify(negSaldo.json));
+  const moedaInvalida = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Moeda X", balanceReais: 0, currency: "XXX", papel: "reserva" },
+  });
+  t("moeda não configurada → 400", moedaInvalida.status === 400, JSON.stringify(moedaInvalida.json));
+  // saldo zero não gera lançamento
+  const contaZero = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Vazia", papel: "reserva" },
+  });
+  const txZero = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where account_id=?").get(contaZero.json?.id)?.c);
+  t("saldo zero → conta sem lançamento", contaZero.status === 201 && txZero === 0, `status=${contaZero.status} txs=${txZero}`);
+
+  // --- 2. reserva nunca vira caixa ---
+  const lojaRes = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Só Reserva", category: "mercadoria" },
+  });
+  const shopRes = lojaRes.json?.id;
+  await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopRes}/gestores`, {
+    cookie: mestre, body: { membershipId: j1.membershipId, role: "gestor" },
+  });
+  await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopRes}/contas`, {
+    cookie: j1.cookie, body: { type: "especie", name: "Só Reserva", papel: "reserva" },
+  });
+  const ofertaRes = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopRes}/ofertas`, {
+    cookie: j1.cookie, body: { name: "Item Reserva", priceCents: 100 },
+  });
+  const compraRes = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId: shopRes, accountId: contaId, items: [{ offerId: ofertaRes.json?.id, qty: 1 }], requestId: "compra-reserva-1" },
+  });
+  t("loja só com reserva → 409 loja_sem_caixa", compraRes.status === 409 && compraRes.json?.erro === "loja_sem_caixa", JSON.stringify(compraRes.json));
+  const txRes = comDb(BANCO, (db) => db.prepare("select count(*) c from money_transactions where request_id like 'compra-reserva-1:%'").get().c);
+  t("reserva: zero movimento no ledger", txRes === 0, String(txRes));
+
+  // --- 3. escopo idempotente: campanha+ator+direção+requestId ---
+  // atores diferentes, mesmo requestId → operações independentes
+  const contaMestre = await req(BASE, "POST", `/characters/${charOk}/financeiro/contas`, {
+    cookie: mestre, body: { type: "especie", name: "Cofre Mestre", balanceReais: 500 },
+  });
+  const esc1j1 = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 1 }], requestId: "escopo-001" },
+  });
+  const esc1m = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: mestre,
+    body: { shopId, accountId: contaMestre.json?.id, items: [{ offerId: offerCorrida, qty: 1 }], requestId: "escopo-001" },
+  });
+  t("atores diferentes mesmo requestId → ambos commitam", esc1j1.status === 201 && esc1m.status === 201, JSON.stringify([esc1j1.status, esc1m.status, esc1j1.json?.erro, esc1m.json?.erro]));
+  const pedidosEscopo = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_orders where request_id='escopo-001'").get().c);
+  t("escopo: dois recibos independentes", pedidosEscopo === 2, String(pedidosEscopo));
+
+  // mesmo ator, direções diferentes, mesmo requestId → escopos independentes
+  const invEscopo = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invEscopo, charOk, "Bugiganga Escopo", 1, JSON.stringify({ aquisicao: { unitCents: 100, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const esc2c = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 1 }], requestId: "escopo-002" },
+  });
+  const esc2v = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invEscopo, qty: 1, accountId: contaId, requestId: "escopo-002" },
+  });
+  t("mesmo ator requestId compra+venda → independentes", esc2c.status === 201 && esc2v.status === 201, JSON.stringify([esc2c.status, esc2v.status, esc2c.json?.erro, esc2v.json?.erro]));
+  const dirsEscopo = comDb(BANCO, (db) => db.prepare("select direction from shop_orders where request_id='escopo-002' order by direction").all().map((r) => r.direction));
+  t("escopo: direções distintas persistidas", dirsEscopo.length === 2 && dirsEscopo[0] !== dirsEscopo[1], JSON.stringify(dirsEscopo));
+
+  // mesmo ator+direção+requestId, fingerprint divergente → 409 sem efeitos
+  const esc3a = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 1 }], requestId: "escopo-003" },
+  });
+  const esc3b = await req(BASE, "POST", `/characters/${charOk}/comercio/comprar`, {
+    cookie: j1.cookie,
+    body: { shopId, accountId: contaId, items: [{ offerId: offerCorrida, qty: 3 }], requestId: "escopo-003" },
+  });
+  t("mesmo escopo fingerprint divergente → 201+409", esc3a.status === 201 && esc3b.status === 409 && esc3b.json?.erro === "request_id_divergente", JSON.stringify([esc3a.status, esc3b.status, esc3b.json]));
+  const recEscopo3 = comDb(BANCO, (db) => db.prepare("select count(*) c from shop_orders where request_id='escopo-003'").get().c);
+  t("escopo divergente: um único recibo", recEscopo3 === 1, String(recEscopo3));
 
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
