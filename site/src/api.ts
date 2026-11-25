@@ -438,6 +438,22 @@ export const api = {
   // parâmetro → 400, inelegível → 403 internet_indisponivel sem dados.
   comercioLojas: (cid: string, charId: string) =>
     requisicao<{ lojas: LojaComercio[] }>(`/campaigns/${cid}/comercio/lojas?personagem=${encodeURIComponent(charId)}`),
+  criarLoja: (cid: string, dados: { name: string; category?: string; location?: string; description?: string }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarLoja: (cid: string, shopId: string, dados: Partial<{ name: string; category: string; location: string; description: string; isOpen: boolean }>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  adicionarGestorLoja: (cid: string, shopId: string, dados: { membershipId: string; role: "gestor" | "proprietario" }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/gestores`, { method: "POST", body: JSON.stringify(dados) }),
+  removerGestorLoja: (cid: string, shopId: string, managerId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}/gestores/${managerId}`, { method: "DELETE" }),
+  listarContasLoja: (cid: string, shopId: string) =>
+    requisicao<{ contas: ContaLoja[] }>(`/campaigns/${cid}/comercio/lojas/${shopId}/contas`),
+  criarContaLoja: (cid: string, shopId: string, dados: { type: string; name: string; balanceReais?: number; currency?: string; papel: "caixa" | "reserva" }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/contas`, { method: "POST", body: JSON.stringify(dados) }),
+  criarOfertaLoja: (cid: string, shopId: string, dados: { name: string; description?: string; priceCents: number; currency?: string; stockQty?: number | null; itemTemplateId?: string }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/ofertas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarOfertaLoja: (cid: string, shopId: string, offerId: string, dados: Partial<{ name: string; description: string; priceCents: number; currency: string; stockQty: number | null; itemTemplateId: string; isActive: boolean }>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}/ofertas/${offerId}`, { method: "PATCH", body: JSON.stringify(dados) }),
   comercioComprar: (charId: string, dados: { shopId: string; accountId: string; items: { offerId: string; qty: number; expectedUnitCents?: number }[]; requestId: string }) =>
     requisicao<{ id: string; replay?: boolean; totalCents?: number; itens?: { offerId: string; name: string; qty: number; unitCents: number }[] }>(`/characters/${charId}/comercio/comprar`, { method: "POST", body: JSON.stringify(dados) }),
   comercioVender: (charId: string, dados: { shopId: string; inventoryEntryId: string; qty: number; accountId: string; expectedUnitCents?: number; requestId: string }) =>
@@ -1197,6 +1213,21 @@ export interface OfertaComercio {
   updatedAt: string;
 }
 
+export interface GestorLoja {
+  id: string;
+  membershipId: string;
+  role: "gestor" | "proprietario" | string;
+}
+
+export interface ContaLoja {
+  id: string;
+  type: string;
+  name: string;
+  currency: string;
+  balanceCents: number;
+  data: Record<string, unknown>;
+}
+
 export interface LojaComercio {
   id: string;
   campaignId: string;
@@ -1205,6 +1236,10 @@ export interface LojaComercio {
   location: string | null;
   description: string | null;
   isOpen: boolean;
+  /** Calculado pelo servidor para o usuário da sessão. */
+  podeGerenciar?: boolean;
+  /** Só vem na resposta do mestre; nunca exposto a compradores comuns. */
+  gestores?: GestorLoja[];
   data: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;
