@@ -324,7 +324,11 @@ comercioLojasRouter.patch("/lojas/:shopId/ofertas/:offerId", requirePapel("mestr
   if ("erro" in acesso) { res.status(acesso.erro ?? 403).json({ erro: "Loja não encontrada ou sem permissão" }); return; }
   const b = ofertaSchema.partial().extend({ isActive: z.boolean().optional() }).safeParse(req.body ?? {});
   if (!b.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
-  const [of] = await db.select().from(shopOffers).where(and(eq(shopOffers.id, req.params.offerId), eq(shopOffers.shopId, req.params.shopId))).limit(1);
+  const [of] = await db.select().from(shopOffers).where(and(
+    eq(shopOffers.id, req.params.offerId),
+    eq(shopOffers.shopId, req.params.shopId),
+    eq(shopOffers.campaignId, req.params.campaignId as string),
+  )).limit(1);
   if (!of) { res.status(404).json({ erro: "Oferta não encontrada" }); return; }
   // O vínculo do Acervo precisa pertencer à campanha da loja também no PATCH.
   // Sem esta validação um gestor poderia anexar template de outra campanha.
@@ -418,7 +422,12 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
       const linhas: { oferta: typeof shopOffers.$inferSelect; qty: number }[] = [];
       for (const item of b.data.items) {
         const [of] = tx.select().from(shopOffers)
-          .where(and(eq(shopOffers.id, item.offerId), eq(shopOffers.shopId, loja.id), eq(shopOffers.isActive, true))).limit(1).all();
+          .where(and(
+            eq(shopOffers.id, item.offerId),
+            eq(shopOffers.shopId, loja.id),
+            eq(shopOffers.campaignId, campaignId),
+            eq(shopOffers.isActive, true),
+          )).limit(1).all();
         if (!of) throw new ErroComercio(409, "oferta_indisponivel", { offerId: item.offerId });
         if (item.expectedUnitCents !== undefined && item.expectedUnitCents !== of.priceCents) {
           throw new ErroComercio(409, "preco_divergente", { offerId: of.id, precoAtualCents: of.priceCents });
@@ -548,9 +557,18 @@ function creditarEstoqueLoja(
   const tpl = item.templateId ?? null;
   const [existente] = tpl
     ? tx.select().from(shopOffers)
-      .where(and(eq(shopOffers.shopId, loja.id), eq(shopOffers.itemTemplateId, tpl))).limit(1).all()
+      .where(and(
+        eq(shopOffers.shopId, loja.id),
+        eq(shopOffers.campaignId, campaignId),
+        eq(shopOffers.itemTemplateId, tpl),
+      )).limit(1).all()
     : tx.select().from(shopOffers)
-      .where(and(eq(shopOffers.shopId, loja.id), isNull(shopOffers.itemTemplateId), eq(shopOffers.name, item.name))).limit(1).all();
+      .where(and(
+        eq(shopOffers.shopId, loja.id),
+        eq(shopOffers.campaignId, campaignId),
+        isNull(shopOffers.itemTemplateId),
+        eq(shopOffers.name, item.name),
+      )).limit(1).all();
   if (existente) {
     if (existente.stockQty !== null) {
       tx.update(shopOffers).set({ stockQty: existente.stockQty + qty, updatedAt: agora })
@@ -647,6 +665,16 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
       if (b.data.expectedUnitCents !== undefined && b.data.expectedUnitCents !== valorUnit) {
         throw new ErroComercio(409, "preco_divergente", { precoAtualCents: valorUnit });
       }
+      // O template do item de inventário também deve pertencer à campanha.
+      // Não permitir que dados persistidos/client-controlled criem estoque
+      // comercial ligado ao Acervo de outra campanha.
+      const templateId = typeof dadosItem.templateId === "string" ? dadosItem.templateId : null;
+      if (templateId) {
+        const [tpl] = tx.select({ id: itemTemplates.id }).from(itemTemplates)
+          .where(and(eq(itemTemplates.id, templateId), eq(itemTemplates.campaignId, campaignId)))
+          .limit(1).all();
+        if (!tpl) throw new ErroComercio(409, "template_indisponivel");
+      }
       totalCents = Math.round(valorUnit * b.data.qty);
       nomeItem = item.name;
 
@@ -703,7 +731,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
       creditarEstoqueLoja(tx, loja, campaignId,
         {
           name: item.name, description: item.description,
-          templateId: typeof dadosItem.templateId === "string" ? dadosItem.templateId : undefined,
+          templateId: templateId ?? undefined,
         },
         b.data.qty, valorUnit, orderId, contaVendedor.currency, agora);
 
