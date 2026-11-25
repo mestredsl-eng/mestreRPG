@@ -56,13 +56,16 @@ try {
 
   // Personagens: elegível (pericia+notebook), sem pericia, sem dispositivo
   const charOk = cenario.novoPersonagem(j1.membershipId, "Conectado", { comp: 1 });
+  const charOkJ2 = cenario.novoPersonagem(j2.membershipId, "Conectado J2", { comp: 1 });
   const charSemPericia = cenario.novoPersonagem(j2.membershipId, "Sem Pericia", { for: 5 });
   const charSemDevice = cenario.novoPersonagem(j2.membershipId, "Sem Device", { comp: 2 });
   {
     const db = abrirDb(BANCO);
     const agora = Date.now();
-    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
-      .run(crypto.randomUUID(), charOk, "Notebook", 1, JSON.stringify({ regra: { kind: "item", key: "notebook" } }), agora, agora);
+    const inserirNotebook = db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)");
+    for (const characterId of [charOk, charOkJ2]) {
+      inserirNotebook.run(crypto.randomUUID(), characterId, "Notebook", 1, JSON.stringify({ regra: { kind: "item", key: "notebook" } }), agora, agora);
+    }
     db.close();
   }
 
@@ -103,6 +106,18 @@ try {
     cookie: mestre, body: { membershipId: j1.membershipId, role: "gestor" },
   });
   t("mestre vincula gestor", gestor.status === 201, JSON.stringify(gestor.json));
+
+  // A vitrine informa a permissão calculada pelo servidor. Apenas o mestre
+  // recebe o cadastro de gestores; outro jogador elegível vê false e nada privado.
+  const vitrineMestre = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: mestre });
+  const lojaMestre = vitrineMestre.json?.lojas?.find((l) => l.id === shopId);
+  t("mestre recebe podeGerenciar e gestores", lojaMestre?.podeGerenciar === true && lojaMestre?.gestores?.some((g) => g.membershipId === j1.membershipId), JSON.stringify(lojaMestre));
+  const vitrineGestor = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: j1.cookie });
+  const lojaGestor = vitrineGestor.json?.lojas?.find((l) => l.id === shopId);
+  t("gestor recebe podeGerenciar sem lista de gestores", lojaGestor?.podeGerenciar === true && lojaGestor?.gestores === undefined, JSON.stringify(lojaGestor));
+  const vitrinePublica = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOkJ2}`, { cookie: j2.cookie });
+  const lojaPublica = vitrinePublica.json?.lojas?.find((l) => l.id === shopId);
+  t("não-gestor não recebe permissão de gestão", lojaPublica?.podeGerenciar === false && lojaPublica?.gestores === undefined, JSON.stringify(lojaPublica));
 
   // gestor cria conta de caixa da loja (titular = estabelecimento)
   const contaCaixa = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/contas`, {
@@ -297,6 +312,15 @@ try {
   t("vendedor creditado 7500→11500", posVenda.comprador === 11500, String(posVenda.comprador));
   t("caixa debitado 102500→98500", posVenda.caixa === 98500, String(posVenda.caixa));
   t("item removido do inventário", posVenda.item === 0, String(posVenda.item));
+
+  // A recompra sem oferta correspondente vira oferta inativa. O gestor precisa
+  // vê-la para revisar preço/ativar; a vitrine pública não deve divulgá-la.
+  const vitrineGestaoRevenda = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: j1.cookie });
+  const revendaPendente = vitrineGestaoRevenda.json?.lojas?.find((l) => l.id === shopId)?.ofertas?.find((o) => o.name === "Relíquia Antiga" && o.isActive === false);
+  t("gestor vê revenda pendente inativa", !!revendaPendente, JSON.stringify(revendaPendente));
+  const vitrinePublicaRevenda = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOkJ2}`, { cookie: j2.cookie });
+  const revendaOculta = vitrinePublicaRevenda.json?.lojas?.find((l) => l.id === shopId)?.ofertas?.some((o) => o.name === "Relíquia Antiga");
+  t("vitrine pública oculta revenda inativa", revendaOculta === false, String(revendaOculta));
 
   const replayVenda = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
     cookie: j1.cookie,

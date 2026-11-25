@@ -159,12 +159,28 @@ comercioLojasRouter.get("/lojas", requirePapel("mestre", "jogador", "espectador"
   const gate = await gateInternet(acesso.personagem);
   if (!gate.elegivel) { res.status(403).json({ erro: "internet_indisponivel", motivos: gate.motivos }); return; }
   const lista = await db.select().from(shops).where(eq(shops.campaignId, campaignId));
-  const ofertas = await db.select().from(shopOffers).where(and(eq(shopOffers.campaignId, campaignId), eq(shopOffers.isActive, true)));
+  // A visão de gestão é calculada no servidor para o usuário desta sessão.
+  // Só mestre recebe a lista de gestores; gestores recebem ofertas inativas
+  // da própria loja para revisar revendas LOJA-B. A vitrine pública segue
+  // mostrando somente ofertas ativas e nunca expõe o caixa.
+  const [ofertas, gestores] = await Promise.all([
+    db.select().from(shopOffers).where(eq(shopOffers.campaignId, campaignId)),
+    db.select().from(shopManagers).where(eq(shopManagers.campaignId, campaignId)),
+  ]);
+  const ehMestre = acesso.membership.role === "mestre";
   res.json({
-    lojas: lista.map((l) => ({
-      ...l,
-      ofertas: ofertas.filter((o) => o.shopId === l.id).map((o) => ({ ...o, emEstoque: o.stockQty === null || o.stockQty > 0 })),
-    })),
+    lojas: lista.map((l) => {
+      const gestoresLoja = gestores.filter((g) => g.shopId === l.id);
+      const podeGerenciar = ehMestre || gestoresLoja.some((g) => g.membershipId === acesso.membership.id);
+      return {
+        ...l,
+        podeGerenciar,
+        ...(ehMestre ? { gestores: gestoresLoja.map((g) => ({ id: g.id, membershipId: g.membershipId, role: g.role })) } : {}),
+        ofertas: ofertas
+          .filter((o) => o.shopId === l.id && (o.isActive || podeGerenciar))
+          .map((o) => ({ ...o, emEstoque: o.stockQty === null || o.stockQty > 0 })),
+      };
+    }),
   });
 });
 
