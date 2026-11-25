@@ -5,7 +5,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb } from "../db/index.js";
 import {
-  characters, inventoryEntries, equipmentEntries, itemTemplates, sheetVersions,
+  characters, inventoryEntries, equipmentEntries, itemTemplates, sheetVersions, memberships,
 } from "../db/schema.js";
 import { carregarRegras } from "./regras.js";
 import { avaliarElegibilidadeInternet, chaveItemDe } from "./internet.js";
@@ -48,5 +48,38 @@ export async function gateInternetDoPersonagem(p: typeof characters.$inferSelect
 export async function personagemElegivelInternet(characterId: string): Promise<boolean> {
   const [p] = await db.select().from(characters).where(eq(characters.id, characterId)).limit(1);
   if (!p || p.status === "arquivado") return false;
+  return (await gateInternetDoPersonagem(p)).elegivel;
+}
+
+/**
+ * Revalida a autorização completa do socket Internet em cada entrega:
+ * membership ativa na campanha + titularidade atual (ou mestre) + gate
+ * cumulativo. Impede que um ex-dono continue recebendo eventos depois de
+ * uma transferência de personagem durante uma sessão já conectada.
+ */
+export async function personagemAutorizadoInternet(characterId: string, userId: string): Promise<boolean> {
+  const [p] = await db.select().from(characters).where(eq(characters.id, characterId)).limit(1);
+  if (!p || p.status === "arquivado") return false;
+
+  const [m] = await db.select({ role: memberships.role }).from(memberships)
+    .where(and(
+      eq(memberships.campaignId, p.campaignId),
+      eq(memberships.userId, userId),
+      eq(memberships.status, "ativo"),
+    ))
+    .limit(1);
+  if (!m) return false;
+
+  if (m.role !== "mestre") {
+    const [dono] = await db.select({ userId: memberships.userId }).from(memberships)
+      .where(and(
+        eq(memberships.id, p.membershipId),
+        eq(memberships.campaignId, p.campaignId),
+        eq(memberships.status, "ativo"),
+      ))
+      .limit(1);
+    if (dono?.userId !== userId) return false;
+  }
+
   return (await gateInternetDoPersonagem(p)).elegivel;
 }

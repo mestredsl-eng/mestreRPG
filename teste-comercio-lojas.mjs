@@ -705,20 +705,45 @@ try {
   t("OOC intacto: inelegível recebe patrimonio:atualizado", evPatNeg.length >= 1, String(evPatNeg.length));
   t("OOC intacto: elegível recebe patrimonio:atualizado", evPatOk.length >= 1, String(evPatOk.length));
 
-  // revogação: remove o dispositivo → próxima entrega não chega nem ao elegível
+  // transferência de titularidade durante a sessão: o novo dono pode entrar,
+  // mas o socket do ex-dono deve ser expulso antes da próxima entrega.
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("update characters set membership_id=? where id=?").run(j2.membershipId, charOk);
+    db.close();
+  }
+  t("novo titular pode inscrever-se após transferência",
+    (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  t("ex-titular não consegue reinscrever-se após transferência",
+    (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  const evExTitularAntes = evComOk.length;
+  const evNovoTitularAntes = evComNeg.length;
+  const lojaTransferencia = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Transferência RT" },
+  });
+  t("gatilho pós-transferência 201", lojaTransferencia.status === 201, JSON.stringify(lojaTransferencia.json));
+  await dormir(600);
+  t("ex-titular perde entrega após transferência", evComOk.length === evExTitularAntes,
+    `${evExTitularAntes}→${evComOk.length}`);
+  t("novo titular continua recebendo após transferência", evComNeg.length > evNovoTitularAntes,
+    `${evNovoTitularAntes}→${evComNeg.length}`);
+
+  // revogação por perda do dispositivo: também corta o novo titular.
   {
     const db = abrirDb(BANCO);
     db.prepare("delete from inventory_entries where character_id=? and json_extract(data,'$.regra.key')='notebook'").run(charOk);
     db.close();
   }
-  const evAntes = evComOk.length;
+  const evAntesRevogacao = evComNeg.length;
   const lojaSinal = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
     cookie: mestre, body: { name: "Loja Sinal RT" },
   });
   t("gatilho pós-revogação 201", lojaSinal.status === 201, JSON.stringify(lojaSinal.json));
   await dormir(600);
-  t("revogado não recebe nova entrega", evComOk.length === evAntes, `${evAntes}→${evComOk.length}`);
-  t("reinscrição negada após revogação", (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  t("revogado não recebe nova entrega", evComNeg.length === evAntesRevogacao,
+    `${evAntesRevogacao}→${evComNeg.length}`);
+  t("reinscrição negada após revogação",
+    (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
 
   sockOk.close(); sockNeg.close();
 
