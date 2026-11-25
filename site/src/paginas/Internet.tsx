@@ -3,6 +3,7 @@ import {
   api, ApiError,
   type ContaFinanceira, type Equipamento, type Financeiro, type ItemInventario,
   type LojaComercio, type OfertaComercio, type PedidoComercio,
+  type ContaLoja, type ItemCatalogo, type Membro,
 } from "../api";
 import { getSocket } from "../socket";
 
@@ -15,6 +16,8 @@ interface Props {
   /** Chamado quando o fluxo de venda do itemInicial é fechado — o pai
    *  limpa a pré-seleção para não reabrir a venda depois. */
   aoItemConsumido?: () => void;
+  /** Mestre da campanha pode criar lojas e delegar gestores. */
+  souMestre?: boolean;
 }
 
 const fmtMoeda = (cents: number, moeda = "BRL") =>
@@ -71,7 +74,7 @@ function itemEquipado(item: ItemInventario, equipamentos: Equipamento[]): boolea
  *  função fail-closed das mutações); a UI apenas exibe o veredito e os
  *  motivos. Vitrine, checkout LOJA-A, venda LOJA-B (aba "Vender") e
  *  histórico conforme WF-D/WF-E aceitos. */
-export default function Internet({ characterId, campaignId, itemInicial, aoItemConsumido }: Props) {
+export default function Internet({ characterId, campaignId, itemInicial, aoItemConsumido, souMestre = false }: Props) {
   const [gate, setGate] = useState<{ fase: FaseGate; motivos: string[] }>({ fase: "carregando", motivos: [] });
   const [aba, setAba] = useState<AbaInternet>("lojas");
   const [lojas, setLojas] = useState<LojaComercio[] | null>(null);
@@ -83,6 +86,8 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
   const [vendendoItem, setVendendoItem] = useState<ItemInventario | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [recibo, setRecibo] = useState<PedidoComercio | null>(null);
+  const [lojaGestao, setLojaGestao] = useState<LojaComercio | null>(null);
+  const [criarLojaAberto, setCriarLojaAberto] = useState(false);
   const recarregarRef = useRef<() => Promise<void>>(async () => undefined);
 
   const carregarRef = useRef<() => Promise<void>>(async () => undefined);
@@ -185,6 +190,21 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
     );
   }
 
+  if (lojaGestao) {
+    return (
+      <section className="cartao" aria-label={`Gerenciar loja ${lojaGestao.name}`}>
+        <GestaoLoja
+          loja={lojaGestao}
+          campaignId={campaignId}
+          characterId={characterId}
+          souMestre={souMestre}
+          aoVoltar={() => { setLojaGestao(null); void carregar(); }}
+          aoAtualizar={carregar}
+        />
+      </section>
+    );
+  }
+
   return (
     <section className="cartao" aria-label="Internet">
       <h3>Internet</h3>
@@ -196,27 +216,49 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
       {erro && <p className="erro" role="alert">{erro}</p>}
 
       {aba === "lojas" && !lojaSel && (
-        lojas === null ? <p className="meta">Carregando lojas…</p> : lojas.length === 0 ? (
-          <p className="meta">Nenhuma loja registrada nesta campanha.</p>
-        ) : (
-          <ul className="lista-lojas">
-            {lojas.map((l) => (
-              <li key={l.id} className="cartao cartao-campanha">
-                <div className="linha-entre">
-                  <div>
-                    <strong>{l.name}</strong>
-                    {l.category && <span className="meta"> · {l.category}</span>}
-                    {l.location && <span className="meta"> · {l.location}</span>}
+        <>
+          {souMestre && (
+            <div className="cartao cartao-campanha">
+              <div className="linha-entre">
+                <strong>Administração do comércio</strong>
+                <button className="secundario" onClick={() => setCriarLojaAberto((v) => !v)}>
+                  {criarLojaAberto ? "Cancelar" : "Criar loja"}
+                </button>
+              </div>
+              {criarLojaAberto && (
+                <CriarLojaForm
+                  campaignId={campaignId}
+                  aoCancelar={() => setCriarLojaAberto(false)}
+                  aoCriada={() => { setCriarLojaAberto(false); void carregar(); }}
+                />
+              )}
+            </div>
+          )}
+          {lojas === null ? <p className="meta">Carregando lojas…</p> : lojas.length === 0 ? (
+            <p className="meta">Nenhuma loja registrada nesta campanha.</p>
+          ) : (
+            <ul className="lista-lojas">
+              {lojas.map((l) => (
+                <li key={l.id} className="cartao cartao-campanha">
+                  <div className="linha-entre">
+                    <div>
+                      <strong>{l.name}</strong>
+                      {l.category && <span className="meta"> · {l.category}</span>}
+                      {l.location && <span className="meta"> · {l.location}</span>}
+                    </div>
+                    <span className={`badge ${l.isOpen ? "badge-ativa" : "badge-bloqueada"}`}>{l.isOpen ? "Aberta" : "Fechada"}</span>
                   </div>
-                  <span className={`badge ${l.isOpen ? "badge-ativa" : "badge-bloqueada"}`}>{l.isOpen ? "Aberta" : "Fechada"}</span>
-                </div>
-                {l.description && <p className="meta">{l.description}</p>}
-                <p className="meta">{l.ofertas.length} oferta{l.ofertas.length === 1 ? "" : "s"}</p>
-                <button className="secundario" onClick={() => { setLojaSel(l); setErro(null); }}>Ver vitrine</button>
-              </li>
-            ))}
-          </ul>
-        )
+                  {l.description && <p className="meta">{l.description}</p>}
+                  <p className="meta">{l.ofertas.filter((o) => o.isActive).length} ofertas publicadas</p>
+                  <div className="linha">
+                    <button className="secundario" onClick={() => { setLojaSel(l); setErro(null); }}>Ver vitrine</button>
+                    {l.podeGerenciar && <button onClick={() => setLojaGestao(l)}>Gerenciar loja</button>}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
 
       {aba === "lojas" && lojaSel && (
@@ -809,5 +851,300 @@ function VendaParaLoja({ characterId, campaignId, item, equipado, lojas, contas,
         </>
       )}
     </section>
+  );
+}
+
+
+/** Criação de loja — somente mestre; permissões são revalidadas no servidor. */
+function CriarLojaForm({ campaignId, aoCancelar, aoCriada }: {
+  campaignId: string; aoCancelar: () => void; aoCriada: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState("mercadoria");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const criar = async () => {
+    if (busy || !name.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      await api.criarLoja(campaignId, { name: name.trim(), category: category.trim() || undefined, location: location.trim() || undefined, description: description.trim() || undefined });
+      aoCriada();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível criar a loja."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="cartao">
+      <label>Nome da loja<input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></label>
+      <label>Categoria<input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={60} /></label>
+      <label>Localização<input value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} /></label>
+      <label>Descrição<textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} rows={2} /></label>
+      {error && <p className="erro" role="alert">{error}</p>}
+      <div className="linha">
+        <button onClick={() => void criar()} disabled={busy || !name.trim()}>{busy ? "Criando…" : "Criar loja"}</button>
+        <button className="secundario" onClick={aoCancelar} disabled={busy}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+/** Edição de oferta, inclusive revenda recebida inativa pela LOJA-B. */
+function OfertaGestao({ campaignId, shopId, oferta, aoSalvar }: {
+  campaignId: string; shopId: string; oferta: OfertaComercio; aoSalvar: () => Promise<void>;
+}) {
+  const [name, setName] = useState(oferta.name);
+  const [description, setDescription] = useState(oferta.description ?? "");
+  const [price, setPrice] = useState((oferta.priceCents / 100).toFixed(2));
+  const [stock, setStock] = useState(oferta.stockQty === null ? "" : String(oferta.stockQty));
+  const [active, setActive] = useState(oferta.isActive);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    setName(oferta.name); setDescription(oferta.description ?? "");
+    setPrice((oferta.priceCents / 100).toFixed(2));
+    setStock(oferta.stockQty === null ? "" : String(oferta.stockQty));
+    setActive(oferta.isActive);
+  }, [oferta]);
+  const salvar = async () => {
+    const valor = Number(price.replace(",", "."));
+    const quantidade = stock.trim() === "" ? null : Number(stock);
+    if (busy || !name.trim() || !Number.isFinite(valor) || valor <= 0 ||
+      (quantidade !== null && (!Number.isInteger(quantidade) || quantidade < 0))) {
+      setError("Confira nome, preço positivo e estoque inteiro ou vazio para ilimitado."); return;
+    }
+    setBusy(true); setError(null);
+    try {
+      await api.atualizarOfertaLoja(campaignId, shopId, oferta.id, {
+        name: name.trim(), description: description.trim(),
+        priceCents: Math.round(valor * 100), currency: oferta.currency,
+        stockQty: quantidade, isActive: active,
+      });
+      await aoSalvar();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível salvar a oferta."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="cartao cartao-campanha">
+      <div className="linha-entre">
+        <strong>{oferta.isActive ? "Oferta publicada" : "Revenda pendente de revisão"}</strong>
+        <label><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} /> Publicada</label>
+      </div>
+      <label>Produto<input value={name} onChange={(e) => setName(e.target.value)} maxLength={160} /></label>
+      <label>Descrição<textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} rows={2} /></label>
+      <div className="linha">
+        <label>Preço ({oferta.currency})<input type="number" min="0.01" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} /></label>
+        <label>Estoque (vazio = ilimitado)<input type="number" min="0" step="1" value={stock} onChange={(e) => setStock(e.target.value)} /></label>
+      </div>
+      {error && <p className="erro" role="alert">{error}</p>}
+      <button onClick={() => void salvar()} disabled={busy}>{busy ? "Salvando…" : "Salvar oferta"}</button>
+    </div>
+  );
+}
+
+/** Administração usa as rotas e o ledger de loja já existentes; não cria saldo paralelo. */
+function GestaoLoja({ loja: lojaInicial, campaignId, characterId, souMestre, aoVoltar, aoAtualizar }: {
+  loja: LojaComercio; campaignId: string; characterId: string; souMestre: boolean;
+  aoVoltar: () => void; aoAtualizar: () => Promise<void>;
+}) {
+  const [loja, setLoja] = useState(lojaInicial);
+  const [name, setName] = useState(lojaInicial.name);
+  const [category, setCategory] = useState(lojaInicial.category ?? "");
+  const [location, setLocation] = useState(lojaInicial.location ?? "");
+  const [description, setDescription] = useState(lojaInicial.description ?? "");
+  const [accounts, setAccounts] = useState<ContaLoja[]>([]);
+  const [catalog, setCatalog] = useState<ItemCatalogo[]>([]);
+  const [members, setMembers] = useState<Membro[]>([]);
+  const [membershipId, setMembershipId] = useState("");
+  const [managerRole, setManagerRole] = useState<"gestor" | "proprietario">("gestor");
+  const [accountName, setAccountName] = useState("Caixa da loja");
+  const [accountBalance, setAccountBalance] = useState("0");
+  const [accountType, setAccountType] = useState("especie");
+  const [offerName, setOfferName] = useState("");
+  const [offerDescription, setOfferDescription] = useState("");
+  const [offerPrice, setOfferPrice] = useState("");
+  const [offerStock, setOfferStock] = useState("");
+  const [offerTemplateId, setOfferTemplateId] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const atualizar = async () => {
+    try {
+      const [{ lojas }, { contas }] = await Promise.all([
+        api.comercioLojas(campaignId, characterId),
+        api.listarContasLoja(campaignId, lojaInicial.id),
+      ]);
+      const atual = lojas.find((l) => l.id === lojaInicial.id);
+      if (atual) {
+        setLoja(atual); setName(atual.name); setCategory(atual.category ?? "");
+        setLocation(atual.location ?? ""); setDescription(atual.description ?? "");
+      }
+      setAccounts(contas);
+      await aoAtualizar();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível atualizar a gestão."); }
+  };
+
+  useEffect(() => {
+    let ativo = true;
+    void Promise.all([
+      api.listarContasLoja(campaignId, lojaInicial.id).then((r) => { if (ativo) setAccounts(r.contas); }),
+      api.listarCatalogo(campaignId).then((r) => { if (ativo) setCatalog(r.itens); }),
+      souMestre ? api.listarMembros(campaignId).then((r) => { if (ativo) setMembers(r.membros); }) : Promise.resolve(),
+    ]).catch((e) => { if (ativo) setError(e instanceof Error ? e.message : "Não foi possível carregar a gestão."); });
+    return () => { ativo = false; };
+  }, [campaignId, lojaInicial.id, souMestre]);
+
+  const salvarLoja = async () => {
+    if (busy || !name.trim()) return;
+    setBusy(true); setError(null);
+    try {
+      await api.atualizarLoja(campaignId, loja.id, { name: name.trim(), category: category.trim(), location: location.trim(), description: description.trim() });
+      await atualizar();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível salvar a loja."); }
+    finally { setBusy(false); }
+  };
+  const alterarEstado = async () => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try { await api.atualizarLoja(campaignId, loja.id, { isOpen: !loja.isOpen }); await atualizar(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível alterar o estado da loja."); }
+    finally { setBusy(false); }
+  };
+  const criarOferta = async () => {
+    const valor = Number(offerPrice.replace(",", "."));
+    const quantidade = offerStock.trim() === "" ? null : Number(offerStock);
+    if (busy || !offerName.trim() || !Number.isFinite(valor) || valor <= 0 ||
+      (quantidade !== null && (!Number.isInteger(quantidade) || quantidade < 0))) {
+      setError("Confira nome, preço positivo e estoque inteiro ou vazio para ilimitado."); return;
+    }
+    setBusy(true); setError(null);
+    try {
+      await api.criarOfertaLoja(campaignId, loja.id, {
+        name: offerName.trim(), description: offerDescription.trim() || undefined,
+        priceCents: Math.round(valor * 100), currency: "BRL", stockQty: quantidade,
+        itemTemplateId: offerTemplateId || undefined,
+      });
+      setOfferName(""); setOfferDescription(""); setOfferPrice(""); setOfferStock(""); setOfferTemplateId("");
+      await atualizar();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível criar a oferta."); }
+    finally { setBusy(false); }
+  };
+  const criarConta = async () => {
+    const saldo = Number(accountBalance.replace(",", "."));
+    if (busy || !accountName.trim() || !Number.isFinite(saldo)) { setError("Informe nome e saldo inicial válido."); return; }
+    setBusy(true); setError(null);
+    try {
+      const temCaixaAtual = accounts.some((a) => (a.data as Record<string, unknown>)?.papel === "caixa");
+      await api.criarContaLoja(campaignId, loja.id, {
+        type: accountType, name: accountName.trim(), balanceReais: saldo,
+        papel: temCaixaAtual ? "reserva" : "caixa",
+      });
+      setAccountName(temCaixaAtual ? "Reserva da loja" : "Caixa da loja"); setAccountBalance("0");
+      await atualizar();
+    } catch (e) { setError(e instanceof Error ? e.message : "Não foi possível criar a conta da loja."); }
+    finally { setBusy(false); }
+  };
+  const adicionarGestor = async () => {
+    if (busy || !membershipId) return;
+    setBusy(true); setError(null);
+    try { await api.adicionarGestorLoja(campaignId, loja.id, { membershipId, role: managerRole }); setMembershipId(""); await atualizar(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível vincular o gestor."); }
+    finally { setBusy(false); }
+  };
+  const removerGestor = async (managerId: string) => {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try { await api.removerGestorLoja(campaignId, loja.id, managerId); await atualizar(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Não foi possível remover o gestor."); }
+    finally { setBusy(false); }
+  };
+
+  const gestores = loja.gestores ?? [];
+  const membrosDisponiveis = members.filter((m) => m.status === "ativo" && m.role !== "mestre" && !gestores.some((g) => g.membershipId === m.membershipId));
+  const temCaixa = accounts.some((a) => (a.data as Record<string, unknown>)?.papel === "caixa");
+
+  return (
+    <div>
+      <div className="linha-entre">
+        <h3>Gerenciar: {loja.name}</h3>
+        <button className="secundario" onClick={aoVoltar}>Voltar às lojas</button>
+      </div>
+      <div className="cartao cartao-campanha">
+        <h4>Dados da loja</h4>
+        <label>Nome<input value={name} onChange={(e) => setName(e.target.value)} maxLength={120} /></label>
+        <label>Categoria<input value={category} onChange={(e) => setCategory(e.target.value)} maxLength={60} /></label>
+        <label>Localização<input value={location} onChange={(e) => setLocation(e.target.value)} maxLength={200} /></label>
+        <label>Descrição<textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={2000} rows={2} /></label>
+        <div className="linha">
+          <button onClick={() => void salvarLoja()} disabled={busy || !name.trim()}>Salvar dados</button>
+          <button className="secundario" onClick={() => void alterarEstado()} disabled={busy}>{loja.isOpen ? "Fechar loja" : "Abrir loja"}</button>
+        </div>
+      </div>
+      <div className="cartao cartao-campanha">
+        <h4>Caixa e contas da loja</h4>
+        {accounts.length === 0 ? <p className="meta">Nenhuma conta criada.</p> : (
+          <ul>{accounts.map((a) => <li key={a.id}><strong>{a.name}</strong> · {a.type} · {a.currency} {(a.balanceCents / 100).toFixed(2)} · {String((a.data as Record<string, unknown>)?.papel ?? "conta")}</li>)}</ul>
+        )}
+        <div className="linha">
+          <label>Nome da conta<input value={accountName} onChange={(e) => setAccountName(e.target.value)} maxLength={120} /></label>
+          <label>Tipo<select value={accountType} onChange={(e) => setAccountType(e.target.value)}>
+            <option value="especie">Dinheiro</option><option value="banco">Banco</option><option value="pix">PIX</option><option value="outro">Outro</option>
+          </select></label>
+          <label>Saldo inicial (R$)<input type="number" step="0.01" value={accountBalance} onChange={(e) => setAccountBalance(e.target.value)} /></label>
+        </div>
+        <button onClick={() => void criarConta()} disabled={busy || !accountName.trim()}>{temCaixa ? "Adicionar conta reserva" : "Criar caixa da loja"}</button>
+        <p className="meta">O saldo inicial é registrado no histórico financeiro da loja.</p>
+      </div>
+      <div className="cartao cartao-campanha">
+        <h4>Catálogo e estoque</h4>
+        {catalog.length > 0 && (
+          <label>Vincular item do catálogo (opcional)
+            <select value={offerTemplateId} onChange={(e) => {
+              const id = e.target.value; setOfferTemplateId(id);
+              const item = catalog.find((x) => x.id === id);
+              if (item) { setOfferName(item.name); setOfferDescription(item.description ?? ""); }
+            }}>
+              <option value="">Item livre — sem vínculo com catálogo</option>
+              {catalog.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </label>
+        )}
+        <label>Nome da oferta<input value={offerName} onChange={(e) => setOfferName(e.target.value)} maxLength={160} /></label>
+        <label>Descrição<textarea value={offerDescription} onChange={(e) => setOfferDescription(e.target.value)} maxLength={2000} rows={2} /></label>
+        <div className="linha">
+          <label>Preço (R$)<input type="number" min="0.01" step="0.01" value={offerPrice} onChange={(e) => setOfferPrice(e.target.value)} /></label>
+          <label>Estoque (vazio = ilimitado)<input type="number" min="0" step="1" value={offerStock} onChange={(e) => setOfferStock(e.target.value)} /></label>
+        </div>
+        <button onClick={() => void criarOferta()} disabled={busy || !offerName.trim()}>Publicar oferta</button>
+        <div className="cartao">
+          <strong>Ofertas desta loja</strong>
+          {loja.ofertas.length === 0 ? <p className="meta">Nenhuma oferta cadastrada.</p> : (
+            loja.ofertas.map((oferta) => <OfertaGestao key={oferta.id} campaignId={campaignId} shopId={loja.id} oferta={oferta} aoSalvar={atualizar} />)
+          )}
+        </div>
+      </div>
+      {souMestre && (
+        <div className="cartao cartao-campanha">
+          <h4>Responsáveis pela loja</h4>
+          {gestores.length === 0 ? <p className="meta">Nenhum responsável vinculado.</p> : (
+            <ul>{gestores.map((g) => {
+              const m = members.find((x) => x.membershipId === g.membershipId);
+              return <li key={g.id} className="linha-entre"><span>{m?.displayName || m?.username || g.membershipId} · {g.role}</span><button className="secundario" onClick={() => void removerGestor(g.id)} disabled={busy}>Remover</button></li>;
+            })}</ul>
+          )}
+          <div className="linha">
+            <label>Jogador<select value={membershipId} onChange={(e) => setMembershipId(e.target.value)}>
+              <option value="">Selecionar membro ativo</option>
+              {membrosDisponiveis.map((m) => <option key={m.membershipId} value={m.membershipId}>{m.displayName || m.username}</option>)}
+            </select></label>
+            <label>Função<select value={managerRole} onChange={(e) => setManagerRole(e.target.value as "gestor" | "proprietario")}>
+              <option value="gestor">Gestor</option><option value="proprietario">Proprietário</option>
+            </select></label>
+            <button onClick={() => void adicionarGestor()} disabled={busy || !membershipId}>Vincular responsável</button>
+          </div>
+        </div>
+      )}
+      {error && <p className="erro" role="alert">{error}</p>}
+    </div>
   );
 }
