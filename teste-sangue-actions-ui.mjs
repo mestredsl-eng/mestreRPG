@@ -451,6 +451,8 @@ try {
     });
     const usarNovamente = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
     t("UI. ação narrativa reaparece após reabrir ficha", await usarNovamente.count() === 1);
+    t("UI. botão mostra custo de Sangue configurado", /2 Sangue/.test(await usarNovamente.innerText()),
+      await usarNovamente.innerText());
     await usarNovamente.click();
     await page.waitForFunction(() =>
       Array.from(document.querySelectorAll(".ficha-poder-acao"))
@@ -469,6 +471,29 @@ try {
     await page.getByRole("button", { name: "Salvar", exact: true }).click();
     await page.waitForFunction(() => document.body.innerText.includes("Ficha salva."), { timeout: 15000 });
     t("UI. salvar após ativação usa versão atual da ficha", /Ficha salva\./.test(await page.locator("body").innerText()));
+    await ctx.close();
+  }
+
+  // ---------- 2a. Prévia de custo: saldo insuficiente desabilita ----------
+  sec("UI. prévia de custo e saldo insuficiente");
+  {
+    // CHAR está com saldo 3 após a seção anterior; custo do
+    // poder_fogo é 2. Derrubo para 1 → a UI deve desabilitar a ação
+    // com mensagem clara ANTES de qualquer tentativa de emitir.
+    setSangue(CHAR, { saldo: 1, capacidade: 10, usos: {}, historico: [] });
+    const { ctx, page } = await novaPagina(J1);
+    await abrirFicha(page, "Herói Ações");
+    const btn = page.getByRole("button", { name: "Usar Poder de Fogo sem rolagem" });
+    // A leitura do saldo é assíncrona — espera a prévia resolver.
+    await page.waitForSelector(".ficha-poder-acao .ficha-aviso", { timeout: 15000 }).catch(() => null);
+    t("UI. custo continua visível com saldo baixo", /2 Sangue/.test(await btn.innerText()),
+      await btn.innerText());
+    t("UI. saldo insuficiente desabilita a ação", await btn.isDisabled());
+    t("UI. mensagem de insuficiência visível", /Saldo insuficiente \(1\/2/.test(await page.locator(".ficha-poder-acao").innerText()),
+      await page.locator(".ficha-poder-acao").innerText());
+    t("UI. saldo no banco intacto (nada emitido)", saldoDe(CHAR) === 1, `db=${saldoDe(CHAR)}`);
+    // Restaura o saldo 3 que a seção de permissões espera (ajuste +3 → 6).
+    setSangue(CHAR, { saldo: 3, capacidade: 10, usos: {}, historico: [] });
     await ctx.close();
   }
 
