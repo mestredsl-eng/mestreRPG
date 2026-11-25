@@ -12,7 +12,7 @@
 // Executar: node teste-runtime-processos-298.mjs  (requer servidor/dist buildado)
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -382,7 +382,9 @@ async function main() {
       const sonda = new Database(BANCO + ".trava");
       sonda.pragma("busy_timeout = 2000");
       try {
-        sonda.exec("BEGIN IMMEDIATE");
+        // BEGIN EXCLUSIVE (não IMMEDIATE): mesma semântica dos corredores —
+        // IMMEDIATE tolera leitores SHARED que ainda bloqueiam EXCLUSIVE.
+        sonda.exec("BEGIN EXCLUSIVE");
         sonda.exec("ROLLBACK");
       } catch (e) {
         const vivos = ativos.filter((p) => p.exitCode === null && p.signalCode === null)
@@ -412,8 +414,21 @@ async function main() {
         if (procA.exitCode !== null && procB.exitCode !== null) break;
         await new Promise((r) => setTimeout(r, 300));
       }
+      // Diagnóstico de detentor (Linux/CI): se ambos morreram, despeja as
+      // linhas de /proc/locks do inode da .trava + PIDs node vivos —
+      // identifica QUEM detinha o lock no instante da falha.
+      let locksTrava = "";
+      if (!vencedor && process.platform === "linux") {
+        try {
+          const st = statSync(BANCO + ".trava");
+          const inode = st.ino.toString(16);
+          const locks = readFileSync("/proc/locks", "utf8").split("\n")
+            .filter((l) => l.toLowerCase().includes(inode));
+          locksTrava = locks.length ? `\n/proc/locks .trava(ino=${inode}):\n${locks.join("\n")}` : `\n/proc/locks: nenhuma entrada para ino=${inode}`;
+        } catch (e) { locksTrava = `\n/proc/locks indisponível: ${e?.message ?? e}`; }
+      }
       ok("C7 exatamente uma inicialização vence a corrida", !!vencedor,
-        `[sonda] ${sondaTrava}\n` +
+        `[sonda] ${sondaTrava}${locksTrava}\n` +
         `A exit=${procA.exitCode} sig=${procA.signalCode} | B exit=${procB.exitCode} sig=${procB.signalCode}` +
         `\n--- logA ---\n${logsDe(procA).slice(-800)}\n--- logB ---\n${logsDe(procB).slice(-800)}`);
       if (vencedor) {
