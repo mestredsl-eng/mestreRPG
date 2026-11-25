@@ -193,6 +193,8 @@ jobs:
         run: npx tsx --test servidor/testes/sangue-acoes.test.ts
       - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
         run: npx tsx --test servidor/testes/sangue-invariantes.test.ts
+      - name: Testes unitários do parser de cookie de sessão (Issue #296)
+        run: npx tsx --test servidor/testes/auth-cookie.test.ts
       - name: Suítes obrigatórias v1.0.8 — Servidor sem navegador
         shell: bash
         run: |
@@ -228,6 +230,9 @@ jobs:
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
             teste-integridade-sqlite.mjs
+            teste-escopo-cruzado.mjs
+            teste-arquivos-ci.mjs
+            teste-proxy-acesso.mjs
             teste-ficha-cacadores.mjs
             teste-runtime-processos-298.mjs
           )
@@ -473,6 +478,7 @@ jobs:
             homologacao-vida-regua.mjs
             teste-permissao-tempo-real.mjs
             homologacao-mesa-virtual.mjs
+            teste-mesa-d10-e2e.mjs
             homologacao-regua.mjs
             homologacao-nevoa.mjs
             teste-vtt-rollback-p6.mjs
