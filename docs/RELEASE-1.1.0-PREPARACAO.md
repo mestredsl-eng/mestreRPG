@@ -166,3 +166,19 @@ O run `45557022249` da PR #329 concluiu **3/3 SUCCESS** no SHA exato `698035fe0e
 - Navegador — homologações Playwright: SUCCESS.
 
 O log do job Servidor da mesma execução registra `teste-comercio-lojas.mjs`: **127 passaram / 0 falharam**. Este resultado substitui o estado IN_PROGRESS anotado na fotografia anterior. Permanecem os gates de integração com a main atual, decisão sobre o diff existente de `.github/workflows/ci.yml`, E2E browser específico da nova UI e repetibilidade CI dos testes adicionais da #336.
+
+
+## Divisão de trabalho registrada — 25/11/2026
+
+As frentes foram separadas para reduzir trabalho duplicado e evitar sobreposição de arquivos:
+
+| Responsável de projeto | Frente | Entrega solicitada |
+|---|---|---|
+| PAI | PR #328 | Sincronizar a fundação com main, auditar migrations 0036/0037 em fixture financeira 1.0.9 e registrar CI do SHA final |
+| FILHO | PR #327 | Sincronizar UI e acrescentar E2E de navegador para Internet/gestão/Equipamento-Armazém em suíte já executada pelo workflow |
+| INTERMEDIÁRIO | PR #336 | Comparar semanticamente a suíte de 108 asserts com os 127 da #329 e documentar apenas lacunas reais |
+| Devin | Issue/épico #286 | Coordenar DAG, revisar migrations/contratos, conferir evidências exatas e manter o quadro de bloqueios atualizado |
+
+Os pedidos estão registrados em comentários nas PRs/Issue. Isso constitui uma divisão de trabalho documentada, **não comprova que sessões externas dos agentes já iniciaram ou concluíram as tarefas**. Não há assignees/reviewers formais registrados no GitHub para essas PRs.
+
+O Dono Técnico mantém somente a coordenação, reconciliação de estado e preparação da release, evitando alterar branches de implementação que pertencem às frentes acima. Nenhuma ordem permite modificar `.github/workflows/ci.yml`, mesclar, retarget, publicar tag/release ou iniciar escopo 1.1.1.
