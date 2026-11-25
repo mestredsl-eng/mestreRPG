@@ -478,6 +478,7 @@ jobs:
             homologacao-vida-regua.mjs
             teste-permissao-tempo-real.mjs
             homologacao-mesa-virtual.mjs
+            teste-mesa-d10-e2e.mjs
             homologacao-regua.mjs
             homologacao-nevoa.mjs
             teste-vtt-rollback-p6.mjs
