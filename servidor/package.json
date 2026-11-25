@@ -13,7 +13,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts",
     "test:guildas-guarda": "tsx --test testes/guildas-guarda.test.ts",
-    "test:backup-contrato": "tsx --test testes/backup-contrato.test.ts"
+    "test:backup-contrato": "tsx --test testes/backup-contrato.test.ts",
+    "test:comercio": "tsx --test testes/comercio-schema.test.ts"
   },
   "dependencies": {
     "better-sqlite3": "12.9.0",

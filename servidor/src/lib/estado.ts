@@ -9,7 +9,8 @@ import {
 import {
   campaigns, memberships, invitations, sheetTemplates, sheetVersions, characters, characterFields,
   ruleSets, ruleDefinitions, itemTemplates, inventoryEntries, equipmentEntries, vehicles,
-  financialAccounts, moneyTransactions, sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
+  financialAccounts, moneyTransactions, shops, shopManagers, shopOffers, shopOrders,
+  sessions, turns, chatMessages, rolls, tests, notes, files, folders, noteAttachments,
 } from "../db/schema.js";
 
 const db = getDb();
@@ -30,6 +31,10 @@ export interface EstadoCampanha {
   vehicles: (typeof vehicles.$inferSelect)[];
   financialAccounts: (typeof financialAccounts.$inferSelect)[];
   moneyTransactions: (typeof moneyTransactions.$inferSelect)[];
+  shops: (typeof shops.$inferSelect)[];
+  shopManagers: (typeof shopManagers.$inferSelect)[];
+  shopOffers: (typeof shopOffers.$inferSelect)[];
+  shopOrders: (typeof shopOrders.$inferSelect)[];
   sessions: (typeof sessions.$inferSelect)[];
   turns: (typeof turns.$inferSelect)[];
   chatMessages: (typeof chatMessages.$inferSelect)[];
@@ -69,6 +74,10 @@ export async function exportarCampanha(campaignId: string): Promise<EstadoCampan
     vehicles: await db.select().from(vehicles).where(eq(vehicles.campaignId, campaignId)),
     financialAccounts: await db.select().from(financialAccounts).where(eq(financialAccounts.campaignId, campaignId)),
     moneyTransactions: await db.select().from(moneyTransactions).where(eq(moneyTransactions.campaignId, campaignId)),
+    shops: await db.select().from(shops).where(eq(shops.campaignId, campaignId)),
+    shopManagers: await db.select().from(shopManagers).where(eq(shopManagers.campaignId, campaignId)),
+    shopOffers: await db.select().from(shopOffers).where(eq(shopOffers.campaignId, campaignId)),
+    shopOrders: await db.select().from(shopOrders).where(eq(shopOrders.campaignId, campaignId)),
     // vtt_state corrompido não pode impedir exportação/snapshot da campanha
     sessions: await (async () => {
       try {

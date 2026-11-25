@@ -12,7 +12,7 @@
 // Executar: node teste-runtime-processos-298.mjs  (requer servidor/dist buildado)
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -372,6 +372,28 @@ async function main() {
 
   // ---------- C7: corrida real de duas inicializações ----------
   {
+    // Sonda pré-corrida (diagnóstico, pedido na investigação da falha de
+    // CI): tenta BEGIN IMMEDIATE na .trava ANTES de spawnar A/B. Se a
+    // trava já estiver detida, os dois corredores morrerão por SQLITE_BUSY
+    // — e esta sonda identifica o detentor (processos ainda vivos do
+    // harness) em vez de deixar a falha sem causa.
+    let sondaTrava = "trava livre";
+    {
+      const sonda = new Database(BANCO + ".trava");
+      sonda.pragma("busy_timeout = 2000");
+      try {
+        // BEGIN EXCLUSIVE (não IMMEDIATE): mesma semântica dos corredores —
+        // IMMEDIATE tolera leitores SHARED que ainda bloqueiam EXCLUSIVE.
+        sonda.exec("BEGIN EXCLUSIVE");
+        sonda.exec("ROLLBACK");
+      } catch (e) {
+        const vivos = ativos.filter((p) => p.exitCode === null && p.signalCode === null)
+          .map((p) => `pid=${p.pid}`).join(",") || "nenhum";
+        sondaTrava = `trava detida antes da corrida (${String(e?.message ?? e).slice(0, 80)}); processos vivos: ${vivos}`;
+      } finally { try { sonda.close(); } catch {} }
+    }
+    console.log(`  [C7 sonda] ${sondaTrava}`);
+
     const portaA = await portaLivre();
     const portaB = await portaLivre();
     const procA = subir(portaA, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
@@ -392,7 +414,21 @@ async function main() {
         if (procA.exitCode !== null && procB.exitCode !== null) break;
         await new Promise((r) => setTimeout(r, 300));
       }
+      // Diagnóstico de detentor (Linux/CI): se ambos morreram, despeja as
+      // linhas de /proc/locks do inode da .trava + PIDs node vivos —
+      // identifica QUEM detinha o lock no instante da falha.
+      let locksTrava = "";
+      if (!vencedor && process.platform === "linux") {
+        try {
+          const st = statSync(BANCO + ".trava");
+          const inode = st.ino.toString(16);
+          const locks = readFileSync("/proc/locks", "utf8").split("\n")
+            .filter((l) => l.toLowerCase().includes(inode));
+          locksTrava = locks.length ? `\n/proc/locks .trava(ino=${inode}):\n${locks.join("\n")}` : `\n/proc/locks: nenhuma entrada para ino=${inode}`;
+        } catch (e) { locksTrava = `\n/proc/locks indisponível: ${e?.message ?? e}`; }
+      }
       ok("C7 exatamente uma inicialização vence a corrida", !!vencedor,
+        `[sonda] ${sondaTrava}${locksTrava}\n` +
         `A exit=${procA.exitCode} sig=${procA.signalCode} | B exit=${procB.exitCode} sig=${procB.signalCode}` +
         `\n--- logA ---\n${logsDe(procA).slice(-800)}\n--- logB ---\n${logsDe(procB).slice(-800)}`);
       if (vencedor) {

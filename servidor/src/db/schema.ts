@@ -354,7 +354,11 @@ export const itemTemplates = sqliteTable("item_templates", {
 // especie | banco | cartao_debito | cartao_credito | pre_pago | pix | outro
 export const financialAccounts = sqliteTable("financial_accounts", {
   id: id(),
-  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  // Titular da conta: exatamente um de characterId/shopId (invariante de
+  // aplicação — o schema não usa CHECK). characterId nullable desde 1.1.0
+  // para contas de estabelecimento (Issue #286).
+  characterId: text("character_id").references(() => characters.id, { onDelete: "cascade" }),
+  shopId: text("shop_id").references(() => shops.id),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   type: text("type").notNull(),
   name: text("name").notNull(),
@@ -396,7 +400,11 @@ export const vehicles = sqliteTable("vehicles", {
 // Dinheiro fictício e transações (inclui "PIX fictício" — spec §9.3)
 export const moneyTransactions = sqliteTable("money_transactions", {
   id: id(),
-  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  // Titular da movimentação: characterId (conta de personagem) ou shopId
+  // (conta de estabelecimento). shopId é preenchido em AMBAS as pernas de
+  // uma operação que envolve loja, para consultas do caixa por loja.
+  characterId: text("character_id").references(() => characters.id, { onDelete: "cascade" }),
+  shopId: text("shop_id").references(() => shops.id),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   // tipo: saldo_inicial|entrada|saida|pix_ficticio|ajuste_mestre|transferencia
   kind: text("kind").notNull(),
@@ -687,4 +695,82 @@ export const novidadesLeituras = sqliteTable("novidade_leituras", {
 }, (t) => [
   uniqueIndex("novidade_leitura_unica_idx").on(t.novidadeId, t.userId),
   index("novidade_leitura_user_idx").on(t.userId),
+]);
+
+// ---------- Comércio — lojas na Internet (Issue #286, release 1.1.0) ----------
+// Estabelecimento comercial diegético. O caixa da loja vive em
+// financial_accounts/money_transactions com shop_id (titular =
+// estabelecimento, nunca personagem/NPC nem carteira do gestor).
+
+export const shops = sqliteTable("shops", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  category: text("category"), // ex.: mercadoria, servicos, classificados
+  location: text("location"), // descrição livre do estabelecimento
+  description: text("description"),
+  isOpen: integer("is_open", { mode: "boolean" }).notNull().default(true),
+  data: text("data", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [index("shops_campaign_idx").on(t.campaignId)]);
+
+// Gestores da loja: memberships (usuários) com papel de gestão. O mestre
+// da campanha sempre tem bypass; gestor é jogador não-mestre explicitamente
+// vinculado à loja.
+export const shopManagers = sqliteTable("shop_managers", {
+  id: id(),
+  shopId: text("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  membershipId: text("membership_id").notNull().references(() => memberships.id, { onDelete: "cascade" }),
+  role: text("role").notNull().default("gestor"), // gestor|proprietario
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("shop_manager_unico_idx").on(t.shopId, t.membershipId),
+  index("shop_manager_membership_idx").on(t.membershipId),
+]);
+
+// Oferta comercial da loja (vitrine). Estoque comercial próprio, separado do
+// inventário do personagem; stockQty NULL = ilimitado.
+export const shopOffers = sqliteTable("shop_offers", {
+  id: id(),
+  shopId: text("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  itemTemplateId: text("item_template_id").references(() => itemTemplates.id, { onDelete: "set null" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  priceCents: integer("price_cents").notNull(),
+  currency: text("currency").notNull().default("BRL"),
+  stockQty: integer("stock_qty"), // NULL = ilimitado
+  isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+  data: text("data", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  index("shop_offers_shop_idx").on(t.shopId),
+  index("shop_offers_campaign_idx").on(t.campaignId),
+]);
+
+// Pedido/recibo de compra na loja. Escopo idempotente aceito na matriz
+// #289: campanha + usuário humano iniciador (createdBy) + direção
+// (compra|venda_para_loja) + requestId — NÃO global por campanha.
+export const shopOrders = sqliteTable("shop_orders", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  shopId: text("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
+  requestId: text("request_id").notNull(),
+  createdBy: text("created_by").notNull(), // user id do iniciador humano
+  direction: text("direction").notNull(), // compra | venda_para_loja
+  buyerCharacterId: text("buyer_character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  items: text("items", { mode: "json" }).notNull(), // [{offerId, name, qty, unitCents}]
+  totalCents: integer("total_cents").notNull(),
+  currency: text("currency").notNull().default("BRL"),
+  status: text("status").notNull().default("concluido"), // concluido|estornado
+  moneyTransactionIds: text("money_transaction_ids", { mode: "json" }).notNull().default([]),
+  data: text("data", { mode: "json" }).notNull().default({}),
+  createdAt: createdAt(),
+}, (t) => [
+  uniqueIndex("shop_order_request_idx").on(t.campaignId, t.createdBy, t.direction, t.requestId),
+  index("shop_orders_shop_idx").on(t.shopId),
+  index("shop_orders_buyer_idx").on(t.buyerCharacterId),
 ]);

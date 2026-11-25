@@ -305,7 +305,9 @@ try {
       ? readdirSync(backupsDir).filter((n) => n.startsWith("pre_adocao_")) : [];
     t("backup pre_adocao criado", adocaoBackups.length === 1, adocaoBackups.join(","));
 
-    // 5. Migrações aplicadas: banco agora no schema completo (36).
+    // 5. Migrações aplicadas: banco agora no schema completo — a contagem
+    //    esperada é derivada do journal (não hardcoded), para não quebrar
+    //    a cada migration futura.
     {
       const db = new Database(BANCO, { readonly: true });
       const n = db.prepare("select count(*) c from __drizzle_migrations").get().c;
@@ -313,7 +315,7 @@ try {
       const campsDb = db.prepare("select count(*) c from campaigns").get().c;
       const chars = db.prepare("select count(*) c from characters").get().c;
       db.close();
-      t("migrations completas aplicadas no boot", n === 36, String(n));
+      t("migrations completas aplicadas no boot", n === journal.entries.length, `${n} vs ${journal.entries.length}`);
       t("dados preservados após migrate", users === 2 && campsDb === 1 && chars === 2,
         `users=${users} campaigns=${campsDb} characters=${chars}`);
     }
