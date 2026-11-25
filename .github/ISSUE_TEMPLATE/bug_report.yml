@@ -1,0 +1,84 @@
+name: Relatar um bug
+description: Relate um comportamento incorreto ou uma regressão reproduzível.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar o Mestre RPG. Não inclua senhas, cookies, tokens, chaves, dados pessoais, conteúdo de campanhas ou backups. Para vulnerabilidades de segurança, use o procedimento privado descrito em SECURITY.md.
+  - type: textarea
+    id: resumo
+    attributes:
+      label: O que aconteceu?
+      description: Explique o problema de forma objetiva.
+      placeholder: Descreva o comportamento observado.
+    validations:
+      required: true
+  - type: textarea
+    id: reproducao
+    attributes:
+      label: Como reproduzir?
+      description: Liste os passos mínimos para reproduzir o problema.
+      placeholder: |
+        1. Acesse...
+        2. Abra...
+        3. Execute...
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: O que deveria acontecer?
+      description: Informe o resultado esperado.
+    validations:
+      required: true
+  - type: dropdown
+    id: categoria
+    attributes:
+      label: Área afetada
+      options:
+        - Autenticação e permissões
+        - Campanhas e personagens
+        - Fichas e regras
+        - Mesa, chat e tempo real
+        - Inventário, equipamentos e finanças
+        - Interface e navegação
+        - Acessibilidade
+        - Instalação, atualização e backups
+        - Outra área
+    validations:
+      required: true
+  - type: input
+    id: versao
+    attributes:
+      label: Versão ou commit
+      description: Informe a versão exibida pela aplicação ou o SHA do commit, se souber.
+      placeholder: "Ex.: 1.0.9"
+    validations:
+      required: true
+  - type: dropdown
+    id: ambiente
+    attributes:
+      label: Sistema operacional
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Outro
+    validations:
+      required: true
+  - type: input
+    id: navegador
+    attributes:
+      label: Navegador e versão (quando aplicável)
+      placeholder: "Ex.: Chrome 130, Firefox 132"
+    validations:
+      required: false
+  - type: textarea
+    id: evidencias
+    attributes:
+      label: Evidências sanitizadas
+      description: Inclua mensagens de erro ou logs sem segredos nem dados privados. Não anexe banco, backup ou arquivo de campanha.
+      placeholder: Cole aqui apenas informações que possam ser compartilhadas publicamente.
+    validations:
+      required: false

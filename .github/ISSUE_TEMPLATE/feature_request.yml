@@ -1,0 +1,46 @@
+name: Propor uma melhoria
+description: Sugira uma funcionalidade ou melhoria de experiência.
+title: "[Melhoria]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Antes de enviar, procure sugestões semelhantes nas Issues existentes. Priorize o problema que precisa ser resolvido, não apenas a solução imaginada.
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema precisa ser resolvido?
+      description: Explique a situação atual e quem é afetado.
+      placeholder: Descreva o contexto de uso.
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Qual melhoria você sugere?
+      description: Descreva o resultado desejado e como deveria funcionar.
+    validations:
+      required: true
+  - type: textarea
+    id: impacto
+    attributes:
+      label: Impacto no uso do Mestre RPG
+      description: Explique quais papéis, fluxos ou partes da campanha seriam beneficiados.
+    validations:
+      required: false
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas consideradas
+      description: Conte se existe uma forma atual de contornar o problema ou outra solução possível.
+    validations:
+      required: false
+  - type: checkboxes
+    id: confirmacoes
+    attributes:
+      label: Confirmações
+      options:
+        - label: Procurei sugestões semelhantes e não encontrei uma proposta igual.
+          required: true
+        - label: Esta proposta não contém dados privados, credenciais ou informações sensíveis.
+          required: true

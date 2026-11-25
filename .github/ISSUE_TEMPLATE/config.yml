@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Política de segurança
+    url: https://github.com/mestredsl-eng/mestreRPG/security/policy
+    about: Não publique vulnerabilidades em Issues. Consulte o canal privado de reporte.
+  - name: Guia de operação
+    url: https://github.com/mestredsl-eng/mestreRPG/blob/main/docs/GUIA-OPERACAO.md
+    about: Consulte instalação, atualização, backups, restauração e diagnóstico.
