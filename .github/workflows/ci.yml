@@ -521,6 +521,7 @@ jobs:
             teste-a11y-fluxos-297.mjs
             homologacao-desafio-ficha.mjs
             homologacao-validacao-ficha.mjs
+            teste-internet-e2e.mjs
           )
           falhas=()
           for s in "${arquivos[@]}"; do
