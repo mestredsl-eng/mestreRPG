@@ -751,13 +751,16 @@ export const shopOffers = sqliteTable("shop_offers", {
   index("shop_offers_campaign_idx").on(t.campaignId),
 ]);
 
-// Pedido/recibo de compra na loja. requestId idempotente por campanha
-// (mesmo padrão de money_transactions.request_id).
+// Pedido/recibo de compra na loja. Escopo idempotente aceito na matriz
+// #289: campanha + usuário humano iniciador (createdBy) + direção
+// (compra|venda_para_loja) + requestId — NÃO global por campanha.
 export const shopOrders = sqliteTable("shop_orders", {
   id: id(),
   campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
   shopId: text("shop_id").notNull().references(() => shops.id, { onDelete: "cascade" }),
   requestId: text("request_id").notNull(),
+  createdBy: text("created_by").notNull(), // user id do iniciador humano
+  direction: text("direction").notNull(), // compra | venda_para_loja
   buyerCharacterId: text("buyer_character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
   items: text("items", { mode: "json" }).notNull(), // [{offerId, name, qty, unitCents}]
   totalCents: integer("total_cents").notNull(),
@@ -767,7 +770,7 @@ export const shopOrders = sqliteTable("shop_orders", {
   data: text("data", { mode: "json" }).notNull().default({}),
   createdAt: createdAt(),
 }, (t) => [
-  uniqueIndex("shop_order_request_idx").on(t.campaignId, t.requestId),
+  uniqueIndex("shop_order_request_idx").on(t.campaignId, t.createdBy, t.direction, t.requestId),
   index("shop_orders_shop_idx").on(t.shopId),
   index("shop_orders_buyer_idx").on(t.buyerCharacterId),
 ]);
