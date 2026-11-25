@@ -589,6 +589,33 @@ try {
   const idsVitrine = (vitrineA.json?.lojas ?? []).map((l) => l.id);
   t("vitrine da campanha A não lista loja da campanha B", !idsVitrine.includes(shopB), JSON.stringify(idsVitrine));
 
+  // visibilidade de gestão na vitrine (#329 @ c51e81e): flag
+  // podeGerenciar por loja, gestor vê ofertas inativas da própria loja,
+  // mestre recebe a lista de gestores — sem vazar caixa
+  const lojaVitA = (vitrineA.json?.lojas ?? []).find((l) => l.id === shopId);
+  const lojaVit2 = (vitrineA.json?.lojas ?? []).find((l) => l.id === shop2);
+  t("vitrine: gestor tem podeGerenciar=true na própria loja",
+    lojaVitA?.podeGerenciar === true, JSON.stringify(lojaVitA?.podeGerenciar));
+  t("vitrine: gestor tem podeGerenciar=false na loja alheia",
+    lojaVit2?.podeGerenciar === false, JSON.stringify(lojaVit2?.podeGerenciar));
+  t("vitrine do gestor inclui oferta INATIVA da própria loja (revisão de revenda)",
+    (lojaVitA?.ofertas ?? []).some((o) => o.id === offInativa),
+    JSON.stringify((lojaVitA?.ofertas ?? []).map((o) => o.id)));
+  const vitrineJ2 = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charTplOk}`, { cookie: j2.cookie });
+  const lojaVitJ2 = (vitrineJ2.json?.lojas ?? []).find((l) => l.id === shopId);
+  t("vitrine de não-gestor: podeGerenciar=false e sem oferta inativa",
+    lojaVitJ2?.podeGerenciar === false
+    && !(lojaVitJ2?.ofertas ?? []).some((o) => o.id === offInativa),
+    JSON.stringify({ p: lojaVitJ2?.podeGerenciar, n: (lojaVitJ2?.ofertas ?? []).length }));
+  const vitrineMestre = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charOk}`, { cookie: mestre });
+  const lojaVitM = (vitrineMestre.json?.lojas ?? []).find((l) => l.id === shopId);
+  t("vitrine do mestre expõe gestores da loja",
+    Array.isArray(lojaVitM?.gestores) && lojaVitM.gestores.some((g) => g.membershipId === j1.membershipId),
+    JSON.stringify(lojaVitM?.gestores));
+  t("vitrine nunca expõe saldo/caixa das contas",
+    !JSON.stringify(vitrineMestre.json).includes("balanceCents") && !JSON.stringify(vitrineMestre.json).includes("balance_cents"),
+    "campo de saldo vazou na vitrine");
+
   // isolamento de template/Acervo entre campanhas (#329 @ f6009fb):
   // template criado na campanha B não pode ser referenciado pela A —
   // nem na criação/PATCH de oferta, nem na venda LOJA-B
