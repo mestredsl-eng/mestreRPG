@@ -238,3 +238,24 @@ A versão 1.1.0 permanece **não candidata**. Nenhuma integração, promoção d
 A #329 está baseada em #328@ `e82b5cc`, enquanto a #328 avançou para `76a8f47`. Compare confirma apenas um commit à frente na #328, contendo arquivos de adoção/teste sem interseção com o código comercial. PAI recebeu ordem para incorporar esse commit por merge normal e repetir a CI. Até a integração e os novos runs terminarem, não existe candidata integrada final.
 
 A decisão do proprietário sobre o delta de workflow já existente na #329 continua pendente e separada. Nenhuma PR foi promovida, mesclada ou publicada por esta atualização.
+
+
+## Checkpoint de integração — 25/11/2026, 08:05 UTC
+
+- **#328** HEAD `76a8f4708b6eabd1211995f4f2ce61d150187d1c`: migration/adoption 1.0.9 automatizada no arquivo que já pertence à suíte de CI do Servidor. Run `45571997887`: Windows SUCCESS; Servidor ainda em etapa `Suítes da stack`; Navegador ainda em andamento. Não declarar CI completa até o run terminar.
+- **#329** HEAD `443b497929394512077a3200d24adffa4b2afbf6`, base #328@ `e82b5cc`: run `45570504599`: Servidor SUCCESS e Windows SUCCESS; Navegador em `Suítes obrigatórias v1.0.8 — Navegador`, ainda em andamento. #329 já contém correção L2, mas ainda **não** contém o novo teste de adoção 1.0.9 da #328.
+- **#336** HEAD `62b359e3ab2339614e11b59f65ff4c56db0f1845`, base #329@443b497: 122/122 local. Revisão complementar solicitada para depois do port dos cenários à suíte CI-enabled.
+- **#327** HEAD `f84ea9b82321fe15101ab1947120a7fa024ba5f3`: CI reportada como 5/5 SUCCESS, teste dedicado de UI 31/31 local, ainda não wired à CI integrada.
+- **main** permanece `f6979f48e5fff68a1ec4fedc72a5c48e1b3cdc55`.
+
+### Sequência coordenada atual
+
+O Devin registrou que a sincronização #328@76a8f47 → #329 deve esperar a CI da #328 terminar, para não mover o HEAD enquanto seus jobs ainda executam. Assim que concluir:
+1. PAI incorpora #328@76a8f47 em #329 por merge normal e executa nova CI no resultado.
+2. PAI porta cenários L1/L3/L4/L5 para a suíte `teste-comercio-lojas.mjs` já rodando na CI.
+3. INTERMEDIÁRIO revisa semanticamente o port.
+4. Após CI do backend integrado, sincronizar/testar UI #327 contra a stack e wirear seu E2E somente na fase adequada, sem alterar workflow sem autorização.
+
+L1 segue com comportamento observado: o perdedor da corrida recebe 404 `item_nao_encontrado` quando o vencedor remove a linha de inventário. Atomicidade e ledger estão coerentes segundo a prova local, mas o contrato 404 versus 409 ainda está com o PAI para definição. Não contar L1 como definitivamente fechado até esse ponto ser tratado.
+
+A #329 ainda contém o delta próprio de `.github/workflows/ci.yml` (branch trigger + testes de schema e comércio). A revisão técnica considerou o delta aditivo e sem remoções, mas a aprovação explícita do proprietário ainda não foi registrada. #327/#328/#329/#336/#341 permanecem Draft/open; nenhuma integração foi mergeada em main.
