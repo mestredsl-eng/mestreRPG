@@ -599,6 +599,64 @@ try {
     db.close();
   }
 
+  // Falha injetada DEPOIS dos efeitos financeiros e da baixa do inventário.
+  // O trigger aborta a criação da oferta na entrada do estoque da loja;
+  // a transação inteira deve reverter caixa, vendedor, item, ledger e recibo.
+  const invRollbackMidTx = crypto.randomUUID();
+  const nomeRollbackMidTx = "Teste rollback transacional LOJA-B";
+  const requestRollbackMidTx = "venda-rollback-midtx-1";
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invRollbackMidTx, charOk, nomeRollbackMidTx, 1, JSON.stringify({ aquisicao: { unitCents: 3210, qtdOriginal: 1 } }), agora, agora);
+    db.exec(`CREATE TRIGGER teste_loja_b_falha_estoque
+      BEFORE INSERT ON shop_offers
+      WHEN NEW.name = 'Teste rollback transacional LOJA-B'
+      BEGIN SELECT RAISE(ABORT, 'falha_injetada_estoque_loja'); END;`);
+    db.close();
+  }
+  const antesRollbackMidTx = comDb(BANCO, (db) => ({
+    vendedor: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invRollbackMidTx)?.quantity ?? null,
+    ledger: db.prepare("select count(*) c from money_transactions where shop_id=? and request_id like ?").get(shopId, requestRollbackMidTx + ":%").c,
+    oferta: db.prepare("select count(*) c from shop_offers where shop_id=? and name=?").get(shopId, nomeRollbackMidTx).c,
+    recibo: db.prepare("select count(*) c from shop_orders where campaign_id=? and request_id=?").get(campId, requestRollbackMidTx).c,
+  }));
+  let vendaRollbackMidTx;
+  try {
+    vendaRollbackMidTx = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+      cookie: j1.cookie,
+      body: { shopId, inventoryEntryId: invRollbackMidTx, qty: 1, accountId: contaId, requestId: requestRollbackMidTx },
+    });
+  } finally {
+    const db = abrirDb(BANCO);
+    db.exec("DROP TRIGGER IF EXISTS teste_loja_b_falha_estoque");
+    db.close();
+  }
+  const depoisRollbackMidTx = comDb(BANCO, (db) => ({
+    vendedor: db.prepare("select balance_cents from financial_accounts where id=?").get(contaId)?.balance_cents,
+    caixa: db.prepare("select balance_cents from financial_accounts where id=?").get(caixaId)?.balance_cents,
+    item: db.prepare("select quantity from inventory_entries where id=?").get(invRollbackMidTx)?.quantity ?? null,
+    ledger: db.prepare("select count(*) c from money_transactions where shop_id=? and request_id like ?").get(shopId, requestRollbackMidTx + ":%").c,
+    oferta: db.prepare("select count(*) c from shop_offers where shop_id=? and name=?").get(shopId, nomeRollbackMidTx).c,
+    recibo: db.prepare("select count(*) c from shop_orders where campaign_id=? and request_id=?").get(campId, requestRollbackMidTx).c,
+  }));
+  t("falha injetada ao gravar estoque interrompe LOJA-B (5xx)", vendaRollbackMidTx?.status >= 500, JSON.stringify(vendaRollbackMidTx));
+  t("rollback LOJA-B: caixa e vendedor permanecem intactos",
+    depoisRollbackMidTx.caixa === antesRollbackMidTx.caixa && depoisRollbackMidTx.vendedor === antesRollbackMidTx.vendedor,
+    JSON.stringify({ antes: antesRollbackMidTx, depois: depoisRollbackMidTx }));
+  t("rollback LOJA-B: inventário do vendedor permanece intacto",
+    depoisRollbackMidTx.item === antesRollbackMidTx.item && depoisRollbackMidTx.item === 1,
+    JSON.stringify({ antes: antesRollbackMidTx.item, depois: depoisRollbackMidTx.item }));
+  t("rollback LOJA-B: nenhuma perna de ledger nem recibo órfão",
+    depoisRollbackMidTx.ledger === antesRollbackMidTx.ledger && depoisRollbackMidTx.recibo === antesRollbackMidTx.recibo,
+    JSON.stringify({ antes: antesRollbackMidTx, depois: depoisRollbackMidTx }));
+  t("rollback LOJA-B: estoque comercial não recebe item após falha",
+    depoisRollbackMidTx.oferta === antesRollbackMidTx.oferta && depoisRollbackMidTx.oferta === 0,
+    JSON.stringify({ antes: antesRollbackMidTx.oferta, depois: depoisRollbackMidTx.oferta }));
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;
