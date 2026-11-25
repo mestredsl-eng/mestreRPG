@@ -2,6 +2,7 @@
 // (compra) e LOJA-B (venda à loja), gate de Internet fail-closed, caixa do
 // estabelecimento, idempotência requestId/fingerprint, gestão por gestor.
 // Banco isolado + fixtures sintéticas (teste-base).
+import { io as ioCliente } from "socket.io-client";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, abrirDb, req, encerrarServidor, limparDir,
@@ -598,6 +599,70 @@ try {
     db.prepare("update financial_accounts set balance_cents=? where id=?").run(saldoCaixaAntes, caixaId);
     db.close();
   }
+
+  sec("realtime — canal Internet separado do OOC (bloqueio P1 7152569806)");
+  const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+  const conectarSocket = (cookie) => new Promise((resolve, reject) => {
+    const s = ioCliente(BASE, { extraHeaders: { cookie }, transports: ["websocket", "polling"], reconnection: false });
+    s.on("connect", () => resolve(s));
+    s.on("connect_error", reject);
+    setTimeout(() => reject(new Error("timeout conexão socket")), 8000);
+  });
+  const emitirCb = (s, evento, payload) => new Promise((resolve) => s.emit(evento, payload, (ok) => resolve(ok)));
+
+  const sockOk = await conectarSocket(j1.cookie);   // dono do charOk (elegível)
+  const sockNeg = await conectarSocket(j2.cookie); // dono dos inelegíveis
+  const evComOk = [], evComNeg = [], evPatOk = [], evPatNeg = [];
+  sockOk.on("comercio:atualizado", (d) => evComOk.push(d));
+  sockNeg.on("comercio:atualizado", (d) => evComNeg.push(d));
+  sockOk.on("patrimonio:atualizado", (d) => evPatOk.push(d));
+  sockNeg.on("patrimonio:atualizado", (d) => evPatNeg.push(d));
+  t("sala OOC: ambos entram na campanha", (await emitirCb(sockOk, "entrar-campanha", campId)) === true
+    && (await emitirCb(sockNeg, "entrar-campanha", campId)) === true);
+
+  // inscrição no canal Internet: elegível entra; todos os negativos falham
+  t("elegível inscreve-se no canal Internet", (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  t("inelegível sem perícia → recusado", (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charSemPericia })) === false);
+  t("inelegível sem dispositivo → recusado", (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charSemDevice })) === false);
+  t("personagem alheio → recusado (titularidade)", (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+  t("j1 não é dono do charSemDevice → recusado", (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charSemDevice })) === false);
+
+  // gatilho real: venda gera patrimonio:atualizado (OOC) + comercio:atualizado (IC)
+  const invSinal = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invSinal, charOk, "Sinal Realtime", 1, JSON.stringify({ aquisicao: { unitCents: 100, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const vendaSinal = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invSinal, qty: 1, accountId: contaId, requestId: "venda-sinal-rt" },
+  });
+  t("venda-gatilho 201", vendaSinal.status === 201, JSON.stringify(vendaSinal.json));
+  await dormir(600);
+  t("elegível recebe comercio:atualizado", evComOk.length >= 1, String(evComOk.length));
+  t("inelegível NÃO recebe comercio:atualizado", evComNeg.length === 0, String(evComNeg.length));
+  t("OOC intacto: inelegível recebe patrimonio:atualizado", evPatNeg.length >= 1, String(evPatNeg.length));
+  t("OOC intacto: elegível recebe patrimonio:atualizado", evPatOk.length >= 1, String(evPatOk.length));
+
+  // revogação: remove o dispositivo → próxima entrega não chega nem ao elegível
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("delete from inventory_entries where character_id=? and json_extract(data,'$.regra.key')='notebook'").run(charOk);
+    db.close();
+  }
+  const evAntes = evComOk.length;
+  const lojaSinal = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Sinal RT" },
+  });
+  t("gatilho pós-revogação 201", lojaSinal.status === 201, JSON.stringify(lojaSinal.json));
+  await dormir(600);
+  t("revogado não recebe nova entrega", evComOk.length === evAntes, `${evAntes}→${evComOk.length}`);
+  t("reinscrição negada após revogação", (await emitirCb(sockOk, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
+
+  sockOk.close(); sockNeg.close();
 
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);

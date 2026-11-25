@@ -5,7 +5,7 @@
 import { Router, type Request, type Response } from "express";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { and, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { getDb, type Db } from "../db/index.js";
 import {
   campaigns, characters, financialAccounts, moneyTransactions,
@@ -14,10 +14,8 @@ import {
 import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, getMembership } from "../lib/permissoes.js";
 import { carregarRegras } from "../lib/regras.js";
-import { avaliarElegibilidadeInternet, chaveItemDe } from "../lib/internet.js";
-import { estruturaFichaSchema, type EstruturaFicha } from "../lib/ficha.js";
-import { sheetVersions } from "../db/schema.js";
-import { emitirCampanha } from "../lib/io.js";
+import { gateInternetDoPersonagem } from "../lib/gate-internet.js";
+import { emitirCampanha, emitirComercioInternet } from "../lib/io.js";
 import { audit } from "../lib/audit.js";
 
 const db = getDb();
@@ -30,14 +28,8 @@ comercioPersonagemRouter.use(requireAuth);
 
 // ---------- helpers ----------
 
-const ESTRUTURA_VAZIA = { versao: 1, secoes: [], pontos: { habilitado: false, pontosIniciais: 0, pools: [], custos: {} } } as EstruturaFicha;
-
-async function estruturaDoPersonagem(p: typeof characters.$inferSelect): Promise<EstruturaFicha> {
-  if (!p.templateVersionId) return ESTRUTURA_VAZIA;
-  const [v] = await db.select().from(sheetVersions).where(eq(sheetVersions.id, p.templateVersionId)).limit(1);
-  if (!v) return ESTRUTURA_VAZIA;
-  const parse = estruturaFichaSchema.safeParse(v.structure);
-  return parse.success ? parse.data : ESTRUTURA_VAZIA;
+async function gateInternet(p: typeof characters.$inferSelect) {
+  return gateInternetDoPersonagem(p);
 }
 
 /** Acesso de personagem para rotas /characters/:characterId (mesma regra do patrimônio). */
@@ -73,26 +65,6 @@ async function acessoPersonagemId(req: Request, campaignId: string, characterId:
 function responderAcesso(res: Response, acesso: { erro?: number }) {
   const st = acesso.erro === 404 ? 404 : acesso.erro === 409 ? 409 : 403;
   res.status(st).json({ erro: st === 404 ? "Personagem não encontrado" : st === 409 ? "Personagem arquivado" : "Sem acesso" });
-}
-
-/** Gate Internet fail-closed: estrutura+regras+patrimônio do personagem.
- *  Resolve templateId→catálogo (data.regra.key do template) para que item
- *  comprado de template de dispositivo também habilite — mesma regra da UI. */
-async function gateInternet(p: typeof characters.$inferSelect) {
-  const [estrutura, regras] = await Promise.all([estruturaDoPersonagem(p), carregarRegras(p.campaignId)]);
-  const dados = (p.data ?? {}) as Record<string, unknown>;
-  const itens = await db.select({ data: inventoryEntries.data }).from(inventoryEntries).where(eq(inventoryEntries.characterId, p.id));
-  const equip = await db.select({ data: equipmentEntries.data }).from(equipmentEntries).where(eq(equipmentEntries.characterId, p.id));
-  const todos = [...itens, ...equip];
-  // coleta templateIds referenciados e resolve a chave canônica de cada um
-  const templateIds = [...new Set(todos.map((i) => chaveItemDe(i.data).templateId).filter((x): x is string => !!x))];
-  const chavesTemplate = new Map<string, string | undefined>();
-  if (templateIds.length) {
-    const tpls = await db.select({ id: itemTemplates.id, data: itemTemplates.data }).from(itemTemplates)
-      .where(and(inArray(itemTemplates.id, templateIds), eq(itemTemplates.campaignId, p.campaignId)));
-    for (const tpl of tpls) chavesTemplate.set(tpl.id, chaveItemDe(tpl.data).regraKey);
-  }
-  return avaliarElegibilidadeInternet(estrutura, dados, regras, todos, chavesTemplate);
 }
 
 /** Loja pertence à campanha e o usuário é mestre da campanha ou gestor da loja.
@@ -203,7 +175,7 @@ comercioLojasRouter.post("/lojas", requirePapel("mestre"), async (req, res) => {
   const agora = new Date();
   await db.insert(shops).values({ id, campaignId: req.params.campaignId, ...b.data, createdAt: agora, updatedAt: agora });
   await audit(req, "comercio.loja.criada", { shopId: id, name: b.data.name });
-  emitirCampanha(req.params.campaignId as string, "comercio:atualizado", { shopId: id });
+  emitirComercioInternet(req.params.campaignId as string, { shopId: id });
   res.status(201).json({ id });
 });
 
@@ -214,7 +186,7 @@ comercioLojasRouter.patch("/lojas/:shopId", requirePapel("mestre", "jogador"), a
   if (!b.success) { res.status(400).json({ erro: "Dados inválidos" }); return; }
   await db.update(shops).set({ ...b.data, updatedAt: new Date() }).where(eq(shops.id, req.params.shopId));
   await audit(req, "comercio.loja.atualizada", { shopId: req.params.shopId });
-  emitirCampanha(req.params.campaignId as string, "comercio:atualizado", { shopId: req.params.shopId });
+  emitirComercioInternet(req.params.campaignId as string, { shopId: req.params.shopId });
   res.json({ ok: true });
 });
 
@@ -343,7 +315,7 @@ comercioLojasRouter.post("/lojas/:shopId/ofertas", requirePapel("mestre", "jogad
   const agora = new Date();
   await db.insert(shopOffers).values({ id, shopId: req.params.shopId, campaignId: req.params.campaignId as string, ...b.data, createdAt: agora, updatedAt: agora });
   await audit(req, "comercio.oferta.criada", { shopId: req.params.shopId, offerId: id });
-  emitirCampanha(req.params.campaignId as string, "comercio:atualizado", { shopId: req.params.shopId });
+  emitirComercioInternet(req.params.campaignId as string, { shopId: req.params.shopId });
   res.status(201).json({ id });
 });
 
@@ -355,7 +327,7 @@ comercioLojasRouter.patch("/lojas/:shopId/ofertas/:offerId", requirePapel("mestr
   const [of] = await db.select().from(shopOffers).where(and(eq(shopOffers.id, req.params.offerId), eq(shopOffers.shopId, req.params.shopId))).limit(1);
   if (!of) { res.status(404).json({ erro: "Oferta não encontrada" }); return; }
   await db.update(shopOffers).set({ ...b.data, updatedAt: new Date() }).where(eq(shopOffers.id, of.id));
-  emitirCampanha(req.params.campaignId as string, "comercio:atualizado", { shopId: req.params.shopId });
+  emitirComercioInternet(req.params.campaignId as string, { shopId: req.params.shopId });
   res.json({ ok: true });
 });
 
@@ -529,7 +501,7 @@ comercioPersonagemRouter.post("/comprar", async (req, res) => {
 
   await audit(req, "comercio.compra", { shopId: loja.id, orderId, totalCents, itens: itensEntregues.length });
   emitirPatrimonio(campaignId, personagem.id);
-  emitirCampanha(campaignId, "comercio:atualizado", { shopId: loja.id, orderId });
+  emitirComercioInternet(campaignId, { shopId: loja.id, orderId });
   res.status(201).json({ id: orderId, totalCents, itens: itensEntregues });
 });
 
@@ -737,7 +709,7 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
 
   await audit(req, "comercio.venda_loja", { shopId: loja.id, orderId, totalCents, item: nomeItem });
   emitirPatrimonio(campaignId, personagem.id);
-  emitirCampanha(campaignId, "comercio:atualizado", { shopId: loja.id, orderId });
+  emitirComercioInternet(campaignId, { shopId: loja.id, orderId });
   res.status(201).json({ id: orderId, totalCents });
 });
 
