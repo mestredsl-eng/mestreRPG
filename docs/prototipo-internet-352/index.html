@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protótipo — Internet diegética #352 (wireframe, sem backend)</title>
+<style>
+  :root { --linha:#9aa3b5; --fundo:#f4f5f7; --tinta:#333a45; --acento:#4a6fa5; --alerta:#a3543f; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.45 system-ui,sans-serif; color:var(--tinta); background:#e8eaee; }
+  header.topo { padding:10px 16px; background:#2b2f3a; color:#fff; }
+  header.topo h1 { font-size:15px; margin:0 0 2px; }
+  header.topo p { margin:0; font-size:12px; opacity:.8; }
+  .layout { display:flex; min-height:calc(100vh - 64px); }
+  nav { width:230px; flex:none; background:#fff; border-right:1px solid #d5d9e0; padding:10px; overflow:auto; }
+  nav h2 { font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:#7a8291; margin:12px 4px 4px; }
+  nav button { display:block; width:100%; text-align:left; border:0; background:none; padding:6px 8px; border-radius:6px; cursor:pointer; font:inherit; }
+  nav button:hover { background:#eef1f6; }
+  nav button.ativo { background:#e3ebf5; color:var(--acento); font-weight:600; }
+  main { flex:1; padding:16px; display:flex; gap:16px; align-items:flex-start; }
+  .tela { flex:1; max-width:860px; }
+  .frame { border:2px dashed var(--linha); border-radius:10px; background:#fff; padding:14px; }
+  .frame.aviso { border-color:var(--alerta); }
+  .nota { max-width:300px; font-size:12.5px; color:#4c5563; background:#fffbe8; border:1px solid #e8dfae; border-radius:8px; padding:10px 12px; }
+  .nota strong { display:block; margin-bottom:4px; color:#6b5b1e; }
+  /* ---- wireframe primitives ---- */
+  .w-barra { display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--linha); padding-bottom:8px; margin-bottom:10px; }
+  .w-titulo { font-weight:700; font-size:15px; }
+  .w-meta { font-size:12px; color:#6b7382; }
+  .w-abas { display:flex; gap:6px; margin:8px 0 12px; flex-wrap:wrap; }
+  .w-aba { border:1px solid var(--linha); border-radius:14px; padding:3px 12px; font-size:12.5px; background:#fff; }
+  .w-aba.ativa { background:var(--acento); color:#fff; border-color:var(--acento); }
+  .w-cartao { border:1px solid var(--linha); border-radius:8px; padding:10px 12px; margin-bottom:8px; background:#fafbfc; }
+  .w-cartao.sel { border-color:var(--acento); box-shadow:0 0 0 1px var(--acento) inset; }
+  .w-linha { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .w-btn { border:1px solid var(--acento); color:var(--acento); background:#fff; border-radius:6px; padding:3px 10px; font-size:12.5px; }
+  .w-btn.prim { background:var(--acento); color:#fff; }
+  .w-btn.perigo { border-color:var(--alerta); color:var(--alerta); }
+  .w-input { border:1px solid var(--linha); border-radius:6px; padding:6px 9px; background:#fff; color:#333a45; width:100%; font:inherit; }
+  .w-placeholder { color:#9aa1ad; }
+  .w-balao-eu { background:#dce9f7; border-radius:10px 10px 2px 10px; padding:6px 10px; margin:4px 0 4px auto; max-width:70%; }
+  .w-balao-outro { background:#eef0f3; border-radius:10px 10px 10px 2px; padding:6px 10px; margin:4px 0 auto; max-width:70%; }
+  .w-hora { font-size:10.5px; color:#8a90a0; display:block; text-align:right; margin-top:2px; }
+  .w-sistema { text-align:center; font-size:11px; color:#8a90a0; margin:10px 0; }
+  .w-chip { display:inline-block; border:1px solid var(--linha); border-radius:10px; padding:1px 8px; font-size:11px; color:#5a6270; }
+  .w-chip.diegetico { border-color:#3f7d4e; color:#2f6b3d; background:#eef7ef; }
+  .w-chip.ooc { border-color:#7a5aa8; color:#5b4390; background:#f3eefb; }
+  .w-alerta { border-left:3px solid var(--alerta); background:#fdf3f0; padding:8px 10px; border-radius:4px; font-size:12.5px; margin:8px 0; }
+  .w-ok { border-left:3px solid #3f7d4e; background:#f0f7f1; padding:8px 10px; border-radius:4px; font-size:12.5px; margin:8px 0; }
+  .w-esqueleto { height:12px; border-radius:6px; background:linear-gradient(90deg,#eceef2 25%,#f6f7f9 50%,#eceef2 75%); background-size:200% 100%; margin:8px 0; }
+  .w-legenda { font-size:11px; color:#8a90a0; margin-top:8px; }
+  .grade-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  @media (max-width:900px){ .layout{flex-direction:column} nav{width:auto;border-right:0;border-bottom:1px solid #d5d9e0} .grade-2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<header class="topo">
+  <h1>Protótipo navegável — Internet diegética (issue #352 / F4)</h1>
+  <p>Wireframe sem backend · dados 100% ilustrativos · referência: proposta F1 v3 (#349) · não é tela de produção</p>
+</header>
+<div class="layout">
+  <nav id="nav"></nav>
+  <main><div class="tela" id="tela"></div><aside class="nota" id="nota"></aside></main>
+</div>
+<script>
+const TELAS = [
+  {g:"Fluxo principal", itens:[
+    ["gate","1 · Entrada pelo dispositivo"],
+    ["conta","2 · Conta / identidade"],
+    ["contatos","3 · Contatos e solicitações"],
+    ["caixa","4 · Caixa de entrada"],
+    ["conversa","5 · Conversa privada"],
+    ["grupo","6 · Grupo — criar/detalhes"],
+  ]},
+  {g:"Estados", itens:[
+    ["loading","Loading"],
+    ["vazio","Vazio"],
+    ["erro","Erro"],
+    ["semdispositivo","Sem dispositivo"],
+    ["seminternet","Sem acesso à Internet"],
+    ["reconectando","Reconectando"],
+    ["naoenviada","Mensagem não enviada"],
+  ]},
+  {g:"Regra visual", itens:[
+    ["ooc-vs-diegetico","Diegético × OOC"],
+  ]},
+];
+
+const P = {
+gate: {t:"Entrada pelo dispositivo", n:"Reuso do gate canônico da v1.1.0 (fail-closed): sem item/dispositivo elegível ou sem perícia → negado com motivos. A aba Mensagens só existe dentro do módulo elegível. Após o hotfix #356/#357, espectador não opera a Internet — a entrada também exige membership ativa com papel mestre/jogador (contrato F1 v3).",
+ h:`<div class="w-barra"><div><div class="w-titulo">Internet — Meu Dispositivo</div><div class="w-meta">Personagem: Kael · Notebook “FieldBook X1”</div></div><span class="w-chip">dispositivo conectado</span></div>
+ <div class="w-abas"><span class="w-aba">Lojas</span><span class="w-aba">Vender</span><span class="w-aba">Histórico</span><span class="w-aba ativa">Mensagens</span><span class="w-aba">Conta</span></div>
+ <div class="w-cartao sel"><div class="w-linha"><div><strong>Caixa de entrada</strong><div class="w-meta">3 conversas · 1 solicitação pendente</div></div><span class="w-btn">Abrir</span></div></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Contatos</strong><div class="w-meta">12 contatos · 2 pedidos recebidos</div></div><span class="w-btn">Abrir</span></div></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Conta da Internet</strong><div class="w-meta">@kael.rpg · perfil público mínimo</div></div><span class="w-btn">Editar</span></div></div>`},
+
+conta: {t:"Conta / identidade", n:"Criação da identidade diegética: o jogador escolhe o identificador público (@handle). O backend define unicidade e visibilidade — a UI apenas reflete. Decisão de privacidade aberta (F1): o que o perfil expõe além do nome (ver spec).",
+ h:`<div class="w-barra"><div class="w-titulo">Conta da Internet</div></div>
+ <div class="w-cartao">
+  <label class="w-meta">Identificador público</label>
+  <div class="w-linha"><input class="w-input" style="max-width:220px" value="@kael.rpg"><span class="w-btn prim">Salvar</span></div>
+  <div class="w-meta" style="margin-top:6px">Regras do identificador (minúsculas, 3–20 chars) são definidas pelo contrato — placeholder ilustrativo.</div>
+ </div>
+ <div class="w-cartao"><strong>Perfil visível para contatos</strong>
+  <div class="w-linha" style="margin-top:6px"><span>Nome do personagem</span><span class="w-btn">Privado ▾</span></div>
+  <div class="w-linha" style="margin-top:6px"><span>Status (online/offline)</span><span class="w-btn">Só contatos ▾</span></div>
+ </div>
+ <div class="w-alerta">⚠ Decisão pendente do proprietário: nível de exposição do perfil (nome real nunca; personagem vs conta). Interface já reserva o bloco “Perfil visível”.</div>`},
+
+contatos: {t:"Contatos, pedidos e bloqueios", n:"Modelo canônico F1 v3: aresta dirigida por par (origem→destino) com estado pendente/aceito/bloqueado. Pedido unilateral aparece em “Recebidos”; bloqueio é bilateral de facto. Ações sempre com confirmação quando destrutivas ou que mudam visibilidade.",
+ h:`<div class="w-barra"><div class="w-titulo">Contatos</div><span class="w-btn">+ Adicionar por @handle</span></div>
+ <div class="w-abas"><span class="w-aba ativa">Contatos (12)</span><span class="w-aba">Pedidos recebidos (2)</span><span class="w-aba">Enviados</span><span class="w-aba">Bloqueados (1)</span></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Lyra Stormwind</strong><div class="w-meta">@lyra.sw · aceita · conversa ativa</div></div><span class="w-btn">Conversar</span> <span class="w-btn perigo">Bloquear</span></div></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Doran</strong><div class="w-meta">@doran.mago · pedido pendente (você enviou)</div></div><span class="w-btn perigo">Cancelar pedido</span></div></div>
+ <div class="w-alerta">Confirmação modal antes de: bloquear, remover contato, cancelar pedido enviado. Bloqueio esconde a conversa existente dos dois lados (a definir se histórico some ou só novas msgs — decisão F1).</div>`},
+
+caixa: {t:"Caixa de entrada", n:"Lista de conversas (privadas e grupos) ordenada por última atividade. Badge numérico discreto; preview de última mensagem respeita o que o servidor devolve (sem vazar conteúdo bloqueado). Vazio/erro/loading têm estados próprios.",
+ h:`<div class="w-barra"><div class="w-titulo">Mensagens</div><span class="w-meta">última sync 21:42</span></div>
+ <div class="w-cartao sel"><div class="w-linha"><div><strong>Lyra Stormwind</strong> <span class="w-chip diegetico">privada</span><div class="w-meta">“te encontro no porto às 8” · 21:40</div></div><span class="w-chip">2</span></div></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Guilda dos Andarilhos</strong> <span class="w-chip diegetico">grupo · 5</span><div class="w-meta">Mira: “loot do dragão…” · 19:12</div></div></div></div>
+ <div class="w-cartao"><div class="w-linha"><div><strong>Suporte_Inn</strong> <span class="w-chip diegetico">privada</span><div class="w-meta">mensagem não enviada</div></div><span class="w-chip">!</span></div></div>`},
+
+conversa: {t:"Conversa privada", n:"Thread diegética 1:1. Bolhas diferenciadas; estado “não enviada” com ação de reenviar; indicador de digitação é opcional (decisão de privacidade — pode vazar presença). Em grupo, nome do autor em cada bolha.",
+ h:`<div class="w-barra"><div><div class="w-titulo">Lyra Stormwind</div><div class="w-meta">@lyra.sw · contato desde 12/11</div></div><span class="w-btn">⋯</span></div>
+ <div style="border:1px solid var(--linha);border-radius:8px;padding:10px;min-height:220px;background:#fcfcfd">
+  <div class="w-balao-outro">chegou no porto?<span class="w-hora">19:58 ✓✓</span></div>
+  <div class="w-balao-eu">chego 20h, me espera no cais 3<span class="w-hora">20:01 ✓✓</span></div>
+  <div class="w-sistema">— 12 de novembro —</div>
+  <div class="w-balao-outro">fechado hoje, vim buscar remédio<span class="w-hora">21:40 ✓✓</span></div>
+  <div class="w-alerta" style="margin:8px 0">⚠ msg falhou: “ainda to no caminho” — <u>tentar novamente</u> · <u>descartar</u>. Nunca some silenciosamente.</div>
+ </div>
+ <div class="w-linha" style="margin-top:8px"><input class="w-input w-placeholder" value="Escrever mensagem… (personagem fala em personagem)"><span class="w-btn prim">Enviar</span></div>
+ <div class="w-legenda">Placeholder reforça diegese: o texto é fala do personagem, não do jogador.</div>`},
+
+grupo: {t:"Grupo — criar e detalhes", n:"Criação: nome + seleção de contatos aceitos (não é possível adicionar quem não aceitou). Detalhes: membros, sair, renomear (criador), remover membro (criador). Confirmação em ações destrutivas. Decisão aberta: admin único vs múltiplos.",
+ h:`<div class="w-barra"><div class="w-titulo">Guilda dos Andarilhos</div><div class="w-meta">grupo · você é membro</div></div>
+ <div class="grade-2">
+  <div class="w-cartao"><strong>Membros (5)</strong>
+   <div class="w-cartao" style="margin-top:6px"><div class="w-linha"><span>Kael (você)</span><span class="w-chip">membro</span></div></div>
+   <div class="w-cartao"><div class="w-linha"><span>Lyra Stormwind</span><span class="w-chip">criador</span></div></div>
+   <div class="w-cartao"><div class="w-linha"><span>Mira</span><span class="w-chip">membro</span> <span class="w-btn perigo">Remover</span></div></div>
+  </div>
+  <div>
+   <div class="w-cartao"><strong>Novo grupo</strong>
+    <input class="w-input" style="margin:6px 0" placeholder="Nome do grupo">
+    <div class="w-cartao"><label class="w-meta"><input type="checkbox"> Lyra Stormwind</label></div>
+    <div class="w-cartao"><label class="w-meta"><input type="checkbox"> Doran</label></div>
+    <span class="w-btn prim">Criar grupo</span>
+   </div>
+   <div class="w-cartao"><strong>Ações</strong>
+    <div class="w-linha" style="margin-top:6px"><span>Sair do grupo</span><span class="w-btn perigo">Sair</span></div>
+    <div class="w-w-legenda w-legenda">Modal de confirmação: “Sair da Guilda dos Andarilhos? O histórico some deste dispositivo.”</div>
+   </div>
+  </div>
+ </div>`},
+
+loading: {t:"Estado — carregando", n:"Esqueleto discreto nas listas; nunca spinner bloqueante. Reuso dos padrões existentes (aria-busy, texto “Carregando…”) para leitor de tela.",
+ h:`<div class="w-barra"><div class="w-titulo">Mensagens</div></div>
+ <div aria-busy="true">
+  <div class="w-esqueleto" style="width:80%"></div><div class="w-esqueleto" style="width:60%"></div>
+  <div class="w-esqueleto" style="width:70%"></div><div class="w-esqueleto" style="width:50%"></div>
+ </div>
+ <p class="w-meta">Carregando mensagens…</p>`},
+
+vazio: {t:"Estado — vazio", n:"Lista de contatos sem nenhum: CTA claro para adicionar por @handle. Caixa vazia: convite a iniciar conversa — sempre dentro da diegese (não “nenhum dado”, e sim orientação narrativa).",
+ h:`<div class="w-barra"><div class="w-titulo">Mensagens</div></div>
+ <div class="w-cartao" style="text-align:center;padding:28px 12px">
+  <p><strong>Sua caixa está vazia.</strong></p>
+  <p class="w-meta">Ninguém tentou falar com você ainda.<br>Troque @handle com outros personagens para começar.</p>
+  <span class="w-btn">Ver contatos</span>
+ </div>`},
+
+erro: {t:"Estado — erro", n:"Falha de GET: mensagem honesta + retry manual. Não prometer dados atuais; preservar o que já estava na tela quando possível. Erros de contrato (ex.: 403 internet_indisponivel) voltam ao gate com motivo real.",
+ h:`<div class="w-barra"><div class="w-titulo">Mensagens</div></div>
+ <div class="w-alerta"><strong>Não foi possível carregar as mensagens.</strong><br>Verifique sua conexão com a Internet da campanha e tente novamente.<br><span class="w-btn" style="margin-top:6px">Tentar novamente</span></div>
+ <p class="w-meta">Conteúdo anterior preservado abaixo, se houver.</p>`},
+
+semdispositivo: {t:"Estado — sem dispositivo", n:"Reuso do gate existente: item canônico ausente/inválido → cartão negado com motivo “sem dispositivo compatível”. Nenhuma aba de mensagens renderiza.",
+ h:`<div class="frame aviso">
+  <div class="w-titulo">Internet indisponível</div>
+  <ul class="w-meta" style="margin:8px 0;padding-left:18px">
+   <li>Seu personagem não possui um dispositivo compatível (celular, notebook ou computador).</li>
+   <li>Adquira ou encontre um dispositivo no Equipamento/Armazém para acessar a Internet.</li>
+  </ul>
+  <span class="w-btn">Voltar ao Equipamento/Armazém</span>
+ </div>`},
+
+seminternet: {t:"Estado — sem acesso à Internet", n:"Segundo motivo do gate: dispositivo presente mas sem conectividade/perícia exigida. Distinto de “sem conexão de rede” (reconectando).",
+ h:`<div class="frame aviso">
+  <div class="w-titulo">Internet indisponível</div>
+  <ul class="w-meta" style="margin:8px 0;padding-left:18px">
+   <li>Seu personagem não tem acesso à Internet nesta sessão (sem sinal/conectividade).</li>
+   <li>O acesso pode ser concedido pelo Mestre ou por um item com regra de conectividade.</li>
+  </ul>
+  <span class="w-btn">Voltar</span>
+ </div>`},
+
+reconectando: {t:"Estado — reconectando", n:"Socket caiu: o indicador do shell (PR #359) mostra “Reconectando…”. Na tela de mensagens: banner discreto + composer desabilitado; histórico permanece visível e legível. Ao reconectar, lista e thread recarregam via invalidação — nunca merge otimista.",
+ h:`<div class="w-barra"><div class="w-titulo">Mensagens</div><span class="w-chip">Reconectando…</span></div>
+ <div class="w-alerta">Conexão interrompida — o envio está pausado. As mensagens serão sincronizadas ao reconectar.</div>
+ <div class="w-cartao"><strong>Lyra Stormwind</strong><div class="w-meta">última mensagem recebida às 21:40</div></div>
+ <div class="w-linha" style="margin-top:8px"><input class="w-input w-placeholder" disabled value="Aguardando reconexão…"><span class="w-btn" style="opacity:.5">Enviar</span></div>`},
+
+naoenviada: {t:"Estado — mensagem não enviada", n:"Falha de envio: a bolha permanece na thread com estado explícito e ações (tentar novamente / descartar). Não some, não fica “enviando” eterno. O servidor é autoridade — reenvio usa novo requestId.",
+ h:`<div class="w-barra"><div class="w-titulo">Lyra Stormwind</div></div>
+ <div style="border:1px solid var(--linha);border-radius:8px;padding:10px;min-height:160px;background:#fcfcfd">
+  <div class="w-balao-outro">fechado hoje, vim buscar remédio<span class="w-hora">21:40 ✓✓</span></div>
+  <div class="w-balao-eu" style="opacity:.75">ainda to no caminho<span class="w-hora">21:41 ✗ não enviada</span></div>
+  <div class="w-linha" style="justify-content:flex-end;margin-top:4px"><span class="w-btn">Tentar novamente</span> <span class="w-btn perigo">Descartar</span></div>
+ </div>
+ <div class="w-legenda">“Tentar novamente” = novo POST idempotente; “Descartar” remove só localmente após confirmação se houver texto longo.</div>`},
+
+"ooc-vs-diegetico": {t:"Diegético × OOC — regra visual", n:"Regra proposta (detalhada na spec): mensagens diegéticas vivem DENTRO do módulo Internet do personagem, com chip “privada/grupo”, bolhas em paleta própria e timestamp local. O chat OOC da Mesa permanece no painel da Mesa, visualmente distinto (sem chips diegéticos, contexto de sessão). Nunca fundir os dois; deep-link entre eles é proibido.",
+ h:`<div class="grade-2">
+  <div class="w-cartao" style="border-color:#3f7d4e">
+   <div class="w-linha"><strong>Internet diegética</strong><span class="w-chip diegetico">diegético</span></div>
+   <div class="w-meta" style="margin-top:6px">Local: módulo Internet → aba Mensagens.<br>Papel: fala do PERSONAGEM (não do jogador).<br>Visibilidade: contatos do personagem; mestre não lê por padrão.<br>Selo: chip colorido + rodapé “mensagem do personagem”.</div>
+  </div>
+  <div class="w-cartao" style="border-color:#7a5aa8">
+   <div class="w-linha"><strong>Chat OOC da Mesa</strong><span class="w-chip ooc">OOC</span></div>
+   <div class="w-meta" style="margin-top:6px">Local: painel da Mesa (sessão).<br>Papel: jogadores/mestre fora da ficção.<br>Visibilidade: participantes da sessão.<br>Selo: painel roxo/cinza próprio, nunca confundir com bolhas diegéticas.</div>
+  </div>
+ </div>
+ <div class="w-ok">✓ Regras duras: (1) nenhum componente compartilhado renderiza os dois; (2) nenhuma notificação OOC cita conteúdo diegético e vice-versa; (3) a aba Mensagens não existe sem gate elegível.</div>`},
+};
+
+const nav = document.getElementById("nav"), tela = document.getElementById("tela"), nota = document.getElementById("nota");
+let htmlNav = "";
+for (const g of TELAS) {
+  htmlNav += `<h2>${g.g}</h2>`;
+  for (const [id, rot] of g.itens) htmlNav += `<button data-id="${id}">${rot}</button>`;
+}
+nav.innerHTML = htmlNav;
+function abrir(id){
+  const s = P[id]; if(!s) return;
+  tela.innerHTML = `<div class="frame"><div class="w-barra" style="border:0;padding:0;margin:0"><div class="w-titulo">${s.t}</div></div>${s.h}</div>`;
+  nota.innerHTML = `<strong>Notas de UX / a11y</strong>${s.n}`;
+  nav.querySelectorAll("button").forEach(b=>b.classList.toggle("ativo", b.dataset.id===id));
+  document.querySelector(".tela .frame")?.classList.add(id.startsWith("sem")?"aviso":"");
+}
+nav.addEventListener("click", e=>{ const b=e.target.closest("button"); if(b) abrir(b.dataset.id); });
+abrir("gate");
+</script>
+</body>
+</html>
