@@ -54,6 +54,15 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Biblioteca de regras inicial:** sementes de talentos, habilidades, conhecimentos, profissões, vantagens, defeitos, poderes, disciplinas, perícias, itens, veículos e dinheiro — semeadas por campanha sem duplicar.
 
 
+## Destaques da versão 1.1.0
+
+A versão 1.1.0 acrescenta a Internet diegética e conecta lojas ao patrimônio do personagem:
+
+- **Gate de Internet por personagem:** exige pelo menos 1 ponto em **Computador ou Tecnologia** e a posse de um dispositivo físico reconhecido, como **notebook ou celular**. A validação é feita no servidor, usa referências canônicas do Acervo, considera itens equipados e é reavaliada em cada operação; perder o requisito revoga o acesso e interrompe a entrega de eventos em tempo real.
+- **Lojas por campanha:** criação e gerenciamento de lojas, gestores, ofertas e caixas separados por loja, respeitando campanha, membership e papel do participante.
+- **Compra e venda integradas:** o personagem compra ofertas da loja ou vende itens do próprio inventário para uma loja. Saldo, preço, quantidade, estoque, item equipado e permissões são conferidos no servidor; recibos, inventário e histórico financeiro permanecem vinculados à operação. Não há integração com pagamentos reais.
+- **Equipamento/Armazém:** consulta separada de inventário, equipamentos e veículos, com vínculos reais entre item e equipamento, localização/estado, peso e capacidade quando disponíveis. A edição continua no painel Patrimônio; a venda encaminha o item para a operação financeira na Internet.
+
 ## Destaques da versão 1.0.8
 
 A versão 1.0.8 reúne as melhorias de Pontos de Sangue e os avanços de vida/condição no VTT:
