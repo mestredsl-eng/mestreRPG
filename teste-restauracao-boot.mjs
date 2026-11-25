@@ -86,7 +86,9 @@ function armarFlag(raiz, filePath) {
 // correspondentes no journal do Drizzle — a quantidade é derivada do
 // _journal.json (tudo com idx >= 17), não de um número mágico que
 // quebraria a cada migration nova.
-const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members", "guild_invites", "xp_lotes"];
+const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members", "guild_invites", "xp_lotes",
+  // Comércio 1.1.0 (migration 0036): filhas antes da loja-pai.
+  "shop_orders", "shop_offers", "shop_managers", "shops"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {
@@ -103,6 +105,9 @@ function rebaixarSchema(arquivoDb) {
     const colsMoney = new Set(db.pragma("table_info(money_transactions)").map((c) => c.name));
     if (colsMoney.has("inventory_item_id")) db.exec("alter table money_transactions drop column inventory_item_id");
     if (colsMoney.has("operacao")) db.exec("alter table money_transactions drop column operacao");
+    // shop_id (0036) NÃO é revertido: DROP COLUMN falha porque a coluna
+    // participa de FK. Coluna nullable residual é inócua — o replay da
+    // 0036 lê colunas explícitas no INSERT...SELECT e recria o schema.
     const colsSess = new Set(db.pragma("table_info(sessions)").map((c) => c.name));
     if (colsSess.has("vtt_state")) db.exec("alter table sessions drop column vtt_state");
     const colsCamp = new Set(db.pragma("table_info(campaigns)").map((c) => c.name));
