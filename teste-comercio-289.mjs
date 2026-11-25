@@ -589,6 +589,38 @@ try {
   const idsVitrine = (vitrineA.json?.lojas ?? []).map((l) => l.id);
   t("vitrine da campanha A não lista loja da campanha B", !idsVitrine.includes(shopB), JSON.stringify(idsVitrine));
 
+  // isolamento de template/Acervo entre campanhas (#329 @ f6009fb):
+  // template criado na campanha B não pode ser referenciado pela A —
+  // nem na criação/PATCH de oferta, nem na venda LOJA-B
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("insert into item_templates (id,campaign_id,name,category,description,data,is_active,created_at,updated_at) values (?,?,?,?,?,?,?,?,?)")
+      .run("tpl-campb-289", campBId, "Template Campanha B", "equipamento", null,
+        JSON.stringify({ regra: { kind: "item", key: "notebook" } }), 1, Date.now(), Date.now());
+    db.close();
+  }
+  const ofTplB = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+    cookie: j1.cookie, body: { name: "Oferta tplB", priceCents: 100, itemTemplateId: "tpl-campb-289" },
+  });
+  t("oferta com template de OUTRA campanha → 400", ofTplB.status === 400, `${ofTplB.status} ${JSON.stringify(ofTplB.json)}`);
+  const patchTplB = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas/${offA}`, {
+    cookie: j1.cookie, body: { itemTemplateId: "tpl-campb-289" },
+  });
+  t("PATCH oferta com template de OUTRA campanha → 400", patchTplB.status === 400, `${patchTplB.status} ${JSON.stringify(patchTplB.json)}`);
+  const invTplB = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invTplB, charOk, "Item tplB", 1, JSON.stringify({ aquisicao: { unitCents: 500, qtdOriginal: 1 }, templateId: "tpl-campb-289" }), Date.now(), Date.now());
+    db.close();
+  }
+  const vendTplB = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: j1.cookie,
+    body: { shopId, inventoryEntryId: invTplB, qty: 1, accountId: contaId, requestId: "vend289-tplb" },
+  });
+  t("venda LOJA-B com template de OUTRA campanha → 409 template_indisponivel",
+    vendTplB.status === 409 && vendTplB.json?.erro === "template_indisponivel", `${vendTplB.status} ${JSON.stringify(vendTplB.json)}`);
+
   // papel espectador: gestão de loja negada (requirePapel mestre|jogador)
   {
     const db = abrirDb(BANCO);
