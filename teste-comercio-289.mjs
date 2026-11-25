@@ -264,11 +264,20 @@ try {
   });
   t("compra válida p/ gatilho realtime → 201", rtCompra.status === 201, JSON.stringify(rtCompra.json));
   await dormir(800);
+  // Envelope exigido (revisão do proprietário na PR #336): se o módulo
+  // usa realtime apenas como invalidação/refresh, o evento PODE chegar
+  // ao inelegível — mas somente com ids. O assert exige ENTREGA (>0) E
+  // envelope restrito; zero eventos não passa mais como "vazio".
+  // BLOCKED: a semântica completa do gate realtime (negar inscrição/
+  // leitura/mutação inelegível no canal do módulo) segue pendente de
+  // decisão do proprietário — ver #289. Este teste prova apenas o
+  // envelope de invalidação hoje implementado via room campanha:*.
   const chavesVazadas = eventosComercio.flatMap((d) => Object.keys(d ?? {}))
     .filter((k) => !["shopId", "orderId"].includes(k));
-  t("comercio:atualizado não carrega campos sensíveis (só ids)", chavesVazadas.length === 0,
+  t("realtime: invalidação entregue ao inelegível com envelope só-ids",
+    eventosComercio.length > 0 && chavesVazadas.length === 0,
     `eventos=${eventosComercio.length} chaves=${[...new Set(eventosComercio.flatMap((d) => Object.keys(d ?? {})))]}`);
-  console.log(`  .. realtime: ${eventosComercio.length} evento(s) comercio:atualizado chegaram ao socket inelegível (payload só ids — refresh trigger)`);
+  console.log(`  .. realtime: ${eventosComercio.length} evento(s) comercio:atualizado; payload só ids. BLOCKED: bloqueio de inscrição/leitura inelegível no canal do módulo pendente de decisão (#289)`);
 
   sec("LOJA-A — saldo insuficiente e rollback multi-item");
   const saldoAntes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
@@ -411,6 +420,13 @@ try {
     body: { shopId, inventoryEntryId: invEquip, qty: 1, accountId: contaId, requestId: "vend289-posdes" },
   });
   t("após desequipar, venda conclui → 201", vendaPosDes.status === 201, `${vendaPosDes.status} ${JSON.stringify(vendaPosDes.json)}`);
+
+  // BLOCKED (#289/LB1, efeito 4 dos cinco atômicos): a matriz exige
+  // "aumento do estoque comercial da loja" na venda LOJA-B, mas o
+  // contrato/código da stack #329 ainda não implementa esse efeito
+  // (bloqueio registrado na PR #329). Quando o PAI fechar o modelo de
+  // estoque, acrescentar aqui o assert correspondente. NÃO é PASS.
+  console.log("  .. BLOCKED: LOJA-B efeito 'entrada no estoque comercial da loja' — contrato/implementação pendente (aguarda PAI/#329)");
 
   // caixa insuficiente na LOJA-B: loja 2 com caixa zerado
   const lojaPobre = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
