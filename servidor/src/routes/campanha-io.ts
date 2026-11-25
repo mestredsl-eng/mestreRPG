@@ -56,7 +56,8 @@ function coerenteComCampanha(estado: EstadoCampanha, cid: string): boolean {
   const colecoes = [
     estado.memberships, estado.invitations, estado.sheetTemplates, estado.characters,
     estado.ruleSets, estado.itemTemplates, estado.vehicles, estado.financialAccounts,
-    estado.moneyTransactions, estado.sessions, estado.chatMessages, estado.rolls,
+    estado.moneyTransactions, estado.shops, estado.shopManagers, estado.shopOffers,
+    estado.shopOrders, estado.sessions, estado.chatMessages, estado.rolls,
     estado.tests, estado.notes, estado.files, estado.folders,
   ];
   return colecoes.every((rows) =>

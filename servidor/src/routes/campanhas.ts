@@ -94,27 +94,29 @@ campanhasRouter.post("/", async (req, res) => {
   }
   const agora = new Date();
   const campaignId = crypto.randomUUID();
-  await db.insert(campaigns).values({
-    id: campaignId,
-    name: body.data.name,
-    description: body.data.description ?? null,
-    system: body.data.system ?? null,
-    status: "preparacao",
-    ownerId: req.usuario!.id,
-    guildId,
-    settings: {},
-    createdAt: agora,
-    updatedAt: agora,
-  });
-  await db.insert(memberships).values({
-    id: crypto.randomUUID(),
-    campaignId,
-    userId: req.usuario!.id,
-    role: "mestre",
-    status: "ativo",
-    joinedAt: agora,
-    createdAt: agora,
-    updatedAt: agora,
+  db.transaction((tx) => {
+    tx.insert(campaigns).values({
+      id: campaignId,
+      name: body.data.name,
+      description: body.data.description ?? null,
+      system: body.data.system ?? null,
+      status: "preparacao",
+      ownerId: req.usuario!.id,
+      guildId,
+      settings: {},
+      createdAt: agora,
+      updatedAt: agora,
+    }).run();
+    tx.insert(memberships).values({
+      id: crypto.randomUUID(),
+      campaignId,
+      userId: req.usuario!.id,
+      role: "mestre",
+      status: "ativo",
+      joinedAt: agora,
+      createdAt: agora,
+      updatedAt: agora,
+    }).run();
   });
   const [criada] = await db.select().from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
   const nomes = await nomesGuildas([criada.guildId]);

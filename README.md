@@ -54,6 +54,15 @@ configuracao/  Configurações do servidor (servidor.json)
 - **Biblioteca de regras inicial:** sementes de talentos, habilidades, conhecimentos, profissões, vantagens, defeitos, poderes, disciplinas, perícias, itens, veículos e dinheiro — semeadas por campanha sem duplicar.
 
 
+## Destaques da versão 1.1.0
+
+A versão 1.1.0 acrescenta a Internet diegética e conecta lojas ao patrimônio do personagem:
+
+- **Gate de Internet por personagem:** exige pelo menos 1 ponto em **Computador ou Tecnologia** e a posse de um dispositivo físico reconhecido, como **notebook ou celular**. A validação é feita no servidor, usa referências canônicas do Acervo, considera itens equipados e é reavaliada em cada operação; perder o requisito revoga o acesso e interrompe a entrega de eventos em tempo real.
+- **Lojas por campanha:** criação e gerenciamento de lojas, gestores, ofertas e caixas separados por loja, respeitando campanha, membership e papel do participante.
+- **Compra e venda integradas:** o personagem compra ofertas da loja ou vende itens do próprio inventário para uma loja. Saldo, preço, quantidade, estoque, item equipado e permissões são conferidos no servidor; recibos, inventário e histórico financeiro permanecem vinculados à operação. Não há integração com pagamentos reais.
+- **Equipamento/Armazém:** consulta separada de inventário, equipamentos e veículos, com vínculos reais entre item e equipamento, localização/estado, peso e capacidade quando disponíveis. A edição continua no painel Patrimônio; a venda encaminha o item para a operação financeira na Internet.
+
 ## Destaques da versão 1.0.8
 
 A versão 1.0.8 reúne as melhorias de Pontos de Sangue e os avanços de vida/condição no VTT:
@@ -81,7 +90,7 @@ A versão 1.0.7 reuniu duas melhorias anteriores:
 iniciar-mestre-rpg.bat
 ```
 
-O script instala dependências se preciso, compila o backend e o frontend (`site/dist`, servido pelo próprio backend na porta 3001), roda as migrações, verifica se a porta 3001 já está em uso (evita instância duplicada) e sobe o servidor. A aplicação completa — API, frontend e Socket.IO — fica disponível em `http://localhost:3001`. Em desenvolvimento, `npm run dev` sobe o frontend com hot-reload em `http://localhost:5173` (proxy para a API).
+O script instala dependências se preciso, verifica se a porta 3001 já está em uso (evita instância duplicada), tenta atualizar o código via Git de forma segura (somente clones do repositório oficial, sem alterações locais — ver "Atualização automática" no `docs/GUIA-OPERACAO.md`), compila o backend e o frontend (`site/dist`, servido pelo próprio backend na porta 3001), roda as migrações e sobe o servidor. A aplicação completa — API, frontend e Socket.IO — fica disponível em `http://localhost:3001`. Em desenvolvimento, `npm run dev` sobe o frontend com hot-reload em `http://localhost:5173` (proxy para a API).
 
 ### Encerrar
 
@@ -137,6 +146,8 @@ Apenas o **administrador global** pode restaurar. Backups nunca são servidos pu
 6. Se algo der errado, restaure o backup do passo 1 pelo procedimento acima; o banco anterior fica preservado em `backups/pre_restore_*/` para rollback.
 
 Os dados (`banco/`, `arquivos/`, `backups/`, `configuracao/`) ficam fora do código — atualizar o programa nunca exige recriar campanhas.
+
+**Auto-update no boot:** em instalações via Git, o `iniciar-mestre-rpg.bat` verifica e aplica atualizações do repositório oficial automaticamente, com proteções e rollback (ver `docs/GUIA-OPERACAO.md` §10.1). Para desativar nesta instalação, defina `MESTRE_AUTO_UPDATE=0` como variável de ambiente (`set MESTRE_AUTO_UPDATE=0` no terminal antes de rodar o `.bat`, ou `setx MESTRE_AUTO_UPDATE 0` para valer em novos terminais); sem a variável ou com outro valor, o auto-update permanece habilitado e o boot continua normal em ambos os casos.
 
 ### Acesso externo via HTTPS (amigos pelo navegador)
 

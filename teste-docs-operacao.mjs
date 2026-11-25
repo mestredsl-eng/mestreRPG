@@ -9,6 +9,9 @@ import { mkdirSync, existsSync } from "fs";
 import {
   req, dirTeste, portaLivre, esperarSaudavel, encerrarServidor, limparDir, criarCenario,
 } from "./teste-base.mjs";
+import {
+  autorizarPrimeiroBootstrap, gravarProvisionamento, lerProvisionamento,
+} from "./scripts/estado-externo.mjs";
 
 const DIR = dirTeste("docs-operacao");
 const BANCO = join(DIR, "banco", "mestre-rpg.db");
@@ -27,6 +30,7 @@ const envIsolado = {
   MESTRE_BANCO: BANCO,
   MESTRE_ARQUIVOS: ARQ,
   MESTRE_BACKUPS: BKS,
+  MESTRE_STATE_DIR: join(DIR, "state"),
   MESTRE_PORTA: String(PORTA),
 };
 
@@ -43,7 +47,13 @@ function rodar(cmd, args) {
 try {
   for (const d of [join(DIR, "banco"), ARQ, BKS, CFG]) mkdirSync(d, { recursive: true });
 
-  // 1) npm run db:migrate (documentado)
+  // 1) npm run db:migrate (documentado) — P10-B exige bootstrap
+  //    provisionado para banco vazio; mesma ação que o .bat fará.
+  const REPO = process.cwd();
+  if (lerProvisionamento(REPO, envIsolado).status === "ausente") {
+    gravarProvisionamento(REPO, envIsolado);
+  }
+  autorizarPrimeiroBootstrap(REPO, envIsolado);
   const mig = await rodar("npm", ["run", "db:migrate", "-w", "servidor"]);
   t("db:migrate exit 0", mig.code === 0, mig.out.slice(-300));
   t("banco criado", existsSync(BANCO));

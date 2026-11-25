@@ -5,6 +5,7 @@ import { autenticarHandshake } from "../middleware/auth.js";
 import { getDb } from "../db/index.js";
 import { memberships } from "../db/schema.js";
 import { setIo, barreiraRestauracaoAtiva } from "../lib/io.js";
+import { personagemAutorizadoInternet } from "../lib/gate-internet.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 import { registrarSangue } from "./sangue.js";
@@ -102,6 +103,42 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
 
     socket.on("sair-campanha", (campaignId: string) => {
       socket.leave(`campanha:${campaignId}`);
+    });
+
+    // Inscrição no canal IC/comércio (bloqueio P1 #329/7152569806).
+    // Autorização servidor-side: sessão (já no handshake), membership ativa,
+    // personagem da campanha, titularidade (dono do personagem ou mestre)
+    // e gate Internet cumulativo revalidado NO MOMENTO do join. O cliente
+    // nunca escolhe a sala — só recebe `internet:{campaignId}:{characterId}`
+    // se passar em tudo; caso contrário cb(false) e nenhum evento chega.
+    socket.on("entrar-internet", async (payload: unknown, cb?: (ok: boolean) => void) => {
+      const usuario = socket.data.usuario;
+      const p = payload as { campaignId?: unknown; characterId?: unknown } | null;
+      const campaignId = typeof p?.campaignId === "string" ? p.campaignId : null;
+      const characterId = typeof p?.characterId === "string" ? p.characterId : null;
+      if (!usuario || !campaignId || !characterId || barreiraRestauracaoAtiva(campaignId)) {
+        cb?.(false);
+        return;
+      }
+      const sala = `internet:${campaignId}:${characterId}`;
+      try {
+        // O mesmo veredito server-side é usado no join e em cada entrega.
+        if (!(await personagemAutorizadoInternet(characterId, usuario.id, campaignId))) {
+          cb?.(false);
+          return;
+        }
+        if (!barreiraRestauracaoAtiva(campaignId)) socket.join(sala);
+        cb?.(!barreiraRestauracaoAtiva(campaignId));
+      } catch {
+        cb?.(false);
+      }
+    });
+
+    socket.on("sair-internet", (payload: unknown) => {
+      const p = payload as { campaignId?: unknown; characterId?: unknown } | null;
+      if (typeof p?.campaignId === "string" && typeof p?.characterId === "string") {
+        socket.leave(`internet:${p.campaignId}:${p.characterId}`);
+      }
     });
   });
 

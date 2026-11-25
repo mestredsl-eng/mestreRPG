@@ -17,6 +17,9 @@ export const CAMINHOS = {
 
 export function criarBanco(caminho: string = CAMINHOS.banco) {
   mkdirSync(dirname(caminho), { recursive: true });
+  if (process.env.MESTRE_DEBUG_CONEXOES === "1") {
+    console.error(`[db] conexao aberta: ${caminho}`);
+  }
   const sqlite = new Database(caminho);
   sqlite.pragma("journal_mode = WAL");
   sqlite.pragma("foreign_keys = ON");

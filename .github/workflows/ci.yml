@@ -43,6 +43,8 @@ on:
       - fix/issue-155-status-hardening
       - fix/issue-155-boot-lock
       - test/issue-155-homologacao-w
+      # Base da PR #329 (stack 1.1.0 comércio sobre #328) — faz o CI rodar nela.
+      - feat/1.1.0-lojas-backend
     types:
       - opened
       - synchronize
@@ -131,6 +133,8 @@ jobs:
         run: npx tsc --noEmit -p site/tsconfig.json
       - name: Build workspaces
         run: npm run build
+      - name: Homologação Linux de componentes Boot Lock/Recovery (#271)
+        run: node teste-recovery-linux.mjs
       - name: Testes unitários do contrato de backup (Issue #155 W16)
         run: |
           if [ -f servidor/testes/backup-contrato.test.ts ]; then
@@ -191,6 +195,10 @@ jobs:
         run: npx tsx --test servidor/testes/sangue-acoes.test.ts
       - name: Testes unitários dos invariantes do ledger (Issue #186 #225)
         run: npx tsx --test servidor/testes/sangue-invariantes.test.ts
+      - name: Testes unitários do parser de cookie de sessão (Issue #296)
+        run: npx tsx --test servidor/testes/auth-cookie.test.ts
+      - name: Testes unitários do schema de comércio (Issue #286)
+        run: npx tsx --test servidor/testes/comercio-schema.test.ts
       - name: Suítes obrigatórias v1.0.8 — Servidor sem navegador
         shell: bash
         run: |
@@ -223,17 +231,80 @@ jobs:
             teste-autorizacao-concorrencia.mjs
             teste-rate-limit-socket.mjs
             teste-sessoes-socket.mjs
+            teste-sessoes-conta.mjs
+            teste-mass-assignment.mjs
+            teste-guildas-admin.mjs
+            teste-convite-cadastro.mjs
             teste-xp-lote.mjs
             teste-xp-ancora-integridade-pilha.mjs
+            teste-integridade-sqlite.mjs
+            teste-escopo-cruzado.mjs
+            teste-arquivos-ci.mjs
+            teste-proxy-acesso.mjs
+            teste-ficha-cacadores.mjs
+            teste-runtime-processos-298.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
+          done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
+      - name: Suítes da stack #189 — Servidor sem navegador
+        shell: bash
+        run: |
+          set -euo pipefail
+          arquivos=(
+            teste-restauracao-journal.mjs
+            teste-restauracao-boot.mjs
+            teste-backup-pre-migration.mjs
+            teste-estado-externo.mjs
+            teste-primeiro-bootstrap.mjs
+            teste-adocao-legado.mjs
+            teste-trava-instancia.mjs
+            teste-p10c-gates.mjs
+            teste-docs-operacao.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte da stack #189 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
             node "$s"
           done
+      - name: Suítes 1.1.0 — comércio sem navegador
+        shell: bash
+        run: |
+          set -euo pipefail
+          arquivos=(
+            teste-comercio-lojas.mjs
+            teste-comercio-289.mjs
+          )
+          for s in "${arquivos[@]}"; do
+            if [ ! -f "$s" ]; then
+              echo "::error::Suíte 1.1.0 ausente: $s"
+              exit 1
+            fi
+            echo "===== $s ====="
+            node "$s"
+          done
+      - name: Round-trip e anti-injeção da ficha (Issue #292)
+        if: github.event_name != 'workflow_dispatch' || hashFiles('teste-ficha-roundtrip-292.mjs') != ''
+        shell: bash
+        run: node teste-ficha-roundtrip-292.mjs
+      - name: Regressão E2E ciclo de campanha, convites e membros (Issue #291)
+        run: node teste-ciclo-campanha.mjs
   auto_update_windows:
     name: Auto-update — Windows (npm.cmd + Git)
     runs-on: windows-latest
@@ -297,26 +368,58 @@ jobs:
       - run: npm ci
       - name: Build workspaces no Windows
         run: npm run build
+      - name: Ciclo de vida do processo/servidor (#298)
+        run: node teste-runtime-processos-298.mjs
       - name: Homologação de atualização e restauração no Windows (Issue #33)
         run: node teste-atualizacao-instalacao.mjs
       - name: Testes do auto-update e execução real de npm.cmd
         shell: bash
         run: |
-          if [ ! -f teste-auto-update.mjs ]; then echo "teste-auto-update.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-auto-update.mjs
       - name: Boot lock — Node 22
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
+
+      # Estes testes montam bancos SQLite reais via better-sqlite3 —
+      # precisam rodar no Node 22 (ABI do módulo nativo compilado no
+      # npm ci), ANTES da troca para Node 20 abaixo.
+      - name: Homologar adoção de instalação legada 1.0.8 (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-adocao-legado.mjs
+
+      - name: E2E oficial BAT→health/login sobre instalação 1.0.8 (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-adocao-legado-boot.mjs
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Rebuild do addon nativo para Node 20 (ABI 115)
+        shell: bash
+        run: |
+          # npm ci rodou sob Node 22 (ABI 127); sem rebuild, better-sqlite3
+          # falha ao carregar nos passos Node 20 abaixo (ex.: teste-bat-adocao-legado).
+          npm rebuild better-sqlite3
       - name: Boot lock — Node 20 (versão mínima declarada)
         shell: bash
         run: |
-          if [ ! -f teste-boot-lock.mjs ]; then echo "teste-boot-lock.mjs ausente nesta ref — pulado"; exit 0; fi
           node teste-boot-lock.mjs
+
+      - name: Homologar gate Node mínimo no iniciar-mestre-rpg.bat (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-node-gate.mjs
+
+      - name: Homologar autorização P10-C no primeiro bootstrap (cmd.exe real)
+        shell: bash
+        run: |
+          node teste-bat-primeiro-bootstrap.mjs
+
+      - name: Homologar falha da restauração bloqueia migrate/start (cmd.exe real)
+        run: node teste-bat-restauracao-falha.mjs
 
   navegador:
     name: Navegador — homologações Playwright
@@ -399,6 +502,7 @@ jobs:
             homologacao-vida-regua.mjs
             teste-permissao-tempo-real.mjs
             homologacao-mesa-virtual.mjs
+            teste-mesa-d10-e2e.mjs
             homologacao-regua.mjs
             homologacao-nevoa.mjs
             teste-vtt-rollback-p6.mjs
@@ -414,18 +518,39 @@ jobs:
             homologacao-sessoes.mjs
             teste-realtime-paginas.mjs
             homologacao-pacotes-forjados.mjs
+            teste-wcag-avaliador-297.mjs
+            teste-a11y-fluxos-297.mjs
+            homologacao-desafio-ficha.mjs
+            homologacao-validacao-ficha.mjs
+            teste-internet-e2e.mjs
           )
+          falhas=()
           for s in "${arquivos[@]}"; do
             if [ ! -f "$s" ]; then
               echo "::error::Suíte obrigatória da v1.0.8 ausente: $s"
               exit 1
             fi
             echo "===== $s ====="
-            node "$s"
+            if ! node "$s"; then
+              falhas+=("$s")
+              echo "::error::Suíte falhou: $s"
+            fi
           done
+          if [ "${#falhas[@]}" -gt 0 ]; then
+            echo "::error::Suítes obrigatórias com falha: ${falhas[*]}"
+            exit 1
+          fi
       - name: Suíte E2E do Extrato XP (Issue #185 — obrigatória, sem SKIP)
         run: |
           echo "===== teste-xp-historico-ui.mjs ====="
           node teste-xp-historico-ui.mjs
       - name: E2E concessão XP em lote (#185)
         run: node teste-xp-lote-ui.mjs
+      - name: Suíte E2E UI do ciclo de campanha (#291 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-ciclo-campanha-ui.mjs ====="
+          node teste-ciclo-campanha-ui.mjs
+      - name: Suíte E2E UI do convite de campanha (#254 — obrigatória, sem SKIP)
+        run: |
+          echo "===== teste-convite-campanha-ui.mjs ====="
+          node teste-convite-campanha-ui.mjs
