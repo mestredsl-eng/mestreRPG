@@ -3,6 +3,7 @@
 // estabelecimento, idempotência requestId/fingerprint, gestão por gestor.
 // Banco isolado + fixtures sintéticas (teste-base).
 import { io as ioCliente } from "socket.io-client";
+import { existsSync, writeFileSync, rmSync } from "node:fs";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
   criarCenario, comDb, abrirDb, req, encerrarServidor, limparDir,
@@ -21,7 +22,13 @@ const porta = await portaLivre();
 const BASE = `http://localhost:${porta}`;
 let proc;
 try {
-  proc = subirServidor(porta, { banco: BANCO, arquivos: ARQ, backups: BKS });
+  // MESTRE_PAUSA_FLAG/MESTRE_RESTORE_DELAY_MS: janelas determinísticas
+  // de teste para a seção de barreira de restauração (L2) — inertes
+  // enquanto o arquivo-flag não existir e nenhum restore for disparado.
+  proc = subirServidor(porta, {
+    banco: BANCO, arquivos: ARQ, backups: BKS,
+    env: { MESTRE_PAUSA_FLAG: `${DIR}/pausa.flag`, MESTRE_RESTORE_DELAY_MS: "2000" },
+  });
   proc.stderr.on("data", (d) => process.stderr.write(d));
   await esperarSaudavel(BASE, proc);
 
@@ -864,6 +871,61 @@ try {
     (await emitirCb(sockNeg, "entrar-internet", { campaignId: campId, characterId: charOk })) === false);
 
   sockOk.close(); sockNeg.close();
+
+  sec("realtime — fail-closed durante barreira de restauração (L2)");
+  // charOk volta a ser elegível: notebook reposto + nova inscrição
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), charOk, "Notebook", 1, JSON.stringify({ regra: { kind: "item", key: "notebook" } }), agora, agora);
+    db.close();
+  }
+  // charOk foi transferido para j2 na seção de titularidade — o novo
+  // dono (j2) é quem se inscreve agora
+  const sockL2 = await conectarSocket(j2.cookie);
+  const evL2 = [];
+  sockL2.on("comercio:atualizado", (d) => evL2.push(d));
+  await emitirCb(sockL2, "entrar-campanha", campId);
+  t("elegível reinscreve no canal Internet", (await emitirCb(sockL2, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+
+  // snapshot do estado atual para o restore
+  const snapL2 = await req(BASE, "POST", `/campaigns/${campId}/snapshots`, { cookie: mestre, body: { description: "antes-barreira-l2" } });
+  t("snapshot para restore criado", snapL2.status === 201 && !!snapL2.json?.id, JSON.stringify(snapL2.json));
+
+  // emissão fica PAUSADA no gancho de teste (flag com conteúdo=campId
+  // casa com o marcador `internet:{campaignId}` do emitter)
+  writeFileSync(`${DIR}/pausa.flag`, campId);
+  const lojaBar = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Barreira L2" },
+  });
+  t("gatilho em voo 201", lojaBar.status === 201, JSON.stringify(lojaBar.json));
+  // espera a emissão pausar de fato (.pausado escrito pelo gancho)
+  const flagPausa = `${DIR}/pausa.flag`;
+  let pausou = false;
+  for (let i = 0; i < 100 && !pausou; i++) { await dormir(50); pausou = existsSync(`${flagPausa}.pausado`); }
+  t("emissão de comércio pausada no gancho", pausou);
+
+  // restore sem aguardar — barreira sobe; MESTRE_RESTORE_DELAY_MS segura 2s
+  const pRest = req(BASE, "POST", `/campaigns/${campId}/snapshots/${snapL2.json.id}/restaurar`, {
+    cookie: mestre, body: { confirmacao: "RESTAURAR" },
+  });
+  await dormir(500); // janela: barreira ativa + delay de 2s em curso
+  // libera a emissão pausada → ela DEVE abortar pela barreira (fail-closed)
+  rmSync(flagPausa, { force: true });
+  await dormir(500);
+  t("durante barreira: zero comercio:atualizado entregue", evL2.length === 0, String(evL2.length));
+
+  const rest = await pRest;
+  t("restore concluído", rest.status === 200, JSON.stringify(rest.json).slice(0, 200));
+  // pós-liberação: novo evento entrega normalmente ao elegível
+  const lojaPos = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Pos Barreira" },
+  });
+  t("gatilho pós-barreira 201", lojaPos.status === 201, JSON.stringify(lojaPos.json));
+  await dormir(700);
+  t("pós-barreira: elegível recebe comercio:atualizado", evL2.length >= 1, String(evL2.length));
+  sockL2.close();
 
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
