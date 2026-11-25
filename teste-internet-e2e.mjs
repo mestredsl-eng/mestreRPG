@@ -198,11 +198,18 @@ try {
   await abrirModulo(pgJ1, "Internet");
   await page_await(pgJ1, "Loja E2E");
   t("j1 vê a loja na lista", await pgJ1.getByText("Loja E2E").count() > 0);
-  t("j1 (gestor) vê botão Gerenciar loja", await pgJ1.getByRole("button", { name: "Gerenciar loja" }).count() > 0);
+  // Não-gestor negado: j1 é gestor só da "Loja E2E". A "Loja do Zé"
+  // (criada pelo mestre, sem gestor) não pode oferecer Gerenciar a j1.
+  const cardLojaZe = pgJ1.locator(".cartao.cartao-campanha", { hasText: "Loja do Zé" });
+  t("não-gestor não vê Gerenciar na loja alheia",
+    await cardLojaZe.getByRole("button", { name: "Gerenciar loja" }).count() === 0);
+  const cardLojaE2E = pgJ1.locator(".cartao.cartao-campanha", { hasText: "Loja E2E" });
+  t("gestor autorizado vê Gerenciar só na própria loja",
+    await cardLojaE2E.getByRole("button", { name: "Gerenciar loja" }).count() === 1
+    && await pgJ1.getByRole("button", { name: "Gerenciar loja" }).count() === 1);
 
   // vitrine do comprador: só oferta ativa (escopo no card "Loja E2E" —
   // o mestre criou "Loja do Zé" antes, logo há 2 "Ver vitrine").
-  const cardLojaE2E = pgJ1.locator(".cartao.cartao-campanha", { hasText: "Loja E2E" });
   await cardLojaE2E.getByRole("button", { name: "Ver vitrine" }).click();
   await page_await(pgJ1, "Poção de Cura");
   t("vitrine mostra oferta ativa", await pgJ1.getByText("Poção de Cura").count() > 0);
