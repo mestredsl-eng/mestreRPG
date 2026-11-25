@@ -1,0 +1,1472 @@
+{
+  "gerado": "2026-11-25T21:23:16.740Z",
+  "sha": "0ee6c8b",
+  "matriz": {
+    "mestre": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Editar campanha",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Personagens": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Novo personagem",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Ver arquivados",
+          "Voltar",
+          "XP em lote"
+        ],
+        "inputs": [
+          "input:search(Buscar personagem…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Diário": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Anotações do mestre",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Nova anotação",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)",
+          "Diário",
+          "Anotações do mestre"
+        ]
+      },
+      "aba:Histórico": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Criar ponto de recuperação",
+          "Diário",
+          "Exportar campanha (.json)",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Salvar resumo",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Nome do ponto de rec)",
+          "textarea:textarea(Resumo geral escrito)"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Arquivos": {
+        "botoes": [
+          "+ Nova pasta",
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Enviar arquivo",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Raiz",
+          "Regras",
+          "Sair",
+          "Todos os arquivos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Pesquisar…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Mesa": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Iniciar sessão",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Fichas": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Desativar",
+          "Diário",
+          "Duplicar",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Novo modelo",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Remover padrão",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Regras": {
+        "botoes": [
+          "+ Novo elemento",
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Biblioteca",
+          "Campanhas",
+          "Carregar biblioteca inicial",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Pontuação",
+          "Regras",
+          "Sair",
+          "Sangue",
+          "Validação de fichas",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Buscar por nome, cha)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)",
+          "Biblioteca",
+          "Pontuação",
+          "Sangue",
+          "Validação de fichas",
+          "Acervo"
+        ]
+      },
+      "aba:Participantes": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Aprovar",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Recusar",
+          "Regras",
+          "Remover",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:checkbox",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "aba:Convites": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Convites (0)",
+          "Diário",
+          "Fichas",
+          "Gerar convite",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Regras",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:checkbox",
+          "input:number(Ilimitado)",
+          "input:number(Nunca)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)"
+        ]
+      },
+      "ficha detalhe": {
+        "botoes": [
+          "Acervo",
+          "Adicionar",
+          "Administração",
+          "Aleijado",
+          "Alterar retrato",
+          "Aplicar",
+          "Arquivar",
+          "Arquivos",
+          "Bloquear",
+          "Campanhas",
+          "Catálogo",
+          "Comprar…",
+          "Conta",
+          "Convites (0)",
+          "Dinheiro",
+          "Diário",
+          "Editar ficha",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Escoriado",
+          "Espancado",
+          "Excluir",
+          "Ferido",
+          "Ferido gravemente",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Incapacitado",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Machucado",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Reabrir",
+          "Regras",
+          "Sair",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:number",
+          "input:number(Peso (kg))",
+          "input:number(Qtd)",
+          "input:text(Buscar item…)",
+          "input:text(Categoria)",
+          "input:text(Local)",
+          "input:text(Motivo da mudança (o)",
+          "input:text(Motivo)",
+          "input:text(Nome do item)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro",
+          "Catálogo"
+        ]
+      },
+      "ficha:Inventário": {
+        "botoes": [
+          "Acervo",
+          "Adicionar",
+          "Administração",
+          "Aleijado",
+          "Alterar retrato",
+          "Aplicar",
+          "Arquivar",
+          "Arquivos",
+          "Bloquear",
+          "Campanhas",
+          "Catálogo",
+          "Comprar…",
+          "Conta",
+          "Convites (0)",
+          "Dinheiro",
+          "Diário",
+          "Editar ficha",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Escoriado",
+          "Espancado",
+          "Excluir",
+          "Ferido",
+          "Ferido gravemente",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Incapacitado",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Machucado",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Reabrir",
+          "Regras",
+          "Sair",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:number",
+          "input:number(Peso (kg))",
+          "input:number(Qtd)",
+          "input:text(Buscar item…)",
+          "input:text(Categoria)",
+          "input:text(Local)",
+          "input:text(Motivo da mudança (o)",
+          "input:text(Motivo)",
+          "input:text(Nome do item)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro",
+          "Catálogo"
+        ]
+      },
+      "ficha:Dinheiro": {
+        "botoes": [
+          "Acervo",
+          "Administração",
+          "Aleijado",
+          "Alterar retrato",
+          "Aplicar",
+          "Arquivar",
+          "Arquivos",
+          "Bloquear",
+          "Campanhas",
+          "Catálogo",
+          "Conta",
+          "Convites (0)",
+          "Dinheiro",
+          "Diário",
+          "Editar ficha",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Escoriado",
+          "Espancado",
+          "Excluir",
+          "Ferido",
+          "Ferido gravemente",
+          "Fichas",
+          "Guildas",
+          "Histórico",
+          "Incapacitado",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Machucado",
+          "Mesa",
+          "Nova conta",
+          "Novidades",
+          "Painel",
+          "Participantes (6)",
+          "Personagens",
+          "Reabrir",
+          "Regras",
+          "Sair",
+          "Transferir (PIX fictício)",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:number",
+          "input:text(Motivo da mudança (o)",
+          "input:text(Motivo)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Fichas",
+          "Regras",
+          "Participantes (6)",
+          "Convites (0)",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro",
+          "Catálogo"
+        ]
+      }
+    },
+    "jogador": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Personagens": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Novo personagem",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:search(Buscar personagem…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Diário": {
+        "botoes": [
+          "Acervo",
+          "Anotações do mestre",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Nova anotação",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Diário",
+          "Anotações do mestre"
+        ]
+      },
+      "aba:Histórico": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Arquivos": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Enviar arquivo",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Raiz",
+          "Sair",
+          "Todos os arquivos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Pesquisar…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Mesa": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "ficha detalhe": {
+        "botoes": [
+          "Acervo",
+          "Adicionar",
+          "Alterar retrato",
+          "Arquivos",
+          "Campanhas",
+          "Comprar…",
+          "Conta",
+          "Dinheiro",
+          "Diário",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:number(Peso (kg))",
+          "input:number(Qtd)",
+          "input:text(Buscar item…)",
+          "input:text(Categoria)",
+          "input:text(Local)",
+          "input:text(Nome do item)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro"
+        ]
+      },
+      "ficha:Inventário": {
+        "botoes": [
+          "Acervo",
+          "Adicionar",
+          "Alterar retrato",
+          "Arquivos",
+          "Campanhas",
+          "Comprar…",
+          "Conta",
+          "Dinheiro",
+          "Diário",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:number(Peso (kg))",
+          "input:number(Qtd)",
+          "input:text(Buscar item…)",
+          "input:text(Categoria)",
+          "input:text(Local)",
+          "input:text(Nome do item)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro"
+        ]
+      },
+      "ficha:Dinheiro": {
+        "botoes": [
+          "Acervo",
+          "Alterar retrato",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Dinheiro",
+          "Diário",
+          "Equipamento/Armazém",
+          "Equipamentos",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Internet",
+          "Inventário",
+          "Mesa",
+          "Nova conta",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Veículos",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Inventário",
+          "Equipamentos",
+          "Veículos",
+          "Dinheiro"
+        ]
+      }
+    },
+    "jogador2": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Personagens": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Novo personagem",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Diário": {
+        "botoes": [
+          "Acervo",
+          "Anotações do mestre",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Nova anotação",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Diário",
+          "Anotações do mestre"
+        ]
+      },
+      "aba:Histórico": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Arquivos": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Enviar arquivo",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Raiz",
+          "Sair",
+          "Todos os arquivos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Pesquisar…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Mesa": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      }
+    },
+    "espectador": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Diário": {
+        "botoes": [
+          "Acervo",
+          "Anotações do mestre",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Diário",
+          "Anotações do mestre"
+        ]
+      },
+      "aba:Histórico": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Arquivos": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Raiz",
+          "Sair",
+          "Todos os arquivos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Pesquisar…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Mesa": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      }
+    },
+    "pendente": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Personagens": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Novo personagem",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Diário": {
+        "botoes": [
+          "Acervo",
+          "Anotações do mestre",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos",
+          "Diário",
+          "Anotações do mestre"
+        ]
+      },
+      "aba:Histórico": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Arquivos": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Enviar arquivo",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Raiz",
+          "Sair",
+          "Todos os arquivos",
+          "Voltar"
+        ],
+        "inputs": [
+          "input:text(Pesquisar…)",
+          "select:select-one"
+        ],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      },
+      "aba:Mesa": {
+        "botoes": [
+          "Acervo",
+          "Arquivos",
+          "Campanhas",
+          "Conta",
+          "Diário",
+          "Guildas",
+          "Histórico",
+          "Informações",
+          "Mesa",
+          "Novidades",
+          "Painel",
+          "Personagens",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": [
+          "Informações",
+          "Mesa",
+          "Personagens",
+          "Diário",
+          "Histórico",
+          "Arquivos"
+        ]
+      }
+    },
+    "bloqueado": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Campanhas",
+          "Conta",
+          "Guildas",
+          "Novidades",
+          "Painel",
+          "Sair",
+          "Voltar"
+        ],
+        "inputs": [],
+        "abas": []
+      }
+    },
+    "sem_membership": {
+      "campanha": {
+        "botoes": [
+          "Acervo",
+          "Campanhas",
+          "Conta",
+          "Guildas",
+          "Importar campanha",
+          "Nova campanha",
+          "Novidades",
+          "Painel",
+          "Sair"
+        ],
+        "inputs": [],
+        "abas": []
+      }
+    }
+  }
+}
