@@ -148,5 +148,24 @@ if (precisaBackup) {
 // o mesmo arquivo, com a primeira segurando a trava de instância.
 // Sem backup, getDb() simplesmente abre a primeira e única conexão.
 const db = getDb();
-migrate(db, { migrationsFolder });
+// Rebuilds de tabela (DROP+CREATE gerado pelo drizzle-kit) precisam de
+// FK off: o migrator envolve TODAS as migrations pendentes num único
+// BEGIN/COMMIT e `PRAGMA foreign_keys` dentro de transação é no-op no
+// SQLite — os PRAGMAs emitidos no .sql não desligam nada de fato.
+// Sem isto, `DROP TABLE financial_accounts` falha com FOREIGN KEY
+// constraint failed em qualquer base que já tenha money_transactions
+// (reproduzido na fixture rica #335 / E2E de adoção legada).
+// Desligamos na conexão antes do migrate e religamos + verificamos
+// integridade referencial depois — fail-closed.
+const sqlite = db.$client;
+sqlite.pragma("foreign_keys = OFF");
+try {
+  migrate(db, { migrationsFolder });
+} finally {
+  sqlite.pragma("foreign_keys = ON");
+}
+const violacoesFk = sqlite.pragma("foreign_key_check") as unknown[];
+if (violacoesFk.length > 0) {
+  throw new Error(`[db] foreign_key_check falhou após migrações: ${violacoesFk.length} violação(ões)`);
+}
 console.log(`[db] Migrações aplicadas em ${CAMINHOS.banco}`);
