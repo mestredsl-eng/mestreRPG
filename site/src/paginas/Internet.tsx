@@ -137,15 +137,21 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
     void carregar();
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
+    // Canal dedicado do comércio (#329 @ 0731e27): `comercio:atualizado`
+    // não chega mais pela sala geral — a inscrição `entrar-internet` é
+    // autorizada no servidor (titularidade + gate revalidado no join e a
+    // cada entrega). Sem ela, nenhum evento de comércio é entregue.
+    socket.emit("entrar-internet", { campaignId, characterId }, () => undefined);
     const aoMudar = () => void recarregarRef.current();
     socket.on("comercio:atualizado", aoMudar);
     socket.on("patrimonio:atualizado", aoMudar);
     return () => {
       socket.off("comercio:atualizado", aoMudar);
       socket.off("patrimonio:atualizado", aoMudar);
+      socket.emit("sair-internet", { campaignId, characterId });
       socket.emit("sair-campanha", campaignId);
     };
-  }, [campaignId, gate.fase]);
+  }, [campaignId, characterId, gate.fase]);
 
   // Atalho do Equipamento/Armazém: abre a aba "Vender" já com o item
   // pré-selecionado. O consumo limpa a pré-seleção no pai (evita
