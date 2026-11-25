@@ -213,3 +213,28 @@ Esta seção substitui as fotografias anteriores quando houver divergência de s
 - Essas são tarefas registradas no GitHub; só commits, logs/CI e evidência reproduzível comprovam entrega.
 
 A versão 1.1.0 permanece **não candidata**. Nenhuma integração, promoção de Draft, mudança de workflow, tag ou release está autorizada por esta atualização.
+
+
+## Atualização de execução — 25/11/2026 (novos commits e validação)
+
+### Entregas posteriores à reconciliação anterior
+
+- **#327 / FILHO:** HEAD continua `f84ea9b82321fe15101ab1947120a7fa024ba5f3`; CI natural reportada/consultada como SUCCESS, e o FILHO registrou **31/31 PASS local** em `teste-internet-e2e.mjs`. O arquivo segue sem wiring no job Navegador para evitar falso vermelho antes de o backend entrar em main.
+- **#328 / PAI:** HEAD avançou para `76a8f4708b6eabd1211995f4f2ce61d150187d1c`. Foi adicionada regressão em `teste-adocao-legado.mjs` para a fixture exata v1.0.9: 36 migrations, 3 contas e 6 transações. Reportado localmente: 45/45 (30 asserts 1.0.8 + 15 novos 1.0.9) e E2E BAT de 1.0.8 22/22. O teste percorre adoção + backup + migrate até 0037 e confere preservação campo a campo, `shop_id` NULL, FK 0 e integrity ok. A regressão usa a suíte já presente no job Servidor; não houve alteração de workflow nesta entrega.
+- **Correção adicional na #328:** a rotina `scripts/adotar-legado.mjs` não reconhecia esquema 1.0.9 de 36 migrations e falhava fechado com `esquema-nao-reconhecido`. PAI adicionou o conjunto válido `ULTIMO_IDX_109=35`; Devin revisou a lógica como correta. Gap de adoção corrigido em código e coberto pela nova fixture.
+- **#329 / PAI:** HEAD avançou para `443b497929394512077a3200d24adffa4b2afbf6`, base #328@ `e82b5cc`. A correção L2 em `emitirComercioInternet` agora consulta a barreira de restauração antes do fan-out e revalida imediatamente antes das entregas, falhando fechado se a barreira iniciar no meio da emissão. Teste determinístico reportado localmente **135/135**; Devin revisou o desenho e não encontrou ressalvas.
+- **#336 / INTERMEDIÁRIO:** HEAD `62b359e3ab2339614e11b59f65ff4c56db0f1845`, já sincronizado com #329@443b497. Casos L1/L3/L4/L5 foram adicionados à suíte complementar; total **122/122 PASS local**. L1 demonstra atomicidade com um 201 e um erro perdedor, mas o perdedor atual recebe 404 `item_nao_encontrado` quando a linha de inventário já foi removida. PAI foi solicitado a avaliar 409 específico para conflito de concorrência, preservando 404 para ID realmente inexistente.
+- **Distribuição das responsabilidades:** PAI recebeu a integração #328@76a8f47 na #329 e a portabilidade dos cenários L1/L3/L4/L5 para `teste-comercio-lojas.mjs`, que já é executado na CI. INTERMEDIÁRIO fará revisão semântica desse port. Nenhum step novo foi solicitado no workflow.
+
+### Runs em andamento no momento desta atualização
+
+- #328 HEAD `76a8f47`: CI run `45571997887` — Servidor, Navegador e Windows ainda **IN_PROGRESS** na última consulta.
+- #329 HEAD `443b497`: CI run `45570504599` — Servidor e Windows **SUCCESS**; Navegador ainda **IN_PROGRESS**.
+- #327 HEAD `f84ea9b`: run de CI `45564318683` **SUCCESS**; workflow separado Mestre Voice também SUCCESS.
+- #336 HEAD `62b359e`: suíte 122/122 local; workflow de Assistente concluiu, mas não executa a suíte de comércio. Não classificar como CI.
+
+### Integração ainda necessária
+
+A #329 está baseada em #328@ `e82b5cc`, enquanto a #328 avançou para `76a8f47`. Compare confirma apenas um commit à frente na #328, contendo arquivos de adoção/teste sem interseção com o código comercial. PAI recebeu ordem para incorporar esse commit por merge normal e repetir a CI. Até a integração e os novos runs terminarem, não existe candidata integrada final.
+
+A decisão do proprietário sobre o delta de workflow já existente na #329 continua pendente e separada. Nenhuma PR foi promovida, mesclada ou publicada por esta atualização.
