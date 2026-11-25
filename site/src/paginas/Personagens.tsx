@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
+import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
@@ -350,6 +350,14 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   // Pontos de entrada 1.1.0 fora da ficha: Equipamento/Armazém e Internet.
   // Módulos independentes — abrir um não fecha o Patrimônio legado.
   const [modulo, setModulo] = useState<"equipamento" | "internet" | null>(null);
+  // Atalho LOJA-B: o Armazém sinaliza o item; a Internet abre a aba
+  // "Vender" já com ele pré-selecionado (a operação financeira mora lá).
+  const [itemVendaPendente, setItemVendaPendente] = useState<ItemInventario | null>(null);
+  const alternarModulo = (m: "equipamento" | "internet") => {
+    const proximo = modulo === m ? null : m;
+    setModulo(proximo);
+    if (proximo !== "internet") setItemVendaPendente(null);
+  };
 
   const arquivado = personagem.status === "arquivado";
   // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
@@ -646,23 +654,32 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             <button
               className={modulo === "equipamento" ? "ativo" : "secundario"}
               aria-pressed={modulo === "equipamento"}
-              onClick={() => setModulo(modulo === "equipamento" ? null : "equipamento")}
+              onClick={() => alternarModulo("equipamento")}
             >Equipamento/Armazém</button>
             {!arquivado && (
               <button
                 className={modulo === "internet" ? "ativo" : "secundario"}
                 aria-pressed={modulo === "internet"}
-                onClick={() => setModulo(modulo === "internet" ? null : "internet")}
+                onClick={() => alternarModulo("internet")}
               >Internet</button>
             )}
           </div>
         </section>
       )}
       {modulo === "equipamento" && (souMestre || personagem.ehEu === true) && (
-        <EquipamentoArmazem characterId={personagem.id} campaignId={campaignId} />
+        <EquipamentoArmazem
+          characterId={personagem.id}
+          campaignId={campaignId}
+          aoVenderItem={(item) => { setItemVendaPendente(item); setModulo("internet"); }}
+        />
       )}
       {modulo === "internet" && !arquivado && (souMestre || personagem.ehEu === true) && (
-        <Internet characterId={personagem.id} campaignId={campaignId} />
+        <Internet
+          characterId={personagem.id}
+          campaignId={campaignId}
+          itemInicial={itemVendaPendente}
+          aoItemConsumido={() => setItemVendaPendente(null)}
+        />
       )}
 
       {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
