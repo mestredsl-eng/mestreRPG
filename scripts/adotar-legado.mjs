@@ -16,8 +16,8 @@
 //   2. SQLite íntegro: PRAGMA integrity_check = ok e
 //      foreign_key_check sem linhas;
 //   3. schema reconhecido: __drizzle_migrations contém EXATAMENTE o
-//      conjunto de migrations da 1.0.8 (idx 0..33 do journal) ou o
-//      conjunto completo da candidata (já migrada por um boot
+//      conjunto de migrations da 1.0.8 (idx 0..33), o da 1.0.9
+//      (idx 0..35) ou o completo da candidata (já migrada por um boot
 //      intermediário desta versão). Qualquer outro conjunto = esquema
 //      desconhecido → bloqueio, nada é gravado;
 //   4. backup completo VALIDADO: banco (+sidecars), configuracao/ e
@@ -50,8 +50,10 @@ const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const env = process.env;
 const JOURNAL_ADOCAO = "adocao-legado.json";
 // Último idx de migration presente na 1.0.8 (main@7e17c9b: 34 entradas,
-// idx 0..33). A candidata adiciona 0034/0035 (idx 34/35).
+// idx 0..33). A 1.0.9 adiciona 0034/0035 (idx 34/35 = 36 entradas) e a
+// candidata adiciona 0036/0037 (idx 36/37) — as três são reconhecidas.
 const ULTIMO_IDX_108 = 33;
+const ULTIMO_IDX_109 = 35;
 
 const args = process.argv.slice(2);
 if (!args.includes("--confirmar") && !args.includes("--confirmar-adocao")) {
@@ -159,7 +161,8 @@ if (!candidato.adotavel) {
   falhar(candidato.motivo);
 }
 
-// 2. Validação do banco: integridade + esquema 1.0.8 exato ou 1.0.9 já
+// 2. Validação do banco: integridade + esquema 1.0.8/1.0.9 exato ou o
+//    schema completo da candidata já migrado por boot intermediário.
 //    aplicada (quando um boot intermediário já migrou o banco oficial).
 const banco = caminhoBancoConfigurado(repoDir, env);
 // Nome real do arquivo de banco: o backup copia byte a byte para
@@ -197,14 +200,16 @@ const journalMigrations = JSON.parse(
   readFileSync(join(repoDir, "servidor", "migrations", "meta", "_journal.json"), "utf8"),
 ).entries.map((e) => Number(e.when)).sort((a, b) => a - b);
 const conjuntoLegado = journalMigrations.filter((_, i) => i <= ULTIMO_IDX_108);
+const conjunto109 = journalMigrations.filter((_, i) => i <= ULTIMO_IDX_109);
 const conjuntoAtual = journalMigrations;
 const mesmoConjunto = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
 const esquema = mesmoConjunto(aplicadas, conjuntoLegado) ? "1.0.8"
-  : mesmoConjunto(aplicadas, conjuntoAtual) ? "1.0.9"
+  : mesmoConjunto(aplicadas, conjunto109) ? "1.0.9"
+  : mesmoConjunto(aplicadas, conjuntoAtual) ? "atual"
   : null;
 if (!esquema) {
   falhar("esquema-nao-reconhecido",
-    `aplicadas=${aplicadas.length} esperado=legado(${conjuntoLegado.length})|atual(${conjuntoAtual.length})`);
+    `aplicadas=${aplicadas.length} esperado=legado(${conjuntoLegado.length})|1.0.9(${conjunto109.length})|atual(${conjuntoAtual.length})`);
 }
 console.log(`[adocao] banco reconhecido: esquema ${esquema}, ${aplicadas.length} migrations aplicadas, integridade ok.`);
 

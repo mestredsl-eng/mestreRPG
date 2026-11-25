@@ -927,6 +927,148 @@ try {
   t("pós-barreira: elegível recebe comercio:atualizado", evL2.length >= 1, String(evL2.length));
   sockL2.close();
 
+  sec("lacunas L1/L3/L4/L5 (#336 → suíte CI-enabled)");
+  // charOk pertence a j2 desde a seção de titularidade; contaId é a
+  // conta do charOk — o dono atual (j2) é quem opera o personagem.
+  const donoAtual = j2.cookie;
+
+  // ---- L1: 404 para inexistente / 409 para consumido em corrida ----
+  const invInexistente = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: crypto.randomUUID(), qty: 1, accountId: contaId, requestId: "vend-l1-404" },
+  });
+  t("L1: item inexistente → 404 item_nao_encontrado",
+    invInexistente.status === 404 && invInexistente.json?.erro === "item_nao_encontrado",
+    `${invInexistente.status} ${JSON.stringify(invInexistente.json)}`);
+
+  const invCorridaL1 = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invCorridaL1, charOk, "Item Corrida L1", 1, JSON.stringify({ aquisicao: { unitCents: 700, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const saldoL1Antes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
+  const [cvA, cvB] = await Promise.all([
+    req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+      cookie: donoAtual,
+      body: { shopId, inventoryEntryId: invCorridaL1, qty: 1, accountId: contaId, requestId: "vend-l1-corrida-a" },
+    }),
+    req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+      cookie: donoAtual,
+      body: { shopId, inventoryEntryId: invCorridaL1, qty: 1, accountId: contaId, requestId: "vend-l1-corrida-b" },
+    }),
+  ]);
+  const stL1 = [cvA.status, cvB.status].sort((a, b) => a - b);
+  const perdL1 = [cvA, cvB].find((r) => r.status !== 201);
+  t("L1: corrida último item → um 201 + perdedor 409 item_indisponivel",
+    stL1[0] === 201 && stL1[1] === 409 && perdL1?.json?.erro === "item_indisponivel",
+    `statuses=${cvA.status},${cvB.status} erros=${cvA.json?.erro}|${cvB.json?.erro}`);
+  const posL1 = comDb(BANCO, (db) => ({
+    inv: db.prepare("select count(*) c from inventory_entries where id=?").get(invCorridaL1).c,
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b,
+    orders: db.prepare("select count(*) c from shop_orders where request_id in ('vend-l1-corrida-a','vend-l1-corrida-b')").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'vend-l1-corrida-%'").get().c,
+    oferta: db.prepare("select count(*) c, sum(stock_qty) s from shop_offers where shop_id=? and name='Item Corrida L1'").get(shopId),
+  }));
+  t("L1: inventário consumido, débito único (+700), 1 recibo, 2 pernas, 1 oferta estoque qty=1",
+    posL1.inv === 0 && posL1.saldo === saldoL1Antes + 700
+    && posL1.orders === 1 && posL1.txs === 2
+    && posL1.oferta.c === 1 && posL1.oferta.s === 1,
+    JSON.stringify(posL1));
+
+  // ---- L3: loja fechada → venda nega 409 loja_fechada com zero efeitos ----
+  const patchFechaL3 = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}`, {
+    cookie: mestre, body: { isOpen: false },
+  });
+  t("L3: PATCH loja isOpen=false → 200", patchFechaL3.status === 200, String(patchFechaL3.status));
+  const invFechadaL3 = crypto.randomUUID();
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,data,created_at,updated_at) values (?,?,?,?,?,?,?)")
+      .run(invFechadaL3, charOk, "Item Loja Fechada L3", 1, JSON.stringify({ aquisicao: { unitCents: 300, qtdOriginal: 1 } }), agora, agora);
+    db.close();
+  }
+  const saldoL3Antes = comDb(BANCO, (db) => db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b);
+  const vendFechadaL3 = await req(BASE, "POST", `/characters/${charOk}/comercio/vender`, {
+    cookie: donoAtual,
+    body: { shopId, inventoryEntryId: invFechadaL3, qty: 1, accountId: contaId, requestId: "vend-l3-fechada" },
+  });
+  t("L3: venda em loja fechada → 409 loja_fechada",
+    vendFechadaL3.status === 409 && vendFechadaL3.json?.erro === "loja_fechada",
+    `${vendFechadaL3.status} ${JSON.stringify(vendFechadaL3.json)}`);
+  const posL3 = comDb(BANCO, (db) => ({
+    saldo: db.prepare("select balance_cents b from financial_accounts where id=?").get(contaId).b,
+    qtd: db.prepare("select quantity q from inventory_entries where id=?").get(invFechadaL3)?.q,
+    orders: db.prepare("select count(*) c from shop_orders where request_id='vend-l3-fechada'").get().c,
+    txs: db.prepare("select count(*) c from money_transactions where request_id like 'vend-l3-fechada:%'").get().c,
+    oferta: db.prepare("select count(*) c from shop_offers where shop_id=? and name='Item Loja Fechada L3'").get(shopId).c,
+  }));
+  t("L3: vendedor/item/ledger/recibo/estoque intactos",
+    posL3.saldo === saldoL3Antes && posL3.qtd === 1
+    && posL3.orders === 0 && posL3.txs === 0 && posL3.oferta === 0,
+    JSON.stringify(posL3));
+  const patchReabreL3 = await req(BASE, "PATCH", `/campaigns/${campId}/comercio/lojas/${shopId}`, {
+    cookie: mestre, body: { isOpen: true },
+  });
+  t("L3: reabertura da loja → 200", patchReabreL3.status === 200, String(patchReabreL3.status));
+
+  // ---- L4: sair-internet corta a entrega; reinscrição volta ----
+  const sockL4 = await conectarSocket(donoAtual);
+  const evL4 = [];
+  sockL4.on("comercio:atualizado", (d) => evL4.push(d));
+  await emitirCb(sockL4, "entrar-campanha", campId);
+  t("L4: elegível inscreve no canal Internet",
+    (await emitirCb(sockL4, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  const gatilhoL4a = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Sinal L4a" },
+  });
+  t("L4: gatilho inicial → 201", gatilhoL4a.status === 201, String(gatilhoL4a.status));
+  await dormir(600);
+  const nL4Antes = evL4.length;
+  t("L4: inscrito recebe comercio:atualizado", nL4Antes >= 1, String(nL4Antes));
+  sockL4.emit("sair-internet", { campaignId: campId, characterId: charOk });
+  await dormir(200);
+  const gatilhoL4b = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Sinal L4b" },
+  });
+  t("L4: gatilho pós-sair → 201", gatilhoL4b.status === 201, String(gatilhoL4b.status));
+  await dormir(600);
+  t("L4: após sair-internet o socket NÃO recebe comercio:atualizado",
+    evL4.length === nL4Antes, `${nL4Antes} → ${evL4.length}`);
+  t("L4: reinscrição após sair-internet → true",
+    (await emitirCb(sockL4, "entrar-internet", { campaignId: campId, characterId: charOk })) === true);
+  const gatilhoL4c = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Sinal L4c" },
+  });
+  t("L4: gatilho pós-reinscrição → 201", gatilhoL4c.status === 201, String(gatilhoL4c.status));
+  await dormir(600);
+  t("L4: após reinscrição o socket volta a receber",
+    evL4.length > nL4Antes, `${nL4Antes} → ${evL4.length}`);
+  sockL4.close();
+
+  // ---- L5: entrar-internet com payload malformado → cb(false), sem sala ----
+  const sockL5 = await conectarSocket(donoAtual);
+  const evL5 = [];
+  sockL5.on("comercio:atualizado", (d) => evL5.push(d));
+  const malformados = [null, "string", 42, {}, { campaignId: campId }, { characterId: charOk }, { campaignId: 123, characterId: charOk }, { campaignId: campId, characterId: 42 }];
+  let malNegados = 0;
+  for (const payload of malformados) {
+    const ok = await emitirCb(sockL5, "entrar-internet", payload);
+    if (ok === false) malNegados++;
+  }
+  t("L5: entrar-internet malformado → todos cb(false)", malNegados === malformados.length, `${malNegados}/${malformados.length}`);
+  const gatilhoL5 = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
+    cookie: mestre, body: { name: "Loja Sinal L5" },
+  });
+  t("L5: gatilho pós-payloads malformados → 201", gatilhoL5.status === 201, String(gatilhoL5.status));
+  await dormir(600);
+  t("L5: socket com payloads malformados NÃO entrou em sala (zero eventos)",
+    evL5.length === 0, `eventos=${evL5.length}`);
+  sockL5.close();
+
   sec("resumo");
   console.log(`\n${pass} passaram, ${fail} falharam`);
   if (fail) process.exitCode = 1;

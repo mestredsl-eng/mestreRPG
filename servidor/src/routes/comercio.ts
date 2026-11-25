@@ -660,7 +660,24 @@ comercioPersonagemRouter.post("/vender", async (req, res) => {
     db.transaction((tx) => {
       const [item] = tx.select().from(inventoryEntries)
         .where(and(eq(inventoryEntries.id, b.data.inventoryEntryId), eq(inventoryEntries.characterId, personagem.id))).limit(1).all();
-      if (!item) throw new ErroComercio(404, "item_nao_encontrado");
+      if (!item) {
+        // L1 (#336/7156867952): a linha some quando a quantidade zera —
+        // o perdedor de uma corrida precisa distinguir "nunca existiu"
+        // (404) de "existia no início da venda e foi consumido por uma
+        // venda concluída" (409). O recibo vencedor grava
+        // items[].inventoryEntryId — consulta dentro da mesma tx.
+        const pedidos = tx.select({ items: shopOrders.items }).from(shopOrders)
+          .where(and(
+            eq(shopOrders.campaignId, campaignId),
+            eq(shopOrders.direction, "venda_para_loja"),
+            eq(shopOrders.status, "concluido"),
+            eq(shopOrders.buyerCharacterId, personagem.id),
+          )).all();
+        const consumido = pedidos.some((p) => Array.isArray(p.items)
+          && p.items.some((it) => (it as { inventoryEntryId?: unknown })?.inventoryEntryId === b.data.inventoryEntryId));
+        if (consumido) throw new ErroComercio(409, "item_indisponivel");
+        throw new ErroComercio(404, "item_nao_encontrado");
+      }
       // item equipado/vinculado a equipamento não pode ser vendido
       const dadosItem = (item.data ?? {}) as Record<string, unknown>;
       if (dadosItem.equipped === true) throw new ErroComercio(409, "item_equipado");
