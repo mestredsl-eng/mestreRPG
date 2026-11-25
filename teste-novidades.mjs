@@ -90,12 +90,13 @@ const sec = (n) => console.log("\n== " + n + " ==");
     `prevId=${snapshot1009.prevId} anterior=${snapshotAuto.id}`);
   t("snapshot 0035 preserva o mesmo esquema (migration só de dados)",
     JSON.stringify(semIdentidade(snapshot1009)) === JSON.stringify(semIdentidade(snapshotAuto)));
+  const snapshot37 = JSON.parse(readFileSync(join(meta, "0037_snapshot.json"), "utf8"));
   const snapshot1100 = JSON.parse(readFileSync(join(meta, "0038_snapshot.json"), "utf8"));
   t("snapshot 0038 encadeia em 0037 com UUID próprio",
-    snapshot1100.prevId === snapshot1009.id && snapshot1100.id !== snapshot1009.id && /^[0-9a-f-]{36}$/i.test(snapshot1100.id),
-    `prevId=${snapshot1100.prevId} anterior=${snapshot1009.id}`);
+    snapshot1100.prevId === snapshot37.id && snapshot1100.id !== snapshot37.id && /^[0-9a-f-]{36}$/i.test(snapshot1100.id),
+    `prevId=${snapshot1100.prevId} anterior=${snapshot37.id}`);
   t("snapshot 0038 preserva o mesmo esquema (migration só de dados)",
-    JSON.stringify(semIdentidade(snapshot1100)) === JSON.stringify(semIdentidade(snapshot1009)));
+    JSON.stringify(semIdentidade(snapshot1100)) === JSON.stringify(semIdentidade(snapshot37)));
 }
 
 // ---------- banco limpo com todas as migrations (cenário principal) ----------
