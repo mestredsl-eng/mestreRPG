@@ -5,7 +5,7 @@ Obrigado pelo interesse no Mestre RPG. Este documento explica como relatar probl
 ## Antes de começar
 
 1. Leia o [README](README.md) para conhecer a aplicação e o modo de operação.
-2. Consulte o guia de operação em \`docs/GUIA-OPERACAO.md\` quando a mudança envolver instalação, atualização, banco de dados ou backups.
+2. Consulte o guia de operação em `docs/GUIA-OPERACAO.md` quando a mudança envolver instalação, atualização, banco de dados ou backups.
 3. Procure Issues e Pull Requests existentes antes de abrir um novo registro.
 4. Para mudanças grandes, decisões de arquitetura, alterações de banco ou novas áreas funcionais, converse primeiro em uma Issue. Isso evita trabalho duplicado e decisões incompatíveis.
 
@@ -13,10 +13,10 @@ O software-fonte deste repositório é distribuído sob a licença [MIT](LICENSE
 
 ## Fluxo de trabalho
 
-- Trabalhe em uma branch própria; não faça commits diretamente em \`main\`.
-- Para contribuições comuns, use \`main\` como base.
+- Trabalhe em uma branch própria; não faça commits diretamente em `main`.
+- Para contribuições comuns, use `main` como base.
 - Se uma Pull Request depender de outra branch/PR, deixe essa dependência explícita na descrição e mantenha o destino correto. Não retargete PRs de outras pessoas.
-- Prefira nomes objetivos, por exemplo: \`docs/issue-123-guia\`, \`fix/issue-123-validacao\` ou \`feat/issue-123-funcionalidade\`.
+- Prefira nomes objetivos, por exemplo: `docs/issue-123-guia`, `fix/issue-123-validacao` ou `feat/issue-123-funcionalidade`.
 - Mantenha cada Pull Request focada em uma mudança revisável. Separe refatorações não relacionadas.
 - Não faça merge, publicação, criação de tag ou release em nome dos mantenedores.
 
@@ -48,15 +48,15 @@ O software-fonte deste repositório é distribuído sob a licença [MIT](LICENSE
 
 - Evite adicionar dependências quando a stack existente já resolve o problema.
 - Alterações em workflows, permissões do GitHub Actions, segredos, regras de proteção, configurações do repositório ou processos de publicação precisam de aprovação explícita dos mantenedores.
-- Não inclua tokens, senhas, cookies, chaves, arquivos \`.env\`, bancos de campanha, backups ou dados pessoais em commits.
+- Não inclua tokens, senhas, cookies, chaves, arquivos `.env`, bancos de campanha, backups ou dados pessoais em commits.
 
 ## Preparar e verificar a alteração
 
 Na raiz do repositório:
 
-1. Instale as dependências com \`npm ci\`.
-2. Execute \`npm run build\`.
-3. Rode os testes relevantes à área alterada, usando os scripts existentes em \`package.json\` e as instruções do workflow de CI.
+1. Instale as dependências com `npm ci`.
+2. Execute `npm run build`.
+3. Rode os testes relevantes à área alterada, usando os scripts existentes em `package.json` e as instruções do workflow de CI.
 4. Para mudanças de banco, inclua testes de migração/upgrade com dados representativos e verifique que os dados anteriores continuam íntegros.
 5. Para mudanças de interface, verifique desktop e mobile e execute as homologações aplicáveis.
 
