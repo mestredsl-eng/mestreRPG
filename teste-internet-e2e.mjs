@@ -113,6 +113,23 @@ try {
     db.close();
   }
 
+  // ---- Fixtures da auditoria UI (gaps restantes) ----
+  // Dispositivo FANTASMA: nome "Notebook" mas data sem regra/templateId
+  // canônico do Acervo — não pode contar como posse (só nome/ID fantasma).
+  const charFalsoDevice = c.novoPersonagem(j2.membershipId, "Device Falso E2E", { comp: 1 });
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,description,category,location,condition,weight,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), charFalsoDevice, "Notebook", 1, null, "equipamento", "mochila", "novo", 1.5,
+        JSON.stringify({ aquisicao: { origem: "fixture" } }), agora, agora);
+    // Usuário SEM membership na campanha — não pode alcançar vitrine/ações.
+    const hash = db.prepare("select password_hash from users where username='jogador_um'").get().password_hash;
+    db.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+      .run(crypto.randomUUID(), "sem_campanha", "Sem Campanha", hash, agora, agora);
+    db.close();
+  }
+
   // ---- Fixture comercial via API (o que a UI não cria sozinha) ----
   const lojaApi = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas`, {
     cookie: mestre, body: { name: "Loja E2E", category: "mercadoria", location: "Centro" },
@@ -174,6 +191,15 @@ try {
   await abrirModulo(pgJ2, "Internet");
   await page_await(pgJ2, "Acesso à Internet não liberado");
   t("gate negado visível (sem dispositivo)", await pgJ2.getByText("Nenhum dispositivo compatível").count() > 0);
+  // Dispositivo fantasma: item chamado "Notebook" sem referência canônica
+  // (regra/templateId do Acervo) NÃO pode contar como posse.
+  await pgJ2.locator("section.cartao", { has: pgJ2.getByRole("heading", { name: "Sem Device E2E" }) })
+    .getByRole("button", { name: "Voltar" }).click();
+  await abrirPersonagem(pgJ2, "Device Falso E2E");
+  await abrirModulo(pgJ2, "Internet");
+  await page_await(pgJ2, "Acesso à Internet não liberado");
+  t("dispositivo fantasma (só nome) não habilita gate",
+    await pgJ2.getByText("Nenhum dispositivo compatível").count() > 0);
 
   sec("Gestão mestre — criação de loja pela UI");
   await login(pgM, "mestre_teste", "senha-forte-123");
@@ -196,6 +222,21 @@ try {
   await irPersonagens(pgJ1);
   await abrirPersonagem(pgJ1, "Conectado E2E");
   await abrirModulo(pgJ1, "Internet");
+  // Fixture de isolamento: conta na "Loja do Zé" (criada pelo mestre,
+  // j1 NÃO é gestor dela) — não pode vazar na gestão da Loja E2E.
+  {
+    const lojas = await req(BASE, "GET", `/campaigns/${campId}/comercio/lojas?personagem=${charMestre}`, { cookie: mestre });
+    const lista = lojas.json?.lojas ?? lojas.json ?? [];
+    const ze = lista.find((l) => l.name === "Loja do Zé");
+    if (ze?.id) {
+      const contaZe = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${ze.id}/contas`, {
+        cookie: mestre, body: { type: "especie", name: "Caixa Secreto Zé", balanceReais: 77, papel: "caixa" },
+      });
+      t("conta de outra loja criada via API", contaZe.status === 201, String(contaZe.status));
+    } else {
+      t("conta de outra loja criada via API", false, "Loja do Zé não encontrada na listagem");
+    }
+  }
   await page_await(pgJ1, "Loja E2E");
   t("j1 vê a loja na lista", await pgJ1.getByText("Loja E2E").count() > 0);
   // Não-gestor negado: j1 é gestor só da "Loja E2E". A "Loja do Zé"
@@ -221,6 +262,9 @@ try {
   await pgJ1.getByRole("button", { name: "Voltar às lojas" }).click();
   await pgJ1.getByRole("button", { name: "Gerenciar loja" }).click();
   await page_await(pgJ1, "Gerenciar: Loja E2E");
+  // Isolamento: a gestão da Loja E2E não pode exibir conta da Loja do Zé.
+  t("gestão não vaza conta/caixa de outra loja",
+    await pgJ1.getByText("Caixa Secreto Zé").count() === 0);
   const cartaoRevenda = pgJ1.locator(".cartao.cartao-campanha", { hasText: "Revenda pendente de revisão" }).last();
   await cartaoRevenda.waitFor({ timeout: 10000 });
   t("gestão mostra revenda pendente de revisão", true);
@@ -284,6 +328,62 @@ try {
   await pgJ1.locator("section[aria-label='Venda para loja']").waitFor({ timeout: 10000 });
   t("atalho abre Internet aba Vender com item pré-selecionado",
     await pgJ1.locator("h4", { hasText: "Vender para loja: Espada de Treino" }).count() > 0);
+
+  sec("Revogação ao vivo — UI não mantém estado elegível obsoleto");
+  const ctxRev = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgRev = await ctxRev.newPage();
+  vigiar(pgRev, "rev");
+  await login(pgRev, "jogador_um", "senha-jogador-123");
+  await irPersonagens(pgRev);
+  await abrirPersonagem(pgRev, "Conectado E2E");
+  await abrirModulo(pgRev, "Internet");
+  await page_await(pgRev, "Loja E2E");
+  t("vitrine visível antes da revogação",
+    await pgRev.getByRole("button", { name: "Ver vitrine" }).count() > 0);
+  // Remove o dispositivo canônico via API — o evento patrimonio:atualizado
+  // (sala geral, emitido pelo próprio módulo Internet) deve derrubar o
+  // gate AO VIVO, sem reload manual.
+  const itemNotebook = comDb(BANCO, (db) =>
+    db.prepare("select id from inventory_entries where character_id=? and json_extract(data,'$.regra.key')='notebook'").get(charOk)?.id);
+  const delDev = await req(BASE, "DELETE", `/characters/${charOk}/inventario/${itemNotebook}`, { cookie: mestre });
+  t("dispositivo removido via API", delDev.status === 200, String(delDev.status));
+  await page_await(pgRev, "Nenhum dispositivo compatível", 25000);
+  t("gate cai ao vivo após perda do dispositivo (sem reload)", true);
+  // O cartão de negação não pode conter NENHUM botão de ação — a página
+  // tem "Comprar…" do Acervo legado, então o escopo é o cartão negado.
+  const cartaoNegado = pgRev.locator("section.cartao", { hasText: "Acesso à Internet não liberado" });
+  t("nenhuma ação de compra permanece habilitada",
+    await cartaoNegado.getByRole("button").count() === 0);
+  // Realtime: nova oferta NÃO pode chegar à sala do personagem revogado —
+  // o servidor revalida por entrega e expulsa o socket da sala Internet.
+  const ofertaPos = await req(BASE, "POST", `/campaigns/${campId}/comercio/lojas/${shopId}/ofertas`, {
+    cookie: j1.cookie, body: { name: "Oferta Pos-Queda E2E", priceCents: 100, stockQty: 1 },
+  });
+  t("oferta pós-queda criada via API", ofertaPos.status === 201, String(ofertaPos.status));
+  await pgRev.waitForTimeout(2500);
+  t("UI revogada não recebe nem mostra atualização de comércio",
+    await pgRev.getByText("Oferta Pos-Queda E2E").count() === 0
+    && await pgRev.getByText("Nenhum dispositivo compatível").count() > 0);
+  await ctxRev.close();
+  // Restaura o dispositivo do charOk — a seção mobile espera UI elegível.
+  {
+    const db = abrirDb(BANCO);
+    const agora = Date.now();
+    db.prepare("insert into inventory_entries (id,character_id,name,quantity,description,category,location,condition,weight,data,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), charOk, "Notebook", 1, null, "equipamento", "mochila", "novo", 1.5,
+        JSON.stringify({ regra: { kind: "item", key: "notebook" } }), agora, agora);
+    db.close();
+  }
+
+  sec("Sem membership — campanha inalcançável pela UI");
+  const ctxSem = await browser.newContext({ viewport: { width: 1366, height: 900 } });
+  const pgSem = await ctxSem.newPage();
+  vigiar(pgSem, "sem");
+  await login(pgSem, "sem_campanha", "senha-jogador-123");
+  await pgSem.waitForTimeout(1500);
+  t("campanha não listada para usuário sem membership",
+    await pgSem.getByText("Campanha Teste", { exact: true }).count() === 0);
+  await ctxSem.close();
 
   sec("Navegação mobile (390px)");
   await login(pgMov, "jogador_um", "senha-jogador-123");
