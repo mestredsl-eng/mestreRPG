@@ -55,7 +55,7 @@ body:
       description: Informe a versão exibida pela aplicação ou o SHA do commit, se souber.
       placeholder: "Ex.: 1.0.9"
     validations:
-      required: true
+      required: false
   - type: dropdown
     id: ambiente
     attributes:
