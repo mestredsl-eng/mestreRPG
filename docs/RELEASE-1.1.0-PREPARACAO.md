@@ -330,3 +330,22 @@ Esta fotografia substitui os estados anteriores quando houver divergência. A in
 4. **Candidata/release:** após integração backend → UI e os gates da versão, criar uma única candidata a partir da main, executar CI no SHA exato, revisar o diff contra v1.0.9 e então preparar tag/release. Não existe candidata final ainda.
 
 Nenhuma tag ou GitHub Release foi criada. A PR #328 foi a única mesclada nesta etapa; #329, #327 e #341 continuam Draft/open. Não declarar a 1.1.0 pronta para distribuição até fechar os gates acima.
+
+
+## Checkpoint final pós-#328 — 25/11/2026 (FILHO, ordem `7168616208`)
+
+### Sincronização e CI desta branch
+
+- HEAD: `62a05c1` (merge de `main@48aeb1e` pós-#328 + docs `2d2c8c6`), 0 commits atrás de main, diff exclusivo do documento.
+- CI run `45658087334` no SHA `62a05c1`: **SUCCESS** (Build e relatório, Servidor, Navegador e Auto-update Windows — todos completed/success).
+
+### Estado final das frentes (verificado no GitHub)
+
+- **#328 — fundação:** MERGEADA em main (`48aeb1e`). Regressão 1.0.9 versionada na CI.
+- **#329 — comércio/backend:** HEAD `320ee73` (base agora `main`, pós-retarget). Port B1–B7 para `teste-comercio-lojas.mjs` — **223 asserts** verificados localmente por Devin; o job Servidor da CI executa essa suíte. Na última consulta o CI do SHA `320ee73` estava em andamento (Build SUCCESS; Servidor/Navegador/Windows rodando) — não declarar fechado.
+- **#327 — UI:** HEAD `b966e33` (sync pós-#328). CI do HEAD reportada SUCCESS nos checks consultados. Re-homologação FILHO no worktree integrado `#329@320ee73 + #327@b966e33` (HEAD `1423f35`, merge limpo): `teste-internet-e2e.mjs` **41/41 PASS** e `teste-mesa-d10-e2e.mjs` **29/29 PASS** — ambas **locais**, não CI; o arquivo E2E de UI permanece sem wiring até autorização separada.
+- **#336 — matriz complementar:** HEAD `efa36d0` (propagado `320ee73`); revisão do port B1–B7 **aprovada, matriz completa**.
+
+### Prontidão
+
+A fundação 1.1.0 está em main; restam #329 (CI do HEAD em fechamento) e #327 (aguarda merge do backend + wiring do E2E). A 1.1.0 **ainda não é candidata de release** até #329 mergear, a CI final fechar e a ordem de merge ser executada. Nenhuma promoção, merge, workflow, tag ou release nesta atualização.
