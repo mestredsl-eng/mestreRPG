@@ -156,3 +156,13 @@ Contagens atuais contra `main@a1522a8`:
 - #341 (esta preparação): 1 à frente / 2 atrás; diff contém somente este documento e permanece Draft/mergeável.
 
 A fotografia de CI continua: #327 run `45556998995` SUCCESS 3/3; #329 run `45557022249` ainda IN_PROGRESS na última leitura, com Servidor e Windows SUCCESS e Playwright executando; #336 108/108 local declarado, sem CI da suíte.
+
+
+## Atualização de CI — 25/11/2026, após 03:21 BRT
+
+O run `45557022249` da PR #329 concluiu **3/3 SUCCESS** no SHA exato `698035fe0e11e3b04290c153781a8799d6a815fc`:
+- Servidor — typecheck, build e suítes sem navegador: SUCCESS.
+- Auto-update — Windows: SUCCESS.
+- Navegador — homologações Playwright: SUCCESS.
+
+O log do job Servidor da mesma execução registra `teste-comercio-lojas.mjs`: **127 passaram / 0 falharam**. Este resultado substitui o estado IN_PROGRESS anotado na fotografia anterior. Permanecem os gates de integração com a main atual, decisão sobre o diff existente de `.github/workflows/ci.yml`, E2E browser específico da nova UI e repetibilidade CI dos testes adicionais da #336.
