@@ -10,7 +10,7 @@ import { join, resolve } from "node:path";
 import {
   verificarAtualizacao, executarBoot, reverterAtualizacao,
   recuperarAtualizacaoPendente,
-  executarReal, normalizarUrlRepo, REPO_OFICIAL,
+  executarReal, normalizarUrlRepo, REPO_OFICIAL, avaliarStatusPorcelain,
 } from "./scripts/auto-update.mjs";
 import {
   gravarEstado as gravarEstadoExterno,
@@ -963,6 +963,74 @@ try {
       else process.env.MESTRE_AUTO_UPDATE = envAnterior;
     }
   }
+  sec("Issue #373 — exceção estrita p/ artefato runtime .db.trava");
+  {
+    // Unidade: parsing de porcelain -z e allowlist auditável.
+    t("status vazio → limpo", avaliarStatusPorcelain("").sujo === false);
+    t("trava isolada tolerada", (() => {
+      const a = avaliarStatusPorcelain("?? banco/mestre-rpg.db.trava\0");
+      return a.sujo === false && a.tolerados.length === 1;
+    })());
+    t("trava com espaço no nome tolerada", avaliarStatusPorcelain("?? banco/meu banco.db.trava\0").sujo === false);
+    t("qualquer *.db.trava em banco/ tolerado", avaliarStatusPorcelain("?? banco/outro.db.trava\0?? banco/terceiro.db.trava\0").sujo === false);
+    t("trava aninhada em subdir bloqueia", avaliarStatusPorcelain("?? banco/sub/x.db.trava\0").sujo === true);
+    t("trava fora de banco/ bloqueia", avaliarStatusPorcelain("?? dados/x.db.trava\0").sujo === true);
+    t("trava-journal transitório bloqueia", avaliarStatusPorcelain("?? banco/x.db.trava-journal\0").sujo === true);
+    t("wal/shm bloqueiam", avaliarStatusPorcelain("?? banco/x.db.wal\0?? banco/x.db-shm\0").sujo === true);
+    t(".bak-* não comprovado bloqueia", avaliarStatusPorcelain("?? banco/copia.bak-1\0").sujo === true);
+    t("outro untracked bloqueia", avaliarStatusPorcelain("?? notas.txt\0").sujo === true);
+    t("modificado rastreado bloqueia", avaliarStatusPorcelain(" M site/src/app.txt\0").sujo === true);
+    t("staged bloqueia", avaliarStatusPorcelain("M  package.json\0").sujo === true);
+    t("rename bloqueia", avaliarStatusPorcelain("R  banco/y.db.trava\0").sujo === true);
+
+    // E2E 1+2: clone "v1.1.0" real — .gitignore legado exato da tag
+    // (banco/*.db + -journal/-wal/-shm; NÃO cobre .trava/.bak-*) +
+    // arquivo de trava REAL em disco → o updater precisa alcançar o
+    // fetch e aplicar ff para o candidato que traz o novo .gitignore.
+    const GITIGNORE_LEGADO = "banco/*.db\nbanco/*.db-journal\nbanco/*.db-wal\nbanco/*.db-shm\n";
+    const c = criarRepo("c22-trava-legado");
+    c.commit(c.local, "gitignore legado <=1.1.0", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c.local);
+    mkdirSync(join(c.local, "banco"), { recursive: true });
+    const travaBytes = "MESTRE-RPG-TRAVA-INSTANCE-LOCK\n";
+    writeFileSync(join(c.local, "banco", "mestre-rpg.db.trava"), travaBytes);
+    publicar(c, "release com .gitignore novo", {
+      ".gitignore": "/banco/\n",
+      "site/src/app.txt": "v1.1.1\n",
+    });
+    const reg = [];
+    const r = await verificarAtualizacao({ ...opcoesRepo(c), executar: executarHibrido({ registro: reg }), log: silencioso });
+    t("clone legado + .trava real → ff p/ candidato", r.atualizou === true && r.motivo === "atualizado", JSON.stringify(r));
+    t("fetch executado apesar do .trava", reg.some((x) => x.includes(" fetch ")), reg.join(" | "));
+    t("arquivo .trava byte-idêntico após ff", readFileSync(join(c.local, "banco", "mestre-rpg.db.trava"), "utf8") === travaBytes);
+    t("novo .gitignore /banco/ ignora a trava", git(["check-ignore", "-q", "banco/mestre-rpg.db.trava"], c.local).status === 0);
+    t("trava não aparece mais no status pós-update", !String(git(["status", "--porcelain"], c.local).stdout).includes("trava"));
+
+    // E2E 3a: .trava + .bak-* não comprovado → segue fail-closed, sem fetch.
+    const c2 = criarRepo("c23-trava-mais-bak");
+    c2.commit(c2.local, "gitignore legado", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c2.local);
+    mkdirSync(join(c2.local, "banco"), { recursive: true });
+    writeFileSync(join(c2.local, "banco", "mestre-rpg.db.trava"), "x\n");
+    writeFileSync(join(c2.local, "banco", "copia.bak-2024"), "x\n");
+    publicar(c2);
+    const reg2 = [];
+    const r2 = await verificarAtualizacao({ ...opcoesRepo(c2), executar: executarHibrido({ registro: reg2 }), log: silencioso });
+    t(".bak-* não comprovado → arvore-suja", r2.motivo === "arvore-suja", r2.motivo);
+    t("sem fetch com sujeira real", !reg2.some((x) => x.includes(" fetch ")), reg2.join(" | "));
+
+    // E2E 3b: .trava + arquivo rastreado modificado → segue fail-closed.
+    const c3 = criarRepo("c24-trava-mais-modificado");
+    c3.commit(c3.local, "gitignore legado", { ".gitignore": GITIGNORE_LEGADO });
+    gitSetup(["push", "origin", "HEAD:main"], c3.local);
+    mkdirSync(join(c3.local, "banco"), { recursive: true });
+    writeFileSync(join(c3.local, "banco", "mestre-rpg.db.trava"), "x\n");
+    writeFileSync(join(c3.local, "site/src/app.txt"), "editado localmente\n");
+    publicar(c3);
+    const r3 = await verificarAtualizacao({ ...opcoesRepo(c3), executar: execReal, log: silencioso });
+    t("rastreado modificado + .trava → arvore-suja", r3.motivo === "arvore-suja", r3.motivo);
+  }
+
   sec("Hardening do spawnSync — saída npm acima de 1 MiB");
   {
     const bytes = 2 * 1024 * 1024;

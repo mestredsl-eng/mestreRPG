@@ -42,6 +42,45 @@ const GIT_ENV = {
   GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10",
 };
 
+// Issue #373 — exceção estrita e auditável para artefatos runtime que o
+// .gitignore legado (<= v1.1.0) não cobria. Sem ela, o arquivo de trava
+// de instância (`banco/*.db.trava`, criado por trava-instancia.ts como
+// caminhoBanco + ".trava" e persistente após o shutdown) deixa TODA
+// instalação real permanentemente "árvore suja": o updater nunca
+// alcança o novo `.gitignore` `/banco/` que resolveria o problema —
+// ovo-e-galinha comprovado pelo Técnico Geral na homologação Windows.
+//
+// Allowlist: SOMENTE caminhos `banco/<nome>.db.trava` — a forma exata
+// que trava-instancia.ts produz para qualquer MESTRE_BANCO *.db dentro
+// de banco/. O banco de trava usa journal SQLite default (sem WAL),
+// logo não existem -wal/-shm persistentes; um `-journal` eventual é
+// transitório e segue bloqueando (fail-closed).
+// Fora da lista, tudo continua bloqueando: `.bak-*` (o app não gera —
+// sem prova de nome/caminho), qualquer outro untracked, e TODO arquivo
+// rastreado modificado/staged/renomeado. Nada é apagado, movido ou
+// ignorado de verdade — apenas deixa de contar como sujeira.
+const RE_ARTEFATO_RUNTIME = /^banco\/[^/]+\.db\.trava$/;
+
+/**
+ * Interpreta `git status --porcelain -z` (registros NUL-separados,
+ * `XY <path>`). Retorna { sujo, tolerados }: sujo=true se houver
+ * qualquer entrada que não seja untracked allowlisted; tolerados lista
+ * os caminhos de runtime aceitos (para log auditável).
+ */
+export function avaliarStatusPorcelain(stdout) {
+  const tolerados = [];
+  let sujo = false;
+  for (const reg of String(stdout ?? "").split("\0")) {
+    if (reg.length === 0) continue;
+    const xy = reg.slice(0, 2);
+    const caminho = reg.slice(3);
+    if (xy !== "??") { sujo = true; break; }
+    if (RE_ARTEFATO_RUNTIME.test(caminho)) tolerados.push(caminho);
+    else { sujo = true; break; }
+  }
+  return { sujo, tolerados };
+}
+
 /** Execucao real de comandos. Injetavel nos testes. */
 export function executarReal(cmd, args, { cwd, env, timeoutMs } = {}) {
   // O updater não herda variáveis GIT_* do processo pai: GIT_DIR,
@@ -170,9 +209,13 @@ export async function verificarAtualizacao(opts = {}) {
 
   // 6. arvore limpa — qualquer alteracao (rastreada ou nao) aborta so a
   //    atualizacao; proibido stash/clean/reset preventivo.
-  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"]);
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"]);
   if (status.code !== 0) return pular("falha-status", { repoDir, branch });
-  if (String(status.stdout).trim() !== "") return pular("arvore-suja", { repoDir, branch });
+  const arvore = avaliarStatusPorcelain(status.stdout);
+  if (arvore.sujo) return pular("arvore-suja", { repoDir, branch });
+  if (arvore.tolerados.length) {
+    log(`[auto-update] Artefatos runtime tolerados na guarda de árvore: ${arvore.tolerados.join(", ")}`);
+  }
 
   // 7. fetch nao interativo, com timeout — rede/auth/timeout nunca bloqueiam
   const f = git(["fetch", "origin"], tFetch);
@@ -431,8 +474,8 @@ async function executarRollback(estado, opts = {}) {
     }
   }
 
-  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"], repoDir);
-  if (status.code !== 0 || String(status.stdout).trim() !== "") {
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"], repoDir);
+  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout).sujo) {
     return { ok: false, motivo: "arvore-suja-rollback-bloqueado" };
   }
   const marcar = (fase) => {
@@ -581,8 +624,8 @@ export async function recuperarAtualizacaoPendente(opts = {}) {
   if (branchAtual.code !== 0 || String(branchAtual.stdout).trim() !== estado.branch) {
     return { ok: false, motivo: "branch-alterada-durante-atualizacao" };
   }
-  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "--untracked-files=all"], repoDir);
-  if (status.code !== 0 || String(status.stdout).trim() !== "") {
+  const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"], repoDir);
+  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout).sujo) {
     return { ok: false, motivo: "arvore-suja-recuperacao-bloqueada" };
   }
   const head = String(git(["rev-parse", "HEAD"], repoDir).stdout).trim();
