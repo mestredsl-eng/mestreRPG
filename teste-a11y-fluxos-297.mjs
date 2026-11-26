@@ -216,6 +216,79 @@ async function checarTela(page, rotulo) {
   });
 }
 
+// ---------- #132 — busca de Arquivos: nome, contraste e foco medidos ----------
+// O achado #297 media placeholder ~3,9:1 e borda ~1,3:1. Aqui medimos o
+// DOM renderizado (computed styles) e calculamos a razão WCAG — nada de
+// estimativa. Placeholder exige 4,5:1 (texto); borda e indicador de foco
+// exigem 3:1 contra as cores adjacentes (SC 1.4.11).
+const _lum = (rgb) => {
+  const [r, g, b] = rgb.map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+const _ratio = (a, b) => {
+  const l1 = _lum(a), l2 = _lum(b);
+  return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+};
+const _rgb = (css) => {
+  const m = String(css).match(/[\d.]+/g);
+  return m && m.length >= 3 ? m.slice(0, 3).map(Number) : null;
+};
+
+async function checarBuscaArquivos(page, rotulo) {
+  const busca = page.locator('input[aria-label="Pesquisar arquivos"]').first();
+  const n = await busca.count();
+  t(`${rotulo}: busca de arquivos com nome acessível persistente`, n === 1, `encontrados=${n}`);
+  if (n !== 1) return;
+  const m = await busca.evaluate((el) => {
+    const cs = getComputedStyle(el);
+    const ph = getComputedStyle(el, "::placeholder");
+    el.focus();
+    const f = getComputedStyle(el);
+    return {
+      phColor: ph.color,
+      bg: cs.backgroundColor,
+      borda: cs.borderTopColor,
+      bordaW: parseFloat(cs.borderTopWidth),
+      focoEstilo: `${f.outlineStyle} ${f.outlineWidth} ${f.outlineColor}`,
+    };
+  });
+  const bg = _rgb(m.bg), ph = _rgb(m.phColor), borda = _rgb(m.borda);
+  t(`${rotulo}: placeholder ≥4,5:1`, !!(ph && bg) && _ratio(ph, bg) >= 4.5,
+    ph && bg ? `ratio=${_ratio(ph, bg).toFixed(2)}:1 (${m.phColor} sobre ${m.bg})` : `ph=${m.phColor} bg=${m.bg}`);
+  t(`${rotulo}: borda do controle ≥3:1`, !!(borda && bg) && m.bordaW >= 1 && _ratio(borda, bg) >= 3,
+    borda && bg ? `ratio=${_ratio(borda, bg).toFixed(2)}:1 (${m.borda} sobre ${m.bg})` : `borda=${m.borda} bg=${m.bg}`);
+  const fm = m.focoEstilo.match(/(\S+) (\S+) (.+)/);
+  const focoCor = fm ? _rgb(fm[3]) : null;
+  t(`${rotulo}: foco visível (outline ≥2px, ≥3:1)`,
+    !!(fm && fm[1] === "solid" && parseFloat(fm[2]) >= 2 && focoCor && bg && _ratio(focoCor, bg) >= 3),
+    m.focoEstilo);
+
+  // Temas de destaque (#132): a borda/foco usam --horror-vinho-claro, que
+  // cada paleta redefine. Medimos a razão real nas 4 variantes — a troca
+  // do token não pode derrubar a identificação do controle.
+  const TEMAS = [
+    ["vinho", "#b85c69"], ["ambar", "#e3c98f"],
+    ["violeta", "#b9a4d6"], ["cinza-frio", "#c3c9d4"],
+  ];
+  for (const [tema, claro] of TEMAS) {
+    const mm = await busca.evaluate((el, cor) => {
+      document.documentElement.style.setProperty("--horror-vinho-claro", cor);
+      const cs = getComputedStyle(el);
+      el.focus();
+      const f = getComputedStyle(el);
+      return { borda: cs.borderTopColor, foco: f.outlineColor };
+    }, claro);
+    const bordaT = _rgb(mm.borda), focoT = _rgb(mm.foco);
+    t(`${rotulo}: tema ${tema} — borda ≥3:1 e foco ≥3:1`,
+      !!(bordaT && focoT && bg && _ratio(bordaT, bg) >= 3 && _ratio(focoT, bg) >= 3),
+      `borda=${mm.borda} foco=${mm.foco} bg=${m.bg}`);
+  }
+  await busca.evaluate(() => document.documentElement.style.removeProperty("--horror-vinho-claro"));
+}
+
 let browser, proc;
 try {
   await prepararBanco(BANCO);
@@ -298,6 +371,7 @@ try {
       await aba(page, nomeAba);
       await page.waitForTimeout(400);
       await checarTela(page, `aba ${nomeAba}`);
+      if (nomeAba === "Arquivos") await checarBuscaArquivos(page, `viewport ${vp.nome}`);
     }
 
     // Ficha: abrir personagem → detalhe (leitura) + patrimônio (regressão)

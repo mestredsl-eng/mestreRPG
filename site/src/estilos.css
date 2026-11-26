@@ -202,6 +202,23 @@ input:focus {
   border-color: #3b5bdb;
 }
 
+/* #132 — busca de Arquivos: o placeholder default do navegador media
+   ~3,9:1 sobre o fundo do input e a borda ~1,3:1 (SC 1.4.1/1.4.11).
+   --texto-fraco (#8b93a7) ≈ 5,9:1; --horror-*-claro ≥ 3,8:1 em todas as
+   paletas de destaque (a variante clara de cada tema é mais clara que
+   o vinho base). */
+.campo-pesquisa::placeholder {
+  color: var(--texto-fraco, #8b93a7);
+  opacity: 1;
+}
+.campo-pesquisa {
+  border-color: var(--horror-vinho-claro, #b85c69);
+}
+.campo-pesquisa:focus {
+  outline: 2px solid var(--horror-vinho-claro, #b85c69);
+  outline-offset: 1px;
+}
+
 label.checkbox {
   flex-direction: row;
   align-items: center;
