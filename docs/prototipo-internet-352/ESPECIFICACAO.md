@@ -2,7 +2,7 @@
 
 **Status**: proposta para revisão — implementação só após contratos F1/F2/F3 aprovados.
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
-**Referência de contrato**: proposta F1 v3 (#349, comentários `7175640361`/`7176552898`) — arestas de contato dirigidas, cursor de leitura em `internet_participantes`, gate `contaAutorizadaPara` exigindo membership ativa + papel mestre/jogador (espectador fora — hotfix #356/#357).
+**Referência de contrato**: `docs/ISSUE-349-ARQUITETURA-CONTRATO.md` @ `8a9f012` (PR #360, doc v3 consolidado; origem: proposta F1 v3 #349, comentários `7175640361`/`7176552898`) — arestas de contato dirigidas, cursor de leitura em `internet_participantes`, gate `contaAutorizadaPara` exigindo membership ativa + papel mestre/jogador (espectador fora — hotfix #356/#357).
 
 ## 1. Mapa de telas
 
@@ -24,7 +24,7 @@ Abas do módulo Internet passam de 3 (Lojas/Vender/Histórico) para incluir **Me
 |--------|-----------|
 | Loading | Esqueleto + `aria-busy`, sem spinner bloqueante |
 | Vazio | CTA diegético ("troque @handle…"), nunca jargão de sistema |
-| Erro de GET | Mensagem honesta + "Tentar novamente"; conteúdo anterior preservado; 403 `internet_indisponivel` volta ao gate com motivo real |
+| Erro de GET | Mensagem honesta + "Tentar novamente"; conteúdo anterior preservado; 403 `internet_indisponivel` (código já existente do gate de dispositivo em `site/src/paginas/Internet.tsx` — reúso, não código novo do contrato) volta ao gate com motivo real |
 | Sem dispositivo | Gate existente — cartão negado com motivo; aba Mensagens nem renderiza |
 | Sem acesso à Internet | Segundo motivo do gate (dispositivo ok, sem conectividade/perícia) |
 | Reconectando | Banner discreto + composer desabilitado; histórico legível; resync por invalidação no `connect` |
