@@ -496,11 +496,11 @@ try {
   });
   t("convidado não envia antes de aceitar", msgConvidado?.ok === false, JSON.stringify(msgConvidado));
 
-  // O endpoint responder usa :pid = id da LINHA internet_participantes.
-  // Obtém via banco (fixture de teste, não via API pública).
-  const pid = abrirDb(BANCO)
-    .prepare("select id from internet_participantes where conversa_id=? and conta_id=?").get(grupoId, contaJ2).id;
-  t("linha de participante existe", !!pid);
+  // O endpoint responder usa :pid = id da LINHA internet_participantes,
+  // exposto no detalhe da conversa (lacuna F4 #2 — sem ele o convite de
+  // grupo era inalcançável via API pública).
+  const pid = detGrp.json?.conversa?.participantes?.find((p) => p.conta?.id === contaJ2)?.id;
+  t("linha de participante expõe id via API", !!pid);
   const resp = await API("POST", `/conversations/${grupoId}/participants/${pid}/responder`, j2.cookie, { aceitar: true });
   t("convidado aceita → ativo", resp.status === 200 && resp.json?.status === "ativo", JSON.stringify(resp.json));
 

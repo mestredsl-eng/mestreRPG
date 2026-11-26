@@ -320,6 +320,8 @@ function conversaPublica(
   return {
     id: c.id, tipo: c.tipo, nome: c.nome, status: c.status,
     participantes: partes.map((p) => ({
+      id: p.id, // id da linha internet_participantes — necessário para
+      // POST /participants/:pid/responder (aceite de convite de grupo)
       contaId: p.contaId,
       conta: contas.get(p.contaId) ?? null,
       papel: p.papel, status: p.status,
