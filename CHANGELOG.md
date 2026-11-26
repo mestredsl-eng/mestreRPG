@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-11-26
+
+### Novidades
+
+- **Contas diegéticas na Internet:** cada personagem elegível possui uma conta própria com identidade, contatos e lista de conversas, isolada por campanha e por dispositivo.
+- **Conversas diretas e em grupo:** mensagens em tempo real por Socket.IO com fan-out individual por destinatário, cursor estável de leitura e histórico persistido; grupos com convite, aceite e saída atômicos.
+- **Contatos e bloqueio par-a-par:** pedidos de contato com aceite, bloqueio bilateral que filtra o envio e a entrega por par — sem interromper a comunicação com não-bloqueados em grupos.
+- **Transferência de personagem (P7):** fluxo com confirmação e auditoria para transferir a titularidade de um personagem entre contas.
+- **Interface da Internet (F4):** painel de conversas, contatos, convites e bloqueios integrado à Mesa, com estados de conexão, reconexão e isolamento por campanha.
+
+### Integridade e segurança
+
+- **Gate dedicado fail-closed:** operações da Internet exigem conta autorizada por personagem/campanha/dispositivo; espectadores e contas revogadas são negados, com revalidação por destinatário na entrega em tempo real.
+- **Idempotência e concorrência:** envios deduplicados por `requestId`+`payload_hash` antes do rate-limit; corridas de aceite/recusa, saída de grupo e convite duplo resolvidas atomicamente (migrações 0039–0041).
+- **Privacidade:** isolamento físico entre Internet e OOC verificado (41/41), backup/restore preserva históricos e exportações não incluem dados da Internet.
+
+### Validação
+
+- Suíte backend dedicada 140+ asserts; E2E `teste-internet-rede-e2e.mjs` homologado em três execuções independentes (124/124) sobre o par backend+frontend final.
+- Homologação F6: Internet↔OOC 41/41, mobile 390/768px 15/15, backup→restore+P9 8/8, P7 57/57, restore de migração 236/236.
+- Restore Windows real comprovado via `POST /backups/:id/restaurar` com flag/journal.
+
 ## [1.1.0] - 2026-11-25
 
 ### Novidades
