@@ -74,9 +74,10 @@ Todos reutilizam `EstadoCarregando` (aria-busy), `EstadoVazio` (CTA diegético),
 | Offline/reconectando | Banner "Reconectando…" (padrão já existente); leitura liberada, ações de publicação desabilitadas |
 | Sem dispositivo | Gate existente — Explorar nem renderiza |
 | Sem conta | Vazio diegético (mesmo padrão de Mensagens) |
-| Conteúdo removido/expirado | Tela dedicada honesta: "este anúncio não está mais disponível" + data de expiração quando houver; **nunca** 404 cru nem conteúdo residual |
+| Conteúdo removido/expirado | Tela dedicada honesta: "este anúncio não está mais disponível" + data de expiração quando houver; **nunca** 404 cru nem conteúdo residual. **Distinção autor×leitor** (threat model V-07/D-E): o autor vê que seu conteúdo foi retirado **com motivo**; terceiros veem apenas indisponível |
 | Sem permissão para publicar | Ação visível mas desabilitada **com motivo** ("publicar exige autorização do mestre" — se a regra exigir) |
-| Pesquisa sem resultado | Estado vazio específico + sugestão de ampliar escopo |
+| Pesquisa sem resultado | Estado vazio específico + sugestão de ampliar escopo. Resultado nunca vaza existência de conteúdo oculto (anti-enumeração V-02: "não existe" e "existe mas oculto" respondem igual) |
+| Perdeu o dispositivo (gate revogado) | **Ler** conteúdo já publicado segue permitido (publicação é fato consumado — D-B do threat model); **editar/publicar** fica bloqueado pelo gate vigente, com motivo |
 
 ## 4. Matriz tela × estado × papel × ação
 
@@ -142,6 +143,20 @@ a ação desabilitada com motivo quando não permitida.
 | D8 | Pesquisa indexa o quê — tudo que o personagem pode ver, ou só conteúdo "público"? | Define escopo default e honestidade dos resultados |
 | D9 | Sites têm navegação própria (menu do site) ou são páginas soltas? | Define W3 |
 | D10 | Personagem sem conta Internet acessa a camada pública? (hoje conta é pré-requisito do módulo) | Define se Explorar fica atrás do mesmo gate de conta |
+| D11 | Leitura pública **sem login** existe? (ator anônimo — threat model D-A) | Se sim, é superfície fora do módulo do personagem; esta spec assume sempre autenticado |
+| D12 | `displayName` livre pode conter dado pessoal real — indexar na busca global só com opt-in? (V-08) | Define o que W2 indexa de perfis e o aviso no formulário de perfil |
+| D13 | Autor vê o próprio conteúdo retirado com motivo? (V-07/D-E — recomendo sim) | Define o estado "removido" do ponto de vista do autor em W7/W9 |
+
+## 6.1 Alinhamento com o threat model #367 (checkpoint INTERMEDIÁRIO)
+
+Restrições de segurança que a UX deve **refletir**, não contornar:
+
+- **Anti-enumeração (V-01/V-02)**: id/termo de conteúdo oculto responde igual a inexistente — a UI nunca mostra "existe mas você não pode ver".
+- **Visibilidade atômica (V-03)**: retirado/expirado some de lista, busca e perfil no mesmo instante — estados "em atualização" transitórios não devem prometer conteúdo.
+- **Autoria server-side (V-05)**: o formulário de publicar **não** tem campo de "publicar como" — autoria é sempre a conta autenticada; se o contrato um dia permitir agirem por terceiros, a UX precisará de seletor explícito.
+- **Conteúdo público × gate (V-04/D-B)**: publicação já feita sobrevive à perda do dispositivo; edição/rascunho exige gate vigente — a UI separa "ler" de "editar" em affordances distintas.
+- **Perfil mínimo (V-08)**: W9 exibe handle + displayName + publicações — nunca userId, e-mail, dados OOC ou campos de ficha. `displayName` livre pode conter dado pessoal → aviso no formulário (depende de D12).
+- **Links externos (V-07/D-D)**: se permitidos, sempre `noopener noreferrer` e nunca `javascript:`/`data:` — a prévia do W8 deve renderizar links como texto até a decisão.
 
 ## 7. O que NÃO está proposto
 
