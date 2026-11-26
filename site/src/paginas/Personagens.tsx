@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type MetadadoPoder, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
-import { registrarSyncOk } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
@@ -48,47 +48,50 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
 
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const [{ personagens }, { modelos }] = await Promise.all([
         api.listarPersonagens(campaignId, verArquivados),
         api.listarModelos(campaignId),
       ]);
+      if (g !== geracao.current) return;
       setPersonagens(personagens);
       setModelos(modelos);
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "personagens");
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar");
+      if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar");
     }
     // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
     try {
       const { elementos, metadadosPoderes: poderes } = await api.obterVinculaveis(campaignId);
+      if (g !== geracao.current) return;
       setBiblioteca(elementos);
       setMetadadosPoderes(poderes ?? []);
     } catch {
-      setBiblioteca(null);
-      setMetadadosPoderes([]);
+      if (g === geracao.current) {
+        setBiblioteca(null);
+        setMetadadosPoderes([]);
+      }
     }
   }, [campaignId, verArquivados]);
 
+  useEffect(() => { void carregar(); }, [carregar]);
+
+  // Invalidação por evento + resync na reconexão via hook único.
+  useSincronizacaoCampanha(
+    ["personagens:atualizados", "fichas:atualizadas", "regras:atualizadas"],
+    // Issue #67: regras:atualizadas invalida a biblioteca de vinculáveis.
+    () => void carregar(),
+  );
+
   useEffect(() => {
-    void carregar();
     const socket = getSocket();
     socket.emit("entrar-campanha", campaignId, () => undefined);
-    const aoMudar = () => void carregar();
-    socket.on("personagens:atualizados", aoMudar);
-    socket.on("fichas:atualizadas", aoMudar);
-    // Issue #67: elementos de regra alterados invalidam a biblioteca de
-    // vinculáveis usada pelos campos da ficha.
-    socket.on("regras:atualizadas", aoMudar);
-    return () => {
-      socket.off("personagens:atualizados", aoMudar);
-      socket.off("fichas:atualizadas", aoMudar);
-      socket.off("regras:atualizadas", aoMudar);
-      socket.emit("sair-campanha", campaignId);
-    };
-  }, [carregar, campaignId]);
+    return () => { socket.emit("sair-campanha", campaignId); };
+  }, [campaignId]);
 
   const abrir = async (id: string) => {
     const epoch = ++selecaoEpochRef.current;

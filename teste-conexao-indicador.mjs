@@ -1,7 +1,8 @@
-// Issue #285 / PR #359 — E2E do indicador de conexão + última
+// Issue #285 / PR #372 — E2E do indicador de conexão + última
 // sincronização no shell da campanha. Prova: o horário só avança após
 // GET autoritativo concluir; falha de GET não avança; desconexão marca
-// "sincronização interrompida"; reconexão + navegação resincronizam.
+// "sincronização interrompida"; reconexão resincroniza telas já abertas;
+// a marca é por tela ativa (sync de uma aba não vaza para outra).
 import { chromium } from "playwright";
 import { join } from "node:path";
 import {
@@ -141,6 +142,62 @@ try {
   );
   const marca3 = await textoIndicador(page);
   t("marca atualizada após resync do Diário", /Atualizado às/.test(marca3), marca3);
+
+  sec("Reconexão com Personagens aberto → resync automático");
+  await page.locator(".abas button", { hasText: "Personagens" }).first().click();
+  // espera a montagem terminar (GET characters + sheet-templates + vinculaveis)
+  await page.waitForResponse(
+    (r) => r.url().includes(`/api/campaigns/${c.campId}/characters`) && r.request().method() === "GET",
+    { timeout: 15000 },
+  ).catch(() => null);
+  await page.waitForTimeout(800);
+  // waiters registrados ANTES do reconnect — provam GET automático sem reload manual
+  const getPersonagens = page.waitForRequest(
+    (r) => r.url().includes(`/api/campaigns/${c.campId}/characters`) && r.method() === "GET",
+    { timeout: 25000 },
+  ).catch(() => null);
+  const getShell = page.waitForRequest(
+    (r) => /\/api\/campaigns\/[^/?]+$/.test(new URL(r.url()).pathname) && r.method() === "GET",
+    { timeout: 25000 },
+  ).catch(() => null);
+  await page.evaluate(() => window.__mesaSocket?.disconnect());
+  await page.waitForFunction(
+    () => /interrompida|Sem conexão/.test(document.querySelector(".conexao")?.textContent ?? ""),
+    { timeout: 10000 },
+  );
+  await page.evaluate(() => window.__mesaSocket?.connect());
+  await page.waitForFunction(
+    () => /Conectado/.test(document.querySelector(".conexao")?.textContent ?? "") && !/Reconectando/.test(document.querySelector(".conexao")?.textContent ?? ""),
+    { timeout: 15000 },
+  );
+  t("GET de Personagens automático pós-reconexão (tela já aberta)", !!(await getPersonagens));
+  t("GET do shell automático pós-reconexão", !!(await getShell));
+
+  sec("Troca de abas — marca é por tela ativa");
+  await page.locator(".abas button", { hasText: "Informações" }).first().click();
+  await page.waitForTimeout(500);
+  const marcaInfo = await textoIndicador(page);
+  t("marca do shell visível em Informações", /Atualizado às \d{2}:\d{2}/.test(marcaInfo), marcaInfo);
+  const minutoMarca = Number(marcaInfo.match(/(\d{2}):(\d{2})/)?.[2]);
+  // vira o minuto para que uma sync do Diário tenha marca distinguível
+  t("relógio cruzou fronteira de minuto", await aguardarViradaMinuto(minutoMarca), `minutoMarca=${minutoMarca}`);
+  // Diário monta e sincroniza na aba dele; depois o mestre cria anotação
+  // → anotacoes:atualizadas → Diario recarrega e carimba "diario".
+  await page.locator(".abas button", { hasText: "Diário" }).first().click();
+  await page.waitForTimeout(1000);
+  const nota = await req(BASE, "POST", `/campaigns/${c.campId}/anotacoes`, {
+    cookie: c.cookieMestre,
+    body: { title: "sync-aba", content: "x", kind: "diario", visibility: "privada", important: false },
+  });
+  t("POST anotação aceita (dispara invalidação)", nota.status === 200 || nota.status === 201, `status=${nota.status}`);
+  await page.waitForTimeout(1200);
+  // Volta a Informações: o shell NÃO recarregou (troca de aba não emite
+  // GET), então a marca exibida deve ser a do shell — a sync do Diário
+  // não pode vazar para a aba Informações.
+  await page.locator(".abas button", { hasText: "Informações" }).first().click();
+  await page.waitForTimeout(500);
+  const marcaInfoDepois = await textoIndicador(page);
+  t("sync do Diário não altera a marca de Informações", marcaInfoDepois === marcaInfo, `${marcaInfo} → ${marcaInfoDepois}`);
 
   sec("Mobile 390px");
   const ctxM = await browser.newContext({ viewport: { width: 390, height: 844 } });

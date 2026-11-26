@@ -52,7 +52,7 @@ export default function Diario({ campaignId, campanha }: { campaignId: string; c
       if (g !== geracao.current) return;
       setAnotacoes(lista);
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "diario");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId, aba]);
 

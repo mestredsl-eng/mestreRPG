@@ -88,7 +88,7 @@ export default function Regras({ campaignId }: { campaignId: string }) {
       if (g !== geracao.current) return;
       setRegras(r);
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "regras");
     } catch (e) {
       if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar regras");
     }

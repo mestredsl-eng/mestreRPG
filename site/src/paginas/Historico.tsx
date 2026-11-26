@@ -44,7 +44,7 @@ export default function Historico({ campaignId, campanha, aoAtualizar }: { campa
         setEstado(est); setRestauracoes(rests.restauracoes);
       }
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "historico");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId, souMestre]);
 

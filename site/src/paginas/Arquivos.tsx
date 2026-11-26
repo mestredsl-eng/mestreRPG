@@ -55,7 +55,7 @@ export default function Arquivos({ campaignId, campanha }: { campaignId: string;
       setArquivos(a.arquivos); setPastas(p.pastas);
       setJogadoresEnviam(a.config.jogadoresEnviam);
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "arquivos");
     } catch (e) { if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar"); }
   }, [campaignId]);
   useEffect(() => { void carregar(); }, [carregar]);

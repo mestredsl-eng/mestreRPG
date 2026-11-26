@@ -69,28 +69,32 @@ export function useSincronizacaoCampanha(eventos: readonly string[], aoInvalidar
 }
 
 /**
- * Issue #285 — marca da última sincronização concluída por campanha.
+ * Issue #285 — marca da última sincronização concluída por campanha+tela.
  *
- * As páginas chamam `registrarSyncOk(campaignId)` somente depois que a
- * busca autoritativa (GET) termina com sucesso — nunca no recebimento
- * do evento nem no `socket.connected`. O store é por campanha: uma
- * resposta tardia da campanha A não altera o indicador da campanha B.
+ * As páginas chamam `registrarSyncOk(campaignId, tela)` somente depois que
+ * a busca autoritativa (GET) termina com sucesso — nunca no recebimento
+ * do evento nem no `socket.connected`. O store é por campanha e por tela:
+ * uma resposta tardia da campanha A não altera o indicador da campanha B,
+ * e a sincronização de uma aba não é atribuída a outra. `tela` é o
+ * identificador da aba do shell ("info", "diario", "personagens", ...);
+ * chamadas sem `tela` caem no bucket compartilhado da campanha.
  */
 const marcasSync = new Map<string, number>();
 const ouvintesSync = new Set<() => void>();
+const chaveSync = (campaignId: string, tela: string) => `${campaignId}\n${tela}`;
 
-export function registrarSyncOk(campaignId: string) {
-  marcasSync.set(campaignId, Date.now());
+export function registrarSyncOk(campaignId: string, tela = "") {
+  marcasSync.set(chaveSync(campaignId, tela), Date.now());
   ouvintesSync.forEach((o) => o());
 }
 
-export function useUltimaSync(campaignId: string): number | null {
+export function useUltimaSync(campaignId: string, tela = ""): number | null {
   return useSyncExternalStore(
     (cb) => {
       ouvintesSync.add(cb);
       return () => ouvintesSync.delete(cb);
     },
-    () => marcasSync.get(campaignId) ?? null,
+    () => marcasSync.get(chaveSync(campaignId, tela)) ?? null,
     () => null
   );
 }

@@ -54,7 +54,7 @@ export default function ModelosFicha({ campaignId }: { campaignId: string }) {
       if (g !== geracao.current) return;
       setModelos(modelos);
       setErro(null);
-      registrarSyncOk(campaignId);
+      registrarSyncOk(campaignId, "fichas");
       try {
         const { kinds, elementos } = await api.obterVinculaveis(campaignId);
         if (g !== geracao.current) return;

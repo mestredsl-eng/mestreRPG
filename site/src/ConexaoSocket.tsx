@@ -57,16 +57,18 @@ function rotuloHora(ts: number): string {
  * Com `campaignId`, acrescenta a hora da última sincronização concluída
  * (Issue #285): o horário só avança após um GET autoritativo terminar
  * com sucesso — não no recebimento de evento nem no socket.connected.
+ * `tela` identifica a aba cuja marca deve ser exibida (semântica por
+ * tela ativa — a sincronização de outra aba não altera este horário).
  */
-export function IndicadorConexao({ campaignId }: { campaignId?: string }) {
+export function IndicadorConexao({ campaignId, tela }: { campaignId?: string; tela?: string }) {
   const estado = useEstadoConexao();
-  const ultima = useUltimaSync(campaignId ?? "");
+  const ultima = useUltimaSync(campaignId ?? "", tela ?? "");
 
   let texto = ROTULO[estado];
   let detalhe: string | null = null;
   if (estado === "conectado" && ultima !== null) {
     texto = `${ROTULO.conectado} · Atualizado às ${rotuloHora(ultima)}`;
-    detalhe = "Última atualização de dados concluída com sucesso";
+    detalhe = tela ? "Última sincronização desta tela concluída com sucesso" : "Última atualização de dados concluída com sucesso";
   } else if (estado === "desconectado") {
     if (campaignId) texto = `${ROTULO.desconectado} · sincronização interrompida`;
     detalhe = "Sincronização interrompida — os dados exibidos podem estar desatualizados";

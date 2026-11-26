@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { IndicadorConexao } from "../ConexaoSocket";
-import { registrarSyncOk } from "../useSincronizacao";
+import { useSincronizacaoCampanha, registrarSyncOk } from "../useSincronizacao";
 import { statusLabel } from "./Campanhas";
 import { ModalConfirmar } from "../Modal";
 import ModelosFicha from "./ModelosFicha";
@@ -24,6 +24,10 @@ const STATUS_OPCOES = [
 const PAPEL_LABEL: Record<string, string> = { mestre: "Mestre", jogador: "Jogador", espectador: "Espectador" };
 type Aba = "info" | "mesa" | "personagens" | "diario" | "historico" | "arquivos" | "fichas" | "regras" | "participantes" | "convites";
 
+// Abas servidas pelo GET do shell (campanha+membros+convites). A aba Mesa
+// tem ciclo próprio e não recebe marca do shell.
+const TELAS_SHELL: readonly string[] = ["info", "participantes", "convites"];
+
 export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () => void }) {
   const [campanha, setCampanha] = useState<CampanhaResumo | null>(null);
   const [membros, setMembros] = useState<Membro[]>([]);
@@ -44,9 +48,12 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   // para espectador): a aba e a página só existem para quem pode ler.
   const vePersonagens = campanha?.meuPapel !== "espectador";
 
+  const geracao = useRef(0);
   const carregar = useCallback(async () => {
+    const g = ++geracao.current;
     try {
       const { campanha } = await api.obterCampanha(id);
+      if (g !== geracao.current) return;
       setCampanha(campanha);
       setForm({
         name: campanha.name,
@@ -56,20 +63,28 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
       });
       if (campanha.meuPapel === "mestre") {
         const [{ membros }, { convites }] = await Promise.all([api.listarMembros(id), api.listarConvites(id)]);
+        if (g !== geracao.current) return;
         setMembros(membros);
         setConvites(convites);
       } else {
         const { membros } = await api.listarMembros(id);
+        if (g !== geracao.current) return;
         setMembros(membros);
       }
       setErro(null);
       // Issue #285: a marca de sincronização só avança após o GET
-      // autoritativo da campanha terminar com sucesso.
-      registrarSyncOk(id);
+      // autoritativo terminar com sucesso. O shell serve as abas
+      // info/participantes/convites — cada uma recebe a mesma marca.
+      for (const tela of TELAS_SHELL) registrarSyncOk(id, tela);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
+      if (g === geracao.current) setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
     }
   }, [id]);
+
+  // Invalidação por evento + resync na reconexão passam pelo hook único
+  // (coalescência + connect → recarga). Aqui fica só o ciclo de vida da
+  // room: entrar na conexão e a cada reconnect, sair no unmount.
+  useSincronizacaoCampanha(["membros:atualizados", "campanha:atualizada"], () => void carregar());
 
   useEffect(() => {
     void carregar();
@@ -84,13 +99,8 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
     };
     socket.emit("entrar-campanha", id);
     socket.on("connect", entrar);
-    const aoMudar = () => void carregar();
-    socket.on("membros:atualizados", aoMudar);
-    socket.on("campanha:atualizada", aoMudar);
     return () => {
       socket.off("connect", entrar);
-      socket.off("membros:atualizados", aoMudar);
-      socket.off("campanha:atualizada", aoMudar);
       socket.emit("sair-campanha", id);
     };
   }, [id, carregar]);
@@ -177,7 +187,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             <p className="meta">
               {campanha.system ? `Sistema: ${campanha.system} · ` : ""}
               {statusLabel(campanha.status)} · Você é {PAPEL_LABEL[campanha.meuPapel] ?? campanha.meuPapel}
-              {" · "}<IndicadorConexao campaignId={id} />
+              {" · "}<IndicadorConexao campaignId={id} tela={aba} />
             </p>
           </div>
           <button className="secundario" onClick={aoVoltar}>Voltar</button>
