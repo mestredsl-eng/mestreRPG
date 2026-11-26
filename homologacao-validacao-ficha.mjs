@@ -69,6 +69,9 @@ try {
         { id: "f-defeitos", label: "Defeitos", tipo: "selecao_nivel", regraKind: "defeito" },
         { id: "f-poderes", label: "Poderes", tipo: "selecao_multipla", regraKind: "poder" },
         { id: "f-apelido", label: "Apelido", tipo: "texto", obrigatorio: true },
+        // #304 residual: array obrigatório — esvaziar dispara PATCH 400
+        // {detalhes:{campoId,codigo:"campo_obrigatorio"}} (sem mensagem).
+        { id: "f-lista-obl", label: "Lista Obrigatória", tipo: "lista", obrigatorio: true, opcoes: ["alfa", "beta"] },
         // visível para todos, mas só o mestre altera — deve ficar somente leitura
         { id: "f-nota", label: "Anotação do mestre", tipo: "texto", editavelPor: "mestre" },
         // IDs legítimos que colidem com chaves internas do payload de erro
@@ -83,10 +86,10 @@ try {
 
   const pj = await req(BASE, "POST", `/campaigns/${CID}/characters`, { cookie: J, body: { name: "Val Desk", templateVersionId: vid } });
   const CHAR = pj.json?.personagem?.id ?? pj.json?.id;
-  await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: J, body: { data: { "f-apelido": "Val", "f-forca": 2, "f-int": 3 } } });
+  await req(BASE, "PATCH", `/characters/${CHAR}`, { cookie: J, body: { data: { "f-apelido": "Val", "f-forca": 2, "f-int": 3, "f-lista-obl": ["alfa"] } } });
   const pj2 = await req(BASE, "POST", `/campaigns/${CID}/characters`, { cookie: J, body: { name: "Val Mob", templateVersionId: vid } });
   const CHAR2 = pj2.json?.personagem?.id ?? pj2.json?.id;
-  await req(BASE, "PATCH", `/characters/${CHAR2}`, { cookie: J, body: { data: { "f-apelido": "ValM", "f-forca": 2, "f-int": 3 } } });
+  await req(BASE, "PATCH", `/characters/${CHAR2}`, { cookie: J, body: { data: { "f-apelido": "ValM", "f-forca": 2, "f-int": 3, "f-lista-obl": ["alfa"] } } });
   t("personagens seed criados", !!CHAR && !!CHAR2);
 
   const cookieValor = J.split("=")[1];
@@ -168,6 +171,26 @@ try {
     const aindaErro = await painel.isVisible().catch(() => false);
     t(`${nome}: após corrigir salva`, salvo > 0 && !aindaErro, `salvo=${salvo} erro=${aindaErro}`);
     t(`${nome}: sem erros de página`, erros.length === 0, erros.slice(0, 2).join(" | "));
+
+    // #304 residual: PATCH 400 {campoId,codigo:"campo_obrigatorio"} sem
+    // mensagem — a UI deve mostrar texto amigável com o rótulo do campo,
+    // destacar o campo e nunca expor UUID/código interno.
+    // (a ficha já nasce com ["alfa"]; desmarcar tudo envia [] → 400)
+    await p.getByRole("button", { name: "Editar ficha" }).click();
+    await p.waitForTimeout(800);
+    await p.locator("#ficha-campo-f-lista-obl label", { hasText: "alfa" }).locator("input").click(); // desmarca → []
+    await p.waitForTimeout(400);
+    await p.getByRole("button", { name: "Salvar" }).click();
+    await p.waitForTimeout(1500);
+    const painel3 = await painel.innerText().catch(() => "");
+    t(`${nome}: 400 campo_obrigatorio → mensagem amigável`,
+      painel3.includes("Lista Obrigatória") && painel3.includes("esvaziado"), painel3.slice(0, 300));
+    t(`${nome}: painel sem UUID/código interno`,
+      !/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/.test(painel3) && !painel3.includes("campo_obrigatorio"), painel3.slice(0, 300));
+    t(`${nome}: campo esvaziado destacado`,
+      (await p.locator("#ficha-campo-f-lista-obl.campo-com-erro").count()) === 1);
+    await p.getByRole("button", { name: "Cancelar" }).click();
+    await p.waitForTimeout(600);
 
     // IDs legítimos 'pontos'/'erros': valores inválidos devem aparecer no painel
     await p.getByRole("button", { name: "Editar ficha" }).click();
