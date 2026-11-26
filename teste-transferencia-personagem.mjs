@@ -188,19 +188,23 @@ try {
     t("titular NÃO mudou (bloqueio)", membershipDe(charB) === MEM1);
     comDb((db) => db.prepare("update memberships set status='ativo' where id=?").run(MEM3));
 
-    // F3: user do destino inativo (users.status) → 409
+    // F3: user do ORIGEM inativo entre convite e aceite → o EXISTS de
+    // users ativo dentro do UPDATE reprova (changes=0 → 409). O
+    // usuário bloqueado é o titular atual (J1) — a sessão de J2, que
+    // responde, não é afetada, então a prova isola a camada SQL da
+    // camada de auth (401).
     const charC = await novoChar(J1, "UserBloqueável");
     const invC = await API("POST", `/${charC}/transferencias`, J1, { membershipId: MEM2 });
     const tidC = invC.json?.transferencia?.id;
-    const uidJ2 = c.jogadores.j2.id;
-    comDb((db) => db.prepare("update users set status='bloqueado' where id=?").run(uidJ2));
+    const uidJ1 = c.jogadores.j1.id;
+    comDb((db) => db.prepare("update users set status='bloqueado' where id=?").run(uidJ1));
     const accC = await API("POST", `/transferencias/${tidC}/responder`, J2, { aceitar: true });
-    // usuário inativo é barrado já na camada de auth (401) — a
-    // revalidação EXISTS na tx é a segunda linha de defesa
-    t("aceite com user inativo → rejeitado (401 auth / 409 tx)",
-      accC.status === 401 || accC.status === 409, `status=${accC.status}`);
-    t("titular NÃO mudou (user inativo)", membershipDe(charC) === MEM1);
-    comDb((db) => db.prepare("update users set status='ativo' where id=?").run(uidJ2));
+    t("aceite com user ORIGEM inativo → 409 (EXISTS na tx)",
+      accC.status === 409, `status=${accC.status}`);
+    t("titular NÃO mudou (user origem inativo)", membershipDe(charC) === MEM1);
+    t("pedido permanece pendente após user-inativo",
+      transferStatus(tidC) === "pendente");
+    comDb((db) => db.prepare("update users set status='ativo' where id=?").run(uidJ1));
   }
 
   sec("G. Bordas — NPC, arquivado na criação, corrida de aceites");
@@ -256,6 +260,113 @@ try {
     t("terceiro NÃO lê a trilha", gTerceiro.status === 200 && gTerceiro.json?.transferencias?.length === 0);
     const gMestre = await API("GET", `/${char}/transferencias`, M);
     t("mestre lê a trilha", gMestre.status === 200 && gMestre.json?.transferencias?.length === 1);
+  }
+
+  sec("I. Corridas aceite×recusa / aceite×cancelar / convite×aceite");
+  {
+    // I1: aceite × recusa simultâneos → exatamente 1 vencedor, auditoria coerente
+    const charR = await novoChar(J1, "AceiteVSRecusa");
+    const invR = await API("POST", `/${charR}/transferencias`, J1, { membershipId: MEM2 });
+    const tidR = invR.json?.transferencia?.id;
+    const [ar, rr] = await Promise.all([
+      API("POST", `/transferencias/${tidR}/responder`, J2, { aceitar: true }),
+      API("POST", `/transferencias/${tidR}/responder`, J2, { aceitar: false }),
+    ]);
+    const okR = [ar, rr].filter((r) => r.status === 200).length;
+    const c409R = [ar, rr].filter((r) => r.status === 409).length;
+    t("aceite×recusa: exatamente 1 vencedor (200) + 1 conflito (409)",
+      okR === 1 && c409R === 1, `st=${ar.status},${rr.status}`);
+    const stR = transferStatus(tidR);
+    t("estado final do pedido = vencedor", stR === "aceita" || stR === "recusada", stR);
+    const audR = comDb((db) => db.prepare(
+      "select action from audit_logs where campaign_id=? and action like 'personagem.transferencia_%' and detail like ?"
+    ).all(CID, `%${tidR}%`).map((r) => r.action));
+    t("auditoria reflete o vencedor (sem recusa falsa)",
+      stR === "aceita" ? audR.includes("personagem.transferencia_aceita") && !audR.includes("personagem.transferencia_recusada")
+                       : audR.includes("personagem.transferencia_recusada") && !audR.includes("personagem.transferencia_aceita"),
+      audR.join(","));
+    t("titular final coerente com o vencedor",
+      (stR === "aceita" ? membershipDe(charR) === MEM2 : membershipDe(charR) === MEM1));
+
+    // I2: aceite × cancelamento simultâneos → exatamente 1 vencedor
+    const charX = await novoChar(J1, "AceiteVSCancela");
+    const invX = await API("POST", `/${charX}/transferencias`, J1, { membershipId: MEM2 });
+    const tidX = invX.json?.transferencia?.id;
+    const [ax, cx] = await Promise.all([
+      API("POST", `/transferencias/${tidX}/responder`, J2, { aceitar: true }),
+      API("POST", `/transferencias/${tidX}/cancelar`, J1, {}),
+    ]);
+    const okX = [ax, cx].filter((r) => r.status === 200).length;
+    const c409X = [ax, cx].filter((r) => r.status === 409).length;
+    t("aceite×cancelar: exatamente 1 vencedor",
+      okX === 1 && c409X === 1, `st=${ax.status},${cx.status}`);
+    const stX = transferStatus(tidX);
+    t("estado final = aceita ou cancelada",
+      stX === "aceita" || stX === "cancelada", stX);
+    t("titular final coerente",
+      (stX === "aceita" ? membershipDe(charX) === MEM2 : membershipDe(charX) === MEM1));
+
+    // I3: convite × transferência já aceita — o titular antigo não
+    // pode criar pedido obsoleto quando a tx revalida membership_id
+    const charY = await novoChar(J1, "ConviteObsoleto");
+    const invY = await API("POST", `/${charY}/transferencias`, J1, { membershipId: MEM2 });
+    const tidY = invY.json?.transferencia?.id;
+    const [accY, novoConvite] = await Promise.all([
+      API("POST", `/transferencias/${tidY}/responder`, J2, { aceitar: true }),
+      API("POST", `/${charY}/transferencias`, J1, { membershipId: MEM3 }),
+    ]);
+    // 403 = pre-check viu o novo titular; 409 = tx revalidou e achou
+    // estado mudado — ambos rejeitam sem criar pedido obsoleto
+    t("convite×aceite: novo convite rejeitado (403 pré-check ou 409 tx)",
+      novoConvite.status === 403 || novoConvite.status === 409, `st=${novoConvite.status}`);
+    t("aceite concorrente pode ter vencido", accY.status === 200 || accY.status === 409);
+    const pendY = comDb((db) => db.prepare(
+      "select count(*) c from character_transfers where character_id=? and status='pendente'").get(charY).c);
+    t("nenhum pedido pendente obsoleto ficou para trás", pendY === 0, `pendentes=${pendY}`);
+    t("titular final = novo titular (ou antigo se aceite perdeu)",
+      membershipDe(charY) === MEM2 || membershipDe(charY) === MEM1);
+  }
+
+  sec("J. Bordas — espectador real e cross-campaign real");
+  {
+    // espectador: usuário novo + membership role='espectador' ativo
+    const uidEsp = crypto.randomUUID();
+    const agoraMs = Date.now();
+    comDb((db) => {
+      db.prepare("insert into users (id,username,display_name,password_hash,is_admin,status,created_at,updated_at) values (?,?,?,?,0,'ativo',?,?)")
+        .run(uidEsp, "esp_p7", "Espectador P7", "x", agoraMs, agoraMs);
+      db.prepare("insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'espectador','ativo',?,?,?)")
+        .run(crypto.randomUUID(), CID, uidEsp, agoraMs, agoraMs, agoraMs);
+    });
+    const memEsp = comDb((db) => db.prepare("select id from memberships where campaign_id=? and user_id=?").get(CID, uidEsp).id);
+    const charEsp = await novoChar(J1, "ParaEspectador");
+    const rEsp = await API("POST", `/${charEsp}/transferencias`, J1, { membershipId: memEsp });
+    t("destino espectador → 400", rEsp.status === 400, `status=${rEsp.status}`);
+
+    // cross-campaign REAL: segunda campanha + membership jogador lá
+    const campB = await req(BASE, "POST", "/campaigns", { cookie: M, body: { name: "Campanha B P7" } });
+    const cidB = campB.json?.campanha?.id ?? campB.json?.id;
+    t("campanha B criada", !!cidB, JSON.stringify(campB.json).slice(0, 120));
+    const memB = crypto.randomUUID();
+    comDb((db) => db.prepare(
+      "insert into memberships (id,campaign_id,user_id,role,status,joined_at,created_at,updated_at) values (?,?,?,'jogador','ativo',?,?,?)")
+      .run(memB, cidB, c.jogadores.j2.id, agoraMs, agoraMs, agoraMs));
+    const charXc = await novoChar(J1, "CrossCampanha");
+    const rXc = await API("POST", `/${charXc}/transferencias`, J1, { membershipId: memB });
+    t("membership de OUTRA campanha → 400", rXc.status === 400, `status=${rXc.status}`);
+    // escopo de rota: campanha A apontando para personagem de B
+    // (personagem inserido direto — campanha B não tem modelo publicado)
+    const tplB = comDb((db) => db.prepare(
+      "select template_version_id t from characters where campaign_id=? limit 1").get(CID).t);
+    const idB2 = crypto.randomUUID();
+    comDb((db) => db.prepare(
+      "insert into characters (id,campaign_id,membership_id,template_version_id,name,data,overrides,status,is_npc,created_at,updated_at) values (?,?,?,?,?,?,?,?,?,?,?)")
+      .run(idB2, cidB, memB, tplB, "Char Campanha B", "{}", "{}", "aprovada", 0, agoraMs, agoraMs));
+    const rEscopo = await req(BASE, "POST", `/campaigns/${CID}/characters/${idB2}/transferencias`,
+      { cookie: M, body: { membershipId: MEM1 } });
+    t("rota campanha A + personagem de B → 404 (escopo)", rEscopo.status === 404, `status=${rEscopo.status}`);
+    const gEscopo = await req(BASE, "GET", `/campaigns/${CID}/characters/${idB2}/transferencias`, { cookie: M });
+    t("GET trilha cross-campanha → 404", gEscopo.status === 404, `status=${gEscopo.status}`);
   }
 
   console.log(`\n${pass} ok, ${fail} falhas`);
