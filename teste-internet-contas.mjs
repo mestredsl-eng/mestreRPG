@@ -22,7 +22,7 @@
 import crypto from "node:crypto";
 import { io as ioClient } from "socket.io-client";
 import { spawn } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -145,13 +145,18 @@ try {
     const dstMig = join(DIR, "migrations-ate-0038");
     mkdirSync(dstMig, { recursive: true });
     cpSync(srcMig, dstMig, { recursive: true });
-    rmSync(join(dstMig, "0039_dapper_rocket_raccoon.sql"), { force: true });
-    // remove o snapshot 0039 e a entrada do journal
+    // fronteira v1.1.0 = idx 38: remove TODO arquivo/snapshot/journal
+    // posterior (hoje 0039 e 0040) — genérico para próximas migrations.
+    for (const f of readdirSync(join(dstMig, "meta"))) {
+      if (/^00(39|40)_snapshot\.json$/.test(f)) rmSync(join(dstMig, "meta", f), { force: true });
+    }
+    for (const f of readdirSync(dstMig)) {
+      if (/^00(39|40)_.*\.sql$/.test(f)) rmSync(join(dstMig, f), { force: true });
+    }
     const snapDir = join(dstMig, "meta");
-    for (const f of ["0039_snapshot.json"]) rmSync(join(snapDir, f), { force: true });
     const journalPath = join(snapDir, "_journal.json");
     const journal = JSON.parse(readFileSync(journalPath, "utf8"));
-    journal.entries = journal.entries.filter((e) => !String(e.tag).includes("0039"));
+    journal.entries = journal.entries.filter((e) => e.idx <= 38);
     writeFileSync(journalPath, JSON.stringify(journal, null, 2));
 
     // provisiona o state dir isolado do banco de upgrade (mesmo fluxo
@@ -516,6 +521,143 @@ try {
   const detApos = await API("GET", `/conversations/${grupoId}`, j2.cookie);
   const novoDono = detApos.json?.conversa?.participantes?.find((p) => p.conta?.id === contaJ2);
   t("P6: propriedade transferida ao sucessor elegível", novoDono?.papel === "dono", JSON.stringify(novoDono).slice(0, 160));
+
+  // ================= BLOQUEIO PAR-A-PAR EM GRUPO (P3) =================
+  sec("L. Bloqueio par-a-par — grupo A/B/C, ambas direções, P12, P10");
+
+  // a seção H arquivou charJ3 (teste de revogação) — restaura para os
+  // vetores de grupo, que precisam de 3 contas vivas.
+  {
+    const dbx = abrirDb(BANCO);
+    dbx.prepare("update characters set status='ativo' where id=?").run(charJ3);
+    dbx.close();
+  }
+
+  // contato j1↔j3 para viabilizar o grupo de 3 (P4 exige aresta aceita)
+  const ped13 = await API("POST", "/contacts", j1.cookie, { contaId: contaJ3 });
+  const contato13Id = ped13.json?.contato?.id;
+  t("contato j1→j3 criado", ped13.status === 201, JSON.stringify(ped13.json).slice(0, 160));
+  const acc13 = await API("POST", `/contacts/${contato13Id}/aceitar`, j3.cookie);
+  t("j3 aceita contato com j1", acc13.status === 200 && acc13.json?.status === "aceito", JSON.stringify(acc13.json));
+
+  // grupo2: j1 dono + j2,j3 convidados (ambos com contato aceito)
+  const grp2 = await API("POST", "/conversations", j1.cookie, {
+    tipo: "grupo", nome: "Trio Alfa", origemContaId: contaJ1, contaIds: [contaJ2, contaJ3],
+  });
+  t("grupo de 3 criado", grp2.status === 201 && !!grp2.json?.conversa, JSON.stringify(grp2.json).slice(0, 200));
+  const grupo2Id = grp2.json?.conversa;
+  const detG2j2 = await API("GET", `/conversations/${grupo2Id}`, j2.cookie);
+  const pidJ2g2 = detG2j2.json?.conversa?.participantes?.find((p) => p.conta?.id === contaJ2)?.id;
+  const detG2j3 = await API("GET", `/conversations/${grupo2Id}`, j3.cookie);
+  const pidJ3g2 = detG2j3.json?.conversa?.participantes?.find((p) => p.conta?.id === contaJ3)?.id;
+  t("pids de convite expostos via API", !!pidJ2g2 && !!pidJ3g2);
+  const respJ2g2 = await API("POST", `/conversations/${grupo2Id}/participants/${pidJ2g2}/responder`, j2.cookie, { aceitar: true });
+  t("j2 aceita convite do grupo2", respJ2g2.status === 200 && respJ2g2.json?.status === "ativo", JSON.stringify(respJ2g2.json));
+  const respJ3g2 = await API("POST", `/conversations/${grupo2Id}/participants/${pidJ3g2}/responder`, j3.cookie, { aceitar: true });
+  t("j3 aceita convite do grupo2", respJ3g2.status === 200 && respJ3g2.json?.status === "ativo", JSON.stringify(respJ3g2.json));
+
+  // PRÉ-bloqueio: j2 e j3 enviam ao vivo; todos recebem. j1 não envia
+  // (cota P8 esgotada na seção E) — sua msg pré-bloqueio entra via
+  // fixture de banco, só para o teste de filtro temporal do histórico.
+  const wJ1pre = ouvirUmaVez(sJ1, "internet:mensagem", 6000);
+  const wJ2pre = ouvirUmaVez(sJ2, "internet:mensagem", 6000);
+  const wJ3pre = ouvirUmaVez(sJ3, "internet:mensagem", 6000);
+  const mPre2 = await emitirCb(sJ2, "internet:mensagem:enviar", {
+    conversaId: grupo2Id, contaId: contaJ2, requestId: "req-g2-pre2", conteudo: "pré j2",
+  });
+  t("pré-bloqueio j2 envia no grupo2", mPre2?.ok === true, JSON.stringify(mPre2));
+  await Promise.all([wJ1pre, wJ2pre, wJ3pre]);
+  {
+    const w1 = ouvirUmaVez(sJ1, "internet:mensagem", 6000);
+    const w3 = ouvirUmaVez(sJ3, "internet:mensagem", 6000);
+    const mPre3 = await emitirCb(sJ3, "internet:mensagem:enviar", {
+      conversaId: grupo2Id, contaId: contaJ3, requestId: "req-g2-pre3", conteudo: "pré j3",
+    });
+    t("pré-bloqueio j3 envia no grupo2", mPre3?.ok === true, JSON.stringify(mPre3));
+    await Promise.all([w1, w3]);
+  }
+  {
+    const dbx = abrirDb(BANCO);
+    dbx.prepare("insert into internet_messages (id,conversa_id,campaign_id,autor_conta_id,request_id,payload_hash,conteudo,created_at) values (?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), grupo2Id, campId, contaJ1, "fix-pre-j1", "h-pre", "pré j1 (fixture)", Date.now() - 30_000);
+    dbx.close();
+  }
+
+  // ORIGEM inicia o bloqueio — aresta j1→j2 tem contaOrigemId=contaJ1
+  // (contaDestinoId=contaJ2). Antes da deliberação só o destino podia.
+  const bloqOrigem = await API("POST", `/contacts/${contato2Id}/bloquear`, j1.cookie);
+  t("ORIGEM inicia bloqueio (P3 qualquer ponta)",
+    bloqOrigem.status === 200 && bloqOrigem.json?.status === "bloqueado", JSON.stringify(bloqOrigem.json));
+  const bloqueadoPor = abrirDb(BANCO)
+    .prepare("select bloqueado_por_conta_id b from internet_contacts where id=?").get(contato2Id).b;
+  t("iniciador do bloqueio registrado", bloqueadoPor === contaJ1, `bloqueadoPor=${bloqueadoPor}`);
+  t("não-iniciador não remove aresta bloqueada",
+    (await API("DELETE", `/contacts/${contato2Id}`, j2.cookie)).status === 403);
+
+  // PÓS-bloqueio: j2 envia → j3 recebe, j1 NÃO recebe (par bloqueado)
+  const negJ1pos = ouvirUmaVez(sJ1, "internet:mensagem", 3000);
+  const posJ3a = ouvirUmaVez(sJ3, "internet:mensagem", 6000);
+  const mPos2 = await emitirCb(sJ2, "internet:mensagem:enviar", {
+    conversaId: grupo2Id, contaId: contaJ2, requestId: "req-g2-pos2", conteudo: "pós j2",
+  });
+  t("grupo: autor com par bloqueado ainda envia (há elegível)",
+    mPos2?.ok === true, JSON.stringify(mPos2));
+  t("membro não-bloqueado recebe msg do autor bloqueado-par",
+    (await posJ3a)?.conteudo === "pós j2");
+  t("par bloqueado NÃO recebe fan-out", (await negJ1pos) === null);
+
+  // j3 envia → j1 E j2 recebem (j3 não bloqueado com ninguém — prova
+  // "bloqueado segue membro e recebe de terceiros")
+  const recJ1b = ouvirUmaVez(sJ1, "internet:mensagem", 6000);
+  const recJ2b = ouvirUmaVez(sJ2, "internet:mensagem", 6000);
+  const mPos3 = await emitirCb(sJ3, "internet:mensagem:enviar", {
+    conversaId: grupo2Id, contaId: contaJ3, requestId: "req-g2-pos3", conteudo: "pós j3",
+  });
+  t("j3 envia pós-bloqueio", mPos3?.ok === true, JSON.stringify(mPos3));
+  t("j1 recebe msg de j3 (não-bloqueado)", (await recJ1b)?.conteudo === "pós j3");
+  t("j2 recebe msg de j3 — recebe de terceiros", (await recJ2b)?.conteudo === "pós j3");
+
+  // fixture: msg da conta j1 DEPOIS do bloqueio (para o corte temporal)
+  {
+    const dbx = abrirDb(BANCO);
+    dbx.prepare("insert into internet_messages (id,conversa_id,campaign_id,autor_conta_id,request_id,payload_hash,conteudo,created_at) values (?,?,?,?,?,?,?,?)")
+      .run(crypto.randomUUID(), grupo2Id, campId, contaJ1, "fix-pos-j1", "h-pos", "pós j1 (fixture)", Date.now());
+    dbx.close();
+  }
+
+  // HISTÓRICO — filtro leitor×autor com corte temporal
+  const histJ1g2 = await API("GET", `/conversations/${grupo2Id}/messages?limit=100`, j1.cookie);
+  const cJ1 = (histJ1g2.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("j1 lê pré-bloqueio de j2 (P12)", cJ1.includes("pré j2"));
+  t("j1 lê msgs próprias pré/pós", cJ1.includes("pré j1 (fixture)") && cJ1.includes("pós j1 (fixture)"));
+  t("j1 lê msg de j3", cJ1.includes("pós j3"));
+  t("j1 NÃO lê msg pós-bloqueio de j2", !cJ1.includes("pós j2"), cJ1.join("|"));
+
+  const histJ2g2 = await API("GET", `/conversations/${grupo2Id}/messages?limit=100`, j2.cookie);
+  const cJ2 = (histJ2g2.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("j2 lê pré-bloqueio de j1 (P12 simétrico)", cJ2.includes("pré j1 (fixture)"));
+  t("j2 lê pré-bloqueio de j3", cJ2.includes("pré j3"));
+  t("j2 NÃO lê msg pós-bloqueio de j1", !cJ2.includes("pós j1 (fixture)"), cJ2.join("|"));
+  t("j2 lê msgs próprias e de j3", cJ2.includes("pós j2") && cJ2.includes("pós j3"));
+
+  const histJ3g2 = await API("GET", `/conversations/${grupo2Id}/messages?limit=100`, j3.cookie);
+  const cJ3 = (histJ3g2.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("j3 lê TODAS as mensagens (não bloqueado com ninguém)",
+    ["pré j2", "pré j3", "pré j1 (fixture)", "pós j2", "pós j3", "pós j1 (fixture)"].every((c) => cJ3.includes(c)),
+    cJ3.join("|"));
+
+  // mestre P10: oversight auditado SEM filtro de bloqueio
+  const auditsAntesL = abrirDb(BANCO)
+    .prepare("select count(*) c from audit_logs where action='internet.leitura_mestre' and campaign_id=?").get(campId).c;
+  const histMestreG2 = await API("GET", `/conversations/${grupo2Id}/messages?limit=100`, C.cookieMestre);
+  const cM = (histMestreG2.json?.mensagens ?? []).map((m) => m.conteudo);
+  const auditsDepoisL = abrirDb(BANCO)
+    .prepare("select count(*) c from audit_logs where action='internet.leitura_mestre' and campaign_id=?").get(campId).c;
+  t("mestre lê tudo sem filtro par-a-par (P10)",
+    ["pré j2", "pré j3", "pré j1 (fixture)", "pós j2", "pós j3", "pós j1 (fixture)"].every((c) => cM.includes(c))
+    && histMestreG2.json?.leituraMestre === true,
+    cM.join("|"));
+  t("leitura mestre auditada", auditsDepoisL === auditsAntesL + 1, `${auditsAntesL}→${auditsDepoisL}`);
 
   // ================= EXPORT P9 =================
   sec("K. Exportação — P9: nenhuma tabela internet_* sai no pacote");

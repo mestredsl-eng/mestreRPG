@@ -139,11 +139,18 @@ export function registrarInternet(io: SocketIOServer) {
         // escritas via .run(). Tudo dentro da tx para não haver corrida
         // entre checagem de bloqueio/rate-limit e a gravação.
         const resultado = db.transaction((tx) => {
-          // bloqueio bilateral (P3) contra TODOS os outros participantes ativos
+          // P3 par-a-par (deliberação do proprietário): a mensagem é
+          // persistida se o autor tem AO MENOS UM destinatário elegível
+          // (participante ativo sem aresta `bloqueado` contra ele).
+          // Em direta, o único outro é o par — bloqueado ⇒ 0 elegíveis
+          // ⇒ rejeição equivalente à anterior. Em grupo, o autor segue
+          // falando com os não-bloqueados; o filtro de entrega/leitura
+          // acontece no fan-out e no histórico.
           const outros = tx.select({ contaId: internetParticipantes.contaId })
             .from(internetParticipantes)
             .where(and(eq(internetParticipantes.conversaId, conversaId), eq(internetParticipantes.status, "ativo")))
             .all();
+          let elegiveis = 0;
           for (const o of outros) {
             if (o.contaId === contaId) continue;
             const arestas = tx.select({ status: internetContacts.status })
@@ -156,9 +163,10 @@ export function registrarInternet(io: SocketIOServer) {
                 ),
               ))
               .all();
-            if (arestas.some((r) => r.status === "bloqueado")) {
-              return { erro: "contato_bloqueado" as const };
-            }
+            if (!arestas.some((r) => r.status === "bloqueado")) elegiveis++;
+          }
+          if (elegiveis === 0) {
+            return { erro: "contato_bloqueado" as const };
           }
           // rate limit P8 — conta quantas mensagens a conta enviou na janela
           const r = tx.select({ c: sql<number>`count(*)` })
@@ -217,7 +225,7 @@ export function registrarInternet(io: SocketIOServer) {
         });
         if (!resultado.replay) {
           // fan-out individual revalidado por destinatário (contrato §6)
-          await emitirInternetConversa(conversaId, "internet:mensagem", eventoMensagem(msg, autor!));
+          await emitirInternetConversa(conversaId, "internet:mensagem", eventoMensagem(msg, autor!), contaId);
         }
       } catch (e) {
         console.error("[internet] falha no envio de mensagem:", e);

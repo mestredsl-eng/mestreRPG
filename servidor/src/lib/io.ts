@@ -6,7 +6,7 @@ import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
 import { sessions, memberships } from "../db/schema.js";
 import { personagemAutorizadoInternet } from "./gate-internet.js";
-import { contaAutorizadaPara } from "./conta-internet.js";
+import { contaAutorizadaPara, bloqueiosEntreContas } from "./conta-internet.js";
 import { selecionarDestinatariosInternet } from "./internet-fanout.js";
 import { internetParticipantes, internetAccounts, characters } from "../db/schema.js";
 import { internetConversations } from "../db/schema.js";
@@ -557,6 +557,7 @@ export async function emitirInternetConversa(
   conversaId: string,
   evento: string,
   dados: Record<string, unknown>,
+  autorContaId?: string,
 ): Promise<void> {
   const instancia = io;
   if (!instancia) return;
@@ -570,6 +571,15 @@ export async function emitirInternetConversa(
     const campaignId = conversa.campaignId;
     agendarAutosave(campaignId);
     if (barreiraRestauracaoAtiva(campaignId)) return;
+
+    // P3 par-a-par: contas com aresta `bloqueado` contra o autor (qualquer
+    // direção) não recebem o evento — em grupo os demais seguem recebendo.
+    // Eventos "agora" são sempre posteriores ao marco do bloqueio.
+    let bloqueados: Set<string> | null = null;
+    if (autorContaId) {
+      const mapa = await bloqueiosEntreContas(campaignId, [autorContaId]);
+      bloqueados = new Set(mapa.get(autorContaId)?.keys() ?? []);
+    }
 
     // resolve conta → personagem → membership → userId (dono atual do
     // personagem). A revalidação completa acontece por destinatário.
@@ -589,6 +599,7 @@ export async function emitirInternetConversa(
     // duas contas na conversa recebe um evento por conta (roteamento).
     for (const parte of selecionarDestinatariosInternet(partes)) {
       if (barreiraRestauracaoAtiva(campaignId)) return;
+      if (bloqueados?.has(parte.contaId)) continue; // par bloqueado (P3)
       // revalidação completa por destinatário na hora da entrega —
       // titularidade atual, membership ativa, conta ativa, personagem
       // não arquivado e gate cumulativo. Sem bypass de mestre.
