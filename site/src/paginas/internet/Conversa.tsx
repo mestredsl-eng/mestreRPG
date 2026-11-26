@@ -148,11 +148,28 @@ export default function Conversa({ adaptador, conversaId, nomeConversa, tipoConv
     let vivo = true;
     setErro(false);
     setMensagens(null);
-    carregar()
-      .catch(() => { if (vivo) setErro(true); });
+    const iniciar = async () => {
+      // Grupo: resolve o status do participante ANTES do histórico —
+      // `convidado` não lê mensagens (servidor 403) mas PRECISA ver o
+      // banner de convite; sem isso a tela caía em ErroRetry e o aceite
+      // ficava inalcançável (defeito achado no E2E real #352).
+      if (tipoConversa === "grupo") {
+        try {
+          const d = await adaptador.obterDetalhesGrupo(conversaId);
+          if (!vivo) return;
+          setDetalhes(d);
+          if (d.meuStatusParticipante === "convidado") {
+            setMensagens([]);
+            return;
+          }
+        } catch { /* detalhe falhou → segue p/ o carregamento normal, que falha honesto */ }
+      }
+      await carregar().catch(() => { if (vivo) setErro(true); });
+    };
+    void iniciar();
     return () => { vivo = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [adaptador, conversaId, tentativa]);
+  }, [adaptador, conversaId, tentativa, tipoConversa]);
 
   // Realtime F3: eventos chegam por usuario:{id} — aqui só reagimos a
   // ESTA conversa; revalidação de autorização já ocorreu no servidor.
