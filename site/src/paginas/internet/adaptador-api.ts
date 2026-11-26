@@ -156,14 +156,9 @@ export function criarAdaptadorInternetApi({ campaignId, characterId }: {
       });
     },
 
-    async responderPedidoContato(contaId: string, aceitar: boolean) {
-      // a API decide por aresta (:id), não por conta — resolve a aresta
-      const r = await requisicao<{ contatos: ContatoApi[] }>(`${base}/contacts`);
-      const aresta = r.contatos.find((c) =>
-        c.status === "pendente" && !c.souOrigem &&
-        ((c.origem?.id === contaId) || (c.destino?.id === contaId)));
-      if (!aresta) throw new ApiError("Pedido não encontrado", undefined, 404);
-      await requisicao(`${base}/contacts/${aresta.id}/${aceitar ? "aceitar" : "recusar"}`, { method: "POST", body: "{}" });
+    // o F2 decide por aresta (:id) — o id já vem do GET /contacts
+    async responderPedidoContato(contatoId: string, aceitar: boolean) {
+      await requisicao(`${base}/contacts/${contatoId}/${aceitar ? "aceitar" : "recusar"}`, { method: "POST", body: "{}" });
     },
 
     cancelarPedidoContato: (contatoId) => requisicao(`${base}/contacts/${contatoId}`, { method: "DELETE" }).then(() => {}),

@@ -33,8 +33,10 @@ export interface AdaptadorInternet {
   listarContatos(): Promise<ContatosInternet>;
   /** Envia pedido de contato por @handle — unilateral (estado pendente). */
   enviarPedidoContato(handle: string): Promise<void>;
-  /** Aceita/recusa pedido recebido — aresta vira `aceito` ou é encerrada. */
-  responderPedidoContato(contaId: string, aceitar: boolean): Promise<void>;
+  /** Aceita/recusa pedido recebido — aresta vira `aceito` ou é encerrada.
+   *  `contatoId` é o id da ARESTA (como bloquear/remover/cancelar), não o
+   *  da conta — o F2 decide por `POST /contacts/:id/aceitar|recusar`. */
+  responderPedidoContato(contatoId: string, aceitar: boolean): Promise<void>;
   /** Cancela pedido enviado ainda pendente. */
   cancelarPedidoContato(contatoId: string): Promise<void>;
   /** Bloqueio bilateral de facto (P3): corta envio e entrega nos dois sentidos. */

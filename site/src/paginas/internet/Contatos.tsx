@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { ModalConfirmar } from "../../Modal";
 import type { AdaptadorInternet } from "./adaptador";
 import type { ContatoInternet, ContatosInternet, EventoInternet } from "./tipos";
+import { aoTeclarAbas, AbaBotao } from "./abas";
 import { Carregando, ErroRetry, Vazio } from "./estados";
 
 type SubAba = "aceitos" | "recebidos" | "enviados" | "bloqueados";
@@ -141,20 +142,21 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
 
   return (
     <section className="internet-contatos" aria-label="Contatos">
-      <div className="internet-contatos-subabas" role="tablist" aria-label="Grupos de contatos">
+      <div
+        className="internet-contatos-subabas"
+        role="tablist"
+        aria-label="Grupos de contatos"
+        onKeyDown={(e) => aoTeclarAbas(e, SUBABAS.map((s) => s.id), subAba, (id) => setSubAba(id as SubAba))}
+      >
         {SUBABAS.map((s) => (
-          <button
+          <AbaBotao
             key={s.id}
-            type="button"
-            role="tab"
-            aria-selected={subAba === s.id}
-            className={subAba === s.id ? "ativo" : "secundario"}
-            onClick={() => setSubAba(s.id)}
-          >
-            {s.rotulo}
-            {s.id === "recebidos" && dados.pedidosRecebidos.length > 0 &&
-              ` (${dados.pedidosRecebidos.length})`}
-          </button>
+            id={`contato-${s.id}`}
+            rotulo={`${s.rotulo}${s.id === "recebidos" && dados.pedidosRecebidos.length > 0 ? ` (${dados.pedidosRecebidos.length})` : ""}`}
+            ativo={subAba === s.id}
+            controles={`painel-contato-${s.id}`}
+            aoClicar={() => setSubAba(s.id)}
+          />
         ))}
       </div>
 
@@ -179,6 +181,7 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
       </form>
       {erroAcao && <p className="erro" role="alert">{erroAcao}</p>}
 
+      <div role="tabpanel" id={`painel-contato-${subAba}`} aria-labelledby={`aba-contato-${subAba}`}>
       <h3 className="internet-sr-only">{rotuloSub}</h3>
       {lista.length === 0 ? (
         <Vazio
@@ -223,7 +226,7 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
                 rotulo: "Aceitar",
                 aoClicar: () => {
                   setOcupado(true);
-                  void adaptador.responderPedidoContato(c.contaId, true)
+                  void adaptador.responderPedidoContato(c.id, true)
                     .catch(() => setErroAcao("Não foi possível aceitar o pedido."))
                     .finally(() => { setOcupado(false); recarregar(); });
                 },
@@ -231,13 +234,12 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
               });
               acoes.push({
                 rotulo: "Recusar", perigo: true,
-                aoClicar: () => {
-                  setOcupado(true);
-                  void adaptador.responderPedidoContato(c.contaId, false)
-                    .catch(() => setErroAcao("Não foi possível recusar o pedido."))
-                    .finally(() => { setOcupado(false); recarregar(); });
-                },
-                desabilitado: ocupado,
+                aoClicar: () => pedir({
+                  titulo: `Recusar pedido de @${c.handle}?`,
+                  mensagem: "O pedido será encerrado e o contato não será criado. A pessoa poderá enviar um novo pedido depois.",
+                  rotulo: "Recusar pedido", perigo: true,
+                  executar: () => adaptador.responderPedidoContato(c.id, false),
+                }),
               });
             } else if (subAba === "enviados") {
               acoes.push({
@@ -265,6 +267,7 @@ export default function Contatos({ adaptador, aoIniciarConversa }: {
           })}
         </ul>
       )}
+      </div>
 
       {confirmacao && (
         <ModalConfirmar

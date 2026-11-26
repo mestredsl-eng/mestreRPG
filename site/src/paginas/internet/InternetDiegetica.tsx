@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { adaptadorInternetIndisponivel, type AdaptadorInternet } from "./adaptador";
 import type { ConexaoRealtime, ConversaResumo } from "./tipos";
+import { aoTeclarAbas, AbaBotao } from "./abas";
 import ContaInternet from "./ContaInternet";
 import Contatos from "./Contatos";
 import Mensagens from "./Mensagens";
@@ -20,6 +21,9 @@ import "./estilos-internet.css";
 
 type Aba = "mensagens" | "conta";
 type SubAbaMensagens = "caixa" | "contatos";
+
+const ABAS_PRINCIPAIS = ["mensagens", "conta"] as const;
+const SUBABAS_MENSAGENS = ["caixa", "contatos"] as const;
 
 interface ConversaAberta {
   id: string;
@@ -46,96 +50,80 @@ export default function InternetDiegetica({
     setConversa({ id: c.id, nome: nomeDeConversa(c), tipo: c.tipo });
   };
 
-  // nome/tipo da conversa aberta: a caixa de entrada conhece o resumo;
-  // Conversa recebe o rótulo já resolvido pelo chamador quando souber.
-  // Para conversas abertas por id (deep-link/evento), o cabeçalho usa
-  // um rótulo genérico honesto até o F2 expor resolução de título.
   return (
     <div className="internet-rede">
-      {conexao !== "conectado" && aba !== null && !conversa && (
+      {conexao !== "conectado" && !conversa && (
         <p className="internet-rede-banner internet-rede-banner-reconectando" role="status">
           Reconectando… as mensagens novas podem demorar um instante.
         </p>
       )}
 
-      <div className="abas" role="tablist" aria-label="Internet do personagem">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={aba === "mensagens"}
-          className={aba === "mensagens" ? "ativo" : "secundario"}
-          onClick={() => { setAba("mensagens"); setConversa(null); }}
-        >
-          Mensagens
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={aba === "conta"}
-          className={aba === "conta" ? "ativo" : "secundario"}
-          onClick={() => { setAba("conta"); setConversa(null); }}
-        >
-          Conta
-        </button>
+      <div
+        className="abas"
+        role="tablist"
+        aria-label="Internet do personagem"
+        onKeyDown={(e) => aoTeclarAbas(e, [...ABAS_PRINCIPAIS], aba, (id) => { setAba(id as Aba); setConversa(null); })}
+      >
+        <AbaBotao id="mensagens" rotulo="Mensagens" ativo={aba === "mensagens"} controles="painel-mensagens" aoClicar={() => { setAba("mensagens"); setConversa(null); }} />
+        <AbaBotao id="conta" rotulo="Conta" ativo={aba === "conta"} controles="painel-conta" aoClicar={() => { setAba("conta"); setConversa(null); }} />
       </div>
 
       {aba === "conta" ? (
-        <ContaInternet adaptador={adaptador} />
-      ) : conversa ? (
-        <Conversa
-          key={conversa.id}
-          adaptador={adaptador}
-          conversaId={conversa.id}
-          nomeConversa={conversa.nome}
-          tipoConversa={conversa.tipo}
-          conexao={conexao}
-          aoVoltar={() => setConversa(null)}
-          aoMudarLista={() => setRefreshLista((n) => n + 1)}
-        />
+        <div role="tabpanel" id="painel-conta" aria-labelledby="aba-conta">
+          <ContaInternet adaptador={adaptador} />
+        </div>
       ) : (
-        <>
-          <div className="internet-contatos-subabas" role="tablist" aria-label="Seções de mensagens">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={subAba === "caixa"}
-              className={subAba === "caixa" ? "ativo" : "secundario"}
-              onClick={() => setSubAba("caixa")}
-            >
-              Caixa de entrada
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={subAba === "contatos"}
-              className={subAba === "contatos" ? "ativo" : "secundario"}
-              onClick={() => setSubAba("contatos")}
-            >
-              Contatos
-            </button>
-          </div>
-          {subAba === "caixa" ? (
-            <Mensagens
-              key={refreshLista}
+        <div role="tabpanel" id="painel-mensagens" aria-labelledby="aba-mensagens">
+          {conversa ? (
+            <Conversa
+              key={conversa.id}
               adaptador={adaptador}
-              aoAbrirConversa={abrirConversa}
+              conversaId={conversa.id}
+              nomeConversa={conversa.nome}
+              tipoConversa={conversa.tipo}
+              conexao={conexao}
+              aoVoltar={() => setConversa(null)}
+              aoMudarLista={() => setRefreshLista((n) => n + 1)}
             />
           ) : (
-            <Contatos
-              adaptador={adaptador}
-              aoIniciarConversa={async (contaId) => {
-                try {
-                  const { conversaId } = await adaptador.iniciarConversaDireta(contaId);
-                  abrirConversa({
-                    id: conversaId, tipo: "direta", nome: null, interlocutor: null,
-                    ultimaMensagem: null, naoLidas: 0, atualizadoEm: new Date().toISOString(),
-                    status: "ativa",
-                  });
-                } catch { /* erro já exibido pela superfície de contatos */ }
-              }}
-            />
+            <>
+              <div
+                className="internet-contatos-subabas"
+                role="tablist"
+                aria-label="Seções de mensagens"
+                onKeyDown={(e) => aoTeclarAbas(e, [...SUBABAS_MENSAGENS], subAba, (id) => setSubAba(id as SubAbaMensagens))}
+              >
+                <AbaBotao id="caixa" rotulo="Caixa de entrada" ativo={subAba === "caixa"} controles="painel-caixa" aoClicar={() => setSubAba("caixa")} />
+                <AbaBotao id="contatos" rotulo="Contatos" ativo={subAba === "contatos"} controles="painel-contatos" aoClicar={() => setSubAba("contatos")} />
+              </div>
+              {subAba === "caixa" ? (
+                <div role="tabpanel" id="painel-caixa" aria-labelledby="aba-caixa">
+                  <Mensagens
+                    key={refreshLista}
+                    adaptador={adaptador}
+                    aoAbrirConversa={abrirConversa}
+                  />
+                </div>
+              ) : (
+                <div role="tabpanel" id="painel-contatos" aria-labelledby="aba-contatos">
+                  <Contatos
+                    adaptador={adaptador}
+                    aoIniciarConversa={async (contaId) => {
+                      try {
+                        const { conversaId } = await adaptador.iniciarConversaDireta(contaId);
+                        abrirConversa({
+                          id: conversaId, tipo: "direta", nome: null, interlocutor: null,
+                          ultimaMensagem: null, naoLidas: 0, atualizadoEm: new Date().toISOString(),
+                          status: "ativa",
+                        });
+                      } catch { /* erro já exibido pela superfície de contatos */ }
+                    }}
+                  />
+                </div>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );

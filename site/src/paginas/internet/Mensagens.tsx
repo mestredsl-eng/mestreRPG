@@ -48,11 +48,13 @@ function LinhaConversa({ conversa, aoAbrir }: { conversa: ConversaResumo; aoAbri
   );
 }
 
-function SeletorContatos({ contatos, selecionados, aoAlternar, rotulo }: {
+function SeletorContatos({ contatos, selecionados, aoAlternar, rotulo, selecaoUnica = false }: {
   contatos: ContatoInternet[];
   selecionados: Set<string>;
   aoAlternar: (contaId: string) => void;
   rotulo: string;
+  /** conversa direta aceita exatamente 1 contato — radio em vez de checkbox */
+  selecaoUnica?: boolean;
 }) {
   if (contatos.length === 0) {
     return <p className="meta">Nenhum contato aceito disponível — adicione contatos primeiro.</p>;
@@ -63,7 +65,8 @@ function SeletorContatos({ contatos, selecionados, aoAlternar, rotulo }: {
       {contatos.map((c) => (
         <label key={c.contaId} className="internet-contato-item" style={{ padding: "4px 0" }}>
           <input
-            type="checkbox"
+            type={selecaoUnica ? "radio" : "checkbox"}
+            name={selecaoUnica ? "internet-contato-unico" : undefined}
             checked={selecionados.has(c.contaId)}
             onChange={() => aoAlternar(c.contaId)}
           />
@@ -125,6 +128,7 @@ export default function Mensagens({ adaptador, aoAbrirConversa }: {
 
   const alternar = (contaId: string) => {
     setSelecionados((s) => {
+      if (modal === "direta") return new Set([contaId]); // seleção única
       const n = new Set(s);
       if (n.has(contaId)) n.delete(contaId); else n.add(contaId);
       return n;
@@ -243,6 +247,7 @@ export default function Mensagens({ adaptador, aoAbrirConversa }: {
             selecionados={selecionados}
             aoAlternar={alternar}
             rotulo={modal === "direta" ? "Contato para conversa" : "Participantes do grupo"}
+            selecaoUnica={modal === "direta"}
           />
         </Modal>
       )}

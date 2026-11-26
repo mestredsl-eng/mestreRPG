@@ -69,6 +69,35 @@ for (const vp of [{ w: 1366, h: 800, n: "desktop" }, { w: 390, h: 844, n: "mobil
   t(`${vp.n}: contatos renderizam`, await p.locator(".internet-contato-item").count() === 3);
 
   t(`${vp.n}: tablist semântico`, await p.locator("[role='tab']").count() >= 4);
+
+  // APG: setas movem seleção+foco; roving tabindex; tab↔tabpanel
+  const tabMensagens = p.getByRole("tab", { name: "Mensagens", exact: true });
+  await tabMensagens.focus();
+  await p.keyboard.press("ArrowRight");
+  await p.waitForTimeout(400);
+  t(`${vp.n}: seta ativa próxima aba`, await p.getByRole("tab", { name: "Conta", exact: true }).getAttribute("aria-selected") === "true");
+  t(`${vp.n}: roving tabindex`, await p.getByRole("tab", { name: "Conta", exact: true }).getAttribute("tabindex") === "0"
+    && await p.getByRole("tab", { name: "Mensagens", exact: true }).getAttribute("tabindex") === "-1");
+  t(`${vp.n}: tabpanel associado`, await p.locator("#painel-conta[aria-labelledby='aba-conta']").count() === 1);
+  await p.keyboard.press("ArrowLeft");
+  await p.waitForTimeout(400);
+
+  // Recusar pedido passa por confirmação modal
+  await p.getByRole("tab", { name: "Mensagens", exact: true }).click();
+  await p.getByRole("tab", { name: "Contatos", exact: true }).click();
+  await p.getByRole("tab", { name: /Pedidos recebidos/ }).click();
+  await p.getByRole("button", { name: "Recusar", exact: true }).click();
+  await p.locator(".modal, [role='dialog']").first().waitFor({ timeout: 3000 }).catch(() => {});
+  t(`${vp.n}: recusar pede confirmação`, await p.getByText(/Recusar pedido de @nix_bric/).count() === 1);
+  await p.getByRole("button", { name: "Cancelar", exact: true }).click();
+
+  // conversa direta: seleção única (radio)
+  await p.getByRole("tab", { name: "Caixa de entrada", exact: true }).click();
+  await p.getByRole("button", { name: "Nova conversa direta" }).click();
+  await p.locator("input[type='radio'][name='internet-contato-unico']").first().waitFor({ timeout: 3000 });
+  t(`${vp.n}: direta usa seleção única`, await p.locator("input[type='radio'][name='internet-contato-unico']").count() === 3);
+  await p.getByRole("button", { name: "Cancelar", exact: true }).click();
+
   await p.waitForTimeout(300);
   t(`${vp.n}: zero pageerror`, errs.length === 0, errs[0]);
   await ctx.close();
