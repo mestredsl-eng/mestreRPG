@@ -214,20 +214,43 @@ internetRouter.post("/contacts", requirePapel("mestre", "jogador"), async (req, 
   if (await contatoBloqueadoEntre(db, cid, origem.id, destino.id)) {
     erroHttp(res, 403, "Contato bloqueado"); return;
   }
-  const existente = await arestaContato(cid, origem.id, destino.id)
-    ?? await arestaContato(cid, destino.id, origem.id);
-  if (existente) {
-    if (existente.contaOrigemId === origem.id && existente.status === "pendente") {
-      res.json({ ok: true, contato: { id: existente.id, status: "pendente" }, replay: true }); return;
-    }
-    erroHttp(res, 409, "Já existe aresta de contato", { status: existente.status }); return;
-  }
+  // check-then-act DENTRO da tx síncrona: dois pedidos simultâneos em
+  // direções opostas não podem ambos passar — o UNIQUE da aresta é por
+  // direção, então sem isso nasceriam duas arestas pendentes espelhadas.
+  // O bloqueio também é re-verificado aqui para fechar a janela.
   const agora = new Date();
   const id = crypto.randomUUID();
-  await db.insert(internetContacts).values({
-    id, campaignId: cid, contaOrigemId: origem.id, contaDestinoId: destino.id,
-    status: "pendente", createdAt: agora, updatedAt: agora,
+  const resultado = db.transaction((tx) => {
+    const arestas = tx.select().from(internetContacts)
+      .where(and(
+        eq(internetContacts.campaignId, cid),
+        or(
+          and(eq(internetContacts.contaOrigemId, origem.id), eq(internetContacts.contaDestinoId, destino.id)),
+          and(eq(internetContacts.contaOrigemId, destino.id), eq(internetContacts.contaDestinoId, origem.id)),
+        ),
+      ))
+      .all();
+    if (arestas.some((r) => r.status === "bloqueado")) return { erro: "bloqueado" as const };
+    if (arestas.length) {
+      const ex = arestas[0];
+      if (arestas.length === 1 && ex.contaOrigemId === origem.id && ex.status === "pendente") {
+        return { replay: ex };
+      }
+      return { conflito: ex.status };
+    }
+    tx.insert(internetContacts).values({
+      id, campaignId: cid, contaOrigemId: origem.id, contaDestinoId: destino.id,
+      status: "pendente", createdAt: agora, updatedAt: agora,
+    }).run();
+    return { criado: true as const };
   });
+  if ("erro" in resultado) { erroHttp(res, 403, "Contato bloqueado"); return; }
+  if ("conflito" in resultado) {
+    erroHttp(res, 409, "Já existe aresta de contato", { status: resultado.conflito }); return;
+  }
+  if ("replay" in resultado && resultado.replay) {
+    res.json({ ok: true, contato: { id: resultado.replay.id, status: "pendente" }, replay: true }); return;
+  }
   await audit(req, "internet.contato_pedido", { contatoId: id, origem: origem.id, destino: destino.id });
   // notifica o destinatário pela sala privada (nunca room de conteúdo)
   const [destUser] = await db.select({ userId: memberships.userId }).from(internetAccounts)
