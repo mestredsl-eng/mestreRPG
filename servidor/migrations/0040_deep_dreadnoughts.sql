@@ -1,0 +1,1 @@
+ALTER TABLE `internet_contacts` ADD `bloqueado_por_conta_id` text REFERENCES internet_accounts(id);

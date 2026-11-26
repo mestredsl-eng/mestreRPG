@@ -88,7 +88,13 @@ function armarFlag(raiz, filePath) {
 // quebraria a cada migration nova.
 const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras", "operacao_estornos", "guilds", "guild_members", "guild_invites", "xp_lotes",
   // Comércio 1.1.0 (migration 0036): filhas antes da loja-pai.
-  "shop_orders", "shop_offers", "shop_managers", "shops"];
+  "shop_orders", "shop_offers", "shop_managers", "shops",
+  // Internet diegética 1.1.1 (migration 0039): filhas antes dos pais
+  // (messages/participantes → conversations → contacts → accounts).
+  "internet_messages", "internet_participantes", "internet_conversations",
+  "internet_contacts", "internet_accounts",
+  // Transferência de personagem (migration 0041).
+  "character_transfers"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {

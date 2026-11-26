@@ -9,6 +9,7 @@ import { personagemAutorizadoInternet } from "../lib/gate-internet.js";
 import { origemPermitida } from "../lib/origens.js";
 import { registrarMesa } from "./mesa.js";
 import { registrarSangue } from "./sangue.js";
+import { registrarInternet } from "./internet.js";
 
 /**
  * Camada de tempo real (spec §16).
@@ -52,6 +53,7 @@ export function configurarSockets(httpServer: HttpServer, opcoes: OpcoesSockets 
   const db = getDb();
   registrarMesa(io);
   registrarSangue(io);
+  registrarInternet(io);
 
   io.use(async (socket, next) => {
     const headers = socket.handshake.headers;

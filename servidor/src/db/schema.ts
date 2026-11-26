@@ -1,4 +1,5 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 /**
  * Schema do Mestre RPG — fundação (Etapa 1).
@@ -773,4 +774,138 @@ export const shopOrders = sqliteTable("shop_orders", {
   uniqueIndex("shop_order_request_idx").on(t.campaignId, t.createdBy, t.direction, t.requestId),
   index("shop_orders_shop_idx").on(t.shopId),
   index("shop_orders_buyer_idx").on(t.buyerCharacterId),
+]);
+
+// ---------- Internet diegética — contas e mensagens (Issue #349/#350, v1.1.1) ----------
+// Escopo aprovado P1–P12 (contrato docs/ISSUE-349-ARQUITETURA-CONTRATO.md):
+// conta opt-in 1:1 por personagem, contatos por aresta dirigida, conversas
+// diretas/grupo e mensagens persistentes. NUNCA entram em exportação de
+// campanha (P9) — exportarCampanha enumera tabelas explicitamente e estas
+// ficam de fora por omissão deliberada. P13: sem rotina de expurgo — o
+// createdAt indexado permite o job futuro sem migration destrutiva.
+
+// Conta diegética: uma por personagem (opt-in do titular). O handle é
+// legível e normalizado, único por campanha; a identidade real nunca
+// aparece — autorização sempre resolve personagem→membership→userId.
+export const internetAccounts = sqliteTable("internet_accounts", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  handle: text("handle").notNull(), // normalizado: minúsculas, [a-z0-9._-]
+  displayName: text("display_name"),
+  status: text("status").notNull().default("ativa"), // ativa|inativa|arquivada
+  // P11 — perfil público mínimo: presença e "digitando" desligados por padrão
+  mostrarPresenca: integer("mostrar_presenca", { mode: "boolean" }).notNull().default(false),
+  mostrarDigitando: integer("mostrar_digitando", { mode: "boolean" }).notNull().default(false),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_accounts_handle_idx").on(t.campaignId, t.handle),
+  uniqueIndex("internet_accounts_char_idx").on(t.characterId),
+  index("internet_accounts_campaign_idx").on(t.campaignId),
+]);
+
+// Contato = aresta DIRIGIDA origem→destino (pedido unilateral, P2).
+// `bloqueado` tem efeito bilateral de facto (P3): a checagem de envio
+// olha as duas direções. Remoção/recusa apagam a aresta — o histórico
+// das conversas é preservado (P12) e fica na auditoria.
+export const internetContacts = sqliteTable("internet_contacts", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  contaOrigemId: text("conta_origem_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  contaDestinoId: text("conta_destino_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pendente"), // pendente|aceito|bloqueado
+  // P3 (deliberação do proprietário): qualquer ponta da aresta pode
+  // iniciar o bloqueio — este campo registra QUAL conta o iniciou
+  // (auditoria + autorização de remoção). NULL fora de `bloqueado`.
+  bloqueadoPorContaId: text("bloqueado_por_conta_id").references(() => internetAccounts.id, { onDelete: "set null" }),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+  respondedAt: integer("responded_at", { mode: "timestamp_ms" }),
+}, (t) => [
+  uniqueIndex("internet_contacts_aresta_idx").on(t.campaignId, t.contaOrigemId, t.contaDestinoId),
+  index("internet_contacts_origem_idx").on(t.contaOrigemId),
+  index("internet_contacts_destino_idx").on(t.contaDestinoId),
+]);
+
+// Conversa direta ou grupo. `parKey` só existe em diretas
+// (min|max dos contaIds) — UNIQUE(campaignId,parKey) resolve a criação
+// concorrente pela constraint, sem check-then-act. Grupos: parKey NULL
+// (NULLs são distintos no SQLite — várias conversas grupo coexistem).
+export const internetConversations = sqliteTable("internet_conversations", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  tipo: text("tipo").notNull(), // direta|grupo
+  parKey: text("par_key"),
+  nome: text("nome"), // título do grupo (opcional)
+  status: text("status").notNull().default("ativa"), // ativa|arquivada
+  createdByContaId: text("created_by_conta_id").references(() => internetAccounts.id),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_conv_par_idx").on(t.campaignId, t.parKey),
+  index("internet_conv_campaign_idx").on(t.campaignId),
+]);
+
+// Participante da conversa. Cursor de leitura `(lastReadCreatedAt,
+// lastReadMessageId)` vive NESTA linha — fonte única de verdade (D2),
+// atualizado na mesma transação da leitura. Reconvite reativa a mesma
+// linha (trilha preservada em audit_logs), nunca apaga+recria.
+export const internetParticipantes = sqliteTable("internet_participantes", {
+  id: id(),
+  conversaId: text("conversa_id").notNull().references(() => internetConversations.id, { onDelete: "cascade" }),
+  contaId: text("conta_id").notNull().references(() => internetAccounts.id, { onDelete: "cascade" }),
+  papel: text("papel").notNull().default("membro"), // dono|membro
+  status: text("status").notNull().default("convidado"), // convidado|ativo|recusado|cancelado|saiu
+  convidadoPorContaId: text("convidado_por_conta_id").references(() => internetAccounts.id),
+  convidadoEm: integer("convidado_em", { mode: "timestamp_ms" }),
+  decididoEm: integer("decidido_em", { mode: "timestamp_ms" }),
+  saiuEm: integer("saiu_em", { mode: "timestamp_ms" }),
+  lastReadCreatedAt: integer("last_read_created_at", { mode: "timestamp_ms" }),
+  lastReadMessageId: text("last_read_message_id"),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+}, (t) => [
+  uniqueIndex("internet_part_conv_conta_idx").on(t.conversaId, t.contaId),
+  index("internet_part_conta_idx").on(t.contaId),
+  index("internet_part_status_idx").on(t.conversaId, t.status),
+]);
+
+// Mensagem diegética persistente. Ordenação canônica (createdAt,id);
+// idempotência por UNIQUE(conversaId,autorContaId,requestId) + payloadHash
+// (SHA-256 do conteúdo NFC-normalizado). `campaignId` desnormalizado
+// para escopo/auditoria sem join.
+export const internetMessages = sqliteTable("internet_messages", {
+  id: id(),
+  conversaId: text("conversa_id").notNull().references(() => internetConversations.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  autorContaId: text("autor_conta_id").notNull().references(() => internetAccounts.id),
+  requestId: text("request_id").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  conteudo: text("conteudo").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (t) => [
+  uniqueIndex("internet_msg_idem_idx").on(t.conversaId, t.autorContaId, t.requestId),
+  index("internet_msg_conv_ordem_idx").on(t.conversaId, t.createdAt, t.id),
+  index("internet_msg_campaign_idx").on(t.campaignId, t.createdAt),
+]);
+
+// Transferência de personagem (P7, contrato #349): convite do titular
+// atual + aceite explícito do novo titular. No máximo 1 `pendente` por
+// personagem (índice parcial). Conta diegética e histórico acompanham
+// por characterId sem mudança; o aceite é atômico (UPDATE condicional
+// do titular + status do pedido na mesma tx).
+export const characterTransfers = sqliteTable("character_transfers", {
+  id: id(),
+  campaignId: text("campaign_id").notNull().references(() => campaigns.id, { onDelete: "cascade" }),
+  characterId: text("character_id").notNull().references(() => characters.id, { onDelete: "cascade" }),
+  fromMembershipId: text("from_membership_id").notNull().references(() => memberships.id),
+  toMembershipId: text("to_membership_id").notNull().references(() => memberships.id),
+  status: text("status").notNull().default("pendente"), // pendente|aceita|recusada|cancelada
+  createdAt: createdAt(),
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+}, (t) => [
+  uniqueIndex("char_transf_pendente_idx").on(t.characterId).where(sql`status = 'pendente'`),
+  index("char_transf_campaign_idx").on(t.campaignId),
+  index("char_transf_to_idx").on(t.toMembershipId, t.status),
 ]);

@@ -27,6 +27,7 @@ import { novidadesRouter, novidadesAdminRouter } from "./routes/novidades.js";
 import { guildasRouter } from "./routes/guildas.js";
 import { convitesGuildaAdminRouter, convitesGuildaRouter } from "./routes/convites-guilda.js";
 import { servidorRouter } from "./routes/admin-servidor.js";
+import { internetRouter } from "./routes/internet.js";
 import { configurarSockets } from "./sockets/index.js";
 import { errorHandler } from "./middleware/error.js";
 import { headersSeguranca } from "./middleware/headers.js";
@@ -95,7 +96,7 @@ const routers: Router[] = [
   defeitosRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
-  convitesGuildaAdminRouter, convitesGuildaRouter,
+  convitesGuildaAdminRouter, convitesGuildaRouter, internetRouter,
 ];
 for (const r of routers) {
   blindar(r);
@@ -122,6 +123,7 @@ app.use("/api/campaigns/:campaignId/regras", regrasRouter);
 app.use("/api/characters/:characterId", patrimonioRouter);
 app.use("/api/characters/:characterId/comercio", comercioPersonagemRouter);
 app.use("/api/campaigns/:campaignId/comercio", comercioLojasRouter);
+app.use("/api/campaigns/:campaignId/internet", internetRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);
 app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
