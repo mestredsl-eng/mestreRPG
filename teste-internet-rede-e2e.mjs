@@ -198,9 +198,9 @@ try {
   proc.stderr.on("data", () => {});
   await esperarSaudavel(BASE, proc);
 
-  const c = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_um", jogador2: "jogador_dois" } });
+  const c = await criarCenario(BASE, BANCO, { jogadores: { jogador1: "jogador_um", jogador2: "jogador_dois", jogador3: "jogador_tres" } });
   const mestre = c.cookieMestre, campA = c.campId;
-  const j1 = c.jogadores.jogador1, j2 = c.jogadores.jogador2;
+  const j1 = c.jogadores.jogador1, j2 = c.jogadores.jogador2, j3 = c.jogadores.jogador3;
   fixtureGate(BANCO, campA, c.adminId);
 
   const campBRes = await req(BASE, "POST", "/campaigns", { cookie: mestre, body: { name: "Campanha Beta" } });
@@ -222,6 +222,7 @@ try {
   const charA1b = novoChar(BANCO, { campId: campA, membershipId: j1.membershipId, nome: "Lya Dois", data: { comp: 1 } });
   const charA2 = novoChar(BANCO, { campId: campA, membershipId: j2.membershipId, nome: "Nix Um", data: { comp: 1 } });
   const charA2b = novoChar(BANCO, { campId: campA, membershipId: j2.membershipId, nome: "Nix Dois", data: { comp: 1 } });
+  const charA3 = novoChar(BANCO, { campId: campA, membershipId: j3.membershipId, nome: "Três Um", data: { comp: 1 } });
   const charSemConta = novoChar(BANCO, { campId: campA, membershipId: j1.membershipId, nome: "Sem Conta UA", data: { comp: 1 } });
   const charSemDev = novoChar(BANCO, { campId: campA, membershipId: j2.membershipId, nome: "Sem Device UB", data: { comp: 1 }, comDevice: false });
   const charB1 = novoChar(BANCO, { campId: campB, membershipId: membB, nome: "Lya CampBeta", data: { comp: 1 } });
@@ -244,6 +245,9 @@ try {
   const cb1 = await mk(j1.cookie, charB1, campB, "lya_campob");
   const contaB1 = cb1.json?.conta?.id;
   t("conta @lya_campob (campanha B)", cb1.status === 201);
+  const ca3 = await mk(j3.cookie, charA3, campA, "tres_um");
+  const contaA3 = ca3.json?.conta?.id;
+  t("conta @tres_um (j3/charA3)", ca3.status === 201 && !!contaA3, JSON.stringify(ca3.json).slice(0, 140));
 
   const dup = await mk(j1.cookie, charA1, campA, "outro_handle");
   t("conta duplicada → 409", dup.status === 409, String(dup.status));
@@ -261,12 +265,21 @@ try {
   t("par API A1b↔A2b aceito", par1.ok, `etapa=${par1.etapa} ` + JSON.stringify(par1.resp?.json ?? par1).slice(0, 160));
   const par2 = await aceitarPar(BASE, j1.cookie, contaA1b, j2.cookie, contaA2, campA);
   t("par API A1b↔A2 aceito (membro do grupo dedup)", par2.ok, `etapa=${par2.etapa} ` + JSON.stringify(par2.resp?.json ?? par2).slice(0, 160));
+  // Par do cenário P3 A/B/C: A=contaA1b (j1), B=contaA2b (j2), C=contaA3 (j3).
+  // contaA1b é a ORIGEM das arestas par1/par5 — o bloqueio iniciado por
+  // ela prova o P3 (qualquer ponta). contaA1 fica livre p/ o fluxo de UI.
+  const par5 = await aceitarPar(BASE, j1.cookie, contaA1b, j3.cookie, contaA3, campA);
+  t("par P3 A↔C aceito", par5.ok, `etapa=${par5.etapa} ` + JSON.stringify(par5.resp?.json ?? par5).slice(0, 160));
+  // contaA1↔contaA3: membro ativo extra p/ o grupo de UI (P3 exige ≥1
+  // destinatário elegível — convidado ainda não conta)
+  const par6 = await aceitarPar(BASE, j1.cookie, contaA1, j3.cookie, contaA3, campA);
+  t("par UI A1↔C aceito", par6.ok, `etapa=${par6.etapa} ` + JSON.stringify(par6.resp?.json ?? par6).slice(0, 160));
 
   // ================= SOCKET + DIRETA (API) =================
   sec("2. Conversa direta A1b↔A2b — socket real");
-  const s1 = conectar(j1.cookie), s2 = conectar(j2.cookie);
-  await Promise.all([pronto(s1), pronto(s2)]);
-  t("dois sockets conectados", s1.connected && s2.connected);
+  const s1 = conectar(j1.cookie), s2 = conectar(j2.cookie), s3 = conectar(j3.cookie);
+  await Promise.all([pronto(s1), pronto(s2), pronto(s3)]);
+  t("três sockets conectados", s1.connected && s2.connected && s3.connected);
 
   const convInv = await req(BASE, "POST", `${R(campA)}/conversations`, {
     cookie: j1.cookie, body: { tipo: "direta", contaDestinoId: "nao-existe", origemContaId: contaA1b },
@@ -415,17 +428,111 @@ try {
   const dirB = await req(BASE, "GET", `${R(campB)}/accounts`, { cookie: j1.cookie });
   t("campB: diretório não lista contas de A", !(dirB.json?.contas ?? []).some((x) => x.id === contaA1 || x.id === contaA2), JSON.stringify(dirB.json).slice(0, 160));
 
-  // ================= BLOQUEIO =================
-  sec("7. Bloqueio bilateral (par API)");
-  const arestas = await req(BASE, "GET", `${R(campA)}/contacts`, { cookie: j1.cookie });
+  // ================= BLOQUEIO P3 — GRUPO A/B/C + DM TEMPORAL =================
+  // Backend c5f719a: bloqueio par-a-par por QUALQUER ponta, corte temporal
+  // no histórico (P12) e elegibilidade por destinatário no envio/fan-out.
+  // A=contaA1b (j1, ORIGEM das arestas), B=contaA2b (j2), C=contaA3 (j3).
+  // A DM A↔B é a convId já existente (A1b↔A2b) — o bloqueio atinge a aresta par1.
+  sec("7. Bloqueio P3 par-a-par — grupo A/B/C + DM temporal");
+  const abc = await req(BASE, "POST", `${R(campA)}/conversations`, {
+    cookie: j1.cookie,
+    body: { tipo: "grupo", nome: "Tribo ABC", contaIds: [contaA2b, contaA3], origemContaId: contaA1b },
+  });
+  const abcId = abc.json?.conversa;
+  t("grupo A/B/C criado", abc.status === 201 && !!abcId, JSON.stringify(abc.json).slice(0, 140));
+  const detABC = await req(BASE, "GET", `${R(campA)}/conversations/${abcId}`, { cookie: j1.cookie });
+  const partesABC = detABC.json?.conversa?.participantes ?? [];
+  const pidABC = (cid) => partesABC.find((p) => p.conta?.id === cid && p.status === "convidado")?.id;
+  const accBAB = await req(BASE, "POST", `${R(campA)}/conversations/${abcId}/participants/${pidABC(contaA2b)}/responder`, { cookie: j2.cookie, body: { aceitar: true } });
+  const accCAB = await req(BASE, "POST", `${R(campA)}/conversations/${abcId}/participants/${pidABC(contaA3)}/responder`, { cookie: j3.cookie, body: { aceitar: true } });
+  t("B e C aceitam convite do grupo", accBAB.status === 200 && accCAB.status === 200, JSON.stringify({ accBAB: accBAB.status, accCAB: accCAB.status }));
+  const dmId = convId; // DM A↔B já existe (A1b↔A2b)
+
+  const colP3 = { s1: [], s2: [], s3: [] };
+  const hP3 = { s1: (x) => colP3.s1.push(x), s2: (x) => colP3.s2.push(x), s3: (x) => colP3.s3.push(x) };
+  s1.on("internet:mensagem", hP3.s1); s2.on("internet:mensagem", hP3.s2); s3.on("internet:mensagem", hP3.s3);
+  const enviarP3 = async (sock, conta, conv, conteudo) => {
+    const marca = { s1: colP3.s1.length, s2: colP3.s2.length, s3: colP3.s3.length };
+    const ack = await emitirCb(sock, "internet:mensagem:enviar", {
+      conversaId: conv, contaId: conta, requestId: crypto.randomUUID(), conteudo,
+    });
+    await dormir(700);
+    const ev = {};
+    for (const k of ["s1", "s2", "s3"]) ev[k] = colP3[k].slice(marca[k]).filter((x) => x.conversaId === conv);
+    return { ack, ev };
+  };
+
+  // pré-bloqueio: grupo e DM fluem normalmente
+  const preA = await enviarP3(s1, contaA1b, abcId, "abc-antes-A");
+  t("pré-bloqueio: A envia no grupo", preA.ack?.ok === true, JSON.stringify(preA.ack));
+  t("pré-bloqueio: B recebe msg de A", preA.ev.s2.some((x) => x.contaId === contaA2b && x.conteudo === "abc-antes-A"), JSON.stringify(preA.ev.s2.map((x) => x.contaId)));
+  t("pré-bloqueio: C recebe msg de A", preA.ev.s3.some((x) => x.contaId === contaA3 && x.conteudo === "abc-antes-A"));
+  await enviarP3(s2, contaA2b, abcId, "abc-antes-B");
+  await enviarP3(s3, contaA3, abcId, "abc-antes-C");
+  const preDM = await enviarP3(s2, contaA2b, dmId, "dm-antes");
+  t("pré-bloqueio: DM B→A entregue", preDM.ack?.ok === true && preDM.ev.s1.some((x) => x.conteudo === "dm-antes"));
+
+  // A bloqueia B — contaA1b é a ORIGEM da aresta par1: prova do P3 (qualquer ponta)
   const par = (x) => (x.origem?.id === contaA1b && x.destino?.id === contaA2b) || (x.origem?.id === contaA2b && x.destino?.id === contaA1b);
-  const arestaBloq = (arestas.json?.contatos ?? []).find((x) => x.status === "aceito" && par(x));
-  t("aresta aceita A1b↔A2b localizada", !!arestaBloq, JSON.stringify(arestas.json?.contatos?.map((x) => ({ s: x.status, o: x.origem?.id === contaA1b ? "A1b" : "?", d: x.destino?.id }))).slice(0, 200));
-  // j2 é o DESTINO da aresta A1b→A2b — só ele pode bloquear (P3)
+  const arestasP3 = await req(BASE, "GET", `${R(campA)}/contacts`, { cookie: j1.cookie });
+  const arestaAB = (arestasP3.json?.contatos ?? []).find((x) => x.status === "aceito" && par(x));
+  t("aresta A↔B aceita localizada", !!arestaAB, JSON.stringify(arestasP3.json?.contatos?.length));
+  const bloqAB = await req(BASE, "POST", `${R(campA)}/contacts/${arestaAB.id}/bloquear`, { cookie: j1.cookie, body: {} });
+  t("A (origem) bloqueia B — P3 qualquer ponta inicia", bloqAB.status === 200, JSON.stringify(bloqAB.json).slice(0, 120));
+
+  // pós-bloqueio no grupo: A segue falando com C; B não recebe A
+  const posA = await enviarP3(s1, contaA1b, abcId, "abc-depois-A");
+  t("pós-bloqueio: A envia no grupo (C elegível)", posA.ack?.ok === true, JSON.stringify(posA.ack));
+  t("A continua falando com C — C recebe", posA.ev.s3.some((x) => x.contaId === contaA3 && x.conteudo === "abc-depois-A"), JSON.stringify(posA.ev.s3.map((x) => x.contaId)));
+  t("B não recebe msg de A", !posA.ev.s2.some((x) => x.conteudo === "abc-depois-A"), JSON.stringify(posA.ev.s2.map((x) => x.contaId)));
+  t("A recebe o próprio evento (sync multi-aba)", posA.ev.s1.some((x) => x.contaId === contaA1b));
+
+  // B recebe C normalmente
+  const posC = await enviarP3(s3, contaA3, abcId, "abc-depois-C");
+  t("B recebe msg de C", posC.ev.s2.some((x) => x.contaId === contaA2b && x.conteudo === "abc-depois-C"), JSON.stringify(posC.ev.s2.map((x) => x.contaId)));
+  t("A recebe msg de C", posC.ev.s1.some((x) => x.contaId === contaA1b));
+
+  // B ainda fala com C; A não recebe B (bloqueio simétrico de facto)
+  const posB = await enviarP3(s2, contaA2b, abcId, "abc-depois-B");
+  t("B envia no grupo (C elegível)", posB.ack?.ok === true, JSON.stringify(posB.ack));
+  t("C recebe msg de B", posB.ev.s3.some((x) => x.contaId === contaA3));
+  t("A NÃO recebe msg de B", !posB.ev.s1.some((x) => x.conteudo === "abc-depois-B"), JSON.stringify(posB.ev.s1.map((x) => x.contaId)));
+
+  // DM A↔B (convId): bloqueio zera elegíveis → rejeição honesta nos dois sentidos
+  const dmA = await enviarP3(s1, contaA1b, dmId, "dm-depois-A");
+  t("DM A→B rejeitada (0 elegíveis)", dmA.ack?.ok === false, JSON.stringify(dmA.ack));
+  const dmB = await enviarP3(s2, contaA2b, dmId, "dm-depois-B");
+  t("DM B→A rejeitada (0 elegíveis)", dmB.ack?.ok === false, JSON.stringify(dmB.ack));
+
+  // histórico temporal: pré-bloqueio visível p/ ambos (P12); pós oculto do par
+  const histJ1 = await req(BASE, "GET", `${R(campA)}/conversations/${abcId}/messages?limit=50`, { cookie: j1.cookie });
+  const txtJ1 = (histJ1.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("histórico j1: msgs pré-bloqueio visíveis", ["abc-antes-A", "abc-antes-B", "abc-antes-C"].every((x) => txtJ1.includes(x)), txtJ1.join("|"));
+  t("histórico j1: pós de A e C visíveis", txtJ1.includes("abc-depois-A") && txtJ1.includes("abc-depois-C"));
+  t("histórico j1: pós de B oculto", !txtJ1.includes("abc-depois-B"), txtJ1.join("|"));
+  const histJ2 = await req(BASE, "GET", `${R(campA)}/conversations/${abcId}/messages?limit=50`, { cookie: j2.cookie });
+  const txtJ2 = (histJ2.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("histórico j2(B): pré de A visível (P12)", txtJ2.includes("abc-antes-A") && txtJ2.includes("abc-depois-B") && txtJ2.includes("abc-depois-C"), txtJ2.join("|"));
+  t("histórico j2(B): pós de A oculto", !txtJ2.includes("abc-depois-A"), txtJ2.join("|"));
+  const histDM = await req(BASE, "GET", `${R(campA)}/conversations/${dmId}/messages?limit=50`, { cookie: j1.cookie });
+  const dmTxt = (histDM.json?.mensagens ?? []).map((m) => m.conteudo);
+  t("histórico DM: pré-bloqueio visível, pós ausente (P12)",
+    dmTxt.includes("dm-antes") && !dmTxt.includes("dm-depois-A") && !dmTxt.includes("dm-depois-B"), dmTxt.slice(-4).join("|"));
+  s1.off("internet:mensagem", hP3.s1); s2.off("internet:mensagem", hP3.s2); s3.off("internet:mensagem", hP3.s3);
+
+  // ================= BLOQUEIO — ARESTA JÁ BLOQUEADA (remoção P3) =================
+  sec("8. Bloqueio — aresta A1b↔A2b bloqueada (replay e remoção P3)");
+  const arestas = await req(BASE, "GET", `${R(campA)}/contacts`, { cookie: j1.cookie });
+  const arestaBloq = (arestas.json?.contatos ?? []).find((x) => x.status === "bloqueado" && par(x));
+  t("aresta A1b↔A2b bloqueada localizada", !!arestaBloq, JSON.stringify(arestas.json?.contatos?.map((x) => ({ s: x.status, o: x.origem?.id === contaA1b ? "A1b" : "?", d: x.destino?.id }))).slice(0, 200));
+  // P3: qualquer ponta pode (re)iniciar — com aresta já bloqueada é replay
   const bloq = await req(BASE, "POST", `${R(campA)}/contacts/${arestaBloq.id}/bloquear`, { cookie: j2.cookie, body: {} });
-  t("bloqueio aplicado pelo destino", bloq.status === 200, JSON.stringify(bloq.json).slice(0, 120));
+  t("destino também pode bloquear (P3) — replay idempotente", bloq.status === 200 && bloq.json?.replay === true, JSON.stringify(bloq.json).slice(0, 120));
   const bloqOrigem = await req(BASE, "POST", `${R(campA)}/contacts/${arestaBloq.id}/bloquear`, { cookie: j1.cookie, body: {} });
-  t("origem NÃO pode bloquear (só destino)", bloqOrigem.status === 403, String(bloqOrigem.status));
+  t("origem também pode bloquear (P3) — replay idempotente", bloqOrigem.status === 200, String(bloqOrigem.status));
+  // novo pedido entre par bloqueado → 403 honesto
+  const novoPedido = await req(BASE, "POST", `${R(campA)}/contacts`, { cookie: j1.cookie, body: { contaId: contaA2b, origemContaId: contaA1b } });
+  t("novo pedido entre par bloqueado → 403", novoPedido.status === 403, String(novoPedido.status));
   const envioBloq = await emitirCb(s1, "internet:mensagem:enviar", {
     conversaId: convId, contaId: contaA1b, requestId: crypto.randomUUID(), conteudo: "após bloqueio",
   });
@@ -437,9 +544,15 @@ try {
   // barra conversas NOVAS e envios, não o replay do histórico (P12).
   t("replay da conversa existente → mesma id (bloqueio não apaga histórico)",
     convNova.status === 200 && convNova.json?.conversa === convId, `${convNova.status} ${JSON.stringify(convNova.json).slice(0, 120)}`);
+  // P3: aresta bloqueada só é removida por QUEM bloqueou — aqui a
+  // iniciadora foi contaA1b (j1); j2 é a outra ponta e NÃO pode remover
+  const delNao = await req(BASE, "DELETE", `${R(campA)}/contacts/${arestaBloq.id}`, { cookie: j2.cookie });
+  t("aresta bloqueada: não-iniciador não remove", delNao.status === 403, String(delNao.status));
+  const delOk = await req(BASE, "DELETE", `${R(campA)}/contacts/${arestaBloq.id}`, { cookie: j1.cookie });
+  t("aresta bloqueada: iniciador remove (aresta some)", delOk.status === 200, String(delOk.status));
 
   // ================= REVOGAÇÃO =================
-  sec("8. Revogação — arquivar personagem");
+  sec("9. Revogação — arquivar personagem");
   {
     const db = abrirDb(BANCO);
     db.prepare("update characters set status='arquivado' where id=?").run(charA2b);
@@ -455,8 +568,8 @@ try {
   const h2 = (x) => coletar2.push(x);
   s2y.on("internet:mensagem", h2);
   const antes2 = coletar2.length;
-  // A1b está bloqueado com A2b — uso o grupo: dono é A1b... bloqueio é
-  // par-a-par A1b↔A2b, não A1b↔A2. Mando como A2 (membro ativo).
+  // contaA2b está arquivada — o fan-out deve excluí-la mesmo sendo
+  // participante ativo do grupo. Mando como A2 (membro ativo).
   await emitirCb(s2, "internet:mensagem:enviar", {
     conversaId: grupoId, contaId: contaA2, requestId: crypto.randomUUID(), conteudo: "grupo segue",
   });
@@ -468,7 +581,7 @@ try {
   s2y.off("internet:mensagem", h2);
 
   // ================= NEGAÇÕES API =================
-  sec("9. Negações honestas (REST/socket)");
+  sec("10. Negações honestas (REST/socket)");
   const origInv = await req(BASE, "POST", `${R(campA)}/conversations`, {
     cookie: j1.cookie, body: { tipo: "direta", contaDestinoId: contaA2, origemContaId: "conta-inexistente" },
   });
@@ -483,7 +596,7 @@ try {
   t("grupo c/ conta inexistente → negado", [400, 403, 404].includes(semAceite.status), String(semAceite.status));
 
   // ================= UI =================
-  sec("10. UI — módulo Rede (site/dist real)");
+  sec("11. UI — módulo Rede (site/dist real)");
   const dumpUI = async (page, tag) => {
     try {
       const txt = await page.locator(".internet-rede, section[aria-label='Internet']").last().innerText({ timeout: 3000 });
@@ -557,8 +670,19 @@ try {
   // j1 agrega arestas de TODAS as suas contas: @nix_um aparece 2× (aresta
   // A1↔A2 e A1b↔A2) — ambas selecionam a mesma contaA2; .first() basta.
   await p1.locator(".internet-rede .internet-contato-item", { hasText: "@nix_um" }).locator("input[type='checkbox']").first().check();
+  // @tres_um (contaA3/j3) entra como segundo membro: o backend P3 exige
+  // ≥1 destinatário elegível (ativo) p/ persistir — C aceita via API já.
+  await p1.locator(".internet-rede .internet-contato-item", { hasText: "@tres_um" }).locator("input[type='checkbox']").first().check();
   await p1.getByRole("button", { name: "Criar grupo", exact: true }).click();
   await p1.locator("#internet-msg-texto").waitFor({ timeout: 10000 });
+  // j3 aceita o convite de contaA3 via API — grupo passa a ter 1 ativo
+  // além do dono, tornando a msg abaixo persistível sob o contrato P3
+  const convsUI = await req(BASE, "GET", `${R(campA)}/conversations`, { cookie: j1.cookie });
+  const gUI = (convsUI.json?.conversas ?? []).find((x) => x.nome === "Tribo UI" || x.titulo === "Tribo UI");
+  const detGUI = await req(BASE, "GET", `${R(campA)}/conversations/${gUI?.id ?? gUI?.conversa}`, { cookie: j1.cookie });
+  const pidC = (detGUI.json?.conversa?.participantes ?? []).find((p) => p.conta?.id === contaA3 && p.status === "convidado")?.id;
+  const accCUI = await req(BASE, "POST", `${R(campA)}/conversations/${gUI?.id ?? gUI?.conversa}/participants/${pidC}/responder`, { cookie: j3.cookie, body: { aceitar: true } });
+  t("UI: j3 aceita convite (membro ativo p/ P3)", accCUI.status === 200, JSON.stringify(accCUI.json).slice(0, 120));
   await p1.locator("#internet-msg-texto").fill("msg do grupo UI");
   await p1.getByRole("button", { name: "Enviar", exact: true }).click();
   t("UI j1: grupo criado + msg enviada", await p1.locator(".internet-bolha", { hasText: "msg do grupo UI" }).count() >= 1);
