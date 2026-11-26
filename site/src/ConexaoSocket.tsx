@@ -80,6 +80,7 @@ export function IndicadorConexao({ campaignId, tela }: { campaignId?: string; te
     <span
       className={`conexao conexao-${estado}`}
       title={detalhe ? `${ROTULO[estado]} — ${detalhe}` : "Status da conexão em tempo real"}
+      data-sync-ts={ultima ?? ""}
     >
       <i aria-hidden="true" />
       {texto}

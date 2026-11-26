@@ -199,6 +199,79 @@ try {
   const marcaInfoDepois = await textoIndicador(page);
   t("sync do Diário não altera a marca de Informações", marcaInfoDepois === marcaInfo, `${marcaInfo} → ${marcaInfoDepois}`);
 
+  sec("Resposta obsoleta não avança marca nem estado (generation guard)");
+  const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+  // Cenário: GET #1 é atrasado 1,5s e responderia com dado velho; GET #2
+  // (disparado ~600ms depois) completa antes. Sem guard, a resposta #1
+  // sobrescreveria estado e avançaria a marca por último.
+
+  // --- shell da campanha (GET /api/campaigns/:id) ---
+  await page.locator(".abas button", { hasText: "Informações" }).first().click();
+  await page.waitForTimeout(500);
+  const tsShell0 = await indicador(page).getAttribute("data-sync-ts");
+  let getShellCount = 0;
+  await page.route(`**/api/campaigns/${c.campId}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    getShellCount++;
+    if (getShellCount === 1) {
+      await sleepMs(1500);
+      const resp = await route.fetch();
+      const json = await resp.json();
+      if (json?.campanha) json.campanha.name = "ZZZ-OBSOLETO";
+      return route.fulfill({ response: resp, json });
+    }
+    return route.continue();
+  });
+  await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { description: "obs1 " + Date.now() } });
+  await sleepMs(600);
+  await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { description: "obs2 " + Date.now() } });
+  // GET #2 completa rápido → marca avança
+  await page.waitForFunction(
+    (ts0) => {
+      const el = document.querySelector(".conexao");
+      const ts = el?.getAttribute("data-sync-ts") ?? "";
+      return ts !== "" && ts !== ts0;
+    },
+    tsShell0, { timeout: 20000 },
+  );
+  const tsShell2 = await indicador(page).getAttribute("data-sync-ts");
+  // aguarda a resposta obsoleta (#1, ~1,5s) resolver e ser descartada
+  await sleepMs(2400);
+  const tsShellDepois = await indicador(page).getAttribute("data-sync-ts");
+  t("shell: resposta obsoleta não avança a marca", tsShellDepois === tsShell2, `${tsShell2} → ${tsShellDepois}`);
+  t("shell: dado obsoleto não aparece na tela", (await page.getByText("ZZZ-OBSOLETO").count()) === 0);
+  await page.unroute(`**/api/campaigns/${c.campId}`);
+
+  // --- Personagens (GET /api/campaigns/:id/characters) ---
+  await page.locator(".abas button", { hasText: "Personagens" }).first().click();
+  await sleepMs(1500); // mount GETs (characters + sheet-templates + vinculaveis)
+  const tsP0 = await indicador(page).getAttribute("data-sync-ts");
+  let getPersCount = 0;
+  await page.route(`**/api/campaigns/${c.campId}/characters**`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    getPersCount++;
+    if (getPersCount === 1) await sleepMs(1500);
+    return route.continue();
+  });
+  // dois eventos fichas:atualizadas via POST de modelo (mestre) — Personagens escuta
+  await req(BASE, "POST", `/campaigns/${c.campId}/sheet-templates`, { cookie: c.cookieMestre, body: { name: "mdl-obs1 " + Date.now() } });
+  await sleepMs(600);
+  await req(BASE, "POST", `/campaigns/${c.campId}/sheet-templates`, { cookie: c.cookieMestre, body: { name: "mdl-obs2 " + Date.now() } });
+  await page.waitForFunction(
+    (ts0) => {
+      const el = document.querySelector(".conexao");
+      const ts = el?.getAttribute("data-sync-ts") ?? "";
+      return ts !== "" && ts !== ts0;
+    },
+    tsP0, { timeout: 20000 },
+  );
+  const tsP2 = await indicador(page).getAttribute("data-sync-ts");
+  await sleepMs(2400);
+  const tsPDepois = await indicador(page).getAttribute("data-sync-ts");
+  t("personagens: resposta obsoleta não avança a marca", tsPDepois === tsP2, `${tsP2} → ${tsPDepois}`);
+  t("personagens: GETs interceptados (1 obsoleto + 1 fresco)", getPersCount >= 2, `count=${getPersCount}`);
+  await page.unroute(`**/api/campaigns/${c.campId}/characters**`);
+
   sec("Mobile 390px");
   const ctxM = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pgM = await ctxM.newPage();
