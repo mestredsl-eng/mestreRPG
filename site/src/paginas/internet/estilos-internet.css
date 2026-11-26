@@ -1,0 +1,187 @@
+/* F4 / Issue #352 — Internet diegética: camada visual.
+   Escopo exclusivo do módulo internet/ — nada aqui afeta o chat OOC
+   da Mesa nem o comércio v1.1.0. */
+
+.internet-rede { display: flex; flex-direction: column; gap: 12px; }
+
+.internet-rede .abas { display: flex; gap: 6px; flex-wrap: wrap; }
+.internet-rede .abas button { flex: 0 0 auto; }
+
+.internet-rede-banner {
+  border: 1px solid var(--horror-vinho, #7a2e3a);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 0.9rem;
+}
+.internet-rede-banner-reconectando { border-color: #8a6d1f; color: #c9a86a; }
+
+/* ---------- caixa de entrada ---------- */
+.internet-inbox { display: flex; flex-direction: column; gap: 8px; }
+
+.internet-conversa-item {
+  display: flex; align-items: center; gap: 10px;
+  width: 100%; text-align: left;
+  padding: 10px 12px;
+}
+.internet-conversa-item .crescer { flex: 1; min-width: 0; }
+.internet-conversa-nome {
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.internet-conversa-preview {
+  color: var(--texto-fraco, #9aa0aa); font-size: 0.85rem;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.internet-conversa-meta {
+  display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
+  font-size: 0.78rem; color: var(--texto-fraco, #9aa0aa); flex: 0 0 auto;
+}
+.internet-badge-nao-lidas {
+  background: var(--horror-vinho, #7a2e3a); color: #fff;
+  border-radius: 999px; min-width: 20px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.75rem; font-weight: 700; padding: 0 6px;
+}
+.internet-chip-tipo {
+  font-size: 0.7rem; border: 1px solid var(--borda, #3a3f4a);
+  border-radius: 999px; padding: 1px 8px; color: var(--texto-fraco, #9aa0aa);
+}
+.internet-chip-grupo { color: #7fb3d5; border-color: #2c4a63; }
+.internet-chip-direto { color: #9fd6a8; border-color: #2e5c3a; }
+
+/* ---------- thread ---------- */
+.internet-thread { display: flex; flex-direction: column; gap: 10px; }
+.internet-thread-cab {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.internet-thread-cab .crescer { flex: 1; min-width: 0; }
+.internet-thread-voltar { flex: 0 0 auto; }
+
+.internet-mensagens {
+  display: flex; flex-direction: column; gap: 6px;
+  max-height: 55vh; overflow-y: auto; padding: 4px 2px;
+}
+.internet-bolha {
+  max-width: 78%; padding: 8px 12px; border-radius: 12px;
+  font-size: 0.95rem; line-height: 1.4; word-wrap: break-word;
+  white-space: pre-wrap;
+}
+.internet-bolha-dele {
+  align-self: flex-start;
+  background: var(--cartao-fundo, #1c1f26);
+  border: 1px solid var(--borda, #3a3f4a);
+  border-bottom-left-radius: 4px;
+}
+.internet-bolha-minha {
+  align-self: flex-end;
+  background: var(--horror-vinho, #7a2e3a);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+}
+.internet-bolha-meta {
+  display: block; font-size: 0.7rem; opacity: 0.75; margin-top: 4px;
+}
+.internet-bolha-autor {
+  display: block; font-size: 0.72rem; font-weight: 700; opacity: 0.85;
+  margin-bottom: 2px;
+}
+.internet-bolha-falhou {
+  outline: 2px solid #b03a2e; outline-offset: 1px;
+}
+.internet-bolha-estado {
+  display: flex; align-items: center; gap: 8px; margin-top: 6px;
+  font-size: 0.75rem;
+}
+.internet-bolha-estado button { padding: 2px 8px; font-size: 0.75rem; }
+
+.internet-composer {
+  display: flex; gap: 8px; align-items: flex-end;
+  border-top: 1px solid var(--borda, #3a3f4a); padding-top: 10px;
+}
+.internet-composer textarea {
+  flex: 1; resize: vertical; min-height: 44px; max-height: 140px;
+  font: inherit;
+}
+.internet-composer-contador {
+  font-size: 0.72rem; color: var(--texto-fraco, #9aa0aa);
+  align-self: center;
+}
+.internet-composer-contador.perto-do-limite { color: #c9a86a; font-weight: 700; }
+
+/* ---------- estados ---------- */
+.internet-msg-carregando {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--texto-fraco, #9aa0aa); padding: 12px 0;
+}
+.internet-msg-skeleton {
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--borda, #3a3f4a);
+  border-top-color: var(--horror-vinho, #7a2e3a);
+  animation: internet-msg-girar 0.9s linear infinite;
+}
+@keyframes internet-msg-girar { to { transform: rotate(360deg); } }
+
+.internet-msg-erro {
+  border: 1px solid #b03a2e; border-radius: 8px;
+  padding: 12px; display: flex; flex-direction: column; gap: 8px;
+  align-items: flex-start;
+}
+.internet-msg-erro p { margin: 0; }
+
+.internet-msg-vazio {
+  border: 1px dashed var(--borda, #3a3f4a); border-radius: 8px;
+  padding: 18px 14px; text-align: center;
+  display: flex; flex-direction: column; gap: 6px; align-items: center;
+}
+.internet-msg-vazio-titulo { font-weight: 600; margin: 0; }
+.internet-msg-vazio .meta { margin: 0; }
+
+/* ---------- contatos / grupos ---------- */
+.internet-contatos-subabas { display: flex; gap: 6px; flex-wrap: wrap; }
+.internet-contatos-lista { display: flex; flex-direction: column; gap: 8px; }
+.internet-contato-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+}
+.internet-contato-item .crescer { flex: 1; min-width: 0; }
+.internet-contato-acoes { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.internet-contato-handle { font-weight: 600; }
+.internet-contato-nome { color: var(--texto-fraco, #9aa0aa); font-size: 0.85rem; }
+
+.internet-grupo-membros { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
+.internet-grupo-membro {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid var(--borda, #3a3f4a); border-radius: 8px;
+}
+.internet-grupo-membro .crescer { flex: 1; min-width: 0; }
+.internet-grupo-papel {
+  font-size: 0.72rem; border-radius: 999px; padding: 1px 8px;
+  border: 1px solid var(--borda, #3a3f4a); color: var(--texto-fraco, #9aa0aa);
+}
+.internet-grupo-papel-dono { color: #e8c96a; border-color: #6d5a1f; }
+.internet-grupo-papel-convidado { color: #7fb3d5; border-color: #2c4a63; }
+
+.internet-rede-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.internet-rede-form input[type="text"] { flex: 1; min-width: 180px; }
+.internet-rede-form select { max-width: 100%; }
+
+/* ---------- mobile: thread em tela cheia com Voltar ---------- */
+@media (max-width: 640px) {
+  .internet-mensagens { max-height: none; flex: 1; }
+  .internet-bolha { max-width: 88%; }
+  .internet-composer textarea { font-size: 16px; } /* evita zoom iOS */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .internet-msg-skeleton { animation: none; }
+  .internet-bolha, .internet-conversa-item { transition: none; }
+}
+
+.internet-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+.internet-conta-dados { display: flex; flex-direction: column; gap: 8px; margin: 0 0 10px; }
+.internet-conta-dados div { display: flex; gap: 10px; align-items: baseline; }
+.internet-conta-dados dt { color: var(--texto-fraco, #9aa0aa); min-width: 90px; }
+.internet-conta-dados dd { margin: 0; font-weight: 600; }

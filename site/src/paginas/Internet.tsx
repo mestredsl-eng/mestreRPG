@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   api, ApiError,
   type ContaFinanceira, type Equipamento, type Financeiro, type ItemInventario,
@@ -6,6 +6,10 @@ import {
   type ContaLoja, type ItemCatalogo, type Membro,
 } from "../api";
 import { getSocket } from "../socket";
+import InternetDiegetica from "./internet/InternetDiegetica";
+import { criarAdaptadorInternetApi } from "./internet/adaptador-api";
+import { AbaBotao, aoTeclarAbas } from "./internet/abas";
+import type { ConexaoRealtime } from "./internet/tipos";
 
 interface Props {
   characterId: string;
@@ -47,7 +51,10 @@ const ERRO_LABEL: Record<string, string> = {
 };
 
 type FaseGate = "carregando" | "indisponivel" | "negado" | "elegivel";
-type AbaInternet = "lojas" | "pedidos" | "vender";
+type AbaInternet = "lojas" | "pedidos" | "vender" | "rede";
+
+/** Ordem das abas do módulo — usada pelo teclado APG (setas/Home/End). */
+const ABAS_INTERNET = ["lojas", "vender", "pedidos", "rede"] as const;
 
 interface PedidoIncerto {
   payload: Parameters<typeof api.comercioComprar>[1];
@@ -88,6 +95,15 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
   const [recibo, setRecibo] = useState<PedidoComercio | null>(null);
   const [lojaGestao, setLojaGestao] = useState<LojaComercio | null>(null);
   const [criarLojaAberto, setCriarLojaAberto] = useState(false);
+  const [conexaoRede, setConexaoRede] = useState<ConexaoRealtime>("conectado");
+  // Adaptador real F2/F3 (#352): construído sob demanda do gate já
+  // validado — nenhuma chamada de rede acontece na construção; cada
+  // método resolve conta/contatos/conversas via REST+socket e falha
+  // honestamente quando o backend #362 ainda não responde.
+  const adaptadorInternet = useMemo(
+    () => criarAdaptadorInternetApi({ campaignId, characterId }),
+    [campaignId, characterId],
+  );
   const recarregarRef = useRef<() => Promise<void>>(async () => undefined);
 
   const carregarRef = useRef<() => Promise<void>>(async () => undefined);
@@ -168,6 +184,21 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
     setVendendoItem(itemInicial);
   }, [itemInicial]);
 
+  // Estado de conexão do socket singleton — alimenta o banner de
+  // reconexão da camada diegética (composer desabilita, histórico fica).
+  useEffect(() => {
+    if (aba !== "rede") return;
+    const socket = getSocket();
+    const atualizar = () => setConexaoRede(socket.connected ? "conectado" : "reconectando");
+    atualizar();
+    socket.on("connect", atualizar);
+    socket.on("disconnect", atualizar);
+    return () => {
+      socket.off("connect", atualizar);
+      socket.off("disconnect", atualizar);
+    };
+  }, [aba]);
+
   if (gate.fase === "carregando") {
     return <section className="cartao"><h3>Internet</h3><p className="meta">Verificando acesso…</p></section>;
   }
@@ -208,14 +239,22 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
   return (
     <section className="cartao" aria-label="Internet">
       <h3>Internet</h3>
-      <div className="abas" role="tablist">
-        <button role="tab" aria-selected={aba === "lojas"} className={aba === "lojas" ? "ativo" : "secundario"} onClick={() => setAba("lojas")}>Lojas</button>
-        <button role="tab" aria-selected={aba === "vender"} className={aba === "vender" ? "ativo" : "secundario"} onClick={() => setAba("vender")}>Vender</button>
-        <button role="tab" aria-selected={aba === "pedidos"} className={aba === "pedidos" ? "ativo" : "secundario"} onClick={() => setAba("pedidos")}>Histórico</button>
+      <div
+        className="abas"
+        role="tablist"
+        aria-label="Internet do personagem"
+        onKeyDown={(e) => aoTeclarAbas(e, [...ABAS_INTERNET], aba, (id) => setAba(id as AbaInternet))}
+      >
+        <AbaBotao id="lojas" rotulo="Lojas" ativo={aba === "lojas"} controles="painel-internet-lojas" aoClicar={() => setAba("lojas")} />
+        <AbaBotao id="vender" rotulo="Vender" ativo={aba === "vender"} controles="painel-internet-vender" aoClicar={() => setAba("vender")} />
+        <AbaBotao id="pedidos" rotulo="Histórico" ativo={aba === "pedidos"} controles="painel-internet-pedidos" aoClicar={() => setAba("pedidos")} />
+        <AbaBotao id="rede" rotulo="Rede" ativo={aba === "rede"} controles="painel-internet-rede" aoClicar={() => setAba("rede")} />
       </div>
       {erro && <p className="erro" role="alert">{erro}</p>}
 
-      {aba === "lojas" && !lojaSel && (
+      {aba === "lojas" && (
+        <div role="tabpanel" id="painel-internet-lojas" aria-labelledby="aba-lojas">
+        {!lojaSel && (
         <>
           {souMestre && (
             <div className="cartao cartao-campanha">
@@ -259,21 +298,25 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
             </ul>
           )}
         </>
+        )}
+
+        {lojaSel && (
+          <VitrineLoja
+            loja={lojaSel}
+            characterId={characterId}
+            contas={contas}
+            aoVoltar={() => { setLojaSel(null); void carregar(); }}
+            aoConcluido={(p) => { setLojaSel(null); setRecibo(p); void carregar(); }}
+            aoErro={setErro}
+          />
+        )}
+        </div>
       )}
 
-      {aba === "lojas" && lojaSel && (
-        <VitrineLoja
-          loja={lojaSel}
-          characterId={characterId}
-          contas={contas}
-          aoVoltar={() => { setLojaSel(null); void carregar(); }}
-          aoConcluido={(p) => { setLojaSel(null); setRecibo(p); void carregar(); }}
-          aoErro={setErro}
-        />
-      )}
-
-      {aba === "vender" && vendendoItem && (
-        <VendaParaLoja
+      {aba === "vender" && (
+        <div role="tabpanel" id="painel-internet-vender" aria-labelledby="aba-vender">
+        {vendendoItem && (
+          <VendaParaLoja
           characterId={characterId}
           campaignId={campaignId}
           item={vendendoItem}
@@ -284,9 +327,9 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
           aoConcluido={(p) => { setVendendoItem(null); aoItemConsumido?.(); setRecibo(p); void carregar(); }}
           aoErro={setErro}
         />
-      )}
+        )}
 
-      {aba === "vender" && !vendendoItem && (
+        {!vendendoItem && (
         itens === null ? <p className="meta">Carregando inventário…</p> : itens.length === 0 ? (
           <p className="meta">Inventário vazio — não há itens para vender.</p>
         ) : (
@@ -326,10 +369,13 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
             </table>
           </>
         )
+        )}
+        </div>
       )}
 
       {aba === "pedidos" && (
-        pedidos === null ? <p className="meta">Carregando histórico…</p> : pedidos.length === 0 ? (
+        <div role="tabpanel" id="painel-internet-pedidos" aria-labelledby="aba-pedidos">
+        {pedidos === null ? <p className="meta">Carregando histórico…</p> : pedidos.length === 0 ? (
           <p className="meta">Nenhuma compra registrada.</p>
         ) : (
           <ul className="lista-lojas">
@@ -351,7 +397,17 @@ export default function Internet({ characterId, campaignId, itemInicial, aoItemC
               </li>
             ))}
           </ul>
-        )
+        )}
+        </div>
+      )}
+
+      {aba === "rede" && (
+        <div role="tabpanel" id="painel-internet-rede" aria-labelledby="aba-rede">
+          {/* Internet diegética (#352): mensagens/conta/contatos sobre o
+              contrato F2/F3. Conta ausente e falhas de API viram estados
+              honestos dentro do módulo — nunca dados simulados. */}
+          <InternetDiegetica adaptador={adaptadorInternet} conexao={conexaoRede} />
+        </div>
       )}
 
       {recibo && <Recibo pedido={recibo} nomeLoja={lojas?.find((l) => l.id === recibo.shopId)?.name} aoFechar={() => setRecibo(null)} />}
