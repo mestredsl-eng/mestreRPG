@@ -3,7 +3,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const RAIZ = resolve(__dirname, "..", "..", "..");
+// config.ts fica a 2 níveis da raiz tanto em src/ (dev/tsx) quanto em
+// dist/ (build): servidor/src|dist → servidor → raiz do repositório.
+const RAIZ = resolve(__dirname, "..", "..");
 const ARQUIVO_CONFIG = resolve(RAIZ, "configuracao", "servidor.json");
 
 interface ConfigServidor {
@@ -30,7 +32,10 @@ function carregar(): ConfigServidor {
     const json = JSON.parse(readFileSync(ARQUIVO_CONFIG, "utf-8")) as Partial<ConfigServidor>;
     return {
       host: json.host ?? padrao.host,
-      porta: json.porta ?? padrao.porta,
+      // Prioridade efetiva histórica: MESTRE_PORTA (env) > servidor.json > 3001.
+      // O env precisa vencer o JSON — é o contrato usado por todos os
+      // harness/testes e por quem sobe instâncias em portas alternativas.
+      porta: Number(process.env.MESTRE_PORTA) || json.porta || padrao.porta,
       sitePorta: json.sitePorta ?? padrao.sitePorta,
       caminhos: { ...padrao.caminhos, ...(json.caminhos ?? {}) },
       arquivos: { ...padrao.arquivos, ...(json.arquivos ?? {}) },

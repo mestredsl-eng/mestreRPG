@@ -522,6 +522,84 @@ async function main() {
     ok("C8 marcadores de todos os ciclos persistiram", restante >= 3, `encontrados=${restante}`);
   }
 
+  // ---------- C9: RAIZ do módulo compilado carrega configuracao/servidor.json (#377) ----------
+  {
+    const ARQ_CFG = "configuracao/servidor.json";
+    const cfgOriginal = existsSync(ARQ_CFG) ? readFileSync(ARQ_CFG, "utf-8") : null;
+    const restaurarCfg = () => {
+      try {
+        if (cfgOriginal === null) { if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG); }
+        else writeFileSync(ARQ_CFG, cfgOriginal);
+      } catch { }
+    };
+    // spawn direto sem MESTRE_PORTA — prova que o JSON sozinho define a porta
+    const spawnSemEnvPorta = () => {
+      const p = spawn("node", ["servidor/dist/index.js"], {
+        env: {
+          ...process.env,
+          NODE_ENV: "test",
+          MESTRE_BANCO: BANCO,
+          MESTRE_ARQUIVOS: ARQUIVOS,
+          MESTRE_BACKUPS: BACKUPS,
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      p.__log = "";
+      const acumular = (d) => { p.__log += String(d); if (p.__log.length > 200_000) p.__log = p.__log.slice(-100_000); };
+      p.stdout?.on("data", acumular);
+      p.stderr?.on("data", acumular);
+      p.__closed = false;
+      p.once("close", () => { p.__closed = true; });
+      ativos.push(p);
+      return p;
+    };
+    try {
+      // C9a: JSON presente, SEM MESTRE_PORTA → o build compilado deve
+      // carregar configuracao/servidor.json e escutar a porta do JSON.
+      // (Regressão #377: RAIZ apontava para o pai do repo e o JSON era
+      // silenciosamente ignorado.)
+      const pJson = await portaLivre();
+      writeFileSync(ARQ_CFG, JSON.stringify({ ...(cfgOriginal ? JSON.parse(cfgOriginal) : {}), porta: pJson }));
+      {
+        const proc = spawnSemEnvPorta();
+        try {
+          await esperarSaudavel(`http://127.0.0.1:${pJson}`, proc, 30000);
+          ok("C9a build compilado carrega servidor.json — porta vem do JSON sem env", true);
+        } catch (e) {
+          ok("C9a build compilado carrega servidor.json — porta vem do JSON sem env", false,
+            String(e?.message ?? e).slice(0, 200));
+        } finally { await limparProcesso(proc); }
+      }
+      // C9b: JSON presente + MESTRE_PORTA → env prevalece (prioridade
+      // efetiva histórica preservada; json.porta não pode derrubar
+      // harness/testes que sobem o servidor em porta livre).
+      const pEnv = await portaLivre();
+      {
+        const proc = subir(pEnv, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
+        try {
+          await esperarSaudavel(`http://127.0.0.1:${pEnv}`, proc, 30000);
+          ok("C9b MESTRE_PORTA prevalece sobre servidor.json (prioridade preservada)", true);
+        } catch (e) {
+          ok("C9b MESTRE_PORTA prevalece sobre servidor.json (prioridade preservada)", false,
+            String(e?.message ?? e).slice(0, 200));
+        } finally { await limparProcesso(proc); }
+      }
+      // C9c: JSON ausente + MESTRE_PORTA → fallback de env efetivo.
+      if (existsSync(ARQ_CFG)) rmSync(ARQ_CFG);
+      {
+        const pSem = await portaLivre();
+        const proc = subir(pSem, { banco: BANCO, arquivos: ARQUIVOS, backups: BACKUPS });
+        try {
+          await esperarSaudavel(`http://127.0.0.1:${pSem}`, proc, 30000);
+          ok("C9c sem servidor.json, MESTRE_PORTA é o fallback", true);
+        } catch (e) {
+          ok("C9c sem servidor.json, MESTRE_PORTA é o fallback", false,
+            String(e?.message ?? e).slice(0, 200));
+        } finally { await limparProcesso(proc); }
+      }
+    } finally { restaurarCfg(); }
+  }
+
   // ---------- C5: sem órfãos — processos já encerrados pelos cenários ----------
   {
     // Primeiro verifica SEM matar: cada cenário deve ter encerrado seu
