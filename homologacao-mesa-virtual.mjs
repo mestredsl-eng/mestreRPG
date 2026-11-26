@@ -125,7 +125,7 @@ try {
   t("jogador não tem botão de upload", await pgJ1.locator(".mesa-vtt input[type=file]").count() === 0);
 
   // mestre cria token do jogador1
-  await pgM.locator(".vtt-controles input").fill("Ana");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("Ana");
   await pgM.locator(".vtt-controles select").selectOption(c.jogadores.jogador1.id);
   await pgM.locator(".vtt-controles button.primario").click();
   await pgM.locator(".vtt-token", { hasText: "AN" }).waitFor({ timeout: 8000 });

@@ -254,11 +254,11 @@ try {
   await pgM.locator(".mesa-vtt input[type=file]").setInputFiles(PNG_PATH);
   await pgM.locator(".vtt-tabuleiro").waitFor({ timeout: 10000 });
   await pgJ1.locator(".vtt-tabuleiro").waitFor({ timeout: 10000 });
-  await pgM.locator(".vtt-controles input").fill("Ana");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("Ana");
   await pgM.locator(".vtt-controles select").selectOption(c.jogadores.jogador1.id);
   await pgM.locator(".vtt-controles button.primario").click();
   await pgJ1.locator(".vtt-token", { hasText: "AN" }).waitFor({ timeout: 8000 });
-  await pgM.locator(".vtt-controles input").fill("Beto");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("Beto");
   await pgM.locator(".vtt-controles select").selectOption("");
   await pgM.locator(".vtt-controles button.primario").click();
   await pgJ1.locator(".vtt-token", { hasText: "BE" }).waitFor({ timeout: 8000 });
@@ -436,7 +436,7 @@ try {
   // ---------- P6.11 token removido durante operação pendente ----------
   sec("P6.11 token removido com drag pendente");
   // mestre cria token CAR do jogador1 pela UI
-  await pgM.locator(".vtt-controles input").fill("CAR");
+  await pgM.locator('.vtt-controles input[placeholder="Nome do token"]').fill("CAR");
   await pgM.locator(".vtt-controles select").selectOption(c.jogadores.jogador1.id);
   await pgM.locator(".vtt-controles button.primario").click();
   await pgJ1.locator(".vtt-token", { hasText: "CA" }).waitFor({ timeout: 8000 });
