@@ -791,7 +791,8 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
       if (!campo.obrigatorio || !(campo.id in enviadas)) continue;
       const v = enviadas[campo.id];
       const vazio = v === undefined || v === null || v === ""
-        || (campo.tipo === "tabela" && Array.isArray(v) && v.length === 0);
+        || (["lista", "selecao_multipla", "selecao_nivel", "tabela"].includes(campo.tipo)
+          && Array.isArray(v) && v.length === 0);
       if (vazio) {
         res.status(400).json({ erro: `O campo obrigatório "${campo.label}" não pode ser esvaziado`, detalhes: { campoId: campo.id, codigo: "campo_obrigatorio" } });
         return;

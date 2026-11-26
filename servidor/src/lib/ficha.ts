@@ -786,6 +786,13 @@ export function validarFicha(
     // Checkbox tolera 0/1 de registros antigos e padrões numéricos.
     if (campo.tipo === "checkbox" && (valor === 0 || valor === 1)) valor = valor === 1;
 
+    // [] em tipo-array conta como vazio para obrigatório no modo estrito;
+    // em campo opcional segue o fluxo normal e grava [] (limpa o campo).
+    if (Array.isArray(valor) && valor.length === 0 && opcoes.estrito && campo.obrigatorio
+      && (campo.tipo === "lista" || campo.tipo === "selecao_multipla"
+        || campo.tipo === "selecao_nivel" || campo.tipo === "tabela")) {
+      erros[campo.id] = "Campo obrigatório"; continue;
+    }
     // Vazio (undefined/null/"") é "ausente": obrigatório só é exigido no
     // modo estrito (submissão p/ aprovação); valor vazio enviado limpa o campo.
     if (valor === undefined || valor === null || valor === "") {
