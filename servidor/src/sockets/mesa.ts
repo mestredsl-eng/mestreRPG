@@ -817,7 +817,12 @@ function socket_handlers(
               }
             }
           } else {
-            // jogador: somente posição do próprio token — nada mais
+            // jogador: somente posição do próprio token — nada mais.
+            // hpManual é rejeitado explicitamente como em "mover" —
+            // nunca ignorado silenciosamente.
+            if (t.hpManual !== undefined) {
+              cb?.({ ok: false, erro: "Jogador não altera HP do token" }); return;
+            }
             if (!(await tokenPertenceAoUsuario(sessionId, existente, u.id))) {
               cb?.({ ok: false, erro: "Token não pertence a você" }); return;
             }

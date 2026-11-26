@@ -428,14 +428,15 @@ try {
     const rHpM2 = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 10, maximo: 20 } } });
     t("mestre define HP manual no token do jogador", rHpM2?.ok === true);
     const rHpJ1 = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-002", hpManual: { atual: 99, maximo: 99 } } });
+    t("jogador não altera HP nem no próprio token (rejeição explícita)", rHpJ1?.ok === false, JSON.stringify(rHpJ1).slice(0, 120));
     const vDepoisJ1 = await sincronizar(sA);
     const vDepoisMestre = await syncM();
-    t("vidaCompartilhada OFF: dono do token sem ficha também não recebe HP",
-      tok(vDepoisJ1?.vtt, "tkman-002")?.vida == null);
+    t("vidaCompartilhada OFF: dono do token sem ficha recebe o próprio HP (paridade ficha)",
+      tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.atual === 10
+        && tok(vDepoisJ1?.vtt, "tkman-002")?.vida?.hp?.maximo === 20);
     t("mestre mantém autoridade e vê HP manual 10/20",
       tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.atual === 10
         && tok(vDepoisMestre?.vtt, "tkman-002")?.vida?.hp?.maximo === 20);
-    void rHpJ1;
 
     // espectador read-only
     const rHpE = await emitirCb(sE, "mesa:vtt:token", { sessionId: sid, acao: "atualizar", token: { id: "tkman-001", hpManual: { atual: 1, maximo: 2 } } });
@@ -547,8 +548,9 @@ try {
     t("cria token manual-only sem ficha", rManualOnly?.ok === true);
     const rManualOnlyOff = await emitirCb(sA3, "mesa:vtt:sincronizar", { sessionId: sid3 });
     const tkManualOnlyOff = tok(rManualOnlyOff?.vtt, "tk-manual-only");
-    t("manual-only OFF: jogador vê token, mas não seu HP",
-      !!tkManualOnlyOff && tkManualOnlyOff.vida == null && !("hpManual" in tkManualOnlyOff));
+    t("manual-only OFF: dono recebe o próprio HP manual (paridade ficha), sem dado bruto",
+      !!tkManualOnlyOff && tkManualOnlyOff.vida?.hp?.atual === 9 && tkManualOnlyOff.vida?.hp?.maximo === 12
+        && !("hpManual" in tkManualOnlyOff));
     // F20: o mesmo contrato OFF vale no GET HTTP da sessão manual-only —
     // a sessão não tem nenhum personagemId vinculado.
     const httpOnlyOff = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
@@ -556,8 +558,9 @@ try {
     const httpOnlyOffVtt = typeof httpOnlyOff.json?.sessao?.vttState === "string"
       ? JSON.parse(httpOnlyOff.json.sessao.vttState) : httpOnlyOff.json?.sessao?.vttState;
     const tkHttpOnlyOff = tok(httpOnlyOffVtt, "tk-manual-only");
-    t("manual-only HTTP OFF: jogador recebe token sem vida nem hpManual",
-      !!tkHttpOnlyOff && tkHttpOnlyOff.vida == null && !("hpManual" in tkHttpOnlyOff));
+    t("manual-only HTTP OFF: dono recebe vida.hp, nunca hpManual",
+      !!tkHttpOnlyOff && tkHttpOnlyOff.vida?.hp?.atual === 9 && tkHttpOnlyOff.vida?.hp?.maximo === 12
+        && !("hpManual" in tkHttpOnlyOff));
     const cfgOnlyOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
       { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
     t("ativa compartilhamento para sessão manual-only", cfgOnlyOn.status === 200);

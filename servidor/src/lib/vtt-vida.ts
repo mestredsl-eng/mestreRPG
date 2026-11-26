@@ -139,9 +139,12 @@ export function vidaNoEstado(
       // o token sobreviveu ao filtro canônico e não tem ficha vinculada.
       const { hpManual, ...resto } = tk;
       if (!tk.personagemId) {
-        // F14: HP manual segue a mesma política global da vida derivada
-        // de ficha. Com compartilhamento OFF, só o mestre recebe o valor.
-        const podeVerHpManual = papel === "mestre" || ctx?.compartilhada === true;
+        // F14: HP manual segue a mesma política da vida derivada de ficha
+        // — mestre sempre; dono efetivo do token mesmo com
+        // compartilhamento OFF (paridade com vidaParaPersonagem); demais
+        // só quando compartilhada está ON.
+        const podeVerHpManual = papel === "mestre" || ctx?.compartilhada === true
+          || donos.get(tk.id) === userId;
         return {
           ...resto,
           vida: hpManual && podeVerHpManual
