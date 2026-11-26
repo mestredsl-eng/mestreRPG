@@ -138,6 +138,47 @@ export async function contatoBloqueadoEntre(
   return rows.some((r) => r.status === "bloqueado");
 }
 
+/**
+ * Bloqueios par-a-par (P3, deliberação do proprietário): mapa
+ * contaId → (contaContraparte → instante do bloqueio). Cobre arestas
+ * `bloqueado` em QUALQUER direção — o bloqueio é simétrico de facto.
+ * O instante é `responded_at` (fallback `updated_at`) e serve de corte
+ * temporal: mensagens POSTERIORES a ele são ocultadas do par bloqueado
+ * no histórico; anteriores permanecem visíveis (P12).
+ */
+export async function bloqueiosEntreContas(
+  campaignId: string,
+  contaIds: string[],
+): Promise<Map<string, Map<string, Date>>> {
+  const out = new Map<string, Map<string, Date>>();
+  if (!contaIds.length) return out;
+  const rows = await db.select({
+    origem: internetContacts.contaOrigemId,
+    destino: internetContacts.contaDestinoId,
+    quando: internetContacts.respondedAt,
+    atualizado: internetContacts.updatedAt,
+  }).from(internetContacts).where(and(
+    eq(internetContacts.campaignId, campaignId),
+    eq(internetContacts.status, "bloqueado"),
+    or(
+      inArray(internetContacts.contaOrigemId, contaIds),
+      inArray(internetContacts.contaDestinoId, contaIds),
+    ),
+  ));
+  for (const r of rows) {
+    const t = r.quando ?? r.atualizado;
+    if (!t) continue;
+    for (const [eu, outro] of [[r.origem, r.destino], [r.destino, r.origem]] as const) {
+      if (!contaIds.includes(eu)) continue;
+      let m = out.get(eu);
+      if (!m) { m = new Map(); out.set(eu, m); }
+      const ant = m.get(outro);
+      if (!ant || t < ant) m.set(outro, t);
+    }
+  }
+  return out;
+}
+
 /** Contato aceito em alguma direção é pré-requisito de conversa/convite (P4). */
 export async function contatoAceitoEntre(
   tx: { select: typeof db.select },

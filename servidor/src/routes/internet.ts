@@ -15,7 +15,7 @@ import { requireAuth } from "../middleware/auth.js";
 import { requirePapel, vincularLeaseAoHandler } from "../lib/permissoes.js";
 import {
   contaAutorizadaPara, contasDoUsuario, arestaContato, contatoBloqueadoEntre,
-  contatoAceitoEntre, codificarCursor, decodificarCursor,
+  contatoAceitoEntre, codificarCursor, decodificarCursor, bloqueiosEntreContas,
   participanteDaConta, participanteAtivo, mestreLeitorDaCampanha,
 } from "../lib/conta-internet.js";
 import { gateInternetDoPersonagem } from "../lib/gate-internet.js";
@@ -269,20 +269,27 @@ internetRouter.post("/contacts/:id/aceitar", requirePapel("mestre", "jogador"), 
 internetRouter.post("/contacts/:id/recusar", requirePapel("mestre", "jogador"), (req, res) => void responderContato(req, res, "remover"));
 
 /** POST /api/campaigns/:campaignId/internet/contacts/:id/bloquear —
- *  somente o DESTINO bloqueia (P3: efeito bilateral de facto). */
+ *  P3 (deliberação do proprietário): QUALQUER ponta da aresta pode
+ *  iniciar o bloqueio — a direção origem→destino da solicitação não
+ *  pode impedir metade dos usuários de bloquear. O iniciador fica
+ *  registrado em `bloqueadoPorContaId` para auditoria e para autorizar
+ *  a remoção da aresta bloqueada. */
 internetRouter.post("/contacts/:id/bloquear", requirePapel("mestre", "jogador"), async (req, res) => {
   const cid = campanhaId(req);
   const [contato] = await db.select().from(internetContacts)
     .where(and(eq(internetContacts.id, req.params.id), eq(internetContacts.campaignId, cid))).limit(1);
   if (!contato) { erroHttp(res, 404, "Contato não encontrado"); return; }
-  const auth = await exigirConta(req, res, contato.contaDestinoId);
-  if (!auth) return;
+  const authOrigem = await contaAutorizadaPara(contato.contaOrigemId, req.usuario!.id);
+  const iniciador = authOrigem ? contato.contaOrigemId
+    : (await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id)) ? contato.contaDestinoId
+    : null;
+  if (!iniciador) { erroHttp(res, 403, "Conta não autorizada"); return; }
   if (contato.status === "bloqueado") { res.json({ ok: true, status: "bloqueado", replay: true }); return; }
   const agora = new Date();
   await db.update(internetContacts)
-    .set({ status: "bloqueado", respondedAt: agora, updatedAt: agora })
+    .set({ status: "bloqueado", bloqueadoPorContaId: iniciador, respondedAt: agora, updatedAt: agora })
     .where(eq(internetContacts.id, contato.id));
-  await audit(req, "internet.contato_bloqueado", { contatoId: contato.id });
+  await audit(req, "internet.contato_bloqueado", { contatoId: contato.id, iniciadoPor: iniciador });
   res.json({ ok: true, status: "bloqueado" });
 });
 
@@ -293,12 +300,12 @@ internetRouter.delete("/contacts/:id", requirePapel("mestre", "jogador"), async 
   const [contato] = await db.select().from(internetContacts)
     .where(and(eq(internetContacts.id, req.params.id), eq(internetContacts.campaignId, cid))).limit(1);
   if (!contato) { erroHttp(res, 404, "Contato não encontrado"); return; }
-  // P3: aresta `bloqueado` só pode ser removida por quem a bloqueou —
-  // o bloqueio é unilateral do DESTINO da aresta (rota /bloquear exige
-  // contaDestinoId). Se a origem pudesse deletar, desfaria o bloqueio
-  // do outro sem consentimento. Demais status: qualquer ponta remove.
+  // P3: aresta `bloqueado` só pode ser removida por QUEM a bloqueou
+  // (`bloqueadoPorContaId`; fallback `contaDestinoId` para arestas
+  // gravadas antes da coluna existir). Demais status: qualquer ponta.
   if (contato.status === "bloqueado") {
-    const okBloqueador = await contaAutorizadaPara(contato.contaDestinoId, req.usuario!.id);
+    const quemBloqueou = contato.bloqueadoPorContaId ?? contato.contaDestinoId;
+    const okBloqueador = await contaAutorizadaPara(quemBloqueou, req.usuario!.id);
     if (!okBloqueador) { erroHttp(res, 403, "Conta não autorizada"); return; }
   } else {
     const ok1 = await contaAutorizadaPara(contato.contaOrigemId, req.usuario!.id);
@@ -529,14 +536,16 @@ internetRouter.get("/conversations/:id/messages", requirePapel("mestre", "jogado
   if (!conversa) { erroHttp(res, 404, "Conversa não encontrada"); return; }
 
   const minhas = await contasDoUsuario(cid, req.usuario!.id);
-  let autorizado = false;
+  // TODAS as contas do usuário que são participantes ativos autorizados
+  // — o filtro par-a-par do histórico é por conta leitora (multi-personagem).
+  const leitoraIds: string[] = [];
   for (const conta of minhas) {
-    // participante ativo + gate completo da conta (titularidade, gate)
     if (await participanteAtivo(conversa.id, conta.id)
       && await contaAutorizadaPara(conta.id, req.usuario!.id)) {
-      autorizado = true; break;
+      leitoraIds.push(conta.id);
     }
   }
+  const autorizado = leitoraIds.length > 0;
   const leituraMestre = !autorizado && await mestreLeitorDaCampanha(cid, req.usuario!.id);
   if (!autorizado && !leituraMestre) { erroHttp(res, 403, "Sem acesso à conversa"); return; }
 
@@ -555,10 +564,32 @@ internetRouter.get("/conversations/:id/messages", requirePapel("mestre", "jogado
     .where(and(...conds))
     .orderBy(internetMessages.createdAt, internetMessages.id)
     .limit(limit + 1);
-  const pagina = rows.slice(0, limit);
+  // P3 par-a-par com corte temporal: mensagem é ocultada do leitor
+  // somente se TODAS as suas contas leitoras têm aresta `bloqueado`
+  // contra o autor com marco ANTERIOR ao createdAt da mensagem.
+  // Pré-bloqueio permanece visível (P12); leitura mestre P10 não filtra.
+  const janela = rows.slice(0, limit);
+  // P3 par-a-par com corte temporal: mensagem é ocultada do leitor
+  // somente se TODAS as suas contas leitoras têm aresta `bloqueado`
+  // contra o autor com marco ANTERIOR ao createdAt da mensagem.
+  // Pré-bloqueio permanece visível (P12); leitura mestre P10 não filtra.
+  // O filtro incide só na janela — o cursor avança pelo raw, sem
+  // reexpor nem pular mensagens visíveis nas páginas seguintes.
+  let pagina = janela;
+  if (autorizado) {
+    const bloqueios = await bloqueiosEntreContas(cid, leitoraIds);
+    pagina = janela.filter((m) => {
+      const t = m.createdAt;
+      for (const rid of leitoraIds) {
+        const corte = bloqueios.get(rid)?.get(m.autorContaId);
+        if (!corte || t <= corte) return true;
+      }
+      return false;
+    });
+  }
   const temMais = rows.length > limit;
-  const proximoCursor = temMais && pagina.length
-    ? codificarCursor(pagina[pagina.length - 1].createdAt, pagina[pagina.length - 1].id)
+  const proximoCursor = temMais && janela.length
+    ? codificarCursor(janela[janela.length - 1].createdAt, janela[janela.length - 1].id)
     : null;
 
   const autorIds = [...new Set(pagina.map((m) => m.autorContaId))];
