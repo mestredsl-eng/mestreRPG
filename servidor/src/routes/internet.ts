@@ -575,7 +575,13 @@ internetRouter.post("/conversations/:id/read", requirePapel("mestre", "jogador")
   if (!conversa) { erroHttp(res, 404, "Conversa não encontrada"); return; }
   const parte = await participanteAtivo(conversa.id, body.data.contaId);
   if (!parte) { erroHttp(res, 403, "Não participante"); return; }
-  const novo = new Date(body.data.ateCreatedAt);
+  // o cursor só pode apontar para mensagem REAL desta conversa — e o
+  // createdAt autoritativo é o da própria mensagem (o cliente informa
+  // a tupla, mas nunca forja o timestamp persistido).
+  const [msgCursor] = await db.select({ id: internetMessages.id, createdAt: internetMessages.createdAt }).from(internetMessages)
+    .where(and(eq(internetMessages.id, body.data.ateMessageId), eq(internetMessages.conversaId, conversa.id))).limit(1);
+  if (!msgCursor) { erroHttp(res, 400, "Mensagem de cursor inválida"); return; }
+  const novo = msgCursor.createdAt;
   const atual = parte.lastReadCreatedAt?.getTime() ?? 0;
   if (novo.getTime() <= atual) { res.json({ ok: true, replay: true }); return; }
   await db.update(internetParticipantes).set({

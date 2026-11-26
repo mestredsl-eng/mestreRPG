@@ -372,10 +372,18 @@ try {
     contaId: contaJ1, ateCreatedAt: Date.parse(ultima.createdAt), ateMessageId: ultima.id,
   });
   t("marcar leitura avança cursor", read1.status === 200 && read1.json?.ok === true, JSON.stringify(read1.json));
+  // cursor monotônico: aponta para a PRIMEIRA mensagem real (mais
+  // antiga que o cursor já gravado) — deve ser replay, nunca retrocede
+  const primeira = histJ1.json?.mensagens?.[0];
   const readVelho = await API("POST", `/conversations/${conversaId}/read`, j1.cookie, {
-    contaId: contaJ1, ateCreatedAt: Date.parse(ultima.createdAt) - 1000, ateMessageId: "msg-velha",
+    contaId: contaJ1, ateCreatedAt: Date.parse(primeira.createdAt), ateMessageId: primeira.id,
   });
   t("cursor nunca retrocede (replay)", readVelho.json?.replay === true, JSON.stringify(readVelho.json));
+  const readFalso = await API("POST", `/conversations/${conversaId}/read`, j1.cookie, {
+    contaId: contaJ1, ateCreatedAt: Date.now(), ateMessageId: "msg-inexistente",
+  });
+  t("cursor para mensagem inexistente/de outra conversa → 400",
+    readFalso.status === 400, `status=${readFalso.status}`);
 
   // ================= BLOQUEIO BILATERAL =================
   sec("G. Bloqueio — efeito bilateral de facto (P3)");
