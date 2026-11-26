@@ -92,7 +92,9 @@ const TABELAS_ANTIGAS = ["campaign_rule_books", "novidades", "novidade_leituras"
   // Internet diegética 1.1.1 (migration 0039): filhas antes dos pais
   // (messages/participantes → conversations → contacts → accounts).
   "internet_messages", "internet_participantes", "internet_conversations",
-  "internet_contacts", "internet_accounts"];
+  "internet_contacts", "internet_accounts",
+  // Transferência de personagem (migration 0041).
+  "character_transfers"];
 const JOURNAL_MIGRATIONS = join(RAIZ_REPO, "servidor", "migrations", "meta", "_journal.json");
 const IDX_FRONTEIRA = 17; // primeira migration que este teste simula como "antiga"
 function migrationsAReverter() {
