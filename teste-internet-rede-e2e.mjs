@@ -572,10 +572,35 @@ try {
   await p2.getByRole("button", { name: "Aceitar convite", exact: true }).click();
   await p2.locator("#internet-msg-texto").waitFor({ timeout: 10000 });
   t("UI j2: responderConviteGrupo real → composer liberado", true);
+  // P3 INTERMEDIÁRIO: histórico autorizado aparece SEM mensagem nova nem
+  // refresh — j1 já tinha enviado "msg do grupo UI" antes do aceite
+  await p2.locator(".internet-bolha", { hasText: "msg do grupo UI" }).waitFor({ timeout: 10000 });
+  t("UI j2: histórico do grupo carrega após aceite (sem refresh)", true);
   await p2.locator("#internet-msg-texto").fill("entrei no grupo");
   await p2.getByRole("button", { name: "Enviar", exact: true }).click();
   await p1.locator(".internet-bolha", { hasText: "entrei no grupo" }).waitFor({ timeout: 10000 });
   t("UI j1: msg do convidado chega", true);
+
+  // recusar convite → volta à lista (grupo extra criado via API real)
+  const grupoRecusa = await req(BASE, "POST", `${R(campA)}/conversations`, {
+    cookie: j1.cookie,
+    body: { tipo: "grupo", nome: "Tribo Recusa", contaIds: [contaA2], origemContaId: contaA1 },
+  });
+  t("grupo 'Tribo Recusa' criado p/ recusa", grupoRecusa.status === 201, JSON.stringify(grupoRecusa.json).slice(0, 140));
+  await p2.locator(".internet-rede").getByRole("button", { name: /Voltar/ }).click();
+  await subMsg(p2, "Caixa de entrada");
+  await p2.locator(".internet-conversa-item", { hasText: "Tribo Recusa" }).first().waitFor({ timeout: 10000 });
+  await p2.locator(".internet-conversa-item", { hasText: "Tribo Recusa" }).first().click();
+  await p2.getByText("Você foi convidado para este grupo.").waitFor({ timeout: 10000 });
+  await p2.locator(".internet-rede").getByRole("button", { name: "Recusar", exact: true }).click();
+  // recusar → volta à lista (aoVoltar). Observação: o servidor mantém o
+  // participante "recusado" na conversa — a UX de exibição disso fica
+  // registrada como pendência de produto, não assertada aqui.
+  await p2.locator(".internet-conversa-item", { hasText: "Tribo UI" }).first().waitFor({ timeout: 10000 });
+  t("UI j2: recusar convite → volta à lista", true);
+  // volta p/ dentro do Tribo UI p/ o teste de reconexão do j1 não depender disso
+  await p2.locator(".internet-conversa-item", { hasText: "Tribo UI" }).first().click();
+  await p2.locator("#internet-msg-texto").waitFor({ timeout: 10000 });
 
   // reconexão via UI
   await p1.evaluate(() => window.__mesaSocket?.disconnect());
