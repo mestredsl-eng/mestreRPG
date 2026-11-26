@@ -164,10 +164,12 @@
       <label>Categoria</label><input class="campo-largo" value="Itens">
       <label>Descrição</label><textarea class="campo-largo">Lote de 10 poções, preço a combinar na taverna.</textarea>
       <label>Validade</label><input class="campo-largo" value="7 dias">
+      <label>Identidade do autor</label>
+      <div class="vis"><span class="on">Identidade real</span><span>Pseudônimo</span><span>Anônimo*</span></div>
       <label>Visibilidade</label>
-      <div class="vis"><span class="on">Campanha</span><span>Serviço</span><span>Todos os personagens</span></div>
-      <div class="cartao" style="margin-top:12px"><h4>Prévia</h4><div class="meta"><span>como os outros verão</span></div><p style="font-size:13px;margin:6px 0 0">Vendo poções de cura (lote) — Lote de 10 poções…</p></div>
-      <p style="font-size:12px;color:#e3c98f">⚠ Se a regra exigir aprovação do mestre, esta ação fica desabilitada com o motivo visível (ver dúvida D1).</p>
+      <div class="vis"><span class="on">Campanha</span><span>Contatos</span></div>
+      <div class="cartao" style="margin-top:12px"><h4>Prévia</h4><div class="meta"><span>como os outros verão</span></div><p style="font-size:13px;margin:6px 0 0">Vendo poções de cura (lote) — Lote de 10 poções… · público: campanha</p></div>
+      <p style="font-size:12px;color:#e3c98f">* Anônimo só nos tipos permitidos; publicação anônima é imutável após publicar. Publicação livre — denúncia pode acionar remoção automática; contestação por administrador da plataforma.</p>
       <div style="display:flex;gap:8px;margin-top:12px"><button class="btn">Publicar</button><button class="btn sec">Cancelar</button></div>
     </div>
   </div>
@@ -178,12 +180,12 @@
   <div class="frame">
     <div class="topo"><b>Perfil · @lya_um</b><span class="chip diegetico">seu perfil</span></div>
     <div class="corpo">
-      <div class="cartao"><h4>Lya — personagem jogadora</h4><div class="meta"><span>membro desde…</span><span>3 publicações</span></div></div>
+      <div class="cartao"><h4>Lya — nome público (padrão: nome do personagem)</h4><div class="meta"><span>avatar</span><span>descrição editável</span><span>3 publicações</span></div></div>
       <h4 style="margin:10px 0 6px;font-size:12px;color:var(--texto-fraco)">PUBLICAÇÕES</h4>
       <div class="cartao"><h4>Nota sobre o farol antigo</h4><div class="meta"><span>perfil</span><span>há 3 d</span></div></div>
       <div class="cartao"><h4>Anúncio: troca de mapas</h4><div class="meta"><span>classificado</span><span>ativo</span></div></div>
       <button class="btn sec" style="margin-top:8px">Editar perfil</button>
-      <p class="nota-rodape">Perfil de terceiros = somente leitura. Campos editáveis dependem do contrato (dúvida D5).</p>
+      <p class="nota-rodape">Perfil opcional e ativação irrevogável (Quiz): sem controles de ocultar/desativar/excluir. Permanece após a morte.</p>
     </div>
   </div>
 </section>
@@ -198,6 +200,10 @@
     <div class="frame"><div class="topo"><b>Nunca visível — 404 diegético</b></div><div class="corpo"><div class="vazio">Página indisponível.<br><span style="font-size:12px">idêntico a inexistente — não revela que o conteúdo existe</span></div></div></div>
     <div class="frame"><div class="topo"><b>Sem permissão</b></div><div class="corpo"><div class="cartao"><h4>Publicar notícia</h4><div class="meta"><span class="chip alerta">requer autorização do mestre</span></div><button class="btn" style="margin-top:8px;opacity:.5" disabled>Publicar</button></div></div></div>
     <div class="frame"><div class="topo"><b>Loading</b></div><div class="corpo"><div class="vazio">Carregando… <span aria-hidden="true">(aria-busy)</span></div></div></div>
+    <div class="frame"><div class="topo"><b>Ativação de perfil — aviso irrevogável</b></div><div class="corpo"><div class="cartao"><h4>Ativar perfil público?</h4><div class="meta"><span class="chip alerta">irreversível</span></div><p style="font-size:12px">Uma vez ativado, seu perfil fica <b>permanentemente público</b>: não pode ser ocultado, desativado ou apagado — nem após a morte do personagem.</p><button class="btn" style="margin-top:8px">Confirmar ativação</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Publicação anônima — imutável</b></div><div class="corpo"><div class="cartao"><h4>Seu anúncio</h4><div class="meta"><span>autor: anônimo</span><span class="chip alerta">imutável</span></div><p style="font-size:12px">Publicações anônimas não podem ser editadas nem apagadas após publicar.</p><button class="btn sec" style="margin-top:8px;opacity:.5" disabled>Editar</button> <button class="btn sec" style="opacity:.5" disabled>Apagar</button></div></div></div>
+    <div class="frame"><div class="topo"><b>Denúncia → remoção automática</b></div><div class="corpo"><div class="cartao"><h4>Anúncio denunciado</h4><div class="meta"><span class="chip alerta">removido pelo sistema</span></div><p style="font-size:12px">Denúncias podem acionar remoção automática. Contestação é resolvida por administrador da plataforma — não pelo Mestre.</p></div></div></div>
+    <div class="frame"><div class="topo"><b>Notícia automática de morte</b></div><div class="corpo"><div class="cartao"><h4>Falecimento de @bram_ii</h4><div class="meta"><span class="chip diegetico">automática</span><span>notícia</span></div><p style="font-size:12px">Matéria gerada pelo sistema. Jornalista elegível pode derivar matéria própria.</p></div></div></div>
   </div>
 </section>
 </main>

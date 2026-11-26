@@ -2,9 +2,10 @@
 
 **Status**: **UX aprovada pela revisão adversarial** (INTERMEDIÁRIO #366 —
 2 rodadas incorporadas) e alinhada ao threat model #367 e à proposta de
-domínio #365. **Segue Draft de produto**: PR #371 permanece draft até o
-contrato v2 do PAI e a deliberação do proprietário sobre as decisões
-restantes (§6 — **D1 e D2 já decididas em 26/11**, Quizzes 1 e 2).
+domínio #365. **Segue Draft de produto**: PR #371 permanece draft até o Dono
+Técnico fechar o contrato v2.2. **Quiz 1–20 do proprietário (26/11)
+incorporados** — decisões respondidas marcadas DECIDIDAS na matriz §6;
+restantes seguem proposta.
 **HEAD da spec**: `b1079aa`+ (branch `docs/366-ux-internet-publica`, PR #371).
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
 **Bases analisadas**:
@@ -56,12 +57,14 @@ raiz), preservando contexto de pesquisa/filtro via estado local.
 | W1 | Explorar — Início | Rede → Explorar | Barra de pesquisa global, **diretório de sites da campanha** (D2 decidido), notícias em destaque, anúncios recentes — **prévia/contagem só do que o leitor pode ver** | `[contrato]` índice de sites/notícias/anúncios |
 | W2 | Pesquisa | W1 (campo) ou sub-aba Pesquisa | Escopo: Tudo · Páginas · Notícias · Classificados · Perfis; resultados agrupados; estado sem resultado | `[contrato]` endpoint de busca + escopo |
 | W3 | Página/Site | W1 atalhos, W2 resultado, link interno | Menu do site, conteúdo, "voltar" para origem | `[contrato]` estrutura site/página |
-| W4 | Notícias — lista | Explorar → Notícias | Matérias com fonte, autor, data, escopo | `[contrato]` |
-| W5 | Matéria | W4 | Corpo, fonte, autoria, data, escopo de visibilidade | `[contrato]` |
+| W4 | Notícias — lista | Explorar → Notícias | Matérias com fonte, autor, data, escopo; **notícia automática de morte** com selo próprio | `[contrato]` |
+| W5 | Matéria | W4 | Corpo, fonte, autoria, data, escopo de visibilidade; matéria automática de morte + **matéria derivada por jornalista** | `[contrato]` |
 | W6 | Classificados — lista | Explorar → Classificados | Filtro por categoria, validade/estado, autoria | `[contrato]` |
 | W7 | Anúncio — detalhe | W6 | Conteúdo, autor, validade, estado (ativo/expirado/removido), ações permitidas | `[contrato]` |
-| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + **declaração de público por publicação** (`campanha`\|`contatos` — D1/D2 decididos) visível na criação **e** na edição; marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
-| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | Identidade do personagem, sites possuídos, timeline de **publicações visíveis ao leitor** (`post_perfil` — restritas somem por completo, sem contagem nem placeholder), escopo do perfil | `[contrato]` |
+| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + **declaração de público por publicação** (`campanha`\|`contatos` — D1/D2 decididos) visível na criação **e** na edição; **seletor de identidade do autor** (verdadeira padrão / pseudônimo / anônimo — conforme o tipo); anônima publicada = **imutável**; marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
+| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | **Opcional** — Internet funciona sem perfil. Ativado: nome público, avatar, descrição (nome do personagem é padrão, alternativo permitido, edição livre); **ativação irreversível** — aviso inequívoco antes, zero controles de ocultar/desativar/excluir depois; permanece após a morte | `[contrato]` |
+| W10 | Ativação de perfil | W9 ("Ativar perfil público") | Aviso permanente irrevogável + confirmação única; depois disso o perfil passa a existir publicamente | `[contrato]` |
+| W11 | Investigação jornalística | W4/W5 (matéria automática de morte) ou Explorar → Notícias | Acionada por jornalista elegível sobre matéria/notícia: lança teste do RPG real, mostra **resultado do teste + informações obtidas** — **sem aviso de que informação retornada é falsa**; repetição só com novas pistas/evidências/justificativa | `[contrato]` mecânica real (Caçadores & Caçados — sem classe/perícia paralela) |
 
 **Favoritos/histórico**: incluídos como *opcionais* na spec — só se o contrato
 justificar persistência por conta. Recomendação: **adiar** (ver §5).
@@ -83,6 +86,13 @@ Todos reutilizam `EstadoCarregando` (aria-busy), `EstadoVazio` (CTA diegético),
 | Sem permissão para publicar | Ação visível mas desabilitada **com motivo** ("publicar exige autorização do mestre" — se a regra exigir) |
 | Pesquisa sem resultado | Estado vazio específico + sugestão de ampliar escopo. Resultado nunca vaza existência de conteúdo oculto (anti-enumeração V-02: "não existe" e "existe mas oculto" respondem igual) |
 | Conteúdo restrito (`contatos`) para não-contato | **Invisível por completo**: não aparece em busca, prévias, contagens, timelines nem no agregado do perfil — sem placeholder, sem "conteúdo restrito aqui". Site/perfil do autor **existem e são descobríveis** normalmente; só o conteúdo restrito some (decisão Quiz 2) |
+| Perfil inativo (padrão) | W9 mostra estado "perfil público não ativado" + CTA de ativação; **todo o resto do Explorar funciona** (publicar, pesquisar, ler) — perfil é opcional |
+| Ativação de perfil (W10) | Aviso inequívoco: "ativado, o perfil fica **permanentemente público** — não pode ser ocultado, desativado ou apagado" + confirmação única. **Nenhum** controle de ocultar/desativar/excluir existe depois — a UI não desenha affordance que a regra proíbe |
+| Perfil após morte do personagem | Perfil e publicações **permanecem** (decisão Quiz); estado indica "personagem falecido" sem remover conteúdo |
+| Publicação anônima | W8 oferece identidade anônima **só nos tipos que permitem**; após publicada, anônima é **imutável** — sem editar, sem apagar (UI desabilita com motivo) |
+| Denúncia → remoção | Conteúdo publicado pode ser denunciado; denúncia pode acionar **remoção automática pelo sistema**; autor vê estado "removido". **Contestação é resolvida por administrador da plataforma — não pelo Mestre** |
+| Notícia automática de morte | Matéria gerada pelo sistema com selo "automática"; jornalista elegível pode derivar matéria própria a partir dela (W11) |
+| Investigação (W11) | Mostra resultado do teste do RPG + informações obtidas; **nunca** sinaliza quais informações são falsas; repetição bloqueada sem novas pistas/evidências/justificativa |
 | Perdeu o dispositivo (gate revogado) | **Ler** conteúdo já publicado segue permitido (publicação é fato consumado — D-B do threat model); **editar/publicar** fica bloqueado pelo gate vigente, com motivo |
 
 ## 4. Matriz tela × estado × papel × ação
@@ -114,11 +124,16 @@ pública via dispositivo. Escrita pública: J e M publicam; M adicionalmente
 | W7 | expirado/removido — nunca visível ao requisitante | ✓ | ✓ | **404 diegético** idêntico a inexistente (anti-enumeração V-02) |
 | W8 Publicar | formulário | ✓* | ✓ | Preencher → prévia → confirmar |
 | W8 | prévia | ✓* | ✓ | Revisar + trocar visibilidade antes de confirmar |
-| W9 Perfil | próprio | ✓ | ✓ | Editar campos permitidos, ver publicações |
-| W9 | de outro personagem | ✓ | ✓ | Somente leitura conforme escopo |
+| W9 Perfil | próprio — inativo | ✓ | ✓ | CTA "Ativar perfil público" → W10 |
+| W9 | próprio — ativo | ✓ | ✓ | Editar nome público/avatar/descrição (edição livre); **sem** ocultar/desativar/excluir |
+| W9 | de outro personagem | ✓ | ✓ | Somente leitura conforme escopo; perfil inexistente = 404 diegético |
+| W10 Ativação | aviso irrevogável | ✓ | ✓ | Ler aviso → confirmar uma vez → perfil passa a existir |
+| W11 Investigação | disponível | ✓* | ✓ | Jogar teste do RPG → ver resultado + informações obtidas |
+| W11 | repetição sem novidade | ✓* | ✓ | Bloqueada com motivo ("precisa de novas pistas/evidências") |
 
-\* `J` só publica se a regra da campanha permitir — ver dúvidas D7/D8. A UI mostra
-a ação desabilitada com motivo quando não permitida.
+\* `J` só atua como jornalista se a elegibilidade for decidida — **D8
+permanece proposta** (ver §6). A UI mostra a ação desabilitada com motivo
+quando não permitida.
 
 ## 5. Recomendações de experiência
 
@@ -160,16 +175,28 @@ na busca" fundidas em **D10**; "moderação" + "motivo ao autor" fundidas em
 | D1 | PAI #365 | ~~Escopo "público": só campanha ou entre campanhas/servidor?~~ **DECIDIDO 26/11 (Quiz 1): fronteira entre campanhas ABSOLUTA — escopo = campanha** | — | campanha-only, definitivo | W8 seletor fixo `campanha\|contatos`; W2 sem escopo cross-campaign | — (decidido) |
 | D2 | PAI #365 | ~~Sites visíveis a todos da campanha ou só a contatos?~~ **DECIDIDO 26/11 (Quiz 2, escolha A): sites descobríveis por TODOS os elegíveis da campanha; `contatos` restringe publicações individuais** | — | todos — diretório lista sites; perfil/site existe sem expor publicações restritas | W1 diretório de sites; W3/W9 existem mesmo sem publicações visíveis ao leitor | — (decidido) |
 | D3 | PAI #365 | Histórico de edições de página: `version`+audit ou tabela de revisões/rollback? | a) version+audit b) revisions | a) adiar revisions (fatía A) | W3/W8 "versões anteriores" só existe se b) | Tabela nova se b) |
-| D4 | PAI #365 | Bio de perfil: coluna `descricao` em `internet_accounts` ou publicação fixada? | a) coluna b) fixada | a) coluna (simples) | W9 campo bio; formulário de perfil | Schema (coluna vs. entidade) |
+| D4 | PAI #365 | ~~Bio de perfil: coluna ou publicação fixada?~~ **DECIDIDO (Quiz): perfil exibe descrição editável** — implementa como campo do perfil | — | campo `descricao` no perfil | W9 campo descrição; edição livre | — (decidido) |
 | D5 | PAI #365 | Todo endpoint público exige gate do leitor (conta Internet + dispositivo)? | a) gate em tudo b) discovery aberto | a) gate em tudo — **absorve** "sem conta acessa?" e "anônimo?" (sem conta = sem gate = sem acesso) | Todo o Explorar atrás do gate; estado "sem conta" já especificado | Regra de autorização |
 | D6 | PAI #365 | Incluir tabelas públicas no export/backup P9? | a) sim b) não | a) sim (conteúdo diegético ≠ comunicação privada) | Nenhum impacto visual — registrado p/ completude | Contrato de export |
-| D7 | UX | Publicação livre ou com aprovação do mestre? E o que o autor vê quando retirado? | a) livre + mestre retira reativamente b) pré-moderação c) fila de denúncia | a) — alinhado à fatia A do PAI; autor vê "retirado" + motivo quando houver (V-07/D-E), inclusive "retirado pelo mestre" | W8 "enviado para análise" só existe se b); estado retirado em W7/W9 | Fluxo de W8; estado retirado |
-| D8 | UX | Quem publica o quê: sites/páginas por qualquer conta elegível? notícias restritas a fontes oficiais? | a) tudo livre p/ elegível b) notícias/fontes só mestre c) sites só mestre | a) qualquer elegível; notícias exibem selo de fonte — sem papel extra salvo deliberação contrária | "Novo site" visível p/ J; rótulo de fonte em W4/W5 | Permissões de escrita |
+| D7 | UX | ~~Moderação~~ **DECIDIDO (Quiz): publicação livre + denúncia → remoção automática pelo sistema; contestação resolvida por administrador da plataforma — NÃO pelo Mestre.** Só admin da plataforma consulta identidade anônima em moderação excepcional (sem justificativa obrigatória, sem trilha de auditoria — escolha do proprietário) | — | — | W8 publica direto; ação "Denunciar" em conteúdos; estado removido; **sem** fila de aprovação, **sem** papel do mestre na contestação | Fluxo de denúncia/contestação |
+| D8 | UX | Quem publica o quê + **elegibilidade para jornalista** (matéria derivada de notícia automática de morte)? | a) tudo livre p/ elegível b) notícias/fontes só mestre c) jornalista exige elegibilidade própria | **PARCIAL**: identidade do autor por tipo decidida (verdadeira padrão; pseudônimo/anônimo conforme tipo; anônima imutável). **Segue proposta**: elegibilidade de jornalista e restrições por tipo de publicação | W8 seletor de identidade; W11 ação de investigação; selo de fonte | Permissões de escrita; W11 |
 | D9 | UX | Anúncio permite "Contatar"? | a) sim, via fluxo de contato existente b) não c) canal direto | a) — aresta dirigida + aceite + bloqueio P3; se bloqueado, estado honesto sem vazar o bloqueio | W7 ação Contatar | Ação de W7 |
-| D10 | UX | O que o perfil público exibe? | a) handle+displayName+bio+publicações b) só handle+publicações c) mais campos | a) handle sempre; `displayName` só com opt-in explícito (V-08); bio conforme D4; publicações do autor (`post_perfil`) | W9 campos; aviso no formulário de perfil; W2 índice de perfis | W9 + índice de busca |
+| D10 | UX | ~~O que o perfil público exibe?~~ **DECIDIDO (Quiz): perfil OPCIONAL; exibe só nome público + avatar + descrição; nome do personagem é padrão, alternativo permitido; edição livre; ativação IRREVERSÍVEL (aviso inequívoco, sem ocultar/desativar/excluir); permanece após morte; utilizável sem perfil** | — | — | W9/W10 conforme §3; W2 indexa perfil só se ativado | — (decidido) |
 | D11 | UX | Anúncio tem prazo? Quem remove? | a) expiração opcional pelo autor + remoção por autor/mestre b) prazo fixo c) sem expiração | a) `expiresAt` opcional (já no modelo); `expirado` derivado, sem job | W6 chip "expirado"; W8 campo validade; W7 estado | `meta.expiresAt` (já previsto) |
 | D12 | UX | Pesquisa indexa o quê e com que escopo default? | a) título+páginas+notícias+anúncios+perfis(handle) b) +displayName c) só publicações | a) conforme contrato v1 (`titulo`+`handle`+`nome`), filtro por visibilidade do leitor no SQL; `displayName` fora do índice (depende de D10) | W2 escopos e agrupamento de resultados | Quase respondida pelo contrato — confirmar |
 | D13 | UX | Sites têm navegação própria (menu) ou são páginas soltas? | a) menu derivado das páginas publicadas b) editor de menu c) sem navegação | a) menu simples derivado; sem editor de menu na fatia | W3 menu do site | W3 |
+
+**Outras decisões Quiz 1–20 já incorporadas** (sem pergunta aberta de UX):
+identidade verdadeira como padrão com pseudônimo/anônimo conforme tipo de
+publicação; publicação anônima **imutável** após publicar; denúncia →
+remoção automática pelo sistema; contestação e consulta a identidade
+anônima **só por administrador da plataforma** (não pelo Mestre; sem
+justificativa obrigatória e sem trilha de auditoria — escolha do
+proprietário); notícia **automática de morte** + matéria derivada por
+jornalista; investigação mostra resultado do teste do RPG e informações
+obtidas **sem revelar quais são falsas**, com repetição só mediante novas
+pistas/evidências/justificativa; princípio de implementação — digitalizar
+regras de *Caçadores & Caçados*, sem mecânica paralela de jornalismo.
 
 ## 6.1 Alinhamento com o threat model #367 (checkpoint INTERMEDIÁRIO)
 
@@ -216,14 +243,15 @@ podem ser congeladas já (wireframe + contratos de leitura estáveis):
 - **Tokens/estados visuais**: reuso integral de `estilos-internet.css`,
   `abas.tsx`, `estados.tsx` — zero linguagem nova.
 - **Responsividade**: layouts mobile/desktop do wireframe.
+- **Com as decisões Quiz 1–20**: W9/W10 (perfil opcional, ativação
+  irrevogável, campos nome público/avatar/descrição), seletor de
+  identidade por tipo no W8, publicação anônima imutável, notícia
+  automática de morte com selo, fluxo de denúncia/remoção automática.
 
-**NÃO congelável** (depende de deliberação): permissões de publicação por
-tipo (D7/D8), ação "Contatar" (D9), campos do perfil (D4/D10), campo de
-validade (D11), escopo/índice da pesquisa (D12), menu do site (D13), e
-qualquer texto de "enviado para análise" (D7). **Já decidido**: escopo =
-campanha absoluto (D1) e sites descobríveis por todos os elegíveis (D2) —
-o seletor `campanha|contatos` por publicação e a invisibilidade total de
-conteúdo restrito já podem ser congelados junto com W8/W9.
+**NÃO congelável** (depende de deliberação): elegibilidade de jornalista
+e permissões por tipo de publicação (D8 residual), ação "Contatar" (D9),
+campo de validade de anúncio (D11), escopo/índice da pesquisa (D12),
+menu do site (D13), e histórico de edições de página (D3).
 
 ## 8. O que NÃO está proposto
 
