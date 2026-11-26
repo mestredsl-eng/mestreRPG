@@ -17,9 +17,9 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { caminhoCanonicoRepo } from "./boot-lock.mjs";
 import {
@@ -59,24 +59,52 @@ const GIT_ENV = {
 // sem prova de nome/caminho), qualquer outro untracked, e TODO arquivo
 // rastreado modificado/staged/renomeado. Nada é apagado, movido ou
 // ignorado de verdade — apenas deixa de contar como sujeira.
-const RE_ARTEFATO_RUNTIME = /^banco\/[^/]+\.db\.trava$/;
+/**
+ * Caminhos dos artefatos SQLite de trava derivados da MESMA configuração
+ * que servidor/src/db/index.ts: MESTRE_BANCO ou banco/mestre-rpg.db.
+ * O SQLite usa "<banco>.trava" e "<banco>.trava-journal".
+ *
+ * Só toleramos esses dois caminhos exatos quando estão dentro do clone.
+ * Backups antigos, outros bancos, caminhos externos, nomes parecidos e
+ * qualquer artefato não comprovado continuam fail-closed.
+ */
+function caminhosTravaRuntime(repoDir, env = process.env) {
+  const banco = env.MESTRE_BANCO
+    ? resolve(repoDir, env.MESTRE_BANCO)
+    : resolve(repoDir, "banco", "mestre-rpg.db");
+  const trava = banco + ".trava";
+  const relativo = (arquivo) => {
+    const caminho = relative(repoDir, arquivo);
+    if (!caminho || caminho === ".." || caminho.startsWith(".." + sep) || isAbsolute(caminho)) {
+      return null;
+    }
+    return caminho.split(sep).join("/");
+  };
+  return new Set([relativo(trava), relativo(trava + "-journal")].filter(Boolean));
+}
+
+/** lstat rejeita symlinks, diretórios e caminhos quebrados. */
+function ehArquivoRegular(caminho) {
+  try { return lstatSync(caminho).isFile(); } catch { return false; }
+}
 
 /**
- * Interpreta `git status --porcelain -z` (registros NUL-separados,
- * `XY <path>`). Retorna { sujo, tolerados }: sujo=true se houver
- * qualquer entrada que não seja untracked allowlisted; tolerados lista
- * os caminhos de runtime aceitos (para log auditável).
+ * Interpreta \`git status --porcelain -z\` (registros NUL-separados,
+ * \`XY <path>\`). Só tolera untracked nos dois caminhos runtime exatos
+ * do banco configurado, e apenas quando são arquivos regulares.
+ * Qualquer outra entrada (inclusive staged/modified/rename) é sujeira.
  */
-export function avaliarStatusPorcelain(stdout) {
+export function avaliarStatusPorcelain(stdout, repoDir = process.cwd(), env = process.env) {
   const tolerados = [];
+  const permitidos = caminhosTravaRuntime(repoDir, env);
   let sujo = false;
   for (const reg of String(stdout ?? "").split("\0")) {
     if (reg.length === 0) continue;
     const xy = reg.slice(0, 2);
     const caminho = reg.slice(3);
-    if (xy !== "??") { sujo = true; break; }
-    if (RE_ARTEFATO_RUNTIME.test(caminho)) tolerados.push(caminho);
-    else { sujo = true; break; }
+    if (xy !== "??" || !permitidos.has(caminho)) { sujo = true; break; }
+    if (!ehArquivoRegular(resolve(repoDir, caminho))) { sujo = true; break; }
+    tolerados.push(caminho);
   }
   return { sujo, tolerados };
 }
@@ -211,7 +239,7 @@ export async function verificarAtualizacao(opts = {}) {
   //    atualizacao; proibido stash/clean/reset preventivo.
   const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"]);
   if (status.code !== 0) return pular("falha-status", { repoDir, branch });
-  const arvore = avaliarStatusPorcelain(status.stdout);
+  const arvore = avaliarStatusPorcelain(status.stdout, repoDir);
   if (arvore.sujo) return pular("arvore-suja", { repoDir, branch });
   if (arvore.tolerados.length) {
     log(`[auto-update] Artefatos runtime tolerados na guarda de árvore: ${arvore.tolerados.join(", ")}`);
@@ -475,7 +503,7 @@ async function executarRollback(estado, opts = {}) {
   }
 
   const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"], repoDir);
-  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout).sujo) {
+  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout, repoDir).sujo) {
     return { ok: false, motivo: "arvore-suja-rollback-bloqueado" };
   }
   const marcar = (fase) => {
@@ -625,7 +653,7 @@ export async function recuperarAtualizacaoPendente(opts = {}) {
     return { ok: false, motivo: "branch-alterada-durante-atualizacao" };
   }
   const status = git(["-c", "status.showUntrackedFiles=all", "status", "--porcelain", "-z", "--untracked-files=all"], repoDir);
-  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout).sujo) {
+  if (status.code !== 0 || avaliarStatusPorcelain(status.stdout, repoDir).sujo) {
     return { ok: false, motivo: "arvore-suja-recuperacao-bloqueada" };
   }
   const head = String(git(["rev-parse", "HEAD"], repoDir).stdout).trim();
