@@ -55,8 +55,8 @@ raiz), preservando contexto de pesquisa/filtro via estado local.
 | W5 | Matéria | W4 | Corpo, fonte, autoria, data, escopo de visibilidade | `[contrato]` |
 | W6 | Classificados — lista | Explorar → Classificados | Filtro por categoria, validade/estado, autoria | `[contrato]` |
 | W7 | Anúncio — detalhe | W6 | Conteúdo, autor, validade, estado (ativo/expirado/removido), ações permitidas | `[contrato]` |
-| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + seletor de visibilidade; marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
-| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | Identidade do personagem, publicações, escopo do perfil | `[contrato]` |
+| W8 | Publicar (anúncio/notícia/post) | W6/W4/W9 ("Publicar") | Formulário + **prévia** + seletor de visibilidade (`campanha`/`contatos` — proposta #365); marca o que exige autorização do mestre | `[contrato]` + regra de moderação |
+| W9 | Perfil público | Explorar → Perfil (o próprio) ou resultado de busca | Identidade do personagem, sites possuídos, timeline de publicações (`post_perfil`), escopo do perfil | `[contrato]` |
 
 **Favoritos/histórico**: incluídos como *opcionais* na spec — só se o contrato
 justificar persistência por conta. Recomendação: **adiar** (ver §5).
@@ -82,7 +82,12 @@ Todos reutilizam `EstadoCarregando` (aria-busy), `EstadoVazio` (CTA diegético),
 ## 4. Matriz tela × estado × papel × ação
 
 Papeis: **J** = jogador (personagem elegível), **M** = mestre, **E** =
-espectador (fora do gate — não vê a aba Rede).
+espectador. Pela proposta #365, leitura pública exige conta Internet +
+gate do leitor (`personagemAutorizadoInternet`) — logo **E não acessa o
+Explorar** (sem conta/dispositivo); o "read-only" do espectador na matriz
+do PAI aplica-se a contextos onde haja sessão autorizada, não à camada
+pública via dispositivo. Escrita pública: J e M publicam; M adicionalmente
+**retira** conteúdo alheio (moderação P10), nunca edita.
 
 | Tela | Estado | J | M | Ação principal |
 |------|--------|---|---|----------------|
@@ -138,7 +143,7 @@ a ação desabilitada com motivo quando não permitida.
 | # | Dúvida | Impacto na UX |
 |---|--------|---------------|
 | D1 | Publicação é livre ou exige aprovação do mestre? Pré-moderação ou denúncia+pós? | Define se W8 mostra "enviado para análise" ou publica direto. **Qualquer que seja**: remoção pós-publicação tem efeito imediato em lista/busca/socket e audit de quem retirou (threat model V-03) |
-| D2 | Escopo de visibilidade: só dentro da campanha ou entre campanhas/servidor? | **Fronteira de segurança, não cosmética** (revisão INTERMEDIÁRIO): se cruzar campanhas, `campaignId` deixa de ser fronteira suficiente e todo V-01 muda de natureza — exige camada "público global vs por campanha" no schema/índice. **Default seguro recomendado: escopo = campanha**, consistente com todo o domínio Internet atual. Deliberar **antes** do PAI fechar o contrato #365 |
+| D2 | Escopo de visibilidade: só dentro da campanha ou entre campanhas/servidor? **PAI propôs `campanha\|contatos` intra-campanha** (#365) — residual = cruzar campanhas? | Define o seletor de visibilidade do W8 e o escopo da pesquisa. Se cruzar campanhas, `campaignId` deixa de ser fronteira suficiente (threat model) — **default seguro: escopo = campanha** |
 | D3 | Quem cria sites/páginas — só mestre ou qualquer personagem? | Define se "Novo site" aparece para jogador |
 | D4 | Notícias: qualquer personagem publica ou só fontes oficiais? | Define W8 para notícias e o rótulo de fonte |
 | D5 | O que o perfil público exibe — nome do personagem, bio, publicações, nada? | Define W9 e o que a busca indexa de perfil. **Padrão P11**: handle sempre; `displayName` só com opt-in explícito do titular (V-08) — acopla com D12 |
@@ -149,7 +154,7 @@ a ação desabilitada com motivo quando não permitida.
 | D10 | Personagem sem conta Internet acessa a camada pública? (hoje conta é pré-requisito do módulo) | Define se Explorar fica atrás do mesmo gate de conta. **Acoplada a D-A/D-B**: se a camada pública ficar atrás do gate de conta, os vetores de revogação V-04 herdam de graça; se aberta a personagem sem conta, precisa de regra própria — "o que conta como identidade" (personagem sem conta diegética pode publicar? ter perfil?) |
 | D11 | Leitura pública **sem login** existe? (ator anônimo — threat model D-A) | Se sim, é superfície fora do módulo do personagem; esta spec assume sempre autenticado |
 | D12 | `displayName` livre pode conter dado pessoal real — indexar na busca global só com opt-in? (V-08) | Define o que W2 indexa de perfis e o aviso no formulário de perfil |
-| D13 | Autor vê o próprio conteúdo retirado com motivo? (V-07/D-E — recomendo sim) | Define o estado "removido" do ponto de vista do autor em W7/W9 |
+| D13 | Autor vê o próprio conteúdo retirado com motivo? (V-07/D-E — recomendo sim; inclui "retirado pelo mestre" — moderação P10 não edita, só retira) | Define o estado "removido" do ponto de vista do autor em W7/W9 |
 
 ## 6.1 Alinhamento com o threat model #367 (checkpoint INTERMEDIÁRIO)
 
@@ -162,6 +167,20 @@ Restrições de segurança que a UX deve **refletir**, não contornar:
 - **Conteúdo público × gate (V-04/D-B)**: publicação já feita sobrevive à perda do dispositivo; edição/rascunho exige gate vigente — a UI separa "ler" de "editar" em affordances distintas.
 - **Perfil mínimo (V-08)**: W9 exibe handle + displayName + publicações — nunca userId, e-mail, dados OOC ou campos de ficha. `displayName` livre pode conter dado pessoal → aviso no formulário (depende de D12).
 - **Links externos (V-07/D-D)**: se permitidos, sempre `noopener noreferrer` e nunca `javascript:`/`data:` — a prévia do W8 deve renderizar links como texto até a decisão.
+
+## 6.2 Alinhamento com a proposta de domínio #365 (PAI, checkpoint 1)
+
+O modelo proposto (`internet_sites` + `internet_pages` + `internet_publicacoes` tipado) é compatível com W1–W9. Deltas que a UX reflete:
+
+- **`visibilidade = campanha | contatos`** (proposta): W8 ganha o seletor com esses dois escopos; "contatos" = aresta aceita vigente + sem bloqueio P3 na hora da leitura. Isso resolve a maior parte de D2 **dentro** da campanha — a deliberação D2 remanescente é apenas "entre campanhas/servidor?" (default seguro: não).
+- **`post_perfil`**: W9 passa a ter timeline de publicações do autor, não só identidade.
+- **Ciclo `rascunho|publicado|retirado|expirado|arquivado`**: `expirado` é derivado de `expiresAt` (sem job); `arquivado` é terminal de site/página — W3/W7 tratam como indisponível com a mesma fronteira de acesso legítimo. Rascunho responde 404 a não-autores (já coberto pela regra anti-enumeração).
+- **Moderação mestre**: mestre retira publicação/página alheia mas **não edita** — para o autor, "retirado" pode vir de moderação; D13 (motivo visível ao autor) ganha o caso "retirado pelo mestre".
+- **HTTP-only**: a proposta não usa socket para a camada pública — leituras são request/response. O estado "reconectando" se aplica a escritas e à experiência geral do módulo; não há expectativa de tempo real em listas públicas.
+- **Pesquisa v1 = LIKE/prefixo** em `titulo`+`handle`+`nome` (FTS5 adiado): W2 assume busca simples; o escopo "Perfis" indexa handle (P11) — displayName só com opt-in (D12).
+- **Edição de página publicada → `version+1`**: W8/W3 assumem que editar conteúdo publicado cria nova versão; se o Dono exigir histórico/rollback (decisão D3 do PAI), a UX precisará de "versões anteriores" — sinalizado, não especificado.
+- **Slug público** (`/sites/:slug/p/:pageSlug`): URLs são adivinháveis por natureza — reforça que a fronteira "visível-antes vs nunca-visível" do §3 é requisito de contrato, não detalhe.
+- **Transferência P7**: autoria via `characterId` é estável — sites/páginas/posts acompanham o personagem transferido sem migração; W9 não muda.
 
 ## 7. O que NÃO está proposto
 
