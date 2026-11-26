@@ -5,7 +5,7 @@
 // administrativos só porque componentes invisíveis montaram.
 import { chromium } from "playwright";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { hashSenha } from "./servidor/dist/lib/password.js";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -20,6 +20,7 @@ const DIR = dirTeste("papeis-ui");
 const BANCO = join(DIR, "banco", "mestre-rpg.db");
 const PORTA = await portaLivre();
 const BASE = `http://localhost:${PORTA}`;
+const VERSAO_PKG = JSON.parse(readFileSync("package.json", "utf-8")).version;
 let browser, proc;
 
 async function login(page, user, senha) {
@@ -143,6 +144,29 @@ try {
     await page.getByRole("button", { name: "Administração" }).click();
     await page.waitForTimeout(800);
     t("Admin carrega seção do servidor", await temTexto(page, "Servidor"));
+    // Issue #373 — a versão exibida deve ser a do package.json raiz:
+    // GET /admin/servidor/status lê o metadado real e a UI renderiza
+    // esse valor sem hardcode (nunca um valor antigo fixado em código).
+    const stVersao = await req(BASE, "GET", "/admin/servidor/status", { cookie: cookies.mestreAtivo });
+    t("API /admin/servidor/status 200", stVersao.status === 200, `status=${stVersao.status}`);
+    t(
+      "versão da API === version do package.json raiz",
+      stVersao.json?.servidor?.versao === VERSAO_PKG,
+      `api=${stVersao.json?.servidor?.versao} pkg=${VERSAO_PKG}`,
+    );
+    const pVersao = page.locator("p", { hasText: "Versão:" }).first();
+    await pVersao.waitFor({ timeout: 10000 });
+    const txtVersao = (await pVersao.innerText()).replace(/\s+/g, " ").trim();
+    t(
+      "UI exibe 'Versão: <version do package.json>'",
+      new RegExp(`Versão:\\s*${VERSAO_PKG.replace(/\./g, "\\.")}`).test(txtVersao),
+      txtVersao,
+    );
+    t(
+      "UI não exibe versão divergente da API",
+      txtVersao.includes(stVersao.json?.servidor?.versao ?? "∅"),
+      `${txtVersao} vs api=${stVersao.json?.servidor?.versao}`,
+    );
     await page.getByRole("button", { name: "Painel" }).click();
     await irCampanha(page);
     await page.waitForSelector(".abas", { timeout: 10000 });
