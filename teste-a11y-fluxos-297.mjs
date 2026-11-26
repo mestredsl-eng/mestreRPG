@@ -9,6 +9,7 @@
 // Patrimônio ainda embutido na ficha — regressão, não separação 1.1.x).
 import { chromium } from "playwright";
 import { join } from "node:path";
+import { writeFileSync } from "node:fs";
 import { avaliarWcag, avaliarFocoIndicador } from "./wcag-avaliador-297.mjs";
 import { auditarNomes } from "./nomes-acessiveis-297.mjs";
 import {
@@ -294,24 +295,29 @@ async function checarBuscaArquivos(page, rotulo) {
 // com o token de destaque. Aqui medimos o DOM real — borda ≥3:1 contra
 // o fundo do próprio controle e contra o cartão adjacente, glifo checked,
 // foco ≥3:1 e fallback forced-colors — nas 4 paletas de destaque.
-async function checarCheckboxConvite(page, rotulo) {
-  const cb = page.locator('form.formulario input[type="checkbox"]').first();
-  const n = await page.locator('form.formulario input[type="checkbox"]').count();
-  t(`${rotulo}: checkbox do formulário presente`, n >= 1, `encontrados=${n}`);
+async function checarCaixaAutoral(page, seletor, rotulo, tipo = "checkbox") {
+  const base = page.locator(seletor);
+  const n = await base.count();
+  t(`${rotulo}: ${tipo} autoral presente`, n >= 1, `encontrados=${n}`);
   if (n < 1) return;
+  const cb = base.first();
   const m = await cb.evaluate((el) => {
+    // fundo próprio só é comparável desmarcado (checked preenche com o
+    // acento — borda e fundo ficam da mesma cor por construção)
+    const estavaChecked = el.checked;
+    if (estavaChecked) el.checked = false;
     const cs = getComputedStyle(el);
-    // fundo adjacente: primeiro ancestral com background não transparente
+    // primitivos na hora — CSSStyleDeclaration é vivo
+    const appearance = cs.appearance || cs.webkitAppearance;
+    const borda = cs.borderTopColor, bordaW = parseFloat(cs.borderTopWidth);
+    const raio = cs.borderTopLeftRadius, bg = cs.backgroundColor;
     let adj = null;
     for (let p = el.parentElement; p; p = p.parentElement) {
       const b = getComputedStyle(p).backgroundColor;
       if (b && b !== "rgba(0, 0, 0, 0)" && b !== "transparent") { adj = b; break; }
     }
-    return {
-      appearance: cs.appearance || cs.webkitAppearance,
-      borda: cs.borderTopColor, bordaW: parseFloat(cs.borderTopWidth),
-      raio: cs.borderTopLeftRadius, bg: cs.backgroundColor, adj,
-    };
+    if (estavaChecked) el.checked = true;
+    return { appearance, borda, bordaW, raio, bg, adj };
   });
   // checked/disabled: getComputedStyle é vivo — ler primitivos na hora.
   const estados = await cb.evaluate((el) => {
@@ -339,20 +345,23 @@ async function checarCheckboxConvite(page, rotulo) {
   }) : { estilo: "não focou", fv: false };
   m.focoEstilo = foco.estilo;
   const bg = _rgb(m.bg), adj = _rgb(m.adj), borda = _rgb(m.borda);
-  t(`${rotulo}: checkbox appearance:none (caixa autoral)`, m.appearance === "none", m.appearance);
-  t(`${rotulo}: checkbox borda 2px token`, m.bordaW === 2, `width=${m.bordaW}`);
-  t(`${rotulo}: checkbox borda ≥3:1 vs fundo próprio`, !!(borda && bg) && _ratio(borda, bg) >= 3,
+  const raioPx = parseFloat(m.raio);
+  t(`${rotulo}: ${tipo} appearance:none (caixa autoral)`, m.appearance === "none", m.appearance);
+  t(`${rotulo}: ${tipo} borda 2px token`, m.bordaW === 2, `width=${m.bordaW}`);
+  t(`${rotulo}: ${tipo} formato ${tipo === "radio" ? "circular" : "4px"}`,
+    tipo === "radio" ? raioPx >= 7 : raioPx >= 3 && raioPx <= 6, `raio=${m.raio}`);
+  t(`${rotulo}: ${tipo} borda ≥3:1 vs fundo próprio`, !!(borda && bg) && _ratio(borda, bg) >= 3,
     borda && bg ? `ratio=${_ratio(borda, bg).toFixed(2)}:1` : `borda=${m.borda} bg=${m.bg}`);
-  t(`${rotulo}: checkbox borda ≥3:1 vs cartão adjacente`, !!(borda && adj) && _ratio(borda, adj) >= 3,
+  t(`${rotulo}: ${tipo} borda ≥3:1 vs cartão adjacente`, !!(borda && adj) && _ratio(borda, adj) >= 3,
     borda && adj ? `ratio=${_ratio(borda, adj).toFixed(2)}:1 adj=${m.adj}` : `adj=${m.adj}`);
-  t(`${rotulo}: checkbox checked desenha glifo`, m.checkedBg.includes("svg") && m.checkedBg.includes("data:image"),
+  t(`${rotulo}: ${tipo} checked desenha glifo`, m.checkedBg.includes("svg") && m.checkedBg.includes("data:image"),
     m.checkedBg.slice(0, 60));
   const fm = m.focoEstilo.match(/(\S+) (\S+) (.+)/);
   const focoCor = fm ? _rgb(fm[3]) : null;
-  t(`${rotulo}: checkbox foco visível (outline ≥2px, ≥3:1)`,
+  t(`${rotulo}: ${tipo} foco visível (outline ≥2px, ≥3:1)`,
     !!(fm && fm[1] === "solid" && parseFloat(fm[2]) >= 2 && focoCor && bg && _ratio(focoCor, bg) >= 3),
     m.focoEstilo);
-  t(`${rotulo}: checkbox disabled visível porém inerte`, m.disabledOpacity <= 0.6 && m.disabledCursor === "not-allowed",
+  t(`${rotulo}: ${tipo} disabled visível porém inerte`, m.disabledOpacity <= 0.6 && m.disabledCursor === "not-allowed",
     `opacity=${m.disabledOpacity} cursor=${m.disabledCursor}`);
 
   // 4 paletas de destaque: a borda nunca pode cair abaixo de 3:1.
@@ -373,7 +382,7 @@ async function checarCheckboxConvite(page, rotulo) {
       })() };
     }, claro);
     const bT = _rgb(mm.borda), bgT = _rgb(mm.bg), adjT = _rgb(mm.adj);
-    t(`${rotulo}: checkbox tema ${tema} — borda ≥3:1`,
+    t(`${rotulo}: ${tipo} tema ${tema} — borda ≥3:1`,
       !!(bT && bgT && adjT) && _ratio(bT, bgT) >= 3 && _ratio(bT, adjT) >= 3,
       `borda=${mm.borda} bg=${mm.bg} adj=${mm.adj}`);
   }
@@ -463,7 +472,7 @@ try {
       await page.waitForTimeout(400);
       await checarTela(page, `aba ${nomeAba}`);
       if (nomeAba === "Arquivos") await checarBuscaArquivos(page, `viewport ${vp.nome}`);
-      if (nomeAba === "Convites") await checarCheckboxConvite(page, `viewport ${vp.nome}`);
+      if (nomeAba === "Convites") await checarCaixaAutoral(page, 'form.formulario input[type="checkbox"]', `viewport ${vp.nome}`);
     }
 
     // Ficha: abrir personagem → detalhe (leitura) + patrimônio (regressão)
@@ -657,6 +666,36 @@ try {
         } else t("popover: botão Editar ficha presente", false);
       } else t("popover: personagem fixture visível na lista", false);
     } else t("popover: fixture de personagem presente", false);
+
+    // ---------- #132 fatia 2 — Acervo: filtro admin + rádios da prévia ----------
+    // Fixture real: livro criado via API + envelope exportado com `sistema`
+    // alterado → prévia de importação exibe metadadosAlterados com rádios.
+    sec("Acervo — controles nativos (filtro + rádio de prévia)");
+    const novoLivro = await req(BASE, "POST", "/biblioteca/livros", {
+      cookie: cenario.cookieMestre,
+      body: { titulo: "Livro Radio A11y", tipo: "livro" },
+    });
+    t("fixture: livro p/ prévia de importação", novoLivro.status < 300 && !!novoLivro.json?.livro?.id,
+      `status=${novoLivro.status}`);
+    const exp = await req(BASE, "GET", "/biblioteca/exportar", { cookie: cenario.cookieMestre });
+    const alvo = exp.json?.livros?.find?.((l) => l.titulo === "Livro Radio A11y");
+    t("fixture: livro presente no envelope exportado", !!alvo && exp.status === 200,
+      `status=${exp.status}`);
+    if (alvo) {
+      alvo.sistema = "Sistema Radio A11y";
+      const arqImport = join(DIR, "import-a11y-radio.json");
+      writeFileSync(arqImport, JSON.stringify(exp.json));
+      await page.getByRole("button", { name: "Acervo", exact: true }).first().click();
+      await page.waitForTimeout(800);
+      await checarCaixaAutoral(page, 'input[type="checkbox"].caixa-autoral', "acervo filtro");
+      await page.locator('input[type="file"][accept*=".json"]').setInputFiles(arqImport);
+      const radio = page.locator(".modal input[type='radio']");
+      await radio.first().waitFor({ timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(300);
+      await checarCaixaAutoral(page, ".modal input[type='radio']", "acervo prévia", "radio");
+      const btnCancelar = page.getByRole("button", { name: "Cancelar", exact: true });
+      if (await btnCancelar.count()) { await btnCancelar.first().click(); await page.waitForTimeout(300); }
+    }
     await ctx.close();
   }
 

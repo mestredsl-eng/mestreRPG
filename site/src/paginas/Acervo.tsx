@@ -372,7 +372,7 @@ export default function Acervo() {
           </select>
           {ehAdmin && (
             <label className="linha" style={{ gap: "0.35rem" }}>
-              <input type="checkbox" checked={mostrarExcluidos} onChange={(e) => setMostrarExcluidos(e.target.checked)} />
+              <input type="checkbox" className="caixa-autoral" checked={mostrarExcluidos} onChange={(e) => setMostrarExcluidos(e.target.checked)} />
               Mostrar excluídos
             </label>
           )}
