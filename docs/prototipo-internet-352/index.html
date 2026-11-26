@@ -132,20 +132,22 @@ conversa: {t:"Conversa privada", n:"Thread diegética 1:1. Bolhas diferenciadas;
  <div class="w-linha" style="margin-top:8px"><input class="w-input w-placeholder" value="Escrever mensagem… (personagem fala em personagem)"><span class="w-btn prim">Enviar</span></div>
  <div class="w-legenda">Placeholder reforça diegese: o texto é fala do personagem, não do jogador.</div>`},
 
-grupo: {t:"Grupo — criar e detalhes", n:"Criação: nome + seleção de contatos aceitos (não é possível adicionar quem não aceitou). Detalhes: membros, sair, renomear (criador), remover membro (criador). Confirmação em ações destrutivas. Decisão aberta: admin único vs múltiplos.",
+grupo: {t:"Grupo — criar e detalhes", n:"Criação: nome + seleção de contatos aceitos. Default recomendado do contrato (P4 pendente): só arestas aceitas são selecionáveis — Doran aparece desabilitado com motivo. Contrato exige convite pendente (convidado→ativo com aceite explícito) para quem ainda não é membro — UX detalhada com F3. Detalhes: membros, sair, renomear (dono), remover membro (dono).",
  h:`<div class="w-barra"><div class="w-titulo">Guilda dos Andarilhos</div><div class="w-meta">grupo · você é membro</div></div>
  <div class="grade-2">
   <div class="w-cartao"><strong>Membros (5)</strong>
    <div class="w-cartao" style="margin-top:6px"><div class="w-linha"><span>Kael (você)</span><span class="w-chip">membro</span></div></div>
-   <div class="w-cartao"><div class="w-linha"><span>Lyra Stormwind</span><span class="w-chip">criador</span></div></div>
+   <div class="w-cartao"><div class="w-linha"><span>Lyra Stormwind</span><span class="w-chip">dono</span></div></div>
    <div class="w-cartao"><div class="w-linha"><span>Mira</span><span class="w-chip">membro</span> <span class="w-btn perigo">Remover</span></div></div>
+   <div class="w-cartao" style="opacity:.6"><div class="w-linha"><span>Doran</span><span class="w-chip">convite pendente</span></div><div class="w-meta">ainda não é membro — aceite explícito necessário</div></div>
   </div>
   <div>
    <div class="w-cartao"><strong>Novo grupo</strong>
     <input class="w-input" style="margin:6px 0" placeholder="Nome do grupo">
     <div class="w-cartao"><label class="w-meta"><input type="checkbox"> Lyra Stormwind</label></div>
-    <div class="w-cartao"><label class="w-meta"><input type="checkbox"> Doran</label></div>
+    <div class="w-cartao" style="opacity:.6"><label class="w-meta"><input type="checkbox" disabled> Doran <span class="w-meta">— pedido pendente, não aceito</span></label></div>
     <span class="w-btn prim">Criar grupo</span>
+    <div class="w-meta" style="margin-top:6px">Quem não é contato aceito recebe <strong>convite</strong> (estado pendente até aceite) — UX do convite detalhada com F3.</div>
    </div>
    <div class="w-cartao"><strong>Ações</strong>
     <div class="w-linha" style="margin-top:6px"><span>Sair do grupo</span><span class="w-btn perigo">Sair</span></div>

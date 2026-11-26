@@ -13,7 +13,7 @@
 | S3 | Contatos | Internet → aba "Mensagens" → sub-abas | Contatos aceitos, pedidos recebidos/enviados, bloqueados; ação "+ Adicionar por @handle" |
 | S4 | Caixa de entrada | Default da aba Mensagens | Conversas privadas e grupos, badge de não lidas, preview, ordenação por atividade |
 | S5 | Conversa privada | Caixa → thread | Bolhas, timestamps, estados de envio, composer diegético |
-| S6 | Grupo | Caixa → thread de grupo; S3 → detalhes | Criação (nome + contatos aceitos), membros, sair, renomear/remover (criador) |
+| S6 | Grupo | Caixa → thread de grupo; S3 → detalhes | Criação (nome + contatos aceitos), convite pendente (`convidado→ativo`, aceite explícito — UX detalhada com F3), membros, sair, renomear/remover (dono) |
 | S7 | Histórico de pedidos (existente) | Aba "Histórico" | Commerce inalterado — fora do escopo de mensagens |
 
 Abas do módulo Internet passam de 3 (Lojas/Vender/Histórico) para incluir **Mensagens** e **Conta** — proposta de navegação a confirmar com o Dono (pode virar sub-navegação dentro de uma única aba "Rede").
@@ -33,8 +33,8 @@ Abas do módulo Internet passam de 3 (Lojas/Vender/Histórico) para incluir **Me
 ## 3. Ações e confirmações
 
 - **Sempre com confirmação modal**: bloquear contato, remover contato, cancelar pedido enviado, sair de grupo, remover membro de grupo, descartar mensagem longa.
-- **Sem confirmação**: enviar mensagem, aceitar pedido (reversível), renomear grupo (criador).
-- **Adição a grupo**: somente contatos com aresta `aceito` — espelha a regra de backend; a UI desabilita não-contatos com tooltip explicativo.
+- **Sem confirmação**: enviar mensagem, aceitar pedido (reversível), renomear grupo (dono).
+- **Adição a grupo**: default recomendado do contrato (P4 pendente de deliberação — #360 §10): somente contatos com aresta `aceito`. A UI desabilita não-contatos com motivo visível **independentemente** da decisão final; se o proprietário relaxar a regra, a UI se ajusta sem mudar a estrutura.
 
 ## 4. Regra visual diegético × OOC (explícita)
 
@@ -63,7 +63,7 @@ site/src/paginas/internet/
 site/src/api-internet.ts (ou extensão de api.ts) — somente após contrato F2
 ```
 
-Socket: reusa `entrar-internet`/salas `internet:{cid}:{charId}` existentes; eventos de mensagem entram pelo plano F3 (#351) — **nenhum tipo/socket alterado nesta fase**.
+Socket: reusa `entrar-internet`/salas `internet:{cid}:{charId}` **da v1.1.0 (comércio)** existentes. Mensagens **não** usam room compartilhada de conteúdo — seguem o fan-out individual `usuario:{id}` com revalidação por destinatário do plano F3 (#351). Nenhum tipo/socket alterado nesta fase.
 
 ## 7. Decisões de privacidade ainda abertas (sinalizadas no protótipo)
 
@@ -71,6 +71,8 @@ Socket: reusa `entrar-internet`/salas `internet:{cid}:{charId}` existentes; even
 - **Histórico pós-bloqueio**: bloquear apaga a thread dos dois lados ou só impede novas mensagens? (F1 define `bloqueado` bilateral de facto; UX precisa da regra de exibição.)
 - **Indicador de digitação/presença**: recomendo **não** ter — vaza atividade; confirmação do proprietário.
 - **Mestre em emergência**: se o mestre precisar moderação, deve ser via auditoria backend, nunca leitura na UI.
+- **Convite de grupo**: o contrato exige estado `convidado→ativo` com aceite explícito do convidado; a UX do convite (banner na caixa, aceite/recusa) será especificada junto com F3 — não prototipada como definitiva.
+- **Nomenclatura de papel em grupo**: contrato usa `dono|membro`; o protótipo já foi alinhado (era "criador").
 
 ## 8. Fora de escopo (limites respeitados)
 
