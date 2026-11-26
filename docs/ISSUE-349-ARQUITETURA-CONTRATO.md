@@ -1,6 +1,6 @@
 # Issue #349 — contrato consolidado da Internet diegética (v1.1.1)
 
-> Fase F1/6 da release #348. Documento de arquitetura e decisões, somente leitura. Esta proposta não cria tabela, migration, endpoint, socket, UI ou alteração de workflow. A implementação continua bloqueada pelas decisões do proprietário listadas na seção 10.
+> Fase F1/6 da release #348. Documento de arquitetura e decisões, somente leitura. Esta proposta não cria tabela, migration, endpoint, socket, UI ou alteração de workflow. As decisões P1–P12 foram aprovadas; somente o prazo exato de retenção automática (P13) permanece pendente. A rotina de expurgo não pode ser implementada/ativada até esse prazo ser definido.
 
 ## 1. Escopo e princípios
 
@@ -54,9 +54,9 @@ Criar, na futura implementação, um helper específico (proposto: `contaAutoriz
 4. personagem não arquivado/inativo;
 5. elegibilidade do dispositivo/perícia conforme decisão G4 da seção 10.
 
-Espectador-dono é negado para conta/mensagens. Mestre só acessa conta do próprio personagem, se titular e elegível; não ganha leitura de conversa alheia por ser mestre. ADMIN global também não recebe acesso implícito.
+Espectador-dono é negado para conta/mensagens. Para criar/gerir uma conta, o mestre continua sujeito à titularidade e elegibilidade do próprio personagem. A leitura de mensagens como mestre é uma permissão separada, restrita à própria campanha e somente leitura, conforme P10/§7; não amplia a gestão de contas. ADMIN global não recebe acesso implícito.
 
-**Não alterar** os helpers atuais da Internet/comércio da v1.1.0: o novo gate é aditivo para preservar a semântica já publicada. NPC/personagem do mestre sem titularidade normal: política pendente do proprietário; recomendação técnica é NPC não possuir conta diegética na 1.1.1.
+**Não alterar** os helpers atuais da Internet/comércio da v1.1.0: o novo gate é aditivo para preservar a semântica já publicada. Decisão aprovada do proprietário (P1): conta opt-in, uma por personagem; NPC não precisa de conta na 1.1.1.
 
 ## 4. Modelo de domínio consolidado
 
@@ -75,7 +75,7 @@ Espectador-dono é negado para conta/mensagens. Mestre só acessa conta do próp
 
 - `pendente`: pedido unilateral; a origem identifica quem pediu.
 - `aceito`: contato aceito.
-- `bloqueado`: estado na aresta dirigida; o efeito recomendado é bilateral de facto (bloqueia envio nos dois sentidos), sujeito à decisão G2 do proprietário.
+- `bloqueado`: estado na aresta dirigida; por decisão aprovada P3, bloqueia envio nos dois sentidos (efeito bilateral de facto), mantendo a autoria/origem da aresta.
 - Remover contato não deve apagar mensagens/histórico automaticamente. A semântica de remoção, visibilidade do histórico e eventual novo pedido deve seguir a decisão de produto; não inferir exclusão de conversa.
 
 Não modelar contatos como par não ordenado nem derivá-los de conversas: isso não representa pedido pendente nem bloqueio independente de conversa.
@@ -85,8 +85,8 @@ Não modelar contatos como par não ordenado nem derivá-los de conversas: isso 
 - Conversa direta: `parKey = min(contaA,contaB) + "|" + max(contaA,contaB)`; `UNIQUE(campaignId,parKey)`. A criação concorrente é resolvida pela constraint/transação, não por check-then-act. Grupos deixam `parKey` nulo.
 - Participante: `papel = dono|membro`; status explícito `convidado|ativo|recusado|cancelado|saiu`; manter quem convidou e timestamps de convite/decisão/saída.
 - Reconvite deve preservar trilha histórica (nova participação/evento auditável ou reativação transacional com histórico explícito); não apagar e recriar silenciosamente.
-- Convite exige membership ativa e conta elegível na mesma campanha. Exigir também contato aceito é o default G3 recomendado, pendente de aprovação do proprietário.
-- O destino do grupo quando o criador sai (transferir owner, encerrar ou permitir grupo sem owner ativo) é decisão do proprietário; não presumir comportamento.
+- Convite exige membership ativa e conta elegível na mesma campanha e, por decisão aprovada P4, contato previamente aceito.
+- P6 aprovado: quando o proprietário do grupo sai, a propriedade deve ser transferida para outro membro elegível. O fluxo deve validar a elegibilidade do sucessor e registrar a transferência; nunca deixar a propriedade com membro inelegível.
 
 ## 5. Mensagens, ordenação, leitura e idempotência
 
@@ -98,7 +98,7 @@ Não modelar contatos como par não ordenado nem derivá-los de conversas: isso 
 - Constraint: `UNIQUE(conversationId,authorContaId,requestId)`.
 - Mesmo requestId + mesmo hash: replay idempotente, devolver a mensagem existente (`replay:true`), sem segunda gravação.
 - Mesmo requestId + hash diferente: `uso_conflito`, sem mutação.
-- Teto de caracteres e mensagens/minuto continuam pendentes (D4); usar rate limit server-side por conta/usuário após decisão do proprietário.
+- P8 aprovado: limitar cada mensagem a 4.000 caracteres e cada conta a 20 mensagens por minuto. Aplicar e validar os limites no servidor, com resposta estável de rate limit.
 
 ## 6. Socket.IO e entrega realtime — sem room de conteúdo
 
@@ -116,12 +116,15 @@ A conexão autenticada atual é reutilizada. O desenho corrigido do PAI (#351, c
 
 ## 7. Privacidade, exportação, retenção e transferência
 
-- Leitura/escrita de DM/grupo somente para participante ativo com gate válido. Mestre e ADMIN não têm acesso de auditoria implícito.
-- Export comum da campanha: default fail-closed, **excluir mensagens/conversas privadas** para não permitir que um exportador receba conteúdo que não pode ler na UI.
-- Export privado por titularidade (somente conversas das contas do próprio exportador) é uma alternativa de portabilidade, ainda pendente de decisão.
-- Backup técnico/snapshot/restore precisa preservar o banco completo e as mensagens privadas para recuperação operacional; isso não concede ao operador direito de ler conteúdo na interface. O controle de acesso após restore continua igual.
-- Não apagar mensagem/histórico ao remover contato, sair de grupo ou arquivar conta por acidente. Retenção, expurgo, histórico pós-bloqueio e visibilidade de conversas arquivadas precisam de decisão explícita.
-- Transferência de personagem altera o titular real via membership. Se a conta acompanha o personagem, o novo titular poderia herdar mensagens privadas antigas. Herança do histórico, confirmação do novo titular, evento de sistema e opção de encerrar/recriar conta são decisões pendentes (B7); nenhum comportamento pode ser implementado por inferência.
+- **Leitura/envio normais:** mensagens diretas e de grupo são lidas/enviadas pelos participantes ativos com gate válido. Bloqueio, saída ou revogação impede novas entregas conforme a autorização atual; não se presume acesso apenas por conhecer um ID.
+- **P10 — leitura pelo mestre (decisão aprovada):** um usuário com membership ativa e papel `mestre` pode ler o conteúdo das conversas privadas (diretas e em grupo) dos personagens daquela mesma campanha, mesmo quando não participa da conversa. Esse acesso é **somente leitura**, limitado à campanha em que exerce o papel de mestre e não autoriza enviar, editar, remover participantes ou gerir a conversa sem ser participante. A permissão de leitura do mestre deve ser um caminho de autorização separado do gate de titularidade da conta; não reutilizar nem ampliar o acesso ao inventário/conta. Cada leitura privilegiada — incluindo abertura e paginação do histórico — deve gerar registro de auditoria com ator, campanha, conversa, momento e operação. Não há acesso entre campanhas.
+- **ADMIN global:** não recebe automaticamente o privilégio de leitura do mestre. A decisão P10 concede acesso ao papel de mestre na própria campanha, não ao administrador global.
+- **P9 — exportações (decisão aprovada):** nenhuma mensagem ou conteúdo de conversa privada pode ser incluído em qualquer exportação, nem mesmo quando o próprio titular solicitar exportação de suas conversas. A regra vale para export comum da campanha e para export individual/privado. Não implementar uma exceção de portabilidade por usuário.
+- **Backup técnico:** backup/snapshot operacional não é exportação de campanha e deve preservar os dados necessários à recuperação íntegra do banco. O ciclo de retenção/expiração dos backups deve ser compatível com P13 e o procedimento de restore não pode reintroduzir mensagens já expiradas no ambiente restaurado.
+- **P12 — histórico após bloqueio/remoção/arquivamento (decisão aprovada):** preservar o histórico existente. Bloquear novas mensagens quando houver bloqueio e permitir ocultar a conversa da lista conforme a ação do usuário; ocultar não significa apagar conteúdo. A remoção de contato, saída ou arquivamento não apaga automaticamente o histórico antes do prazo de retenção.
+- **P13 — retenção (decisão aprovada em princípio; parâmetro pendente):** deve existir um prazo fixo de retenção e as mensagens devem ser apagadas automaticamente ao completar esse prazo. **O número exato de dias/meses ainda não foi informado pelo proprietário**; não inventar um valor nem ativar/implementar o job de expurgo antes de essa duração ser definida. A implementação deverá aplicar o prazo de modo consistente também ao ciclo de backup/restore, para evitar ressuscitar mensagens expiradas.
+- **P7 — transferência de personagem (decisão aprovada):** a conta e o histórico acompanham o personagem. A transferência exige confirmação explícita e deve registrar um evento de sistema/auditoria. O novo titular só recebe acesso conforme a transferência confirmada e a autorização vigente; a trilha deve identificar a transferência sem expor conteúdo a quem ainda não tem direito de acesso.
+
 
 ## 8. Matriz de autorização proposta
 
@@ -129,7 +132,7 @@ A conexão autenticada atual é reutilizada. O desenho corrigido do PAI (#351, c
 |---|---:|---:|---:|---:|
 | Dono de personagem + membership ativa + papel jogador/mestre + gate elegível | Sim | Sim, no escopo aprovado | Sim, se participante ativo | Não |
 | Jogador ativo sem personagem/conta elegível | Não | Sem conta, não | Não | Não |
-| Mestre ativo titular do personagem | Sim, nas mesmas condições | Sim, nas mesmas condições | Sim, se participante ativo | Não por ser mestre |
+| Mestre ativo da campanha | Conta própria somente se titular e elegível | Conforme conta própria | Sim, se participante ativo | **Sim, somente leitura de conversas privadas da própria campanha**, conforme P10/§7; sem gerir/enviar se não for participante |
 | Espectador, inclusive dono do personagem | Não | Não | Não | Não |
 | Membership pendente/bloqueada/removida | Não | Não | Não | Não |
 | ADMIN global | Não por padrão | Não por padrão | Não por padrão | Não |
@@ -160,33 +163,43 @@ Todos os handlers resolvem usuário autenticado + conta + personagem + membershi
 
 Os caminhos acima são contratos propostos, não API implementada nem nomes definitivos.
 
-## 10. Decisões do proprietário — BLOQUEIAM a implementação
+## 10. Decisões do proprietário — respostas registradas
 
-Nenhum item abaixo está aprovado só por ter recomendação técnica. O proprietário deve escolher explicitamente:
+Em 26/11/2026, o proprietário respondeu expressamente às decisões P1–P13. As escolhas abaixo são decisões de produto aprovadas; não devem ser substituídas pelas recomendações técnicas anteriores.
 
-| ID | Decisão necessária | Alternativas/recomendação registrada | Estado |
-|---|---|---|---|
-| P1 | Conta opt-in e uma por personagem; política para NPC/personagem do mestre | Recomenda-se opt-in, uma por personagem; NPC sem conta na 1.1.1 | **PENDENTE** |
-| P2 | Escopo de contatos/conversas | Campanha-local na 1.1.1; sem identidade global | **PENDENTE confirmação** |
-| P3 / G2 | Bloqueio de contato | Bilateral de facto (bloqueia as duas direções) ou unilateral | **PENDENTE** |
-| P4 / G3 | Convite de grupo | Exigir contato aceito + conta ativa/elegível; ou permitir convite sem contato | **PENDENTE** |
-| P5 / G4 | Criação de conta | Exigir gate completo de Internet (perícia + dispositivo canônico) no momento da criação; ou permitir pré-cadastro | **PENDENTE** |
-| P6 | Criador sair de grupo | Transferir propriedade, encerrar grupo ou permitir grupo sem owner ativo | **PENDENTE** |
-| P7 / B7 | Transferência de personagem | Conta/histórico acompanha o personagem com evento e confirmação; ou encerrar/recriar/segregar histórico | **PENDENTE** |
-| P8 / D4 | Limite de mensagem e rate limit | 4.000 caracteres + 20/minuto (recomendação INTERMEDIÁRIO) ou 8.000 + 30/minuto (proposta F2) | **PENDENTE** |
-| P9 | Export/import de mensagens | Excluir do export comum; opcionalmente incluir apenas conversas próprias do exportador. Backup técnico preserva tudo | **PENDENTE** |
-| P10 | Moderação mestre/ADMIN | Nenhuma leitura privilegiada por padrão; decidir se existe ferramenta excepcional, com trilha de auditoria | **PENDENTE** |
-| P11 | Privacidade do perfil e presença | Perfil público mínimo, presença/indicador de digitação desligado por padrão; confirmar visibilidade | **PENDENTE** |
-| P12 | Histórico após bloqueio/remoção/arquivamento | Preservar histórico dos participantes autorizados versus restringir/ocultar após a ação | **PENDENTE** |
-| P13 | Retenção/expurgo | Sem expurgo automático na 1.1.1 como proposta técnica; confirmar retenção/arquivamento | **PENDENTE** |
+| ID | Decisão aprovada pelo proprietário | Estado |
+|---|---|---|
+| P1 | Opt-in; uma conta por personagem; NPCs não precisam de conta na 1.1.1 | **APROVADO** |
+| P2 | Contatos e conversas separados por campanha; sem escopo global | **APROVADO** |
+| P3 / G2 | Bloqueio bilateral: bloquear em uma direção impede a comunicação nos dois sentidos | **APROVADO** |
+| P4 / G3 | Convite para grupo exige contato aceito e conta ativa/elegível na mesma campanha | **APROVADO** |
+| P5 / G4 | Criar conta somente após cumprir os requisitos de habilidade e dispositivo adequado, usando o gate canônico | **APROVADO** |
+| P6 | Ao sair o proprietário do grupo, transferir a propriedade para outro membro elegível | **APROVADO** |
+| P7 / B7 | A conta e o histórico acompanham o personagem, com confirmação e registro da transferência | **APROVADO** |
+| P8 / D4 | Limite de 4.000 caracteres por mensagem e 20 mensagens por minuto | **APROVADO** |
+| P9 | Nunca incluir mensagens privadas em exportações, nem mesmo quando solicitadas pelo próprio titular | **APROVADO** |
+| P10 | O mestre pode ler as mensagens privadas dos personagens da própria campanha | **APROVADO** — leitura somente dentro da campanha e registrada em auditoria; ADMIN global não herda essa permissão |
+| P11 | Perfil público mínimo; presença e indicador de digitação desligados por padrão | **APROVADO** |
+| P12 | Preservar o histórico; bloquear novas mensagens ou ocultar a conversa da lista conforme a ação | **APROVADO** |
+| P13 | Definir um prazo fixo de retenção e apagar mensagens após esse prazo | **APROVADO EM PRINCÍPIO** — falta informar a duração exata |
 
-A recomendação fail-closed é preservar a privacidade: sem resposta, nenhuma exceção de leitura para mestre/ADMIN, nenhum export de DM por padrão, nenhum indicador de digitação e nenhum acesso baseado apenas em ID.
+### Único parâmetro ainda pendente
+
+O proprietário aprovou a existência de retenção fixa com expurgo automático, mas **não especificou quantos dias/meses**. A equipe não pode inventar essa duração. O job de expurgo e a regra temporal de exclusão ficam bloqueados até o número exato ser definido; as demais regras P1–P12 e o desenho geral de P13 estão aprovados.
+
+### Salvaguardas decorrentes das decisões
+
+- A leitura do mestre é um privilégio separado, somente leitura, limitado à campanha em que ele tem membership ativa com papel `mestre`, e auditado por operação. Não concede acesso cross-campanha nem poder de gestão da conversa.
+- ADMIN global não recebe leitura privilegiada por extensão.
+- Mensagens privadas não entram em nenhuma exportação; backup técnico continua preservando o banco para recuperação, respeitando expiração/restore compatível com a retenção aprovada.
+- Nenhuma mensagem deve ser apagada antes da duração de retenção que vier a ser definida.
+
 
 ## 11. Plano de implementação após aceite
 
-1. Proprietário responde às decisões P1–P13; PAI registra as respostas e consolida este contrato.
-2. INTERMEDIÁRIO confere a versão consolidada e confirma que nenhuma decisão pendente foi transformada em default aprovado.
-3. F2/F3 reservam schema/rotas/socket e delta de arquivos antes de escrever; F4 trabalha em UI sobre contratos firmes; F5 valida gate/dispositivo/privacidade; F6 fecha matriz de qualidade e durabilidade.
+1. PAI mantém as decisões P1–P12 aprovadas neste contrato; o único parâmetro em aberto é a duração exata da retenção P13. Não solicitar novamente ao proprietário respostas já registradas.
+2. INTERMEDIÁRIO revisa independentemente as decisões e especialmente as salvaguardas P9/P10, a matriz de autorização e o único parâmetro pendente P13.
+3. Após a revisão, F2/F3/F4/F5/F6 podem implementar as regras aprovadas P1–P12 e a estrutura geral de retenção. A rotina de expurgo temporal P13 permanece desativada/fora do código executável até o proprietário informar a duração exata.
 4. Migrações aditivas/idempotentes; testes em banco limpo e upgrade v1.1.0; concorrência, replay, revogação e backup/restore.
 5. Cada implementação usa branch/PR pequena contra a main vigente, CI natural no SHA final, sem SKIP silencioso e sem editar workflow protegido.
 6. Release somente após gates de #348 e autorização expressa do proprietário.
@@ -199,4 +212,4 @@ A recomendação fail-closed é preservar a privacidade: sem resposta, nenhuma e
 - INTERMEDIÁRIO: parecer final F1×F2×F3 #349 `7176869671` — **PASS técnico** na reconciliação.
 - Plano realtime corrigido pelo PAI #351 `7175636585` — fan-out individual por usuário, revalidação a cada entrega, sem sala compartilhada de conteúdo.
 
-**Status atual:** contrato tecnicamente coerente e revisado (PASS). Isso não significa aprovação das decisões de produto P1–P13. Não iniciar implementação antes das respostas do proprietário.
+**Status atual:** contrato tecnicamente coerente e revisado (PASS). Decisões do proprietário P1–P12 registradas e aprovadas; P13 aprovada quanto à retenção fixa/expurgo, com duração exata pendente. A equipe pode avançar nas regras aprovadas; não implementar/ativar expurgo antes do prazo exato. Nenhuma escolha aprovada pode ser reinterpretada.
