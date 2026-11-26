@@ -8,6 +8,7 @@ incorporados** — decisões respondidas marcadas DECIDIDAS na matriz §6;
 restantes seguem proposta.
 **HEAD da spec**: `b1079aa`+ (branch `docs/366-ux-internet-publica`, PR #371).
 **Protótipo navegável**: [`index.html`](./index.html) (wireframe, dados ilustrativos, sem backend).
+**Suplemento DP-1…DP-9**: [`SUPLEMENTO-DECISOES-DP.md`](./SUPLEMENTO-DECISOES-DP.md) — fechamento UX dependente das decisões de produto (ordem Dono 14:44).
 **Bases analisadas**:
 - Visual/módulo: `feat/352-internet-f4` @ `6d2e565` (Internet diegética 1.1.1 — módulo "Rede", homologado 124/124 sobre backend `0607f40`)
 - Documentação de contrato 1.1.1: `docs/prototipo-internet-352/ESPECIFICACAO.md` (branch `docs/352-prototipo-internet`)
