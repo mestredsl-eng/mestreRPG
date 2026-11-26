@@ -465,6 +465,36 @@ try {
     const rAmbos = await criarManual({ id: "tkamb-01", personagemId: PJ2, hpManual: { atual: 1, maximo: 2 } });
     t("token com ficha + hpManual rejeitado", rAmbos?.ok === false, JSON.stringify(rAmbos).slice(0, 120));
 
+    // P3 mecânicos (#127 ordem 7180837385):
+    // personagemId + hpManual na mesma mutação → erro explícito, nada muda
+    const rAmbosUpd = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkman-002", personagemId: PJ1, hpManual: { atual: 7, maximo: 9 } } });
+    t("atualizar personagemId+hpManual → rejeitado explícito", rAmbosUpd?.ok === false && JSON.stringify(rAmbosUpd).includes("HP manual"), JSON.stringify(rAmbosUpd).slice(0, 140));
+    const vAposAmbos = tok((await syncM())?.vtt, "tkman-002");
+    t("combinação rejeitada não gravou nada (sem ficha, hpManual 10/20 intacto)",
+      vAposAmbos && !vAposAmbos.personagemId && vAposAmbos.vida?.hp?.atual === 10);
+    // hpManual enviado a token JÁ vinculado → erro explícito (não descarte)
+    const rHpEmFicha = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkpj1-aa11", hpManual: { atual: 1, maximo: 2 } } });
+    t("hpManual em token com ficha → rejeitado explícito", rHpEmFicha?.ok === false && JSON.stringify(rHpEmFicha).includes("HP manual"), JSON.stringify(rHpEmFicha).slice(0, 140));
+    // "mover" nunca muta HP — mestre e jogador
+    const rMoverHpM = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.5, y: 0.5, hpManual: { atual: 99, maximo: 99 } } });
+    t("mover com hpManual (mestre) → rejeitado", rMoverHpM?.ok === false && JSON.stringify(rMoverHpM).includes("HP"), JSON.stringify(rMoverHpM).slice(0, 140));
+    const rMoverHpJ = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.6, y: 0.6, hpManual: { atual: 99, maximo: 99 } } });
+    t("mover com hpManual (jogador) → rejeitado", rMoverHpJ?.ok === false && JSON.stringify(rMoverHpJ).includes("HP"), JSON.stringify(rMoverHpJ).slice(0, 140));
+    const rMoverOk = await emitirCb(sA, "mesa:vtt:token", { sessionId: sid, acao: "mover",
+      token: { id: "tkman-002", x: 0.33, y: 0.44 } });
+    t("mover legítimo (só posição) segue ok", rMoverOk?.ok === true && tok(rMoverOk?.vtt, "tkman-002")?.x === 0.33);
+    // desvincular + hpManual na mesma mutação → permitido (estado final sem ficha)
+    await criar("tkp3-f01", { personagemId: PJNpc });
+    const rDesvinc = await emitirCb(sM, "mesa:vtt:token", { sessionId: sid, acao: "atualizar",
+      token: { id: "tkp3-f01", personagemId: null, hpManual: { atual: 5, maximo: 9 } } });
+    t("desvincular+hpManual na mesma mutação → aceito", rDesvinc?.ok === true, JSON.stringify(rDesvinc).slice(0, 140));
+    t("vida passa a ser a manual 5/9 após desvincular",
+      tok(rDesvinc?.vtt, "tkp3-f01")?.vida?.hp?.atual === 5 && tok(rDesvinc?.vtt, "tkp3-f01")?.vida?.hp?.maximo === 9);
+
     // persistência: hpManual fica em vtt_state; vida NUNCA é persistida
     {
       const db = abrirDb(BANCO);

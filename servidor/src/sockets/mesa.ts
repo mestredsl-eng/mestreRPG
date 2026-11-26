@@ -767,6 +767,10 @@ function socket_handlers(
         } else if (acao === "atualizar" || acao === "mover") {
           if (!existente) { cb?.({ ok: false, erro: "Token não encontrado" }); return; }
           if (!posicaoValida(t.x ?? existente.x, t.y ?? existente.y)) { cb?.({ ok: false, erro: "Posição inválida" }); return; }
+          // "mover" é só posição — nunca mutação de HP, para qualquer papel.
+          if (acao === "mover" && t.hpManual !== undefined) {
+            cb?.({ ok: false, erro: "Mover não altera HP do token" }); return;
+          }
           if (ehMestre) {
             if (t.nome !== undefined) {
               if (!nomeValido(t.nome)) { cb?.({ ok: false, erro: "Nome de token inválido" }); return; }
@@ -795,8 +799,13 @@ function socket_handlers(
             }
             // HP manual (F14): token com ficha nunca carrega hpManual —
             // vincular limpa na mesma mutação; desvincular não copia nada
-            // (o mestre informa manualmente se quiser).
+            // (o mestre informa manualmente se quiser). Enviar hpManual
+            // quando o estado final tem ficha é erro explícito — nunca
+            // descarte silencioso.
             if (existente.personagemId) {
+              if (t.hpManual !== undefined) {
+                cb?.({ ok: false, erro: "Token vinculado a ficha não aceita HP manual" }); return;
+              }
               delete existente.hpManual;
             } else if (t.hpManual !== undefined) {
               if (t.hpManual === null) {
