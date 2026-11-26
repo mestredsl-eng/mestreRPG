@@ -15,6 +15,7 @@ import type { ItemDadoMesa } from "../MesaDados3D";
 import { efeitoDaClasse, classificarD10, rotuloClasseD10, faceExibida, type ClasseD10 } from "../convencaoD10";
 import { ModalConfirmar } from "../Modal";
 import { IndicadorConexao } from "../ConexaoSocket";
+import PainelSangue from "../PainelSangue";
 import { criarFilaMestreVoice } from "../lib/mestreVoice";
 // Núcleo matemático da régua (Issue #125): MESMO módulo do servidor —
 // distância euclidiana corrigida pela proporção real do mapa e
@@ -1267,7 +1268,7 @@ function MesaView({ campaignId, sessao, souMestre, restKey = 0, aoSair }: {
 
           {/* desafio D10 pela ficha (mestre) — fluxo principal */}
           {ehMestreAtual && (
-            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} />
+            <DesafioD10 sessionId={sessao.id} campaignId={campaignId} personagens={personagens} aoErro={reportarErro} ehMestre={ehMestreAtual} />
           )}
 
           {/* teste manual genérico (mestre) — opção secundária */}
@@ -1483,7 +1484,7 @@ function SolicitarTeste({ sessionId, personagens, aoErro }: {
 // Mesmo critério do backend (campoElegivelParaTeste em lib/ficha.ts):
 // usadoEmTestes explícito manda; sem a flag (fichas antigas), cai no
 // fallback por semântica — números "livres" (idade, contadores) não entram.
-const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento"]);
+const SEMANTICOS_TESTAVEIS_FALLBACK = new Set(["atributo", "habilidade", "conhecimento", "talento", "poder"]);
 
 // Regra compartilhada com o backend (campoElegivelParaTeste* em
 // servidor/src/lib/ficha.ts): flag explícita manda; sem flag, fallback
@@ -1516,8 +1517,8 @@ interface CampoTeste {
 }
 interface GrupoTeste { titulo: string; campos: CampoTeste[] }
 
-function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
-  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void;
+function DesafioD10({ sessionId, campaignId, personagens, aoErro, ehMestre = false }: {
+  sessionId: string; campaignId: string; personagens: PersonagemResumo[]; aoErro: (e: string | null) => void; ehMestre?: boolean;
 }) {
   // Fluxo principal: o formulário já abre visível — o mestre não precisa
   // descobrir uma ação escondida para solicitar teste pela ficha.
@@ -1669,6 +1670,12 @@ function DesafioD10({ sessionId, campaignId, personagens, aoErro }: {
           )}
           <button type="submit" disabled={!campoSel}>Enviar desafio</button>
         </form>
+      )}
+      {/* C8-C1 (Issue #186): leitura de Sangue do personagem escolhido
+          no desafio — somente leitura via GET /characters/:id/sangue;
+          some sozinho quando o usuário não tem acesso (403). */}
+      {aberto && characterId && (
+        <PainelSangue characterId={characterId} ehMestre={ehMestre} />
       )}
     </section>
   );

@@ -1,7 +1,10 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type CampoDef, type ConfigPoderes, type ElementoVinculavel, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { api, type CampoDef, type ConfigPoderes, type ConfigSangue, type ElementoVinculavel, type MetadadoPoder, type EstruturaFicha, type PoolPontos, type ResultadoPontos, type SimulacaoResultado, type VidaResumo } from "./api";
+import { apiSangue, type SangueLeitura } from "./api-sangue";
 import { AjudaPopover } from "./Modal";
 import ProgressaoXp from "./ProgressaoXp";
+import PainelSangue from "./PainelSangue";
+import { getSocket } from "./socket";
 
 /**
  * Renderiza a ficha a partir da estrutura JSON — sem nenhum campo fixo.
@@ -16,6 +19,8 @@ interface Props {
   aoMudar?: (campoId: string, valor: unknown) => void;
   /** Biblioteca de regras da campanha (Etapa 5): campos com regraKind usam estas opções. */
   biblioteca?: Record<string, ElementoVinculavel[]>;
+  /** Regra D10 por Poder, incluindo entradas inativas na biblioteca. */
+  metadadosPoderes?: MetadadoPoder[];
   /** Personagem dono da ficha — habilita a prévia de pontos em tempo real (sem salvar). */
   personagemId?: string;
   /** Saldo de pontos já calculado pelo servidor para os dados atuais. */
@@ -26,6 +31,20 @@ interface Props {
   carteiras?: Record<string, { saldoInicial: number; entradas: number; saidas: number; saldo: number }>;
   /** Papel do usuário — controla se o saldo inicial da carteira é editável. */
   ehMestre?: boolean;
+  /** Pode ler Pontos de Sangue (mestre ou dono da ficha). Fail-closed:
+   *  sem true explícito o painel nem é montado — evita GET /sangue que
+   *  o servidor negaria com 403 (ex.: jogador lendo NPC público). */
+  podeLerSangue?: boolean;
+  /** Dono ativo da ficha: pode ativar um Poder sem rolagem. O D10 continua cobrando no fluxo de teste. */
+  podeAtivarPoder?: boolean;
+  /** Sincroniza a versão atual da ficha após a confirmação de uma ativação de Poder. */
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  /** Bloqueia a entrada no modo de edição enquanto a ativação sincroniza a versão da ficha. */
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
+  /** Campanha do personagem — usada só para resolver o vínculo de
+   *  Sangue (config.sangue.campoCapacidadeId) sem fetch extra de
+   *  personagem. */
+  campaignId?: string;
   /** Simulador do editor de fichas: prévia de pontos+regras sem personagem
    *  (POST /regras/simulacao — somente leitura, nada é gravado). */
   simulacao?: { campaignId: string; pontosFicticios?: number | null };
@@ -41,9 +60,21 @@ interface ContextoPontos {
   poolDe: (poolId: string) => PoolPontos | undefined;
 }
 
-export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, simulacao, camposComErro }: Props) {
+export default function FichaForm({ estrutura, valores, calculados = {}, somenteLeitura = false, aoMudar, biblioteca, metadadosPoderes = [], personagemId, pontosInicial, poderesCfg, carteiras, ehMestre, podeLerSangue = false, podeAtivarPoder = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder, campaignId, simulacao, camposComErro }: Props) {
   const [pontos, setPontos] = useState<ResultadoPontos | null>(pontosInicial ?? null);
   const [avisoPoder, setAvisoPoder] = useState<string | null>(null);
+  // Vínculo de Sangue (Issue #186 .9): campo da ficha que fornece a
+  // capacidade — vem de config.sangue.campoCapacidadeId do ruleset.
+  // O widget de saldo/recuperação é montado junto a ESSE campo, não
+  // como painel separado. null = não montar (sem permissão/config).
+  const [sangueCampoId, setSangueCampoId] = useState<string | null>(null);
+  // config.sangue completa do ruleset — custos por Poder para a prévia
+  // da ativação narrativa (o servidor continua sendo a autoridade).
+  const [sangueCfg, setSangueCfg] = useState<ConfigSangue | null>(null);
+  // Leitura autoritativa do saldo (GET /sangue) — só buscada quando o
+  // usuário pode ativar Poder; null = desconhecido (UI não bloqueia,
+  // o servidor rejeita fail-closed).
+  const [sangueLeitura, setSangueLeitura] = useState<SangueLeitura | null>(null);
   const [sim, setSim] = useState<SimulacaoResultado | null>(null);
   // Erros de regras vindos da prévia do personagem (pontos-previa) — mesmo
   // pipeline do simulador, exibidos no bloco .simulacao-erros.
@@ -106,6 +137,55 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   const camposPoder = useMemo(() => todosOsCampos.filter(ehPoder), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
   const camposDefeito = useMemo(() => todosOsCampos.filter(ehDefeito), [todosOsCampos]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Resolve o campo de capacidade de Sangue uma vez por ficha: a
+  // configuração mora no ruleset da campanha (GET /regras é legível
+  // por membros). Sem config habilitada ou sem vínculo, nada é
+  // montado — evita GET /sangue desnecessário e ruído visual.
+  useEffect(() => {
+    if (!personagemId || !podeLerSangue || simulacao || !campaignId) {
+      setSangueCampoId(null);
+      return;
+    }
+    let vivo = true;
+    api.obterRegras(campaignId)
+      .then((regras) => {
+        const cfg = regras?.config?.sangue;
+        if (!vivo || !cfg) return;
+        setSangueCfg(cfg.habilitado === true ? cfg : null);
+        if (cfg.habilitado === true && typeof cfg.campoCapacidadeId === "string" && cfg.campoCapacidadeId) {
+          setSangueCampoId(cfg.campoCapacidadeId);
+        }
+      })
+      .catch(() => { /* vínculo é best-effort — a ficha funciona sem ele */ });
+    return () => { vivo = false; };
+  }, [personagemId, podeLerSangue, simulacao, campaignId]);
+
+  // Saldo atual para a prévia de custo/suficiência nos botões de
+  // ativação. Revalida em personagens:atualizados do MESMO personagem —
+  // a ativação confirma pelo ACK e o evento cobre ajustes do mestre.
+  useEffect(() => {
+    if (!personagemId || !podeAtivarPoder || simulacao) {
+      setSangueLeitura(null);
+      return;
+    }
+    let vivo = true;
+    const carregar = () => {
+      apiSangue.obter(personagemId)
+        .then((r) => { if (vivo) setSangueLeitura(r); })
+        .catch(() => { if (vivo) setSangueLeitura(null); });
+    };
+    carregar();
+    const socket = getSocket();
+    const aoMudar = (d: { characterId?: string } | undefined) => {
+      if (d?.characterId === personagemId) carregar();
+    };
+    socket.on("personagens:atualizados", aoMudar);
+    return () => {
+      vivo = false;
+      socket.off("personagens:atualizados", aoMudar);
+    };
+  }, [personagemId, podeAtivarPoder, simulacao]);
+
   /** Chaves de elementos selecionadas num campo (strings ou {key,nivel}). */
   const chavesSelecionadas = (c: CampoDef): string[] => {
     const v = valores[c.id];
@@ -132,6 +212,55 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
   }, [camposDefeito, valores]);
 
   const faltaDefeito = !!poderesCfg?.exigirDefeito && poderesSelecionados.size > 0 && defeitosSelecionados.size === 0;
+
+  // Ativação narrativa: reutiliza os Poderes que já estão selecionados
+  // nesta ficha. Não cria seletor paralelo e não interfere no D10.
+  const acoesPoderCampo = (campo: CampoDef) => {
+    if (!personagemId || !podeAtivarPoder || simulacao || !ehPoder(campo)) return null;
+    // "Usado em testes" pertence ao CAMPO e não distingue os Poderes
+    // dentro de uma lista. A distinção de uso é por elemento da biblioteca:
+    // somente o Poder marcado "Exige teste D10" fica sem ação narrativa.
+    // Metadado ausente em fichas/campanhas antigas preserva o uso narrativo.
+    const regra = campo.regra;
+    let chaves = chavesSelecionadas(campo);
+    // Campos numéricos vinculados a um Poder representam posse por nível.
+    // Só oferece ação quando o nível existente na ficha é > 0.
+    if (regra?.kind === "poder" && regra.key) {
+      const bruto = valores[campo.id];
+      const nivel = typeof bruto === "number" ? bruto : typeof bruto === "string" ? Number(bruto) : 0;
+      chaves = Number.isFinite(nivel) && nivel > 0 ? [regra.key] : [];
+    }
+    chaves = chaves.filter((key) =>
+      metadadosPoderes.find((e) => e.key === key)?.exigeTeste !== true
+      && (biblioteca?.poder ?? []).find((e) => e.key === key)?.exigeTeste !== true
+    );
+    if (chaves.length === 0) return null;
+    // Prévia de custo (Issue #186 §4): custo vem de config.sangue.poderes
+    // da campanha; sem entrada = gratuito. O saldo exibido é o do GET
+    // autoritativo — desconhecido (null) nunca bloqueia a UI.
+    const saldoAtual = sangueLeitura?.estado === "ok" ? sangueLeitura.saldo : null;
+    return (
+      <div className="linha ficha-poder-acoes" role="group" aria-label={`Usar Poderes de ${campo.label}`} style={{ flexWrap: "wrap", marginTop: "0.35rem" }}>
+        {chaves.map((key) => {
+          const nome = (biblioteca?.poder ?? []).find((e) => e.key === key)?.name ?? key;
+          const custo = sangueCfg?.poderes?.[key]?.custo ?? 0;
+          const insuficiente = saldoAtual !== null && custo > saldoAtual;
+          return <AtivacaoPoderNarrativa
+            key={key}
+            characterId={personagemId}
+            poderKey={key}
+            nome={nome}
+            custoSangue={custo}
+            saldoSangue={saldoAtual}
+            insuficienteSangue={insuficiente}
+            aoAtualizarPersonagem={aoAtualizarPersonagem}
+            aoMudarAtivacaoPoder={aoMudarAtivacaoPoder}
+          />;
+        })}
+        <span className="meta">Ativação sem rolagem. Quando o Poder exigir teste, use o D10 na Mesa — o custo será cobrado por lá.</span>
+      </div>
+    );
+  };
 
   /**
    * Alterna um poder respeitando o limite configurado.
@@ -218,7 +347,13 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
               <h3>{secao.titulo}</h3>
               {secao.descricao && <p className="meta">{secao.descricao}</p>}
               {secao.campos.map((campo, ci) => (
-                <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                <Fragment key={campo.id}>
+                  <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} destaque={indice === 0 && ci === 0} comErro={camposComErro?.has(campo.id)} />
+                  {acoesPoderCampo(campo)}
+                  {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
+                    <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
+                  )}
+                </Fragment>
               ))}
               {subsecoes.length > 0 && (
                 <div className="ficha-subsecoes">
@@ -226,7 +361,13 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
                     <div key={sub.id} className="ficha-subsecao">
                       <h4>{sub.titulo}</h4>
                       {sub.campos.map((campo) => (
-                        <CampoInput key={campo.id} campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                        <Fragment key={campo.id}>
+                          <CampoInput campo={campo} valor={valores[campo.id]} calculado={calculados[campo.id]} somenteLeitura={somenteLeitura || campo.editavel === false} aoMudar={aoMudar} biblioteca={biblioteca} ctxPontos={ctxPontos} aoAlternarPoder={ehPoder(campo) ? alternarPoder : undefined} carteiraResumo={carteiras?.[campo.id]} saldoEnviado={valores[`${campo.id}::saldo`]} ehMestre={ehMestre} comErro={camposComErro?.has(campo.id)} />
+                          {acoesPoderCampo(campo)}
+                          {campo.id === sangueCampoId && personagemId && !simulacao && podeLerSangue && (
+                            <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
+                          )}
+                        </Fragment>
                       ))}
                     </div>
                   ))}
@@ -242,7 +383,195 @@ export default function FichaForm({ estrutura, valores, calculados = {}, somente
       {personagemId && !simulacao && (
         <ProgressaoXp characterId={personagemId} ehMestre={!!ehMestre} />
       )}
+      {/* Pontos de Sangue (Issue #186 .9): o widget de saldo/
+          recuperação é montado JUNTO ao campo de capacidade da ficha
+          (ver mapas acima). Este fallback só existe quando a config
+          aponta um campo que NÃO existe nesta versão de ficha —
+          ex.: personagem em template antigo — para que os estados
+          degradados (capacidade_indisponivel etc.) continuem visíveis
+          em vez de sumirem silenciosamente. */}
+      {personagemId && !simulacao && podeLerSangue && sangueCampoId
+        && !todosOsCampos.some((c) => c.id === sangueCampoId) && (
+        <PainelSangue characterId={personagemId} ehMestre={!!ehMestre} />
+      )}
     </div>
+  );
+}
+
+/** ID v4 também funciona em HTTP por IP: randomUUID pode faltar fora de contexto seguro,
+ * mas getRandomValues continua disponível nesses navegadores. */
+const UUID_SANGUE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function criarRequestIdSangue(): string {
+  const fonte = window.crypto;
+  if (typeof fonte.randomUUID === "function") return fonte.randomUUID();
+  if (typeof fonte.getRandomValues !== "function") {
+    throw new Error("Este navegador não oferece geração segura de identificadores.");
+  }
+  const bytes = fonte.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, "0"));
+  return `${h.slice(0, 4).join("")}-${h.slice(4, 6).join("")}-${h.slice(6, 8).join("")}-${h.slice(8, 10).join("")}-${h.slice(10, 16).join("")}`;
+}
+
+function chaveRequestIdSangue(characterId: string, poderKey: string): string {
+  return `mestre-rpg:sangue:ativacao-pendente:${encodeURIComponent(characterId)}:${encodeURIComponent(poderKey)}`;
+}
+
+/** Recupera a mesma intenção após desmontar/reabrir a ficha ou recarregar a página. */
+function obterRequestIdSangue(chave: string): string {
+  const salvo = window.localStorage.getItem(chave);
+  if (salvo && UUID_SANGUE_RE.test(salvo)) return salvo;
+  const novo = criarRequestIdSangue();
+  window.localStorage.setItem(chave, novo);
+  return novo;
+}
+
+function limparRequestIdSangue(chave: string, requestId: string): void {
+  if (window.localStorage.getItem(chave) === requestId) {
+    window.localStorage.removeItem(chave);
+  }
+}
+
+/** Ativa um Poder já escolhido na ficha, sem abrir um segundo seletor.
+ * A intenção fica persistida até um ACK conclusivo; reabrir a ficha
+ * reenvia o mesmo requestId e o ledger impede o segundo débito.
+ * O uso com teste continua passando exclusivamente pelo D10 da Mesa. */
+function AtivacaoPoderNarrativa({ characterId, poderKey, nome, custoSangue = 0, saldoSangue = null, insuficienteSangue = false, aoAtualizarPersonagem, aoMudarAtivacaoPoder }: {
+  characterId: string;
+  poderKey: string;
+  nome: string;
+  /** Custo configurado em config.sangue.poderes (0 = gratuito/sem config). */
+  custoSangue?: number;
+  /** Saldo atual do GET /sangue; null = ainda desconhecido. */
+  saldoSangue?: number | null;
+  /** Saldo conhecido e menor que o custo — prévia fail-closed da UI. */
+  insuficienteSangue?: boolean;
+  aoAtualizarPersonagem?: () => void | Promise<void>;
+  aoMudarAtivacaoPoder?: (andamento: boolean) => void;
+}) {
+  const [ocupado, setOcupado] = useState(false);
+  const [mensagem, setMensagem] = useState<{ tipo: "ok" | "erro"; texto: string } | null>(null);
+  const requestId = useRef<string | null>(null);
+  const emAndamento = useRef(false);
+  const storageKey = chaveRequestIdSangue(characterId, poderKey);
+
+  const ativar = () => {
+    if (emAndamento.current) return;
+    emAndamento.current = true;
+    setOcupado(true);
+    aoMudarAtivacaoPoder?.(true);
+    setMensagem(null);
+
+    let id: string;
+    try {
+      // Persistir ANTES de emitir: se o servidor confirmar o débito e a
+      // resposta se perder, o ID sobrevive ao fechamento/reabertura da ficha.
+      id = requestId.current ?? obterRequestIdSangue(storageKey);
+      requestId.current = id;
+    } catch {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+      setMensagem({ tipo: "erro", texto: "Não foi possível guardar a tentativa com segurança. O Poder não foi enviado; verifique o armazenamento do navegador." });
+      return;
+    }
+
+    let resolvido = false;
+    const liberar = () => {
+      emAndamento.current = false;
+      setOcupado(false);
+      aoMudarAtivacaoPoder?.(false);
+    };
+    const finalizarTimeout = window.setTimeout(() => {
+      if (resolvido) return;
+      resolvido = true;
+      liberar();
+      // Não limpar requestId: o servidor pode ter gravado o débito
+      // antes de a confirmação se perder. O próximo clique é replay.
+      setMensagem({ tipo: "erro", texto: "Sem confirmação do servidor. Clique novamente para reenviar a mesma tentativa, sem cobrar duas vezes." });
+    }, 15000);
+
+    try {
+      getSocket().emit("sangue:ativar", {
+        characterId,
+        poderKey,
+        requestId: id,
+      }, (ack: { ok?: boolean; erro?: string; codigo?: string; estado?: { saldo?: number } } | undefined) => {
+        if (resolvido) return;
+        resolvido = true;
+        window.clearTimeout(finalizarTimeout);
+
+        if (ack?.ok === true) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // O request continua idempotente no servidor; manter o valor
+            // salvo é mais seguro do que criar uma intenção nova por engano.
+          }
+          requestId.current = null;
+          const saldo = ack.estado?.saldo;
+          void (async () => {
+            try {
+              await aoAtualizarPersonagem?.();
+              setMensagem({ tipo: "ok", texto: saldo === undefined ? `${nome} ativado.` : `${nome} ativado · ${saldo} Pontos de Sangue restantes.` });
+            } catch {
+              setMensagem({ tipo: "erro", texto: `${nome} foi ativado, mas a ficha não pôde ser atualizada. Reabra a ficha antes de editar.` });
+            } finally {
+              liberar();
+            }
+          })();
+          return;
+        }
+
+        if (ack?.ok === false) {
+          try {
+            limparRequestIdSangue(storageKey, id);
+          } catch {
+            // Sem ACK positivo, manter o mesmo ID continua sendo seguro.
+          }
+          requestId.current = null;
+          setMensagem({ tipo: "erro", texto: ack.erro ?? "Não foi possível ativar este Poder." });
+          liberar();
+          return;
+        }
+
+        // ACK ausente/indefinido é ambíguo: não descartar a intenção.
+        setMensagem({ tipo: "erro", texto: "O servidor não confirmou a tentativa. Clique novamente para consultar o mesmo uso sem novo débito." });
+        liberar();
+      });
+    } catch {
+      window.clearTimeout(finalizarTimeout);
+      resolvido = true;
+      liberar();
+      // Mantém requestId persistido; o emit pode ter chegado ao servidor.
+      setMensagem({ tipo: "erro", texto: "Falha de conexão. Tente novamente para reenviar a mesma tentativa." });
+    }
+  };
+
+  const rotuloCusto = custoSangue > 0 ? ` · ${custoSangue} Sangue` : "";
+  return (
+    <span className="ficha-poder-acao">
+      <button
+        type="button" className="mini" disabled={ocupado || insuficienteSangue}
+        onClick={ativar} aria-label={`Usar ${nome} sem rolagem`}
+        title={insuficienteSangue && saldoSangue !== null
+          ? `Saldo insuficiente: ${saldoSangue} de ${custoSangue} Pontos de Sangue necessários`
+          : undefined}
+      >
+        {ocupado ? `Usando ${nome}…` : `Usar ${nome}${rotuloCusto}`}
+      </button>
+      {insuficienteSangue && saldoSangue !== null && (
+        <small className="ficha-aviso" role="alert">
+          Saldo insuficiente ({saldoSangue}/{custoSangue} Sangue)
+        </small>
+      )}
+      {mensagem && (
+        <small className={mensagem.tipo === "ok" ? "meta" : "ficha-aviso"} role={mensagem.tipo === "ok" ? "status" : "alert"}>
+          {mensagem.texto}
+        </small>
+      )}
+    </span>
   );
 }
 

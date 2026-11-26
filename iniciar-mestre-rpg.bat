@@ -44,6 +44,29 @@ if errorlevel 1 (
     echo.
 )
 
+rem ---------- Versao minima do Node (engines.node >=20.19) ----------
+rem Falha cedo se Node existir mas for antigo: antes de npm, Git updater,
+rem lock de boot, estado externo, restauracao ou migrations.
+set "NODE_MIN=20.19"
+set "NODE_VER="
+for /f "usebackq delims=" %%v in (`node -p "process.versions.node" 2^>nul`) do set "NODE_VER=%%v"
+if not defined NODE_VER (
+    echo [ERRO] Nao foi possivel ler a versao do Node.js instalado.
+    echo        Versao minima exigida: %NODE_MIN% ou superior.
+    echo        Reinstale o Node.js em https://nodejs.org e tente novamente.
+    pause
+    exit /b 1
+)
+node -e "const p=process.versions.node.split('.').map(Number);process.exit(p[0]>20||(p[0]===20&&p[1]>=19)?0:1)" >nul 2>nul
+if errorlevel 1 (
+    echo [ERRO] Node.js %NODE_VER% detectado - versao minima exigida: %NODE_MIN% ou superior.
+    echo        Atualize o Node.js em https://nodejs.org e tente novamente.
+    pause
+    exit /b 1
+)
+echo [OK] Node.js %NODE_VER% (minimo %NODE_MIN%).
+echo.
+
 where npm >nul 2>nul
 if errorlevel 1 (
     echo [ERRO] npm nao encontrado. Reinstale o Node.js 20+ e tente novamente.
@@ -51,15 +74,191 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem Impede segunda instancia: verifica se a porta 3001 ja responde
-rem (127.0.0.1 evita ambiguidade de IPv6/localhost; -Proxy $null ignora proxy do sistema)
-powershell -NoProfile -Command "try { (Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Proxy $null http://127.0.0.1:3001/api/health).StatusCode } catch { exit 1 }" >nul 2>nul
-if not errorlevel 1 (
-    echo [AVISO] Ja existe um servidor respondendo em http://localhost:3001
-    echo         Se desejar reiniciar, feche a janela anterior ou use parar-mestre-rpg.bat
+rem ---------- Lock de boot (Issue #155) ----------
+rem Garante que apenas UM processo execute auto-update, npm ci, builds,
+rem restauracao, migrations e o servidor neste diretorio. O helper
+rem resolve a porta efetiva do servidor (mesma precedencia de
+rem servidor/src/config.ts: configuracao/servidor.json > MESTRE_PORTA
+rem > 3001), sonda /api/health ANTES de adquirir o lock — se ja ha
+rem servidor no ar, sai com codigo 20 sem tocar em nada — e so depois
+rem adquire o lock pelo cmd.exe deste script, cobrindo TODO o ciclo.
+rem Se outra instancia valida estiver subindo, aguardamos o health
+rem por ate 120s — se o servidor responder, este boot encerra sem
+rem duplicar. Codigo 20 = servidor de outra instancia respondeu
+rem (sai sem erro); codigo 1 = aborta; 0 = lock adquirido e boot
+rem prossegue. O lock e OBRIGATORIO: sem o arquivo ou sem codigo
+rem 0/20, o boot aborta — nenhuma etapa mutavel roda sem exclusividade.
+if not exist scripts\boot-lock.mjs (
+    echo [ERRO] scripts\boot-lock.mjs ausente — inicializacao abortada.
+    echo        Restaure o arquivo ou use uma versao completa do projeto.
     pause
-    exit /b 0
+    exit /b 1
 )
+node scripts\boot-lock.mjs adquirir
+if %errorlevel%==20 exit /b 0
+if not %errorlevel%==0 (
+    echo [ERRO] Nao foi possivel adquirir o lock de inicializacao.
+    echo        Outra instancia pode estar em recuperacao ou o lock
+    echo        esta invalido. Verifique janelas do iniciar-mestre-rpg
+    echo        e processos node/cmd abertos antes de tentar de novo.
+    pause
+    exit /b 1
+)
+
+rem ---------- Autorizacao explicita de primeiro bootstrap (P10-C) ----------
+rem Executa depois do Boot Lock e ANTES de qualquer atualizacao, npm,
+rem restore, migration ou start. Exit 10 = instalacao nova e limpa:
+rem perguntar ao operador. Exit 0 = instalacao conhecida/autorizada.
+rem Qualquer outro codigo = estado ambiguo/corrompido: abortar fail-closed.
+if not exist scripts\avaliar-boot.mjs (
+    echo [ERRO] scripts\avaliar-boot.mjs ausente — inicializacao abortada.
+    node scripts\boot-lock.mjs liberar >nul 2>nul
+    pause
+    exit /b 1
+)
+node scripts\avaliar-boot.mjs preflight
+if errorlevel 11 goto :adocao_legada_candidata
+if errorlevel 10 goto :perguntar_primeiro_bootstrap
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:adocao_legada_candidata
+echo.
+echo [ATENCAO] Instalacao anterior detectada (banco de dados existente,
+echo          sem registro do protocolo novo de inicializacao).
+echo O Mestre RPG vai adotar esta instalacao como legitima, apos
+echo confirmar o esquema do banco, a integridade e criar um backup
+echo completo e validado em backups\pre_adocao_*.
+echo Nenhum dado sera apagado. A atualizacao continuara normalmente.
+set "MESTRE_ADOCAO_TENTATIVAS=0"
+:adocao_legada_novamente
+set "MESTRE_ADOCAO_RESPOSTA="
+ver >nul
+set /p "MESTRE_ADOCAO_RESPOSTA=Adotar esta instalacao existente? [S/N]: "
+if errorlevel 1 goto :adocao_legada_entrada_vazia
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="S" goto :confirmar_adocao_legada
+if /i "%MESTRE_ADOCAO_RESPOSTA%"=="N" goto :recusar_adocao_legada
+echo [AVISO] Resposta invalida. Digite S ou N.
+goto :adocao_legada_novamente
+
+:adocao_legada_entrada_vazia
+rem Mesmo criterio do primeiro bootstrap: ENTER vazio repete ate 3x;
+rem EOF/entrada ausente termina fail-closed.
+set /a MESTRE_ADOCAO_TENTATIVAS+=1
+if %MESTRE_ADOCAO_TENTATIVAS% GEQ 3 goto :adocao_legada_eof
+echo [AVISO] Nenhuma resposta recebida. Digite S ou N.
+goto :adocao_legada_novamente
+
+:confirmar_adocao_legada
+if not exist scripts\adotar-legado.mjs goto :falha_adocao_legado
+node scripts\adotar-legado.mjs --confirmar
+if errorlevel 1 goto :falha_adocao_legado
+node scripts\avaliar-boot.mjs validar
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:recusar_adocao_legada
+echo [AVISO] Adocao recusada. Nenhuma atualizacao, restauracao,
+echo         migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:adocao_legada_eof
+echo [ERRO] Entrada terminou antes da confirmacao. Boot abortado por seguranca.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:falha_adocao_legado
+echo [ERRO] Nao foi possivel concluir a adocao da instalacao existente.
+echo        Verifique o motivo exibido acima. Nenhum recibo foi emitido
+echo        e nenhuma etapa de banco sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
+
+:perguntar_primeiro_bootstrap
+echo.
+echo [ATENCAO] Esta instalacao parece ser um primeiro uso limpo.
+echo O Mestre RPG precisara criar um banco de dados novo.
+echo Confirme somente se esta e realmente uma instalacao nova.
+set "MESTRE_BOOT_TENTATIVAS=0"
+:perguntar_primeiro_bootstrap_novamente
+set "MESTRE_BOOT_RESPOSTA="
+ver >nul
+set /p "MESTRE_BOOT_RESPOSTA=Autorizar primeiro bootstrap? [S/N]: "
+if errorlevel 1 goto :bootstrap_entrada_vazia
+if /i "%MESTRE_BOOT_RESPOSTA%"=="S" goto :confirmar_primeiro_bootstrap
+if /i "%MESTRE_BOOT_RESPOSTA%"=="N" goto :recusar_primeiro_bootstrap
+echo [AVISO] Resposta invalida. Digite S ou N.
+goto :perguntar_primeiro_bootstrap_novamente
+
+:bootstrap_entrada_vazia
+rem set /p usa ERRORLEVEL 1 tanto para ENTER vazio quanto para EOF.
+rem Repetimos entradas vazias limitadamente: ENTER pode ser corrigido,
+rem EOF/entrada ausente termina fail-closed depois de tres tentativas.
+set /a MESTRE_BOOT_TENTATIVAS+=1
+if %MESTRE_BOOT_TENTATIVAS% GEQ 3 goto :bootstrap_eof
+echo [AVISO] Nenhuma resposta recebida. Digite S ou N.
+goto :perguntar_primeiro_bootstrap_novamente
+
+:confirmar_primeiro_bootstrap
+if not exist scripts\autorizar-bootstrap.mjs goto :falha_autorizacao_bootstrap
+node scripts\autorizar-bootstrap.mjs --confirmar-provisionamento
+if errorlevel 1 goto :falha_autorizacao_bootstrap
+node scripts\avaliar-boot.mjs validar
+if errorlevel 1 goto :falha_preflight_bootstrap
+goto :bootstrap_autorizado
+
+:recusar_primeiro_bootstrap
+echo [AVISO] Primeiro bootstrap recusado. Nenhuma atualizacao, restauracao,
+echo         migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:bootstrap_eof
+echo [ERRO] Entrada terminou antes da confirmacao. Boot abortado por seguranca.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+exit /b 1
+
+:falha_autorizacao_bootstrap
+echo [ERRO] Nao foi possivel emitir a autorizacao de primeiro bootstrap.
+echo        Nenhuma etapa de banco sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
+
+:falha_preflight_bootstrap
+echo [ERRO] Estado de instalacao desconhecido, corrompido ou com recuperacao pendente.
+echo        Nenhuma atualizacao, restauracao, migration ou inicializacao sera executada.
+node scripts\boot-lock.mjs liberar >nul 2>nul
+pause
+exit /b 1
+
+:bootstrap_autorizado
+
+rem ---------- Atualizacao automatica via Git (Issue #155) ----------
+rem Executa SOMENTE depois da sonda de health do lock acima: se ja ha
+rem um servidor no ar, nenhuma operacao Git/npm de atualizacao acontece.
+rem O script e conservador: sem git, sem .git (instalacao ZIP), remoto
+rem diferente do oficial, arvore suja, sem upstream, sem rede, branch
+rem divergente ou falha de build/dependencias, ele apenas avisa e o
+rem boot segue com a versao local. So retorna erro quando nem um
+rem rollback seguro pode ser garantido — nesse caso nada e executado
+rem alem do reset --hard verificado (arvore limpa + HEAD no commit do
+rem pull). Nunca usa stash, clean, merge, rebase ou force.
+rem Documentacao: docs/GUIA-OPERACAO.md e README.md ("Atualizacao").
+if not exist scripts\auto-update.mjs goto :sem_auto_update
+node scripts\auto-update.mjs
+if errorlevel 1 (
+    echo [ERRO] A atualizacao automatica falhou de forma irrecuperavel.
+    echo        Nenhuma alteracao local foi descartada. Siga as
+    echo        instrucoes exibidas acima e a secao "Atualizacao
+    echo        automatica" do docs\GUIA-OPERACAO.md.
+    pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
+    exit /b 1
+)
+:sem_auto_update
 
 if not exist node_modules (
     echo [INFO] Instalando dependencias pela primeira vez...
@@ -72,6 +271,7 @@ if not exist node_modules (
     if errorlevel 1 (
         echo [ERRO] Falha ao instalar dependencias.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -84,6 +284,7 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo [ERRO] Falha ao recompilar dependencias nativas. Tente 'npm install' manualmente.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -97,6 +298,7 @@ call npm run build -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha na compilacao.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -114,6 +316,7 @@ if errorlevel 1 (
     if errorlevel 1 (
         echo [ERRO] Falha ao compilar o frontend.
         pause
+        node scripts\boot-lock.mjs liberar >nul 2>nul
         exit /b 1
     )
 )
@@ -131,6 +334,7 @@ if errorlevel 1 (
     echo        O banco anterior foi preservado em backups\pre_restore_*.
     echo        Corrija o problema e execute este script novamente.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -139,6 +343,7 @@ call npm run db:migrate -w servidor
 if errorlevel 1 (
     echo [ERRO] Falha ao migrar banco de dados.
     pause
+    node scripts\boot-lock.mjs liberar >nul 2>nul
     exit /b 1
 )
 
@@ -153,4 +358,8 @@ echo Para acesso externo HTTPS, veja a secao "Acesso externo" no README.md.
 echo.
 
 call npm run start -w servidor
+rem Servidor encerrou — libera o lock antes do pause final. Se a janela
+rem for fechada com o servidor no ar, o cmd.exe morre e o lock fica
+rem obsoleto: a proxima inicializacao o recupera com prova de pid morto.
+node scripts\boot-lock.mjs liberar >nul 2>nul
 pause

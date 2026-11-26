@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, eq, desc, max } from "drizzle-orm";
+import { and, eq, desc, max, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb } from "../db/index.js";
 import { sheetTemplates, sheetVersions, campaigns } from "../db/schema.js";
@@ -27,6 +27,32 @@ async function carregarVersao(versionId: string) {
   return { row: v, estrutura: parse.success ? (parse.data as EstruturaFicha) : null };
 }
 
+/**
+ * Carrega uma versão somente quando o template pai pertence à campanha da rota.
+ * A associação é verificada na mesma consulta que localiza a versão, evitando
+ * confiar apenas no papel do usuário na campaignId recebida pela URL.
+ */
+async function carregarVersaoDaCampanha(templateId: string, versionId: string, campaignId: string) {
+  const [versao] = await db
+    .select({
+      id: sheetVersions.id,
+      templateId: sheetVersions.templateId,
+      version: sheetVersions.version,
+      structure: sheetVersions.structure,
+      publishedAt: sheetVersions.publishedAt,
+      createdAt: sheetVersions.createdAt,
+    })
+    .from(sheetVersions)
+    .innerJoin(sheetTemplates, eq(sheetTemplates.id, sheetVersions.templateId))
+    .where(and(
+      eq(sheetVersions.id, versionId),
+      eq(sheetVersions.templateId, templateId),
+      eq(sheetTemplates.campaignId, campaignId),
+    ))
+    .limit(1);
+  return versao ?? null;
+}
+
 function templatePublico(t: typeof sheetTemplates.$inferSelect, versaoAtual?: { id: string; version: number; publishedAt: Date | null } | null) {
   return {
     id: t.id,
@@ -48,11 +74,11 @@ function templatePublico(t: typeof sheetTemplates.$inferSelect, versaoAtual?: { 
 modelosRouter.get("/", async (req, res) => {
   const campaignId = campaignIdDe(req);
   const m = await getMembership(campaignId, req.usuario!.id);
-  if (!m || m.status === "removido") {
+  if (!m || m.status === "removido" || m.status === "bloqueado") {
     res.status(403).json({ erro: "Sem permissão nesta campanha" });
     return;
   }
-  const ehMestre = m.role === "mestre";
+  const ehMestre = m.status === "ativo" && m.role === "mestre";
   const rows = await db
     .select()
     .from(sheetTemplates)
@@ -90,25 +116,27 @@ modelosRouter.post("/", requirePapel("mestre"), async (req, res) => {
   const versionId = crypto.randomUUID();
   const estruturaVazia = estruturaFichaSchema.parse({ secoes: [], pontos: { habilitado: false } });
 
-  await db.insert(sheetTemplates).values({
-    id: templateId,
-    campaignId: campaignIdDe(req),
-    name: body.data.name,
-    description: body.data.description ?? null,
-    ownerId: req.usuario!.id,
-    isActive: true,
-    isDefault: false,
-    createdAt: agora,
-    updatedAt: agora,
+  db.transaction((tx) => {
+    tx.insert(sheetTemplates).values({
+      id: templateId,
+      campaignId: campaignIdDe(req),
+      name: body.data.name,
+      description: body.data.description ?? null,
+      ownerId: req.usuario!.id,
+      isActive: true,
+      isDefault: false,
+      createdAt: agora,
+      updatedAt: agora,
+    }).run();
+    tx.insert(sheetVersions).values({
+      id: versionId,
+      templateId,
+      version: 1,
+      structure: estruturaVazia,
+      createdAt: agora,
+    }).run();
+    tx.update(sheetTemplates).set({ currentVersionId: versionId }).where(eq(sheetTemplates.id, templateId)).run();
   });
-  await db.insert(sheetVersions).values({
-    id: versionId,
-    templateId,
-    version: 1,
-    structure: estruturaVazia,
-    createdAt: agora,
-  });
-  await db.update(sheetTemplates).set({ currentVersionId: versionId }).where(eq(sheetTemplates.id, templateId));
   await audit(req, "ficha.modelo_criado", { templateId, campaignId: campaignIdDe(req) });
   emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId });
   res.status(201).json({ modelo: { id: templateId, versionId } });
@@ -143,14 +171,33 @@ modelosRouter.patch("/:templateId", requirePapel("mestre"), async (req, res) => 
   if (body.data.isActive !== undefined) dados.isActive = body.data.isActive;
   if (body.data.isDefault !== undefined) dados.isDefault = body.data.isDefault;
 
-  // "Modelo para novos personagens" é único por campanha
+  // "Modelo para novos personagens" é único por campanha.
+  // A remoção do default anterior e a promoção do alvo precisam confirmar juntas.
   if (body.data.isDefault) {
-    await db
-      .update(sheetTemplates)
-      .set({ isDefault: false })
-      .where(and(eq(sheetTemplates.campaignId, campaignIdDe(req)), eq(sheetTemplates.isDefault, true)));
+    // A leitura inicial de t acontece antes da transação. Revalidar o alvo
+    // no próprio UPDATE evita limpar o default anterior e commitar zero
+    // defaults se o template desaparecer ou sair da campanha nesse intervalo.
+    const conflitoAlvo = new Error("Modelo não está mais disponível nesta campanha");
+    try {
+      db.transaction((tx) => {
+        tx.update(sheetTemplates)
+          .set({ isDefault: false })
+          .where(and(eq(sheetTemplates.campaignId, campaignIdDe(req)), eq(sheetTemplates.isDefault, true)))
+          .run();
+        const atualizacao = tx.update(sheetTemplates).set(dados).where(and(
+          eq(sheetTemplates.id, t.id),
+          eq(sheetTemplates.campaignId, campaignIdDe(req)),
+        )).run();
+        if (atualizacao.changes !== 1) throw conflitoAlvo;
+      });
+    } catch (erro) {
+      if (erro !== conflitoAlvo) throw erro;
+      res.status(409).json({ erro: "Modelo não está mais disponível nesta campanha." });
+      return;
+    }
+  } else {
+    await db.update(sheetTemplates).set(dados).where(eq(sheetTemplates.id, t.id));
   }
-  await db.update(sheetTemplates).set(dados).where(eq(sheetTemplates.id, t.id));
   emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: t.id });
   const [atualizado] = await db.select().from(sheetTemplates).where(eq(sheetTemplates.id, t.id)).limit(1);
   res.json({ modelo: templatePublico(atualizado) });
@@ -176,25 +223,27 @@ modelosRouter.post("/:templateId/duplicate", requirePapel("mestre"), async (req,
   const novoId = crypto.randomUUID();
   const novaVersaoId = crypto.randomUUID();
   const nome = `${t.name} (cópia)`;
-  await db.insert(sheetTemplates).values({
-    id: novoId,
-    campaignId: campaignIdDe(req),
-    name: nome,
-    description: t.description,
-    ownerId: req.usuario!.id,
-    isActive: false, // cópia nasce inativa até o mestre revisar
-    isDefault: false,
-    createdAt: agora,
-    updatedAt: agora,
+  db.transaction((tx) => {
+    tx.insert(sheetTemplates).values({
+      id: novoId,
+      campaignId: campaignIdDe(req),
+      name: nome,
+      description: t.description,
+      ownerId: req.usuario!.id,
+      isActive: false, // cópia nasce inativa até o mestre revisar
+      isDefault: false,
+      createdAt: agora,
+      updatedAt: agora,
+    }).run();
+    tx.insert(sheetVersions).values({
+      id: novaVersaoId,
+      templateId: novoId,
+      version: 1,
+      structure: origem.estrutura,
+      createdAt: agora,
+    }).run();
+    tx.update(sheetTemplates).set({ currentVersionId: novaVersaoId }).where(eq(sheetTemplates.id, novoId)).run();
   });
-  await db.insert(sheetVersions).values({
-    id: novaVersaoId,
-    templateId: novoId,
-    version: 1,
-    structure: origem.estrutura,
-    createdAt: agora,
-  });
-  await db.update(sheetTemplates).set({ currentVersionId: novaVersaoId }).where(eq(sheetTemplates.id, novoId));
   emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: novoId });
   res.status(201).json({ modelo: { id: novoId, versionId: novaVersaoId } });
 });
@@ -204,7 +253,7 @@ modelosRouter.post("/:templateId/duplicate", requirePapel("mestre"), async (req,
 /** GET .../sheet-templates/:templateId — detalhe com versões */
 modelosRouter.get("/:templateId", async (req, res) => {
   const m = await getMembership(campaignIdDe(req), req.usuario!.id);
-  if (!m || m.status === "removido") {
+  if (!m || m.status === "removido" || m.status === "bloqueado") {
     res.status(403).json({ erro: "Sem permissão nesta campanha" });
     return;
   }
@@ -217,7 +266,7 @@ modelosRouter.get("/:templateId", async (req, res) => {
     res.status(404).json({ erro: "Modelo não encontrado" });
     return;
   }
-  const ehMestre = m.role === "mestre";
+  const ehMestre = m.status === "ativo" && m.role === "mestre";
   const versoes = await db
     .select()
     .from(sheetVersions)
@@ -241,11 +290,11 @@ modelosRouter.put(
   "/:templateId/versions/:versionId",
   requirePapel("mestre"),
   async (req, res) => {
-    const [v] = await db
-      .select()
-      .from(sheetVersions)
-      .where(and(eq(sheetVersions.id, req.params.versionId), eq(sheetVersions.templateId, req.params.templateId)))
-      .limit(1);
+    const v = await carregarVersaoDaCampanha(
+      req.params.templateId,
+      req.params.versionId,
+      campaignIdDe(req),
+    );
     if (!v) {
       res.status(404).json({ erro: "Versão não encontrada" });
       return;
@@ -259,10 +308,15 @@ modelosRouter.put(
       res.status(400).json({ erro: "Estrutura inválida", detalhes: parse.error.issues });
       return;
     }
-    await db.update(sheetVersions).set({ structure: parse.data }).where(eq(sheetVersions.id, v.id));
-    const [tpl] = await db.select({ campaignId: sheetTemplates.campaignId }).from(sheetTemplates)
-      .where(eq(sheetTemplates.id, req.params.templateId)).limit(1);
-    if (tpl?.campaignId) emitirCampanha(tpl.campaignId, "fichas:atualizadas", { templateId: req.params.templateId });
+    const escrita = db.update(sheetVersions)
+      .set({ structure: parse.data })
+      .where(and(eq(sheetVersions.id, v.id), isNull(sheetVersions.publishedAt)))
+      .run();
+    if (escrita.changes !== 1) {
+      res.status(409).json({ erro: "Versão já publicada é imutável. Crie uma nova versão." });
+      return;
+    }
+    emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: req.params.templateId });
     res.json({ ok: true });
   }
 );
@@ -284,20 +338,26 @@ modelosRouter.post("/:templateId/versions", requirePapel("mestre"), async (req, 
     if (atual?.estrutura) estruturaBase = atual.estrutura;
   }
   const parse = estruturaFichaSchema.safeParse(estruturaBase);
-  const [{ valor: proxima }] = await db
-    .select({ valor: max(sheetVersions.version) })
-    .from(sheetVersions)
-    .where(eq(sheetVersions.templateId, t.id));
   const agora = new Date();
   const versionId = crypto.randomUUID();
-  await db.insert(sheetVersions).values({
-    id: versionId,
-    templateId: t.id,
-    version: (proxima ?? 0) + 1,
-    structure: parse.success ? parse.data : estruturaBase,
-    createdAt: agora,
+  db.transaction((tx) => {
+    const [{ valor: proxima }] = tx
+      .select({ valor: max(sheetVersions.version) })
+      .from(sheetVersions)
+      .where(eq(sheetVersions.templateId, t.id))
+      .all();
+    tx.insert(sheetVersions).values({
+      id: versionId,
+      templateId: t.id,
+      version: (proxima ?? 0) + 1,
+      structure: parse.success ? parse.data : estruturaBase,
+      createdAt: agora,
+    }).run();
+    tx.update(sheetTemplates)
+      .set({ currentVersionId: versionId, updatedAt: agora })
+      .where(and(eq(sheetTemplates.id, t.id), eq(sheetTemplates.campaignId, campaignIdDe(req))))
+      .run();
   });
-  await db.update(sheetTemplates).set({ currentVersionId: versionId, updatedAt: agora }).where(eq(sheetTemplates.id, t.id));
   emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: t.id });
   res.status(201).json({ versionId });
 });
@@ -305,21 +365,41 @@ modelosRouter.post("/:templateId/versions", requirePapel("mestre"), async (req, 
 /** POST .../sheet-templates/:templateId/publish — publica versão para os jogadores */
 modelosRouter.post("/:templateId/publish", requirePapel("mestre"), async (req, res) => {
   const versionId = z.string().min(1).parse(req.body?.versionId ?? req.params.versionId);
-  const [v] = await db
-    .select()
-    .from(sheetVersions)
-    .where(and(eq(sheetVersions.id, versionId), eq(sheetVersions.templateId, req.params.templateId)))
-    .limit(1);
+  const v = await carregarVersaoDaCampanha(
+    req.params.templateId,
+    versionId,
+    campaignIdDe(req),
+  );
   if (!v) {
     res.status(404).json({ erro: "Versão não encontrada" });
     return;
   }
   const agora = new Date();
-  await db.update(sheetVersions).set({ publishedAt: agora }).where(eq(sheetVersions.id, v.id));
-  await db
-    .update(sheetTemplates)
-    .set({ currentVersionId: v.id, updatedAt: agora })
-    .where(eq(sheetTemplates.id, req.params.templateId));
+  const publicada = db.transaction((tx) => {
+    const escritaVersao = tx.update(sheetVersions)
+      .set({ publishedAt: agora })
+      .where(and(
+        eq(sheetVersions.id, v.id),
+        eq(sheetVersions.templateId, req.params.templateId),
+        isNull(sheetVersions.publishedAt),
+      ))
+      .run();
+    if (escritaVersao.changes !== 1) return false;
+
+    const escritaTemplate = tx.update(sheetTemplates)
+      .set({ currentVersionId: v.id, updatedAt: agora })
+      .where(and(
+        eq(sheetTemplates.id, req.params.templateId),
+        eq(sheetTemplates.campaignId, campaignIdDe(req)),
+      ))
+      .run();
+    if (escritaTemplate.changes !== 1) throw new Error("Modelo não encontrado nesta campanha durante publicação");
+    return true;
+  });
+  if (!publicada) {
+    res.status(409).json({ erro: "Versão já publicada ou alterada em paralelo." });
+    return;
+  }
   await audit(req, "ficha.modelo_publicado", { templateId: req.params.templateId, versionId: v.id, version: v.version });
   emitirCampanha(campaignIdDe(req), "fichas:atualizadas", { templateId: req.params.templateId });
   res.json({ ok: true, version: v.version });

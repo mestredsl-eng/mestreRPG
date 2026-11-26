@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
+import { api, ApiError, type CampanhaResumo, type ElementoVinculavel, type ItemInventario, type MetadadoPoder, type ModeloResumo, type PersonagemDetalhe, type PersonagemResumo } from "../api";
 import { getSocket } from "../socket";
 import FichaForm, { useFichaValores } from "../FichaForm";
 import Vida from "../Vida";
 import Patrimonio from "./Patrimonio";
+import EquipamentoArmazem from "./EquipamentoArmazem";
+import Internet from "./Internet";
+import ExtratoXp from "../ExtratoXp";
 import AvatarRetrato from "../AvatarRetrato";
 import ModalRetrato from "../ModalRetrato";
 import { ModalConfirmar } from "../Modal";
+import XpLote from "../XpLote";
 
 const STATUS_LABEL: Record<string, string> = {
   rascunho: "Rascunho",
@@ -30,10 +34,15 @@ export default function Personagens({ campaignId, campanha }: Props) {
   const [personagens, setPersonagens] = useState<PersonagemResumo[]>([]);
   const [modelos, setModelos] = useState<ModeloResumo[]>([]);
   const [selecionado, setSelecionado] = useState<PersonagemDetalhe | null>(null);
+  // Identifica a abertura atual; respostas de uma ficha anterior não podem
+  // sobrescrever outra seleção, mesmo se o usuário reabrir o mesmo personagem.
+  const selecaoEpochRef = useRef(0);
   const [criando, setCriando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [biblioteca, setBiblioteca] = useState<Record<string, ElementoVinculavel[]> | null>(null);
+  const [metadadosPoderes, setMetadadosPoderes] = useState<MetadadoPoder[]>([]);
   const [verArquivados, setVerArquivados] = useState(false);
+  const [xpLoteAberto, setXpLoteAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtroStatus, setFiltroStatus] = useState("");
   const souMestre = campanha?.meuPapel === "mestre";
@@ -52,10 +61,12 @@ export default function Personagens({ campaignId, campanha }: Props) {
     }
     // Biblioteca de regras (Etapa 5) — opcional, alimenta campos vinculados
     try {
-      const { elementos } = await api.obterVinculaveis(campaignId);
+      const { elementos, metadadosPoderes: poderes } = await api.obterVinculaveis(campaignId);
       setBiblioteca(elementos);
+      setMetadadosPoderes(poderes ?? []);
     } catch {
       setBiblioteca(null);
+      setMetadadosPoderes([]);
     }
   }, [campaignId, verArquivados]);
 
@@ -78,10 +89,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
   }, [carregar, campaignId]);
 
   const abrir = async (id: string) => {
+    const epoch = ++selecaoEpochRef.current;
     try {
-      setSelecionado(await api.obterPersonagem(id));
+      const detalhe = await api.obterPersonagem(id);
+      if (selecaoEpochRef.current === epoch) setSelecionado(detalhe);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao abrir personagem");
+      if (selecaoEpochRef.current === epoch) {
+        setErro(e instanceof Error ? e.message : "Erro ao abrir personagem");
+      }
     }
   };
 
@@ -98,26 +113,39 @@ export default function Personagens({ campaignId, campanha }: Props) {
   if (selecionado) {
     return (
       <PersonagemDetalheView
+        key={selecionado.personagem.id}
         detalhe={selecionado}
         souMestre={souMestre}
         biblioteca={biblioteca}
+        metadadosPoderes={metadadosPoderes}
         campaignId={campaignId}
         aoVoltar={async () => {
+          // Invalida qualquer GET de atualização iniciado pela ficha que
+          // está sendo fechada antes de voltar à lista.
+          selecaoEpochRef.current += 1;
           setSelecionado(null);
           await carregar();
         }}
         aoSalvar={async (nome, data, status) => {
+          const epoch = selecaoEpochRef.current;
+          const characterId = selecionado.personagem.id;
           // BUG_0002: envia o updatedAt carregado — fichas com níveis
           // financiados por XP exigem base atual para aceitar escrita.
-          const atualizado = await api.atualizarPersonagem(selecionado.personagem.id, {
+          const atualizado = await api.atualizarPersonagem(characterId, {
             name: nome, data, status,
             baseUpdatedAt: selecionado.personagem.updatedAt,
           });
-          setSelecionado(atualizado);
+          if (selecaoEpochRef.current === epoch) setSelecionado(atualizado);
           await carregar();
         }}
         aoRecarregar={async () => {
-          setSelecionado(await api.obterPersonagem(selecionado.personagem.id));
+          const epoch = selecaoEpochRef.current;
+          const characterId = selecionado.personagem.id;
+          const atualizado = await api.obterPersonagem(characterId);
+          // Uma confirmação tardia só atualiza a ficha que iniciou a ação.
+          // Se houve saída e reabertura (inclusive do mesmo personagem),
+          // o novo detalhe permanece intacto.
+          if (selecaoEpochRef.current === epoch) setSelecionado(atualizado);
           await carregar();
         }}
       />
@@ -131,9 +159,14 @@ export default function Personagens({ campaignId, campanha }: Props) {
           <h2>Personagens{verArquivados ? " arquivados" : ""}</h2>
           <div className="linha">
             {souMestre && (
-              <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
-                {verArquivados ? "Ver ativos" : "Ver arquivados"}
-              </button>
+              <>
+                <button className="secundario" onClick={() => setVerArquivados((v) => !v)}>
+                  {verArquivados ? "Ver ativos" : "Ver arquivados"}
+                </button>
+                {!verArquivados && personagens.length > 0 && (
+                  <button className="secundario" onClick={() => setXpLoteAberto(true)}>XP em lote</button>
+                )}
+              </>
             )}
             {!verArquivados && (
             <button onClick={() => setCriando((v) => !v)} disabled={modelosPublicados.length === 0}>
@@ -196,6 +229,9 @@ export default function Personagens({ campaignId, campanha }: Props) {
           </table>
           )}
         </section>
+      )}
+      {xpLoteAberto && souMestre && (
+        <XpLote campaignId={campaignId} personagens={personagens} nomes={new Map(personagens.map((p) => [p.id, p.name]))} aoFechar={() => setXpLoteAberto(false)} />
       )}
     </>
   );
@@ -289,10 +325,11 @@ function extrairErrosValidacao(detalhes: unknown): ErroValidacao[] {
   return Object.entries(d).map(([campoId, v]) => ({ campoId, mensagem: String(v) }));
 }
 
-function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
+function PersonagemDetalheView({ detalhe, souMestre, biblioteca, metadadosPoderes, campaignId, aoVoltar, aoSalvar, aoRecarregar }: {
   detalhe: PersonagemDetalhe;
   souMestre: boolean;
   biblioteca: Record<string, ElementoVinculavel[]> | null;
+  metadadosPoderes: MetadadoPoder[];
   campaignId: string;
   aoVoltar: () => Promise<void>;
   aoSalvar: (nome: string, data: Record<string, unknown>, status?: string) => Promise<void>;
@@ -327,6 +364,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   }, [versaoServidor]);
   const [nome, setNome] = useState(personagem.name);
   const [editando, setEditando] = useState(false);
+  const [sincronizandoPoder, setSincronizandoPoder] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -334,6 +372,17 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
   const [confirmando, setConfirmando] = useState<"excluir" | "arquivar" | "restaurar" | null>(null);
   const [retratoModal, setRetratoModal] = useState(false);
   const [operando, setOperando] = useState(false);
+  // Pontos de entrada 1.1.0 fora da ficha: Equipamento/Armazém e Internet.
+  // Módulos independentes — abrir um não fecha o Patrimônio legado.
+  const [modulo, setModulo] = useState<"equipamento" | "internet" | null>(null);
+  // Atalho LOJA-B: o Armazém sinaliza o item; a Internet abre a aba
+  // "Vender" já com ele pré-selecionado (a operação financeira mora lá).
+  const [itemVendaPendente, setItemVendaPendente] = useState<ItemInventario | null>(null);
+  const alternarModulo = (m: "equipamento" | "internet") => {
+    const proximo = modulo === m ? null : m;
+    setModulo(proximo);
+    if (proximo !== "internet") setItemVendaPendente(null);
+  };
 
   const arquivado = personagem.status === "arquivado";
   // Ficha aprovada/bloqueada/arquivada fica trancada para o jogador até o
@@ -460,7 +509,7 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
         {erro && <p className="erro">{erro}</p>}
         {msg && <p className="online">{msg}</p>}
         <div className="linha">
-          {!editando && podeEditar && <button onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>Editar ficha</button>}
+          {!editando && podeEditar && <button disabled={sincronizandoPoder} onClick={() => { setErrosValidacao(null); setErro(null); setEditando(true); }}>{sincronizandoPoder ? "Sincronizando ficha…" : "Editar ficha"}</button>}
           {editando && (
             <>
               <button onClick={() => void salvar()} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
@@ -608,20 +657,71 @@ function PersonagemDetalheView({ detalhe, souMestre, biblioteca, campaignId, aoV
             somenteLeitura={!editando}
             aoMudar={editando ? aoMudar : undefined}
             biblioteca={biblioteca ?? undefined}
+            metadadosPoderes={metadadosPoderes}
             personagemId={personagem.id}
             pontosInicial={ficha?.pontos}
             poderesCfg={ficha?.poderes ?? null}
             carteiras={ficha?.carteiras}
             ehMestre={souMestre}
+            podeLerSangue={souMestre || personagem.ehEu === true}
+            podeAtivarPoder={personagem.ehEu === true && !arquivado && !editando}
+            aoAtualizarPersonagem={aoRecarregar}
+            aoMudarAtivacaoPoder={setSincronizandoPoder}
+            campaignId={campaignId}
             camposComErro={new Set(errosValidacao?.map((e) => e.campoId).filter((x): x is string => !!x) ?? [])}
           />
         )}
       </section>
 
+      {/* Pontos de entrada independentes da ficha (1.1.0): Equipamento/
+          Armazém e Internet. Mesmo recorte de audiência do Patrimônio —
+          dono do personagem ou mestre. Internet não aparece em
+          arquivado (patrimônio congelado, sem comércio). */}
+      {(souMestre || personagem.ehEu === true) && (
+        <section className="cartao">
+          <div className="linha" role="group" aria-label="Módulos do personagem">
+            <button
+              className={modulo === "equipamento" ? "ativo" : "secundario"}
+              aria-pressed={modulo === "equipamento"}
+              onClick={() => alternarModulo("equipamento")}
+            >Equipamento/Armazém</button>
+            {!arquivado && (
+              <button
+                className={modulo === "internet" ? "ativo" : "secundario"}
+                aria-pressed={modulo === "internet"}
+                onClick={() => alternarModulo("internet")}
+              >Internet</button>
+            )}
+          </div>
+        </section>
+      )}
+      {modulo === "equipamento" && (souMestre || personagem.ehEu === true) && (
+        <EquipamentoArmazem
+          characterId={personagem.id}
+          campaignId={campaignId}
+          aoVenderItem={(item) => { setItemVendaPendente(item); setModulo("internet"); }}
+        />
+      )}
+      {modulo === "internet" && !arquivado && (souMestre || personagem.ehEu === true) && (
+        <Internet
+          characterId={personagem.id}
+          campaignId={campaignId}
+          souMestre={souMestre}
+          itemInicial={itemVendaPendente}
+          aoItemConsumido={() => setItemVendaPendente(null)}
+        />
+      )}
+
       {/* Patrimônio só para mestre/dono: leitor de NPC revelado não é
           dono — montar o componente dispararia consultas 403 desnecessárias. */}
       {(souMestre || personagem.ehEu === true) && (
         <Patrimonio characterId={personagem.id} campaignId={campaignId} souMestre={souMestre} somenteLeitura={arquivado} />
+      )}
+
+      {/* Extrato de XP: somente mestre/dono — mesmo recorte do backend
+          (GET /progressao). Leitor de NPC revelado não é dono e não vê. */}
+      {(souMestre || personagem.ehEu === true) && (
+        <ExtratoXp characterId={personagem.id} />
       )}
     </>
   );

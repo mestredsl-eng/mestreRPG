@@ -5,6 +5,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { agendarAutosave } from "./autosave.js";
 import { getDb } from "../db/index.js";
 import { sessions, memberships } from "../db/schema.js";
+import { personagemAutorizadoInternet } from "./gate-internet.js";
 
 /** Instância do Socket.IO para emissão de eventos fora do handshake. */
 let io: SocketIOServer | null = null;
@@ -37,6 +38,68 @@ export function emitirCampanha(campaignId: string, evento: string, dados: unknow
   io?.to(`campanha:${campaignId}`).emit(evento, dados);
   // Etapa 12: qualquer mutação propagada por socket também agenda salvamento automático
   agendarAutosave(campaignId);
+}
+
+/**
+ * Fan-out do módulo Internet/comércio (bloqueio P1 #329/7152569806):
+ * `comercio:atualizado` NUNCA vai para a sala geral `campanha:*` — só para
+ * sockets inscritos na sala `internet:{campaignId}:{characterId}`, criada
+ * por `entrar-internet` após autorização servidor-side (sessão, membership
+ * ativa, titularidade do personagem e gate cumulativo).
+ *
+ * Revalidação por entrega: antes de emitir, cada personagem inscrito é
+ * reavaliado — quem perdeu perícia/dispositivo é removido da sala e não
+ * recebe nem o envelope só-IDs. A sessão OOC (`campanha:*`) não é tocada.
+ */
+export function emitirComercioInternet(campaignId: string, dados: unknown) {
+  agendarAutosave(campaignId);
+  const instancia = io;
+  // L2 (#336/7155835610): fail-closed — nenhuma entrega de comércio
+  // enquanto a barreira de restauração estiver ativa, e rechecagem
+  // imediatamente antes de CADA entrega após os awaits (mesmo padrão
+  // de emitirPrivadoCampanha). Emissões legítimas após o commit seguem.
+  if (!instancia || barreiraRestauracaoAtiva(campaignId)) return;
+  void (async () => {
+    try {
+      const prefixo = `internet:${campaignId}:`;
+      const porPersonagem = new Map<string, Set<string>>();
+      for (const [sala, membros] of instancia.sockets.adapter.rooms) {
+        if (!sala.startsWith(prefixo)) continue;
+        const characterId = sala.slice(prefixo.length);
+        let conjunto = porPersonagem.get(characterId);
+        if (!conjunto) { conjunto = new Set(); porPersonagem.set(characterId, conjunto); }
+        for (const sid of membros) conjunto.add(sid);
+      }
+      for (const [characterId, sids] of porPersonagem) {
+        const sala = `${prefixo}${characterId}`;
+        // janela determinística de teste (NODE_ENV=test): segura a
+        // emissão aqui para o teste cobrir a rechecagem pós-await
+        await pausaTesteEmit(`internet:${campaignId}`);
+        if (barreiraRestauracaoAtiva(campaignId)) return;
+        const autorizados = new Map<string, boolean>();
+        for (const sid of sids) {
+          const sock = instancia.sockets.sockets.get(sid);
+          if (!sock) continue;
+          const usuario = sock.data.usuario as { id?: string } | undefined;
+          const userId = typeof usuario?.id === "string" ? usuario.id : null;
+          let autorizado = false;
+          if (userId) {
+            if (!autorizados.has(userId)) {
+              autorizados.set(userId, await personagemAutorizadoInternet(characterId, userId, campaignId));
+            }
+            autorizado = autorizados.get(userId) === true;
+          }
+          // rechecagem imediatamente antes de cada entrega — sem await
+          // entre a checagem e o emit
+          if (barreiraRestauracaoAtiva(campaignId)) return;
+          if (autorizado) sock.emit("comercio:atualizado", dados);
+          else void sock.leave(sala);
+        }
+      }
+    } catch (e) {
+      console.error("[comercio] falha no fan-out Internet:", e);
+    }
+  })();
 }
 
 /**

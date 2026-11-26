@@ -9,8 +9,9 @@ import { estruturaFichaSchema, mapaCampos, campoElegivelParaTeste, campoElegivel
 import { mensagemVisivel } from "../routes/sessoes.js";
 import { agendarAutosave } from "../lib/autosave.js";
 import { permissoesDe } from "../lib/permissoes.js";
-import { barreiraRestauracaoAtiva, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
-import { carregarRegras } from "../lib/regras.js";
+import { barreiraRestauracaoAtiva, emitirCampanha, emitirPrivadoCampanha, adquirirOperacaoCampanha, pausaTesteEmit, opCampanhaALS, leaseOperacaoALS, liberarLeasesALS } from "../lib/io.js";
+import { carregarRegras, carregarRegrasSincrono, impressaoDigitalRegras, type RegrasCampanha } from "../lib/regras.js";
+import { registrarUsoD10 } from "../lib/sangue.js";
 import { resumoVitalidade } from "../lib/vida.js";
 import { calcularIniciativa, INICIATIVA_DADOS_MAX, type ResultadoIniciativa } from "../lib/iniciativa.js";
 import { avaliarD10, type AvaliacaoDadoD10 } from "../lib/d10.js";
@@ -174,6 +175,117 @@ async function nomeElementoTeste(campo: CampoDef, key: string, campaignId: strin
     } catch { /* biblioteca indisponível — cai no fallback */ }
   }
   return key;
+}
+
+const UUID_TESTE_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** R6.2 (Issue #186, contrato #7055515759 item 7): resolve se a
+ *  rolagem D10 "efetivamente usa um Poder" e qual custo aplicar.
+ *  - `elementoKey` do skillRef aponta para um elemento kind="poder"
+ *    do ruleset ativo → identidade do Poder (ruleset-scoped, nunca
+ *    campoId≅poderKey);
+ *  - o elemento precisa constar na ficha ATUAL do personagem
+ *    (revalidado na tx — ficha pode ter mudado desde o pedido);
+ *  - custo vem de `config.sangue.poderes[key].custo` do ruleset —
+ *    NUNCA do cliente; ausente/zero = gratuito;
+ *  - `config.sangue.habilitado !== true` (ou config ausente) → roll
+ *    D10 legado, sem débito nem escrita no ledger (P2-1);
+ *  - campo ligado a Poder SEM identidade de elemento (escalar ou
+ *    selecao_nivel sem `elementoKey`, e sem `regra.key` vinculada)
+ *    → fail-closed `poder_nao_identificado`, sem roll nem débito
+ *    parcial (P2-2) — nunca vira Poder gratuito silencioso.
+ *  Retorna "erro" para fail-closed: poder sumiu da ficha, custo
+ *  inválido, identidade de teste incompativel com o ledger ou Poder
+ *  não identificável. */
+function resolverCobrancaSangueD10(
+  skillRef: unknown,
+  dadosFicha: Record<string, unknown>,
+  regras: RegrasCampanha,
+  campoSel?: CampoDef | null,
+):
+  | { tipo: "livre" }
+  | { tipo: "debitar"; custo: number; poderKey: string }
+  | { tipo: "erro"; erro: "poder_nao_adquirido" | "poder_nao_identificado" | "custo_invalido" | "test_id_invalido" } {
+  if (!skillRef || typeof skillRef !== "object" || Array.isArray(skillRef)) return { tipo: "livre" };
+  // P2-1: recurso de Sangue desabilitado/ausente → comportamento D10
+  // legado. O roll acontece normalmente, sem débito nem mutação do
+  // ledger — `habilitado:false` nunca vira ativação gratuita.
+  const cfgSangue = regras.config.sangue;
+  if (!cfgSangue || cfgSangue.habilitado !== true) return { tipo: "livre" };
+  const ref = skillRef as Record<string, unknown>;
+  let elementoKey = typeof ref.elementoKey === "string" ? ref.elementoKey : "";
+  // Posse por lista de elementos (selecao_nivel) só se aplica quando a
+  // identidade veio do skillRef; vínculo `regra.key` do campo prova a
+  // posse pelo próprio valor numérico do campo (revalidado abaixo).
+  let posseLista = true;
+  if (!elementoKey) {
+    // P2-2: campo ligado a Poder sem `elementoKey` no skillRef.
+    const ehPoder = !!campoSel && (campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder");
+    if (!ehPoder) return { tipo: "livre" };
+    const keyRegra = campoSel!.regra?.kind === "poder" ? campoSel!.regra.key : "";
+    if (!keyRegra) return { tipo: "erro", erro: "poder_nao_identificado" };
+    elementoKey = keyRegra;
+    posseLista = false;
+  }
+  // só debita quando o elemento é de fato um Poder das regras vigentes
+  const elemento = regras.elementos.get(`poder:${elementoKey}`);
+  if (!elemento) {
+    // identidade vinda do vínculo do campo aponta para elemento
+    // inexistente → fail-closed; elementoKey do cliente sem elemento
+    // correspondente segue "não é teste de Poder" (livre) — EXCETO
+    // quando o campo validado é ligado a Poder (regraKind/regra.kind):
+    // uma key que some do ruleset entre o pedido e a rolagem nunca
+    // pode virar D10 gratuito silencioso.
+    if (!posseLista) return { tipo: "erro", erro: "poder_nao_identificado" };
+    const ehPoderCampo = !!campoSel && (campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder");
+    if (ehPoderCampo) return { tipo: "erro", erro: "poder_nao_identificado" };
+    return { tipo: "livre" };
+  }
+  // P1 refresh: o CampoDef atual é AUTORITATIVO — um campo conhecido
+  // que NÃO é ligado a Poder nunca vira débito de Sangue, mesmo que
+  // exista elemento kind="poder" homônimo no ruleset (ex.:
+  // habilidade:poder_fogo × poder:poder_fogo). O elementoKey do
+  // cliente não pode promover um campo não-Poder a teste de Poder.
+  // campoSel null (campoId ausente da versão atual) preserva o
+  // comportamento anterior — a identidade não pode ser provada.
+  if (campoSel && campoSel.regraKind !== "poder" && campoSel.regra?.kind !== "poder") {
+    return { tipo: "livre" };
+  }
+  const campoId = typeof ref.campoId === "string" ? ref.campoId : "";
+  if (posseLista) {
+    // revalidação de posse: o elemento precisa existir na ficha atual
+    const lista = campoId && Array.isArray(dadosFicha[campoId])
+      ? (dadosFicha[campoId] as { key?: unknown }[])
+      : [];
+    if (!lista.some((i) => i && typeof i === "object" && i.key === elementoKey)) {
+      return { tipo: "erro", erro: "poder_nao_adquirido" };
+    }
+  } else {
+    // vínculo regra.key: a posse é o valor numérico do próprio campo —
+    // revalidado na ficha atual (pode ter mudado desde o pedido).
+    // Convenção do motor (nivelNoVinculo/aplicarNivelDados): 0 = ausente
+    // e valores não-positivos não representam nível adquirido — um campo
+    // zerado/negativo NUNCA autoriza débito de Sangue por um Poder que o
+    // sistema considera não adquirido.
+    const campoRegraId = campoSel?.id ?? campoId;
+    const v = campoRegraId ? dadosFicha[campoRegraId] : undefined;
+    if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) {
+      return { tipo: "erro", erro: "poder_nao_adquirido" };
+    }
+  }
+  // Custo zero OU ausente = Poder gratuito — mas NUNCA retorna
+  // "livre": a gratuidade é registrada no ledger (`usos["d10:<testId>"]`
+  // + evento quantidade 0) para que retry/concorrência sejam
+  // idempotentes (contrato #219 @ 7be6aab). Custo inválido segue
+  // fail-closed; -0 é normalizado para 0.
+  const custoBruto = (cfgSangue.poderes as Record<string, { custo?: unknown }> | undefined)?.[elementoKey]?.custo;
+  if (custoBruto !== undefined && custoBruto !== null) {
+    if (typeof custoBruto !== "number" || !Number.isFinite(custoBruto) || custoBruto < 0) {
+      return { tipo: "erro", erro: "custo_invalido" };
+    }
+  }
+  const custo = custoBruto ?? 0;
+  return { tipo: "debitar", custo: custo === 0 ? 0 : custo, poderKey: elementoKey };
 }
 
 async function nomeUsuario(id: string | null | undefined): Promise<string> {
@@ -995,6 +1107,28 @@ function socket_handlers(
       // do campo no skillRef enriquecido (Issue #147).
       let estruturaValida: EstruturaFicha | null = null;
       let campoInfo: Record<string, unknown> | null = null;
+      // Regras da campanha carregadas sob demanda — somente quando o
+      // campo é ligado a Poder E Sangue está habilitado (R6.2 P2:
+      // validação de posse/key do Poder antes do INSERT).
+      // P2 refresh: falha de carga ≠ Sangue desabilitado — `falhou`
+      // distingue "ruleset inacessível" (fail-closed) de "config
+      // confirmadamente sem Sangue" (legado).
+      let regrasPedir: RegrasCampanha | null | undefined;
+      let regrasPedirFalhou = false;
+      const carregarRegrasPedir = async () => {
+        if (regrasPedir === undefined) {
+          try { regrasPedir = await carregarRegras(ctx.sessao.campaignId); }
+          catch { regrasPedir = null; regrasPedirFalhou = true; }
+        }
+        return regrasPedir;
+      };
+      // Guard comum: campo ligado a Poder exige ruleset legível; só
+      // pula a validação quando a carga CONFIRMA habilitado !== true.
+      const validarPoderSeHabilitado = async (): Promise<"ok" | "legado" | "rejeita"> => {
+        const regras = await carregarRegrasPedir();
+        if (regrasPedirFalhou || !regras) return "rejeita";
+        return regras.config.sangue?.habilitado === true ? "ok" : "legado";
+      };
       const rejeitarCampo = (motivo: string, detalhe?: string) => {
         console.warn(`[mesa] teste:pedir rejeitado — ${motivo}${detalhe ? ` (${detalhe})` : ""} (campoId=${payload.campoId}, elemento=${payload.elementoKey ?? "-"}, personagem=${char.id}, versao=${char.templateVersionId ?? "nenhuma"})`);
         cb?.({ ok: false, erro: "Campo não é elegível para teste" });
@@ -1038,6 +1172,27 @@ function socket_handlers(
           const lista = Array.isArray(dadosFicha[campoSel.id]) ? (dadosFicha[campoSel.id] as { key?: unknown; nivel?: unknown }[]) : [];
           const item = key ? lista.find((i) => i && typeof i === "object" && i.key === key) : undefined;
           const nivel = item && typeof item.nivel === "number" && Number.isFinite(item.nivel) ? item.nivel : null;
+          // R6.2 P2: campo ligado a Poder + Sangue habilitado → a key
+          // precisa existir na ficha com nível inteiro 1..5 (contrato
+          // selecao_nivel — frações não são nível de lista) E no
+          // ruleset ativo como kind="poder". Recusa ANTES do INSERT.
+          const ehPoderSel = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
+          if (ehPoderSel) {
+            const modo = await validarPoderSeHabilitado();
+            if (modo === "rejeita") {
+              rejeitarCampo("ruleset indisponível para validar Poder");
+              return;
+            }
+            if (modo === "ok") {
+              const regras = regrasPedir!;
+              const keyNoRuleset = !!key && regras.elementos.has(`poder:${key}`);
+              const nivelOk = typeof nivel === "number" && Number.isInteger(nivel) && nivel >= 1 && nivel <= 5;
+              if (!keyNoRuleset || !nivelOk) {
+                rejeitarCampo("poder sem nível/key válida no ruleset");
+                return;
+              }
+            }
+          }
           if (!key || nivel === null || nivel < 1) {
             rejeitarCampo("elemento sem nível na ficha");
             return;
@@ -1056,6 +1211,28 @@ function socket_handlers(
             // cair no dadosCount do cliente como fallback
             rejeitarCampo("campo sem valor numérico na ficha");
             return;
+          }
+          // R6.2 P2: campo escalar vinculado a Poder (regra.kind=
+          // "poder" + regra.key) + Sangue habilitado → a key derivada
+          // do vínculo precisa existir no ruleset ativo e o valor
+          // precisa ser número finito > 0 (0.5 é nível válido —
+          // convenção nivelNoVinculo; 0/negativo = não adquirido).
+          const ehPoderEsc = campoSel.regraKind === "poder" || campoSel.regra?.kind === "poder";
+          if (ehPoderEsc) {
+            const modo = await validarPoderSeHabilitado();
+            if (modo === "rejeita") {
+              rejeitarCampo("ruleset indisponível para validar Poder");
+              return;
+            }
+            if (modo === "ok") {
+              const regras = regrasPedir!;
+              const keyRegra = campoSel.regra?.kind === "poder" ? campoSel.regra.key : "";
+              const keyNoRuleset = !!keyRegra && regras.elementos.has(`poder:${keyRegra}`);
+              if (!keyNoRuleset || !(v > 0)) {
+                rejeitarCampo("poder sem nível/key válida no ruleset");
+                return;
+              }
+            }
           }
           valorCampo = v;
           rotuloExibicao = campoSel.label;
@@ -1202,74 +1379,291 @@ function socket_handlers(
         cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" });
         return;
       }
-      if (teste.status !== "pendente") { cb?.({ ok: true, id: teste.id, status: teste.status, jaRolado: true }); return; }
+      // SEM fast-path de idempotência aqui: qualquer retry — inclusive
+      // de teste já 'rolado' — precisa alcançar a transação, onde a
+      // autorização ATUAL é revalidada antes do ACK jaRolado.
+      // personagem arquivado não rola — fail-closed (revalidado na tx)
+      if (char?.status === "arquivado") { cb?.({ ok: false, erro: "Personagem arquivado não pode rolar testes" }); return; }
 
-      // Vitalidade: penalidade de dados aplicada no servidor a partir do
-      // estado atual do personagem — o jogador não pode ignorá-la.
-      // Incapacitado bloqueia ações de quem não é mestre (exceção do mestre).
-      let vitalidade: { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean } | null = null;
-      let countFinal = teste.diceCount;
+      // ---------- FASE 1 — pré-carga assíncrona ----------
+      // Regras são resolvidas aqui só para a impressão digital: dentro da
+      // transação a config é RELIDA e comparada — se mudou entre a
+      // pré-carga e o commit, a rolagem aborta em vez de gravar com
+      // regra obsoleta (R6.1).
       const regras = await carregarRegras(teste.campaignId);
-      if (char) {
-        const vit = resumoVitalidade(regras.config.vitalidade, (char.data ?? {}) as Record<string, unknown>);
-        if (vit) {
-          if (vit.bloqueiaAcoes && ctx.papel !== "mestre") {
-            cb?.({ ok: false, erro: `Ação bloqueada: ${char.name} está ${vit.nome} e não pode agir normalmente` });
-            return;
-          }
-          countFinal = Math.max(0, teste.diceCount - vit.penalidadeDados);
-          vitalidade = {
-            nivel: vit.nivel, nome: vit.nome, penalidadeDados: vit.penalidadeDados,
-            dadosOriginais: teste.diceCount, dadosFinais: countFinal,
-            excecaoMestre: vit.bloqueiaAcoes && ctx.papel === "mestre" ? true : undefined,
-          };
-        }
-      }
-
-      const resultados = rolarLados(teste.diceSides, countFinal);
-      const total = resultados.reduce((a, b) => a + b, 0);
-
-      // Desafio D10: sucessos/falhas calculados no servidor com a meta da
-      // campanha — o navegador não pode alterar o mínimo de sucesso.
-      let d10: { minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] } | null = null;
-      if (teste.diceSides === 10) {
-        const minimo = regras.config.dados?.d10SucessoMinimo ?? 6;
-        const av = avaliarD10(resultados, minimo);
-        d10 = { minimo, lancados: resultados.length, sucessos: av.sucessos, falhas: av.falhas, avaliacao: av.avaliacao };
-      }
+      const fingerprintRegras = impressaoDigitalRegras(regras);
 
       await pausaTesteEmit(JSON.stringify(payload));
-      const rollId = payload.requestId ?? randomUUID();
+      // Identidade da rolagem ≠ chave de idempotência do cliente:
+      // rollId é sempre UUID próprio (dois testId com o mesmo
+      // requestId NÃO podem colidir na PK). A idempotência do caminho
+      // de teste é garantida por tests.status (pendente→rolado dentro
+      // da tx); requestId é persistido como chave COMPOSTA por teste
+      // para não colidir no UNIQUE (campaign_id, request_id) nem
+      // devolver roll de outro teste.
+      const rollId = randomUUID();
+      const requestIdPersistido = payload.requestId
+        ? `teste:${payload.testId}:${payload.requestId}`
+        : null;
       const agora = new Date();
+      // R6.2: nome do autor para o evento __sangue — resolvido ANTES da
+      // tx (sem await dentro); só é usado se houver débito de Sangue.
+      const autorNomeSangue = await nomeUsuario(u.id);
+
+      // ---------- FASE 2 — transação SQLite síncrona ----------
+      // Sem `await` dentro: tudo que pode mudar entre a pré-carga e a
+      // escrita é RELIDO sob a transação — teste, membership do ator,
+      // personagem/dono, regras (fingerprint) e dados de vitalidade.
+      // Apenas um concorrente transiciona pendente→rolado; o perdedor
+      // recebe a resposta idempotente do estado já gravado.
+      type TxTesteRolar =
+        | { tipo: "ok"; rollId: string; teste: typeof tests.$inferSelect; characterName?: string;
+            papel: Papel; donoUserId?: string; resultados: number[]; total: number;
+            countFinal: number; vitalidade: VitalidadeRoll | null; d10: D10Roll | null;
+            sangue?: { custo: number; saldoResultante: number } }
+        | { tipo: "jaRolado"; status: string }
+        | { tipo: "naoEncontrado" } | { tipo: "semPermissao" } | { tipo: "donoPerdido" }
+        | { tipo: "arquivado" } | { tipo: "visibilidade" }
+        | { tipo: "sessaoInvalida" } | { tipo: "personagemInvalido" }
+        | { tipo: "bloqueado"; nomePersonagem: string; nomeVitalidade: string }
+        | { tipo: "regrasMudaram" }
+        | { tipo: "poderNaoAdquirido" }
+        | { tipo: "sangueInsuficiente"; custo: number }
+        | { tipo: "cobrancaErro"; erro: string };
+      type VitalidadeRoll = { nivel: number; nome: string; penalidadeDados: number; dadosOriginais: number; dadosFinais: number; excecaoMestre?: boolean };
+      type D10Roll = { minimo: number; lancados: number; sucessos: number; falhas: number; avaliacao?: AvaliacaoDadoD10[] };
+      let txRes: TxTesteRolar;
       try {
-        await db.insert(rolls).values({
-          id: rollId, campaignId: teste.campaignId, sessionId: teste.sessionId,
-          characterId: teste.characterId, userId: u.id,
-          dice: [{ sides: teste.diceSides, count: countFinal }] as never,
-          results: { dados: resultados, total, soma: total, vitalidade, d10, campo: campoDoSkillRef(teste.skillRef) } as never,
-          reason: `teste:${teste.id}`, visibility: teste.visibility,
-          requestId: payload.requestId ?? null, createdAt: agora,
+        txRes = db.transaction((tx): TxTesteRolar => {
+          // membership do ator — papel/status podem ter mudado na pré-carga
+          const [mTx] = tx.select().from(memberships)
+            .where(and(eq(memberships.campaignId, ctx.sessao.campaignId), eq(memberships.userId, u.id), eq(memberships.status, "ativo")))
+            .limit(1).all();
+          if (!mTx) return { tipo: "semPermissao" };
+          const papelTx = mTx.role as Papel;
+
+          const [tTx] = tx.select().from(tests).where(eq(tests.id, payload.testId!)).limit(1).all();
+          if (!tTx || !tTx.sessionId || tTx.sessionId !== ref.sessionId || tTx.campaignId !== ctx.sessao.campaignId) {
+            return { tipo: "naoEncontrado" };
+          }
+
+          // sessão relida sob a tx: precisa existir, pertencer à
+          // campanha do teste e não estar encerrada
+          const [sTx] = tx.select().from(sessions).where(eq(sessions.id, tTx.sessionId)).limit(1).all();
+          if (!sTx || sTx.campaignId !== tTx.campaignId || sTx.status === "encerrada") {
+            return { tipo: "sessaoInvalida" };
+          }
+
+          // personagem precisa existir, pertencer à MESMA campanha do
+          // teste e não estar arquivado
+          const [cTx] = tx.select().from(characters).where(eq(characters.id, tTx.characterId)).limit(1).all();
+          if (!cTx || cTx.campaignId !== tTx.campaignId) return { tipo: "personagemInvalido" };
+          if (cTx.status === "arquivado") return { tipo: "arquivado" };
+          // membership do dono: mesma campanha do teste, status ativo —
+          // membership inativa/removida ou de outra campanha não
+          // confere titularidade
+          const [mdTx] = tx.select().from(memberships)
+            .where(and(eq(memberships.id, cTx.membershipId), eq(memberships.campaignId, tTx.campaignId), eq(memberships.status, "ativo")))
+            .limit(1).all();
+          const ehDonoTx = mdTx?.userId === u.id;
+          if (papelTx !== "mestre" && !ehDonoTx) return { tipo: "donoPerdido" };
+          if (papelTx !== "mestre" && classeVisibilidadeTeste(tTx.visibility) === "mestre") return { tipo: "visibilidade" };
+
+          // Idempotência SÓ depois da autorização atual: um teste já
+          // rolado confirma duplicidade (jaRolado) somente se o ator
+          // ainda tiver acesso — sessão válida, personagem da campanha,
+          // titularidade/visibilidade revalidadas acima. Sem isso, quem
+          // perdeu a posse durante a pausa pré-commit receberia ACK de
+          // confirmação baseado em autorização obsoleta.
+          if (tTx.status !== "pendente") return { tipo: "jaRolado", status: tTx.status };
+
+          const regrasTx = carregarRegrasSincrono(tx, tTx.campaignId);
+          if (!regrasTx || impressaoDigitalRegras(regrasTx) !== fingerprintRegras) return { tipo: "regrasMudaram" };
+
+          // Vitalidade recalculada com dados FRESCOS do personagem — o
+          // jogador não pode ignorar a penalidade e o mestre mantém a
+          // exceção de ação bloqueada.
+          let vitalidade: VitalidadeRoll | null = null;
+          let countFinal = tTx.diceCount;
+          if (cTx) {
+            const vit = resumoVitalidade(regrasTx.config.vitalidade, (cTx.data ?? {}) as Record<string, unknown>);
+            if (vit) {
+              if (vit.bloqueiaAcoes && papelTx !== "mestre") {
+                return { tipo: "bloqueado", nomePersonagem: cTx.name, nomeVitalidade: vit.nome };
+              }
+              countFinal = Math.max(0, tTx.diceCount - vit.penalidadeDados);
+              vitalidade = {
+                nivel: vit.nivel, nome: vit.nome, penalidadeDados: vit.penalidadeDados,
+                dadosOriginais: tTx.diceCount, dadosFinais: countFinal,
+                excecaoMestre: vit.bloqueiaAcoes && papelTx === "mestre" ? true : undefined,
+              };
+            }
+          }
+
+          const resultados = rolarLados(tTx.diceSides, countFinal);
+          const total = resultados.reduce((a, b) => a + b, 0);
+
+          // R6.2 — cobrança de Sangue (Issue #186, contrato
+          // #7055515759 item 7): se a rolagem usa um Poder com custo
+          // configurado, o débito acontece na MESMA transação do roll +
+          // transição pendente→rolado. usoId `d10:<testId>` é
+          // idempotente no ledger — retry/concorrência nunca debita
+          // duas vezes; jaRolado retorna antes daqui.
+          // P2-2: para detectar campo ligado a Poder sem identidade de
+          // elemento, resolve o CampoDef da estrutura da ficha — somente
+          // quando Sangue está habilitado e o skillRef não traz
+          // elementoKey (selecao_nivel já se identifica sozinha).
+          let campoSelD10: CampoDef | null = null;
+          const refSkill = tTx.skillRef && typeof tTx.skillRef === "object" && !Array.isArray(tTx.skillRef)
+            ? tTx.skillRef as Record<string, unknown> : null;
+          const refCampoId = typeof refSkill?.campoId === "string" ? refSkill.campoId : "";
+          const refElementoKey = typeof refSkill?.elementoKey === "string" ? refSkill.elementoKey : "";
+          // campoSel carregado para AMBOS os caminhos (escalar e
+          // selecao_nivel) — necessário para detectar campo ligado a
+          // Poder quando a key some do ruleset entre pedido e rolagem
+          // (fail-closed, nunca tipo:"livre").
+          if (
+            regrasTx.config.sangue?.habilitado === true &&
+            refCampoId && cTx.templateVersionId
+          ) {
+            const [verD10] = tx.select({ structure: sheetVersions.structure })
+              .from(sheetVersions).where(eq(sheetVersions.id, cTx.templateVersionId)).limit(1).all();
+            const parseD10 = verD10 ? estruturaFichaSchema.safeParse(verD10.structure) : null;
+            if (parseD10?.success) {
+              campoSelD10 = mapaCampos(parseD10.data).get(refCampoId) ?? null;
+            }
+          }
+          const cobranca = resolverCobrancaSangueD10(
+            tTx.skillRef,
+            (cTx.data ?? {}) as Record<string, unknown>,
+            regrasTx,
+            campoSelD10,
+          );
+          if (cobranca.tipo === "erro") {
+            if (cobranca.erro === "poder_nao_adquirido") return { tipo: "poderNaoAdquirido" };
+            if (cobranca.erro === "poder_nao_identificado") return { tipo: "cobrancaErro", erro: "poder_nao_identificado" };
+            if (cobranca.erro === "test_id_invalido") return { tipo: "cobrancaErro", erro: "test_id_invalido" };
+            return { tipo: "cobrancaErro", erro: "custo_invalido" };
+          }
+          let dadosComSangue: Record<string, unknown> | null = null;
+          let sangueInfo: { custo: number; saldoResultante: number } | undefined;
+          if (cobranca.tipo === "debitar") {
+            // o ledger C2 só aceita ids UUID — testId fora do formato é
+            // fail-closed (nunca debita com identidade ambígua)
+            if (!UUID_TESTE_RE.test(tTx.id)) return { tipo: "cobrancaErro", erro: "test_id_invalido" };
+            const resSangue = registrarUsoD10((cTx.data ?? {}) as Record<string, unknown>, {
+              personagemId: cTx.id,
+              testId: tTx.id,
+              custo: cobranca.custo,
+              autorId: u.id,
+              autorNome: autorNomeSangue,
+              motivo: `Teste D10 (${tTx.id})`,
+              requestId: payload.requestId ?? null,
+            });
+            if (!resSangue.ok) {
+              if (resSangue.codigo === "saldo_insuficiente") {
+                // Não exponha o saldo calculado no ACK: a origem da capacidade pode ser um campo privado da ficha.
+                return { tipo: "sangueInsuficiente", custo: cobranca.custo };
+              }
+              return { tipo: "cobrancaErro", erro: resSangue.codigo };
+            }
+            dadosComSangue = resSangue.dados;
+            sangueInfo = { custo: cobranca.custo, saldoResultante: resSangue.estado.saldo };
+          }
+
+          // Desafio D10: sucessos/falhas calculados no servidor com a meta
+          // da campanha — o navegador não pode alterar o mínimo.
+          let d10: D10Roll | null = null;
+          if (tTx.diceSides === 10) {
+            const minimo = regrasTx.config.dados?.d10SucessoMinimo ?? 6;
+            const av = avaliarD10(resultados, minimo);
+            d10 = { minimo, lancados: resultados.length, sucessos: av.sucessos, falhas: av.falhas, avaliacao: av.avaliacao };
+          }
+
+          tx.insert(rolls).values({
+            id: rollId, campaignId: tTx.campaignId, sessionId: tTx.sessionId,
+            characterId: tTx.characterId, userId: u.id,
+            dice: [{ sides: tTx.diceSides, count: countFinal }] as never,
+            results: { dados: resultados, total, soma: total, vitalidade, d10, campo: campoDoSkillRef(tTx.skillRef) } as never,
+            reason: `teste:${tTx.id}`, visibility: tTx.visibility,
+            requestId: requestIdPersistido, createdAt: agora,
+          }).run();
+          tx.update(tests).set({ status: "rolado", rollId, updatedAt: agora }).where(eq(tests.id, tTx.id)).run();
+          if (dadosComSangue) {
+            tx.update(characters).set({ data: dadosComSangue, updatedAt: agora }).where(eq(characters.id, cTx.id)).run();
+          }
+
+          return {
+            tipo: "ok", rollId, teste: tTx, characterName: cTx.name, papel: papelTx,
+            donoUserId: mdTx?.userId, resultados, total, countFinal, vitalidade, d10,
+            ...(sangueInfo ? { sangue: sangueInfo } : {}),
+          };
         });
       } catch (e) {
-        if (String(e).includes("UNIQUE") && payload.requestId) {
-          const [ex] = await db.select().from(rolls).where(and(eq(rolls.campaignId, teste.campaignId), eq(rolls.requestId, payload.requestId))).limit(1);
-          cb?.({ ok: true, rollId: ex?.id, duplicado: true });
-          return;
+        // UNIQUE só pode vir de rolls_request_idx (campaign_id,
+        // request_id) — a chave já é composta por teste, então o roll
+        // encontrado é necessariamente DESTE teste; reason é
+        // conferida como segunda trava contra qualquer divergência.
+        if (String(e).includes("UNIQUE") && requestIdPersistido) {
+          const [ex] = await db.select().from(rolls).where(and(
+            eq(rolls.campaignId, teste.campaignId),
+            eq(rolls.requestId, requestIdPersistido),
+            eq(rolls.reason, `teste:${payload.testId}`),
+          )).limit(1);
+          if (ex) { cb?.({ ok: true, rollId: ex.id, duplicado: true }); return; }
         }
-        throw e;
+        // falha dentro da transação → rollback total já garantido;
+        // responde erro no ACK em vez de derrubar o handler sem resposta
+        console.error("[mesa:teste:rolar] falha na transação:", e);
+        cb?.({ ok: false, erro: "Falha ao registrar a rolagem" });
+        return;
       }
-      await db.update(tests).set({ status: "rolado", rollId, updatedAt: agora }).where(eq(tests.id, teste.id));
 
+      // Respostas de aborto da transação — mesmos contratos da
+      // pré-carga; nada foi gravado (rollback total garantido pelo tx).
+      if (txRes.tipo === "jaRolado") { cb?.({ ok: true, id: payload.testId, status: txRes.status, jaRolado: true }); return; }
+      if (txRes.tipo === "naoEncontrado") { cb?.({ ok: false, erro: "Teste não encontrado" }); return; }
+      if (txRes.tipo === "semPermissao") { cb?.({ ok: false, erro: "Sem permissão nesta campanha" }); return; }
+      if (txRes.tipo === "donoPerdido") { cb?.({ ok: false, erro: "Só o dono do personagem ou o mestre rolam" }); return; }
+      if (txRes.tipo === "arquivado") { cb?.({ ok: false, erro: "Personagem arquivado não pode rolar testes" }); return; }
+      if (txRes.tipo === "sessaoInvalida") { cb?.({ ok: false, erro: "Sessão encerrada ou inválida" }); return; }
+      if (txRes.tipo === "personagemInvalido") { cb?.({ ok: false, erro: "Personagem inválido para este teste" }); return; }
+      if (txRes.tipo === "visibilidade") { cb?.({ ok: false, erro: "Somente o mestre pode rolar este teste" }); return; }
+      if (txRes.tipo === "bloqueado") {
+        cb?.({ ok: false, erro: `Ação bloqueada: ${txRes.nomePersonagem} está ${txRes.nomeVitalidade} e não pode agir normalmente` });
+        return;
+      }
+      if (txRes.tipo === "regrasMudaram") {
+        cb?.({ ok: false, erro: "Regras da campanha alteradas durante a rolagem — tente novamente" });
+        return;
+      }
+      if (txRes.tipo === "poderNaoAdquirido") {
+        cb?.({ ok: false, erro: "Poder não consta mais na ficha do personagem" });
+        return;
+      }
+      if (txRes.tipo === "sangueInsuficiente") {
+        cb?.({ ok: false, erro: `Sangue insuficiente para o custo do Poder (custo ${txRes.custo})`, codigo: "sangue_insuficiente" });
+        return;
+      }
+      if (txRes.tipo === "cobrancaErro") {
+        cb?.({ ok: false, erro: `Cobrança de Sangue recusada (${txRes.erro})` });
+        return;
+      }
+
+      // ---------- FASE 3 — pós-commit assíncrono ----------
+      // Somente agora o roll existe de forma durável: nenhum socket ou
+      // broadcast pode anunciar rolagem revertida pela transação.
+      const { teste: tTx, resultados, total, countFinal, vitalidade, d10 } = txRes;
       const payloadRoll = {
-        id: rollId, testId: teste.id, sessionId: teste.sessionId,
-        characterId: teste.characterId, characterName: char?.name,
+        id: rollId, testId: tTx.id, sessionId: tTx.sessionId,
+        characterId: tTx.characterId, characterName: txRes.characterName,
         userId: u.id, rolador: await nomeUsuario(u.id),
-        papel: ctx.papel, solicitante: await nomeUsuario(teste.requestedBy),
-        campo: campoDoSkillRef(teste.skillRef),
-        dados: resultados, total, lados: teste.diceSides, count: countFinal,
-        dadosOriginais: teste.diceCount, vitalidade, d10,
-        alvo: teste.target, // só mestres recebem via filtro abaixo
-        visibility: teste.visibility, createdAt: agora,
+        papel: txRes.papel, solicitante: await nomeUsuario(tTx.requestedBy),
+        campo: campoDoSkillRef(tTx.skillRef),
+        dados: resultados, total, lados: tTx.diceSides, count: countFinal,
+        dadosOriginais: tTx.diceCount, vitalidade, d10,
+        alvo: tTx.target, // só mestres recebem via filtro abaixo
+        visibility: tTx.visibility, createdAt: agora,
       };
       // `alvo` (dificuldade) só existe no objeto dos mestres — sala,
       // dono e qualquer outro destinatário recebem o payload SEM o
@@ -1278,31 +1672,38 @@ function socket_handlers(
       // fail-closed: SOMENTE "publica" vai à sala coletiva — "privada"
       // vai só a dono+mestres; "mestre"/"secreta"/desconhecida vão
       // exclusivamente aos mestres atuais (nunca à sala, nunca ao dono)
-      const classeRoll = classeVisibilidadeTeste(teste.visibility);
+      const classeRoll = classeVisibilidadeTeste(tTx.visibility);
       if (classeRoll === "publica") {
-        io.to(`sessao:${teste.sessionId}`).emit("mesa:rolagem", { ...payloadRollSemAlvo, visibility: "publica" });
+        io.to(`sessao:${tTx.sessionId}`).emit("mesa:rolagem", { ...payloadRollSemAlvo, visibility: "publica" });
       }
       // emissões privadas revalidam membership ativa no instante do envio;
       // o dono recebe o resultado SEM a dificuldade — somente quando o
       // teste é explicitamente "privada" (ou "publica", sanitizada)
-      if (membroDono && classeRoll !== "mestre") {
-        await emitirPrivadoCampanha(teste.campaignId, [membroDono.userId], "mesa:rolagem", payloadRollSemAlvo);
+      if (txRes.donoUserId && classeRoll !== "mestre") {
+        await emitirPrivadoCampanha(tTx.campaignId, [txRes.donoUserId], "mesa:rolagem", payloadRollSemAlvo);
       }
-      const mestres = await mestresDaCampanha(teste.campaignId);
-      await emitirPrivadoCampanha(teste.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
+      const mestres = await mestresDaCampanha(tTx.campaignId);
+      await emitirPrivadoCampanha(tTx.campaignId, mestres, "mesa:rolagem", payloadRoll, ["mestre"]);
 
-      // gancho determinístico PÓS-PRIMEIRA-GRAVAÇÃO: rolls e tests já
-      // foram escritos — o lease do handler DEVE cobrir até o fim,
-      // inclusive o registrarChat (que reutiliza o mesmo lease ALS)
+      // gancho determinístico PÓS-COMMIT: rolls e tests já foram
+      // escritos na mesma transação — o lease do handler DEVE cobrir
+      // até o fim, inclusive o registrarChat (que reutiliza o mesmo
+      // lease ALS)
       await pausaTesteEmit(JSON.stringify({ ...payload, fase: "pos-write" }));
+      agendarAutosave(tTx.campaignId);
+      // R6.2: débito de Sangue alterou characters.data — mesmo contrato
+      // do endpoint individual de XP (pós-commit, nunca antes).
+      if (txRes.sangue) {
+        emitirCampanha(tTx.campaignId, "personagens:atualizados", { characterId: tTx.characterId });
+      }
       await registrarChat(io, {
-        campaignId: teste.campaignId, sessionId: teste.sessionId, authorId: u.id,
+        campaignId: tTx.campaignId, sessionId: tTx.sessionId, authorId: u.id,
         kind: "rolagem",
-        content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${teste.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${teste.diceSides}` : `${teste.diceCount}d${teste.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
-        visibility: visibilidadeChatDoTeste(teste.visibility),
-        recipients: classeRoll === "privada" && membroDono ? [membroDono.userId] : undefined,
+        content: `${await nomeUsuario(u.id)} rolou ${vitalidade ? `${vitalidade.dadosOriginais}d${tTx.diceSides} → vitalidade ${vitalidade.nome} (−${vitalidade.penalidadeDados}) → ${countFinal}d${tTx.diceSides}` : `${tTx.diceCount}d${tTx.diceSides}`} → ${resultados.length ? resultados.join(", ") : "(sem dados)"} = ${total}${d10 ? ` · D10: ${d10.sucessos}/${d10.lancados} sucessos (mín ${d10.minimo})` : ""}`,
+        visibility: visibilidadeChatDoTeste(tTx.visibility),
+        recipients: classeRoll === "privada" && txRes.donoUserId ? [txRes.donoUserId] : undefined,
       });
-      cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: teste.diceCount, vitalidade, d10 });
+      cb?.({ ok: true, id: rollId, dados: resultados, total, count: countFinal, dadosOriginais: tTx.diceCount, vitalidade, d10 });
     });
 
     // ---------- rolagem livre ----------

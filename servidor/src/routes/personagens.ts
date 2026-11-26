@@ -27,6 +27,8 @@ import { lerPontos, bonusPontos, comSeloPontos, aplicarBonusPontos } from "../li
 import { reconciliarFinanciadoXp } from "../lib/progressao.js";
 import {
   carregarRegras,
+  carregarRegrasSincrono,
+  impressaoDigitalRegras,
   validarRegras,
   estruturaComCustosDeElementos,
   aplicarCustosSelecao,
@@ -495,6 +497,15 @@ personagensRouter.post("/", requirePapel("mestre", "jogador"), async (req, res) 
   // NPC nasce aprovado e com pontos selados (ninguém disputa aprovação).
   if (isNpc) {
     dadosCriacao = comSeloPontos(dadosCriacao, { id: req.usuario!.id, nome: await nomeUsuario(req.usuario!.id) });
+    // #304: NPC aprovado não tem bypass — o resultado final da criação
+    // (após defaults normais já materializados) é validado em modo
+    // estrito, sem reaplicar padrões.
+    const carteirasTodas = new Set(todosCampos(carregada.estrutura).filter((c) => c.carteira).map((c) => c.id));
+    const validacaoEstrita = validarFicha(carregada.estrutura, dadosCriacao, { estrito: true, aplicarPadroes: false, carteirasSaldo: carteirasTodas });
+    if (!validacaoEstrita.ok) {
+      res.status(400).json({ erro: "NPC incompleto: campos obrigatórios ausentes", detalhes: { erros: validacaoEstrita.erros } });
+      return;
+    }
   }
 
   const agora = new Date();
@@ -770,6 +781,24 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
     dadosFinais = { ...(p.data as Record<string, unknown>), ...validacao.dados };
   }
 
+  // #304 O7.2: esvaziar explicitamente um campo obrigatório no payload é
+  // rejeitado com 400 ANTES de qualquer gravação — o PATCH inteiro é
+  // atômico. Só campos obrigatórios explicitamente enviados são
+  // examinados; obrigatórios históricos omitidos não são revalidados.
+  {
+    const enviadas = (body.data.data ?? {}) as Record<string, unknown>;
+    for (const campo of todosCampos(estrutura)) {
+      if (!campo.obrigatorio || !(campo.id in enviadas)) continue;
+      const v = enviadas[campo.id];
+      const vazio = v === undefined || v === null || v === ""
+        || (campo.tipo === "tabela" && Array.isArray(v) && v.length === 0);
+      if (vazio) {
+        res.status(400).json({ erro: `O campo obrigatório "${campo.label}" não pode ser esvaziado`, detalhes: { campoId: campo.id, codigo: "campo_obrigatorio" } });
+        return;
+      }
+    }
+  }
+
   // BUG_0002: se este PATCH altera o valor de um campo que possui
   // nível financiado por XP, exige que o cliente prove que editou
   // sobre o estado atual (baseUpdatedAt == updatedAt carregado).
@@ -893,6 +922,19 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
     novoStatus = "aprovada";
   }
 
+  // #304: transição para aguardando_aprovacao/aprovada valida o estado
+  // final pós-merge (dadosFinais) em modo estrito, sem aplicar padrões —
+  // default já materializado conta. Ficha legada já aprovada que não
+  // muda de status (PATCH neutro) não é revalidada.
+  if ((novoStatus === "aguardando_aprovacao" || novoStatus === "aprovada") && p.status !== novoStatus) {
+    const carteirasTodas = new Set(todosCampos(estrutura).filter((c) => c.carteira).map((c) => c.id));
+    const validacaoEstrita = validarFicha(estrutura, dadosFinais as Record<string, unknown>, { estrito: true, aplicarPadroes: false, carteirasSaldo: carteirasTodas });
+    if (!validacaoEstrita.ok) {
+      res.status(400).json({ erro: "Ficha incompleta para aprovação", detalhes: { erros: validacaoEstrita.erros } });
+      return;
+    }
+  }
+
   // Aprovação sela os pontos: a partir daqui o jogador não altera mais
   // campos que mudem o total de pontos (o selo nunca é removido por
   // Reabrir/Devolver — só o mestre concede/remove via /pontos).
@@ -904,6 +946,12 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
   // requisição. Antes de gravar, compara esse snapshot dentro de uma
   // transação síncrona: HP, Vitalidade, pontos ou outro PATCH que tenham
   // sido salvos enquanto validávamos não podem ser sobrescritos por JSON velho.
+  // #304: a mesma comparação cobre campaignId, templateVersionId, o
+  // snapshot da estrutura (sheetVersions.structure relido na tx) e a
+  // impressão digital completa do ruleset ativo — divergência ou ausência
+  // é conflito fechado (409), pois a validação pode ter usado base velha.
+  const estruturaFp = JSON.stringify(estrutura);
+  const regrasFp = impressaoDigitalRegras(regras);
   const conflito = db.transaction((tx) => {
     const [atual] = tx.select().from(characters).where(eq(characters.id, p.id)).limit(1).all();
     if (!atual) return "ausente" as const;
@@ -912,9 +960,17 @@ personagensRouter.patch("/:characterId", requireLeasePersonagem(), async (req, r
     const mesmoUpdatedAt = atual.updatedAt instanceof Date && p.updatedAt instanceof Date
       ? atual.updatedAt.getTime() === p.updatedAt.getTime()
       : String(atual.updatedAt) === String(p.updatedAt);
-    if (!mesmaData || !mesmosOverrides || !mesmoUpdatedAt || atual.name !== p.name || atual.status !== p.status) {
+    if (!mesmaData || !mesmosOverrides || !mesmoUpdatedAt || atual.name !== p.name || atual.status !== p.status
+      || atual.campaignId !== p.campaignId || atual.templateVersionId !== p.templateVersionId) {
       return "conflito" as const;
     }
+    if (atual.templateVersionId) {
+      const [ver] = tx.select().from(sheetVersions).where(eq(sheetVersions.id, atual.templateVersionId)).limit(1).all();
+      const parseVer = ver ? estruturaFichaSchema.safeParse(ver.structure) : null;
+      if (!parseVer?.success || JSON.stringify(parseVer.data) !== estruturaFp) return "conflito" as const;
+    }
+    const regrasTx = carregarRegrasSincrono(tx, p.campaignId);
+    if (!regrasTx || impressaoDigitalRegras(regrasTx) !== regrasFp) return "conflito" as const;
     tx.update(characters)
       .set({
         name: body.data.name ?? atual.name,

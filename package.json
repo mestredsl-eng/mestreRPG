@@ -1,6 +1,6 @@
 {
   "name": "mestre-rpg",
-  "version": "1.0.6",
+  "version": "1.1.0",
   "private": true,
   "description": "Plataforma própria de RPG — campanhas online, fichas personalizáveis e mesa sincronizada.",
   "workspaces": [
@@ -28,6 +28,7 @@
     "node": ">=20.19"
   },
   "devDependencies": {
+    "better-sqlite3": "12.9.0",
     "playwright": "^1.65.0"
   }
 }

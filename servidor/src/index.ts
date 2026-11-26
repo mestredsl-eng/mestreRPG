@@ -10,9 +10,12 @@ import { convitesRouter, convitesPublicoRouter } from "./routes/convites.js";
 import { modelosRouter } from "./routes/modelos.js";
 import { personagensRouter } from "./routes/personagens.js";
 import { progressaoRouter } from "./routes/progressao.js";
+import { sangueRouter } from "./routes/sangue.js";
+import { xpLoteRouter } from "./routes/xp-lote.js";
 import { defeitosRouter } from "./routes/defeitos.js";
 import { regrasRouter } from "./routes/regras.js";
 import { patrimonioRouter } from "./routes/patrimonio.js";
+import { comercioLojasRouter, comercioPersonagemRouter } from "./routes/comercio.js";
 import { catalogoRouter } from "./routes/catalogo.js";
 import { sessoesRouter } from "./routes/sessoes.js";
 import { anotacoesRouter } from "./routes/anotacoes.js";
@@ -88,7 +91,7 @@ app.use(express.json({ limit: "2mb" }));
 const routers: Router[] = [
   healthRouter, authRouter, adminRouter, servidorRouter, localRouter,
   campanhasRouter, campanhaIORouter, convitesPublicoRouter, convitesRouter, modelosRouter,
-  personagensRouter, progressaoRouter, regrasRouter, patrimonioRouter, catalogoRouter,
+  personagensRouter, progressaoRouter, sangueRouter, xpLoteRouter, regrasRouter, patrimonioRouter, comercioLojasRouter, comercioPersonagemRouter, catalogoRouter,
   defeitosRouter,
   sessoesRouter, anotacoesRouter, snapshotsRouter, arquivosRouter, bibliotecaRouter,
   novidadesRouter, novidadesAdminRouter, guildasRouter,
@@ -109,6 +112,7 @@ app.use("/api/admin/servidor", servidorRouter);
 app.use("/api/local", localRouter);
 app.use("/api/campaigns", campanhasRouter);
 app.use("/api/campaigns", campanhaIORouter);
+app.use("/api/campaigns", xpLoteRouter);
 app.use("/api/convites", convitesPublicoRouter);
 app.use("/api/convites", convitesRouter);
 app.use("/api/campaigns/:campaignId/sheet-templates", modelosRouter);
@@ -116,6 +120,8 @@ app.use("/api/campaigns/:campaignId/characters", personagensRouter);
 app.use("/api/campaigns/:campaignId/defeitos", defeitosRouter);
 app.use("/api/campaigns/:campaignId/regras", regrasRouter);
 app.use("/api/characters/:characterId", patrimonioRouter);
+app.use("/api/characters/:characterId/comercio", comercioPersonagemRouter);
+app.use("/api/campaigns/:campaignId/comercio", comercioLojasRouter);
 app.use("/api/campaigns/:campaignId/inventario", catalogoRouter);
 app.use("/api/campaigns/:campaignId/sessoes", sessoesRouter);
 app.use("/api/campaigns/:campaignId/anotacoes", anotacoesRouter);
@@ -123,6 +129,7 @@ app.use("/api/campaigns/:campaignId/snapshots", snapshotsRouter);
 app.use("/api/campaigns/:campaignId/arquivos", arquivosRouter);
 app.use("/api/characters", personagensRouter);
 app.use("/api/characters", progressaoRouter);
+app.use("/api/characters", sangueRouter);
 app.use("/api/biblioteca", bibliotecaRouter);
 app.use("/api/novidades", novidadesRouter);
 app.use("/api/admin/novidades", novidadesAdminRouter);
@@ -244,7 +251,38 @@ httpServer.listen(config.porta, config.host, () => {
   log("info", "servidor iniciado", { porta: config.porta });
   // recuperação de agendamentos de backup perdidos — não bloqueia a subida
   setImmediate(() => void verificarBackupAgendado(true));
+  // P10-A: health-ready real = listen confirmado acima. Se um bootstrap
+  // foi autorizado e consumido (estado "bootstrap-interrompido") e o
+  // banco tem tabelas, a instalação concluiu de fato → recibo permanente.
+  setImmediate(() => void concluirBootstrapSePossivel());
 });
+
+// Recibo de instalação só após conclusão efetiva: `npm run start`
+// bloqueia o .bat, então quem prova a escuta é o próprio listen. O
+// estado externo só grava o recibo se houver autorização consumida sem
+// recibo E o banco comprovadamente populado — qualquer outro caso é
+// no-op. Falha aqui nunca derruba o servidor.
+async function concluirBootstrapSePossivel() {
+  try {
+    const { pathToFileURL } = await import("node:url");
+    const { join } = await import("node:path");
+    const mod = await import(pathToFileURL(join(RAIZ, "scripts", "estado-externo.mjs")).href) as {
+      concluirBootstrapAposHealth(repoDir: string, env?: NodeJS.ProcessEnv, bancoComDados?: boolean): { concluido: boolean; motivo?: string };
+    };
+    let bancoComDados = false;
+    try {
+      const client = (getDb() as unknown as { $client?: { prepare(sql: string): { get(): { c: number } } } }).$client;
+      if (client) {
+        const row = client.prepare("select count(*) as c from sqlite_master where type='table' and name not like 'sqlite_%'").get();
+        bancoComDados = (row?.c ?? 0) > 0;
+      }
+    } catch { bancoComDados = false; }
+    const r = mod.concluirBootstrapAposHealth(RAIZ, process.env, bancoComDados);
+    if (r.concluido) log("info", "bootstrap concluído — recibo de instalação gravado", { motivo: r.motivo });
+  } catch (e) {
+    log("erro", "falha ao avaliar conclusão de bootstrap", { erro: String(e) });
+  }
+}
 
 // ---------- backup automático agendado (Etapa 10) ----------
 // verificarBackupAgendado cobre tanto o disparo no horário quanto a recuperação

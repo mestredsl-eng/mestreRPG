@@ -218,6 +218,62 @@
       "when": 1795148331452,
       "tag": "0030_release_1006_diario_permissoes_news",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1795212981626,
+      "tag": "0031_release_1007_patrimonio_regua_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1795223232737,
+      "tag": "0032_release_1009_xp_lote",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1795374175383,
+      "tag": "0033_release_1008_pontos_sangue_vtt_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1795419496335,
+      "tag": "0034_release_1006_auto_update_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1795535932258,
+      "tag": "0035_release_1009_stabilizacao_news",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1795560239088,
+      "tag": "0036_free_quentin_quire",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1795574928872,
+      "tag": "0037_flippant_mordo",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1795626288169,
+      "tag": "0038_release_110_internet_comercio_news",
+      "breakpoints": true
     }
   ]
 }

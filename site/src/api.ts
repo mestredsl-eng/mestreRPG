@@ -31,6 +31,8 @@ export interface Usuario {
     visibilidade?: { aparencia?: boolean; bandeja?: boolean; rolagens?: boolean };
     /** Preferências visuais da conta (Issue #132) — objeto completo das seis dimensões. */
     visual?: PreferenciasVisuais;
+    /** Aprendizado visual (Issue #132): opt-in explícito + histórico das combinações aplicadas (máx. 8). */
+    visualAprendizado?: { optIn?: boolean; historico?: PreferenciasVisuais[] };
   } & Record<string, unknown>;
 }
 
@@ -186,6 +188,13 @@ export const api = {
     requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
       method: "PATCH",
       body: JSON.stringify({ visual }),
+    }),
+
+  /** Aprendizado visual (Issue #132) — PATCH parcial de `visualAprendizado`; o servidor mescla por chave. */
+  atualizarPreferenciasAprendizado: (aprendizado: { optIn?: boolean; historico?: PreferenciasVisuais[] }) =>
+    requisicao<{ ok: boolean; preferences: Usuario["preferences"] }>("/auth/preferences", {
+      method: "PATCH",
+      body: JSON.stringify({ visualAprendizado: aprendizado }),
     }),
 
   // Administração (somente admin)
@@ -370,7 +379,11 @@ export const api = {
   validarFichaRegras: (cid: string, characterId: string) =>
     requisicao<ResultadoValidacaoRegras>(`/campaigns/${cid}/regras/validacao/${characterId}`),
   obterVinculaveis: (cid: string) =>
-    requisicao<{ kinds: string[]; elementos: Record<string, ElementoVinculavel[]> }>(`/campaigns/${cid}/regras/vinculaveis`),
+    requisicao<{
+      kinds: string[];
+      elementos: Record<string, ElementoVinculavel[]>;
+      metadadosPoderes?: MetadadoPoder[];
+    }>(`/campaigns/${cid}/regras/vinculaveis`),
   /** Simulador da prévia do editor — mesmo pipeline da ficha real, sem gravar nada. */
   simularFicha: (cid: string, dados: { estrutura: EstruturaFicha; dados: Record<string, unknown>; pontosFicticios?: number }) =>
     requisicao<SimulacaoResultado>(`/campaigns/${cid}/regras/simulacao`, { method: "POST", body: JSON.stringify(dados) }),
@@ -420,6 +433,37 @@ export const api = {
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacao`, { method: "POST", body: JSON.stringify(dados) }),
   estornarOperacao: (charId: string, opId: string) =>
     requisicao<{ ok: boolean; saldo: number | null; semMovimentacao?: boolean }>(`/characters/${charId}/financeiro/operacoes/${encodeURIComponent(opId)}/estornar`, { method: "POST" }),
+
+  // Comércio diegético 1.1.0 (backend: PRs #328/#329 — contrato LOJA-A/B)
+  comercioElegibilidade: (charId: string) =>
+    requisicao<{ elegivel: boolean; motivos: string[] }>(`/characters/${charId}/comercio/elegibilidade`),
+  // ?personagem= obrigatório desde o gate nas leituras (#329 @ 55f8adc):
+  // o servidor valida dono/mestre + gateInternet a cada chamada; sem o
+  // parâmetro → 400, inelegível → 403 internet_indisponivel sem dados.
+  comercioLojas: (cid: string, charId: string) =>
+    requisicao<{ lojas: LojaComercio[] }>(`/campaigns/${cid}/comercio/lojas?personagem=${encodeURIComponent(charId)}`),
+  criarLoja: (cid: string, dados: { name: string; category?: string; location?: string; description?: string }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarLoja: (cid: string, shopId: string, dados: Partial<{ name: string; category: string; location: string; description: string; isOpen: boolean }>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  adicionarGestorLoja: (cid: string, shopId: string, dados: { membershipId: string; role: "gestor" | "proprietario" }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/gestores`, { method: "POST", body: JSON.stringify(dados) }),
+  removerGestorLoja: (cid: string, shopId: string, managerId: string) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}/gestores/${managerId}`, { method: "DELETE" }),
+  listarContasLoja: (cid: string, shopId: string) =>
+    requisicao<{ contas: ContaLoja[] }>(`/campaigns/${cid}/comercio/lojas/${shopId}/contas`),
+  criarContaLoja: (cid: string, shopId: string, dados: { type: string; name: string; balanceReais?: number; currency?: string; papel: "caixa" | "reserva" }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/contas`, { method: "POST", body: JSON.stringify(dados) }),
+  criarOfertaLoja: (cid: string, shopId: string, dados: { name: string; description?: string; priceCents: number; currency?: string; stockQty?: number | null; itemTemplateId?: string }) =>
+    requisicao<{ id: string }>(`/campaigns/${cid}/comercio/lojas/${shopId}/ofertas`, { method: "POST", body: JSON.stringify(dados) }),
+  atualizarOfertaLoja: (cid: string, shopId: string, offerId: string, dados: Partial<{ name: string; description: string; priceCents: number; currency: string; stockQty: number | null; itemTemplateId: string; isActive: boolean }>) =>
+    requisicao<{ ok: boolean }>(`/campaigns/${cid}/comercio/lojas/${shopId}/ofertas/${offerId}`, { method: "PATCH", body: JSON.stringify(dados) }),
+  comercioComprar: (charId: string, dados: { shopId: string; accountId: string; items: { offerId: string; qty: number; expectedUnitCents?: number }[]; requestId: string }) =>
+    requisicao<{ id: string; replay?: boolean; totalCents?: number; itens?: { offerId: string; name: string; qty: number; unitCents: number }[] }>(`/characters/${charId}/comercio/comprar`, { method: "POST", body: JSON.stringify(dados) }),
+  comercioVender: (charId: string, dados: { shopId: string; inventoryEntryId: string; qty: number; accountId: string; expectedUnitCents?: number; requestId: string }) =>
+    requisicao<{ id: string; replay?: boolean; totalCents?: number }>(`/characters/${charId}/comercio/vender`, { method: "POST", body: JSON.stringify(dados) }),
+  comercioPedidos: (charId: string) =>
+    requisicao<{ pedidos: PedidoComercio[] }>(`/characters/${charId}/comercio/pedidos`),
 
   // Catálogo de itens (Etapa 6)
   listarCatalogo: (cid: string) =>
@@ -790,6 +834,8 @@ export interface DefinicaoElemento {
   exclusivos?: string[];
   obrigatorios?: string[];
   reservaPontos?: string;
+  /** Uso deste Poder só deve ser registrado no fluxo de teste D10. */
+  exigeTeste?: boolean;
   disponivel?: boolean;
   ordem?: number;
   formulas?: Record<string, string>;
@@ -847,6 +893,10 @@ export interface ConfigRegras {
   dados?: {
     d10SucessoMinimo: number;
   };
+  /** Pontos de Sangue (Issue #186, C1) — espelha config.sangue do schema
+   *  servidor/src/lib/regras.ts. Apenas vínculos; custo/recuperação em
+   *  jogo ainda não fazem parte deste contrato. */
+  sangue?: ConfigSangue;
   notas?: {
     jogadorCompartilha: boolean;
     espectadorLeCompartilhadas: boolean;
@@ -854,6 +904,58 @@ export interface ConfigRegras {
   vtt?: {
     vidaCompartilhada: boolean;
   };
+}
+
+// ---------- Pontos de Sangue (Issue #186, C1) ----------
+
+export type ModoCapacidadeSangue = "valor" | "somaNiveis" | "mapa";
+
+export interface ConfigCapacidadeSangue {
+  modo?: ModoCapacidadeSangue;
+  /** modo "mapa": rótulo do campo → capacidade (rótulos são da campanha). */
+  mapa?: Record<string, number>;
+  /** Bônus opcional por Qualidade — coeficiente é da campanha, nunca inventado. */
+  bonusQualidade?: {
+    campoId?: string;
+    coeficiente?: number;
+    modo?: ModoCapacidadeSangue;
+    mapa?: Record<string, number>;
+  };
+}
+
+export interface ConfigNaturezaSangue {
+  metaHumanoComPoder?: boolean;
+  /** Ação canônica de recuperação (contrato #216) — nunca string livre. */
+  recuperacao?: "descansar" | "alimentar";
+}
+
+/** Ação canônica de recuperação de Sangue (Descansar/Alimentar-se). */
+export interface ConfigAcaoRecuperacao {
+  /** Obrigatória quando a ação está presente; false = inerte. */
+  habilitada?: boolean;
+  /** Obrigatória > 0 quando habilitada:true; ausente/inválida → 400. */
+  quantidade?: number;
+}
+
+export interface ConfigSangue {
+  habilitado?: boolean;
+  campoCapacidadeId?: string;
+  campoNaturezaId?: string;
+  capacidade?: ConfigCapacidadeSangue;
+  /** Rótulos de natureza livres da campanha; sem mapeamento = desconhecida (fail-closed). */
+  naturezas?: Record<string, ConfigNaturezaSangue>;
+  /** Ausência nunca habilita recuperação — só habilitado:true liga. */
+  recuperacaoSangue?: {
+    habilitado?: boolean;
+    /** Ações canônicas; ação ausente = desabilitada. */
+    acoes?: {
+      descansar?: ConfigAcaoRecuperacao;
+      alimentar?: ConfigAcaoRecuperacao;
+    };
+  };
+  /** Custo de Sangue por Poder (key de rule_definitions kind="poder").
+   *  Campo sem entrada = gratuito; custo deve ser finito >= 0. */
+  poderes?: Record<string, { custo: number }>;
 }
 
 export interface RegrasCampanha {
@@ -873,6 +975,14 @@ export interface ElementoVinculavel {
   niveis?: { descricao?: string; custo?: number }[];
   custoPontos?: number;
   maximo?: number;
+  /** true = uso exige D10; ausente/false = preserva ativação narrativa. */
+  exigeTeste?: boolean;
+}
+
+/** Metadados de regra dos Poderes, inclusive os inativos na biblioteca. */
+export interface MetadadoPoder {
+  key: string;
+  exigeTeste: boolean;
 }
 
 export interface ResultadoValidacaoRegras {
@@ -1096,6 +1206,84 @@ export interface Financeiro {
   };
   contas: ContaFinanceira[];
   historico: TransacaoFinanceira[];
+}
+
+// ---- Comércio diegético 1.1.0 (lojas/ofertas/pedidos) ----
+
+export interface OfertaComercio {
+  id: string;
+  shopId: string;
+  name: string;
+  description: string | null;
+  priceCents: number;
+  currency: string;
+  stockQty: number | null;
+  isActive: boolean;
+  itemTemplateId: string | null;
+  /** calculado no servidor: stockQty NULL = ilimitado */
+  emEstoque: boolean;
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GestorLoja {
+  id: string;
+  membershipId: string;
+  role: "gestor" | "proprietario" | string;
+}
+
+export interface ContaLoja {
+  id: string;
+  type: string;
+  name: string;
+  currency: string;
+  balanceCents: number;
+  data: Record<string, unknown>;
+}
+
+export interface LojaComercio {
+  id: string;
+  campaignId: string;
+  name: string;
+  category: string | null;
+  location: string | null;
+  description: string | null;
+  isOpen: boolean;
+  /** Calculado pelo servidor para o usuário da sessão. */
+  podeGerenciar?: boolean;
+  /** Só vem na resposta do mestre; nunca exposto a compradores comuns. */
+  gestores?: GestorLoja[];
+  data: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  ofertas: OfertaComercio[];
+}
+
+export interface PedidoComercioItem {
+  offerId?: string;
+  inventoryEntryId?: string;
+  name: string;
+  qty: number;
+  unitCents: number;
+}
+
+export interface PedidoComercio {
+  id: string;
+  campaignId: string;
+  shopId: string;
+  requestId: string;
+  buyerCharacterId: string;
+  items: PedidoComercioItem[];
+  totalCents: number;
+  currency: string;
+  status: string;
+  moneyTransactionIds: string[];
+  /** Direção canônica do pedido (contrato #329 @ 858aeab+):
+   *  "compra" | "venda_para_loja" — fallback data.direction em versões antigas. */
+  direcao?: string;
+  data: { fingerprint?: string; direction?: string } & Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface ItemCatalogo {

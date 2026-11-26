@@ -7,6 +7,7 @@
 //   teste-convite-cadastro.mjs   → isAdmin forjado no cadastro
 //   teste-sessoes-conta.mjs      → hardening do ADMIN principal
 // Banco temporário + migrations reais + servidor spawnado (teardown seguro).
+import { connect, createServer } from "node:net";
 import { io as ioClient } from "socket.io-client";
 import {
   dirTeste, prepararBanco, portaLivre, subirServidor, esperarSaudavel,
@@ -15,12 +16,23 @@ import {
 
 const DIR = dirTeste("escopo-cruzado");
 const BANCO = `${DIR}/mestre-rpg-teste.db`;
-await prepararBanco(BANCO);
 
 let pass = 0, fail = 0;
 const t = (n, c, extra = "") => { if (c) { pass++; console.log("  ok", n); } else { fail++; console.log("  FALHOU", n, extra); } };
 const sec = (n) => console.log("\n== " + n + " ==");
 const dormir = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Sonda TCP precisa: só ECONNREFUSED prova porta liberada. Timeout ou
+// qualquer outro erro é ambíguo → retorna false (NÃO prova ausência).
+function portaLiberada(portaAlvo, timeoutMs = 2000) {
+  return new Promise((res) => {
+    const s = connect({ host: "127.0.0.1", port: portaAlvo });
+    const fim = (livre) => { try { s.destroy(); } catch { } res(livre); };
+    s.setTimeout(timeoutMs, () => fim(false));
+    s.once("connect", () => fim(false));
+    s.once("error", (e) => fim(e?.code === "ECONNREFUSED"));
+  });
+}
 
 // Pipes do servidor consumidos continuamente com buffers limitados:
 // sem drenar stdout/stderr o filho pode bloquear com o pipe cheio;
@@ -62,15 +74,24 @@ const emitirCb = (s, ev, p) => new Promise((r) => {
   s.emit(ev, p, (x) => { clearTimeout(to); r(x); });
 });
 
-const porta = await portaLivre();
-const base = `http://127.0.0.1:${porta}`;
-const proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
-consumirStream(proc.stdout, logsServidor.out);
-consumirStream(proc.stderr, logsServidor.err);
+// Handles nullable: qualquer etapa de setup pode falhar antes de
+// produzir porta/processo — o finally cobre todos os casos.
+let porta = null;
+let base = null;
+let proc = null;
 
 try {
-  // Boot protegido: falha aqui ainda passa pelo finally — processo e
-  // diretório temporário nunca ficam abandonados.
+  // Todo o setup (banco, porta, processo) acontece DENTRO do try:
+  // uma falha em qualquer ponto ainda passa pelo finally — fixture,
+  // porta e processo nunca ficam órfãos.
+  await prepararBanco(BANCO);
+  porta = await portaLivre();
+  base = `http://127.0.0.1:${porta}`;
+  proc = subirServidor(porta, { banco: BANCO, arquivos: `${DIR}/arq`, backups: `${DIR}/bks` });
+  consumirStream(proc.stdout, logsServidor.out);
+  consumirStream(proc.stderr, logsServidor.err);
+
+  // Boot protegido: falha aqui ainda passa pelo finally.
   await esperarSaudavel(base, proc);
   sec("Cenário — campanha, sessão, ADMIN secundário e GM de guilda");
   const C = await criarCenario(base, BANCO, { jogadores: { jogador1: "esc_j1" } });
@@ -106,6 +127,25 @@ try {
   db.close();
   t("admin2 sem membership na campanha", membAdmin2 === 0);
   t("GM sem membership na campanha", membGm === 0);
+
+  // O GM possui um membership legítimo em OUTRA campanha; isso prova que
+  // autorização em um escopo de campanha não atravessa para a campanha-alvo.
+  const outra = await req(base, "POST", "/campaigns", {
+    cookie: cookieGm,
+    body: { name: "Campanha do GM — outra" },
+  });
+  const outraCampId = outra.json?.campanha?.id ?? outra.json?.campaign?.id;
+  t("GM cria outra campanha e recebe membership mestre",
+    outra.status === 201 && !!outraCampId,
+    JSON.stringify(outra.json).slice(0, 200));
+  if (outraCampId) {
+    const membOutra = comDb(BANCO, (db) => db.prepare(
+      "select role, status from memberships where campaign_id=? and user_id=?"
+    ).get(outraCampId, gmId));
+    t("membership do GM existe somente na outra campanha",
+      membOutra?.role === "mestre" && membOutra?.status === "ativo",
+      JSON.stringify(membOutra));
+  }
 
   // baseline de integridade: convites e memberships da campanha antes
   // das negações — os asserts do fim comparam com estes valores.
@@ -181,6 +221,50 @@ try {
   t("memberships inalterados após PATCH de papel negado",
     integridade.membros === baseIntegridade.membros,
     `antes=${baseIntegridade.membros} depois=${integridade.membros}`);
+
+  sec("Fault injection — falha de setup/boot não deixa recurso órfão");
+  {
+    const DIR2 = dirTeste("escopo-cruzado-fail");
+    const BANCO2 = `${DIR2}/mestre-rpg-teste.db`;
+    let porta2 = null, proc2 = null, bloqueador = null;
+    try {
+      await prepararBanco(BANCO2);
+      porta2 = await portaLivre();
+      // Porta ocupada por um servidor oco ANTES do spawn: o app falha
+      // no bind de forma determinística — injeção real de falha de boot.
+      bloqueador = createServer();
+      await new Promise((res, rej) => {
+        bloqueador.once("error", rej);
+        bloqueador.listen(porta2, "0.0.0.0", res);
+      });
+      proc2 = subirServidor(porta2, { banco: BANCO2, arquivos: `${DIR2}/arq`, backups: `${DIR2}/bks` });
+      const morreu = await Promise.race([
+        new Promise((r) => proc2.once("exit", () => r(true))),
+        dormir(10000).then(() => false),
+      ]);
+      t("falha injetada: app morre ao não conseguir bind", morreu === true);
+    } catch (e) {
+      fail++;
+      console.log("FALHOU fault injection (exceção):", String(e?.message ?? e).slice(0, 160));
+    } finally {
+      // Mesmo padrão do finally principal: teardown independente por
+      // etapa — bloqueador, processo e fixture são limpos mesmo com
+      // o setup ter falhado no meio.
+      try { if (bloqueador) await new Promise((r) => bloqueador.close(() => r())); } catch { }
+      try { await encerrarServidor(proc2); } catch { }
+      if (porta2 !== null) {
+        const livre = await portaLiberada(porta2);
+        t("fault injection: porta liberada (ECONNREFUSED, sem órfão)", livre === true);
+      }
+      try {
+        const limpo = limparDir(DIR2);
+        t("fault injection: fixture removida mesmo após falha", limpo === true);
+      } catch {
+        fail++;
+        console.log("FALHOU fault injection: limpeza lançou exceção");
+      }
+    }
+  }
 } catch (e) {
   // Exceção no corpo do teste vira falha registrada — o resumo final
   // continua sendo impresso e o erro original não é perdido.
@@ -201,6 +285,20 @@ try {
   } catch (e) {
     teardownFalhou = true;
     console.error("[teardown] servidor:", e?.message ?? e);
+  }
+  // Prova de ausência de recurso órfão: o processo precisa ter exit
+  // real e a porta precisa recusar conexão (ECONNREFUSED) — timeout
+  // ou erro ambíguo NÃO conta como prova.
+  if (proc && proc.exitCode === null && proc.signalCode === null) {
+    teardownFalhou = true;
+    console.error("[teardown] processo do servidor sem exit após encerrarServidor");
+  }
+  if (porta !== null) {
+    const livre = await portaLiberada(porta);
+    if (!livre) {
+      teardownFalhou = true;
+      console.error(`[teardown] porta ${porta} não comprovadamente liberada (sem ECONNREFUSED)`);
+    }
   }
   try {
     if (!limparDir(DIR)) teardownFalhou = true;

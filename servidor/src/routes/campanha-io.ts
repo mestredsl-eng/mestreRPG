@@ -56,7 +56,8 @@ function coerenteComCampanha(estado: EstadoCampanha, cid: string): boolean {
   const colecoes = [
     estado.memberships, estado.invitations, estado.sheetTemplates, estado.characters,
     estado.ruleSets, estado.itemTemplates, estado.vehicles, estado.financialAccounts,
-    estado.moneyTransactions, estado.sessions, estado.chatMessages, estado.rolls,
+    estado.moneyTransactions, estado.shops, estado.shopManagers, estado.shopOffers,
+    estado.shopOrders, estado.sessions, estado.chatMessages, estado.rolls,
     estado.tests, estado.notes, estado.files, estado.folders,
   ];
   return colecoes.every((rows) =>
@@ -134,7 +135,14 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       const sessoesAntes = (await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.campaignId, cid))).map((s) => s.id);
       let resultado;
       try {
-        resultado = await restaurarEstado(cid, estado, { gravarArquivos: pacote.arquivos, origem: "externa" });
+        resultado = await restaurarEstado(cid, estado, {
+          gravarArquivos: pacote.arquivos,
+          origem: "externa",
+          // C3: envelope do pacote — contexto de proveniência da cadeia
+          // validada na importação (pacote.campanhaId === cid já foi
+          // verificado acima)
+          campanhaIdOrigem: pacote.campanhaId,
+        });
         commitado = true;
       } catch (e) {
         await liberarBarreiraRestauracao(cid, restoreId, "falha");
@@ -238,7 +246,11 @@ campanhaIORouter.post("/importar", limiteImportar, async (req, res) => {
       // pacote externo: origem "externa" — metadados reservados passam
       // por validação/saneamento e o relatório vai para resposta+auditoria.
       // B1: chave de assinatura buscada antes da transação (get-or-create).
-      saneamento = inserirEstado(tx, estado, { origem: "externa", chaveAssinatura });
+      saneamento = inserirEstado(tx, estado, {
+        origem: "externa",
+        chaveAssinatura,
+        campanhaIdOrigem: pacote.campanhaId,
+      });
       // garante o importador como mestre mesmo que o pacote não o tenha
       if (precisaMembroExtra) {
         tx.insert(memberships).values({
