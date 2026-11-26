@@ -39,6 +39,46 @@ function envHome(home, extra = {}) {
   return { ...process.env, MESTRE_HOME: home, MESTRE_BANCO: join(home, "banco", "mestre-rpg.db"),
     MESTRE_ARQUIVOS: join(home, "arquivos", "campanhas"), MESTRE_BACKUPS: join(home, "backups"), ...extra };
 }
+
+// Issue #205 — ambiente do .bat filho (W9/W10): allowlist explícita.
+// O spawn herdava process.env inteiro: qualquer MESTRE_HOME/MESTRE_BANCO/
+// MESTRE_ARQUIVOS/MESTRE_BACKUPS (ou MESTRE_PORTA, MESTRE_AUTO_UPDATE,
+// MESTRE_STATE_DIR, MESTRE_TRAVA_GATE_DIR...) definido no terminal pai —
+// ou setado por cenário anterior do próprio harness (w16 grava
+// process.env.MESTRE_*) — vazava para o cmd.exe e redirecionava os dados
+// do filho para fora da fixture. Aqui o filho recebe SOMENTE variáveis
+// de SO/sessão da allowlist + as injeções explícitas da fixture; os
+// diretórios de dados apontam para tmp descartável, nunca para a
+// instalação real.
+const CHAVES_ENV_BAT = new Set([
+  "path", "pathext", "comspec", "systemroot", "windir", "os",
+  "temp", "tmp", "tmpdir",
+  "username", "userdomain", "userdomain_roamingprofile", "logonserver",
+  "sessionname", "clientname",
+  "userprofile", "homedrive", "homepath", "home",
+  "appdata", "localappdata", "programdata", "public", "allusersprofile",
+  "programfiles", "programfiles(x86)", "programw6432",
+  "commonprogramfiles", "commonprogramfiles(x86)", "commonprogramw6432",
+  "processor_architecture", "processor_identifier", "processor_level",
+  "processor_revision", "number_of_processors",
+  "psmodulepath", "driverdata",
+]);
+
+function envBatFilho(tmp, injetadas = {}) {
+  const env = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && CHAVES_ENV_BAT.has(k.toLowerCase())) env[k] = v;
+  }
+  const dados = join(tmp, "dados-fixture");
+  return {
+    ...env,
+    MESTRE_HOME: dados,
+    MESTRE_BANCO: join(dados, "banco", "mestre-rpg.db"),
+    MESTRE_ARQUIVOS: join(dados, "arquivos", "campanhas"),
+    MESTRE_BACKUPS: join(dados, "backups"),
+    ...injetadas,
+  };
+}
 function rodarRestaurador(home, extraEnv = {}) {
   return spawnSync(NODE, [DIST_REST], { env: envHome(home, extraEnv), encoding: "utf8", timeout: 60000 });
 }
@@ -401,7 +441,7 @@ const barreira = process.env.HOMOLOG_BARRIER || "";
 const dirBar = process.env.HOMOLOG_BARRIER_DIR || "";
 const ponto = alvo.includes("db:migrate") ? "migrate" : alvo.includes("run start") ? "start" : null;
 // debug: dump sempre ao lado do stub (independe de dirBar)
-try { appendFileSync(new URL("./env-dump.log", import.meta.url), JSON.stringify({ alvo, barreira, dirBar, homologa: Object.keys(process.env).filter(k=>/HOMOLOG/i.test(k)) }) + "\\n"); } catch {}
+try { appendFileSync(new URL("./env-dump.log", import.meta.url), JSON.stringify({ alvo, barreira, dirBar, homologa: Object.keys(process.env).filter(k=>/HOMOLOG/i.test(k)), mestre: Object.fromEntries(Object.entries(process.env).filter(([k])=>/^MESTRE_/i.test(k))) }) + "\\n"); } catch {}
 if (dirBar) { try { appendFileSync(dirBar + "/chamadas.log", JSON.stringify({ alvo, barreira, ponto, dirBar }) + "\\n"); } catch {} }
 if (barreira === ponto && ponto) {
   writeFileSync(dirBar + "/" + ponto + ".chegou", String(Date.now()));
@@ -439,7 +479,8 @@ async function rodarBat(cloneDir, logFile, opts = {}) {
   let buf = "";
   const filho = spawn("cmd.exe", ["/c", "iniciar-mestre-rpg.bat"], {
     cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"],
-    env: opts.env ? { ...process.env, ...opts.env } : process.env,
+    // opts.env já vem completo de envBatFilho() — sem herdar process.env
+    env: opts.env,
   });
   const estado = { morto: false, motivo: null, health: null };
   const aoDados = (d) => {
@@ -516,17 +557,23 @@ async function executarBatE2E(w, cenario) {
       const stub = prepararStubNpm(tmp);
       const barDir = join(tmp, "barreira");
       mkdirSync(barDir, { recursive: true });
-      // Windows: a variavel pode ser "Path" (nao "PATH") — reutilizar a
-      // chave real existente, senao o filho recebe PATH duplicada e o
-      // stub nunca entra na resolucao do npm.
-      const chavePath = Object.keys(process.env).find((k) => k.toLowerCase() === "path") || "PATH";
-      const envBar = {
-        [chavePath]: stub.dir + ";" + process.env[chavePath],
-        HOMOLOG_BARRIER: ponto, HOMOLOG_BARRIER_DIR: barDir,
-      };
+      // #205: env do filho = allowlist de SO/sessão + injeções da fixture.
+      // Nenhum MESTRE_*/HOMOLOG_* do processo pai atravessa; os dados do
+      // filho vivem em tmp/dados-fixture (descartável), nunca na instalação.
+      const envBar = envBatFilho(tmp, { HOMOLOG_BARRIER: ponto, HOMOLOG_BARRIER_DIR: barDir });
+      // Windows: a variável pode ser "Path" (não "PATH") — reutilizar a
+      // chave real presente no env filtrado, senão o filho recebe PATH
+      // duplicada e o stub nunca entra na resolução do npm.
+      const chavePath = Object.keys(envBar).find((k) => k.toLowerCase() === "path") || "PATH";
+      envBar[chavePath] = `${stub.dir};${envBar[chavePath] ?? ""}`;
       writeFileSync(join(tmp, "env-debug.txt"), JSON.stringify({
         chavePath, path: envBar[chavePath], barrier: envBar.HOMOLOG_BARRIER, dirBar: envBar.HOMOLOG_BARRIER_DIR,
+        mestre: Object.fromEntries(Object.entries(envBar).filter(([k]) => k.startsWith("MESTRE_"))),
       }, null, 2));
+      res.dirsFixture = {
+        MESTRE_HOME: envBar.MESTRE_HOME, MESTRE_BANCO: envBar.MESTRE_BANCO,
+        MESTRE_ARQUIVOS: envBar.MESTRE_ARQUIVOS, MESTRE_BACKUPS: envBar.MESTRE_BACKUPS,
+      };
       // run1: boot com stub — o processo PARA no ponto exato da barreira
       const r1 = await rodarBatParado(cloneDir, join(tmp, `w${w}-run1-kill.log`), barDir, ponto, envBar);
       res.execucoes.push({ fase: "kill-na-barreira", ...r1.estado, exitCmd: r1.exitCmd });
@@ -540,8 +587,9 @@ async function executarBatE2E(w, cenario) {
           res.servidorNoArAposKill = rr.ok;
         } catch { res.servidorNoArAposKill = false; }
       }
-      // run2: retomada com npm real — boot completo ate o servidor
-      const r2 = await rodarBat(cloneDir, join(tmp, `w${w}-run2-retomada.log`), { matarAposSaude: true });
+      // run2: retomada com npm real — boot completo ate o servidor.
+      // Mesma allowlist do run1, sem stub nem barreira (npm real decide).
+      const r2 = await rodarBat(cloneDir, join(tmp, `w${w}-run2-retomada.log`), { matarAposSaude: true, env: envBatFilho(tmp) });
       res.execucoes.push({ fase: "retomada", ...r2.estado, exitCmd: r2.exitCmd });
     }
     res.headFinal = git(`rev-parse HEAD`, cloneDir);
@@ -560,7 +608,7 @@ async function executarBatE2E(w, cenario) {
 async function rodarBatParado(cloneDir, logFile, barDir, ponto, env) {
   const out = [];
   const filho = spawn("cmd.exe", ["/c", "iniciar-mestre-rpg.bat"], {
-    cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, ...env },
+    cwd: cloneDir, stdio: ["ignore", "pipe", "pipe"], env,
   });
   const estado = { morto: false, motivo: null, health: null };
   const aoDados = (d) => { const s = d.toString(); out.push(s); process.stdout.write(s); };
