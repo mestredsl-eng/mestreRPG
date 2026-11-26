@@ -549,6 +549,15 @@ try {
     const tkManualOnlyOff = tok(rManualOnlyOff?.vtt, "tk-manual-only");
     t("manual-only OFF: jogador vê token, mas não seu HP",
       !!tkManualOnlyOff && tkManualOnlyOff.vida == null && !("hpManual" in tkManualOnlyOff));
+    // F20: o mesmo contrato OFF vale no GET HTTP da sessão manual-only —
+    // a sessão não tem nenhum personagemId vinculado.
+    const httpOnlyOff = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnlyOffVtt = typeof httpOnlyOff.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOff.json.sessao.vttState) : httpOnlyOff.json?.sessao?.vttState;
+    const tkHttpOnlyOff = tok(httpOnlyOffVtt, "tk-manual-only");
+    t("manual-only HTTP OFF: jogador recebe token sem vida nem hpManual",
+      !!tkHttpOnlyOff && tkHttpOnlyOff.vida == null && !("hpManual" in tkHttpOnlyOff));
     const cfgOnlyOn = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
       { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: true } } });
     t("ativa compartilhamento para sessão manual-only", cfgOnlyOn.status === 200);
@@ -557,6 +566,21 @@ try {
     t("manual-only ON: jogador recebe HP projetado, sem dado bruto",
       tkManualOnlyOn?.vida?.hp?.atual === 9 && tkManualOnlyOn?.vida?.hp?.maximo === 12
         && !("hpManual" in tkManualOnlyOn));
+    const httpOnlyOn = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: c.jogadores.jogador1.cookie });
+    const httpOnlyOnVtt = typeof httpOnlyOn.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOn.json.sessao.vttState) : httpOnlyOn.json?.sessao?.vttState;
+    const tkHttpOnlyOn = tok(httpOnlyOnVtt, "tk-manual-only");
+    t("manual-only HTTP ON: jogador recebe vida.hp, nunca hpManual",
+      tkHttpOnlyOn?.vida?.hp?.atual === 9 && tkHttpOnlyOn?.vida?.hp?.maximo === 12
+        && !("hpManual" in tkHttpOnlyOn));
+    const httpOnlyOnM = await req(BASE, "GET", `/campaigns/${ids.camp}/sessoes/${sid3}`,
+      { cookie: ids.cookieMestre });
+    const httpOnlyOnMVtt = typeof httpOnlyOnM.json?.sessao?.vttState === "string"
+      ? JSON.parse(httpOnlyOnM.json.sessao.vttState) : httpOnlyOnM.json?.sessao?.vttState;
+    const tkHttpOnlyM = tok(httpOnlyOnMVtt, "tk-manual-only");
+    t("manual-only HTTP ON: mestre recebe vida.hp via GET",
+      tkHttpOnlyM?.vida?.hp?.maximo === 12 && !("hpManual" in (tkHttpOnlyM ?? {})));
     const rMasterOnlyOff = await req(BASE, "PUT", `/campaigns/${ids.camp}/regras/config`,
       { cookie: ids.cookieMestre, body: { vtt: { vidaCompartilhada: false } } });
     t("restaura compartilhamento OFF ao final", rMasterOnlyOff.status === 200);
