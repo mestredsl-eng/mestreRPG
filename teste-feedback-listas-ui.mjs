@@ -136,6 +136,34 @@ try {
   ok("convites. vazio real aparece após carga", (await pm.locator(".estado-vazio:has-text('Nenhum convite')").count()) === 1);
   ok("convites. formulário Gerar convite preservado", (await pm.locator('button[type="submit"]', { hasText: "Gerar convite" }).count()) === 1);
 
+  // ---------- 3b) Convites: falha em listarConvites → erro com retry, nunca "Carregando…" eterno ----------
+  // Issue #132 P3: antes do fix, listarMembros/listarConvites falhando após a
+  // campanha carregar deixava a aba Convites presa em "Carregando convites…".
+  let falharConvites = true;
+  await pm.route(urlConvites, async (route) => {
+    if (falharConvites) {
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ erro: "falha simulada" }) });
+    } else {
+      await route.continue();
+    }
+  });
+  await pm.reload({ waitUntil: "domcontentloaded" });
+  await abrirCampanha(pm);
+  await abrirAba(pm, "Convites");
+  await pm.waitForSelector("#painel-convites .estado-feedback-erro", { timeout: 8000 });
+  const painelConvites = pm.locator("#painel-convites");
+  ok("convites. falha mostra EstadoErro (não loading eterno)",
+    (await painelConvites.locator(".estado-feedback-erro").count()) === 1 &&
+    (await painelConvites.locator(".estado-feedback-carregando").count()) === 0);
+  ok("convites. erro tem role=alert e retry", (await painelConvites.locator(".estado-feedback-erro").getAttribute("role")) === "alert" &&
+    (await painelConvites.getByRole("button", { name: "Tentar novamente" }).count()) === 1);
+  ok("convites. estado vazio NÃO aparece durante o erro", (await pm.locator(".estado-vazio:has-text('Nenhum convite')").count()) === 0);
+  falharConvites = false;
+  await painelConvites.getByRole("button", { name: "Tentar novamente" }).click();
+  await pm.waitForSelector(".estado-vazio:has-text('Nenhum convite')", { timeout: 8000 });
+  ok("convites. retry recupera e mostra estado vazio", (await pm.locator(".estado-vazio:has-text('Nenhum convite')").count()) === 1);
+  await pm.unroute(urlConvites);
+
   // ---------- 4) Reduced motion: texto permanece, animação desligada ----------
   await pm.emulateMedia({ reducedMotion: "reduce" });
   // força loading de novo em Arquivos

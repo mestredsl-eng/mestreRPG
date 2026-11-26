@@ -98,6 +98,46 @@ try {
     });
     ok("mestre. aba focável por teclado com outline visível", foco.tag === "BUTTON" && /abas|secundario|ativo/.test(foco.cls) && /solid 2px/.test(foco.outline), JSON.stringify(foco));
 
+    // Issue #132 P3 — semântica ARIA: tablist/tab/tabpanel ligados.
+    const sem = await page.evaluate(() => {
+      const tl = document.querySelector(".abas[role=tablist]");
+      const tabs = [...document.querySelectorAll(".abas [role=tab]")];
+      const ativoTab = tabs.find((t) => t.getAttribute("aria-selected") === "true");
+      const painel = document.querySelector("[role=tabpanel]");
+      return {
+        tablist: !!tl && tl.getAttribute("aria-label") === "Seções da campanha",
+        rolesOk: tabs.length === 10 && tabs.every((t) =>
+          t.id && t.getAttribute("aria-controls") &&
+          (t.tabIndex === 0) === (t === ativoTab)),
+        painelLigado: !!(painel && ativoTab &&
+          painel.id === ativoTab.getAttribute("aria-controls") &&
+          painel.getAttribute("aria-labelledby") === ativoTab.id),
+      };
+    });
+    ok("mestre. tablist com aria-label; tabs com aria-selected/controls e roving tabindex", sem.tablist && sem.rolesOk, JSON.stringify(sem));
+    ok("mestre. painel ativo é tabpanel ligado à aba selecionada", sem.painelLigado);
+
+    // Teclado APG: setas movem foco+seleção; Home/End vão às pontas.
+    await page.locator(".abas button", { hasText: "Informações" }).click();
+    await page.waitForTimeout(200);
+    await page.keyboard.press("ArrowRight");
+    await page.waitForTimeout(200);
+    const aposSeta = await page.evaluate(() => ({
+      foco: document.activeElement.id,
+      sel: document.querySelector(".abas [aria-selected=true]")?.id,
+    }));
+    ok("mestre. ArrowRight move foco e seleção para Mesa", aposSeta.foco === "aba-mesa" && aposSeta.sel === "aba-mesa", JSON.stringify(aposSeta));
+    await page.keyboard.press("End");
+    await page.waitForTimeout(200);
+    const aposEnd = await page.evaluate(() => ({
+      foco: document.activeElement.id,
+      painel: document.querySelector("[role=tabpanel]")?.id,
+    }));
+    ok("mestre. End vai à última aba (Convites) com painel correspondente", aposEnd.foco === "aba-convites" && aposEnd.painel === "painel-convites", JSON.stringify(aposEnd));
+    await page.keyboard.press("Home");
+    await page.waitForTimeout(200);
+    ok("mestre. Home volta à primeira aba (Informações)", (await page.evaluate(() => document.activeElement.id)) === "aba-info");
+
     // Mobile 390px: abas não estouram a viewport (flex-wrap permite rolagem interna).
     await page.setViewportSize({ width: 390, height: 844 });
     await page.waitForTimeout(300);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { api, type CampanhaResumo, type Convite, type Membro, type PermissoesMembro } from "../api";
 import { getSocket } from "../socket";
 import { statusLabel } from "./Campanhas";
@@ -10,7 +10,7 @@ import Mesa from "./Mesa";
 import Diario from "./Diario";
 import Historico from "./Historico";
 import Arquivos from "./Arquivos";
-import IconeInterface from "../IconeInterface";
+import IconeInterface, { type NomeIconeInterface } from "../IconeInterface";
 import EstadoVazio from "../EstadoVazio";
 import { EstadoCarregando, EstadoErro } from "../EstadoFeedback";
 
@@ -36,6 +36,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
   // Issue #239 — membros/convites carregam junto da campanha; gate
   // evita o "EstadoVazio" de convites piscar antes do GET resolver.
   const [extrasCarregados, setExtrasCarregados] = useState(false);
+  // P3 #132: se listarMembros/listarConvites falha depois de a campanha
+  // carregar, a aba Convites não pode ficar em "Carregando…" eterno —
+  // marca erro próprio com retry (o erro global já aparece via EstadoErro).
+  const [extrasErro, setExtrasErro] = useState(false);
   const [editando, setEditando] = useState(false);
   const [form, setForm] = useState({ name: "", description: "", system: "", status: "preparacao" });
   const [conviteCriado, setConviteCriado] = useState<{ code: string } | null>(null);
@@ -67,8 +71,10 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         setMembros(membros);
       }
       setExtrasCarregados(true);
+      setExtrasErro(false);
       setErro(null);
     } catch (e) {
+      setExtrasErro(true);
       setErro(e instanceof Error ? e.message : "Erro ao carregar campanha");
     }
   }, [id]);
@@ -170,6 +176,41 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
 
   const pendentes = membros.filter((m) => m.status === "pendente");
 
+  // Issue #132 P3 — abas como tablist ARIA de verdade: role=tab com
+  // aria-selected/aria-controls, roving tabindex e setas ←/→/Home/End
+  // movem foco+seleção. Painéis correspondentes recebem role=tabpanel.
+  const abasVisiveis: { id: Aba; rotulo: string; icone: NomeIconeInterface }[] = [
+    { id: "info", rotulo: "Informações", icone: "informacoes" },
+    { id: "mesa", rotulo: "Mesa", icone: "mesa" },
+    ...(vePersonagens ? [{ id: "personagens" as Aba, rotulo: "Personagens", icone: "personagens" as NomeIconeInterface }] : []),
+    { id: "diario", rotulo: "Diário", icone: "diario" },
+    { id: "historico", rotulo: "Histórico", icone: "historico" },
+    { id: "arquivos", rotulo: "Arquivos", icone: "arquivos" },
+    ...(souMestre
+      ? ([
+          { id: "fichas", rotulo: "Fichas", icone: "fichas" },
+          { id: "regras", rotulo: "Regras", icone: "regras" },
+          { id: "participantes", rotulo: `Participantes (${membros.length})`, icone: "participantes" },
+          { id: "convites", rotulo: `Convites (${convites.length})`, icone: "convites" },
+        ] as { id: Aba; rotulo: string; icone: NomeIconeInterface }[])
+      : []),
+  ];
+
+  const aoTeclarAbas = (e: ReactKeyboardEvent) => {
+    const ids = abasVisiveis.map((a) => a.id);
+    const i = ids.indexOf(aba);
+    let j = -1;
+    if (e.key === "ArrowRight") j = (i + 1) % ids.length;
+    else if (e.key === "ArrowLeft") j = (i - 1 + ids.length) % ids.length;
+    else if (e.key === "Home") j = 0;
+    else if (e.key === "End") j = ids.length - 1;
+    else return;
+    e.preventDefault();
+    const alvo = ids[j];
+    setAba(alvo);
+    requestAnimationFrame(() => document.getElementById(`aba-${alvo}`)?.focus());
+  };
+
   return (
     <>
       <section className="cartao">
@@ -185,37 +226,37 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
         </div>
         {campanha.description && <p>{campanha.description}</p>}
 
-        <div className="abas">
-          {/* Issue #233 — ícones complementam os rótulos (que permanecem
-              como accessible name); nunca substituem o texto. */}
-          <button className={aba === "info" ? "ativo" : "secundario"} onClick={() => setAba("info")}><IconeInterface nome="informacoes" />Informações</button>
-          <button className={aba === "mesa" ? "ativo" : "secundario"} onClick={() => setAba("mesa")}><IconeInterface nome="mesa" />Mesa</button>
-          {vePersonagens && <button className={aba === "personagens" ? "ativo" : "secundario"} onClick={() => setAba("personagens")}><IconeInterface nome="personagens" />Personagens</button>}
-          <button className={aba === "diario" ? "ativo" : "secundario"} onClick={() => setAba("diario")}><IconeInterface nome="diario" />Diário</button>
-          <button className={aba === "historico" ? "ativo" : "secundario"} onClick={() => setAba("historico")}><IconeInterface nome="historico" />Histórico</button>
-          <button className={aba === "arquivos" ? "ativo" : "secundario"} onClick={() => setAba("arquivos")}><IconeInterface nome="arquivos" />Arquivos</button>
-          {souMestre && (
-            <>
-              <button className={aba === "fichas" ? "ativo" : "secundario"} onClick={() => setAba("fichas")}><IconeInterface nome="fichas" />Fichas</button>
-              <button className={aba === "regras" ? "ativo" : "secundario"} onClick={() => setAba("regras")}><IconeInterface nome="regras" />Regras</button>
-              <button className={aba === "participantes" ? "ativo" : "secundario"} onClick={() => setAba("participantes")}><IconeInterface nome="participantes" />Participantes ({membros.length})</button>
-              <button className={aba === "convites" ? "ativo" : "secundario"} onClick={() => setAba("convites")}><IconeInterface nome="convites" />Convites ({convites.length})</button>
-            </>
-          )}
+        {/* Issue #233 — ícones complementam os rótulos (que permanecem
+            como accessible name); nunca substituem o texto.
+            Issue #132 P3 — tablist ARIA real: setas/Home/End navegam. */}
+        <div className="abas" role="tablist" aria-label="Seções da campanha" onKeyDown={aoTeclarAbas}>
+          {abasVisiveis.map((a) => (
+            <button
+              key={a.id}
+              id={`aba-${a.id}`}
+              role="tab"
+              aria-selected={aba === a.id}
+              aria-controls={`painel-${a.id}`}
+              tabIndex={aba === a.id ? 0 : -1}
+              className={aba === a.id ? "ativo" : "secundario"}
+              onClick={() => setAba(a.id)}
+            ><IconeInterface nome={a.icone} />{a.rotulo}</button>
+          ))}
         </div>
       </section>
 
-      {aba === "mesa" && <Mesa campaignId={id} campanha={campanha} />}
-      {aba === "personagens" && vePersonagens && <Personagens campaignId={id} campanha={campanha} />}
-      {aba === "diario" && <Diario campaignId={id} campanha={campanha} />}
-      {aba === "historico" && <Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} />}
-      {aba === "arquivos" && <Arquivos campaignId={id} campanha={campanha} />}
-      {aba === "fichas" && souMestre && <ModelosFicha campaignId={id} />}
-      {aba === "regras" && souMestre && <Regras campaignId={id} />}
+      {aba === "mesa" && <div role="tabpanel" id="painel-mesa" aria-labelledby="aba-mesa"><Mesa campaignId={id} campanha={campanha} /></div>}
+      {aba === "personagens" && vePersonagens && <div role="tabpanel" id="painel-personagens" aria-labelledby="aba-personagens"><Personagens campaignId={id} campanha={campanha} /></div>}
+      {aba === "diario" && <div role="tabpanel" id="painel-diario" aria-labelledby="aba-diario"><Diario campaignId={id} campanha={campanha} /></div>}
+      {aba === "historico" && <div role="tabpanel" id="painel-historico" aria-labelledby="aba-historico"><Historico campaignId={id} campanha={campanha} aoAtualizar={() => void carregar()} /></div>}
+      {aba === "arquivos" && <div role="tabpanel" id="painel-arquivos" aria-labelledby="aba-arquivos"><Arquivos campaignId={id} campanha={campanha} /></div>}
+      {aba === "fichas" && souMestre && <div role="tabpanel" id="painel-fichas" aria-labelledby="aba-fichas"><ModelosFicha campaignId={id} /></div>}
+      {aba === "regras" && souMestre && <div role="tabpanel" id="painel-regras" aria-labelledby="aba-regras"><Regras campaignId={id} /></div>}
 
       {erro && <EstadoErro aoTentarNovamente={carregar}>{erro}</EstadoErro>}
 
       {aba === "info" && (
+        <div role="tabpanel" id="painel-info" aria-labelledby="aba-info">
         <section className="cartao">
           {!editando ? (
             <>
@@ -241,11 +282,14 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             </form>
           )}
         </section>
+        </div>
       )}
 
       {aba === "participantes" && souMestre && (
+        <div role="tabpanel" id="painel-participantes" aria-labelledby="aba-participantes">
         <section className="cartao">
           <h2>Participantes</h2>
+          {extrasErro && <EstadoErro aoTentarNovamente={carregar}>Não foi possível carregar os participantes.</EstadoErro>}
           {pendentes.length > 0 && (
             <>
               <h3>Aguardando aprovação ({pendentes.length})</h3>
@@ -396,9 +440,11 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             ))}
           </div>
         </section>
+        </div>
       )}
 
       {aba === "convites" && souMestre && (
+        <div role="tabpanel" id="painel-convites" aria-labelledby="aba-convites">
         <section className="cartao">
           <h2>Convites</h2>
 
@@ -429,7 +475,9 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             <button type="submit">Gerar convite</button>
           </form>
 
-          {!extrasCarregados ? (
+          {extrasErro ? (
+            <EstadoErro aoTentarNovamente={carregar}>Não foi possível carregar os convites.</EstadoErro>
+          ) : !extrasCarregados ? (
             <EstadoCarregando>Carregando convites…</EstadoCarregando>
           ) : convites.length === 0 ? (
             <EstadoVazio icone="vazio-lista">Nenhum convite gerado ainda.</EstadoVazio>
@@ -475,6 +523,7 @@ export default function Campanha({ id, aoVoltar }: { id: string; aoVoltar: () =>
             ))}
           </div>
         </section>
+        </div>
       )}
 
       {confirmando && (

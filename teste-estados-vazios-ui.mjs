@@ -89,6 +89,10 @@ try {
   await abrirAba(pm, "Convites");
   await pm.waitForTimeout(800);
   await checarVazio(pm.locator("body"), "Nenhum convite gerado ainda.", "convites. lista vazia");
+  // Issue #132 P3 — a aba ativa expõe um tabpanel semanticamente ligado a ela.
+  const painelConvites = pm.locator("#painel-convites[role=tabpanel]");
+  ok("convites. painel é tabpanel ligado à aba", (await painelConvites.count()) === 1 &&
+    (await painelConvites.getAttribute("aria-labelledby")) === "aba-convites");
   const btnConvite = await pm.locator('button[type="submit"]', { hasText: "Gerar convite" }).count();
   ok("convites. formulário Gerar convite continua visível", btnConvite === 1);
 
