@@ -328,7 +328,14 @@ export default function Conversa({ adaptador, conversaId, nomeConversa, tipoConv
                   setOcupado(true);
                   void adaptador.responderConviteGrupo(conversaId, true)
                     .catch(() => setErroAcao("Não foi possível aceitar o convite."))
-                    .finally(() => { setOcupado(false); void carregarDetalhes(); });
+                    .finally(() => {
+                      setOcupado(false);
+                      // recarrega o status SEM abrir o painel de detalhes —
+                      // o usuário cai direto no composer, não num modal
+                      void adaptador.obterDetalhesGrupo(conversaId)
+                        .then(setDetalhes)
+                        .catch(() => {});
+                    });
                 }}
               >Aceitar convite</button>{" "}
               <button
