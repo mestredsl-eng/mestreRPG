@@ -74,7 +74,7 @@ Todos reutilizam `EstadoCarregando` (aria-busy), `EstadoVazio` (CTA diegético),
 | Offline/reconectando | Banner "Reconectando…" (padrão já existente); leitura liberada, ações de publicação desabilitadas |
 | Sem dispositivo | Gate existente — Explorar nem renderiza |
 | Sem conta | Vazio diegético (mesmo padrão de Mensagens) |
-| Conteúdo removido/expirado | Tela dedicada honesta: "este anúncio não está mais disponível" + data de expiração quando houver; **nunca** 404 cru nem conteúdo residual. **Distinção autor×leitor** (threat model V-07/D-E): o autor vê que seu conteúdo foi retirado **com motivo**; terceiros veem apenas indisponível |
+| Conteúdo removido/expirado | **Distinção de acesso legítimo (anti-enumeração, revisão INTERMEDIÁRIO)**: quem tinha acesso prévio (autor, mestre da campanha, ou conteúdo já público para ele) vê tela honesta de estado — "expirado em…" / "retirado" — com contexto. Quem **nunca** teve acesso (link adivinhado, conteúdo privado alheio) recebe **404 diegético seco**, idêntico a inexistente — a tela de estado jamais vaza existência+estado de moderação. O contrato precisa carregar o flag "visível-antes" vs "nunca-visível" |
 | Sem permissão para publicar | Ação visível mas desabilitada **com motivo** ("publicar exige autorização do mestre" — se a regra exigir) |
 | Pesquisa sem resultado | Estado vazio específico + sugestão de ampliar escopo. Resultado nunca vaza existência de conteúdo oculto (anti-enumeração V-02: "não existe" e "existe mas oculto" respondem igual) |
 | Perdeu o dispositivo (gate revogado) | **Ler** conteúdo já publicado segue permitido (publicação é fato consumado — D-B do threat model); **editar/publicar** fica bloqueado pelo gate vigente, com motivo |
@@ -98,8 +98,9 @@ espectador (fora do gate — não vê a aba Rede).
 | W4/W5 | vazia/erro | ✓ | ✓ | Vazio honesto / retry |
 | W6 Classificados | ok | ✓ | ✓ | Filtrar, abrir detalhe |
 | W6 | vazio por filtro | ✓ | ✓ | Limpar filtro |
-| W7 Anúncio | ativo | ✓ | ✓ | Contatar? (ver dúvida D6) |
-| W7 | expirado/removido | ✓ | ✓ | Somente leitura do aviso de estado |
+| W7 Anúncio | ativo | ✓ | ✓ | "Contatar" **somente** via fluxo de contato existente (aresta dirigida + aceite + bloqueio P3); se bloqueado, estado honesto sem vazar o bloqueio — ver D6 |
+| W7 | expirado/removido — acesso legítimo prévio | ✓ | ✓ | Tela de estado com contexto (data/motivo quando público; motivo ao autor) |
+| W7 | expirado/removido — nunca visível ao requisitante | ✓ | ✓ | **404 diegético** idêntico a inexistente (anti-enumeração V-02) |
 | W8 Publicar | formulário | ✓* | ✓ | Preencher → prévia → confirmar |
 | W8 | prévia | ✓* | ✓ | Revisar + trocar visibilidade antes de confirmar |
 | W9 Perfil | próprio | ✓ | ✓ | Editar campos permitidos, ver publicações |
@@ -118,8 +119,11 @@ a ação desabilitada com motivo quando não permitida.
 3. **Publicar sempre com prévia + declaração de visibilidade** antes de
    confirmar; o que depende de mestre aparece marcado *antes* do envio, não
    como erro depois.
-4. **Conteúdo indisponível é estado de tela**, não erro: expirado/removido
-   mostram aviso dedicado com contexto (data, motivo quando público).
+4. **Conteúdo indisponível é estado de tela — com fronteira de acesso.**
+   Expirado/removido mostram aviso dedicado apenas a quem tinha acesso
+   legítimo prévio (autor, mestre da campanha, ou já público para ele);
+   para quem nunca teve acesso, 404 diegético seco — a tela de estado
+   jamais vaza existência + estado de moderação (anti-enumeração, §6.1).
 5. **Perfis são somente-leitura para terceiros** na 1.1.2; edição do próprio
    perfil fica na sub-área Perfil com os campos que o contrato autorizar.
 6. **Favoritos e histórico: adiar.** Não há justificativa de produto ainda;
@@ -133,16 +137,16 @@ a ação desabilitada com motivo quando não permitida.
 
 | # | Dúvida | Impacto na UX |
 |---|--------|---------------|
-| D1 | Publicação é livre ou exige aprovação do mestre? Pré-moderação ou denúncia+pós? | Define se W8 mostra "enviado para análise" ou publica direto; se ação fica desabilitada para jogador |
-| D2 | Escopo de visibilidade: só dentro da campanha ou entre campanhas/servidor? | Define o seletor de visibilidade do W8 e o escopo da pesquisa |
+| D1 | Publicação é livre ou exige aprovação do mestre? Pré-moderação ou denúncia+pós? | Define se W8 mostra "enviado para análise" ou publica direto. **Qualquer que seja**: remoção pós-publicação tem efeito imediato em lista/busca/socket e audit de quem retirou (threat model V-03) |
+| D2 | Escopo de visibilidade: só dentro da campanha ou entre campanhas/servidor? | **Fronteira de segurança, não cosmética** (revisão INTERMEDIÁRIO): se cruzar campanhas, `campaignId` deixa de ser fronteira suficiente e todo V-01 muda de natureza — exige camada "público global vs por campanha" no schema/índice. **Default seguro recomendado: escopo = campanha**, consistente com todo o domínio Internet atual. Deliberar **antes** do PAI fechar o contrato #365 |
 | D3 | Quem cria sites/páginas — só mestre ou qualquer personagem? | Define se "Novo site" aparece para jogador |
 | D4 | Notícias: qualquer personagem publica ou só fontes oficiais? | Define W8 para notícias e o rótulo de fonte |
-| D5 | O que o perfil público exibe — nome do personagem, bio, publicações, nada? | Define W9 e o que a busca indexa de perfil |
-| D6 | Anúncio permite contato direto (link para conversa privada existente)? | Se sim, W7 ganha ação "Contatar" reutilizando Mensagens |
+| D5 | O que o perfil público exibe — nome do personagem, bio, publicações, nada? | Define W9 e o que a busca indexa de perfil. **Padrão P11**: handle sempre; `displayName` só com opt-in explícito do titular (V-08) — acopla com D12 |
+| D6 | Anúncio permite contato direto (link para conversa privada existente)? | Se sim, W7 ganha ação "Contatar" — **somente reutilizando o fluxo de contato existente** (aresta dirigida + aceite + bloqueio P3). Nunca canal direto: contornaria bloqueio, revelaria se o autor tem conta ativa e criaria canal não auditado. Se já bloqueado → estado honesto sem vazar o bloqueio |
 | D7 | Anúncio tem prazo padrão? Quem remove (autor, mestre, expiração automática)? | Define estados de W7 e o formulário de W8 |
-| D8 | Pesquisa indexa o quê — tudo que o personagem pode ver, ou só conteúdo "público"? | Define escopo default e honestidade dos resultados |
+| D8 | Pesquisa indexa o quê — tudo que o personagem pode ver, ou só conteúdo "público"? | **V-02**: default = somente conteúdo com visibilidade que o personagem pode ver, **filtro no SQL, nunca pós-filtro** — a UI assume que o conjunto retornado já é o conjunto permitido |
 | D9 | Sites têm navegação própria (menu do site) ou são páginas soltas? | Define W3 |
-| D10 | Personagem sem conta Internet acessa a camada pública? (hoje conta é pré-requisito do módulo) | Define se Explorar fica atrás do mesmo gate de conta |
+| D10 | Personagem sem conta Internet acessa a camada pública? (hoje conta é pré-requisito do módulo) | Define se Explorar fica atrás do mesmo gate de conta. **Acoplada a D-A/D-B**: se a camada pública ficar atrás do gate de conta, os vetores de revogação V-04 herdam de graça; se aberta a personagem sem conta, precisa de regra própria — "o que conta como identidade" (personagem sem conta diegética pode publicar? ter perfil?) |
 | D11 | Leitura pública **sem login** existe? (ator anônimo — threat model D-A) | Se sim, é superfície fora do módulo do personagem; esta spec assume sempre autenticado |
 | D12 | `displayName` livre pode conter dado pessoal real — indexar na busca global só com opt-in? (V-08) | Define o que W2 indexa de perfis e o aviso no formulário de perfil |
 | D13 | Autor vê o próprio conteúdo retirado com motivo? (V-07/D-E — recomendo sim) | Define o estado "removido" do ponto de vista do autor em W7/W9 |
@@ -151,7 +155,8 @@ a ação desabilitada com motivo quando não permitida.
 
 Restrições de segurança que a UX deve **refletir**, não contornar:
 
-- **Anti-enumeração (V-01/V-02)**: id/termo de conteúdo oculto responde igual a inexistente — a UI nunca mostra "existe mas você não pode ver".
+- **Anti-enumeração (V-01/V-02)**: id/termo de conteúdo oculto responde igual a inexistente — a UI nunca mostra "existe mas você não pode ver". **Inclui a tela de estado**: o aviso honesto de "expirado/removido" só se aplica a quem tinha acesso legítimo prévio; para quem nunca teve acesso é 404 seco — o contrato carrega o flag "visível-antes" vs "nunca-visível" (requisito de API, não só de UX).
+- **Fronteira de escopo (D2)**: se a pesquisa/listagens cruzarem campanhas, o modelo de visibilidade muda de natureza — deliberar D2 **antes** do contrato do PAI; default seguro = escopo por campanha.
 - **Visibilidade atômica (V-03)**: retirado/expirado some de lista, busca e perfil no mesmo instante — estados "em atualização" transitórios não devem prometer conteúdo.
 - **Autoria server-side (V-05)**: o formulário de publicar **não** tem campo de "publicar como" — autoria é sempre a conta autenticada; se o contrato um dia permitir agirem por terceiros, a UX precisará de seletor explícito.
 - **Conteúdo público × gate (V-04/D-B)**: publicação já feita sobrevive à perda do dispositivo; edição/rascunho exige gate vigente — a UI separa "ler" de "editar" em affordances distintas.
