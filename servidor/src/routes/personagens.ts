@@ -1821,7 +1821,9 @@ async function nomesDasMemberships(ids: string[]): Promise<Map<string, string>> 
  *  (jogador|mestre). No máximo 1 pendente por personagem. */
 personagensRouter.post("/:characterId/transferencias", requireLeasePersonagem(), async (req, res) => {
   const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
-  if (!p) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  if (!p || (req.params.campaignId && p.campaignId !== req.params.campaignId)) {
+    res.status(404).json({ erro: "Personagem não encontrado" }); return;
+  }
   const membership = await getMembership(p.campaignId, req.usuario!.id);
   if (!membership || membership.status !== "ativo") {
     res.status(403).json({ erro: "Sem participação ativa na campanha" }); return;
@@ -1843,27 +1845,67 @@ personagensRouter.post("/:characterId/transferencias", requireLeasePersonagem(),
   if (!destino || destino.status !== "ativo" || (destino.role !== "jogador" && destino.role !== "mestre")) {
     res.status(400).json({ erro: "O novo titular precisa ser jogador ou mestre ativo desta campanha" }); return;
   }
-  const [pendente] = await db.select({ id: characterTransfers.id }).from(characterTransfers)
-    .where(and(eq(characterTransfers.characterId, p.id), eq(characterTransfers.status, "pendente"))).limit(1);
-  if (pendente) { res.status(409).json({ erro: "Já existe transferência pendente para este personagem" }); return; }
   const id = crypto.randomUUID();
   const agora = new Date();
+  // Escrita atômica: a tx revalida TUDO o que foi checado na leitura —
+  // uma transferência aceita entre a leitura e este ponto não pode
+  // gerar convite obsoleto com from_membership_id velho (o CAS do
+  // aceite falharia e o pedido bloquearia novas transferências).
+  let resultado: { ok: true } | { erro: "estado" | "pendente" | "conflito" };
   try {
-    await db.insert(characterTransfers).values({
-      id, campaignId: p.campaignId, characterId: p.id,
-      fromMembershipId: p.membershipId, toMembershipId: destino.id,
-      status: "pendente", createdAt: agora,
+    resultado = db.transaction((tx) => {
+      const [p2] = tx.select().from(characters)
+        .where(eq(characters.id, p.id)).limit(1).all();
+      if (!p2 || p2.membershipId !== membership.id
+          || p2.isNpc || p2.status === "arquivado"
+          || (req.params.campaignId && p2.campaignId !== req.params.campaignId)) {
+        return { erro: "estado" as const };
+      }
+      const origemOk = tx.select({ id: memberships.id }).from(memberships)
+        .innerJoin(users, eq(users.id, memberships.userId))
+        .where(and(
+          eq(memberships.id, membership.id),
+          eq(memberships.campaignId, p.campaignId),
+          eq(memberships.status, "ativo"),
+          inArray(memberships.role, ["jogador", "mestre"]),
+          eq(users.status, "ativo"),
+        )).limit(1).all();
+      if (!origemOk.length) return { erro: "estado" as const };
+      const destinoOk = tx.select({ id: memberships.id }).from(memberships)
+        .innerJoin(users, eq(users.id, memberships.userId))
+        .where(and(
+          eq(memberships.id, destino.id),
+          eq(memberships.campaignId, p.campaignId),
+          eq(memberships.status, "ativo"),
+          inArray(memberships.role, ["jogador", "mestre"]),
+          eq(users.status, "ativo"),
+        )).limit(1).all();
+      if (!destinoOk.length) return { erro: "conflito" as const };
+      const pendente = tx.select({ id: characterTransfers.id }).from(characterTransfers)
+        .where(and(eq(characterTransfers.characterId, p.id), eq(characterTransfers.status, "pendente")))
+        .limit(1).all();
+      if (pendente.length) return { erro: "pendente" as const };
+      tx.insert(characterTransfers).values({
+        id, campaignId: p.campaignId, characterId: p.id,
+        fromMembershipId: p2.membershipId, toMembershipId: destino.id,
+        status: "pendente", createdAt: agora,
+      }).run();
+      return { ok: true as const };
     });
   } catch (e) {
     // índice parcial UNIQUE(character_id) WHERE pendente — corrida de
     // dois convites simultâneos resolve aqui em vez de duplicar
-    if (String(e).includes("UNIQUE")) {
-      res.status(409).json({ erro: "Já existe transferência pendente para este personagem" }); return;
-    }
-    throw e;
+    if (String(e).includes("UNIQUE")) { resultado = { erro: "pendente" }; }
+    else { throw e; }
+  }
+  if ("erro" in resultado) {
+    res.status(409).json({ erro: resultado.erro === "pendente"
+      ? "Já existe transferência pendente para este personagem"
+      : "Personagem ou participante mudou de estado — tente novamente" });
+    return;
   }
   await audit(req, "personagem.transferencia_iniciada",
-    { characterId: p.id, de: p.membershipId, para: destino.id });
+    { characterId: p.id, de: membership.id, para: destino.id });
   res.status(201).json({ ok: true, transferencia: { id, status: "pendente" } });
 });
 
@@ -1871,7 +1913,10 @@ personagensRouter.post("/:characterId/transferencias", requireLeasePersonagem(),
  *  mestre leem a trilha do personagem. */
 personagensRouter.get("/:characterId/transferencias", async (req, res) => {
   const [p] = await db.select().from(characters).where(eq(characters.id, req.params.characterId)).limit(1);
-  if (!p) { res.status(404).json({ erro: "Personagem não encontrado" }); return; }
+  const campaignParam = (req.params as Record<string, string | undefined>).campaignId;
+  if (!p || (campaignParam && p.campaignId !== campaignParam)) {
+    res.status(404).json({ erro: "Personagem não encontrado" }); return;
+  }
   const membership = await getMembership(p.campaignId, req.usuario!.id);
   const rows = await db.select().from(characterTransfers)
     .where(eq(characterTransfers.characterId, p.id))
@@ -1904,9 +1949,15 @@ personagensRouter.post("/transferencias/:tid/responder", requireLeasePersonagem(
   const agora = new Date();
 
   if (!body.data.aceitar) {
-    await db.update(characterTransfers)
+    const r = await db.update(characterTransfers)
       .set({ status: "recusada", decidedAt: agora })
-      .where(and(eq(characterTransfers.id, t.id), eq(characterTransfers.status, "pendente")));
+      .where(and(eq(characterTransfers.id, t.id), eq(characterTransfers.status, "pendente")))
+      .run();
+    // aceite/cancelamento concorrente venceu — a resposta e a
+    // auditoria precisam refletir o estado vencedor, não mentir
+    if (r.changes === 0) {
+      res.status(409).json({ erro: "Transferência já respondida" }); return;
+    }
     await audit(req, "personagem.transferencia_recusada",
       { characterId: t.characterId, transferId: t.id });
     res.json({ ok: true, status: "recusada" });
