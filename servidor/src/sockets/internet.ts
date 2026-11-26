@@ -15,8 +15,19 @@ import { contaAutorizadaPara, participanteAtivo,
   LIMITE_CONTEUDO_CHARS, LIMITE_MSG_POR_MINUTO, JANELA_RATE_MS } from "../lib/conta-internet.js";
 import { emitirInternetConversa } from "../lib/io.js";
 import { barreiraRestauracaoAtiva } from "../lib/io.js";
+import { criarLimitadorSocket } from "../lib/socket-rate-limit.js";
 
 const db = getDb();
+
+// Incremento F3 absorvido (#351): handshake de conversa é de baixa
+// frequência legítima (~1/s por conversa aberta); burst cobre troca
+// rápida de conversa em multi-aba. Por USUÁRIO — independente do P8
+// (20 msg/min por CONTA no envio), que limita recurso diferente.
+const limiteEntrar = criarLimitadorSocket({
+  nome: "internet-conversa-entrar",
+  capacidade: 20,
+  porSegundo: 5,
+});
 
 type Ack = (res: Record<string, unknown>) => void;
 
@@ -51,6 +62,11 @@ export function registrarInternet(io: SocketIOServer) {
       const contaId = payloadStr(p?.contaId);
       if (!uid || !conversaId || !contaId) {
         cb?.({ ok: false });
+        return;
+      }
+      const limite = limiteEntrar.consumir(uid);
+      if (!limite.permitido) {
+        cb?.({ ok: false, erro: "rate_limit", retryAfterMs: limite.retryAfterMs });
         return;
       }
       try {
