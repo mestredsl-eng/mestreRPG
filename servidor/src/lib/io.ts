@@ -7,6 +7,7 @@ import { getDb } from "../db/index.js";
 import { sessions, memberships } from "../db/schema.js";
 import { personagemAutorizadoInternet } from "./gate-internet.js";
 import { contaAutorizadaPara } from "./conta-internet.js";
+import { selecionarDestinatariosInternet } from "./internet-fanout.js";
 import { internetParticipantes, internetAccounts, characters } from "../db/schema.js";
 import { internetConversations } from "../db/schema.js";
 
@@ -584,11 +585,9 @@ export async function emitirInternetConversa(
         eq(internetParticipantes.conversaId, conversaId),
         eq(internetParticipantes.status, "ativo"),
       ));
-    const vistos = new Set<string>();
-    for (const parte of partes) {
-      const chave = `${parte.userId}:${parte.contaId}`;
-      if (vistos.has(chave)) continue;
-      vistos.add(chave);
+    // dedup (userId, contaId) via helper puro testável — mesma pessoa com
+    // duas contas na conversa recebe um evento por conta (roteamento).
+    for (const parte of selecionarDestinatariosInternet(partes)) {
       if (barreiraRestauracaoAtiva(campaignId)) return;
       // revalidação completa por destinatário na hora da entrega —
       // titularidade atual, membership ativa, conta ativa, personagem
