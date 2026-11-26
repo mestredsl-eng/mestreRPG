@@ -8,8 +8,8 @@
 // correspondentes rejeitam com ERRO_API_PENDENTE, nunca fingem sucesso):
 //  - GET /conversations não retorna preview da última mensagem nem
 //    contagem de não lidas → inbox mostra conversa sem badge por ora;
-//  - GET /conversations/:id não expõe o id do participante → o endpoint
-//    /participants/:pid/responder é inalcançável pela UI;
+//    (o id do participante é exposto desde d3174ea — responderConviteGrupo
+//    resolve o pid do detalhe e chama POST /participants/:pid/responder);
 //  - não há endpoints de renomear grupo, remover membro ou desbloquear
 //    contato (DELETE /contacts/:id existe, mas semântica de desbloqueio
 //    não está no contrato);
@@ -38,6 +38,7 @@ interface ContatoApi {
   origem: ContaPublica | null; destino: ContaPublica | null;
 }
 interface ParticipanteApi {
+  id: string; // id da linha internet_participantes (pid do /responder)
   contaId: string; papel: string; status: string;
   conta: ContaPublica | null;
 }
@@ -278,8 +279,18 @@ export function criarAdaptadorInternetApi({ campaignId, characterId }: {
       });
     },
 
-    // :pid não é exposto por GET /conversations/:id — ver lacuna no cabeçalho
-    responderConviteGrupo: () => pendente(),
+    async responderConviteGrupo(conversaId: string, aceitar: boolean) {
+      // d3174ea expõe o id da linha internet_participantes no detalhe —
+      // resolve o MEU pid de convidado e responde pelo endpoint real.
+      const contaId = await meuContaId();
+      const r = await requisicao<{ conversa: ConversaDetalheApi }>(`${base}/conversations/${conversaId}`);
+      const meu = r.conversa.participantes.find((p) => p.contaId === contaId && p.status === "convidado");
+      if (!meu) throw new ApiError("Convite de grupo não encontrado", undefined, 404);
+      await requisicao(`${base}/conversations/${conversaId}/participants/${meu.id}/responder`, {
+        method: "POST",
+        body: JSON.stringify({ aceitar }),
+      });
+    },
     sairDoGrupo: async (conversaId: string) => {
       const contaId = await meuContaId();
       if (!contaId) throw new ApiError("Personagem sem conta", undefined, 403);
