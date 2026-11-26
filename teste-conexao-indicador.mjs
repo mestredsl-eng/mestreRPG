@@ -272,6 +272,43 @@ try {
   t("personagens: GETs interceptados (1 obsoleto + 1 fresco)", getPersCount >= 2, `count=${getPersCount}`);
   await page.unroute(`**/api/campaigns/${c.campId}/characters**`);
 
+  sec("Reconexão com GET falhando → connect não é sync (B3)");
+  await page.locator(".abas button", { hasText: "Informações" }).first().click();
+  await sleepMs(500);
+  const tsB3 = await indicador(page).getAttribute("data-sync-ts");
+  // aborta os GETs do shell: a reconexão acontece, mas o GET falha
+  await page.route(`**/api/campaigns/${c.campId}**`, (route) => route.abort());
+  await page.evaluate(() => window.__mesaSocket?.disconnect());
+  await page.evaluate(() => window.__mesaSocket?.connect());
+  await page.waitForFunction(
+    () => /Conectado/.test(document.querySelector(".conexao")?.textContent ?? "") && !/Reconectando/.test(document.querySelector(".conexao")?.textContent ?? ""),
+    { timeout: 15000 },
+  );
+  await sleepMs(1500); // dá tempo do GET abortado falhar
+  const tsB3Depois = await indicador(page).getAttribute("data-sync-ts");
+  t("connect≠sync: marca preservada quando GET falha pós-reconexão", tsB3Depois === tsB3, `${tsB3} → ${tsB3Depois}`);
+  t("indicador volta a 'Conectado' mesmo com GET falho", /Conectado/.test(await textoIndicador(page)), await textoIndicador(page));
+  await page.unroute(`**/api/campaigns/${c.campId}**`);
+
+  sec("GET lento legítimo avança a marca ao resolver (D4)");
+  await page.route(`**/api/campaigns/${c.campId}`, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await sleepMs(1500);
+    return route.continue();
+  });
+  const tsD4 = await indicador(page).getAttribute("data-sync-ts");
+  await req(BASE, "PATCH", `/campaigns/${c.campId}`, { cookie: c.cookieMestre, body: { description: "lento " + Date.now() } });
+  const avancou = await page.waitForFunction(
+    (ts0) => {
+      const el = document.querySelector(".conexao");
+      const ts = el?.getAttribute("data-sync-ts") ?? "";
+      return ts !== "" && ts !== ts0;
+    },
+    tsD4, { timeout: 25000 },
+  ).then(() => true).catch(() => false);
+  t("GET atrasado (sem troca de contexto) avança a marca", avancou);
+  await page.unroute(`**/api/campaigns/${c.campId}`);
+
   sec("Mobile 390px");
   const ctxM = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const pgM = await ctxM.newPage();
